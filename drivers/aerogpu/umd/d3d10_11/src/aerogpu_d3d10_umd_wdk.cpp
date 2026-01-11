@@ -1190,6 +1190,10 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnGenMips)
 AEROGPU_DEFINE_HAS_MEMBER(pfnGenerateMips)
 AEROGPU_DEFINE_HAS_MEMBER(pfnResolveSubresource)
 AEROGPU_DEFINE_HAS_MEMBER(pfnClearState)
+AEROGPU_DEFINE_HAS_MEMBER(pfnBegin)
+AEROGPU_DEFINE_HAS_MEMBER(pfnEnd)
+AEROGPU_DEFINE_HAS_MEMBER(pfnReadFromSubresource)
+AEROGPU_DEFINE_HAS_MEMBER(pfnWriteToSubresource)
 AEROGPU_DEFINE_HAS_MEMBER(pfnCalcPrivateQuerySize)
 AEROGPU_DEFINE_HAS_MEMBER(pfnCreateQuery)
 AEROGPU_DEFINE_HAS_MEMBER(pfnDestroyQuery)
@@ -3939,6 +3943,18 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   }
   if constexpr (has_pfnClearState<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnClearState = &Noop<decltype(funcs.pfnClearState)>::Fn;
+  }
+  if constexpr (has_pfnBegin<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnBegin = &NotImpl<decltype(funcs.pfnBegin)>::Fn;
+  }
+  if constexpr (has_pfnEnd<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnEnd = &NotImpl<decltype(funcs.pfnEnd)>::Fn;
+  }
+  if constexpr (has_pfnReadFromSubresource<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnReadFromSubresource = &NotImpl<decltype(funcs.pfnReadFromSubresource)>::Fn;
+  }
+  if constexpr (has_pfnWriteToSubresource<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnWriteToSubresource = &NotImpl<decltype(funcs.pfnWriteToSubresource)>::Fn;
   }
   if constexpr (has_pfnCalcPrivateQuerySize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivateQuerySize = &NotImpl<decltype(funcs.pfnCalcPrivateQuerySize)>::Fn;
