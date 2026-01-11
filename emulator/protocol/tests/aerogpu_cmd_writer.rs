@@ -220,12 +220,13 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         0xF,
     );
     w.set_depth_stencil_state(true, true, AerogpuCompareFunc::LessEqual, false, 0xAA, 0xBB);
-    w.set_rasterizer_state(
+    w.set_rasterizer_state_ext(
         AerogpuFillMode::Solid,
         AerogpuCullMode::Back,
         false,
         true,
         -1,
+        true,
     );
     w.present_ex(0, 0, 0x1234_5678);
     w.export_shared_surface(55, 0x0102_0304_0506_0708);
@@ -403,6 +404,21 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
                 .unwrap()
         ),
         -1
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[rast_base
+                + offset_of!(AerogpuCmdSetRasterizerState, state)
+                + offset_of!(AerogpuRasterizerState, reserved0)
+                ..rast_base
+                    + offset_of!(AerogpuCmdSetRasterizerState, state)
+                    + offset_of!(AerogpuRasterizerState, reserved0)
+                    + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1,
+        "depth_clip_disable flag"
     );
 }
 

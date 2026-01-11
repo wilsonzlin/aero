@@ -1050,6 +1050,25 @@ impl AerogpuCmdWriter {
         scissor_enable: bool,
         depth_bias: i32,
     ) {
+        self.set_rasterizer_state_ext(
+            fill_mode,
+            cull_mode,
+            front_ccw,
+            scissor_enable,
+            depth_bias,
+            false,
+        );
+    }
+
+    pub fn set_rasterizer_state_ext(
+        &mut self,
+        fill_mode: AerogpuFillMode,
+        cull_mode: AerogpuCullMode,
+        front_ccw: bool,
+        scissor_enable: bool,
+        depth_bias: i32,
+        depth_clip_disable: bool,
+    ) {
         use super::aerogpu_cmd::AerogpuRasterizerState;
 
         let base = self.append_raw(
@@ -1076,6 +1095,16 @@ impl AerogpuCmdWriter {
         self.write_i32_at(
             state_base + offset_of!(AerogpuRasterizerState, depth_bias),
             depth_bias,
+        );
+        // `depth_clip_disable` is encoded in `AerogpuRasterizerState::reserved0` for now so we can
+        // preserve the existing struct layout while adding D3D11's DepthClipEnable toggle.
+        //
+        // The guest-facing D3D11 UMD models `DepthClipEnable` directly. This flag is inverted to
+        // match the protocol's historical "reserved fields default to zero" rule: 0 means "use
+        // the common default (depth clipping enabled)", 1 means "disable depth clipping".
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuRasterizerState, reserved0),
+            depth_clip_disable as u32,
         );
     }
 
