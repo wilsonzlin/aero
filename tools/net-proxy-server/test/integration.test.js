@@ -300,3 +300,79 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     if (burstServer) await new Promise((resolve) => burstServer.close(resolve));
   }
 });
+
+test("integration: backpressure poll resumes TCP reads after WS drains (small thresholds)", async () => {
+  // This test exercises a subtle edge case: if the proxy pauses TCP reads due to
+  // WS backpressure and then the send queue drains completely while
+  // `ws.bufferedAmount` is still high, we still need to resume TCP reads once
+  // the WS drains.
+  const payloadSize = 256 * 1024;
+  let burstServer;
+  let proxy;
+  let ws;
+
+  try {
+    burstServer = net.createServer((socket) => {
+      setTimeout(() => {
+        const chunk = Buffer.alloc(64 * 1024, 0x33);
+        let remaining = payloadSize;
+
+        const writeMore = () => {
+          while (remaining > 0) {
+            const n = Math.min(remaining, chunk.length);
+            const ok = socket.write(chunk.subarray(0, n));
+            remaining -= n;
+            if (!ok) {
+              socket.once("drain", writeMore);
+              return;
+            }
+          }
+          socket.end();
+        };
+
+        writeMore();
+      }, 50);
+    });
+    const burstPort = await listen(burstServer);
+
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      // Tiny thresholds make it likely we pause after a single DATA frame.
+      wsBackpressureHighWatermarkBytes: 1024,
+      wsBackpressureLowWatermarkBytes: 512,
+      metricsIntervalMs: 0,
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+    await waitForWsOpen(ws);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: burstPort })));
+
+    // Stop the WS client from reading, causing the server-side socket buffer to
+    // fill up quickly.
+    ws._socket.pause();
+
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(proxy.stats.wsBackpressurePauses > 0);
+
+    ws._socket.resume();
+
+    let receivedLen = 0;
+    while (receivedLen < payloadSize) {
+      // eslint-disable-next-line no-await-in-loop
+      const f = await waiter.waitFor((x) => x.msgType === TcpMuxMsgType.DATA && x.streamId === 1, 5000);
+      receivedLen += f.payload.length;
+    }
+
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1, 5000);
+    assert.ok(proxy.stats.wsBackpressureResumes > 0);
+  } finally {
+    if (ws) ws.terminate();
+    if (proxy) await proxy.close();
+    if (burstServer) await new Promise((resolve) => burstServer.close(resolve));
+  }
+});

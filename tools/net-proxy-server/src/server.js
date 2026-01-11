@@ -401,11 +401,24 @@ export async function createProxyServer(userConfig) {
     let wsSendQueueBytes = 0;
     let wsSendFlushScheduled = false;
     let wsBackpressureActive = false;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let wsBackpressurePollTimer = null;
 
     function backlogBytes() {
       // We track the queue we control (wsSendQueueBytes) and also include the
       // ws library's own internal buffer measurement for extra safety.
       return wsSendQueueBytes + (ws.bufferedAmount ?? 0);
+    }
+
+    function scheduleWsBackpressurePoll() {
+      if (wsBackpressurePollTimer) return;
+      wsBackpressurePollTimer = setTimeout(() => {
+        wsBackpressurePollTimer = null;
+        if (ws.readyState !== WebSocket.OPEN) return;
+        maybeResumeTcpForWsBackpressure();
+        if (wsBackpressureActive) scheduleWsBackpressurePoll();
+      }, 10);
+      wsBackpressurePollTimer.unref?.();
     }
 
     function maybePauseTcpForWsBackpressure() {
@@ -424,6 +437,7 @@ export async function createProxyServer(userConfig) {
       if (!didPauseAny) return;
       wsBackpressureActive = true;
       stats.wsBackpressurePauses += 1;
+      scheduleWsBackpressurePoll();
     }
 
     function maybeResumeTcpForWsBackpressure() {
@@ -802,6 +816,10 @@ export async function createProxyServer(userConfig) {
     ws.on("close", () => {
       stats.wsConnectionsActive = Math.max(0, stats.wsConnectionsActive - 1);
       log({ level: "info", event: "ws_closed", sessionId });
+      if (wsBackpressurePollTimer) {
+        clearTimeout(wsBackpressurePollTimer);
+        wsBackpressurePollTimer = null;
+      }
       for (const id of streams.keys()) destroyStream(id);
     });
 
