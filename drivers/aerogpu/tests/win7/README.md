@@ -4,6 +4,8 @@ This directory contains small Windows 7 **guest-side** test programs intended to
 
 Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump artifacts (usually `.bmp`, sometimes raw `.bin`) to disk for manual inspection (`--dump`).
 
+In particular, `d3d10_map_do_not_wait` and `d3d10_1_map_do_not_wait` validate that `Map(READ, DO_NOT_WAIT)` behaves like a non-blocking poll (never hanging the caller) and reports `DXGI_ERROR_WAS_STILL_DRAWING` when GPU work is still in flight.
+
 For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-table entries must be non-null vs safely stubbable, see:
 
 * `docs/graphics/win7-d3d11ddi-function-tables.md`
@@ -69,7 +71,9 @@ drivers/aerogpu/tests/win7/
   d3d9ex_shared_surface_many_producers/
   d3d9ex_shared_allocations/
   d3d10_triangle/
+  d3d10_map_do_not_wait/
   d3d10_1_triangle/
+  d3d10_1_map_do_not_wait/
   d3d10_caps_smoke/
   d3d11_triangle/
   d3d11_caps_smoke/
