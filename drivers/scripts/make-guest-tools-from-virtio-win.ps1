@@ -84,10 +84,15 @@ $resolvedSpecPath = if ($PSBoundParameters.ContainsKey("SpecPath")) {
   if (-not $SpecPath) {
     throw "-SpecPath must not be empty."
   }
-  $SpecPath
+  if (-not [System.IO.Path]::IsPathRooted($SpecPath)) {
+    Join-Path $repoRoot $SpecPath
+  } else {
+    $SpecPath
+  }
 } else {
   $defaultSpecPath
 }
+$resolvedSpecPath = [System.IO.Path]::GetFullPath($resolvedSpecPath)
 $SpecPath = $resolvedSpecPath
 
 $defaultDrivers = if ($Profile -eq "minimal") {
