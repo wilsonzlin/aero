@@ -83,6 +83,10 @@ declare -A ALLOWLIST_FORBIDDEN_BLOB_OIDS=(
   # Tiny text placeholders used by packaging tests (not real Windows drivers).
   [tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.sys]=699c2af51fe608c5bd954289ad4234763b5730c4
   [tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys]=7d44972c5540378feef4752f2c47d658f1ad3236
+  [tools/packaging/aero_packager/testdata/drivers-aero-virtio/amd64/aerovblk/aerovblk.sys]=037ae541635d11f1cd0435e7cffbd31a305664c3
+  [tools/packaging/aero_packager/testdata/drivers-aero-virtio/amd64/aerovnet/aerovnet.sys]=037ae541635d11f1cd0435e7cffbd31a305664c3
+  [tools/packaging/aero_packager/testdata/drivers-aero-virtio/x86/aerovblk/aerovblk.sys]=0533f1eb8a1a13b7b7248e99d42952c0667fdc69
+  [tools/packaging/aero_packager/testdata/drivers-aero-virtio/x86/aerovnet/aerovnet.sys]=0533f1eb8a1a13b7b7248e99d42952c0667fdc69
   [tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.dll]=727f8a1c3b89565599bf9fa0ef6c8a902edf07e0
   [tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.dll]=c33eb7dce4ce37f644d00db459b5a0e90822e726
   [tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/wdfcoinstaller01009.dll]=e680c29961f73cc955748f6156e5e42bbee62136
