@@ -28,10 +28,10 @@ Drivers still own device-specific protocol/state machines and virtqueue sizing/a
 
 And additional shared helpers:
 
-- **INTx helper:** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
+- **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
 - **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
-- **Windows queue helper:** `virtio_queue.*` (alloc + `common_cfg` queue programming + notify)
+- **Queue helper (miniport):** `virtio_queue.*` (alloc + `common_cfg` queue programming + notify)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
 [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
@@ -57,8 +57,8 @@ The binding device/driver contract lives at:
 - Interrupts must work with PCI **INTx** and the virtio ISR status byte
   (read-to-ack).
 
-Contract v1 also fixes a single BAR0 layout so miniports can initialize from a
-BAR0 mapping without “searching”:
+Contract v1 also fixes a single BAR0 layout so drivers can validate conformance
+without guessing:
 
 | Capability | BAR | Offset | Length |
 |-----------|----:|-------:|-------:|
@@ -100,7 +100,20 @@ is retained only for compatibility/testing with transitional/QEMU devices.
 
 ### Modern transport (Virtio 1.0+)
 
-This directory provides two modern transport implementations (choose one; do not link both):
+This directory provides:
+
+- a portable, OS-agnostic modern transport (`virtio_pci_modern.*`), and
+- two Windows-facing modern transports (`virtio_pci_modern_miniport.*` and `virtio_pci_modern_wdm.*`).
+
+The two Windows-facing transports both export a `VirtioPci*` API surface, so a driver
+must link **exactly one** of them.
+
+- `include/virtio_pci_modern.h` + `src/virtio_pci_modern.c`
+  - OS-agnostic virtio-pci modern transport built on `virtio_os_ops_t`.
+  - Used by host-side unit tests (fake PCI config + BAR0 MMIO backends).
+  - Discovers `COMMON/NOTIFY/ISR/DEVICE` capability regions and performs 64-bit
+    feature negotiation (requires `VIRTIO_F_VERSION_1`).
+  - Programs split virtqueues via `common_cfg` (`queue_desc/queue_avail/queue_used`) and sets `queue_enable`.
 
 - `include/virtio_pci_modern_miniport.h` + `src/virtio_pci_modern_miniport.c`
   - Modern virtio-pci transport for miniport-style drivers (NDIS / StorPort).
@@ -258,12 +271,18 @@ For the optional legacy/transitional transport, the device-model must:
 ## Host-side unit tests
 
 `drivers/windows7/virtio/common/tests/` contains a small user-mode test program
-that builds the core ring logic with a fake I/O backend and validates:
+that builds the portable core with fake I/O backends and validates:
 
 - descriptor chain allocation/free under u16 index wraparound
 - avail/used index handling
 - indirect descriptor table building
 - randomized fuzz sequences (invariants/no corruption)
+- virtio-pci legacy vs modern transport behavior (cap parsing, `VIRTIO_F_VERSION_1`
+  enforcement, queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`,
+  notify doorbells, ISR read-to-ack)
+
+The test CMake project also builds `virtio_pci_cap_parser_tests`, which exercises the
+portable virtio PCI capability parser used by the miniport and WDM transports.
 
 Build with CMake:
 
