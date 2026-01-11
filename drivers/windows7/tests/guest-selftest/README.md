@@ -102,6 +102,13 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
+To require virtio-snd (fail the overall run if `PCI\VEN_1AF4&DEV_1059` is missing):
+
+```bat
+schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --require-snd --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
+```
+
 To skip virtio-snd (not recommended unless your QEMU runner cannot attach virtio-snd yet):
 
 ```bat
