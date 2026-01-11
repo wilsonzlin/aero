@@ -12,7 +12,7 @@ The canonical CPU core lives in `crates/aero-cpu-core` (`aero_cpu_core`). The pu
   Source: [`crates/aero-cpu-core/src/interp/tier0/mod.rs`](../crates/aero-cpu-core/src/interp/tier0/mod.rs)
 - **Paging integration:** `aero_cpu_core::PagingBus` (adapter wrapping `aero_mmu`)  
   Source: [`crates/aero-cpu-core/src/paging_bus.rs`](../crates/aero-cpu-core/src/paging_bus.rs)
-- **Architectural interrupt/exception delivery:** `aero_cpu_core::CpuCore` (`CpuState` + `PendingEventState` + deterministic time)  
+- **Architectural interrupt/exception delivery:** `aero_cpu_core::CpuCore` (`CpuState` + `PendingEventState` + `time::TimeSource`)  
   Source: [`crates/aero-cpu-core/src/interrupts.rs`](../crates/aero-cpu-core/src/interrupts.rs)
 - **Tiered exec glue:** `aero_cpu_core::exec` (`Vcpu`, `Tier0Interpreter`, `ExecDispatcher`)  
   Source: [`crates/aero-cpu-core/src/exec/mod.rs`](../crates/aero-cpu-core/src/exec/mod.rs)
@@ -61,7 +61,8 @@ The corresponding “do not regress this” tests live alongside the type:
 
 `CpuState` contains **architectural CPU state** (GPRs, RIP/RFLAGS, segment caches, control/debug registers, MSRs, FPU/SSE state, etc). Runtime/bookkeeping state lives outside the ABI so it can evolve without breaking JIT code:
 
-- CPUID policy, deterministic time knobs, INVLPG logging: `assist::AssistContext`
+- CPUID policy, INVLPG logging: `assist::AssistContext`
+- Virtual time / TSC model: `time::TimeSource` (typically stored in `interrupts::CpuCore.time`)
 - Pending interrupts/exceptions, interrupt shadow bookkeeping, IRET frame stack: `interrupts::PendingEventState`
 - JIT runtime caches/profiling/hotness counters: `jit::*`
 
@@ -118,16 +119,33 @@ API:
 - `assist::handle_assist` (fetch + decode + execute)
 - `assist::handle_assist_decoded` (execute already-decoded instruction)
 
-Runtime state for assists is carried in `assist::AssistContext`:
+Runtime state for assists is split across:
 
-- `features`: CPUID feature policy (also used to mask MSR writes coherently)
-- `tsc_step`: deterministic increment for `RDTSC/RDTSCP`
-- `invlpg_log`: optional log of invalidated linear addresses (useful for tests)
+- `assist::AssistContext` (non-ABI):
+  - `features`: CPUID feature policy (also used to mask MSR writes coherently)
+  - `invlpg_log`: optional log of invalidated linear addresses (useful for tests)
+- `time::TimeSource` (non-ABI): owns virtual TSC progression and is typically stored on `interrupts::CpuCore` as `cpu.time`.
+
+Callers that use the assist layer directly should pass both the architectural state and the time source:
+
+```rust
+assist::handle_assist(&mut ctx, &mut cpu.time, &mut cpu.state, &mut bus, reason)?;
+```
 
 Important integration detail: assists may modify paging-related state (`CR0/CR3/CR4/EFER`, CPL via segment loads, etc.). The CPU bus contract supports this via `CpuBus::sync(state)`:
 
 - Tier-0 calls `bus.sync(state)` once per instruction boundary.
 - `handle_assist` also calls `bus.sync(state)` before and after executing the assist to keep translation state coherent even when used outside the Tier-0 loop.
+
+### Virtual time / TSC semantics (`time::TimeSource`)
+
+The CPU’s timestamp counter is modeled by [`time::TimeSource`](../crates/aero-cpu-core/src/time.rs) (not by `CpuState` or `AssistContext`):
+
+- **Deterministic mode (default):** TSC advances on instruction retirement. Today the Tier-0 batch glue increments time via `TimeSource::advance_cycles(1)` once per retired instruction (including assists).
+- **Wall-clock mode (optional):** TSC is derived from a host `Instant` stored inside `TimeSource` (intended for native/non-WASM integrations; it is inherently non-deterministic).
+- **Coherency:** `CpuState.msr.tsc` mirrors `TimeSource`:
+  - execution glue updates `state.msr.tsc = time.read_tsc()` after each retirement, and
+  - `RDTSC/RDTSCP` and `RDMSR/WRMSR IA32_TSC` read/write through `TimeSource` and update `state.msr.tsc` as part of their architectural semantics.
 
 ---
 
