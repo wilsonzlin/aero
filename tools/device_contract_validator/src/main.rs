@@ -183,14 +183,27 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             bail!("{name}: hardware_id_patterns is empty");
         }
         let expected_substr = format!("VEN_{vendor:04X}&DEV_{did:04X}");
+        let mut any_matches_id = false;
         for pat in &dev.hardware_id_patterns {
             validate_hwid_literal(pat)
                 .with_context(|| format!("{name}: invalid hardware_id_patterns entry"))?;
-            if !pat.to_ascii_uppercase().contains(&expected_substr) {
+            let upper = pat.to_ascii_uppercase();
+            let matches_id = upper.contains(&expected_substr);
+            if matches_id {
+                any_matches_id = true;
+            } else if dev.virtio_device_type.is_some() {
+                // Virtio devices are modern-only; the contract should not list alternate HWID
+                // families here. (Transitional IDs are tracked separately via
+                // pci_device_id_transitional.)
                 bail!(
                     "{name}: hardware_id_patterns entry does not match pci_vendor_id/pci_device_id ({expected_substr}): {pat}"
                 );
             }
+        }
+        if !any_matches_id {
+            bail!(
+                "{name}: hardware_id_patterns must include at least one entry matching pci_vendor_id/pci_device_id ({expected_substr})"
+            );
         }
 
         if dev.driver_service_name.trim().is_empty() {
