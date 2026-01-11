@@ -612,15 +612,54 @@ test("relays UDP datagrams via the /udp WebSocket fallback (v1 + v2)", async ({ 
 
         const sendAndRecv = async (frame) =>
           await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
-            ws.addEventListener(
-              "message",
-              (event) => {
-                clearTimeout(timeout);
-                resolve(new Uint8Array(event.data));
-              },
-              { once: true },
-            );
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    throw new Error(`unexpected websocket text message: ${data}`);
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  throw new Error(`unexpected websocket text message: ${data}`);
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              reject(new Error("timed out waiting for echoed datagram"));
+            }, 10_000);
+            ws.addEventListener("message", onMessage);
             ws.send(frame);
           });
 
@@ -708,18 +747,60 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
         frame[23] = echoPort & 0xff;
         frame.set(payload, 24);
 
-        const echoedFrame = await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
-          ws.addEventListener(
-            "message",
-            (event) => {
+        const sendAndRecv = async (frame) =>
+          await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    throw new Error(`unexpected websocket text message: ${data}`);
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  throw new Error(`unexpected websocket text message: ${data}`);
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
               clearTimeout(timeout);
-              resolve(new Uint8Array(event.data));
-            },
-            { once: true },
-          );
-          ws.send(frame);
-        });
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              reject(new Error("timed out waiting for echoed datagram"));
+            }, 10_000);
+            ws.addEventListener("message", onMessage);
+            ws.send(frame);
+          });
+
+        const echoedFrame = await sendAndRecv(frame);
 
         if (echoedFrame.length < 24) throw new Error("echoed frame too short");
         if (echoedFrame[0] !== 0xa2 || echoedFrame[1] !== 0x02 || echoedFrame[2] !== 0x06 || echoedFrame[3] !== 0x00) {
