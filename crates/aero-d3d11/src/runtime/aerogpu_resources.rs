@@ -340,9 +340,10 @@ impl AerogpuResourceManager {
     }
 
     pub fn destroy_shader(&mut self, handle: AerogpuHandle) -> Result<()> {
-        if self.shaders.remove(&handle).is_none() {
-            bail!("DestroyShader: unknown handle {handle}");
-        }
+        // Destruction should be robust: some DXBC shader stages (GS/HS/DS) are accepted-but-ignored
+        // since the AeroGPU/WebGPU pipeline has no slot for them. In those cases we never insert a
+        // shader resource, so a later destroy should be a no-op rather than a hard error.
+        self.shaders.remove(&handle);
         Ok(())
     }
 
