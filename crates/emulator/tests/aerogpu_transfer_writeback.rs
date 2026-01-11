@@ -1,0 +1,250 @@
+#![cfg(feature = "aerogpu-native")]
+
+use std::time::{Duration, Instant};
+
+use aero_protocol::aerogpu::aerogpu_cmd::{AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST};
+use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control};
+use emulator::devices::aerogpu_ring::{AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC};
+use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
+use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
+use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
+use emulator::io::pci::MmioDevice;
+use memory::Bus;
+use memory::MemoryBus;
+
+fn push_u32(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+fn push_u64(out: &mut Vec<u8>, v: u64) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>)) {
+    let start = out.len();
+    push_u32(out, opcode);
+    push_u32(out, 0); // size_bytes placeholder
+    payload(out);
+
+    let size_bytes = (out.len() - start) as u32;
+    assert!(size_bytes >= 8);
+    assert_eq!(size_bytes % 4, 0);
+    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+}
+
+fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+
+    // aerogpu_cmd_stream_header (24 bytes)
+    push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut out, abi_version);
+    push_u32(&mut out, 0); // size_bytes (patch later)
+    push_u32(&mut out, 0); // flags
+    push_u32(&mut out, 0); // reserved0
+    push_u32(&mut out, 0); // reserved1
+
+    packets(&mut out);
+
+    let size_bytes = out.len() as u32;
+    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out
+}
+
+#[test]
+fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
+    let mut mem = Bus::new(0x20_000);
+
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.executor = AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    };
+
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    dev.set_backend(Box::new(
+        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
+    ));
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    // Ring header.
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Destination allocation (guest-visible memory) + alloc table.
+    let alloc_id = 1u32;
+    let (width, height) = (4u32, 4u32);
+    let row_pitch = width * 4;
+    let dst_gpa = 0x8000u64;
+    let dst_size = (row_pitch * height) as u64;
+
+    let alloc_table_gpa = 0x6000u64;
+    let alloc_table = {
+        let mut bytes = Vec::new();
+        // aerogpu_alloc_table_header (24 bytes)
+        push_u32(&mut bytes, AEROGPU_ALLOC_TABLE_MAGIC);
+        push_u32(&mut bytes, dev.regs.abi_version);
+        push_u32(&mut bytes, 24 + 32); // size_bytes
+        push_u32(&mut bytes, 1); // entry_count
+        push_u32(&mut bytes, 32); // entry_stride_bytes
+        push_u32(&mut bytes, 0); // reserved0
+
+        // aerogpu_alloc_entry (32 bytes)
+        push_u32(&mut bytes, alloc_id);
+        push_u32(&mut bytes, 0); // flags
+        push_u64(&mut bytes, dst_gpa);
+        push_u64(&mut bytes, dst_size);
+        push_u64(&mut bytes, 0); // reserved0
+        bytes
+    };
+    mem.write_physical(alloc_table_gpa, &alloc_table);
+
+    // Command buffer:
+    // - create src texture (host allocated)
+    // - clear it to solid green
+    // - create dst texture backed by alloc_id
+    // - COPY_TEXTURE2D with WRITEBACK_DST
+    let cmd_gpa = 0x4000u64;
+    let stream = build_stream(
+        |out| {
+            // CREATE_TEXTURE2D src (56 bytes)
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // SET_RENDER_TARGETS (48 bytes)
+            emit_packet(out, 0x400, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, 1); // colors[0]
+                for _ in 0..7 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // CLEAR green (36 bytes)
+            emit_packet(out, 0x600, |out| {
+                push_u32(out, 1); // AEROGPU_CLEAR_COLOR
+                push_u32(out, 0.0f32.to_bits()); // r
+                push_u32(out, 1.0f32.to_bits()); // g
+                push_u32(out, 0.0f32.to_bits()); // b
+                push_u32(out, 1.0f32.to_bits()); // a
+                push_u32(out, 1.0f32.to_bits()); // depth
+                push_u32(out, 0); // stencil
+            });
+
+            // CREATE_TEXTURE2D dst (56 bytes)
+            emit_packet(out, 0x101, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, row_pitch); // row_pitch_bytes (required for guest-backed)
+                push_u32(out, alloc_id); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // COPY_TEXTURE2D (64 bytes)
+            emit_packet(out, 0x106, |out| {
+                push_u32(out, 2); // dst_texture
+                push_u32(out, 1); // src_texture
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 0); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 0); // src_x
+                push_u32(out, 0); // src_y
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
+        },
+        dev.regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, stream.len() as u32); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, alloc_table_gpa); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, alloc_table.len() as u32); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 1); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::IRQ_ENABLE,
+        4,
+        irq_bits::FENCE | irq_bits::ERROR,
+    );
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    // Drive polling until the fence completes.
+    let start = Instant::now();
+    let mut now = start;
+    for _ in 0..200 {
+        if dev.regs.completed_fence >= 1 {
+            break;
+        }
+        now += Duration::from_millis(1);
+        dev.tick(&mut mem, now);
+    }
+
+    assert_eq!(dev.regs.completed_fence, 1);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+
+    // Validate guest memory contains RGBA8 green pixels after COPY_TEXTURE2D writeback.
+    let mut got = vec![0u8; dst_size as usize];
+    mem.read_physical(dst_gpa, &mut got);
+
+    for px in got.chunks_exact(4) {
+        assert_eq!(px, [0, 255, 0, 255]);
+    }
+}
+
