@@ -123,7 +123,7 @@ Write-Host "Running make-driver-pack.ps1..."
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
   -VirtioWinRoot $syntheticRoot `
   -OutDir $driverPackOutDir `
-  -NoZip 2>&1 | Tee-Object -FilePath $driverPackLog
+  -NoZip *>&1 | Tee-Object -FilePath $driverPackLog
 if ($LASTEXITCODE -ne 0) {
   throw "make-driver-pack.ps1 failed (exit $LASTEXITCODE). See $driverPackLog"
 }
@@ -143,10 +143,27 @@ foreach ($p in @(
   (Join-Path $driverPackRoot "win7\amd64\viostor\viostor.inf"),
   (Join-Path $driverPackRoot "win7\amd64\netkvm\netkvm.inf"),
   (Join-Path $driverPackRoot "install.cmd"),
+  (Join-Path $driverPackRoot "enable-testsigning.cmd"),
+  (Join-Path $driverPackRoot "THIRD_PARTY_NOTICES.md"),
+  (Join-Path $driverPackRoot "README.md"),
   (Join-Path $driverPackRoot "manifest.json")
 )) {
   if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
     throw "Expected driver pack output missing: $p"
+  }
+}
+
+$driverPackManifestPath = Join-Path $driverPackRoot "manifest.json"
+$driverPackManifest = Get-Content -LiteralPath $driverPackManifestPath -Raw | ConvertFrom-Json
+if ($OmitOptionalDrivers) {
+  if (-not $driverPackManifest.optional_drivers_missing_any) {
+    throw "Expected make-driver-pack.ps1 to report optional drivers missing, but optional_drivers_missing_any=false."
+  }
+  $missingNames = @($driverPackManifest.optional_drivers_missing | ForEach-Object { $_.name })
+  foreach ($want in @("viosnd", "vioinput")) {
+    if (-not ($missingNames -contains $want)) {
+      throw "Expected make-driver-pack.ps1 to report missing optional driver '$want'. Reported: $($missingNames -join ', ')"
+    }
   }
 }
 
@@ -162,7 +179,7 @@ Write-Host "Running make-guest-tools-from-virtio-win.ps1..."
   -OutDir $guestToolsOutDir `
   -Version "0.0.0" `
   -BuildId "ci" `
-  -CleanStage 2>&1 | Tee-Object -FilePath $guestToolsLog
+  -CleanStage *>&1 | Tee-Object -FilePath $guestToolsLog
 if ($LASTEXITCODE -ne 0) {
   throw "make-guest-tools-from-virtio-win.ps1 failed (exit $LASTEXITCODE). See $guestToolsLog"
 }
@@ -207,7 +224,7 @@ if ($xorriso) {
   Write-Host "Running make-virtio-driver-iso.ps1..."
   & pwsh -NoProfile -ExecutionPolicy Bypass -File $isoScript `
     -VirtioWinRoot $syntheticRoot `
-    -OutIso $driverIsoPath 2>&1 | Tee-Object -FilePath $driverIsoLog
+    -OutIso $driverIsoPath *>&1 | Tee-Object -FilePath $driverIsoLog
   if ($LASTEXITCODE -ne 0) {
     throw "make-virtio-driver-iso.ps1 failed (exit $LASTEXITCODE). See $driverIsoLog"
   }
@@ -218,7 +235,7 @@ if ($xorriso) {
 
   Write-Host "Verifying driver ISO contents..."
   & $python (Join-Path $repoRoot "tools\driver-iso\verify_iso.py") `
-    --iso $driverIsoPath 2>&1 | Tee-Object -FilePath $verifyIsoLog
+    --iso $driverIsoPath *>&1 | Tee-Object -FilePath $verifyIsoLog
   if ($LASTEXITCODE -ne 0) {
     throw "verify_iso.py failed (exit $LASTEXITCODE). See $verifyIsoLog"
   }

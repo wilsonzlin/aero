@@ -35,7 +35,7 @@ jobs:
 
       - name: Run virtio-win packaging smoke test
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1" -OmitOptionalDrivers
 
       - name: Upload logs and outputs (failure)
         if: failure()
@@ -46,4 +46,3 @@ jobs:
           path: |
             out/virtio-win-packaging-smoke/**
             drivers/out/**
-
