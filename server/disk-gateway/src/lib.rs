@@ -271,7 +271,7 @@ fn apply_cors_headers(
 
         resp.headers_mut().insert(
             ACCESS_CONTROL_EXPOSE_HEADERS,
-            HeaderValue::from_static("Accept-Ranges, Content-Range, Content-Length, ETag"),
+            HeaderValue::from_static("Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified"),
         );
     }
 

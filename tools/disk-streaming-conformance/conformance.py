@@ -233,7 +233,7 @@ def _test_head(
         _require_cors(
             resp,
             origin,
-            expose={"accept-ranges", "content-range", "content-length", "etag"},
+            expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
         )
         return (
             TestResult(
@@ -367,7 +367,7 @@ def _test_get_range(
     _require_cors(
         resp,
         origin,
-        expose={"accept-ranges", "content-range", "content-length", "etag"},
+        expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
     )
     start, end, total = _parse_content_range(content_range)
     _require(start == req_start and end == req_end, f"expected bytes {req_start}-{req_end}, got {start}-{end}")
@@ -434,7 +434,7 @@ def _test_get_unsatisfiable_range(
         _require_cors(
             resp,
             origin,
-            expose={"accept-ranges", "content-range", "content-length", "etag"},
+            expose={"accept-ranges", "content-range", "content-length", "etag", "last-modified"},
         )
 
         # Example: "bytes */12345"

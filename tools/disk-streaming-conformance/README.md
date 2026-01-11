@@ -9,7 +9,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
   - `Content-Encoding` is absent or `identity`
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
 - CORS preflight (`OPTIONS`) allows the `Range` + `If-Range` headers (and `Authorization` when testing private images)
-- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`)
+- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
 
 The script is dependency-free (Python stdlib only) and exits non-zero on failures (CI-friendly).
