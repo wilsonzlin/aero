@@ -218,8 +218,8 @@ jobs:
       - name: cargo clippy
         run: cargo clippy ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-targets --all-features -- -D warnings
 
-      - name: cargo check (wasm32, aero-d3d11)
-        run: cargo check ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-d3d11
+      - name: cargo test (wasm32, aero-d3d11, no-run)
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --target wasm32-unknown-unknown -p aero-d3d11 --tests --no-run
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2

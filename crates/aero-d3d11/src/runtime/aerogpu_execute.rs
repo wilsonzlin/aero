@@ -147,7 +147,15 @@ impl AerogpuCmdRuntime {
     }
 
     pub fn poll_wait(&self) {
+        self.poll();
+    }
+
+    fn poll(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        self.device.poll(wgpu::Maintain::Poll);
     }
 
     pub fn pipeline_cache_stats(&self) -> PipelineCacheStats {
@@ -701,7 +709,7 @@ impl AerogpuCmdRuntime {
         slice.map_async(wgpu::MapMode::Read, move |v| {
             sender.send(v).ok();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        self.poll();
         receiver
             .receive()
             .await
