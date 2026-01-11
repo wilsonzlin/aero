@@ -203,11 +203,6 @@ impl AllocTable {
                 "alloc table gpa/size must be non-zero".into(),
             ));
         }
-        if table_size_bytes > MAX_ALLOC_TABLE_SIZE_BYTES {
-            return Err(ExecutorError::Validation(format!(
-                "alloc table size_bytes too large (got {table_size_bytes}, max {MAX_ALLOC_TABLE_SIZE_BYTES})"
-            )));
-        }
         if table_gpa.checked_add(u64::from(table_size_bytes)).is_none() {
             return Err(ExecutorError::Validation(
                 "alloc table gpa+size overflow".into(),
@@ -233,6 +228,11 @@ impl AllocTable {
         })?;
 
         let size_bytes = header.size_bytes;
+        if size_bytes > MAX_ALLOC_TABLE_SIZE_BYTES {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table header size_bytes too large (got {size_bytes}, max {MAX_ALLOC_TABLE_SIZE_BYTES})"
+            )));
+        }
         let size_usize = size_bytes as usize;
         if size_usize < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_usize > table_size {
             return Err(ExecutorError::Validation(format!(
@@ -680,16 +680,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
-        if cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
-            return ExecutionReport {
-                packets_processed: 0,
-                events: vec![ExecutorEvent::Error {
-                    at: 0,
-                    message: format!("command stream too large: {cmd_size_bytes} bytes"),
-                }],
-            };
-        }
-
         if cmd_gpa.checked_add(u64::from(cmd_size_bytes)).is_none() {
             return ExecutionReport {
                 packets_processed: 0,
@@ -700,7 +690,66 @@ fn fs_main() -> @location(0) vec4<f32> {
             };
         }
 
-        let cmd_size = cmd_size_bytes as usize;
+        // Forward-compat: `cmd_size_bytes` is the backing buffer size, while the command stream
+        // header's `size_bytes` indicates how many bytes are actually used.
+        let header_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
+        if cmd_size_bytes < header_size {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!("command stream buffer too small: {cmd_size_bytes} bytes"),
+                }],
+            };
+        }
+
+        let mut header_bytes = [0u8; cmd::AerogpuCmdStreamHeader::SIZE_BYTES];
+        if let Err(err) = guest_memory.read(cmd_gpa, &mut header_bytes) {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!("failed to read command stream header: {err}"),
+                }],
+            };
+        }
+
+        let header = match cmd::decode_cmd_stream_header_le(&header_bytes) {
+            Ok(hdr) => hdr,
+            Err(err) => {
+                return ExecutionReport {
+                    packets_processed: 0,
+                    events: vec![ExecutorEvent::Error {
+                        at: 0,
+                        message: format!("failed to decode command stream header: {err:?}"),
+                    }],
+                };
+            }
+        };
+
+        let declared_size_bytes = header.size_bytes;
+        if declared_size_bytes > cmd_size_bytes {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!(
+                        "command stream header size_bytes too large (size_bytes={declared_size_bytes} > cmd_size_bytes={cmd_size_bytes})"
+                    ),
+                }],
+            };
+        }
+        if declared_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!("command stream too large: {declared_size_bytes} bytes"),
+                }],
+            };
+        }
+
+        let cmd_size = declared_size_bytes as usize;
         let mut cmd_bytes = Vec::<u8>::new();
         if cmd_bytes.try_reserve_exact(cmd_size).is_err() {
             return ExecutionReport {
@@ -708,7 +757,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 events: vec![ExecutorEvent::Error {
                     at: 0,
                     message: format!(
-                        "failed to allocate command stream buffer of size {cmd_size_bytes} bytes"
+                        "failed to allocate command stream buffer of size {declared_size_bytes} bytes"
                     ),
                 }],
             };
@@ -719,7 +768,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 packets_processed: 0,
                 events: vec![ExecutorEvent::Error {
                     at: 0,
-                    message: format!("failed to read command stream: {err}"),
+                    message: format!("failed to read command stream bytes: {err}"),
                 }],
             };
         }
