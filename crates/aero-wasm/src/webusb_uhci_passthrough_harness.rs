@@ -1,16 +1,11 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
-
 use wasm_bindgen::prelude::*;
 
 use aero_usb::GuestMemory;
 use aero_usb::uhci::{InterruptController, UhciController};
-use aero_usb::usb::{SetupPacket as BusSetupPacket, UsbDevice, UsbHandshake};
+use aero_usb::usb::SetupPacket as BusSetupPacket;
 
 use aero_usb::passthrough::{
-    SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
-    UsbHostCompletionOut,
+    UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut, UsbWebUsbPassthroughDevice,
 };
 
 // Minimal UHCI register offsets / bits (mirrors the test harness in `crates/aero-usb/tests/hid_enum.rs`).
@@ -51,24 +46,6 @@ const PID_OUT: u8 = 0xE1;
 
 // Standard requests.
 const REQ_SET_ADDRESS: u8 = 0x05;
-
-fn action_id(action: &UsbHostAction) -> u32 {
-    match action {
-        UsbHostAction::ControlIn { id, .. } => *id,
-        UsbHostAction::ControlOut { id, .. } => *id,
-        UsbHostAction::BulkIn { id, .. } => *id,
-        UsbHostAction::BulkOut { id, .. } => *id,
-    }
-}
-
-fn completion_id(completion: &UsbHostCompletion) -> u32 {
-    match completion {
-        UsbHostCompletion::ControlIn { id, .. } => *id,
-        UsbHostCompletion::ControlOut { id, .. } => *id,
-        UsbHostCompletion::BulkIn { id, .. } => *id,
-        UsbHostCompletion::BulkOut { id, .. } => *id,
-    }
-}
 
 fn td_token(pid: u8, addr: u8, ep: u8, toggle: bool, max_len: usize) -> u32 {
     let max_len_field = if max_len == 0 {
@@ -252,352 +229,6 @@ impl ControlChain {
     }
 }
 
-#[derive(Debug)]
-struct WebUsbProxyDeviceInner {
-    address: u8,
-    pending_address: Option<u8>,
-
-    next_id: u32,
-    actions: VecDeque<UsbHostAction>,
-    completions: HashMap<u32, UsbHostCompletion>,
-
-    ctl_setup: Option<BusSetupPacket>,
-    ctl_dir_in: bool,
-    ctl_expected_len: usize,
-    ctl_out_buf: Vec<u8>,
-    ctl_in_buf: Vec<u8>,
-    ctl_in_offset: usize,
-    ctl_action_id: Option<u32>,
-    ctl_action_kind: Option<&'static str>,
-
-    last_error: Option<String>,
-}
-
-impl WebUsbProxyDeviceInner {
-    fn new() -> Self {
-        Self {
-            address: 0,
-            pending_address: None,
-            next_id: 1,
-            actions: VecDeque::new(),
-            completions: HashMap::new(),
-            ctl_setup: None,
-            ctl_dir_in: false,
-            ctl_expected_len: 0,
-            ctl_out_buf: Vec::new(),
-            ctl_in_buf: Vec::new(),
-            ctl_in_offset: 0,
-            ctl_action_id: None,
-            ctl_action_kind: None,
-            last_error: None,
-        }
-    }
-
-    fn alloc_id(&mut self) -> u32 {
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1).max(1);
-        id
-    }
-
-    fn drain_actions(&mut self) -> Vec<UsbHostAction> {
-        self.actions.drain(..).collect()
-    }
-
-    fn push_completion(&mut self, completion: UsbHostCompletion) {
-        self.completions
-            .insert(completion_id(&completion), completion);
-    }
-
-    fn take_completion(&mut self, id: u32) -> Option<UsbHostCompletion> {
-        self.completions.remove(&id)
-    }
-
-    fn begin_control_transfer(&mut self, setup: BusSetupPacket) {
-        self.ctl_dir_in = (setup.request_type & 0x80) != 0;
-        self.ctl_expected_len = setup.length as usize;
-        self.ctl_out_buf.clear();
-        self.ctl_in_buf.clear();
-        self.ctl_in_offset = 0;
-        self.ctl_action_id = None;
-        self.ctl_action_kind = None;
-        self.last_error = None;
-        self.ctl_setup = Some(setup);
-    }
-
-    fn host_setup_packet(setup: BusSetupPacket) -> HostSetupPacket {
-        HostSetupPacket {
-            bm_request_type: setup.request_type,
-            b_request: setup.request,
-            w_value: setup.value,
-            w_index: setup.index,
-            w_length: setup.length,
-        }
-    }
-
-    fn ensure_control_action_queued(&mut self) {
-        let Some(setup) = self.ctl_setup else {
-            return;
-        };
-        if self.ctl_action_id.is_some() {
-            return;
-        }
-
-        let id = self.alloc_id();
-        let host_setup = Self::host_setup_packet(setup);
-
-        if self.ctl_dir_in {
-            self.actions.push_back(UsbHostAction::ControlIn {
-                id,
-                setup: host_setup,
-            });
-            self.ctl_action_kind = Some("controlIn");
-        } else {
-            // For OUT requests without a data stage (`wLength == 0`) this is a complete transfer.
-            // For requests with a data stage, we defer queuing until we've captured all OUT packets.
-            if self.ctl_expected_len == 0 {
-                self.actions.push_back(UsbHostAction::ControlOut {
-                    id,
-                    setup: host_setup,
-                    data: Vec::new(),
-                });
-                self.ctl_action_kind = Some("controlOut");
-            } else {
-                // queued later.
-                self.ctl_action_kind = Some("controlOut");
-                self.ctl_action_id = Some(id);
-                return;
-            }
-        }
-
-        self.ctl_action_id = Some(id);
-    }
-
-    fn queue_control_out_with_data_if_ready(&mut self) {
-        if self.ctl_dir_in {
-            return;
-        }
-        if self.ctl_expected_len == 0 {
-            // already queued during setup.
-            return;
-        }
-        if self.ctl_out_buf.len() < self.ctl_expected_len {
-            return;
-        }
-        if self.ctl_action_id.is_none() {
-            // This should not happen, but keep it robust.
-            self.ctl_action_id = Some(self.alloc_id());
-        }
-        let id = self.ctl_action_id.expect("id exists");
-        if self.actions.iter().any(|a| action_id(a) == id) {
-            // already queued.
-            return;
-        }
-        let Some(setup) = self.ctl_setup else { return };
-        let host_setup = Self::host_setup_packet(setup);
-        let data = self.ctl_out_buf[..self.ctl_expected_len].to_vec();
-        self.actions.push_back(UsbHostAction::ControlOut {
-            id,
-            setup: host_setup,
-            data,
-        });
-        self.ctl_action_kind = Some("controlOut");
-    }
-
-    fn finish_control_transfer(&mut self) {
-        // Apply pending SET_ADDRESS after the status stage completes.
-        if let Some(addr) = self.pending_address.take() {
-            self.address = addr;
-        }
-
-        self.ctl_setup = None;
-        self.ctl_out_buf.clear();
-        self.ctl_in_buf.clear();
-        self.ctl_in_offset = 0;
-        self.ctl_action_id = None;
-        self.ctl_action_kind = None;
-        self.ctl_expected_len = 0;
-        self.ctl_dir_in = false;
-    }
-
-    fn take_last_error(&mut self) -> Option<String> {
-        self.last_error.take()
-    }
-}
-
-#[derive(Clone)]
-struct WebUsbProxyDevice(Rc<RefCell<WebUsbProxyDeviceInner>>);
-
-impl WebUsbProxyDevice {
-    fn new() -> (Self, Rc<RefCell<WebUsbProxyDeviceInner>>) {
-        let inner = Rc::new(RefCell::new(WebUsbProxyDeviceInner::new()));
-        (Self(inner.clone()), inner)
-    }
-}
-
-impl UsbDevice for WebUsbProxyDevice {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn reset(&mut self) {
-        let mut inner = self.0.borrow_mut();
-        inner.address = 0;
-        inner.pending_address = None;
-        inner.actions.clear();
-        inner.completions.clear();
-        inner.last_error = None;
-        inner.begin_control_transfer(BusSetupPacket {
-            request_type: 0,
-            request: 0,
-            value: 0,
-            index: 0,
-            length: 0,
-        });
-        inner.finish_control_transfer();
-    }
-
-    fn address(&self) -> u8 {
-        self.0.borrow().address
-    }
-
-    fn handle_setup(&mut self, setup: BusSetupPacket) {
-        let mut inner = self.0.borrow_mut();
-        inner.begin_control_transfer(setup);
-
-        // SET_ADDRESS: apply after status stage.
-        if setup.request == REQ_SET_ADDRESS && (setup.request_type & 0x80) == 0 {
-            inner.pending_address = Some((setup.value & 0x7F) as u8);
-        }
-
-        // Queue control actions early where possible (IN + OUT-without-data).
-        inner.ensure_control_action_queued();
-    }
-
-    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
-        let mut inner = self.0.borrow_mut();
-        if ep != 0 {
-            return UsbHandshake::Stall;
-        }
-
-        let Some(setup) = inner.ctl_setup else {
-            return UsbHandshake::Timeout;
-        };
-
-        if inner.ctl_dir_in {
-            // Status stage for control IN. Accept it and finish.
-            if !data.is_empty() {
-                // Unexpected; still ACK to keep the harness moving.
-            }
-            inner.finish_control_transfer();
-            return UsbHandshake::Ack { bytes: 0 };
-        }
-
-        // Control OUT data stage (may be empty for status stage, but those are IN tokens).
-        if inner.ctl_expected_len != 0 {
-            inner.ctl_out_buf.extend_from_slice(data);
-            // Once we have all data, queue the WebUSB action (the status stage IN TD will wait for completion).
-            inner.queue_control_out_with_data_if_ready();
-        } else {
-            // No data stage; nothing to capture.
-        }
-
-        // Always ACK the OUT packet.
-        let _ = setup; // keep for clarity.
-        UsbHandshake::Ack { bytes: data.len() }
-    }
-
-    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
-        let mut inner = self.0.borrow_mut();
-        if ep != 0 {
-            return UsbHandshake::Stall;
-        }
-
-        let Some(_setup) = inner.ctl_setup else {
-            return UsbHandshake::Timeout;
-        };
-
-        if inner.ctl_dir_in {
-            // Data stage for control IN (and later status stage OUT which is handled in handle_out).
-            inner.ensure_control_action_queued();
-            let Some(id) = inner.ctl_action_id else {
-                return UsbHandshake::Timeout;
-            };
-
-            if inner.ctl_in_buf.is_empty() {
-                let Some(completion) = inner.take_completion(id) else {
-                    return UsbHandshake::Nak;
-                };
-                match completion {
-                    UsbHostCompletion::ControlIn { result, .. } => match result {
-                        UsbHostCompletionIn::Success { data } => {
-                            inner.ctl_in_buf = data;
-                            inner.ctl_in_offset = 0;
-                        }
-                        UsbHostCompletionIn::Stall => {
-                            inner.last_error = Some("WebUSB controlIn stalled".to_string());
-                            return UsbHandshake::Stall;
-                        }
-                        UsbHostCompletionIn::Error { message } => {
-                            inner.last_error = Some(message);
-                            return UsbHandshake::Timeout;
-                        }
-                    },
-                    _ => return UsbHandshake::Timeout,
-                }
-            }
-
-            let remaining = inner.ctl_in_buf.len().saturating_sub(inner.ctl_in_offset);
-            let take = remaining.min(buf.len());
-            if take != 0 {
-                buf[..take].copy_from_slice(
-                    &inner.ctl_in_buf[inner.ctl_in_offset..inner.ctl_in_offset + take],
-                );
-                inner.ctl_in_offset += take;
-            }
-            return UsbHandshake::Ack { bytes: take };
-        }
-
-        // Control OUT status stage (IN zero-length).
-        // Ensure we have queued a ControlOut action (either early for wLength==0 or once OUT data collected).
-        if inner.ctl_expected_len == 0 {
-            inner.ensure_control_action_queued();
-        } else {
-            inner.queue_control_out_with_data_if_ready();
-        }
-
-        let Some(id) = inner.ctl_action_id else {
-            return UsbHandshake::Timeout;
-        };
-
-        let Some(completion) = inner.take_completion(id) else {
-            return UsbHandshake::Nak;
-        };
-
-        match completion {
-            UsbHostCompletion::ControlOut { result, .. } => match result {
-                UsbHostCompletionOut::Success { .. } => {
-                    // Status stage completes; apply any pending address.
-                    inner.finish_control_transfer();
-                    UsbHandshake::Ack { bytes: 0 }
-                }
-                UsbHostCompletionOut::Stall => {
-                    inner.last_error = Some("WebUSB controlOut stalled".to_string());
-                    UsbHandshake::Stall
-                }
-                UsbHostCompletionOut::Error { message } => {
-                    inner.last_error = Some(message);
-                    UsbHandshake::Timeout
-                }
-            },
-            _ => UsbHandshake::Timeout,
-        }
-    }
-}
-
 fn install_frame_list(mem: &mut VecMemory, fl_base: u32, qh_addr: u32) {
     for i in 0..1024u32 {
         mem.write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
@@ -753,12 +384,25 @@ pub struct WebUsbUhciPassthroughHarness {
 
     max_packet: usize,
     pending_chain: Option<ControlChain>,
-
-    device: Rc<RefCell<WebUsbProxyDeviceInner>>,
+    last_error: Option<String>,
     device_descriptor: Vec<u8>,
     config_descriptor: Vec<u8>,
     config_total_len: usize,
     config_value: u8,
+}
+
+impl WebUsbUhciPassthroughHarness {
+    fn passthrough_device_mut(&mut self) -> &mut UsbWebUsbPassthroughDevice {
+        let port = self
+            .ctrl
+            .bus_mut()
+            .port_mut(0)
+            .expect("UHCI port 0 exists");
+        let dev = port.device.as_mut().expect("UHCI port 0 device attached");
+        dev.as_any_mut()
+            .downcast_mut::<UsbWebUsbPassthroughDevice>()
+            .expect("UHCI port 0 device is UsbWebUsbPassthroughDevice")
+    }
 }
 
 #[wasm_bindgen]
@@ -768,8 +412,7 @@ impl WebUsbUhciPassthroughHarness {
         let io_base = 0x5000;
         let mut ctrl = UhciController::new(io_base, 11);
 
-        let (device, device_handle) = WebUsbProxyDevice::new();
-        ctrl.connect_device(0, Box::new(device));
+        ctrl.connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
 
         let mut mem = VecMemory::new(0x40000);
         let mut irq = DummyIrq::default();
@@ -801,7 +444,7 @@ impl WebUsbUhciPassthroughHarness {
             reset_remaining: 50,
             max_packet: 8,
             pending_chain: None,
-            device: device_handle,
+            last_error: None,
             device_descriptor: Vec::new(),
             config_descriptor: Vec::new(),
             config_total_len: 0,
@@ -826,7 +469,7 @@ impl WebUsbUhciPassthroughHarness {
                 return;
             }
         }
-        if let Some(err) = self.device.borrow_mut().take_last_error() {
+        if let Some(err) = self.last_error.take() {
             self.phase = HarnessPhase::Error;
             self.phase_detail = err;
             self.pending_chain = None;
@@ -1002,8 +645,7 @@ impl WebUsbUhciPassthroughHarness {
 
     /// Drain all queued UsbHostAction objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
-        let mut dev = self.device.borrow_mut();
-        let actions = dev.drain_actions();
+        let actions = self.passthrough_device_mut().drain_actions();
         if actions.is_empty() {
             // Keep polling cheap when the harness is idle.
             return Ok(JsValue::NULL);
@@ -1015,7 +657,35 @@ impl WebUsbUhciPassthroughHarness {
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        self.device.borrow_mut().push_completion(completion);
+        match &completion {
+            UsbHostCompletion::ControlIn { result, .. } => match result {
+                UsbHostCompletionIn::Stall => {
+                    self.last_error = Some("WebUSB controlIn stalled".to_string())
+                }
+                UsbHostCompletionIn::Error { message } => self.last_error = Some(message.clone()),
+                _ => {}
+            },
+            UsbHostCompletion::ControlOut { result, .. } => match result {
+                UsbHostCompletionOut::Stall => {
+                    self.last_error = Some("WebUSB controlOut stalled".to_string())
+                }
+                UsbHostCompletionOut::Error { message } => self.last_error = Some(message.clone()),
+                _ => {}
+            },
+            UsbHostCompletion::BulkIn { result, .. } => match result {
+                UsbHostCompletionIn::Stall => self.last_error = Some("WebUSB bulkIn stalled".to_string()),
+                UsbHostCompletionIn::Error { message } => self.last_error = Some(message.clone()),
+                _ => {}
+            },
+            UsbHostCompletion::BulkOut { result, .. } => match result {
+                UsbHostCompletionOut::Stall => {
+                    self.last_error = Some("WebUSB bulkOut stalled".to_string())
+                }
+                UsbHostCompletionOut::Error { message } => self.last_error = Some(message.clone()),
+                _ => {}
+            },
+        }
+        self.passthrough_device_mut().push_completion(completion);
         Ok(())
     }
 }
