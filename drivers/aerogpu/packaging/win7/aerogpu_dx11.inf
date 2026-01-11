@@ -42,7 +42,7 @@ CopyFiles = AeroGPU_KMD.CopyFiles, AeroGPU_UMD_x86.CopyFiles
 AddReg    = AeroGPU_Device_AddReg_x86
 
 [AeroGPU_Install.NTx86.6.1.Services]
-AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
+AddService = aerogpu,0x00000002,AeroGPU_Service_Install
 
 ; -------------------------------
 ; Install (amd64)
@@ -52,7 +52,7 @@ CopyFiles = AeroGPU_KMD.CopyFiles, AeroGPU_UMD_x64.CopyFiles, AeroGPU_UMD_Wow64.
 AddReg    = AeroGPU_Device_AddReg_amd64
 
 [AeroGPU_Install.NTamd64.6.1.Services]
-AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
+AddService = aerogpu,0x00000002,AeroGPU_Service_Install
 
 ; -------------------------------
 ; File copy lists

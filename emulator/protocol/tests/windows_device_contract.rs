@@ -161,9 +161,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     );
     let expected_add_service = format!("AddService = {}", require_json_str(aerogpu, "driver_service_name"));
     assert!(
-        aerogpu_inf_text
-            .to_ascii_uppercase()
-            .contains(&expected_add_service.to_ascii_uppercase()),
+        contains_needle(&aerogpu_inf_text, &expected_add_service),
         "aerogpu.inf must contain {expected_add_service:?} (case-insensitive)"
     );
 

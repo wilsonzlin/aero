@@ -9,7 +9,6 @@
 > - Staging helper: [`drivers/aerogpu/build/stage_packaging_win7.cmd`](../../../drivers/aerogpu/build/stage_packaging_win7.cmd)
 >
 > The old prototype driver stack (for the deprecated bring-up device) is archived under:
-> (This was the early AeroGPU 1AE0 prototype stack.)
 >
 > - [`prototype/legacy-win7-aerogpu-1ae0/guest/windows/docs/driver_install.md`](../../../prototype/legacy-win7-aerogpu-1ae0/guest/windows/docs/driver_install.md)
 >

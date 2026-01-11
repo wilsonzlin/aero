@@ -20,5 +20,5 @@ The archived prototype sources and its old install guide live under:
 
 Important limitations of the archived prototype:
 
-- Targets the deprecated AeroGPU **1AE0** prototype PCI identity (not the supported **1AED** / **A3A0** ABIs).
+- Targets the deprecated AeroGPU prototype / bring-up PCI identities (not the supported A3A0 device contract).
 - On Windows 7 x64 it is **not WOW64-complete** (no x86 UMD), so **32-bit D3D9 apps will fail**.
