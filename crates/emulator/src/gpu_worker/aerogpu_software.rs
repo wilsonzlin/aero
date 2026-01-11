@@ -240,7 +240,8 @@ impl AeroGpuSoftwareExecutor {
         let size: usize = match usize::try_from(size_bytes) {
             Ok(v) => v,
             Err(_) => {
-                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
                 regs.irq_status |= irq_bits::ERROR;
                 return HashMap::new();
             }
@@ -293,7 +294,8 @@ impl AeroGpuSoftwareExecutor {
         let mut off = ring::AerogpuAllocTableHeader::SIZE_BYTES;
         for _ in 0..hdr.entry_count {
             if off + ring::AerogpuAllocEntry::SIZE_BYTES > total_size {
-                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
                 regs.irq_status |= irq_bits::ERROR;
                 break;
             }
@@ -363,7 +365,10 @@ impl AeroGpuSoftwareExecutor {
         }
         let element_count = u32::from_le_bytes(blob[8..12].try_into().unwrap()) as usize;
         let mut off = hdr_size;
-        let needed = match element_count.checked_mul(elem_size).and_then(|bytes| bytes.checked_add(off)) {
+        let needed = match element_count
+            .checked_mul(elem_size)
+            .and_then(|bytes| bytes.checked_add(off))
+        {
             Some(v) => v,
             None => return ParsedInputLayout::default(),
         };
@@ -388,7 +393,8 @@ impl AeroGpuSoftwareExecutor {
             let semantic_index = u32::from_le_bytes(blob[off + 4..off + 8].try_into().unwrap());
             let dxgi_format = u32::from_le_bytes(blob[off + 8..off + 12].try_into().unwrap());
             let input_slot = u32::from_le_bytes(blob[off + 12..off + 16].try_into().unwrap());
-            let aligned_byte_offset = u32::from_le_bytes(blob[off + 16..off + 20].try_into().unwrap());
+            let aligned_byte_offset =
+                u32::from_le_bytes(blob[off + 16..off + 20].try_into().unwrap());
             off += elem_size;
 
             if semantic_index != 0 {
@@ -763,7 +769,9 @@ impl AeroGpuSoftwareExecutor {
         let parsed_layout = if input_layout_handle == 0 {
             None
         } else {
-            self.input_layouts.get(&input_layout_handle).map(|l| l.parsed.clone())
+            self.input_layouts
+                .get(&input_layout_handle)
+                .map(|l| l.parsed.clone())
         };
 
         let mut vertices: Vec<Vertex> = Vec::new();
@@ -845,7 +853,12 @@ impl AeroGpuSoftwareExecutor {
     }
 
     fn read_vertex_d3d9(&mut self, mem: &mut dyn MemoryBus, index: u32) -> Option<Vertex> {
-        let binding = self.state.vertex_buffers.get(0).copied().unwrap_or_default();
+        let binding = self
+            .state
+            .vertex_buffers
+            .get(0)
+            .copied()
+            .unwrap_or_default();
         if binding.buffer == 0 {
             return None;
         }
@@ -875,7 +888,12 @@ impl AeroGpuSoftwareExecutor {
         })
     }
 
-    fn read_vertex_elem_f32x2(&mut self, mem: &mut dyn MemoryBus, elem: InputElement, index: u32) -> Option<(f32, f32)> {
+    fn read_vertex_elem_f32x2(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        elem: InputElement,
+        index: u32,
+    ) -> Option<(f32, f32)> {
         if elem.dxgi_format != 16 {
             // DXGI_FORMAT_R32G32_FLOAT
             return None;
@@ -890,7 +908,8 @@ impl AeroGpuSoftwareExecutor {
         }
         let handle = self.resolve_handle(binding.buffer);
         let stride = binding.stride_bytes as u64;
-        let start = binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
+        let start =
+            binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
         let mut buf = [0u8; 8];
         if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
             return None;
@@ -901,7 +920,12 @@ impl AeroGpuSoftwareExecutor {
         ))
     }
 
-    fn read_vertex_elem_f32x4(&mut self, mem: &mut dyn MemoryBus, elem: InputElement, index: u32) -> Option<[f32; 4]> {
+    fn read_vertex_elem_f32x4(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        elem: InputElement,
+        index: u32,
+    ) -> Option<[f32; 4]> {
         if elem.dxgi_format != 2 {
             // DXGI_FORMAT_R32G32B32A32_FLOAT
             return None;
@@ -916,7 +940,8 @@ impl AeroGpuSoftwareExecutor {
         }
         let handle = self.resolve_handle(binding.buffer);
         let stride = binding.stride_bytes as u64;
-        let start = binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
+        let start =
+            binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
         let mut buf = [0u8; 16];
         if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
             return None;
@@ -929,11 +954,19 @@ impl AeroGpuSoftwareExecutor {
         ])
     }
 
-    fn read_buffer_bytes(&mut self, mem: &mut dyn MemoryBus, handle: u32, offset: u64, out: &mut [u8]) -> bool {
+    fn read_buffer_bytes(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        handle: u32,
+        offset: u64,
+        out: &mut [u8],
+    ) -> bool {
         let handle = self.resolve_handle(handle);
         if let Some(buf) = self.buffers.get(&handle) {
             if let Some(backing) = buf.backing.as_ref() {
-                if offset.checked_add(out.len() as u64).is_none() || offset + out.len() as u64 > buf.size_bytes {
+                if offset.checked_add(out.len() as u64).is_none()
+                    || offset + out.len() as u64 > buf.size_bytes
+                {
                     return false;
                 }
                 if offset + out.len() as u64 > backing.size_bytes {
@@ -983,45 +1016,46 @@ impl AeroGpuSoftwareExecutor {
         let mut buf = vec![0u8; cmd_size];
         mem.read_physical(desc.cmd_gpa, &mut buf);
 
-        let stream_hdr = match cmd::decode_cmd_stream_header_le(&buf) {
+        let iter = match cmd::AerogpuCmdStreamIter::new(&buf) {
             Ok(v) => v,
             Err(_) => {
                 Self::record_error(regs);
                 return;
             }
         };
-
-        let total = stream_hdr.size_bytes as usize;
-        if total > cmd_size {
-            Self::record_error(regs);
-            return;
-        }
+        let stream_size = iter.header().size_bytes as usize;
 
         let allocs = self.parse_alloc_table(regs, mem, desc);
 
         let mut offset = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
-        while offset < total {
-            let hdr = match cmd::decode_cmd_hdr_le(&buf[offset..total]) {
+        for packet in iter {
+            let packet = match packet {
                 Ok(v) => v,
                 Err(_) => {
                     Self::record_error(regs);
                     break;
                 }
             };
-            let size_bytes = hdr.size_bytes as usize;
-            if size_bytes == 0 {
+            let cmd_size = packet.hdr.size_bytes as usize;
+            let end = match offset.checked_add(cmd_size) {
+                Some(v) => v,
+                None => {
+                    Self::record_error(regs);
+                    break;
+                }
+            };
+            if end > stream_size {
                 Self::record_error(regs);
                 break;
             }
-            if offset + size_bytes > total {
+            let Some(packet_bytes) = buf.get(offset..end) else {
                 Self::record_error(regs);
                 break;
-            }
-            let packet = &buf[offset..offset + size_bytes];
-            if !self.dispatch_cmd(regs, mem, &allocs, packet) {
+            };
+            if !self.dispatch_cmd(regs, mem, &allocs, packet_bytes) {
                 break;
             }
-            offset += size_bytes;
+            offset = end;
         }
 
         self.flush_dirty_textures(regs, mem);
@@ -1141,7 +1175,11 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let min_pitch = width.saturating_mul(bpp as u32);
-                let row_pitch_bytes = if row_pitch_bytes == 0 { min_pitch } else { row_pitch_bytes };
+                let row_pitch_bytes = if row_pitch_bytes == 0 {
+                    min_pitch
+                } else {
+                    row_pitch_bytes
+                };
                 if row_pitch_bytes < min_pitch {
                     Self::record_error(regs);
                     return true;
@@ -1252,27 +1290,24 @@ impl AeroGpuSoftwareExecutor {
                 }
             }
             cmd::AerogpuCmdOpcode::UploadResource => {
-                if packet.len() < 32 {
+                if packet.len() < cmd::AerogpuCmdUploadResource::SIZE_BYTES {
                     Self::record_error(regs);
                     return false;
                 }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let offset = Self::cmd_read_u64(packet, 16).unwrap_or(0);
-                let size = Self::cmd_read_u64(packet, 24).unwrap_or(0);
-                let payload_off = 32;
-                let payload_size = match usize::try_from(size).ok() {
-                    Some(v) => v,
-                    None => {
+                let (cmd, payload) = match cmd::decode_cmd_upload_resource_payload_le(packet) {
+                    Ok(v) => v,
+                    Err(_) => {
                         Self::record_error(regs);
                         return true;
                     }
                 };
-                if payload_off + payload_size > packet.len() {
-                    Self::record_error(regs);
+                let handle = self.resolve_handle(cmd.resource_handle);
+                let offset = cmd.offset_bytes;
+                let size = cmd.size_bytes;
+
+                if size == 0 {
                     return true;
                 }
-                let payload = &packet[payload_off..payload_off + payload_size];
-                let handle = self.resolve_handle(handle);
 
                 if let Some(buf) = self.buffers.get_mut(&handle) {
                     let end = match offset.checked_add(size) {
@@ -1474,7 +1509,11 @@ impl AeroGpuSoftwareExecutor {
                 if width == 0 || height == 0 {
                     return true;
                 }
-                if dst_mip_level != 0 || dst_array_layer != 0 || src_mip_level != 0 || src_array_layer != 0 {
+                if dst_mip_level != 0
+                    || dst_array_layer != 0
+                    || src_mip_level != 0
+                    || src_array_layer != 0
+                {
                     Self::record_error(regs);
                     return true;
                 }
@@ -1546,7 +1585,9 @@ impl AeroGpuSoftwareExecutor {
                         let sy = src_y as usize + row;
                         let src_off = sy * pitch + (src_x as usize) * bpp;
                         let dst_off = row * row_bytes;
-                        if src_off + row_bytes > src_tex.data.len() || dst_off + row_bytes > tmp.len() {
+                        if src_off + row_bytes > src_tex.data.len()
+                            || dst_off + row_bytes > tmp.len()
+                        {
                             Self::record_error(regs);
                             return true;
                         }
@@ -1630,15 +1671,16 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return false;
                 }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let stage = Self::cmd_read_u32(packet, 12).unwrap_or(0);
-                let dxbc_size = Self::cmd_read_u32(packet, 16).unwrap_or(0) as usize;
-                let payload_off = 24;
-                if payload_off + dxbc_size > packet.len() {
-                    Self::record_error(regs);
-                    return true;
-                }
-                let dxbc = packet[payload_off..payload_off + dxbc_size].to_vec();
+                let (cmd, dxbc) = match cmd::decode_cmd_create_shader_dxbc_payload_le(packet) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        Self::record_error(regs);
+                        return true;
+                    }
+                };
+                let handle = cmd.shader_handle;
+                let stage = cmd.stage;
+                let dxbc = dxbc.to_vec();
                 if handle != 0 {
                     self.shaders.insert(handle, ShaderResource { stage, dxbc });
                 }
@@ -1664,21 +1706,23 @@ impl AeroGpuSoftwareExecutor {
                 // Currently ignored by the software backend.
             }
             cmd::AerogpuCmdOpcode::CreateInputLayout => {
-                if packet.len() < 20 {
+                if packet.len() < cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES {
                     Self::record_error(regs);
                     return false;
                 }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let blob_size = Self::cmd_read_u32(packet, 12).unwrap_or(0) as usize;
-                let payload_off = 20;
-                if payload_off + blob_size > packet.len() {
-                    Self::record_error(regs);
-                    return true;
-                }
-                let blob = packet[payload_off..payload_off + blob_size].to_vec();
+                let (cmd, blob) = match cmd::decode_cmd_create_input_layout_blob_le(packet) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        Self::record_error(regs);
+                        return true;
+                    }
+                };
+                let handle = cmd.input_layout_handle;
+                let blob = blob.to_vec();
                 let parsed = Self::parse_input_layout_blob(&blob);
                 if handle != 0 {
-                    self.input_layouts.insert(handle, InputLayoutResource { blob, parsed });
+                    self.input_layouts
+                        .insert(handle, InputLayoutResource { blob, parsed });
                 }
             }
             cmd::AerogpuCmdOpcode::DestroyInputLayout => {
@@ -1785,40 +1829,35 @@ impl AeroGpuSoftwareExecutor {
                 let y = Self::cmd_read_i32(packet, 12).unwrap_or(0);
                 let width = Self::cmd_read_i32(packet, 16).unwrap_or(0);
                 let height = Self::cmd_read_i32(packet, 20).unwrap_or(0);
-                self.state.scissor = Some(Scissor { x, y, width, height });
+                self.state.scissor = Some(Scissor {
+                    x,
+                    y,
+                    width,
+                    height,
+                });
             }
             cmd::AerogpuCmdOpcode::SetVertexBuffers => {
-                if packet.len() < 16 {
+                if packet.len() < std::mem::size_of::<cmd::AerogpuCmdSetVertexBuffers>() {
                     Self::record_error(regs);
                     return false;
                 }
-                let start_slot = Self::cmd_read_u32(packet, 8).unwrap_or(0) as usize;
-                let buffer_count = Self::cmd_read_u32(packet, 12).unwrap_or(0) as usize;
-                let binding_size = std::mem::size_of::<cmd::AerogpuVertexBufferBinding>();
-                let expected = match buffer_count
-                    .checked_mul(binding_size)
-                    .and_then(|bytes| bytes.checked_add(16))
-                {
-                    Some(v) => v,
-                    None => {
+                let (cmd, bindings) = match cmd::decode_cmd_set_vertex_buffers_bindings_le(packet) {
+                    Ok(v) => v,
+                    Err(_) => {
                         Self::record_error(regs);
                         return true;
                     }
                 };
-                if expected > packet.len() {
-                    Self::record_error(regs);
-                    return true;
-                }
+                let start_slot = cmd.start_slot as usize;
 
-                for i in 0..buffer_count {
+                for (i, binding) in bindings.iter().copied().enumerate() {
                     let slot = start_slot + i;
                     if slot >= self.state.vertex_buffers.len() {
                         continue;
                     }
-                    let base = 16 + i * binding_size;
-                    let buffer = Self::cmd_read_u32(packet, base).unwrap_or(0);
-                    let stride_bytes = Self::cmd_read_u32(packet, base + 4).unwrap_or(0);
-                    let offset_bytes = Self::cmd_read_u32(packet, base + 8).unwrap_or(0);
+                    let buffer = u32::from_le(binding.buffer);
+                    let stride_bytes = u32::from_le(binding.stride_bytes);
+                    let offset_bytes = u32::from_le(binding.offset_bytes);
                     self.state.vertex_buffers[slot] = VertexBufferBinding {
                         buffer,
                         stride_bytes,
@@ -1910,8 +1949,8 @@ impl AeroGpuSoftwareExecutor {
                 let mut idxs = Vec::with_capacity(index_count as usize);
                 let mut tmp = vec![0u8; index_size];
                 for i in 0..index_count {
-                    let idx_off = ib.offset_bytes as u64
-                        + ((first_index + i) as u64) * (index_size as u64);
+                    let idx_off =
+                        ib.offset_bytes as u64 + ((first_index + i) as u64) * (index_size as u64);
                     if !self.read_buffer_bytes(mem, ib_handle, idx_off, &mut tmp) {
                         break;
                     }
@@ -1932,7 +1971,8 @@ impl AeroGpuSoftwareExecutor {
                 let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
                 let token = Self::cmd_read_u64(packet, 16).unwrap_or(0);
                 if handle != 0 && token != 0 {
-                    self.shared_surfaces.insert(token, self.resolve_handle(handle));
+                    self.shared_surfaces
+                        .insert(token, self.resolve_handle(handle));
                 }
             }
             cmd::AerogpuCmdOpcode::ImportSharedSurface => {
@@ -1959,5 +1999,4 @@ impl AeroGpuSoftwareExecutor {
         }
         true
     }
-
 }
