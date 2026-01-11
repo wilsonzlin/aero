@@ -174,7 +174,15 @@ describe("Perf HUD Trace JSON export", () => {
   }
 
   beforeEach(() => {
-    const g = globalThis as typeof globalThis & Record<string, unknown>;
+    const g = globalThis as unknown as {
+      window?: unknown;
+      document?: unknown;
+      HTMLElement?: unknown;
+      HTMLCanvasElement?: unknown;
+      HTMLAnchorElement?: unknown;
+      HTMLButtonElement?: unknown;
+      HTMLDivElement?: unknown;
+    };
     g.window = {
       devicePixelRatio: 1,
       setInterval: globalThis.setInterval.bind(globalThis),

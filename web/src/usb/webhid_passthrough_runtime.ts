@@ -1,4 +1,4 @@
-import { normalizeCollections, type NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
+import { normalizeCollections, type HidCollectionInfo, type NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
 import type { WebHidPassthroughManager, WebHidPassthroughState } from "../platform/webhid_passthrough";
 
 export type WebHidPassthroughOutputReport = {
@@ -102,13 +102,23 @@ function copyDataView(view: DataView): Uint8Array {
   return out;
 }
 
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // WebHID expects `BufferSource`. Some TS libdefs model `BufferSource` as
+  // `ArrayBuffer | ArrayBufferView<ArrayBuffer>`, which rejects views backed by a
+  // SharedArrayBuffer. Copy when needed to keep strict typechecking clean.
+  if (bytes.buffer instanceof ArrayBuffer) return bytes as unknown as Uint8Array<ArrayBuffer>;
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
+
 export class WebHidPassthroughRuntime {
   readonly #sessions = new Map<HidDeviceLike, DeviceSession>();
   readonly #createBridge: BridgeFactory;
   readonly #pollIntervalMs: number;
   readonly #onDeviceReady?: (device: HidDeviceLike, bridge: WebHidPassthroughBridgeLike) => void;
   readonly #log: WebHidPassthroughRuntimeLogger;
-  #pollTimer: number | undefined;
+  #pollTimer: ReturnType<typeof setInterval> | undefined;
   #unsubscribe: (() => void) | undefined;
 
   constructor(options: WebHidPassthroughRuntimeOptions) {
@@ -158,7 +168,11 @@ export class WebHidPassthroughRuntime {
 
     let bridge: WebHidPassthroughBridgeLike | null = null;
     try {
-      const normalizedCollections = normalizeCollections(device.collections);
+      // The community WebHID typings (`@types/w3c-web-hid`) model `HIDDevice.collections`
+      // as a loose dictionary shape with lots of optional fields. Chromium's runtime
+      // objects are stricter (and match the shape expected by our normalizer), so
+      // cast through `unknown` here to avoid infecting downstream code with `| undefined`.
+      const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
       bridge = this.#createBridge({ device, normalizedCollections });
 
       const onInputReport = (event: HIDInputReportEvent): void => {
@@ -253,11 +267,11 @@ export class WebHidPassthroughRuntime {
 
         try {
           if (report.reportType === "feature") {
-            void session.device.sendFeatureReport(report.reportId, report.data).catch((err) => {
+            void session.device.sendFeatureReport(report.reportId, ensureArrayBufferBacked(report.data)).catch((err) => {
               this.#log("warn", "WebHID sendFeatureReport() failed", err);
             });
           } else {
-            void session.device.sendReport(report.reportId, report.data).catch((err) => {
+            void session.device.sendReport(report.reportId, ensureArrayBufferBacked(report.data)).catch((err) => {
               this.#log("warn", "WebHID sendReport() failed", err);
             });
           }
