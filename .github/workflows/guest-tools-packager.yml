@@ -9,6 +9,8 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "ci/package-guest-tools.ps1"
+      - "docs/windows-device-contract.json"
       - ".github/workflows/guest-tools-packager.yml"
   pull_request:
     paths:
@@ -17,6 +19,8 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "ci/package-guest-tools.ps1"
+      - "docs/windows-device-contract.json"
       - ".github/workflows/guest-tools-packager.yml"
   merge_group:
     paths:
@@ -25,6 +29,8 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "ci/package-guest-tools.ps1"
+      - "docs/windows-device-contract.json"
       - ".github/workflows/guest-tools-packager.yml"
   workflow_dispatch:
 
