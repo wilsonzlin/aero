@@ -124,7 +124,7 @@ jobs:
       - name: Build Docker image
         env:
           DOCKER_BUILDKIT: "1"
-        run: docker build --build-arg "GIT_SHA=${{ github.sha }}" -t aero-gateway:ci backend/aero-gateway
+        run: docker build --build-arg "NODE_VERSION=$(cat .nvmrc)" --build-arg "GIT_SHA=${{ github.sha }}" -t aero-gateway:ci backend/aero-gateway
 
       - name: Smoke test Docker image (/healthz)
         run: |
