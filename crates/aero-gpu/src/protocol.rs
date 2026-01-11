@@ -823,11 +823,7 @@ pub fn parse_cmd_stream(
 
             // Forward-compat: if `aero-protocol` learns about a new opcode but `aero-gpu` doesn't yet
             // have a typed decoder for it, treat it as unknown and allow higher layers to skip it.
-            Some(_) => AeroGpuCmd::Unknown {
-                opcode: cmd_hdr.opcode,
-                payload,
-            },
-            None => AeroGpuCmd::Unknown {
+            _ => AeroGpuCmd::Unknown {
                 opcode: cmd_hdr.opcode,
                 payload,
             },

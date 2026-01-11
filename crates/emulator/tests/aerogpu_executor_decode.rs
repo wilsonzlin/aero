@@ -191,8 +191,12 @@ fn decodes_alloc_table_and_cmd_stream_header() {
         .cmd_stream_header
         .as_ref()
         .expect("missing cmd stream header");
-    assert_eq!(header.magic, AEROGPU_CMD_STREAM_MAGIC);
-    assert_eq!(header.size_bytes, 24);
+
+    let magic = header.magic;
+    assert_eq!(magic, AEROGPU_CMD_STREAM_MAGIC);
+
+    let size_bytes = header.size_bytes;
+    assert_eq!(size_bytes, 24);
     assert_eq!(record.submission.cmd_stream.len(), cmd_size_bytes as usize);
 }
 

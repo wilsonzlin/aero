@@ -12,8 +12,11 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::{translate_sm4_to_wgsl, ShaderStage, Sm4Program};
-use crate::input_layout::InputLayoutElementDxgi;
+use crate::{parse_signatures, translate_sm4_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
+use crate::input_layout::{
+    fnv1a_32, map_layout_to_shader_locations, InputLayoutBinding, InputLayoutDesc,
+    InputLayoutElementDxgi, VsInputSignatureElement,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackingInfo {
@@ -49,7 +52,10 @@ pub struct Texture2dResource {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ShaderReflection {}
+pub struct ShaderReflection {
+    /// Vertex shader input signature mapping, derived from the DXBC `ISGN` chunk when available.
+    pub vs_input_signature: Vec<VsInputSignatureElement>,
+}
 
 #[derive(Debug)]
 pub struct ShaderResource {
@@ -263,8 +269,8 @@ impl AerogpuResourceManager {
 
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
-        let program =
-            Sm4Program::parse_from_dxbc_bytes(dxbc_bytes).context("parse SM4/SM5 program")?;
+        let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC container")?;
+        let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse SM4/SM5 program")?;
         let parsed_stage = match program.stage {
             ShaderStage::Vertex => AerogpuShaderStage::Vertex,
             ShaderStage::Pixel => AerogpuShaderStage::Pixel,
@@ -285,6 +291,8 @@ impl AerogpuResourceManager {
                 source: wgpu::ShaderSource::Wgsl(wgsl.clone().into()),
             });
 
+        let reflection = build_shader_reflection(stage, &dxbc)?;
+
         self.shaders.insert(
             handle,
             ShaderResource {
@@ -292,7 +300,7 @@ impl AerogpuResourceManager {
                 dxbc_hash_fnv1a64,
                 wgsl,
                 module,
-                reflection: ShaderReflection::default(),
+                reflection,
             },
         );
         Ok(())
@@ -360,6 +368,63 @@ impl AerogpuResourceManager {
         self.input_layouts
             .get(&handle)
             .ok_or_else(|| anyhow!("unknown input layout handle {handle}"))
+    }
+
+    /// Map an ILAY input layout + currently-bound vertex buffer strides into WebGPU vertex layouts.
+    ///
+    /// The mapping is cached per input layout, keyed by `(vertex_shader_dxbc_hash, slot_strides)`.
+    ///
+    /// If the vertex shader's `ISGN` signature is unavailable, this falls back to mapping ILAY
+    /// semantics in declaration order to shader locations `0..N` (sufficient for bring-up shaders).
+    pub fn input_layout_vertex_buffer_layouts(
+        &mut self,
+        input_layout_handle: AerogpuHandle,
+        vertex_shader_handle: AerogpuHandle,
+        slot_strides: &[u32],
+    ) -> Result<&[CachedVertexBufferLayout]> {
+        let vs = self
+            .shaders
+            .get(&vertex_shader_handle)
+            .ok_or_else(|| anyhow!("unknown shader handle {vertex_shader_handle}"))?;
+        if vs.stage != AerogpuShaderStage::Vertex {
+            bail!("shader {vertex_shader_handle} is not a vertex shader");
+        }
+
+        let layout = self
+            .input_layouts
+            .get_mut(&input_layout_handle)
+            .ok_or_else(|| anyhow!("unknown input layout handle {input_layout_handle}"))?;
+
+        let cache_key = hash_input_layout_mapping_key(vs.dxbc_hash_fnv1a64, slot_strides);
+        if !layout.mapping_cache.contains_key(&cache_key) {
+            let desc = InputLayoutDesc::parse(&layout.blob).map_err(|e| anyhow!("{e}"))?;
+
+            let vs_signature = if vs.reflection.vs_input_signature.is_empty() {
+                build_fallback_vs_signature(&desc)
+            } else {
+                vs.reflection.vs_input_signature.clone()
+            };
+
+            let binding = InputLayoutBinding::new(&desc, slot_strides);
+            let mapped =
+                map_layout_to_shader_locations(&binding, &vs_signature).map_err(|e| anyhow!("{e}"))?;
+
+            let cached: Vec<CachedVertexBufferLayout> = mapped
+                .into_iter()
+                .map(|l| CachedVertexBufferLayout {
+                    array_stride: l.array_stride,
+                    step_mode: l.step_mode,
+                    attributes: l.attributes,
+                })
+                .collect();
+            layout.mapping_cache.insert(cache_key, cached);
+        }
+
+        Ok(layout
+            .mapping_cache
+            .get(&cache_key)
+            .expect("mapping cache entry must exist")
+            .as_slice())
     }
 
     pub fn upload_resource(
@@ -532,6 +597,58 @@ impl AerogpuResourceManager {
         }
         Ok(())
     }
+}
+
+fn build_shader_reflection(stage: AerogpuShaderStage, dxbc: &DxbcFile<'_>) -> Result<ShaderReflection> {
+    let mut reflection = ShaderReflection::default();
+
+    if stage == AerogpuShaderStage::Vertex {
+        let signatures = parse_signatures(dxbc).context("parse DXBC signatures")?;
+        if let Some(isgn) = signatures.isgn.as_ref() {
+            reflection.vs_input_signature = isgn
+                .parameters
+                .iter()
+                .map(|p| VsInputSignatureElement {
+                    semantic_name_hash: fnv1a_32(p.semantic_name.as_bytes()),
+                    semantic_index: p.semantic_index,
+                    input_register: p.register,
+                })
+                .collect();
+        }
+    }
+
+    Ok(reflection)
+}
+
+fn build_fallback_vs_signature(desc: &InputLayoutDesc) -> Vec<VsInputSignatureElement> {
+    let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut out: Vec<VsInputSignatureElement> = Vec::new();
+
+    for elem in &desc.elements {
+        let key = (elem.semantic_name_hash, elem.semantic_index);
+        if seen.contains_key(&key) {
+            continue;
+        }
+        let reg = out.len() as u32;
+        seen.insert(key, reg);
+        out.push(VsInputSignatureElement {
+            semantic_name_hash: key.0,
+            semantic_index: key.1,
+            input_register: reg,
+        });
+    }
+
+    out
+}
+
+fn hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64: u64, slot_strides: &[u32]) -> u64 {
+    let mut hash = FNV1A64_OFFSET_BASIS;
+    fnv1a64_update(&mut hash, &vs_dxbc_hash_fnv1a64.to_le_bytes());
+    fnv1a64_update(&mut hash, &(slot_strides.len() as u32).to_le_bytes());
+    for &stride in slot_strides {
+        fnv1a64_update(&mut hash, &stride.to_le_bytes());
+    }
+    hash
 }
 
 pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
@@ -744,14 +861,19 @@ fn upload_texture_from_linear_bytes(
     Ok(())
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    const OFFSET_BASIS: u64 = 14695981039346656037;
-    const PRIME: u64 = 1099511628211;
-    let mut hash = OFFSET_BASIS;
+const FNV1A64_OFFSET_BASIS: u64 = 14695981039346656037;
+const FNV1A64_PRIME: u64 = 1099511628211;
+
+fn fnv1a64_update(hash: &mut u64, bytes: &[u8]) {
     for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(PRIME);
+        *hash ^= b as u64;
+        *hash = hash.wrapping_mul(FNV1A64_PRIME);
     }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = FNV1A64_OFFSET_BASIS;
+    fnv1a64_update(&mut hash, bytes);
     hash
 }
 

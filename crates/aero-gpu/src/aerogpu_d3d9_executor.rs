@@ -761,7 +761,7 @@ impl AerogpuD3d9Executor {
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_buffer))?;
 
                     let (src_buf, src_size) = match src {
-                        Resource::Buffer { buffer, size } => (buffer, *size),
+                        Resource::Buffer { buffer, size, .. } => (buffer, *size),
                         _ => {
                             return Err(AerogpuD3d9Error::CopyNotSupported {
                                 src: src_buffer,
@@ -770,7 +770,7 @@ impl AerogpuD3d9Executor {
                         }
                     };
                     let (dst_buf, dst_size) = match dst {
-                        Resource::Buffer { buffer, size } => (buffer, *size),
+                        Resource::Buffer { buffer, size, .. } => (buffer, *size),
                         _ => {
                             return Err(AerogpuD3d9Error::CopyNotSupported {
                                 src: src_buffer,
