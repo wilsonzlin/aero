@@ -239,6 +239,44 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 	}
 }
 
+func TestWebRTCUDPRelay_L2TunnelRejectsUnordered(t *testing.T) {
+	backendURL, upgrades := startTestL2Backend(t)
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := false
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	closedCh := make(chan struct{})
+	dc.OnClose(func() { close(closedCh) })
+
+	exchangeOffer(t, baseURL, pc)
+
+	select {
+	case <-closedCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for server to close unordered l2 channel")
+	}
+
+	if got := upgrades.Load(); got != 0 {
+		t.Fatalf("backend websocket should not be dialed for rejected l2 channel (got %d upgrades)", got)
+	}
+}
+
 func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 	backendURL, _ := startTestL2Backend(t)
 

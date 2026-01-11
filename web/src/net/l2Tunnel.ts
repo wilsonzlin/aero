@@ -606,7 +606,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * The caller is responsible for signaling / ICE negotiation and should pass an
  * already-created data channel.
  *
- * Recommended channel options for low-latency forwarding:
+ * Required channel options:
  * - `ordered: true`
  * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
  *
