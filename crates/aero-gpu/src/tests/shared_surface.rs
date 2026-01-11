@@ -83,3 +83,17 @@ fn shared_surface_import_with_zero_token_is_an_error() {
         Err(SharedSurfaceError::InvalidToken(0))
     ));
 }
+
+#[test]
+fn shared_surface_import_with_zero_alias_handle_is_an_error() {
+    let mut table = SharedSurfaceTable::default();
+    let token = 0xAAu64;
+
+    table.register_handle(1);
+    table.export(1, token).unwrap();
+
+    assert!(matches!(
+        table.import(0, token),
+        Err(SharedSurfaceError::UnknownHandle(0))
+    ));
+}

@@ -105,6 +105,9 @@ impl SharedSurfaceTable {
         out_resource_handle: u32,
         share_token: u64,
     ) -> Result<(), SharedSurfaceError> {
+        if out_resource_handle == 0 {
+            return Err(SharedSurfaceError::UnknownHandle(out_resource_handle));
+        }
         if share_token == 0 {
             return Err(SharedSurfaceError::InvalidToken(share_token));
         }
