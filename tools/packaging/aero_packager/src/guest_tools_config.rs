@@ -2,6 +2,15 @@ use crate::windows_device_contract::{load_windows_device_contract, WindowsDevice
 use anyhow::{bail, Result};
 use std::path::Path;
 
+#[derive(Debug, Default, Clone)]
+pub struct GuestToolsDevicesCmdServiceOverrides {
+    pub virtio_blk_service: Option<String>,
+    pub virtio_net_service: Option<String>,
+    pub virtio_input_service: Option<String>,
+    pub virtio_snd_service: Option<String>,
+    pub aero_gpu_service: Option<String>,
+}
+
 fn hwids_from_patterns(patterns: &[String]) -> Result<Vec<String>> {
     if patterns.is_empty() {
         bail!("device has no hardware_id_patterns");
@@ -43,6 +52,16 @@ fn device_by_name<'a>(
 }
 
 pub fn generate_guest_tools_devices_cmd_bytes(contract_path: &Path) -> Result<Vec<u8>> {
+    generate_guest_tools_devices_cmd_bytes_with_overrides(
+        contract_path,
+        &GuestToolsDevicesCmdServiceOverrides::default(),
+    )
+}
+
+pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
+    contract_path: &Path,
+    overrides: &GuestToolsDevicesCmdServiceOverrides,
+) -> Result<Vec<u8>> {
     let contract = load_windows_device_contract(contract_path)?;
     let contract_version = contract.contract_version.trim();
 
@@ -58,15 +77,35 @@ pub fn generate_guest_tools_devices_cmd_bytes(contract_path: &Path) -> Result<Ve
     let virtio_input_hwids = hwids_from_patterns(&virtio_input.hardware_id_patterns)?;
     let aero_gpu_hwids = hwids_from_patterns(&aero_gpu.hardware_id_patterns)?;
 
-    let stor_service = virtio_blk.driver_service_name.trim();
+    let stor_service = overrides
+        .virtio_blk_service
+        .as_deref()
+        .unwrap_or(virtio_blk.driver_service_name.trim())
+        .trim();
     if stor_service.is_empty() {
         bail!("virtio-blk entry has empty driver_service_name");
     }
 
-    let net_service = virtio_net.driver_service_name.trim();
-    let snd_service = virtio_snd.driver_service_name.trim();
-    let input_service = virtio_input.driver_service_name.trim();
-    let gpu_service = aero_gpu.driver_service_name.trim();
+    let net_service = overrides
+        .virtio_net_service
+        .as_deref()
+        .unwrap_or(virtio_net.driver_service_name.trim())
+        .trim();
+    let snd_service = overrides
+        .virtio_snd_service
+        .as_deref()
+        .unwrap_or(virtio_snd.driver_service_name.trim())
+        .trim();
+    let input_service = overrides
+        .virtio_input_service
+        .as_deref()
+        .unwrap_or(virtio_input.driver_service_name.trim())
+        .trim();
+    let gpu_service = overrides
+        .aero_gpu_service
+        .as_deref()
+        .unwrap_or(aero_gpu.driver_service_name.trim())
+        .trim();
 
     let mut out = String::new();
     out.push_str("@echo off\r\n");

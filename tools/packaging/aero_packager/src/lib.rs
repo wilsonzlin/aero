@@ -15,6 +15,8 @@ pub use iso9660::read_joliet_file_entries;
 pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use guest_tools_config::generate_guest_tools_devices_cmd_bytes;
+pub use guest_tools_config::generate_guest_tools_devices_cmd_bytes_with_overrides;
+pub use guest_tools_config::GuestToolsDevicesCmdServiceOverrides;
 pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
 pub use spec::{DriverSpec, PackagingSpec};
 
@@ -62,7 +64,7 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     let driver_plan = validate_drivers(&spec, &config.drivers_dir, &devices_cmd_vars)
         .with_context(|| "validate driver artifacts")?;
 
-    let mut files = collect_files(config, &driver_plan)?;
+    let mut files = collect_files(config, &spec, &driver_plan)?;
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
     // Hash all files that will be included, except the manifest which is generated below.
@@ -128,7 +130,11 @@ struct DriverPlan {
     amd64: Vec<DriverToInclude>,
 }
 
-fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec<FileToPackage>> {
+fn collect_files(
+    config: &PackageConfig,
+    spec: &PackagingSpec,
+    driver_plan: &DriverPlan,
+) -> Result<Vec<FileToPackage>> {
     let mut out = Vec::new();
 
     // Guest tools top-level scripts/doc.
@@ -163,14 +169,42 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
         );
     }
 
-    let devices_cmd_bytes =
-        generate_guest_tools_devices_cmd_bytes(&config.windows_device_contract_path)
-            .with_context(|| {
-                format!(
-                    "generate config/devices.cmd from {}",
-                    config.windows_device_contract_path.display()
-                )
-            })?;
+    let driver_names: HashSet<String> = spec
+        .drivers
+        .iter()
+        .map(|d| d.name.trim().to_ascii_lowercase())
+        .collect();
+
+    // When packaging Guest Tools from upstream virtio-win drivers, the Windows service
+    // names (AddService) differ from Aero's in-tree clean-room drivers. Guest Tools
+    // uses these service names for boot-critical storage pre-seeding (0x7B avoidance).
+    //
+    // Override service names based on the selected packaging spec so `setup.cmd` can
+    // validate and preseed against the packaged INFs.
+    let mut service_overrides = GuestToolsDevicesCmdServiceOverrides::default();
+    if driver_names.contains("viostor") {
+        service_overrides.virtio_blk_service = Some("viostor".to_string());
+    }
+    if driver_names.contains("netkvm") {
+        service_overrides.virtio_net_service = Some("netkvm".to_string());
+    }
+    if driver_names.contains("vioinput") {
+        service_overrides.virtio_input_service = Some("vioinput".to_string());
+    }
+    if driver_names.contains("viosnd") {
+        service_overrides.virtio_snd_service = Some("viosnd".to_string());
+    }
+
+    let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
+        &config.windows_device_contract_path,
+        &service_overrides,
+    )
+    .with_context(|| {
+        format!(
+            "generate config/devices.cmd from {}",
+            config.windows_device_contract_path.display()
+        )
+    })?;
     out.push(FileToPackage {
         rel_path: "config/devices.cmd".to_string(),
         bytes: devices_cmd_bytes,
