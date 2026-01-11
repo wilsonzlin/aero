@@ -444,6 +444,51 @@ fn sti_interrupt_shadow_defers_external_interrupt_delivery() {
     assert_eq!(ip, 2);
 }
 
+#[test]
+fn mov_ss_interrupt_shadow_defers_external_interrupt_delivery() {
+    // Program: MOV SS, AX; NOP; NOP; HLT.
+    //
+    // Inject an external interrupt *after* MOV SS retires and assert the MOV-SS
+    // interrupt shadow delays delivery until after the following instruction.
+    let code = [0x8E, 0xD0, 0x90, 0x90, 0xF4];
+    let mut machine = make_machine(CpuMode::Real, &code, |cpu, mem, _ports| {
+        cpu.write_reg(Register::SP, 0x8000);
+        cpu.write_reg(Register::AX, 0);
+        cpu.set_rflags(0x202); // IF=1, reserved bit 1 set
+
+        // IVT[0x20] -> 0000:0500, handler = HLT.
+        let vector = 0x20u8;
+        let ivt_addr = (vector as u64) * 4;
+        mem.write_u16(ivt_addr, 0x0500).unwrap();
+        mem.write_u16(ivt_addr + 2, 0).unwrap();
+        mem.load(0x0500, &[0xF4]);
+    });
+
+    // Step 1: execute MOV SS, AX (creates an interrupt shadow for the next instruction).
+    assert_eq!(machine.step().unwrap(), StepOutcome::Continue);
+    assert_eq!(machine.cpu.rip(), 2);
+
+    machine.pending.inject_external_interrupt(0x20);
+
+    // Step 2: the MOV-SS interrupt shadow blocks delivery, so the first NOP executes.
+    assert_eq!(machine.step().unwrap(), StepOutcome::Continue);
+    assert_eq!(machine.cpu.rip(), 3);
+
+    // Step 3: the interrupt is now delivered before executing the second NOP, and the
+    // handler HLT stops the machine.
+    assert_eq!(machine.step().unwrap(), StepOutcome::Halted);
+    assert_eq!(machine.cpu.rip(), 0x0501);
+
+    // Validate the pushed interrupt frame: top of stack contains return IP 0x0003.
+    let sp = machine.cpu.stack_ptr();
+    let addr = machine
+        .cpu
+        .apply_a20(machine.cpu.seg_base_reg(Register::SS).wrapping_add(sp));
+    let addr = addr as usize;
+    let ip = u16::from_le_bytes([machine.mem.data[addr], machine.mem.data[addr + 1]]);
+    assert_eq!(ip, 3);
+}
+
 struct Bus<'a> {
     mem: &'a mut TestMem,
     ports: &'a mut TestPorts,

@@ -96,7 +96,8 @@ Key entry points:
 
 - `interp::tier0::exec::step` (single instruction)
 - `interp::tier0::exec::run_batch` (execute up to N instructions)
-- `interp::tier0::exec::run_batch_with_assists` (same, but resolves assist exits)
+- `interp::tier0::exec::run_batch_with_assists` (resolves non-interrupt assist exits)
+- `interp::tier0::exec::run_batch_cpu_core_with_assists` (resolves all assists, including interrupt-related ones)
 
 Tier-0 intentionally keeps the “core” instruction set tight. When it encounters instructions that depend on additional platform/system state, it returns an **assist exit**:
 
