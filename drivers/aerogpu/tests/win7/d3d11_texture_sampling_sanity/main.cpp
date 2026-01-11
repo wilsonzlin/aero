@@ -440,11 +440,15 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
 
   ID3D11ShaderResourceView* srvs[] = {srv.get()};
   context->PSSetShaderResources(0, 1, srvs);
-  context->VSSetShaderResources(0, 1, srvs);
+  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
+    context->VSSetShaderResources(0, 1, srvs);
+  }
 
   ID3D11SamplerState* samplers[] = {sampler.get()};
   context->PSSetSamplers(0, 1, samplers);
-  context->VSSetSamplers(0, 1, samplers);
+  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
+    context->VSSetSamplers(0, 1, samplers);
+  }
 
   const FLOAT clear_rgba[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
@@ -453,10 +457,21 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   // Explicitly unbind resources to exercise the "bind NULL to clear" path.
   ID3D11ShaderResourceView* null_srvs[] = {NULL};
   context->PSSetShaderResources(0, 1, null_srvs);
-  context->VSSetShaderResources(0, 1, null_srvs);
+  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
+    context->VSSetShaderResources(0, 1, null_srvs);
+  }
   ID3D11SamplerState* null_samplers[] = {NULL};
   context->PSSetSamplers(0, 1, null_samplers);
-  context->VSSetSamplers(0, 1, null_samplers);
+  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
+    context->VSSetSamplers(0, 1, null_samplers);
+  }
+  context->IASetIndexBuffer(NULL, DXGI_FORMAT_UNKNOWN, 0);
+  ID3D11Buffer* null_vb = NULL;
+  const UINT zero = 0;
+  context->IASetVertexBuffers(0, 1, &null_vb, &zero, &zero);
+  context->IASetInputLayout(NULL);
+  context->VSSetShader(NULL, NULL, 0);
+  context->PSSetShader(NULL, NULL, 0);
 
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;

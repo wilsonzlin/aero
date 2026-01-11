@@ -408,6 +408,13 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
 
   // Explicitly unbind to exercise the "bind NULL to clear" path (common during ClearState).
   context->OMSetRenderTargets(0, NULL, NULL);
+  context->OMSetDepthStencilState(NULL, 0);
+  ID3D11Buffer* null_vb = NULL;
+  const UINT zero = 0;
+  context->IASetVertexBuffers(0, 1, &null_vb, &zero, &zero);
+  context->IASetInputLayout(NULL);
+  context->VSSetShader(NULL, NULL, 0);
+  context->PSSetShader(NULL, NULL, 0);
 
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = rt_desc;

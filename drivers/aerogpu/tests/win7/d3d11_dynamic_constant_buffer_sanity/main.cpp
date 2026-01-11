@@ -401,6 +401,12 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   ID3D11Buffer* null_cbs[] = {NULL};
   context->VSSetConstantBuffers(0, 1, null_cbs);
   context->PSSetConstantBuffers(0, 1, null_cbs);
+  ID3D11Buffer* null_vb = NULL;
+  const UINT zero = 0;
+  context->IASetVertexBuffers(0, 1, &null_vb, &zero, &zero);
+  context->IASetInputLayout(NULL);
+  context->VSSetShader(NULL, NULL, 0);
+  context->PSSetShader(NULL, NULL, 0);
 
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;
