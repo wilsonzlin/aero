@@ -2834,10 +2834,12 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   let lastResult: UsbPassthroughDemoResult | null = null;
   let selectedInfo: { vendorId: number; productId: number; productName?: string } | null = null;
   let selectedError: string | null = null;
+  let lastRequest: UsbPassthroughDemoRunMessage["request"] | null = null;
 
   const runDeviceButton = el("button", {
     text: "Run GET_DESCRIPTOR(Device)",
     onclick: () => {
+      lastRequest = "deviceDescriptor";
       lastResult = null;
       refreshUi();
       attachedIoWorker?.postMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: 18 } satisfies UsbPassthroughDemoRunMessage);
@@ -2847,6 +2849,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const runConfigButton = el("button", {
     text: "Run GET_DESCRIPTOR(Configuration)",
     onclick: () => {
+      lastRequest = "configDescriptor";
       lastResult = null;
       refreshUi();
       attachedIoWorker?.postMessage({ type: "usb.demo.run", request: "configDescriptor", length: 255 } satisfies UsbPassthroughDemoRunMessage);
@@ -2864,12 +2867,18 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     runConfigButton.disabled = !workerReady || !selected;
 
     const selectedLine = selectedInfo
-      ? `selected=vid=0x${selectedInfo.vendorId.toString(16).padStart(4, "0")} pid=0x${selectedInfo.productId.toString(16).padStart(4, "0")}`
+      ? `selected=${selectedInfo.productName ?? "(unnamed)"} vid=0x${selectedInfo.vendorId.toString(16).padStart(4, "0")} pid=0x${selectedInfo.productId
+          .toString(16)
+          .padStart(4, "0")}`
       : selectedError
         ? `selected=(none) error=${selectedError}`
         : "selected=(none)";
+    const requestLine = `lastRequest=${lastRequest ?? "(none)"}`;
     status.textContent =
-      `ioWorker=${workerReady ? "ready" : "stopped"}\n` + `${selectedLine}\n` + `lastResult=${lastResult?.status ?? "(none)"}`;
+      `ioWorker=${workerReady ? "ready" : "stopped"}\n` +
+      `${selectedLine}\n` +
+      `${requestLine}\n` +
+      `lastResult=${lastResult?.status ?? "(none)"}`;
 
     if (!lastResult) {
       resultLine.textContent = "Result: (none yet)";
@@ -2887,21 +2896,30 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         const isDeviceDescriptor = bytes.length >= 12 && bytes[0] === 18 && bytes[1] === 1;
         const idVendor = isDeviceDescriptor ? bytes[8]! | (bytes[9]! << 8) : null;
         const idProduct = isDeviceDescriptor ? bytes[10]! | (bytes[11]! << 8) : null;
-        resultLine.textContent =
-          idVendor !== null && idProduct !== null
-            ? `Result: success (vid=0x${idVendor.toString(16).padStart(4, "0")} pid=0x${idProduct.toString(16).padStart(4, "0")})`
-            : "Result: success";
+        const isConfigDescriptor = bytes.length >= 9 && bytes[0] === 9 && bytes[1] === 2;
+        const totalLen = isConfigDescriptor ? bytes[2]! | (bytes[3]! << 8) : null;
+        const numInterfaces = isConfigDescriptor ? bytes[4]! : null;
+
+        if (idVendor !== null && idProduct !== null) {
+          resultLine.textContent = `Result: success (device vid=0x${idVendor.toString(16).padStart(4, "0")} pid=0x${idProduct
+            .toString(16)
+            .padStart(4, "0")})`;
+        } else if (totalLen !== null && numInterfaces !== null) {
+          resultLine.textContent = `Result: success (config totalLen=${totalLen} interfaces=${numInterfaces})`;
+        } else {
+          resultLine.textContent = `Result: success (bytes=${bytes.byteLength})`;
+        }
         bytesLine.textContent = formatHexBytes(bytes);
         errorLine.textContent = "";
         return;
       }
       case "stall":
-        resultLine.textContent = "Result: stall";
+        resultLine.textContent = `Result: stall${lastRequest ? ` (${lastRequest})` : ""}`;
         bytesLine.textContent = "(no bytes)";
         errorLine.textContent = "";
         return;
       case "error":
-        resultLine.textContent = "Result: error";
+        resultLine.textContent = `Result: error${lastRequest ? ` (${lastRequest})` : ""}`;
         bytesLine.textContent = "(no bytes)";
         errorLine.textContent = lastResult.message;
         return;
@@ -2930,6 +2948,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         const next = msg.info;
         if (!selectedInfo || selectedInfo.vendorId !== next.vendorId || selectedInfo.productId !== next.productId) {
           lastResult = null;
+          lastRequest = "deviceDescriptor";
         }
         selectedInfo = next;
         selectedError = null;
@@ -2937,6 +2956,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         selectedInfo = null;
         selectedError = typeof msg.error === "string" ? msg.error : null;
         lastResult = null;
+        lastRequest = null;
       }
       refreshUi();
     });
