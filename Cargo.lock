@@ -183,40 +183,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-gateway-rs"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "dashmap",
- "futures-util",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "aero-gateway-rs"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "dashmap",
- "futures-util",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
@@ -420,6 +386,7 @@ dependencies = [
  "axum",
  "futures-util",
  "nt-packetlib",
+ "serde",
  "tokio",
  "tokio-tungstenite 0.26.2",
 ]
@@ -1556,20 +1523,6 @@ dependencies = [
  "bitflags 2.10.0",
  "libloading 0.8.9",
  "winapi",
-]
-
-[[package]]
-name = "dashmap"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
 ]
 
 [[package]]
