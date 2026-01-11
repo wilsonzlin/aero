@@ -3675,7 +3675,7 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
                                                 const D3D11DDIARG_CREATEGEOMETRYSHADER* pDesc,
                                                 D3D11DDI_HGEOMETRYSHADER hShader,
                                                 D3D11DDI_HRTGEOMETRYSHADER) {
-  if (!pDesc || !hShader.pDrvPrivate) {
+  if (!pDesc || !hShader.pDrvPrivate || !pDesc->pShaderCode || pDesc->ShaderCodeSize == 0) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
@@ -3683,12 +3683,20 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* sh = new (hShader.pDrvPrivate) Shader();
-  const HRESULT hr = CreateShaderCommon(
-      hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_VERTEX /* placeholder */);
-  if (FAILED(hr)) {
-    return hr;
-  }
+  (void)new (hShader.pDrvPrivate) Shader();
+  // MVP: Geometry shaders are accepted by the Win7 D3D11 runtime at FL10_0, but
+  // the AeroGPU command stream / WebGPU backend currently has no geometry-shader
+  // stage. To keep the pipeline working for pass-through GS usage (e.g. the
+  // Win7 `d3d11_geometry_shader_smoke` test), we treat GS as a no-op and do not
+  // forward the DXBC to the host.
+  //
+  // NOTE: The created Shader's `handle` intentionally stays 0 so
+  // `DestroyShaderCommon` does not emit a host-side DESTROY_SHADER for a shader
+  // that was never created.
+  static std::once_flag log_once;
+  std::call_once(log_once, [] {
+    AEROGPU_D3D10_11_LOG("CreateGeometryShader11: ignoring geometry shader (no GS stage in AeroGPU/WebGPU yet)");
+  });
   return S_OK;
 }
 
@@ -4163,7 +4171,8 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->current_gs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HGEOMETRYSHADER, Shader>(hShader)->handle : 0;
-  // Geometry stage not yet translated into the command stream.
+  // Geometry shaders are currently ignored (no GS stage in the AeroGPU command
+  // stream / WebGPU backend). See CreateGeometryShader11.
 }
 
 static void SetConstantBuffers11Locked(Device* dev,

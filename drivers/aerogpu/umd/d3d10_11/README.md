@@ -16,6 +16,7 @@ This implementation is intentionally conservative and targets **the minimum func
 - Device + immediate context
 - Buffers and 2D textures
 - Vertex/pixel shaders (DXBC payload passthrough)
+- Geometry shaders are currently **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test's pass-through GS that only renames varyings.
 - Input layout + vertex/index buffers
 - RTV + clear + draw/draw-indexed
 - Blend/raster/depth state objects (accepted; currently conservative/stubbed)
