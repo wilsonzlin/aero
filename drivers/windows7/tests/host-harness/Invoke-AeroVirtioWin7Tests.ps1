@@ -980,11 +980,15 @@ try {
       if ($quitOk) {
         try { $proc.WaitForExit(10000) } catch { }
       }
-      Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
-      try { $proc.WaitForExit(5000) } catch { }
+
+      # Only fall back to hard termination if QEMU did not exit after the QMP quit request.
       if (-not $proc.HasExited) {
-        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
         try { $proc.WaitForExit(5000) } catch { }
+        if (-not $proc.HasExited) {
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          try { $proc.WaitForExit(5000) } catch { }
+        }
       }
     }
   }
