@@ -85,11 +85,13 @@ fn session_token_vectors() {
     assert_eq!(valid.exp_unix, vf.aero_session.tokens.valid.claims.exp);
 
     assert!(
-        verify_gateway_session_token(&vf.aero_session.tokens.expired.token, secret, now_ms).is_none(),
+        verify_gateway_session_token(&vf.aero_session.tokens.expired.token, secret, now_ms)
+            .is_none(),
         "expected expired session token to be rejected"
     );
     assert!(
-        verify_gateway_session_token(&vf.aero_session.tokens.bad_signature.token, secret, now_ms).is_none(),
+        verify_gateway_session_token(&vf.aero_session.tokens.bad_signature.token, secret, now_ms)
+            .is_none(),
         "expected bad signature session token to be rejected"
     );
 }

@@ -75,7 +75,11 @@ fn constant_time_equal(a: &[u8], b: &[u8]) -> bool {
     bool::from(a.ct_eq(b))
 }
 
-pub fn verify_gateway_session_token(token: &str, secret: &[u8], now_ms: u64) -> Option<VerifiedSession> {
+pub fn verify_gateway_session_token(
+    token: &str,
+    secret: &[u8],
+    now_ms: u64,
+) -> Option<VerifiedSession> {
     let mut parts = token.split('.');
     let payload_b64 = parts.next()?;
     let sig_b64 = parts.next()?;
@@ -138,7 +142,10 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
     }
 
     let provided_sig = decode_base64url(sig_b64)?;
-    let expected_sig = hmac_sha256(secret, &[header_b64.as_bytes(), b".", payload_b64.as_bytes()]);
+    let expected_sig = hmac_sha256(
+        secret,
+        &[header_b64.as_bytes(), b".", payload_b64.as_bytes()],
+    );
     if !constant_time_equal(&provided_sig, &expected_sig) {
         return None;
     }
