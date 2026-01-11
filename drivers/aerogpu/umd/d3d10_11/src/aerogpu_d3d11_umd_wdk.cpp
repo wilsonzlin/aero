@@ -1282,19 +1282,18 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
 
     HRESULT alloc_hr = CallCbMaybeHandle(cb->pfnAllocateCb, hrt_device11, hrt_device10, &alloc);
 
-    void* dma_ptr = nullptr;
-    void* dma_buffer_ptr = nullptr;
-    void* command_buffer_ptr = nullptr;
     D3DDDI_ALLOCATIONLIST* allocation_list_ptr = nullptr;
     D3DDDI_PATCHLOCATIONLIST* patch_location_list_ptr = nullptr;
+    void* command_buf = nullptr;
+    void* dma_buf = nullptr;
     UINT dma_cap = 0;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
-      dma_buffer_ptr = alloc.pDmaBuffer;
+      dma_buf = alloc.pDmaBuffer;
+      command_buf = alloc.pDmaBuffer;
     }
     __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
-      command_buffer_ptr = alloc.pCommandBuffer;
+      command_buf = alloc.pCommandBuffer;
     }
-    dma_ptr = command_buffer_ptr ? command_buffer_ptr : dma_buffer_ptr;
     __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
       allocation_list_ptr = alloc.pAllocationList;
     }
@@ -1305,7 +1304,12 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       dma_cap = alloc.DmaBufferSize;
     }
     __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
-      dma_cap = alloc.CommandBufferSize;
+      if (dma_cap == 0) {
+        dma_cap = alloc.CommandBufferSize;
+      }
+    }
+    if (!dma_buf) {
+      dma_buf = command_buf;
     }
 
     void* dma_priv_ptr = nullptr;
@@ -1336,7 +1340,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       return 0;
     }
 
-    if (!dma_ptr || dma_cap == 0) {
+    if (!command_buf || dma_cap == 0) {
       deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
       if (out_hr) {
         *out_hr = E_OUTOFMEMORY;
@@ -1454,7 +1458,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     // Copy header + selected packets into the runtime DMA buffer.
-    auto* dst = static_cast<uint8_t*>(dma_ptr);
+    auto* dst = static_cast<uint8_t*>(command_buf);
     std::memcpy(dst, src, sizeof(aerogpu_cmd_stream_header));
     std::memcpy(dst + sizeof(aerogpu_cmd_stream_header), src + chunk_begin, chunk_size - sizeof(aerogpu_cmd_stream_header));
     auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
@@ -1477,10 +1481,10 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         present.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
       }
       __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
-        present.pDmaBuffer = dma_buffer_ptr ? dma_buffer_ptr : dma_ptr;
+        present.pDmaBuffer = dma_buf;
       }
       __if_exists(D3DDDICB_PRESENT::pCommandBuffer) {
-        present.pCommandBuffer = dma_ptr;
+        present.pCommandBuffer = command_buf;
       }
       __if_exists(D3DDDICB_PRESENT::DmaBufferSize) {
         present.DmaBufferSize = static_cast<UINT>(chunk_size);
@@ -1548,10 +1552,10 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         render.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
       }
       __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
-        render.pDmaBuffer = dma_buffer_ptr ? dma_buffer_ptr : dma_ptr;
+        render.pDmaBuffer = dma_buf;
       }
       __if_exists(D3DDDICB_RENDER::pCommandBuffer) {
-        render.pCommandBuffer = dma_ptr;
+        render.pCommandBuffer = command_buf;
       }
       __if_exists(D3DDDICB_RENDER::DmaBufferSize) {
         render.DmaBufferSize = static_cast<UINT>(chunk_size);
