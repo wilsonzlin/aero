@@ -80,6 +80,10 @@ NTSTATUS status = VirtqSplitInit(vq, qsz,
 
 If your payload is MDL-backed, use `virtio_sg_pfn.h` to build a `VIRTQ_SG[]` first:
 
+> Note: `virtio_sg_pfn` produces PFN-derived **CPU physical** addresses. If your
+> platform requires DMA remapping / IOMMU translation, you must obtain device/bus
+> addresses via the OS DMA framework instead.
+
 ```c
 ULONG max_sg = VirtioSgMaxElemsForMdl(Mdl, ByteOffset, ByteLength);
 VIRTQ_SG sg[32];
