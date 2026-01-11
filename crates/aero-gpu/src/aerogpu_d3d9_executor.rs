@@ -5,6 +5,8 @@ use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
 use thiserror::Error;
+use tracing::debug;
+use wgpu::util::DeviceExt;
 
 use crate::aerogpu_executor::AllocTable;
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
@@ -41,7 +43,15 @@ pub struct AerogpuD3d9Executor {
     constants_buffer: wgpu::Buffer,
 
     dummy_texture_view: wgpu::TextureView,
-    dummy_sampler: wgpu::Sampler,
+
+    bind_group_layout: wgpu::BindGroupLayout,
+    pipeline_layout: wgpu::PipelineLayout,
+    bind_group: Option<wgpu::BindGroup>,
+    bind_group_dirty: bool,
+    samplers_ps: [wgpu::Sampler; MAX_SAMPLERS],
+    sampler_state_ps: [D3d9SamplerState; MAX_SAMPLERS],
+
+    pipelines: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
 
     presented_scanouts: HashMap<u32, u32>,
 
@@ -168,9 +178,9 @@ enum Resource {
 #[derive(Debug)]
 struct Shader {
     stage: shader::ShaderStage,
+    key: u64,
     module: wgpu::ShaderModule,
     entry_point: &'static str,
-    used_samplers: Vec<u16>,
 }
 
 #[derive(Debug)]
@@ -224,7 +234,10 @@ struct State {
     depth_stencil_state: DepthStencilState,
     rasterizer_state: RasterizerState,
 
-    textures_ps: [u32; 16],
+    textures_ps: [u32; MAX_SAMPLERS],
+
+    render_states: Vec<u32>,
+    sampler_states_ps: [Vec<u32>; MAX_SAMPLERS],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,7 +257,7 @@ struct RenderTargetsState {
     depth_stencil: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct BlendState {
     enable: bool,
     src_factor: u32,
@@ -266,7 +279,7 @@ impl Default for BlendState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct DepthStencilState {
     depth_enable: bool,
     depth_write_enable: bool,
@@ -306,6 +319,39 @@ impl Default for RasterizerState {
             depth_bias: 0,
         }
     }
+}
+
+const MAX_SAMPLERS: usize = 16;
+const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
+const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct D3d9SamplerState {
+    address_u: u32,
+    address_v: u32,
+    min_filter: u32,
+    mag_filter: u32,
+    mip_filter: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PipelineCacheKey {
+    vs: u64,
+    ps: u64,
+    vertex_buffers: Vec<crate::pipeline_key::VertexBufferLayoutKey>,
+    color_formats: Vec<Option<wgpu::TextureFormat>>,
+    depth_format: Option<wgpu::TextureFormat>,
+    topology: wgpu::PrimitiveTopology,
+    blend: BlendState,
+    depth_stencil: DepthStencilState,
+    raster: RasterizerPipelineKey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RasterizerPipelineKey {
+    cull_mode: u32,
+    front_ccw: bool,
+    depth_bias: i32,
 }
 
 impl AerogpuD3d9Executor {
@@ -386,16 +432,27 @@ impl AerogpuD3d9Executor {
             },
         );
         let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("aerogpu-d3d9.dummy_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
+
+        let bind_group_layout = create_bind_group_layout(&device);
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("aerogpu-d3d9.pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
         });
+
+        let samplers_ps = std::array::from_fn(|_| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("aerogpu-d3d9.sampler_ps_default"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            })
+        });
+        let sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
 
         Self {
             device,
@@ -409,7 +466,13 @@ impl AerogpuD3d9Executor {
             input_layouts: HashMap::new(),
             constants_buffer,
             dummy_texture_view,
-            dummy_sampler,
+            bind_group_layout,
+            pipeline_layout,
+            bind_group: None,
+            bind_group_dirty: true,
+            samplers_ps,
+            sampler_state_ps,
+            pipelines: HashMap::new(),
             presented_scanouts: HashMap::new(),
             state: State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -428,6 +491,23 @@ impl AerogpuD3d9Executor {
         self.shaders.clear();
         self.input_layouts.clear();
         self.presented_scanouts.clear();
+        self.pipelines.clear();
+        self.bind_group = None;
+        self.bind_group_dirty = true;
+        self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
+        let device = &self.device;
+        self.samplers_ps = std::array::from_fn(|_| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("aerogpu-d3d9.sampler_ps_default"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            })
+        });
         self.state = State {
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
@@ -1165,6 +1245,7 @@ impl AerogpuD3d9Executor {
                 dxbc_bytes,
                 ..
             } => {
+                let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
                 let cached = self
                     .shader_cache
                     .get_or_translate(dxbc_bytes)
@@ -1190,14 +1271,13 @@ impl AerogpuD3d9Executor {
                         label: Some("aerogpu-d3d9.shader"),
                         source: wgpu::ShaderSource::Wgsl(cached.wgsl.wgsl.clone().into()),
                     });
-                let used_samplers = cached.ir.used_samplers.iter().copied().collect();
                 self.shaders.insert(
                     shader_handle,
                     Shader {
                         stage: bytecode_stage,
+                        key,
                         module,
                         entry_point: cached.wgsl.entry_point,
-                        used_samplers,
                     },
                 );
                 Ok(())
@@ -1218,6 +1298,10 @@ impl AerogpuD3d9Executor {
                 data,
                 ..
             } => {
+                if data.is_empty() {
+                    return Ok(());
+                }
+
                 // D3D9 keeps separate constant register files per stage; match the shader
                 // translation layout (vertex constants first, then pixel constants).
                 let stage_base = match stage {
@@ -1260,8 +1344,25 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
-                self.queue
-                    .write_buffer(&self.constants_buffer, offset, data);
+                // Use an encoder-ordered copy to guarantee the constants update is visible to
+                // subsequent draws in the same submission.
+                self.ensure_encoder();
+                let staging =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("aerogpu-d3d9.constants_staging"),
+                            contents: data,
+                            usage: wgpu::BufferUsages::COPY_SRC,
+                        });
+                let mut encoder = self.encoder.take().unwrap();
+                encoder.copy_buffer_to_buffer(
+                    &staging,
+                    0,
+                    &self.constants_buffer,
+                    offset,
+                    data.len() as u64,
+                );
+                self.encoder = Some(encoder);
                 Ok(())
             }
             AeroGpuCmd::CreateInputLayout {
@@ -1417,11 +1518,24 @@ impl AerogpuD3d9Executor {
                 if shader_stage == 1 {
                     if (slot as usize) < self.state.textures_ps.len() {
                         self.state.textures_ps[slot as usize] = texture;
+                        self.bind_group_dirty = true;
                     }
                 }
                 Ok(())
             }
-            AeroGpuCmd::SetSamplerState { .. } | AeroGpuCmd::SetRenderState { .. } => Ok(()),
+            AeroGpuCmd::SetSamplerState {
+                shader_stage,
+                slot,
+                state,
+                value,
+            } => {
+                self.set_sampler_state_u32(shader_stage, slot, state, value);
+                Ok(())
+            }
+            AeroGpuCmd::SetRenderState { state, value } => {
+                self.set_render_state_u32(state, value);
+                Ok(())
+            }
             AeroGpuCmd::Clear {
                 flags,
                 color_rgba_f32,
@@ -1939,41 +2053,6 @@ impl AerogpuD3d9Executor {
         if vs_handle == 0 || ps_handle == 0 {
             return Err(AerogpuD3d9Error::MissingShaders);
         }
-        let used_samplers = {
-            let vs = self
-                .shaders
-                .get(&vs_handle)
-                .ok_or(AerogpuD3d9Error::UnknownShader(vs_handle))?;
-            let ps = self
-                .shaders
-                .get(&ps_handle)
-                .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
-            if vs.stage != shader::ShaderStage::Vertex {
-                return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                    shader_handle: vs_handle,
-                    expected: shader::ShaderStage::Vertex,
-                    actual: vs.stage,
-                });
-            }
-            if ps.stage != shader::ShaderStage::Pixel {
-                return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                    shader_handle: ps_handle,
-                    expected: shader::ShaderStage::Pixel,
-                    actual: ps.stage,
-                });
-            }
-
-            let mut used_samplers: Vec<u16> = vs
-                .used_samplers
-                .iter()
-                .copied()
-                .chain(ps.used_samplers.iter().copied())
-                .collect();
-            used_samplers.sort_unstable();
-            used_samplers.dedup();
-            used_samplers
-        };
-
         let layout_handle = self.state.input_layout;
         if layout_handle == 0 {
             return Err(AerogpuD3d9Error::MissingInputLayout);
@@ -2026,13 +2105,17 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        for sampler in &used_samplers {
-            let tex_handle = textures_ps.get(*sampler as usize).copied().unwrap_or(0);
+        for tex_handle in textures_ps.iter().copied() {
             if tex_handle == 0 {
                 continue;
             }
             self.flush_texture_binding_if_dirty(tex_handle, ctx.guest_memory)?;
         }
+        self.ensure_bind_group();
+        let bind_group = self
+            .bind_group
+            .as_ref()
+            .expect("ensure_bind_group initializes bind group");
 
         let vs = self
             .shaders
@@ -2042,72 +2125,30 @@ impl AerogpuD3d9Executor {
             .shaders
             .get(&ps_handle)
             .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
+        if vs.stage != shader::ShaderStage::Vertex {
+            return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                shader_handle: vs_handle,
+                expected: shader::ShaderStage::Vertex,
+                actual: vs.stage,
+            });
+        }
+        if ps.stage != shader::ShaderStage::Pixel {
+            return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                shader_handle: ps_handle,
+                expected: shader::ShaderStage::Pixel,
+                actual: ps.stage,
+            });
+        }
+        let vs_key = vs.key;
+        let ps_key = ps.key;
         let layout = self
             .input_layouts
             .get(&layout_handle)
             .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
-
-        let vertex_buffers = self.vertex_buffer_layouts(layout, vs)?;
-
-        let (color_views, depth_view) = self.render_target_attachments()?;
         let (color_formats, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
-
-        let mut bgl_entries = Vec::new();
-        bgl_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(512 * 16),
-            },
-            count: None,
-        });
-
-        // Match `aero-d3d9` shader generation: bindings are derived from the D3D9 sampler register
-        // index to keep them stable across shader stages.
-        //   texture binding = 1 + 2*s
-        //   sampler binding = 2 + 2*s
-        for sampler in &used_samplers {
-            let tex_binding = 1u32 + u32::from(*sampler) * 2;
-            let samp_binding = tex_binding + 1;
-            bgl_entries.push(wgpu::BindGroupLayoutEntry {
-                binding: tex_binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    multisampled: false,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                },
-                count: None,
-            });
-            bgl_entries.push(wgpu::BindGroupLayoutEntry {
-                binding: samp_binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            });
-        }
-
-        let bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("aerogpu-d3d9.bind_group_layout"),
-                    entries: &bgl_entries,
-                });
-
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aerogpu-d3d9.pipeline_layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let bind_group = self.create_bind_group(&bind_group_layout, &used_samplers)?;
-
+        let vertex_buffers = self.vertex_buffer_layouts(layout)?;
         let vertex_buffers_ref = vertex_buffers
             .buffers
             .iter()
@@ -2129,72 +2170,107 @@ impl AerogpuD3d9Executor {
             })
             .collect::<Vec<_>>();
 
-        let pipeline = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("aerogpu-d3d9.pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &vs.module,
-                    entry_point: vs.entry_point,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &vertex_buffers_ref,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &ps.module,
-                    entry_point: ps.entry_point,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &targets,
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: self.state.topology,
-                    strip_index_format: None,
-                    front_face: if self.state.rasterizer_state.front_ccw {
-                        wgpu::FrontFace::Ccw
-                    } else {
-                        wgpu::FrontFace::Cw
-                    },
-                    cull_mode: match self.state.rasterizer_state.cull_mode {
-                        1 => Some(wgpu::Face::Front),
-                        2 => Some(wgpu::Face::Back),
-                        _ => None,
-                    },
-                    ..Default::default()
-                },
-                depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
-                    format,
-                    depth_write_enabled: self.state.depth_stencil_state.depth_enable
-                        && self.state.depth_stencil_state.depth_write_enable,
-                    depth_compare: if self.state.depth_stencil_state.depth_enable {
-                        map_compare_func(self.state.depth_stencil_state.depth_func)
-                    } else {
-                        wgpu::CompareFunction::Always
-                    },
-                    stencil: if depth_has_stencil && self.state.depth_stencil_state.stencil_enable {
-                        wgpu::StencilState {
-                            front: wgpu::StencilFaceState::IGNORE,
-                            back: wgpu::StencilFaceState::IGNORE,
-                            read_mask: self.state.depth_stencil_state.stencil_read_mask as u32,
-                            write_mask: self.state.depth_stencil_state.stencil_write_mask as u32,
-                        }
-                    } else {
-                        wgpu::StencilState {
-                            front: wgpu::StencilFaceState::IGNORE,
-                            back: wgpu::StencilFaceState::IGNORE,
-                            read_mask: 0,
-                            write_mask: 0,
-                        }
-                    },
-                    bias: wgpu::DepthBiasState {
-                        constant: self.state.rasterizer_state.depth_bias,
-                        slope_scale: 0.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+        let vertex_buffer_keys = vertex_buffers
+            .buffers
+            .iter()
+            .map(|b| crate::pipeline_key::VertexBufferLayoutKey {
+                array_stride: b.array_stride,
+                step_mode: b.step_mode,
+                attributes: b.attributes.iter().copied().map(Into::into).collect(),
+            })
+            .collect::<Vec<_>>();
 
+        let pipeline_key = PipelineCacheKey {
+            vs: vs_key,
+            ps: ps_key,
+            vertex_buffers: vertex_buffer_keys,
+            color_formats: color_formats.clone(),
+            depth_format,
+            topology: self.state.topology,
+            blend: self.state.blend_state,
+            depth_stencil: self.state.depth_stencil_state,
+            raster: RasterizerPipelineKey {
+                cull_mode: self.state.rasterizer_state.cull_mode,
+                front_ccw: self.state.rasterizer_state.front_ccw,
+                depth_bias: self.state.rasterizer_state.depth_bias,
+            },
+        };
+
+        let pipeline = if let Some(existing) = self.pipelines.get(&pipeline_key) {
+            existing
+        } else {
+            let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aerogpu-d3d9.pipeline"),
+                    layout: Some(&self.pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs.module,
+                        entry_point: vs.entry_point,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &vertex_buffers_ref,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &ps.module,
+                        entry_point: ps.entry_point,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &targets,
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: self.state.topology,
+                        strip_index_format: None,
+                        front_face: if self.state.rasterizer_state.front_ccw {
+                            wgpu::FrontFace::Ccw
+                        } else {
+                            wgpu::FrontFace::Cw
+                        },
+                        cull_mode: match self.state.rasterizer_state.cull_mode {
+                            1 => Some(wgpu::Face::Front),
+                            2 => Some(wgpu::Face::Back),
+                            _ => None,
+                        },
+                        ..Default::default()
+                    },
+                    depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
+                        format,
+                        depth_write_enabled: self.state.depth_stencil_state.depth_enable
+                            && self.state.depth_stencil_state.depth_write_enable,
+                        depth_compare: if self.state.depth_stencil_state.depth_enable {
+                            map_compare_func(self.state.depth_stencil_state.depth_func)
+                        } else {
+                            wgpu::CompareFunction::Always
+                        },
+                        stencil: if depth_has_stencil
+                            && self.state.depth_stencil_state.stencil_enable
+                        {
+                            wgpu::StencilState {
+                                front: wgpu::StencilFaceState::IGNORE,
+                                back: wgpu::StencilFaceState::IGNORE,
+                                read_mask: self.state.depth_stencil_state.stencil_read_mask as u32,
+                                write_mask: self.state.depth_stencil_state.stencil_write_mask as u32,
+                            }
+                        } else {
+                            wgpu::StencilState {
+                                front: wgpu::StencilFaceState::IGNORE,
+                                back: wgpu::StencilFaceState::IGNORE,
+                                read_mask: 0,
+                                write_mask: 0,
+                            }
+                        },
+                        bias: wgpu::DepthBiasState {
+                            constant: self.state.rasterizer_state.depth_bias,
+                            slope_scale: 0.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
+            self.pipelines.insert(pipeline_key.clone(), pipeline);
+            self.pipelines
+                .get(&pipeline_key)
+                .expect("pipeline was just inserted")
+        };
+
+        let (color_views, depth_view) = self.render_target_attachments()?;
         let color_attachments = color_views
             .into_iter()
             .map(|view| {
@@ -2247,7 +2323,7 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        pass.set_pipeline(&pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
         // Bind vertex buffers: wgpu slot is derived from the vertex declaration's used streams.
@@ -2322,26 +2398,24 @@ impl AerogpuD3d9Executor {
         Ok(())
     }
 
-    fn create_bind_group(
-        &self,
-        layout: &wgpu::BindGroupLayout,
-        used_samplers: &[u16],
-    ) -> Result<wgpu::BindGroup, AerogpuD3d9Error> {
-        let mut entries: Vec<wgpu::BindGroupEntry> = Vec::new();
+    fn ensure_bind_group(&mut self) {
+        if !self.bind_group_dirty && self.bind_group.is_some() {
+            return;
+        }
+
+        let mut entries: Vec<wgpu::BindGroupEntry> = Vec::with_capacity(1 + MAX_SAMPLERS * 2);
         entries.push(wgpu::BindGroupEntry {
             binding: 0,
             resource: self.constants_buffer.as_entire_binding(),
         });
 
-        for s in used_samplers {
-            let tex_binding = 1u32 + u32::from(*s) * 2;
+        for slot in 0..MAX_SAMPLERS {
+            // `aero-d3d9` shader generation uses binding numbers derived from the sampler register
+            // index.
+            let tex_binding = 1u32 + slot as u32 * 2;
             let samp_binding = tex_binding + 1;
-            let tex_handle = self
-                .state
-                .textures_ps
-                .get(*s as usize)
-                .copied()
-                .unwrap_or(0);
+
+            let tex_handle = self.state.textures_ps[slot];
             let view: &wgpu::TextureView = if tex_handle == 0 {
                 &self.dummy_texture_view
             } else {
@@ -2358,21 +2432,164 @@ impl AerogpuD3d9Executor {
             });
             entries.push(wgpu::BindGroupEntry {
                 binding: samp_binding,
-                resource: wgpu::BindingResource::Sampler(&self.dummy_sampler),
+                resource: wgpu::BindingResource::Sampler(&self.samplers_ps[slot]),
             });
         }
 
-        Ok(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu-d3d9.bind_group"),
-            layout,
+            layout: &self.bind_group_layout,
             entries: &entries,
-        }))
+        }));
+        self.bind_group_dirty = false;
+    }
+
+    fn set_render_state_u32(&mut self, state_id: u32, value: u32) {
+        if state_id > MAX_REASONABLE_RENDER_STATE_ID {
+            debug!(state_id, value, "ignoring suspiciously large D3D9 render state id");
+            return;
+        }
+
+        let idx = state_id as usize;
+        if idx >= self.state.render_states.len() {
+            self.state.render_states.resize(idx + 1, 0);
+        }
+        if self.state.render_states[idx] == value {
+            return;
+        }
+        self.state.render_states[idx] = value;
+
+        match state_id {
+            d3d9::D3DRS_ZENABLE => self.state.depth_stencil_state.depth_enable = value != 0,
+            d3d9::D3DRS_ZWRITEENABLE => self.state.depth_stencil_state.depth_write_enable = value != 0,
+            d3d9::D3DRS_ZFUNC => match d3d9_compare_to_aerogpu(value) {
+                Some(func) => self.state.depth_stencil_state.depth_func = func,
+                None => debug!(state_id, value, "unknown D3D9 compare func"),
+            },
+            d3d9::D3DRS_STENCILENABLE => self.state.depth_stencil_state.stencil_enable = value != 0,
+            d3d9::D3DRS_STENCILMASK => {
+                self.state.depth_stencil_state.stencil_read_mask = (value & 0xFF) as u8
+            }
+            d3d9::D3DRS_STENCILWRITEMASK => {
+                self.state.depth_stencil_state.stencil_write_mask = (value & 0xFF) as u8
+            }
+            d3d9::D3DRS_ALPHABLENDENABLE => self.state.blend_state.enable = value != 0,
+            d3d9::D3DRS_SRCBLEND => match value {
+                d3d9::D3DBLEND_BOTHSRCALPHA => {
+                    self.state.blend_state.src_factor = 2;
+                    self.state.blend_state.dst_factor = 3;
+                }
+                d3d9::D3DBLEND_BOTHINVSRCALPHA => {
+                    self.state.blend_state.src_factor = 3;
+                    self.state.blend_state.dst_factor = 2;
+                }
+                _ => match d3d9_blend_to_aerogpu(value) {
+                    Some(factor) => self.state.blend_state.src_factor = factor,
+                    None => debug!(state_id, value, "unknown D3D9 blend factor"),
+                },
+            },
+            d3d9::D3DRS_DESTBLEND => match d3d9_blend_to_aerogpu(value) {
+                Some(factor) => self.state.blend_state.dst_factor = factor,
+                None => debug!(state_id, value, "unknown D3D9 blend factor"),
+            },
+            d3d9::D3DRS_BLENDOP => match d3d9_blend_op_to_aerogpu(value) {
+                Some(op) => self.state.blend_state.blend_op = op,
+                None => debug!(state_id, value, "unknown D3D9 blend op"),
+            },
+            d3d9::D3DRS_COLORWRITEENABLE => {
+                self.state.blend_state.color_write_mask = (value & 0xF) as u8
+            }
+            d3d9::D3DRS_SCISSORTESTENABLE => self.state.rasterizer_state.scissor_enable = value != 0,
+            d3d9::D3DRS_FRONTCOUNTERCLOCKWISE => {
+                self.state.rasterizer_state.front_ccw = value != 0;
+                self.update_cull_mode_from_render_state();
+            }
+            d3d9::D3DRS_CULLMODE => self.update_cull_mode_from_render_state(),
+            _ => debug!(state_id, value, "ignoring unsupported D3D9 render state"),
+        }
+    }
+
+    fn update_cull_mode_from_render_state(&mut self) {
+        let raw = self
+            .state
+            .render_states
+            .get(d3d9::D3DRS_CULLMODE as usize)
+            .copied()
+            .unwrap_or(0);
+
+        let front_ccw = self.state.rasterizer_state.front_ccw;
+        let mapped = match raw {
+            0 | d3d9::D3DCULL_NONE => 0, // AEROGPU_CULL_NONE
+            d3d9::D3DCULL_CW => {
+                if front_ccw {
+                    2 // CW triangles are back faces when front faces are CCW.
+                } else {
+                    1
+                }
+            }
+            d3d9::D3DCULL_CCW => {
+                if front_ccw {
+                    1
+                } else {
+                    2
+                }
+            }
+            other => {
+                debug!(raw = other, "unknown D3D9 cull mode");
+                return;
+            }
+        };
+        self.state.rasterizer_state.cull_mode = mapped;
+    }
+
+    fn set_sampler_state_u32(&mut self, shader_stage: u32, slot: u32, state_id: u32, value: u32) {
+        if shader_stage != 1 {
+            // Only pixel-stage sampler state is currently needed for DWM/D3D9Ex bring-up.
+            return;
+        }
+
+        if slot >= MAX_SAMPLERS as u32 {
+            debug!(slot, state_id, value, "ignoring out-of-range sampler state");
+            return;
+        }
+
+        if state_id > MAX_REASONABLE_SAMPLER_STATE_ID {
+            debug!(slot, state_id, value, "ignoring suspiciously large D3D9 sampler state id");
+            return;
+        }
+
+        let slot = slot as usize;
+        let idx = state_id as usize;
+        if idx >= self.state.sampler_states_ps[slot].len() {
+            self.state.sampler_states_ps[slot].resize(idx + 1, 0);
+        }
+        if self.state.sampler_states_ps[slot][idx] == value {
+            return;
+        }
+        self.state.sampler_states_ps[slot][idx] = value;
+
+        let mut affects_sampler = true;
+        match state_id {
+            d3d9::D3DSAMP_ADDRESSU => self.sampler_state_ps[slot].address_u = value,
+            d3d9::D3DSAMP_ADDRESSV => self.sampler_state_ps[slot].address_v = value,
+            d3d9::D3DSAMP_MINFILTER => self.sampler_state_ps[slot].min_filter = value,
+            d3d9::D3DSAMP_MAGFILTER => self.sampler_state_ps[slot].mag_filter = value,
+            d3d9::D3DSAMP_MIPFILTER => self.sampler_state_ps[slot].mip_filter = value,
+            _ => {
+                affects_sampler = false;
+                debug!(slot, state_id, value, "ignoring unsupported D3D9 sampler state");
+            }
+        }
+
+        if affects_sampler {
+            self.samplers_ps[slot] = create_wgpu_sampler(&self.device, &self.sampler_state_ps[slot]);
+            self.bind_group_dirty = true;
+        }
     }
 
     fn vertex_buffer_layouts(
         &self,
         input_layout: &InputLayout,
-        _vs: &Shader,
     ) -> Result<VertexInputs, AerogpuD3d9Error> {
         let mut streams: Vec<u8> = input_layout
             .decl
@@ -2711,4 +2928,192 @@ fn map_compare_func(func: u32) -> wgpu::CompareFunction {
         7 => wgpu::CompareFunction::Always,
         _ => wgpu::CompareFunction::Always,
     }
+}
+
+fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    // Match `aero-d3d9` shader generation: all bindings are in group(0), with
+    // binding(0)=constants and (texture,sampler) pairs laid out as:
+    //   texture binding = 1 + 2*s
+    //   sampler binding = 2 + 2*s
+    let mut entries = Vec::with_capacity(1 + MAX_SAMPLERS * 2);
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(512 * 16),
+        },
+        count: None,
+    });
+
+    for slot in 0..MAX_SAMPLERS {
+        let tex_binding = 1u32 + slot as u32 * 2;
+        let samp_binding = tex_binding + 1;
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: tex_binding,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: samp_binding,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("aerogpu-d3d9.bind_group_layout"),
+        entries: &entries,
+    })
+}
+
+fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu::Sampler {
+    fn addr(device: &wgpu::Device, value: u32) -> wgpu::AddressMode {
+        match value {
+            d3d9::D3DTADDRESS_WRAP | 0 => wgpu::AddressMode::Repeat,
+            d3d9::D3DTADDRESS_MIRROR => wgpu::AddressMode::MirrorRepeat,
+            d3d9::D3DTADDRESS_CLAMP => wgpu::AddressMode::ClampToEdge,
+            d3d9::D3DTADDRESS_BORDER => {
+                if device
+                    .features()
+                    .contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER)
+                {
+                    wgpu::AddressMode::ClampToBorder
+                } else {
+                    wgpu::AddressMode::ClampToEdge
+                }
+            }
+            d3d9::D3DTADDRESS_MIRRORONCE => wgpu::AddressMode::MirrorRepeat,
+            _ => wgpu::AddressMode::Repeat,
+        }
+    }
+
+    fn filter(value: u32) -> wgpu::FilterMode {
+        match value {
+            d3d9::D3DTEXF_POINT => wgpu::FilterMode::Nearest,
+            d3d9::D3DTEXF_LINEAR | d3d9::D3DTEXF_ANISOTROPIC => wgpu::FilterMode::Linear,
+            d3d9::D3DTEXF_NONE => wgpu::FilterMode::Linear,
+            _ => wgpu::FilterMode::Linear,
+        }
+    }
+
+    let address_mode_u = addr(device, state.address_u);
+    let address_mode_v = addr(device, state.address_v);
+    let address_mode_w = wgpu::AddressMode::ClampToEdge;
+
+    let min_filter = filter(state.min_filter);
+    let mag_filter = filter(state.mag_filter);
+    let mipmap_filter = filter(state.mip_filter);
+    let lod_max_clamp = if state.mip_filter == d3d9::D3DTEXF_NONE || state.mip_filter == 0 {
+        0.0
+    } else {
+        32.0
+    };
+
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("aerogpu-d3d9.sampler"),
+        address_mode_u,
+        address_mode_v,
+        address_mode_w,
+        mag_filter,
+        min_filter,
+        mipmap_filter,
+        lod_min_clamp: 0.0,
+        lod_max_clamp,
+        compare: None,
+        anisotropy_clamp: 1,
+        border_color: None,
+    })
+}
+
+fn d3d9_compare_to_aerogpu(value: u32) -> Option<u32> {
+    // D3D9: D3DCMP_* is 1-based, AeroGPU compare func is 0-based.
+    match value {
+        1..=8 => Some(value - 1),
+        _ => None,
+    }
+}
+
+fn d3d9_blend_to_aerogpu(value: u32) -> Option<u32> {
+    Some(match value {
+        d3d9::D3DBLEND_ZERO => 0,
+        d3d9::D3DBLEND_ONE => 1,
+        d3d9::D3DBLEND_SRCALPHA => 2,
+        d3d9::D3DBLEND_INVSRCALPHA => 3,
+        d3d9::D3DBLEND_DESTALPHA => 4,
+        d3d9::D3DBLEND_INVDESTALPHA => 5,
+        _ => return None,
+    })
+}
+
+fn d3d9_blend_op_to_aerogpu(value: u32) -> Option<u32> {
+    // D3D9: D3DBLENDOP_* is 1-based, AeroGPU blend op is 0-based.
+    match value {
+        1..=5 => Some(value - 1),
+        _ => None,
+    }
+}
+
+mod d3d9 {
+    // D3DRENDERSTATETYPE (subset).
+    pub const D3DRS_ZENABLE: u32 = 7;
+    pub const D3DRS_ZWRITEENABLE: u32 = 14;
+    pub const D3DRS_ZFUNC: u32 = 23;
+
+    pub const D3DRS_CULLMODE: u32 = 22;
+    pub const D3DRS_FRONTCOUNTERCLOCKWISE: u32 = 18;
+
+    pub const D3DRS_ALPHABLENDENABLE: u32 = 27;
+    pub const D3DRS_SRCBLEND: u32 = 19;
+    pub const D3DRS_DESTBLEND: u32 = 20;
+    pub const D3DRS_BLENDOP: u32 = 171;
+
+    pub const D3DRS_COLORWRITEENABLE: u32 = 168;
+    pub const D3DRS_SCISSORTESTENABLE: u32 = 174;
+
+    pub const D3DRS_STENCILENABLE: u32 = 52;
+    pub const D3DRS_STENCILMASK: u32 = 58;
+    pub const D3DRS_STENCILWRITEMASK: u32 = 59;
+
+    // D3DSAMPLERSTATETYPE (subset).
+    pub const D3DSAMP_ADDRESSU: u32 = 1;
+    pub const D3DSAMP_ADDRESSV: u32 = 2;
+    pub const D3DSAMP_MAGFILTER: u32 = 5;
+    pub const D3DSAMP_MINFILTER: u32 = 6;
+    pub const D3DSAMP_MIPFILTER: u32 = 7;
+
+    // D3DTEXTUREADDRESS.
+    pub const D3DTADDRESS_WRAP: u32 = 1;
+    pub const D3DTADDRESS_MIRROR: u32 = 2;
+    pub const D3DTADDRESS_CLAMP: u32 = 3;
+    pub const D3DTADDRESS_BORDER: u32 = 4;
+    pub const D3DTADDRESS_MIRRORONCE: u32 = 5;
+
+    // D3DTEXTUREFILTERTYPE (subset).
+    pub const D3DTEXF_NONE: u32 = 0;
+    pub const D3DTEXF_POINT: u32 = 1;
+    pub const D3DTEXF_LINEAR: u32 = 2;
+    pub const D3DTEXF_ANISOTROPIC: u32 = 3;
+
+    // Blend factors (subset).
+    pub const D3DBLEND_ZERO: u32 = 1;
+    pub const D3DBLEND_ONE: u32 = 2;
+    pub const D3DBLEND_SRCALPHA: u32 = 5;
+    pub const D3DBLEND_INVSRCALPHA: u32 = 6;
+    pub const D3DBLEND_DESTALPHA: u32 = 7;
+    pub const D3DBLEND_INVDESTALPHA: u32 = 8;
+    pub const D3DBLEND_BOTHSRCALPHA: u32 = 12;
+    pub const D3DBLEND_BOTHINVSRCALPHA: u32 = 13;
+
+    // Cull modes.
+    pub const D3DCULL_NONE: u32 = 1;
+    pub const D3DCULL_CW: u32 = 2;
+    pub const D3DCULL_CCW: u32 = 3;
 }
