@@ -373,7 +373,9 @@ fn translates_vertex_id_and_instance_id_builtins_from_system_value_type() {
 fn translates_front_facing_builtin() {
     let isgn = build_signature_chunk(&[
         sig_param("SV_Position", 0, 0, 0b1111, 0),
-        sig_param("SV_IsFrontFace", 0, 1, 0b0001, 0),
+        // Explicitly use the canonical uppercase spelling to ensure we accept both
+        // `SV_IsFrontFace` and `SV_ISFRONTFACE`.
+        sig_param("SV_ISFRONTFACE", 0, 1, 0b0001, 0),
     ]);
     let osgn = build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111, 0)]);
 
