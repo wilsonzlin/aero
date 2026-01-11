@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -6,12 +7,27 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-const docs = [
-  "drivers/windows7/tests/README.md",
-  "drivers/windows7/tests/guest-selftest/README.md",
-  "drivers/windows7/tests/host-harness/README.md",
-  "drivers/windows7/virtio-snd/tests/qemu/README.md",
-];
+function discoverDocsContainingMarkers() {
+  const res = spawnSync("git", ["grep", "-l", "AERO_VIRTIO_SELFTEST|TEST|", "--", "*.md"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  if (res.error) {
+    throw new Error(`failed to run git grep: ${res.error}`);
+  }
+  if (res.status !== 0 && res.status !== 1) {
+    throw new Error(`git grep failed (exit=${res.status})\n${res.stderr}`);
+  }
+  const docs = String(res.stdout || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  assert.ok(
+    docs.length > 0,
+    "expected at least one markdown doc to contain AERO_VIRTIO_SELFTEST markers; update this test if the marker prefix changes",
+  );
+  return docs;
+}
 
 const forbiddenPatterns = [
   {
@@ -37,7 +53,7 @@ const forbiddenPatterns = [
 ];
 
 test("Windows 7 virtio selftest docs avoid stale marker formats", () => {
-  for (const relPath of docs) {
+  for (const relPath of discoverDocsContainingMarkers()) {
     const absPath = path.join(repoRoot, relPath);
     const contents = fs.readFileSync(absPath, "utf8");
     for (const { re, why } of forbiddenPatterns) {
