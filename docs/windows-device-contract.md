@@ -23,6 +23,25 @@ It exists to prevent “it boots on my machine” failures caused by silent PCI 
 The machine-readable companion manifest (for automation like Guest Tools) is:
 **[`windows-device-contract.json`](./windows-device-contract.json)**.
 
+### Virtio-win packaging variant (non-normative)
+
+When building Guest Tools media from **upstream virtio-win** driver bundles (`viostor`, `netkvm`, etc),
+use the dedicated contract override:
+
+- [`windows-device-contract-virtio-win.json`](./windows-device-contract-virtio-win.json)
+
+This keeps Aero’s **PCI IDs / HWID patterns** (modern-only virtio IDs + `REV_01`) while changing only the
+Windows **service names / INF names** to match virtio-win (`viostor`, `netkvm`, `vioinput`, `viosnd`).
+
+The virtio-win contract file is intended to be passed to the Guest Tools packager wrapper:
+
+- `ci/package-guest-tools.ps1 -WindowsDeviceContractPath docs/windows-device-contract-virtio-win.json`
+
+Keep in sync:
+
+- Any change to virtio PCI IDs or `hardware_id_patterns` in the canonical contract must be reflected in the
+  virtio-win variant. Only `driver_service_name` and `inf_name` should differ for virtio devices.
+
 ## Contract rules (normative)
 
 1. **PCI IDs are API.** If a value in the tables below changes, it is a breaking change.
