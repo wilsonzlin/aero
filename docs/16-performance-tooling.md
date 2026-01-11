@@ -156,6 +156,8 @@ The JSON schema used by CI and tooling lives at:
 
 - `bench/schema/perf-output.schema.json`
 
+CI perf workflows validate `perf_export.json` artifacts against this schema (using `tools/perf/validate_perf_export.mjs`) to catch breaking changes early.
+
 ---
 
 ## Trace mode (timeline capture)

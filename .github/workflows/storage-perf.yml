@@ -66,6 +66,10 @@ jobs:
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir ../head/storage-perf-results/base
 
+      - name: Validate perf export (baseline)
+        working-directory: head
+        run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input storage-perf-results/base/perf_export.json
+
       - name: Run storage perf (candidate)
         working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
@@ -74,6 +78,10 @@ jobs:
 
           cp storage-perf-results/base/storage_bench.json storage-perf-results/base.json
           cp storage-perf-results/head/storage_bench.json storage-perf-results/head.json
+
+      - name: Validate perf export (candidate)
+        working-directory: head
+        run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input storage-perf-results/head/perf_export.json
 
       - name: Compare (fail on regression)
         working-directory: head

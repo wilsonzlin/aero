@@ -66,8 +66,16 @@ jobs:
       - name: Run perf smoke (baseline)
         run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace-base.outputs.dir }}" --preview --preview-port 4173 --out-dir head/perf-results/base --perf-runner head/tools/perf/run.mjs
 
+      - name: Validate perf export (baseline)
+        working-directory: head
+        run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input perf-results/base/perf_export.json
+
       - name: Run perf smoke (candidate)
         run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace-head.outputs.dir }}" --preview --preview-port 4174 --out-dir head/perf-results/head --perf-runner head/tools/perf/run.mjs
+
+      - name: Validate perf export (candidate)
+        working-directory: head
+        run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input perf-results/head/perf_export.json
 
       - name: Compare (fail on regression)
         run: |

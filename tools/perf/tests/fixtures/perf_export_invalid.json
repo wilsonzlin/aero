@@ -1,0 +1,61 @@
+{
+  "kind": "aero-perf-capture",
+  "version": 2,
+  "build": { "git_sha": 123, "mode": null },
+  "env": {
+    "now_epoch_ms": 0,
+    "userAgent": null,
+    "platform": null,
+    "hardwareConcurrency": null,
+    "devicePixelRatio": null,
+    "webgpu": false
+  },
+  "capture": { "startUnixMs": null, "endUnixMs": null, "durationMs": 0 },
+  "capture_control": { "startFrameId": null, "endFrameId": null, "droppedRecords": 0, "records": 0 },
+  "summary": { "frameTime": {}, "mipsAvg": null },
+  "frameTime": { "summary": {}, "stats": {} },
+  "records": [],
+  "memory": {
+    "capabilities": {
+      "wasm_memory": false,
+      "js_heap": false,
+      "gpu_estimate": false,
+      "guest_memory": false,
+      "jit_code_cache": false,
+      "shader_cache": false
+    },
+    "sample_hz": 0,
+    "samples": [],
+    "peaks": {},
+    "summary": { "sample_count": 0, "duration_ms": 0, "start": null, "end": null, "deltas": {} }
+  },
+  "responsiveness": {
+    "capabilities": { "performance_observer": false, "longtask": false, "event_timing": false, "consume_timestamps": false },
+    "input_latency": {
+      "capture_to_inject_ms": { "p50": null, "p95": null },
+      "inject_to_consume_ms": null,
+      "capture_to_present_ms": { "p50": null, "p95": null },
+      "queue": { "depth": null, "oldest_event_age_ms": null }
+    },
+    "event_loop_lag_ms": { "p50": null, "p95": null },
+    "raf_delta_ms": { "p50": null, "p95": null },
+    "long_tasks": null,
+    "event_timing_ms": null
+  },
+  "jit": {
+    "enabled": false,
+    "totals": {
+      "tier1": { "blocksCompiled": 0, "compileMs": 0 },
+      "tier2": {
+        "blocksCompiled": 0,
+        "compileMs": 0,
+        "passesMs": { "constFold": 0, "dce": 0, "regalloc": 0 }
+      },
+      "cache": { "lookupHit": 0, "lookupMiss": 0, "capacityBytes": 0, "usedBytes": 0 },
+      "deopt": { "count": 0, "guardFail": 0 }
+    },
+    "rolling": { "windowMs": 0, "cacheHitRate": 0, "compileMsPerSec": 0, "blocksCompiledPerSec": 0 }
+  },
+  "buffers": []
+}
+

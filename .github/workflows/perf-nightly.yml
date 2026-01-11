@@ -49,6 +49,9 @@ jobs:
       - name: Run browser perf (nightly)
         run: node scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace.outputs.dir }}" --preview --preview-port 4173 --out-dir perf-results/nightly
 
+      - name: Validate perf export (nightly browser)
+        run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input perf-results/nightly/perf_export.json
+
       - name: Write GPU perf scenario params
         run: |
           set -euo pipefail
@@ -75,6 +78,17 @@ jobs:
           set -euo pipefail
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir perf-results/storage_io
+
+      - name: Validate perf export (storage_io, if present)
+        run: |
+          set -euo pipefail
+          if [[ -f perf-results/storage_io/perf_export.json ]]; then
+            node tools/perf/validate_perf_export.mjs \
+              --schema bench/schema/perf-output.schema.json \
+              --input perf-results/storage_io/perf_export.json
+          else
+            echo "perf-results/storage_io/perf_export.json not found; skipping perf export schema validation."
+          fi
       - name: Run aero-gateway bench (nightly)
         run: |
           set -euo pipefail
