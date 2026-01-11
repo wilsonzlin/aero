@@ -47,6 +47,29 @@ namespace {
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 
+// Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
+// correct UMD bitness was loaded (System32 vs SysWOW64).
+void LogModulePathOnce() {
+  static bool logged = false;
+  if (logged) {
+    return;
+  }
+  logged = true;
+
+  HMODULE module = NULL;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(&LogModulePathOnce),
+                         &module)) {
+    char path[MAX_PATH] = {};
+    if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
+      char buf[MAX_PATH + 64] = {};
+      snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: module_path=%s\n", path);
+      OutputDebugStringA(buf);
+    }
+  }
+}
+
 // D3D10_BIND_* subset (numeric values from d3d10.h).
 constexpr uint32_t kD3D10BindVertexBuffer = 0x1;
 constexpr uint32_t kD3D10BindIndexBuffer = 0x2;
@@ -2490,10 +2513,28 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
+  LogModulePathOnce();
+  char buf[256];
+  snprintf(buf,
+           sizeof(buf),
+           "aerogpu-d3d10_11: OpenAdapter10 Interface=%u Version=%u\n",
+           (unsigned)(pOpenData ? pOpenData->Interface : 0),
+           (unsigned)(pOpenData ? pOpenData->Version : 0));
+  OutputDebugStringA(buf);
+  AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapter_WDK(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
+  LogModulePathOnce();
+  char buf[256];
+  snprintf(buf,
+           sizeof(buf),
+           "aerogpu-d3d10_11: OpenAdapter10_2 Interface=%u Version=%u\n",
+           (unsigned)(pOpenData ? pOpenData->Interface : 0),
+           (unsigned)(pOpenData ? pOpenData->Version : 0));
+  OutputDebugStringA(buf);
+  AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapter_WDK(pOpenData);
 }
 
