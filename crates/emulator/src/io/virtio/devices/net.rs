@@ -143,8 +143,21 @@ impl VirtioNetDevice {
             return Ok(false);
         }
 
+        let mut should_interrupt = false;
+
+        // Flush any pending frames first so we don't drop older packets unnecessarily when the
+        // queue is at capacity but RX buffers are now available.
+        if self.process_pending_rx(mem)? {
+            should_interrupt = true;
+        }
+
         self.enqueue_rx_frame(frame.to_vec());
-        self.process_pending_rx(mem)
+
+        if self.process_pending_rx(mem)? {
+            should_interrupt = true;
+        }
+
+        Ok(should_interrupt)
     }
 
     pub fn enqueue_rx_frame(&mut self, frame: Vec<u8>) {
@@ -648,6 +661,77 @@ mod tests {
         let used_len = mem.read_u32_le(used + 8).unwrap();
         assert_eq!(used_id, 0);
         assert_eq!(used_len, (VirtioNetHeader::SIZE + frame.len()) as u32);
+    }
+
+    #[test]
+    fn inject_rx_frame_flushes_pending_before_enqueuing_to_avoid_drop_at_capacity() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        for idx in 0..MAX_PENDING_RX_FRAMES {
+            let mut frame = vec![0u8; MIN_FRAME_LEN];
+            frame[0] = (idx & 0xff) as u8;
+            frame[1] = ((idx >> 8) & 0xff) as u8;
+            dev.enqueue_rx_frame(frame);
+        }
+
+        let injected = vec![0xffu8; MIN_FRAME_LEN];
+        let irq = dev.inject_rx_frame(&mut mem, &injected).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        // The oldest queued frame should be delivered, not dropped to make space for `injected`.
+        let mut expected = vec![0u8; MIN_FRAME_LEN];
+        expected[0] = 0;
+        expected[1] = 0;
+
+        let mut payload = vec![0u8; expected.len()];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload, expected);
     }
 
     #[test]
