@@ -108,13 +108,24 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
         .collect();
 
     let expected_hwid_short = format!("PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}");
+    let expected_hwid_short_rev = format!("PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&REV_01");
     let expected_hwid_keyboard_subsys = format!(
         "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}",
         subsys_vendor = VIRTIO_INPUT_KEYBOARD.subsystem_vendor_id,
         subsys_id = VIRTIO_INPUT_KEYBOARD.subsystem_id
     );
+    let expected_hwid_keyboard_subsys_rev = format!(
+        "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}&REV_01",
+        subsys_vendor = VIRTIO_INPUT_KEYBOARD.subsystem_vendor_id,
+        subsys_id = VIRTIO_INPUT_KEYBOARD.subsystem_id
+    );
     let expected_hwid_mouse_subsys = format!(
         "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}",
+        subsys_vendor = VIRTIO_INPUT_MOUSE.subsystem_vendor_id,
+        subsys_id = VIRTIO_INPUT_MOUSE.subsystem_id
+    );
+    let expected_hwid_mouse_subsys_rev = format!(
+        "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}&REV_01",
         subsys_vendor = VIRTIO_INPUT_MOUSE.subsystem_vendor_id,
         subsys_id = VIRTIO_INPUT_MOUSE.subsystem_id
     );
@@ -129,6 +140,13 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
     assert!(
         patterns
             .iter()
+            .any(|value| value.eq_ignore_ascii_case(&expected_hwid_short_rev)),
+        "{}: virtio-input hardware_id_patterns missing {expected_hwid_short_rev:?}. Found: {patterns:?}",
+        contract_path.display()
+    );
+    assert!(
+        patterns
+            .iter()
             .any(|value| value.eq_ignore_ascii_case(&expected_hwid_keyboard_subsys)),
         "{}: virtio-input hardware_id_patterns missing {expected_hwid_keyboard_subsys:?}. Found: {patterns:?}",
         contract_path.display()
@@ -136,8 +154,22 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
     assert!(
         patterns
             .iter()
+            .any(|value| value.eq_ignore_ascii_case(&expected_hwid_keyboard_subsys_rev)),
+        "{}: virtio-input hardware_id_patterns missing {expected_hwid_keyboard_subsys_rev:?}. Found: {patterns:?}",
+        contract_path.display()
+    );
+    assert!(
+        patterns
+            .iter()
             .any(|value| value.eq_ignore_ascii_case(&expected_hwid_mouse_subsys)),
         "{}: virtio-input hardware_id_patterns missing {expected_hwid_mouse_subsys:?}. Found: {patterns:?}",
+        contract_path.display()
+    );
+    assert!(
+        patterns
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(&expected_hwid_mouse_subsys_rev)),
+        "{}: virtio-input hardware_id_patterns missing {expected_hwid_mouse_subsys_rev:?}. Found: {patterns:?}",
         contract_path.display()
     );
 
@@ -162,11 +194,23 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
     );
     assert_file_contains_case_insensitive(
         &root.join("guest-tools/config/devices.cmd"),
+        &expected_hwid_short_rev,
+    );
+    assert_file_contains_case_insensitive(
+        &root.join("guest-tools/config/devices.cmd"),
         &expected_hwid_keyboard_subsys,
     );
     assert_file_contains_case_insensitive(
         &root.join("guest-tools/config/devices.cmd"),
+        &expected_hwid_keyboard_subsys_rev,
+    );
+    assert_file_contains_case_insensitive(
+        &root.join("guest-tools/config/devices.cmd"),
         &expected_hwid_mouse_subsys,
+    );
+    assert_file_contains_case_insensitive(
+        &root.join("guest-tools/config/devices.cmd"),
+        &expected_hwid_mouse_subsys_rev,
     );
 
     // Contract JSON specifies the canonical INF filename; it must exist in-tree and match the same HWID.
