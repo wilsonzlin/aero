@@ -8,7 +8,7 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
   await page.click("#init-audio-loopback-synthetic");
 
   await page.waitForFunction(() => {
-    // Exposed by `web/src/main.ts`.
+    // Exposed by the repo-root Vite harness UI (`src/main.ts`).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputLoopback;
     return out?.enabled === true && out?.context?.state === "running";

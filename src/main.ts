@@ -21,6 +21,7 @@ import { createWebUsbBroker } from './platform/webusb_broker';
 import { requestWebGpuDevice } from './platform/webgpu';
 import { VmCoordinator } from './emulator/vmCoordinator.js';
 import { MicCapture } from '../web/src/audio/mic_capture';
+import { startSyntheticMic, type SyntheticMicSource } from '../web/src/audio/synthetic_mic';
 import type { AeroConfig } from '../web/src/config/aero_config';
 import { WorkerCoordinator } from '../web/src/runtime/coordinator';
 import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webusb_troubleshooting';
@@ -967,6 +968,7 @@ function renderAudioPanel(): HTMLElement {
   let tonePhase = 0;
   const workerCoordinator = new WorkerCoordinator();
   let hdaDemoWorker: Worker | null = null;
+  let syntheticMic: SyntheticMicSource | null = null;
 
   function stopTone() {
     if (toneTimer !== null) {
@@ -980,6 +982,13 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoWorker.postMessage({ type: "audioOutputHdaDemo.stop" });
     hdaDemoWorker.terminate();
     hdaDemoWorker = null;
+  }
+
+  function stopLoopback(): void {
+    syntheticMic?.stop();
+    syntheticMic = null;
+    workerCoordinator.setMicrophoneRingBuffer(null, 0);
+    workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
   }
 
   function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
@@ -1039,6 +1048,7 @@ function renderAudioPanel(): HTMLElement {
     text: "Init audio output (test tone)",
     onclick: async () => {
       status.textContent = "";
+      stopLoopback();
       stopHdaDemo();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
@@ -1067,10 +1077,11 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       stopTone();
+      stopLoopback();
       stopHdaDemo();
 
       const workerConfig: AeroConfig = {
-        guestMemoryMiB: 256,
+        guestMemoryMiB: 64,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1138,6 +1149,7 @@ function renderAudioPanel(): HTMLElement {
     onclick: async () => {
       status.textContent = "";
       stopTone();
+      stopLoopback();
       stopHdaDemo();
 
       const output = await createAudioOutput({
@@ -1202,11 +1214,103 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const loopbackButton = el("button", {
+    id: "init-audio-loopback-synthetic",
+    text: "Init audio loopback (synthetic mic)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopLoopback();
+      stopHdaDemo();
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ringBufferFrames: 16_384, // ~340ms @ 48k; gives the worker/WASM init some slack.
+      });
+
+      // Expose for Playwright.
+      (
+        globalThis as typeof globalThis & {
+          __aeroAudioOutputLoopback?: unknown;
+          __aeroAudioLoopbackBackend?: unknown;
+          __aeroSyntheticMic?: unknown;
+        }
+      ).__aeroAudioOutputLoopback = output;
+
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      const sr = output.context.sampleRate;
+
+      try {
+        syntheticMic = startSyntheticMic({
+          sampleRate: sr,
+          bufferMs: 250,
+          freqHz: 440,
+          gain: 0.1,
+        });
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      (
+        globalThis as typeof globalThis & {
+          __aeroSyntheticMic?: unknown;
+        }
+      ).__aeroSyntheticMic = syntheticMic;
+
+      // Prefill ~200ms of silence so the AudioWorklet doesn't count underruns while the
+      // workers spin up and attach the loopback plumbing.
+      const targetPrefillFrames = Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 5));
+      const existingLevel = output.getBufferLevelFrames();
+      const prefillFrames = Math.max(0, targetPrefillFrames - existingLevel);
+      if (prefillFrames > 0) {
+        output.writeInterleaved(new Float32Array(prefillFrames * output.ringBuffer.channelCount), sr);
+      }
+
+      const workerConfig: AeroConfig = {
+        guestMemoryMiB: 64,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      };
+
+      try {
+        workerCoordinator.start(workerConfig);
+        workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
+        workerCoordinator.setAudioOutputRingBuffer(
+          output.ringBuffer.buffer,
+          sr,
+          output.ringBuffer.channelCount,
+          output.ringBuffer.capacityFrames,
+        );
+        (
+          globalThis as typeof globalThis & {
+            __aeroAudioLoopbackBackend?: unknown;
+          }
+        ).__aeroAudioLoopbackBackend = "worker";
+
+        await output.resume();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      status.textContent = "Audio loopback initialized (backend=worker).";
+    },
+  });
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton, hdaDemoButton),
+    el("div", { class: "row" }, button, workerButton, hdaDemoButton, loopbackButton),
     status,
   );
 }
