@@ -2,7 +2,149 @@
 
 #include <d3d9.h>
 
+#include "..\\..\\..\\protocol\\aerogpu_dbgctl_escape.h"
+
 using aerogpu_test::ComPtr;
+
+typedef LONG NTSTATUS;
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
+typedef UINT D3DKMT_HANDLE;
+
+typedef struct D3DKMT_OPENADAPTERFROMHDC {
+  HDC hDc;
+  D3DKMT_HANDLE hAdapter;
+  LUID AdapterLuid;
+  UINT VidPnSourceId;
+} D3DKMT_OPENADAPTERFROMHDC;
+
+typedef struct D3DKMT_CLOSEADAPTER {
+  D3DKMT_HANDLE hAdapter;
+} D3DKMT_CLOSEADAPTER;
+
+typedef enum D3DKMT_ESCAPETYPE {
+  D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
+} D3DKMT_ESCAPETYPE;
+
+typedef struct D3DKMT_ESCAPEFLAGS {
+  union {
+    struct {
+      UINT HardwareAccess : 1;
+      UINT Reserved : 31;
+    };
+    UINT Value;
+  };
+} D3DKMT_ESCAPEFLAGS;
+
+typedef struct D3DKMT_ESCAPE {
+  D3DKMT_HANDLE hAdapter;
+  D3DKMT_HANDLE hDevice;
+  D3DKMT_HANDLE hContext;
+  D3DKMT_ESCAPETYPE Type;
+  D3DKMT_ESCAPEFLAGS Flags;
+  VOID *pPrivateDriverData;
+  UINT PrivateDriverDataSize;
+} D3DKMT_ESCAPE;
+
+typedef NTSTATUS(WINAPI *PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC *pData);
+typedef NTSTATUS(WINAPI *PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER *pData);
+typedef NTSTATUS(WINAPI *PFND3DKMTEscape)(D3DKMT_ESCAPE *pData);
+
+static bool MapSharedHandleToken(HWND hwnd, HANDLE shared_handle, uint32_t *out_token, std::string *err) {
+  if (out_token) {
+    *out_token = 0;
+  }
+  if (!hwnd || !shared_handle) {
+    if (err) {
+      *err = "invalid hwnd/shared_handle";
+    }
+    return false;
+  }
+
+  HMODULE gdi32 = LoadLibraryW(L"gdi32.dll");
+  if (!gdi32) {
+    if (err) {
+      *err = "LoadLibraryW(gdi32.dll) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc =
+      (PFND3DKMTOpenAdapterFromHdc)GetProcAddress(gdi32, "D3DKMTOpenAdapterFromHdc");
+  PFND3DKMTCloseAdapter CloseAdapter = (PFND3DKMTCloseAdapter)GetProcAddress(gdi32, "D3DKMTCloseAdapter");
+  PFND3DKMTEscape Escape = (PFND3DKMTEscape)GetProcAddress(gdi32, "D3DKMTEscape");
+  if (!OpenAdapterFromHdc || !CloseAdapter || !Escape) {
+    if (err) {
+      *err = "Missing required D3DKMT* exports in gdi32.dll";
+    }
+    FreeLibrary(gdi32);
+    return false;
+  }
+
+  HDC hdc = GetDC(hwnd);
+  if (!hdc) {
+    if (err) {
+      *err = "GetDC failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    FreeLibrary(gdi32);
+    return false;
+  }
+
+  D3DKMT_OPENADAPTERFROMHDC open;
+  ZeroMemory(&open, sizeof(open));
+  open.hDc = hdc;
+  NTSTATUS st = OpenAdapterFromHdc(&open);
+  ReleaseDC(hwnd, hdc);
+  if (!NT_SUCCESS(st) || open.hAdapter == 0) {
+    if (err) {
+      char buf[64];
+      _snprintf(buf, sizeof(buf), "D3DKMTOpenAdapterFromHdc failed: 0x%08lX", (unsigned long)st);
+      *err = buf;
+    }
+    FreeLibrary(gdi32);
+    return false;
+  }
+
+  aerogpu_escape_map_shared_handle_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
+  q.hdr.size = sizeof(q);
+  q.shared_handle = (uint64_t)(uintptr_t)shared_handle;
+
+  D3DKMT_ESCAPE esc;
+  ZeroMemory(&esc, sizeof(esc));
+  esc.hAdapter = open.hAdapter;
+  esc.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+  esc.Flags.Value = 0;
+  esc.pPrivateDriverData = &q;
+  esc.PrivateDriverDataSize = sizeof(q);
+
+  st = Escape(&esc);
+
+  D3DKMT_CLOSEADAPTER close;
+  ZeroMemory(&close, sizeof(close));
+  close.hAdapter = open.hAdapter;
+  CloseAdapter(&close);
+  FreeLibrary(gdi32);
+
+  if (!NT_SUCCESS(st)) {
+    if (err) {
+      char buf[64];
+      _snprintf(buf, sizeof(buf), "D3DKMTEscape(map-shared-handle) failed: 0x%08lX", (unsigned long)st);
+      *err = buf;
+    }
+    return false;
+  }
+
+  if (out_token) {
+    *out_token = q.share_token;
+  }
+  return q.share_token != 0;
+}
 
 // Minimal NT structures needed to patch a suspended child process command line in-place.
 // Keep this self-contained (avoid winternl.h) so the test builds cleanly with the VS2010 + Win7 SDK
@@ -318,6 +460,17 @@ static int RunConsumer(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
 
+  uint32_t expected_token = 0;
+  bool has_expected_token = false;
+  std::string expected_token_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--expected-share-token", &expected_token_str)) {
+    std::string parse_err;
+    if (!aerogpu_test::ParseUint32(expected_token_str, &expected_token, &parse_err) || expected_token == 0) {
+      return aerogpu_test::Fail(kTestName, "invalid --expected-share-token: %s", parse_err.c_str());
+    }
+    has_expected_token = true;
+  }
+
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -361,6 +514,24 @@ static int RunConsumer(int argc, char** argv) {
                                               false);
   if (!hwnd) {
     return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+  }
+
+  if (has_expected_token) {
+    uint32_t token = 0;
+    std::string map_err;
+    if (!MapSharedHandleToken(hwnd, shared_handle, &token, &map_err)) {
+      return aerogpu_test::Fail(kTestName, "MAP_SHARED_HANDLE failed: %s", map_err.c_str());
+    }
+    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE share_token=%lu (expected=%lu)",
+                               kTestName,
+                               (unsigned long)token,
+                               (unsigned long)expected_token);
+    if (token != expected_token) {
+      return aerogpu_test::Fail(kTestName,
+                                "MAP_SHARED_HANDLE token mismatch: got=%lu expected=%lu",
+                                (unsigned long)token,
+                                (unsigned long)expected_token);
+    }
   }
 
   ComPtr<IDirect3D9Ex> d3d;
@@ -641,10 +812,28 @@ static int RunProducer(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
   }
 
+  uint32_t share_token = 0;
+  std::string map_err;
+  const bool have_share_token = MapSharedHandleToken(hwnd, shared, &share_token, &map_err);
+  if (have_share_token) {
+    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE share_token=%lu", kTestName, (unsigned long)share_token);
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE unavailable (%s); skipping token validation",
+                               kTestName,
+                               map_err.c_str());
+  }
+
   // Create the consumer suspended with a fixed-width placeholder for --shared-handle=0x...
   // We patch the placeholder digits in the child's command line before resuming it.
   std::wstring cmdline = std::wstring(L"\"") + exe_path +
                          L"\" --consumer --shared-handle=0x0000000000000000";
+  if (have_share_token) {
+    wchar_t token_buf[32];
+    _snwprintf(token_buf, ARRAYSIZE(token_buf), L"0x%08lX", (unsigned long)share_token);
+    token_buf[ARRAYSIZE(token_buf) - 1] = 0;
+    cmdline += L" --expected-share-token=";
+    cmdline += token_buf;
+  }
   if (dump) {
     cmdline += L" --dump";
   }
