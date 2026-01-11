@@ -4850,8 +4850,15 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize11(D3D10DDI_HADAPTER, const D3D11DDIARG_CREATEDEVICE*) {
+  __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
+    return sizeof(AeroGpuDevice);
+  }
   // Device allocation includes the immediate context object.
   return sizeof(AeroGpuDevice) + sizeof(AeroGpuImmediateContext);
+}
+
+SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceContextSize11(D3D10DDI_HADAPTER, const D3D11DDIARG_CREATEDEVICE*) {
+  return sizeof(AeroGpuImmediateContext);
 }
 
 HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_CREATEDEVICE* pCreate) {
@@ -4892,14 +4899,18 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
     dev->ddi_callbacks = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->callbacks);
   }
 
-  // Place the immediate context immediately after the device object.
-  void* ctx_mem = reinterpret_cast<uint8_t*>(pCreate->hDevice.pDrvPrivate) + sizeof(AeroGpuDevice);
+  void* ctx_mem = pCreate->hImmediateContext.pDrvPrivate;
+  if (!ctx_mem) {
+    __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
+      return E_INVALIDARG;
+    }
+    ctx_mem = reinterpret_cast<uint8_t*>(pCreate->hDevice.pDrvPrivate) + sizeof(AeroGpuDevice);
+    pCreate->hImmediateContext.pDrvPrivate = ctx_mem;
+  }
+
   auto* ctx = new (ctx_mem) AeroGpuImmediateContext();
   ctx->device = dev;
   dev->immediate = ctx;
-
-  // Return the immediate context handle expected by the runtime.
-  pCreate->hImmediateContext.pDrvPrivate = ctx;
 
   // The Win7 runtime may call a much larger portion of the DDI surface during
   // device creation / initialization than a simple triangle sample would
@@ -5139,11 +5150,28 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
   }
 
   auto* funcs = reinterpret_cast<D3D11DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
-  std::memset(funcs, 0, sizeof(*funcs));
+  D3D11DDI_ADAPTERFUNCS stub = {};
+  stub.pfnGetCaps = &AeroGpuDdiStub<decltype(stub.pfnGetCaps)>::Func;
+  stub.pfnCalcPrivateDeviceSize = &AeroGpuDdiStub<decltype(stub.pfnCalcPrivateDeviceSize)>::Func;
+  __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
+    stub.pfnCalcPrivateDeviceContextSize = &AeroGpuDdiStub<decltype(stub.pfnCalcPrivateDeviceContextSize)>::Func;
+  }
+  stub.pfnCreateDevice = &AeroGpuDdiStub<decltype(stub.pfnCreateDevice)>::Func;
+  stub.pfnCloseAdapter = &AeroGpuDdiStub<decltype(stub.pfnCloseAdapter)>::Func;
+  *funcs = stub;
   funcs->pfnGetCaps = &GetCaps11;
   funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize11;
+  __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
+    funcs->pfnCalcPrivateDeviceContextSize = &CalcPrivateDeviceContextSize11;
+  }
   funcs->pfnCreateDevice = &CreateDevice11;
   funcs->pfnCloseAdapter = &CloseAdapter11;
+  if (!ValidateNoNullDdiTable("D3D11DDI_ADAPTERFUNCS", funcs, sizeof(*funcs))) {
+    pOpenData->hAdapter.pDrvPrivate = nullptr;
+    DestroyKmtAdapterHandle(adapter);
+    delete adapter;
+    return E_NOINTERFACE;
+  }
   return S_OK;
 }
 
