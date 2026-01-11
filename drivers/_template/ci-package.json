@@ -1,4 +1,6 @@
 {
   "$schema": "../../ci/driver-package.schema.json",
+  "infFiles": ["path/to/driver.inf"],
+  "wow64Files": [],
   "additionalFiles": []
 }

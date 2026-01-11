@@ -12,10 +12,15 @@ to avoid accidentally shipping dev/test drivers or conflicting INFs.
 
 The manifest can declare:
 
+- explicit list of `.inf` files to stage (`infFiles`) to avoid packaging multiple optional INFs together
+  - paths are relative to the driver directory
+  - if present, the list must be non-empty
+- WOW64 payload DLL file names to copy from x86 build outputs into the x64 staged package (`wow64Files`)
+  - entries must be file names only (no path separators)
 - extra non-binary files to copy into the staged package (`additionalFiles`)
 - whether the driver needs a WDF coinstaller (`wdfCoInstaller`)
 
-## Manifests
+## Files
 
-- `ci-package.json` is required for CI build+packaging.
-- See `ci-package.json` (minimal) and `ci-package.wdf-example.json` (WDF coinstaller example).
+- `ci-package.json`: minimal template (this file is required for CI build+packaging in real driver directories). Update/remove `infFiles` and `wow64Files` as needed.
+- `ci-package.wdf-example.json`: WDF coinstaller example.
