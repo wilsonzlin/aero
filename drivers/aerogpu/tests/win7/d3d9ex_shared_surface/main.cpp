@@ -971,6 +971,7 @@ static int RunParent(int argc,
 
   PROCESS_INFORMATION pi;
   ZeroMemory(&pi, sizeof(pi));
+  HANDLE job = NULL;
 
   BOOL ok = CreateProcessW(exe_path.c_str(),
                            &cmdline_buf[0],
@@ -998,6 +999,26 @@ static int RunParent(int argc,
     }
     return aerogpu_test::Fail(
         kTestName, "CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+  }
+
+  job = CreateJobObjectW(NULL, NULL);
+  if (job) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+    ZeroMemory(&info, sizeof(info));
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info))) {
+      aerogpu_test::PrintfStdout("INFO: %s: SetInformationJobObject(KILL_ON_JOB_CLOSE) failed: %s",
+                                 kTestName,
+                                 aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      CloseHandle(job);
+      job = NULL;
+    } else if (!AssignProcessToJobObject(job, pi.hProcess)) {
+      aerogpu_test::PrintfStdout("INFO: %s: AssignProcessToJobObject failed: %s",
+                                 kTestName,
+                                 aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      CloseHandle(job);
+      job = NULL;
+    }
   }
 
   std::string patch_err;
@@ -1223,6 +1244,9 @@ static int RunParent(int argc,
   if (done_event) {
     CloseHandle(done_event);
   }
+  if (job) {
+    CloseHandle(job);
+  }
   if (shared_handle_is_nt) {
     CloseHandle(shared_handle);
   }
@@ -1239,11 +1263,14 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--validate-sharing] [--require-vid=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--show] [--validate-sharing] [--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu]",
         kTestName);
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
-    aerogpu_test::PrintfStdout("Internal: %s.exe --child --shared-handle=0x... (used by parent)", kTestName);
+    aerogpu_test::PrintfStdout(
+        "Internal: %s.exe --child --resource=texture|rendertarget --shared-handle=0x... "
+        "[--ready-event=NAME --opened-event=NAME --done-event=NAME] (used by parent)",
+        kTestName);
     return 0;
   }
 
@@ -1253,9 +1280,10 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
       aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump;
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
-  // Default to hidden for this test since it spawns a child process and is intended for automation.
-  const bool show = aerogpu_test::HasArg(argc, argv, "--show");
-  const bool hidden = !show;
+  bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  if (aerogpu_test::HasArg(argc, argv, "--show")) {
+    hidden = false;
+  }
 
   AdapterRequirements req;
   ZeroMemory(&req, sizeof(req));
