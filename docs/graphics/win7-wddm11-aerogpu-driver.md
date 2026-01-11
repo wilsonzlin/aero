@@ -691,11 +691,11 @@ The guest binds to a project-specific PCI display controller. The canonical iden
 - Vendor ID: `0xA3A0` (`AEROGPU_PCI_VENDOR_ID`)
 - Device ID: `0x0001` (`AEROGPU_PCI_DEVICE_ID`)
 - Subsystem vendor/device: `0xA3A0:0x0001` (`AEROGPU_PCI_SUBSYSTEM_VENDOR_ID` / `AEROGPU_PCI_SUBSYSTEM_ID`)
-- Class code: display controller (base `0x03`), **VGA-compatible** subclass (`0x00`), prog-if `0x00`
+- Class code: display controller (base `0x03` / `AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER`), **VGA-compatible** subclass (`0x00` / `AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE`), prog-if `0x00` (`AEROGPU_PCI_PROG_IF`)
   
 BARs / interrupts:
   
-- BAR0 (index 0): MMIO register block, **at least 64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES` is currently 64 KiB). The device must not assume “4 KiB is enough”; the remaining space is reserved for forward-compatible register growth.
+- BAR0 (`AEROGPU_PCI_BAR0_INDEX`, index 0): MMIO register block, **at least 64 KiB** (`AEROGPU_PCI_BAR0_SIZE_BYTES` is currently 64 KiB). The device must not assume “4 KiB is enough”; the remaining space is reserved for forward-compatible register growth.
 - Interrupt: level-triggered line IRQ is acceptable for MVP; MSI/MSI-X can be added later. Interrupt causes are surfaced via `AEROGPU_MMIO_REG_IRQ_*`.
   
 ### 7.2 BAR0 MMIO register block (A3A0)
