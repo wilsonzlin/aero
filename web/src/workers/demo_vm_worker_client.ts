@@ -21,6 +21,8 @@ type DemoVmWorkerClientOptions = {
   onFatalError?: (err: Error) => void;
 };
 
+type RpcOptions = { timeoutMs?: number };
+
 export class DemoVmWorkerClient {
   #worker: Worker | null;
   #nextId = 1;
@@ -49,8 +51,8 @@ export class DemoVmWorkerClient {
     });
   }
 
-  async init(ramBytes: number): Promise<DemoVmWorkerInitResult> {
-    return await this.#rpc<DemoVmWorkerInitResult>({ type: "init", ramBytes });
+  async init(ramBytes: number, options: RpcOptions = {}): Promise<DemoVmWorkerInitResult> {
+    return await this.#rpc<DemoVmWorkerInitResult>({ type: "init", ramBytes }, options);
   }
 
   async runSteps(steps: number): Promise<DemoVmWorkerStepResult> {
@@ -106,7 +108,7 @@ export class DemoVmWorkerClient {
     }
   }
 
-  async #rpc<T>(msg: DistributiveOmit<DemoVmWorkerRequest, "id">): Promise<T> {
+  async #rpc<T>(msg: DistributiveOmit<DemoVmWorkerRequest, "id">, options: RpcOptions = {}): Promise<T> {
     if (this.#destroyed) throw new Error("DemoVmWorkerClient is destroyed.");
     const activeWorker = this.#worker;
     if (!activeWorker) throw new Error("DemoVmWorkerClient worker is unavailable.");
@@ -114,11 +116,37 @@ export class DemoVmWorkerClient {
     const id = this.#nextId++;
     const req = { ...msg, id } as DemoVmWorkerRequest;
     return await new Promise<T>((resolve, reject) => {
-      this.#pending.set(id, { resolve: (v) => resolve(v as T), reject });
+      const timeoutMs = options.timeoutMs ?? 0;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const clear = () => {
+        if (timeout !== null) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+      };
+
+      this.#pending.set(id, {
+        resolve: (v) => {
+          clear();
+          resolve(v as T);
+        },
+        reject: (err) => {
+          clear();
+          reject(err);
+        },
+      });
+
+      if (timeoutMs > 0) {
+        timeout = setTimeout(() => {
+          this.#pending.delete(id);
+          reject(new Error(`Timed out waiting for demo VM worker RPC (${req.type}) (${timeoutMs}ms).`));
+        }, timeoutMs);
+      }
       try {
         activeWorker.postMessage(req);
       } catch (err) {
         this.#pending.delete(id);
+        clear();
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });

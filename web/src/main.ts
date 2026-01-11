@@ -763,7 +763,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     if (workerClient) {
       void (async () => {
         try {
-          const init = await workerClient!.init(256 * 1024);
+          const init = await workerClient!.init(256 * 1024, { timeoutMs: 60_000 });
 
           if (!init.syncAccessHandles) {
             clearAutosaveTimer();
