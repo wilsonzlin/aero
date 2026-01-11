@@ -95,6 +95,29 @@ function getString(obj: any, getter: (v: any) => unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function formatConfigSummary(cfg: any): string | null {
+  if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return null;
+
+  const keys = [
+    "seq_total_mb",
+    "seq_chunk_mb",
+    "seq_runs",
+    "warmup_mb",
+    "random_ops",
+    "random_runs",
+    "random_space_mb",
+    "random_seed",
+    "include_random_write",
+  ];
+
+  const parts: string[] = [];
+  for (const key of keys) {
+    const value = (cfg as any)[key];
+    parts.push(`${key}=${value === undefined ? "unset" : String(value)}`);
+  }
+  return parts.join(" ");
+}
+
 function compareOrderedField(params: {
   field: string;
   baseline: string | null;
@@ -257,6 +280,39 @@ export function compareStorageBenchmarks(params: {
         ranks: { async: 1, sync_access_handle: 2 },
       }),
     );
+  }
+
+  const baselineConfig = params.baseline?.config;
+  const currentConfig = params.current?.config;
+  if (baselineConfig && typeof baselineConfig === "object" && currentConfig && typeof currentConfig === "object") {
+    const keys = [
+      "seq_total_mb",
+      "seq_chunk_mb",
+      "seq_runs",
+      "warmup_mb",
+      "random_ops",
+      "random_runs",
+      "random_space_mb",
+      "random_seed",
+      "include_random_write",
+    ];
+
+    const diffs: string[] = [];
+    for (const key of keys) {
+      const a = (baselineConfig as any)[key];
+      const b = (currentConfig as any)[key];
+      if (a !== b) diffs.push(`${key}: ${a === undefined ? "unset" : a} -> ${b === undefined ? "unset" : b}`);
+    }
+
+    if (diffs.length > 0) {
+      metadataComparisons.push({
+        field: "config",
+        baseline: formatConfigSummary(baselineConfig),
+        current: formatConfigSummary(currentConfig),
+        regression: true,
+        note: diffs.join(", "),
+      });
+    }
   }
 
   const pass =

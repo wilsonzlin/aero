@@ -100,6 +100,7 @@ test("compareStorageBenchmarks: fails when OPFS api_mode regresses (sync -> asyn
   const baseline = {
     backend: "opfs",
     api_mode: "sync_access_handle",
+    config: { seq_total_mb: 32, seq_chunk_mb: 4, seq_runs: 2, warmup_mb: 8, random_ops: 500, random_runs: 2, random_space_mb: 4, random_seed: 1337, include_random_write: false },
     sequential_write: { mean_mb_per_s: 100 },
     sequential_read: { mean_mb_per_s: 150 },
     random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
@@ -108,6 +109,7 @@ test("compareStorageBenchmarks: fails when OPFS api_mode regresses (sync -> asyn
   const current = {
     backend: "opfs",
     api_mode: "async",
+    config: { seq_total_mb: 32, seq_chunk_mb: 4, seq_runs: 2, warmup_mb: 8, random_ops: 500, random_runs: 2, random_space_mb: 4, random_seed: 1337, include_random_write: false },
     sequential_write: { mean_mb_per_s: 100 },
     sequential_read: { mean_mb_per_s: 150 },
     random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
@@ -116,4 +118,28 @@ test("compareStorageBenchmarks: fails when OPFS api_mode regresses (sync -> asyn
   const result = compareStorageBenchmarks({ baseline, current, thresholdPct: 15 });
   assert.equal(result.pass, false);
   assert.ok(result.metadataComparisons.find((c) => c.field === "api_mode")?.regression);
+});
+
+test("compareStorageBenchmarks: fails when benchmark config changes", () => {
+  const baseline = {
+    backend: "opfs",
+    api_mode: "async",
+    config: { seq_total_mb: 32, seq_chunk_mb: 4, seq_runs: 2, warmup_mb: 8, random_ops: 500, random_runs: 2, random_space_mb: 4, random_seed: 1337, include_random_write: false },
+    sequential_write: { mean_mb_per_s: 100 },
+    sequential_read: { mean_mb_per_s: 150 },
+    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+  };
+
+  const current = {
+    backend: "opfs",
+    api_mode: "async",
+    config: { seq_total_mb: 32, seq_chunk_mb: 4, seq_runs: 2, warmup_mb: 8, random_ops: 750, random_runs: 2, random_space_mb: 4, random_seed: 1337, include_random_write: false },
+    sequential_write: { mean_mb_per_s: 100 },
+    sequential_read: { mean_mb_per_s: 150 },
+    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+  };
+
+  const result = compareStorageBenchmarks({ baseline, current, thresholdPct: 15 });
+  assert.equal(result.pass, false);
+  assert.ok(result.metadataComparisons.find((c) => c.field === "config")?.regression);
 });
