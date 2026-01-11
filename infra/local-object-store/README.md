@@ -286,7 +286,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
 dd if=/dev/urandom of=./scratch.img bs=1M count=5
 
 # Default chunk size is 4 MiB (4194304). Pass --chunk-size to override.
-cargo run --manifest-path tools/image-chunker/Cargo.toml -- publish \
+cargo run --locked --manifest-path tools/image-chunker/Cargo.toml -- publish \
   --file ./scratch.img \
   --bucket disk-images \
   --prefix images/demo/sha256-test/ \

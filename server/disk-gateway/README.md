@@ -30,7 +30,7 @@ export DISK_GATEWAY_CORP='same-site'
 export DISK_GATEWAY_MAX_RANGES=16
 export DISK_GATEWAY_MAX_TOTAL_BYTES=$((512 * 1024 * 1024))  # 512 MiB
 
-cargo run
+cargo run --locked
 ```
 
 ### File layout (dev filesystem backend)

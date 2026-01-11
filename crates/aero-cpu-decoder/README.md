@@ -23,7 +23,7 @@ assert_eq!(inst.memory_base(), Register::RIP);
 ## Tests
 
 ```bash
-cargo test -p aero-cpu-decoder
+cargo test --locked -p aero-cpu-decoder
 ```
 
 The suite includes:

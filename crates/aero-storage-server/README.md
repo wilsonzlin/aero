@@ -31,7 +31,7 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 From the repo root:
 
 ```bash
-cargo run -p aero-storage-server
+cargo run --locked -p aero-storage-server
 ```
 
 Then in another terminal:

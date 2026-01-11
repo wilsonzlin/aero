@@ -10,12 +10,12 @@
 
 **If running many agents concurrently**, enforce **memory limits**. CPU and disk I/O contention are handled fine by the Linux scheduler, but memory exhaustion will OOM-kill the host.
 
-**The one rule:** Use `./scripts/mem-limit.sh 12G <command>` for memory-hungry operations (mainly `cargo build --release`).
+**The one rule:** Use `./scripts/mem-limit.sh 12G <command>` for memory-hungry operations (mainly `cargo build --release --locked`).
 
 ```bash
 ./scripts/agent-env-setup.sh                            # One-time sanity checks (safe to re-run)
 source ./scripts/agent-env.sh                           # Set recommended env vars
-./scripts/mem-limit.sh 12G cargo build --release        # Memory-limited build
+./scripts/mem-limit.sh 12G cargo build --release --locked # Memory-limited build
 ```
 
 See [Agent Resource Limits Guide](./docs/agent-resource-limits.md) for details.
