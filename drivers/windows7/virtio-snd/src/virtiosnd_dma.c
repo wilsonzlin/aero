@@ -192,11 +192,36 @@ _Use_decl_annotations_
 VOID
 VirtIoSndFreeCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, PVIRTIOSND_DMA_BUFFER Buf)
 {
+    VIRTIOSND_DMA_BUFFER tmp;
+    BOOLEAN bufInAllocation;
+
     if (Buf == NULL || Buf->Va == NULL || Buf->Size == 0) {
         return;
     }
 
-    if (Buf->IsCommonBuffer) {
+    /*
+     * Buf metadata may itself reside inside the allocation being freed (for
+     * example the virtio-snd control request context stores its VIRTIOSND_DMA_BUFFER
+     * inside the common buffer). In that case, writing to *Buf after freeing the
+     * allocation would be a use-after-free. Copy the metadata to the stack and
+     * only zero the caller's struct when it is not inside the freed allocation.
+     */
+    tmp = *Buf;
+    bufInAllocation = FALSE;
+    {
+        ULONGLONG start;
+        ULONGLONG end;
+        ULONGLONG addr;
+
+        start = (ULONGLONG)(ULONG_PTR)tmp.Va;
+        end = start + (ULONGLONG)tmp.Size;
+        addr = (ULONGLONG)(ULONG_PTR)Buf;
+        if (end >= start && addr >= start && addr < end) {
+            bufInAllocation = TRUE;
+        }
+    }
+
+    if (tmp.IsCommonBuffer) {
         PHYSICAL_ADDRESS logical;
 
         if (Ctx == NULL || Ctx->Adapter == NULL ||
@@ -206,19 +231,21 @@ VirtIoSndFreeCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, PVIRTIOSND_DMA_BUFFER Buf)
             return;
         }
 
-        ASSERT(Buf->Size <= MAXULONG);
-        logical.QuadPart = (LONGLONG)Buf->DmaAddr;
+        ASSERT(tmp.Size <= MAXULONG);
+        logical.QuadPart = (LONGLONG)tmp.DmaAddr;
         Ctx->Adapter->DmaOperations->FreeCommonBuffer(
             Ctx->Adapter,
-            (ULONG)Buf->Size,
+            (ULONG)tmp.Size,
             logical,
-            Buf->Va,
-            Buf->CacheEnabled);
+            tmp.Va,
+            tmp.CacheEnabled);
     } else {
         MEMORY_CACHING_TYPE cacheType;
-        cacheType = VirtIoSndCacheTypeFromBool(Buf->CacheEnabled);
-        MmFreeContiguousMemorySpecifyCache(Buf->Va, Buf->Size, cacheType);
+        cacheType = VirtIoSndCacheTypeFromBool(tmp.CacheEnabled);
+        MmFreeContiguousMemorySpecifyCache(tmp.Va, tmp.Size, cacheType);
     }
 
-    RtlZeroMemory(Buf, sizeof(*Buf));
+    if (!bufInAllocation) {
+        RtlZeroMemory(Buf, sizeof(*Buf));
+    }
 }

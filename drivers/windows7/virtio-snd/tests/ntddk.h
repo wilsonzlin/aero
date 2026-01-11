@@ -328,6 +328,9 @@ typedef struct _KEVENT {
 
 #define IO_NO_INCREMENT 0
 
+typedef void (*VIRTIOSND_TEST_KE_SET_EVENT_HOOK)(KEVENT *event);
+extern VIRTIOSND_TEST_KE_SET_EVENT_HOOK g_virtiosnd_test_ke_set_event_hook;
+
 static __forceinline void KeInitializeEvent(KEVENT *event, EVENT_TYPE type, BOOLEAN state)
 {
     UNREFERENCED_PARAMETER(type);
@@ -340,6 +343,9 @@ static __forceinline LONG KeSetEvent(KEVENT *event, int increment, BOOLEAN wait)
     UNREFERENCED_PARAMETER(increment);
     UNREFERENCED_PARAMETER(wait);
     event->signaled = 1;
+    if (g_virtiosnd_test_ke_set_event_hook != NULL) {
+        g_virtiosnd_test_ke_set_event_hook(event);
+    }
     return old;
 }
 

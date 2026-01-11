@@ -14,6 +14,17 @@
 
 /* Shared by the ntddk.h shim so tests can simulate DISPATCH_LEVEL code paths. */
 volatile KIRQL g_virtiosnd_test_current_irql = PASSIVE_LEVEL;
+VIRTIOSND_TEST_KE_SET_EVENT_HOOK g_virtiosnd_test_ke_set_event_hook = NULL;
+
+static VIRTIOSND_CONTROL* g_virtiosnd_test_reqidle_hook_ctrl = NULL;
+static KEVENT* g_virtiosnd_test_reqidle_hook_event = NULL;
+
+static void virtiosnd_test_reqidle_ke_set_event_hook(KEVENT* event)
+{
+    if (g_virtiosnd_test_reqidle_hook_ctrl != NULL && event == g_virtiosnd_test_reqidle_hook_event) {
+        g_virtiosnd_test_reqidle_hook_ctrl->DmaCtx = NULL;
+    }
+}
 
 /*
  * Keep assertions active in all build configurations.
@@ -303,10 +314,23 @@ static void test_control_timeout_then_late_completion_runs_at_dpc_level(void)
     const VIRTIOSND_SG* sg;
     UINT32 usedLen;
     KIRQL oldIrql;
+    KEVENT *idleEvent;
+    VIRTIOSND_TEST_KE_SET_EVENT_HOOK prevHook;
 
     virtio_test_queue_init(&q, FALSE /* auto_complete */);
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    /*
+     * Install a KeSetEvent hook that clears Ctrl->DmaCtx when ReqIdleEvent is
+     * signaled. This simulates STOP/REMOVE teardown proceeding as soon as the
+     * idle event is set, and catches regressions where ReqIdleEvent is signaled
+     * before request DMA buffers are freed.
+     */
+    g_virtiosnd_test_reqidle_hook_ctrl = &ctrl;
+    g_virtiosnd_test_reqidle_hook_event = &ctrl.ReqIdleEvent;
+    prevHook = g_virtiosnd_test_ke_set_event_hook;
+    g_virtiosnd_test_ke_set_event_hook = virtiosnd_test_reqidle_ke_set_event_hook;
 
     RtlZeroMemory(&req, sizeof(req));
     req.code = VIRTIO_SND_R_PCM_RELEASE;
@@ -343,7 +367,12 @@ static void test_control_timeout_then_late_completion_runs_at_dpc_level(void)
     KeLowerIrql(oldIrql);
 
     /* The request should be freed and removed from the active list (idle signaled). */
-    assert(KeReadStateEvent(&ctrl.ReqIdleEvent) != 0);
+    idleEvent = &ctrl.ReqIdleEvent;
+    assert(KeReadStateEvent(idleEvent) != 0);
+
+    g_virtiosnd_test_ke_set_event_hook = prevHook;
+    g_virtiosnd_test_reqidle_hook_ctrl = NULL;
+    g_virtiosnd_test_reqidle_hook_event = NULL;
 
     VirtioSndCtrlUninit(&ctrl);
     virtio_test_queue_destroy(&q);

@@ -77,20 +77,34 @@ static VOID VirtioSndCtrlRequestDestroy(_In_ VIRTIOSND_CTRL_REQUEST* Req)
 {
     VIRTIOSND_CONTROL* ctrl;
     KIRQL oldIrql;
+    BOOLEAN maybeEmpty;
 
     NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
 
     ctrl = Req->Owner;
+    maybeEmpty = FALSE;
     if (ctrl != NULL) {
         KeAcquireSpinLock(&ctrl->ReqLock, &oldIrql);
         RemoveEntryList(&Req->Link);
+        maybeEmpty = IsListEmpty(&ctrl->ReqList);
+        KeReleaseSpinLock(&ctrl->ReqLock, oldIrql);
+    }
+
+    VirtIoSndFreeCommonBuffer(ctrl ? ctrl->DmaCtx : NULL, &Req->DmaBuf);
+
+    /*
+     * ReqIdleEvent is used by STOP/REMOVE teardown to wait until all request DMA
+     * buffers have been freed (while the DMA adapter is still valid). Signal the
+     * event only after freeing the common buffer to avoid races where the wait
+     * returns while a request still needs to call FreeCommonBuffer().
+     */
+    if (ctrl != NULL && maybeEmpty) {
+        KeAcquireSpinLock(&ctrl->ReqLock, &oldIrql);
         if (IsListEmpty(&ctrl->ReqList)) {
             KeSetEvent(&ctrl->ReqIdleEvent, IO_NO_INCREMENT, FALSE);
         }
         KeReleaseSpinLock(&ctrl->ReqLock, oldIrql);
     }
-
-    VirtIoSndFreeCommonBuffer(ctrl ? ctrl->DmaCtx : NULL, &Req->DmaBuf);
 }
 
 static VOID VirtioSndCtrlRequestFreeWorkItem(_In_ PVOID Context)
