@@ -30,7 +30,10 @@ describe("usb/formatHexBytes", () => {
   it("formats numbers as padded hex", () => {
     expect(hex8(0)).toBe("0x00");
     expect(hex8(255)).toBe("0xff");
+    // Do not truncate: if out-of-range values are passed, show the full value to aid debugging.
+    expect(hex8(0x1ff)).toBe("0x1ff");
     expect(hex16(0)).toBe("0x0000");
     expect(hex16(0x1234)).toBe("0x1234");
+    expect(hex16(0x1_0000)).toBe("0x10000");
   });
 });

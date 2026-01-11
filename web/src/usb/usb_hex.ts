@@ -17,9 +17,9 @@ export function formatHexBytes(bytes: Uint8Array, maxBytes = 256, columns = 16):
 }
 
 export function hex8(value: number): string {
-  return `0x${(value & 0xff).toString(16).padStart(2, "0")}`;
+  return `0x${value.toString(16).padStart(2, "0")}`;
 }
 
 export function hex16(value: number): string {
-  return `0x${(value & 0xffff).toString(16).padStart(4, "0")}`;
+  return `0x${value.toString(16).padStart(4, "0")}`;
 }
