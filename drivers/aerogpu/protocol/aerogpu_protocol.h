@@ -5,8 +5,8 @@
  * device ("ARGP", PCI 1AED:0001).
  *
  * It is kept for reference and for compatibility with the emulator's legacy
- * AeroGPU device model. The current AeroGPU KMD/UMDs do **not** use this header
- * directly.
+ * AeroGPU device model (feature `emulator/aerogpu-legacy`). The current AeroGPU
+ * KMD/UMDs do **not** use this header directly.
  *
  * The canonical, versioned AeroGPU device ABI is defined in:
  *   - `drivers/aerogpu/protocol/README.md`
