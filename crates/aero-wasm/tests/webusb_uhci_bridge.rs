@@ -49,11 +49,15 @@ fn td_ctrl(active: bool, ioc: bool) -> u32 {
 }
 
 unsafe fn write_u32(addr: u32, value: u32) {
-    core::ptr::write_unaligned(addr as *mut u32, value);
+    unsafe {
+        core::ptr::write_unaligned(addr as *mut u32, value);
+    }
 }
 
 unsafe fn write_bytes(addr: u32, bytes: &[u8]) {
-    core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+    }
 }
 
 #[wasm_bindgen_test]
