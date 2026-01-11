@@ -4,6 +4,7 @@ import type { CookieSameSite } from "./cloudfront";
 
 export type AuthMode = "dev" | "none";
 export type CloudFrontAuthMode = "cookie" | "url";
+export type CrossOriginResourcePolicy = "same-origin" | "same-site" | "cross-origin";
 
 export interface Config {
   s3Bucket: string;
@@ -26,6 +27,7 @@ export interface Config {
   authMode: AuthMode;
   port: number;
   corsAllowOrigin: string;
+  crossOriginResourcePolicy: CrossOriginResourcePolicy;
 }
 
 function requireEnv(name: string): string {
@@ -61,6 +63,20 @@ function parseSameSiteEnv(name: string, fallback: CookieSameSite): CookieSameSit
   if (normalized === "lax") return "Lax";
   if (normalized === "strict") return "Strict";
   throw new Error(`Invalid ${name}: ${raw}`);
+}
+
+function parseCrossOriginResourcePolicy(
+  raw: string | undefined,
+  fallback: CrossOriginResourcePolicy
+): CrossOriginResourcePolicy {
+  const trimmed = raw?.trim();
+  if (!trimmed) return fallback;
+  if (trimmed === "same-origin" || trimmed === "same-site" || trimmed === "cross-origin") {
+    return trimmed;
+  }
+  throw new Error(
+    `Invalid CROSS_ORIGIN_RESOURCE_POLICY: ${raw}. Expected same-origin, same-site, or cross-origin.`
+  );
 }
 
 function normalizeBasePath(basePath: string): string {
@@ -148,6 +164,10 @@ export function loadConfig(): Config {
     authMode,
     port: parseIntEnv("PORT", 3000),
     corsAllowOrigin: process.env.CORS_ALLOW_ORIGIN ?? "*",
+    crossOriginResourcePolicy: parseCrossOriginResourcePolicy(
+      process.env.CROSS_ORIGIN_RESOURCE_POLICY,
+      "same-site"
+    ),
   };
 }
 

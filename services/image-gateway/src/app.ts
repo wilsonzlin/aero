@@ -25,7 +25,7 @@ import {
   type StreamAuth,
 } from "./cloudfront";
 import { ApiError } from "./errors";
-import { buildRangeProxyResponse } from "./rangeProxy";
+import { buildRangeProxyHeaders, buildRangeProxyResponse } from "./rangeProxy";
 import type { ImageRecord, ImageStore } from "./store";
 import { buildImageObjectKey } from "./s3";
 
@@ -201,6 +201,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         Bucket: deps.config.s3Bucket,
         Key: s3Key,
         ContentType: "application/octet-stream",
+        CacheControl: "no-transform",
       })
     );
 
@@ -586,9 +587,10 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         }
         if (maybeStatus === 416) {
           const totalSize = record.size;
-          const headers: Record<string, string> = {
-            "accept-ranges": "bytes",
-          };
+          const headers = buildRangeProxyHeaders({
+            contentType: undefined,
+            crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+          });
           if (typeof totalSize === "number") {
             headers["content-range"] = `bytes */${totalSize}`;
           }
@@ -619,7 +621,10 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       );
     }
 
-    const proxy = buildRangeProxyResponse({ s3: s3Res });
+    const proxy = buildRangeProxyResponse({
+      s3: s3Res,
+      crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+    });
 
     reply
       .status(proxy.statusCode)
@@ -664,6 +669,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         LastModified: head.LastModified,
         ContentType: head.ContentType,
       },
+      crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
     });
 
     reply.status(proxy.statusCode).headers(proxy.headers).send();

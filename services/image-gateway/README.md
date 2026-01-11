@@ -69,6 +69,7 @@ Useful optional knobs:
 - `CLOUDFRONT_COOKIE_SAMESITE=None|Lax|Strict` (default `None`; use `Lax`/`Strict` when streaming is same-site and you don't need third-party cookies)
 - `CLOUDFRONT_COOKIE_PARTITIONED=true|false` (default `false`; adds the `Partitioned` attribute for CHIPS-capable browsers, requires `CLOUDFRONT_COOKIE_SAMESITE=None`)
 - `CORS_ALLOW_ORIGIN` (default `*`, used for browser CORS; set an explicit origin if you need credentialed requests / cookie-based auth)
+- `CROSS_ORIGIN_RESOURCE_POLICY` (default `same-site`, sent on the range-proxy responses as defence-in-depth for COEP; see `docs/16-disk-image-streaming-auth.md`)
 - `MULTIPART_PART_SIZE_BYTES` (default `67108864` / 64MiB; must be 5MiB–5GiB)
 
 ### Local MinIO (optional)
@@ -204,3 +205,12 @@ CloudFront must be configured to:
 
 - allow `Range` requests (forward the `Range` header to S3)
 - return `206 Partial Content` responses for ranged reads
+- disable compression / transformations (no `Content-Encoding` other than `identity`)
+- include the streaming-safe headers described in `docs/16-disk-image-streaming-auth.md`:
+  - `Cache-Control: no-transform`
+  - `Content-Type: application/octet-stream`
+  - `X-Content-Type-Options: nosniff`
+  - `Cross-Origin-Resource-Policy: same-site` (or `cross-origin` depending on deployment)
+  - CORS headers (if the app is cross-origin to the disk URL)
+
+See `docs/deployment/cloudfront-disk-streaming.md` for a concrete CloudFront response headers policy.

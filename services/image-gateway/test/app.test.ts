@@ -28,6 +28,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     authMode: "dev",
     port: 0,
     corsAllowOrigin: "http://localhost:5173",
+    crossOriginResourcePolicy: "same-site",
 
     ...overrides,
   };
@@ -83,6 +84,11 @@ describe("app", () => {
     expect(res.headers["content-length"]).toBe("123");
     expect(res.headers["etag"]).toBe('"etag"');
     expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
     expect(res.headers["access-control-allow-credentials"]).toBe("true");
   });
@@ -275,6 +281,11 @@ describe("app", () => {
     expect(res.statusCode).toBe(416);
     expect(res.headers["accept-ranges"]).toBe("bytes");
     expect(res.headers["content-range"]).toBe("bytes */100");
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
   it("handles CORS preflight with OPTIONS", async () => {

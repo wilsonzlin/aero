@@ -13,10 +13,16 @@ describe("range proxy", () => {
         LastModified: lastModified,
         ContentType: "application/octet-stream",
       },
+      crossOriginResourcePolicy: "same-site",
     });
 
     expect(res.statusCode).toBe(206);
     expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["content-range"]).toBe("bytes 0-9/100");
     expect(res.headers["content-length"]).toBe("10");
     expect(res.headers["etag"]).toBe('"etag"');
@@ -30,10 +36,16 @@ describe("range proxy", () => {
         ETag: '"etag"',
         ContentType: "application/octet-stream",
       },
+      crossOriginResourcePolicy: "same-site",
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["content-length"]).toBe("100");
     expect(res.headers).not.toHaveProperty("content-range");
   });
@@ -43,10 +55,22 @@ describe("range proxy", () => {
       s3: {
         ContentRange: "bytes 0-99/100",
       },
+      crossOriginResourcePolicy: "same-site",
     });
 
     expect(res.statusCode).toBe(206);
     expect(res.headers["content-range"]).toBe("bytes 0-99/100");
     expect(res.headers).not.toHaveProperty("content-length");
+  });
+
+  it("falls back to application/octet-stream when the upstream does not provide a Content-Type", () => {
+    const res = buildRangeProxyResponse({
+      s3: {
+        ContentLength: 100,
+      },
+      crossOriginResourcePolicy: "same-site",
+    });
+
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
   });
 });
