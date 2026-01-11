@@ -39,6 +39,9 @@ Some legacy driver projects are Visual Studio "Makefile" projects (`<Keyword>Mak
 The modern toolchain installed by `ci/install-wdk.ps1` does not provide `build.exe`, so CI **skips**
 these projects by default.
 
+If a solution contains a *mix* of wrapper projects and real MSBuild projects, CI builds only the
+non-wrapper `*.vcxproj` projects (so `msbuild <solution>.sln` never attempts to invoke `build.exe`).
+
 To opt in locally (when you have `build.exe` available in your environment):
 
 ```powershell
