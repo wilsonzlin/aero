@@ -48,6 +48,13 @@ it is **not** the supported driver package.
 
 ## Deprecated / stale IDs
 
+The repo also contains **non-canonical prototypes** that use different PCI IDs. These are not
+part of the Windows 7 WDDM AeroGPU ABI contract and must not be used for current device models,
+driver packages, or documentation:
+
+* `VID=0xA0E0, DID=0x0001` — experimental `crates/aero-gpu-device` ABI (used for deterministic
+  host-side tests and gpu-trace plumbing; see `crates/aero-gpu-device/README.md`).
+
 Older prototypes in this repository used a different PCI vendor ID (`VEN_1AE0`)
 and an early placeholder device ID (`E001`). These identifiers are **stale** and
 must not be used for current device models, driver packages, or documentation.
