@@ -85,22 +85,22 @@ pub trait CpuBus {
 
     /// Perform a read-modify-write cycle as a single operation when possible.
     ///
-    /// This is used by the Tier-0 interpreter for `LOCK`ed instructions and other
-    /// atomic RMW operations (e.g. `XCHG` with a memory operand).
+    /// This is used by Tier-0 for `LOCK`ed instructions and other atomic RMW
+    /// instructions (for example, `CMPXCHG`, `XADD`, and `XCHG` with a memory
+    /// operand).
     ///
-    /// Bus implementations may override this to provide true atomicity against
+    /// Implementations may override this to provide true atomicity against
     /// concurrent devices/threads. The default implementation falls back to a
-    /// plain read + conditional write using the scalar `read_u*`/`write_u*`
-    /// operations.
-    fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
+    /// plain scalar read + conditional write.
+    fn atomic_rmw<T, R>(&mut self, addr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
     where
         T: CpuBusValue,
         Self: Sized,
     {
-        let old = T::read_from(self, vaddr)?;
+        let old = T::read_from(self, addr)?;
         let (new, ret) = f(old);
         if new != old {
-            T::write_to(self, vaddr, new)?;
+            T::write_to(self, addr, new)?;
         }
         Ok(ret)
     }
@@ -147,7 +147,9 @@ pub trait CpuBus {
 
     /// Copy `len` bytes from `src` to `dst` with memmove semantics.
     ///
-    /// Returns `true` when the copy was performed.
+    /// Returns `true` when the bus performed the copy. Returning `false` indicates the
+    /// implementation chose not to handle the request and made no observable changes (callers
+    /// should fall back to scalar operations).
     ///
     /// The default implementation performs a byte-at-a-time copy and is correct
     /// but potentially slow.
@@ -190,7 +192,8 @@ pub trait CpuBus {
 
     /// Fill `repeat` elements at `dst`, writing `pattern` each time.
     ///
-    /// Returns `true` when the fill was performed.
+    /// Returns `true` when the bus performed the fill. Returning `false` indicates the
+    /// implementation chose not to handle the request and made no observable changes.
     ///
     /// The default implementation performs a byte-at-a-time fill and is correct
     /// but potentially slow.
@@ -222,7 +225,6 @@ pub trait CpuBus {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception>;
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
 }
-
 /// Identity-mapped memory bus used by unit tests.
 #[derive(Debug, Clone)]
 pub struct FlatTestBus {
@@ -367,7 +369,6 @@ impl CpuBus for FlatTestBus {
 
         Ok(true)
     }
-
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
