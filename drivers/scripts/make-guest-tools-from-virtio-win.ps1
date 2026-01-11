@@ -12,6 +12,11 @@ param(
 
   [string]$BuildId = "local",
 
+  # Driver signing / boot policy embedded in Guest Tools manifest.json.
+  #
+  # - testsigning: prompt to enable Test Signing on Win7 x64
+  # - nointegritychecks: prompt to disable signature enforcement on Win7 x64
+  # - none: do not prompt or change boot policy (for WHQL/production-signed drivers; default)
   [ValidateSet("none", "testsigning", "nointegritychecks")]
   [string]$SigningPolicy = "none",
 

@@ -110,6 +110,11 @@ Profiles:
 - `-Profile full` (default): includes optional virtio drivers when available (`vioinput`, `viosnd`)
 - `-Profile minimal`: storage + network only (`viostor`, `netkvm`)
 
+Signing policy:
+
+- Default is `-SigningPolicy none` (for WHQL/production-signed virtio-win drivers; no cert injection).
+- Override with `-SigningPolicy testsigning|nointegritychecks` for test-signed/custom-signed driver bundles.
+
 This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
 
 The Guest Tools ISO/zip root also includes `THIRD_PARTY_NOTICES.md` (sourced from

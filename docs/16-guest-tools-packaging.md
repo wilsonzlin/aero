@@ -220,6 +220,11 @@ Profiles:
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 
+Signing policy:
+
+- The wrapper defaults to `-SigningPolicy none` (appropriate for WHQL/production-signed virtio-win drivers).
+- If you are packaging test-signed/custom-signed drivers, override it (e.g. `-SigningPolicy testsigning`).
+
 ## Validation: required drivers + hardware IDs
 
 Before producing any output, the packager verifies that:

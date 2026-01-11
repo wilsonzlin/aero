@@ -69,6 +69,11 @@ Profiles:
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 
+Signing policy notes:
+
+- By default, the wrapper uses `-SigningPolicy none` (for WHQL/production-signed virtio-win drivers), so it does not require or inject any custom certs.
+- You can override this via `-SigningPolicy testsigning|nointegritychecks` when producing media for test-signed/custom-signed drivers.
+
 When built from a virtio-win ISO/root, the wrapper script also attempts to
 propagate upstream license/notice files into the packaged outputs under:
 
