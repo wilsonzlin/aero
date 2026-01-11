@@ -1,4 +1,4 @@
-#![cfg(feature = "aerogpu-exec")]
+#![cfg(feature = "aerogpu-webgpu")]
 
 mod common;
 
@@ -14,7 +14,7 @@ use emulator::devices::aerogpu_scanout::AeroGpuFormat as EmuFormat;
 use emulator::gpu_worker::aerogpu_executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
 };
-use emulator::gpu_worker::aerogpu_wgpu_backend::AerogpuWgpuBackend;
+use emulator::gpu_worker::aerogpu_webgpu_backend::WebgpuAeroGpuBackend;
 use memory::MemoryBus;
 
 #[derive(Clone, Debug)]
@@ -51,7 +51,7 @@ impl MemoryBus for VecMemory {
 
 #[test]
 fn webgpu_backend_copies_present_to_guest_scanout() {
-    let backend = match AerogpuWgpuBackend::new() {
+    let backend = match WebgpuAeroGpuBackend::new() {
         Ok(backend) => backend,
         Err(err) => {
             common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
