@@ -857,6 +857,22 @@ fn emit_item(
     tag: u8,
     data: &[u8],
 ) -> Result<(), HidDescriptorError> {
+    // USB HID encodes the report descriptor length as a u16 (wDescriptorLength in the HID
+    // descriptor), so we must never emit a descriptor longer than 65535 bytes. Enforce this as we
+    // build the byte stream to avoid allocating absurdly large buffers for malformed metadata.
+    let added = 1usize.saturating_add(data.len());
+    let next_len = out.len().checked_add(added).unwrap_or(usize::MAX);
+    if next_len > u16::MAX as usize {
+        return Err(HidDescriptorError::at(
+            "reportDescriptor",
+            format!(
+                "HID report descriptor length {} exceeds u16::MAX ({})",
+                next_len,
+                u16::MAX
+            ),
+        ));
+    }
+
     let size_code = match data.len() {
         0 => 0,
         1 => 1,
