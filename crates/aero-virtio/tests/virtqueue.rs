@@ -138,7 +138,10 @@ fn indirect_descriptor_len_not_multiple_of_16_is_rejected() {
     match popped {
         PoppedDescriptorChain::Invalid { head_index, error } => {
             assert_eq!(head_index, 0);
-            assert_eq!(error, VirtQueueError::IndirectDescriptorLenNotMultipleOf16 { len: 15 });
+            assert_eq!(
+                error,
+                VirtQueueError::IndirectDescriptorLenNotMultipleOf16 { len: 15 }
+            );
         }
         PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
     }
@@ -200,7 +203,15 @@ fn indirect_descriptor_table_too_large_is_rejected() {
     let indirect = 0x8000;
 
     // len/16 must fit in u16. 0x100000 bytes => 65536 descriptors, which is too large.
-    write_desc(&mut mem, desc, 0, indirect, 0x100000, VIRTQ_DESC_F_INDIRECT, 0);
+    write_desc(
+        &mut mem,
+        desc,
+        0,
+        indirect,
+        0x100000,
+        VIRTQ_DESC_F_INDIRECT,
+        0,
+    );
 
     write_u16_le(&mut mem, avail, 0).unwrap();
     write_u16_le(&mut mem, avail + 2, 1).unwrap();
