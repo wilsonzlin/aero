@@ -4509,8 +4509,13 @@ void AEROGPU_APIENTRY RotateResourceIdentities11Device(D3D11DDI_HDEVICE hDevice,
 
 HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS* pGetCaps) {
   AEROGPU_D3D10_11_LOG_CALL();
-  if (!pGetCaps || !pGetCaps->pData || pGetCaps->DataSize == 0) {
+  if (!pGetCaps) {
     return E_INVALIDARG;
+  }
+  if (!pGetCaps->pData || pGetCaps->DataSize == 0) {
+    // Be conservative and avoid failing the runtime during bring-up: treat
+    // missing/empty output buffers as a no-op query.
+    return S_OK;
   }
 
   const uint32_t type = static_cast<uint32_t>(pGetCaps->Type);
