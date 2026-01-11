@@ -468,7 +468,10 @@ export class WebUsbBackend {
           }
 
           const params = setupPacketToWebUsbParameters(action.setup);
-          const result = await this.device.controlTransferOut(params, ensureArrayBufferBacked(action.data));
+          const hasOutData = (action.setup.wLength & 0xffff) !== 0 || action.data.byteLength !== 0;
+          const result = hasOutData
+            ? await this.device.controlTransferOut(params, ensureArrayBufferBacked(action.data))
+            : await this.device.controlTransferOut(params);
           if (result.status === "ok") {
             return { kind: "controlOut", id: action.id, status: "success", bytesWritten: result.bytesWritten };
           }

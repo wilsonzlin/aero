@@ -336,6 +336,38 @@ describe("WebUsbBackend.execute controlOut translations", () => {
     });
   });
 
+  it("omits the data argument for zero-length controlTransferOut payloads", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: true, alternates: [], alternate: {} };
+      const config = { configurationValue: 1, interfaces: [iface1] };
+
+      const controlTransferOut = vi.fn<[USBControlTransferParameters, BufferSource?], Promise<USBOutTransferResult>>();
+      controlTransferOut.mockResolvedValueOnce({ status: "ok", bytesWritten: 0 });
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: config as unknown as USBConfiguration,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        controlTransferOut,
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({
+        kind: "controlOut",
+        id: 10,
+        setup: { bmRequestType: 0x40, bRequest: 0x01, wValue: 0x0000, wIndex: 0x0000, wLength: 0x0000 },
+        data: new Uint8Array(),
+      });
+
+      expect(controlTransferOut).toHaveBeenCalledTimes(1);
+      expect(controlTransferOut.mock.calls[0]?.length).toBe(1);
+      expect(res).toEqual({ kind: "controlOut", id: 10, status: "success", bytesWritten: 0 });
+    });
+  });
+
   it("translates CLEAR_FEATURE(ENDPOINT_HALT) into device.clearHalt", async () => {
     await withFakeNavigatorUsb(async () => {
       const iface1 = { interfaceNumber: 1, claimed: true, alternates: [], alternate: {} };
