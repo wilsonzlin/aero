@@ -672,6 +672,7 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 	if (t == NULL || t->CommonCfg == NULL || negotiated_out == NULL) {
 		return STATUS_INVALID_PARAMETER;
 	}
+	*negotiated_out = 0;
 
 	/* Contract requirement: modern device (VERSION_1). */
 	required |= VIRTIO_F_VERSION_1;
@@ -688,18 +689,22 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 
 	device_features = VirtioPciModernTransportReadDeviceFeatures(t);
 	if ((device_features & VIRTIO_F_VERSION_1) == 0) {
+		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
 		return STATUS_NOT_SUPPORTED;
 	}
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (device_features & indirect_desc) == 0) {
 		/* Contract v1 devices must offer INDIRECT_DESC. */
+		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
 		return STATUS_NOT_SUPPORTED;
 	}
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (device_features & forbidden) != 0) {
 		/* Contract v1 devices must not offer EVENT_IDX or PACKED ring. */
+		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	if ((required & ~device_features) != 0) {
+		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -709,6 +714,7 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 
 	VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FEATURES_OK);
 	if ((VirtioPciModernTransportGetStatus(t) & VIRTIO_STATUS_FEATURES_OK) == 0) {
+		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
 		return STATUS_NOT_SUPPORTED;
 	}
 

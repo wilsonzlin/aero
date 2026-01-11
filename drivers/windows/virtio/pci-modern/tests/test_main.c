@@ -661,6 +661,7 @@ static void TestNegotiateFeaturesOk(void)
 	assert((negotiated & ((UINT64)1u << 29)) == 0);
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
 	assert(dev.DriverFeatures == negotiated);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) == 0);
 	assert((VirtioPciModernTransportGetStatus(&t) & (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)) ==
 	       (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK));
 
@@ -686,6 +687,7 @@ static void TestNegotiateFeaturesRejectNoVersion1(void)
 	negotiated = 0;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -708,6 +710,7 @@ static void TestNegotiateFeaturesStrictRejectNoIndirectDesc(void)
 	negotiated = 0;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -731,6 +734,7 @@ static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
 	negotiated = 0;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 29, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -758,6 +762,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
 	assert(dev.DriverFeatures == negotiated);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) == 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -781,6 +786,7 @@ static void TestNegotiateFeaturesStrictRejectPackedRingOffered(void)
 	negotiated = 0;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 34, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -807,6 +813,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing(void)
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
 	assert(dev.DriverFeatures == negotiated);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) == 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
