@@ -36,7 +36,7 @@ on:
       # virtio-snd testing requires modern-only virtio-pci enumeration (disable-legacy=on, x-pci-revision=0x01).
       # Using the wav backend keeps the runner headless and produces an artifact for debugging regressions.
       with_virtio_snd:
-        description: Attach virtio-snd and require the guest virtio-snd playback selftest to PASS
+        description: Attach virtio-snd and require the guest virtio-snd playback + capture selftests to PASS
         required: false
         default: false
         type: boolean
@@ -261,13 +261,18 @@ jobs:
         run: |
           log_dir="out/win7-virtio-harness-logs"
           harness_log="${log_dir}/harness.log"
+          serial_log="${log_dir}/win7-virtio-serial.log"
 
           result_marker=""
           snd_marker=""
+          snd_capture_marker=""
           wav_marker=""
+          if [[ -f "${serial_log}" ]]; then
+            result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            snd_capture_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+          fi
           if [[ -f "${harness_log}" ]]; then
-            result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
-            snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
           fi
 
@@ -281,6 +286,9 @@ jobs:
             fi
             if [[ -n "${snd_marker}" ]]; then
               echo "- Guest virtio-snd marker: ${snd_marker}"
+            fi
+            if [[ -n "${snd_capture_marker}" ]]; then
+              echo "- Guest virtio-snd-capture marker: ${snd_capture_marker}"
             fi
             if [[ -n "${wav_marker}" ]]; then
               echo "- Host wav marker: ${wav_marker}"
