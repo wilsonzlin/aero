@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -7,25 +6,56 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
+function listMarkdownFiles() {
+  const out = [];
+  const skipDirs = new Set([
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    "test-results",
+    "coverage",
+  ]);
+
+  const stack = [repoRoot];
+  while (stack.length) {
+    const dir = stack.pop();
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const absPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (skipDirs.has(entry.name)) continue;
+        stack.push(absPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith(".md")) continue;
+      out.push(path.relative(repoRoot, absPath));
+    }
+  }
+
+  out.sort();
+  return out;
+}
+
 function discoverDocsContainingMarkers() {
-  const res = spawnSync("git", ["grep", "-l", "AERO_VIRTIO_SELFTEST|TEST|", "--", "*.md"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  if (res.error) {
-    throw new Error(`failed to run git grep: ${res.error}`);
+  const docs = [];
+  for (const relPath of listMarkdownFiles()) {
+    const absPath = path.join(repoRoot, relPath);
+    const contents = fs.readFileSync(absPath, "utf8");
+    if (contents.includes("AERO_VIRTIO_SELFTEST|TEST|")) {
+      docs.push(relPath);
+    }
   }
-  if (res.status !== 0 && res.status !== 1) {
-    throw new Error(`git grep failed (exit=${res.status})\n${res.stderr}`);
-  }
-  const docs = String(res.stdout || "")
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
+
   assert.ok(
     docs.length > 0,
     "expected at least one markdown doc to contain AERO_VIRTIO_SELFTEST markers; update this test if the marker prefix changes",
   );
+
   return docs;
 }
 
