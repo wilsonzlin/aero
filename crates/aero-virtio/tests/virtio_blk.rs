@@ -2,7 +2,9 @@ use aero_virtio::devices::blk::{
     BlockBackend, VirtioBlk, VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN,
     VIRTIO_BLK_T_OUT,
 };
-use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
+use aero_virtio::memory::{
+    read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
     VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
@@ -304,6 +306,8 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
         payload.as_slice()
     );
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    // Contract v1: used.len MUST be 0 for all virtio-blk completions.
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 
     // Read request: IN sector 1 into two write-only buffers.
     let data2 = 0xA000;
@@ -328,6 +332,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     let got = mem.get_slice(data2, payload.len()).unwrap();
     assert_eq!(got, payload.as_slice());
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(read_u32_le(&mem, USED_RING + 4 + 1 * 8 + 4).unwrap(), 0);
 
     // FLUSH request.
     mem.write(status, &[0xff]).unwrap();
@@ -339,6 +344,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     write_u16_le(&mut mem, AVAIL_RING + 2, 3).unwrap();
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(read_u32_le(&mem, USED_RING + 4 + 2 * 8 + 4).unwrap(), 0);
 
     // Unsupported request type should return UNSUPP.
     let id_buf = 0xB000;
@@ -353,6 +359,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     write_u16_le(&mut mem, AVAIL_RING + 2, 4).unwrap();
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_UNSUPP);
+    assert_eq!(read_u32_le(&mem, USED_RING + 4 + 3 * 8 + 4).unwrap(), 0);
 }
 
 #[test]
@@ -381,6 +388,7 @@ fn virtio_blk_flush_calls_backend_flush() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(flushes.get(), 1);
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
 
 #[test]
@@ -412,4 +420,5 @@ fn malformed_chains_return_ioerr_without_panicking() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 1);
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
