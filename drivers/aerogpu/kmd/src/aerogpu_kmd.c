@@ -1691,6 +1691,24 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         return STATUS_INVALID_PARAMETER;
     }
 
+    /*
+     * MVP restriction: shared resources must be single-allocation.
+     *
+     * Even though the create path rejects multi-allocation shared resources, be
+     * defensive here as well: older guests (or future driver changes) may try to
+     * open a shared resource that spans multiple allocations (mips/planes/etc).
+     * The current shared-surface protocol associates one share token with a
+     * single backing allocation, so fail deterministically instead of creating a
+     * partially-represented resource.
+     */
+    if (pOpen->NumAllocations != 1) {
+#if DBG
+        AEROGPU_LOG("OpenAllocation: rejecting shared resource with NumAllocations=%u (MVP supports only single-allocation shared surfaces)",
+                    (unsigned)pOpen->NumAllocations);
+#endif
+        return STATUS_NOT_SUPPORTED;
+    }
+
     NTSTATUS st = STATUS_SUCCESS;
 
     for (UINT i = 0; i < pOpen->NumAllocations; ++i) {
