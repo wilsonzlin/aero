@@ -245,6 +245,8 @@ On a clean Win7 SP1 VM:
    packaging\win7\verify_umd_registration.cmd dx11
    ```
 
+   > Note: on Win7 x64, `verify_umd_registration.cmd` automatically uses the `Sysnative` path when run from a 32-bit Command Prompt, so it can correctly check the real `System32\` directory (not the WOW64-redirected view).
+
 4. Confirm UMD DLL placement:
     - x64 VM:
       - `C:\Windows\System32\aerogpu_d3d9_x64.dll` exists
