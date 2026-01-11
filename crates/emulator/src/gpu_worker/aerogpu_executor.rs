@@ -367,13 +367,16 @@ impl AeroGpuExecutor {
             match self.cfg.fence_completion {
                 AeroGpuFenceCompletionMode::Immediate => {
                     let mut vsync_present = false;
+                    // Most submissions are regular render work; avoid scanning the command stream
+                    // unless the KMD marked this submission as containing a PRESENT.
+                    let wants_present = (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0;
                     let cmd_stream_ok = desc.cmd_gpa != 0
                         && desc.cmd_size_bytes != 0
                         && cmd_stream_header.is_some()
                         && !decode_errors
                             .iter()
                             .any(|e| matches!(e, AeroGpuSubmissionDecodeError::CmdStream(_)));
-                    if cmd_stream_ok {
+                    if wants_present && cmd_stream_ok {
                         match cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes) {
                             Ok(vsync) => vsync_present = vsync,
                             Err(_) => {
