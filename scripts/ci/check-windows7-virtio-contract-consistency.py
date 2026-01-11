@@ -71,6 +71,8 @@ AERO_VIRTIO_PCI_IDENTITY_HEADER = REPO_ROOT / "drivers/win7/virtio/virtio-core/p
 AERO_VIRTIO_BLK_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio/blk/include/aerovblk.h"
 AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio/net/include/aerovnet.h"
 AERO_VIRTIO_INPUT_DRIVER_HEADER = REPO_ROOT / "drivers/windows/virtio-input/src/virtio_input.h"
+AERO_VIRTIO_PCI_MODERN_TRANSPORT_H = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
+AERO_VIRTIO_PCI_MODERN_TRANSPORT_C = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
 
 
 def fail(message: str) -> None:
@@ -111,6 +113,121 @@ def parse_c_define_hex(text: str, name: str, *, file: Path) -> int | None:
         return int(m.group("hex"), 16)
     except ValueError:
         fail(f"{file.as_posix()}: invalid hex literal in #define {name}")
+
+
+@dataclass(frozen=True)
+class VirtioPciModernLayout:
+    bar0_required_size: int
+    common_offset: int
+    common_len: int
+    notify_offset: int
+    notify_len: int
+    isr_offset: int
+    isr_len: int
+    device_offset: int
+    device_len: int
+    notify_off_multiplier: int
+
+
+def parse_contract_fixed_mmio_layout(md: str) -> VirtioPciModernLayout:
+    # BAR0 size is described in §1.2.
+    m = re.search(r"^\s*-\s+\*\*BAR0:\*\*.*?size\s+\*\*(?P<size>0x[0-9A-Fa-f]+)\s+bytes\*\*", md, flags=re.M)
+    if not m:
+        fail(f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: could not parse BAR0 size in §1.2")
+    bar0_size = int(m.group("size"), 16)
+
+    # Offsets/lengths are fixed in §1.4.
+    section = _extract_section(
+        md,
+        start=r"^###\s+1\.4\s+Fixed MMIO layout used by all Aero virtio devices",
+        end=r"^###\s+1\.5\s+",
+        file=W7_VIRTIO_CONTRACT_MD,
+        what="section 1.4 (fixed MMIO layout)",
+    )
+
+    layout: dict[int, tuple[int, int]] = {}
+    for row in re.finditer(
+        r"^\|\s*(?P<label>[^|]+?)\s*\|\s*(?P<cfg_type>\d+)\s*\|\s*(?P<bar>\d+)\s*\|\s*`(?P<offset>0x[0-9A-Fa-f]+)`\s*\|\s*`(?P<len>0x[0-9A-Fa-f]+)`\s*\|",
+        section,
+        flags=re.M,
+    ):
+        cfg_type = int(row.group("cfg_type"))
+        bar = int(row.group("bar"))
+        if bar != 0:
+            fail(
+                f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: expected BAR=0 for virtio-pci modern caps in §1.4, got {bar} for cfg_type={cfg_type}"
+            )
+        layout[cfg_type] = (int(row.group("offset"), 16), int(row.group("len"), 16))
+
+    missing = [cfg for cfg in (1, 2, 3, 4) if cfg not in layout]
+    if missing:
+        fail(
+            format_error(
+                f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: could not parse all required virtio cap rows from §1.4 table:",
+                [f"missing cfg_type: {cfg}" for cfg in missing],
+            )
+        )
+
+    # notify_off_multiplier is described in §1.6.
+    m = re.search(r"notify_off_multiplier\s*=\s*(?P<mul>\d+)", md, flags=re.I)
+    if not m:
+        fail(f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: could not parse notify_off_multiplier from §1.6")
+    notify_mul = int(m.group("mul"))
+
+    return VirtioPciModernLayout(
+        bar0_required_size=bar0_size,
+        common_offset=layout[1][0],
+        common_len=layout[1][1],
+        notify_offset=layout[2][0],
+        notify_len=layout[2][1],
+        isr_offset=layout[3][0],
+        isr_len=layout[3][1],
+        device_offset=layout[4][0],
+        device_len=layout[4][1],
+        notify_off_multiplier=notify_mul,
+    )
+
+
+def parse_driver_virtio_pci_modern_layout(*, contract_major: int) -> VirtioPciModernLayout:
+    del contract_major  # reserved for future multi-version layout checks
+
+    header_text = read_text(AERO_VIRTIO_PCI_MODERN_TRANSPORT_H)
+    bar0_required = parse_c_define_hex(
+        header_text,
+        "VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN",
+        file=AERO_VIRTIO_PCI_MODERN_TRANSPORT_H,
+    )
+    if bar0_required is None:
+        fail(
+            f"{AERO_VIRTIO_PCI_MODERN_TRANSPORT_H.as_posix()}: missing VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN"
+        )
+
+    src = read_text(AERO_VIRTIO_PCI_MODERN_TRANSPORT_C)
+
+    def enum_hex(name: str) -> int:
+        m = re.search(rf"\b{re.escape(name)}\s*=\s*(?P<hex>0x[0-9A-Fa-f]+)", src)
+        if not m:
+            fail(f"{AERO_VIRTIO_PCI_MODERN_TRANSPORT_C.as_posix()}: missing enum constant {name}")
+        return int(m.group("hex"), 16)
+
+    def enum_dec(name: str) -> int:
+        m = re.search(rf"\b{re.escape(name)}\s*=\s*(?P<dec>\d+)", src)
+        if not m:
+            fail(f"{AERO_VIRTIO_PCI_MODERN_TRANSPORT_C.as_posix()}: missing enum constant {name}")
+        return int(m.group("dec"), 10)
+
+    return VirtioPciModernLayout(
+        bar0_required_size=bar0_required,
+        common_offset=enum_hex("AERO_W7_VIRTIO_COMMON_OFF"),
+        common_len=enum_hex("AERO_W7_VIRTIO_COMMON_MIN_LEN"),
+        notify_offset=enum_hex("AERO_W7_VIRTIO_NOTIFY_OFF"),
+        notify_len=enum_hex("AERO_W7_VIRTIO_NOTIFY_MIN_LEN"),
+        isr_offset=enum_hex("AERO_W7_VIRTIO_ISR_OFF"),
+        isr_len=enum_hex("AERO_W7_VIRTIO_ISR_MIN_LEN"),
+        device_offset=enum_hex("AERO_W7_VIRTIO_DEVICE_OFF"),
+        device_len=enum_hex("AERO_W7_VIRTIO_DEVICE_MIN_LEN"),
+        notify_off_multiplier=enum_dec("AERO_W7_VIRTIO_NOTIFY_MULTIPLIER"),
+    )
 
 
 def parse_hex(value: str) -> int:
@@ -1550,6 +1667,31 @@ def main() -> None:
                             ],
                         )
                     )
+    contract_mmio = parse_contract_fixed_mmio_layout(w7_md)
+    driver_mmio = parse_driver_virtio_pci_modern_layout(contract_major=contract_major)
+    if contract_mmio != driver_mmio:
+        diffs: list[str] = []
+        for field in contract_mmio.__dataclass_fields__:
+            a = getattr(contract_mmio, field)
+            b = getattr(driver_mmio, field)
+            if a == b:
+                continue
+            if field == "notify_off_multiplier":
+                diffs.append(f"{field}: contract={a} driver={b}")
+            else:
+                diffs.append(f"{field}: contract=0x{a:04X} driver=0x{b:04X}")
+
+        errors.append(
+            format_error(
+                "virtio-pci modern fixed MMIO layout mismatch between contract and Windows transport:",
+                [
+                    f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: §1.2/§1.4/§1.6",
+                    f"{AERO_VIRTIO_PCI_MODERN_TRANSPORT_H.as_posix()}",
+                    f"{AERO_VIRTIO_PCI_MODERN_TRANSPORT_C.as_posix()}",
+                    *diffs,
+                ],
+            )
+        )
 
     # ---------------------------------------------------------------------
     # 3) Feature bit guardrails: docs must agree on Win7 contract v1 ring features.

@@ -24,6 +24,8 @@ on:
       - "drivers/windows7/virtio/net/include/aerovnet.h"
       - "drivers/windows/virtio-input/src/virtio_input.h"
       - "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
+      - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
+      - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
       - ".github/workflows/docs.yml"
   push:
     branches: ["main"]
@@ -49,6 +51,8 @@ on:
       - "drivers/windows7/virtio/net/include/aerovnet.h"
       - "drivers/windows/virtio-input/src/virtio_input.h"
       - "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
+      - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
+      - "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
