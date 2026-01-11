@@ -17,6 +17,8 @@ This doc is intentionally biased toward a **safe skeleton**:
 
 > Related bring-up doc: `docs/graphics/win7-d3d10-11-umd-minimal.md` (conceptual bring-up plan and minimal feature set).
 >
+> Callback/fence symbol-name reference (Win7 WDK): `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
+>
 > Repo pointers (AeroGPU implementation):
 > * UMD code: `drivers/aerogpu/umd/d3d10_11/`
 > * Win7 D3D11 guest tests referenced below:
