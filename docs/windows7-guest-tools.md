@@ -9,7 +9,7 @@ If you are building from source / working on a PR, the GitHub Actions workflow
 
 - `aero-guest-tools.iso`
 - `aero-guest-tools.zip`
-- `manifest.json`
+- `aero-guest-tools.manifest.json` (a copy of the `manifest.json` inside the ISO/zip; includes build metadata and SHA-256 hashes)
 
 ## Quick start (overview)
 
