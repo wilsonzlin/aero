@@ -250,6 +250,123 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	// Production policy denies 127.0.0.0/8 by default.
+	p := policy.NewProductionDestinationPolicy()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, p)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("hello"),
+	}
+	pkt, err := udpproto.EncodeV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(wsUDPMetricDroppedByPolicy) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedByPolicy)
+}
+
+func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+
+		MaxUDPPpsPerSession: 1,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, clk)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("hello"),
+	}
+	pkt, err := udpproto.EncodeV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+
+	// First datagram is allowed.
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage #1: %v", err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = c.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage #1: %v", err)
+	}
+
+	// Second datagram at the same fake clock timestamp should be dropped.
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage #2: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(wsUDPMetricDroppedByRate) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedByRate)
+}
+
 func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeAPIKey,
