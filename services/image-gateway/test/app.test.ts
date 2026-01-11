@@ -233,6 +233,10 @@ describe("app", () => {
     expect(getObjectCalls).toBe(0);
     expect(res.statusCode).toBe(412);
     expect(res.headers["etag"]).toBe('"etag-current"');
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["access-control-expose-headers"]).toContain("etag");
     expect(res.json()).toMatchObject({
       error: { code: "PRECONDITION_FAILED" },

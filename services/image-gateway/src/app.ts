@@ -53,13 +53,25 @@ function normalizeEtag(etag: string): string {
   return `"${trimmed.replace(/"/g, "")}"`;
 }
 
-function sendIfRangePreconditionFailed(reply: FastifyReply, etag: string): void {
-  reply.status(412).header("etag", normalizeEtag(etag)).send({
-    error: {
-      code: "PRECONDITION_FAILED",
-      message: "If-Range does not match current ETag",
-    },
-  });
+function sendIfRangePreconditionFailed(
+  reply: FastifyReply,
+  params: { etag: string; crossOriginResourcePolicy: Config["crossOriginResourcePolicy"] }
+): void {
+  reply
+    .status(412)
+    .headers(
+      buildRangeProxyHeaders({
+        contentType: "application/json",
+        crossOriginResourcePolicy: params.crossOriginResourcePolicy,
+      })
+    )
+    .header("etag", normalizeEtag(params.etag))
+    .send({
+      error: {
+        code: "PRECONDITION_FAILED",
+        message: "If-Range does not match current ETag",
+      },
+    });
 }
 
 function requireImage(store: ImageStore, imageId: string): ImageRecord {
@@ -914,7 +926,10 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
       const normalizedCurrentEtag = normalizeEtag(currentEtag);
       if (normalizedIfRange !== normalizedCurrentEtag) {
-        sendIfRangePreconditionFailed(reply, normalizedCurrentEtag);
+        sendIfRangePreconditionFailed(reply, {
+          etag: normalizedCurrentEtag,
+          crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+        });
         return;
       }
 
@@ -965,16 +980,29 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
           const etagToReturn = currentEtag ?? record.etag;
           if (etagToReturn) {
-            sendIfRangePreconditionFailed(reply, etagToReturn);
+            sendIfRangePreconditionFailed(reply, {
+              etag: etagToReturn,
+              crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+            });
             return;
           }
 
           // We couldn't get a validator, but we still must not stream the full object.
-          throw new ApiError(
-            412,
-            "If-Range precondition failed but no ETag is available",
-            "PRECONDITION_FAILED"
-          );
+          reply
+            .status(412)
+            .headers(
+              buildRangeProxyHeaders({
+                contentType: "application/json",
+                crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+              })
+            )
+            .send({
+              error: {
+                code: "PRECONDITION_FAILED",
+                message: "If-Range precondition failed but no ETag is available",
+              },
+            });
+          return;
         }
         if (maybeStatus === 416) {
           const totalSize = record.size;
