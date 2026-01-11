@@ -283,27 +283,39 @@ try {
     $isoHash = (Get-FileHash -Algorithm SHA256 -Path $isoPath).Hash.ToLowerInvariant()
     $mountCmd = Get-Command "Mount-DiskImage" -ErrorAction SilentlyContinue
     if ($mountCmd) {
-      $img = Mount-DiskImage -ImagePath $isoPath -PassThru
-      $mounted = $true
-      # Drive letter assignment can be asynchronous on some hosts; poll briefly before failing.
-      $vol = $null
-      for ($i = 0; $i -lt 20; $i++) {
-        $vols = $img | Get-Volume -ErrorAction SilentlyContinue
-        $vol = $vols | Where-Object { $_.DriveLetter } | Select-Object -First 1
-        if ($vol) { break }
-        Start-Sleep -Milliseconds 200
+      try {
+        $img = Mount-DiskImage -ImagePath $isoPath -PassThru
+        $mounted = $true
+        # Drive letter assignment can be asynchronous on some hosts; poll briefly before failing.
+        $vol = $null
+        for ($i = 0; $i -lt 20; $i++) {
+          $vols = $img | Get-Volume -ErrorAction SilentlyContinue
+          $vol = $vols | Where-Object { $_.DriveLetter } | Select-Object -First 1
+          if ($vol) { break }
+          Start-Sleep -Milliseconds 200
+        }
+        if (-not $vol -or -not $vol.DriveLetter) {
+          throw "Mounted virtio-win ISO has no drive letter assigned: $isoPath"
+        }
+        $isoVolumeLabel = $vol.FileSystemLabel
+        $VirtioWinRoot = "$($vol.DriveLetter):\"
+      } catch {
+        # Some hosts (or restricted Windows environments) may expose Mount-DiskImage but
+        # fail to mount. Fall back to the cross-platform extractor when possible.
+        Write-Warning "Mount-DiskImage failed ($($_.Exception.Message)); falling back to the virtio-win extractor."
+        if ($mounted -and $null -ne $isoPath) {
+          Dismount-DiskImage -ImagePath $isoPath | Out-Null
+          $mounted = $false
+        }
+        $mountCmd = $null
       }
-      if (-not $vol -or -not $vol.DriveLetter) {
-        throw "Mounted virtio-win ISO has no drive letter assigned: $isoPath"
-      }
-      $isoVolumeLabel = $vol.FileSystemLabel
-      $VirtioWinRoot = "$($vol.DriveLetter):\"
-    } else {
-      # Non-Windows hosts (and some minimal Windows installs) don't have Mount-DiskImage.
-      # Fall back to the cross-platform extractor.
+    }
+    if (-not $mountCmd) {
+      # Non-Windows hosts (and some minimal/restricted Windows installs) don't have Mount-DiskImage
+      # available (or it may fail to mount). Fall back to the cross-platform extractor.
       $python = Resolve-Python
       if (-not $python) {
-        throw "Mount-DiskImage is not available and Python was not found on PATH. Install Python 3 and re-run, or extract manually and use -VirtioWinRoot."
+        throw "Mount-DiskImage is unavailable or failed, and Python was not found on PATH. Install Python 3 and re-run, or extract manually and use -VirtioWinRoot."
       }
       $repoRoot = Resolve-RepoRoot
       $extractor = Join-Path (Join-Path (Join-Path $repoRoot "tools") "virtio-win") "extract.py"
@@ -315,7 +327,7 @@ try {
       New-Item -ItemType Directory -Path $extractTempDir -Force | Out-Null
       $VirtioWinRoot = Join-Path $extractTempDir "virtio-win-root"
 
-      Write-Host "Mount-DiskImage not available; extracting virtio-win ISO using $extractor..."
+      Write-Host "Extracting virtio-win ISO using $extractor..."
       & $python $extractor --virtio-win-iso $isoPath --out-root $VirtioWinRoot
       if ($LASTEXITCODE -ne 0) {
         throw "virtio-win extractor failed (exit $LASTEXITCODE)."
