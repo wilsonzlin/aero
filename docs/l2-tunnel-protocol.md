@@ -20,6 +20,9 @@ The goals are:
 - bounded message sizes (DoS resistance),
 - transport-independence (same framing over WS and WebRTC).
 
+Canonical cross-implementation protocol vectors (Rust + TypeScript) live in
+[`protocol-vectors/l2-tunnel-v1.json`](../protocol-vectors/l2-tunnel-v1.json).
+
 ---
 
 ## Endpoint + negotiation

@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "magic": 162,
+  "version": 3,
+  "flags": 0,
+  "vectors": [
+    {
+      "name": "frame_ethernet_ipv4_header",
+      "type": 0,
+      "flags": 0,
+      "payload_b64": "////////ABEiM0RVCABFAAAUAAEAAEARAADAAAIBwAACAg==",
+      "frame_b64": "ogMAAP///////wARIjNEVQgARQAAFAABAABAEQAAwAACAcAAAgI="
+    },
+    {
+      "name": "ping_u64be_12345",
+      "type": 1,
+      "flags": 0,
+      "payload_b64": "AAAAAAAAMDk=",
+      "frame_b64": "ogMBAAAAAAAAADA5"
+    },
+    {
+      "name": "pong_u64be_12345",
+      "type": 2,
+      "flags": 0,
+      "payload_b64": "AAAAAAAAMDk=",
+      "frame_b64": "ogMCAAAAAAAAADA5"
+    },
+    {
+      "name": "error_structured_code3_bad",
+      "type": 127,
+      "flags": 0,
+      "code": 3,
+      "message": "bad",
+      "payload_b64": "AAMAA2JhZA==",
+      "frame_b64": "ogN/AAADAANiYWQ="
+    }
+  ]
+}

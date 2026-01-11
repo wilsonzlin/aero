@@ -19,6 +19,7 @@ break CI by failing a vector test.
 
 - `udp-relay.json` — WebRTC DataChannel / WebSocket `/udp` UDP relay framing (v1 + v2).
 - `tcp-mux-v1.json` — `aero-tcp-mux-v1` WebSocket multiplexed TCP framing.
+- `l2-tunnel-v1.json` — `aero-l2-tunnel-v1` L2 tunnel framing (FRAME/PING/PONG/ERROR).
 
 ## Updating vectors
 
@@ -27,4 +28,3 @@ break CI by failing a vector test.
    - TCP mux: `docs/backend/01-aero-gateway-api.md`
 2. Regenerate or edit the vectors to match the new canonical bytes.
 3. Run the conformance tests in all implementations (Go + npm workspaces) until green.
-

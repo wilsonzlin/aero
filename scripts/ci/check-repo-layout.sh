@@ -28,6 +28,7 @@ need_file "docs/adr/0001-repo-layout.md"
 need_file "protocol-vectors/README.md"
 need_file "protocol-vectors/udp-relay.json"
 need_file "protocol-vectors/tcp-mux-v1.json"
+need_file "protocol-vectors/l2-tunnel-v1.json"
 
 # Guardrail: avoid reintroducing a second, competing "canonical" vectors directory.
 if [[ -d "tests/protocol-vectors" ]]; then
