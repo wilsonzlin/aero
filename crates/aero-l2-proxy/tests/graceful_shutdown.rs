@@ -17,6 +17,7 @@ fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
         l2_max_control_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
         shutdown_grace,
         ping_interval: None,
+        idle_timeout: None,
         tcp_connect_timeout: Duration::from_millis(200),
         tcp_send_buffer: 8,
         ws_send_buffer: 8,

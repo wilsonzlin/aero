@@ -160,14 +160,13 @@ fn ws_message_len(msg: &Message) -> u64 {
     }
 }
 
-async fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
+fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
     const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
     let _ = ws_out_tx
-        .send(Message::Close(Some(CloseFrame {
+        .try_send(Message::Close(Some(CloseFrame {
             code: CLOSE_CODE_POLICY_VIOLATION,
             reason: Cow::Borrowed(reason),
-        })))
-        .await;
+        })));
 }
 
 async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
@@ -302,6 +301,15 @@ async fn run_session_inner(
     let mut next_ping_id: u64 = 1;
     let mut ping_outstanding: Option<(u64, tokio::time::Instant)> = None;
 
+    // Optional server-side liveness cleanup. This uses inbound activity only so that abandoned
+    // tunnels don't linger indefinitely even if outbound sends remain possible.
+    let idle_timeout_enabled = state.cfg.idle_timeout.is_some();
+    let idle_timeout_duration = state
+        .cfg
+        .idle_timeout
+        .unwrap_or_else(|| Duration::from_secs(3600));
+    let mut last_inbound_activity = tokio::time::Instant::now();
+
     loop {
         if *shutdown_rx.borrow() {
             close_shutting_down(&ws_out_tx).await;
@@ -312,6 +320,12 @@ async fn run_session_inner(
             biased;
             _ = shutdown_rx.changed() => {
                 close_shutting_down(&ws_out_tx).await;
+                break;
+            }
+            _ = tokio::time::sleep_until(last_inbound_activity + idle_timeout_duration), if idle_timeout_enabled => {
+                state.metrics.idle_timeout_closed();
+                tracing::warn!(reason = "idle_timeout", "closing idle session");
+                close_policy_violation(&ws_out_tx, "idle timeout");
                 break;
             }
             _ = ping_interval.tick(), if ping_enabled => {
@@ -335,7 +349,7 @@ async fn run_session_inner(
                         if let Err(exceeded) =
                             send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
                         {
-                            close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                            close_policy_violation(&ws_out_tx, exceeded.reason());
                             break;
                         }
                         ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
@@ -351,9 +365,11 @@ async fn run_session_inner(
                 };
 
                 if let Some(exceeded) = quotas.on_inbound_message(&msg) {
-                    close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                    close_policy_violation(&ws_out_tx, exceeded.reason());
                     break;
                 }
+
+                last_inbound_activity = tokio::time::Instant::now();
 
                 match msg {
                     Message::Binary(data) => {
@@ -404,7 +420,7 @@ async fn run_session_inner(
                                             if let Err(exceeded) =
                                                 send_ws_message(&ws_out_tx, Message::Binary(pong), &mut quotas).await
                                             {
-                                                close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                                                close_policy_violation(&ws_out_tx, exceeded.reason());
                                                 break;
                                             }
                                         }
@@ -451,12 +467,12 @@ async fn run_session_inner(
                                     payload,
                                     &state.l2_limits,
                                 ) {
-                                    if let Err(exceeded) =
-                                        send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
-                                    {
-                                        close_policy_violation(&ws_out_tx, exceeded.reason()).await;
-                                    }
-                                }
+                                     if let Err(exceeded) =
+                                         send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
+                                     {
+                                         close_policy_violation(&ws_out_tx, exceeded.reason());
+                                     }
+                                 }
 
                                 consecutive_protocol_errors = consecutive_protocol_errors.saturating_add(1);
                                 if consecutive_protocol_errors >= MAX_CONSECUTIVE_PROTOCOL_ERRORS {
@@ -470,7 +486,7 @@ async fn run_session_inner(
                         if let Err(exceeded) =
                             send_ws_message(&ws_out_tx, Message::Pong(payload), &mut quotas).await
                         {
-                            close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                            close_policy_violation(&ws_out_tx, exceeded.reason());
                             break;
                         }
                     }
@@ -635,7 +651,7 @@ async fn process_actions(
                 if let Err(exceeded) =
                     send_ws_message(ws_out_tx, Message::Binary(wire), quotas).await
                 {
-                    close_policy_violation(ws_out_tx, exceeded.reason()).await;
+                    close_policy_violation(ws_out_tx, exceeded.reason());
                     return Ok(SessionControl::Close);
                 }
                 state.metrics.frame_tx(frame.len());

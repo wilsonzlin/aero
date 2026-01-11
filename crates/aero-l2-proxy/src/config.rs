@@ -339,6 +339,10 @@ pub struct ProxyConfig {
     /// disabled by default; clients may still implement their own keepalive.
     pub ping_interval: Option<Duration>,
 
+    /// Close the tunnel if no inbound messages are received for this duration. Disabled by
+    /// default.
+    pub idle_timeout: Option<Duration>,
+
     pub tcp_connect_timeout: Duration,
     pub tcp_send_buffer: usize,
     pub ws_send_buffer: usize,
@@ -392,6 +396,12 @@ impl ProxyConfig {
             .unwrap_or(aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD);
 
         let ping_interval = std::env::var("AERO_L2_PING_INTERVAL_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .map(Duration::from_millis);
+
+        let idle_timeout = std::env::var("AERO_L2_IDLE_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|v| *v > 0)
@@ -475,6 +485,7 @@ impl ProxyConfig {
             l2_max_control_payload,
             shutdown_grace,
             ping_interval,
+            idle_timeout,
             tcp_connect_timeout,
             tcp_send_buffer,
             ws_send_buffer,

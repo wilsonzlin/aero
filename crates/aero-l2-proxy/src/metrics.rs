@@ -17,6 +17,7 @@ struct MetricsInner {
     // Sessions
     sessions_active: AtomicU64,
     sessions_total: AtomicU64,
+    idle_timeouts_total: AtomicU64,
 
     // Upgrade rejections
     upgrade_reject_origin_missing_total: AtomicU64,
@@ -69,6 +70,7 @@ impl Metrics {
                 upgrade_rejected_total: AtomicU64::new(0),
                 sessions_active: AtomicU64::new(0),
                 sessions_total: AtomicU64::new(0),
+                idle_timeouts_total: AtomicU64::new(0),
                 upgrade_reject_origin_missing_total: AtomicU64::new(0),
                 upgrade_reject_origin_not_allowed_total: AtomicU64::new(0),
                 upgrade_reject_host_missing_total: AtomicU64::new(0),
@@ -192,6 +194,12 @@ impl Metrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn idle_timeout_closed(&self) {
+        self.inner
+            .idle_timeouts_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn tcp_conn_opened(&self) {
         self.inner.tcp_conns_active.fetch_add(1, Ordering::Relaxed);
     }
@@ -287,6 +295,7 @@ impl Metrics {
         let upgrade_rejected_total = self.inner.upgrade_rejected_total.load(Ordering::Relaxed);
         let sessions_active = self.inner.sessions_active.load(Ordering::Relaxed);
         let sessions_total = self.inner.sessions_total.load(Ordering::Relaxed);
+        let idle_timeouts_total = self.inner.idle_timeouts_total.load(Ordering::Relaxed);
         let upgrade_reject_origin_missing_total = self
             .inner
             .upgrade_reject_origin_missing_total
@@ -354,6 +363,7 @@ impl Metrics {
 
         push_gauge(&mut out, "l2_sessions_active", sessions_active);
         push_counter(&mut out, "l2_sessions_total", sessions_total);
+        push_counter(&mut out, "aero_l2_idle_timeouts_total", idle_timeouts_total);
 
         push_counter(
             &mut out,
