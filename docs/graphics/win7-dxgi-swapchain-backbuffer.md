@@ -66,6 +66,28 @@ To identify *which* `CreateResource` calls are swapchain backbuffers:
 1. Find the handles printed by `RotateResourceIdentities`.
 2. Match those handles to the immediately preceding `CreateResource => created tex2d handle=...` lines.
 
+### Capturing KMD-facing allocation flags (optional but recommended)
+
+To understand which **WDDM allocation flags** are required for `Present` stability, capture what
+dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
+
+`drivers/aerogpu/kmd/src/aerogpu_kmd.c` supports additional DBG logging when built with:
+
+* `AEROGPU_KMD_TRACE_CREATEALLOCATION=1`
+
+When enabled, the miniport logs the first few `CreateAllocation` calls and includes both:
+
+* the **incoming** `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime, and
+* the **final** flags after AeroGPU applies its required bits (currently `CpuVisible` + `Aperture`).
+
+Look for log lines like:
+
+```
+aerogpu-kmd: CreateAllocation: alloc_id=... flags=0x12345678->0x1234D678
+```
+
+These are easiest to capture under WinDbg (kernel debug) or any setup that collects `DbgPrintEx`.
+
 ## Backbuffer allocation recipe (Win7 / WDDM 1.1)
 
 The backbuffer “recipe” should be derived directly from the `CreateResource` trace lines, but the stable *invariants* that the allocation logic should enforce are:

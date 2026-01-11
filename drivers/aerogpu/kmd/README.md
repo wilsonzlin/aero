@@ -217,6 +217,17 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 2. Enable debug print filtering as needed.
 3. Look for messages prefixed with `aerogpu-kmd:`.
 
+### Optional tracing: `DxgkDdiCreateAllocation` flags
+
+DXGI swapchain backbuffers are often non-shared, single-allocation resources, so they may not show up in the default
+CreateAllocation debug logging. For bring-up/debugging you can enable a more verbose CreateAllocation trace by building
+with:
+
+* `AEROGPU_KMD_TRACE_CREATEALLOCATION=1`
+
+This logs the first handful of `DxgkDdiCreateAllocation` calls and prints `DXGK_ALLOCATIONINFO::Flags.Value` both before
+and after the KMD applies its required bits (currently `CpuVisible` + `Aperture`).
+
 ## Escape channel
 
 `DxgkDdiEscape` supports bring-up/debug queries. The stable Escape packet header/common ops

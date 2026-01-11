@@ -14,6 +14,19 @@
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 
 /*
+ * Optional CreateAllocation tracing.
+ *
+ * DXGI swapchain backbuffers are typically "normal" non-shared, single-allocation
+ * resources, so the default CreateAllocation logging (shared or multi-allocation
+ * only) may miss them. Define this to 1 in a DBG build to log the first handful
+ * of CreateAllocation calls and capture the exact DXGK_ALLOCATIONINFO::Flags
+ * values Win7's DXGI/D3D runtime requests for backbuffers.
+ */
+#ifndef AEROGPU_KMD_TRACE_CREATEALLOCATION
+#define AEROGPU_KMD_TRACE_CREATEALLOCATION 0
+#endif
+
+/*
  * WDDM miniport entrypoint from dxgkrnl.
  *
  * The WDK import library provides the symbol, but it is declared here to avoid
@@ -2006,9 +2019,9 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
      * behavior (notably DWM redirected surfaces) and to aid bring-up debugging.
      *
      * Guard + rate-limit to avoid excessive DbgPrint spam in hot paths.
-     */
+      */
     {
-        const BOOLEAN interesting = isShared || (pCreate->NumAllocations != 1);
+        const BOOLEAN interesting = (AEROGPU_KMD_TRACE_CREATEALLOCATION != 0) || isShared || (pCreate->NumAllocations != 1);
         if (interesting) {
             enum { kLogLimit = 64 };
             static LONG s_logCount = 0;
@@ -2022,7 +2035,13 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
                 for (UINT i = 0; i < pCreate->NumAllocations; ++i) {
                     const DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
-                    AEROGPU_LOG("  alloc[%u]: Size=%Iu", (unsigned)i, info->Size);
+                    AEROGPU_LOG("  alloc[%u]: Size=%Iu Alignment=%Iu Flags=0x%08X PrivSize=%u Priv=%p",
+                                (unsigned)i,
+                                info->Size,
+                                info->Alignment,
+                                (unsigned)info->Flags.Value,
+                                (unsigned)info->PrivateDriverDataSize,
+                                info->pPrivateDriverData);
                 }
             } else if (n == (kLogLimit + 1)) {
                 AEROGPU_LOG0("CreateAllocation: log limit reached; suppressing further messages");
@@ -2052,6 +2071,13 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
     for (i = 0; i < pCreate->NumAllocations; ++i) {
         DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
         info->hAllocation = NULL;
+
+#if DBG
+        ULONG preFlags = 0;
+        if (logCall) {
+            preFlags = info->Flags.Value;
+        }
+#endif
 
         ULONG allocId = 0;
         ULONGLONG shareToken = 0;
@@ -2151,11 +2177,13 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
 #if DBG
         if (logCall) {
-            AEROGPU_LOG("CreateAllocation: alloc_id=%lu shared=%lu share_token=0x%I64x size=%Iu",
+            AEROGPU_LOG("CreateAllocation: alloc_id=%lu shared=%lu share_token=0x%I64x size=%Iu flags=0x%08X->0x%08X",
                         alloc->AllocationId,
                         isShared ? 1ul : 0ul,
                         alloc->ShareToken,
-                        alloc->SizeBytes);
+                        alloc->SizeBytes,
+                        (unsigned)preFlags,
+                        (unsigned)info->Flags.Value);
         }
 #endif
     }
