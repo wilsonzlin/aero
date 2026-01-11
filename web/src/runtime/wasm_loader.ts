@@ -91,7 +91,7 @@ export interface WasmApi {
     WebUsbUhciPassthroughHarness?: new () => {
         tick(): void;
         drain_actions(): unknown;
-        push_completion(completion: unknown): void;
+        push_completion(completion: UsbHostCompletion): void;
         free(): void;
     };
 
