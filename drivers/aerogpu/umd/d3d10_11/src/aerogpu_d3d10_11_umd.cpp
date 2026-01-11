@@ -6882,7 +6882,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     return S_OK;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   // Win7 WDK build: Map via LockCb/UnlockCb when a runtime-managed allocation exists.
   if (res->wddm_allocation && dev->callbacks && dev->callbacks->pfnLockCb && dev->callbacks->pfnUnlockCb) {
     D3DDDICB_LOCK lock = {};
