@@ -1023,6 +1023,45 @@ fn protocol_rejects_truncated_variable_payload() {
 }
 
 #[test]
+fn protocol_rejects_truncated_set_samplers_payload() {
+    let stream = build_stream(|out| {
+        // SET_SAMPLERS with sampler_count=2, but only 1 handle follows.
+        emit_packet(out, AeroGpuOpcode::SetSamplers as u32, |out| {
+            push_u32(out, 1); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 2); // sampler_count (claims 2)
+            push_u32(out, 0); // reserved0
+            push_u32(out, 0x55); // handles[0] (missing handles[1])
+        });
+    });
+
+    let err = parse_cmd_stream(&stream).unwrap_err();
+    assert!(matches!(err, AeroGpuCmdStreamParseError::BufferTooSmall));
+}
+
+#[test]
+fn protocol_rejects_truncated_set_constant_buffers_payload() {
+    let stream = build_stream(|out| {
+        // SET_CONSTANT_BUFFERS with buffer_count=2, but only 1 binding follows.
+        emit_packet(out, AeroGpuOpcode::SetConstantBuffers as u32, |out| {
+            push_u32(out, 1); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 2); // buffer_count (claims 2)
+            push_u32(out, 0); // reserved0
+            // binding[0]
+            push_u32(out, 0x90); // buffer
+            push_u32(out, 16); // offset_bytes
+            push_u32(out, 64); // size_bytes
+            push_u32(out, 0); // reserved0
+            // missing binding[1]
+        });
+    });
+
+    let err = parse_cmd_stream(&stream).unwrap_err();
+    assert!(matches!(err, AeroGpuCmdStreamParseError::BufferTooSmall));
+}
+
+#[test]
 fn protocol_rejects_stream_size_bytes_smaller_than_header() {
     let mut stream = Vec::new();
     push_u32(&mut stream, AEROGPU_CMD_STREAM_MAGIC);
