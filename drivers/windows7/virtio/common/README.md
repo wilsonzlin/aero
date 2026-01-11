@@ -28,6 +28,9 @@ And additional shared helpers:
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
 [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
 
+For miniports (NDIS / StorPort) bring-up, see:
+[`docs/windows/win7-miniport-virtio-pci-modern.md`](../../../../docs/windows/win7-miniport-virtio-pci-modern.md).
+
 ## Aero contract v1 (AERO-W7-VIRTIO)
 
 The binding device/driver contract lives at:
@@ -89,7 +92,8 @@ There are two modern transport helpers in-tree:
   `drivers/windows7/virtio-modern/common/include/aero_virtio_pci_modern.h` +
   `drivers/windows7/virtio-modern/common/src/aero_virtio_pci_modern.c`
   - Designed for StorPort miniports, NDIS miniports, and WDM drivers.
-  - Assumes the Aero contract v1 fixed BAR0 MMIO layout (does not parse PCI caps).
+  - Assumes the Aero contract v1 fixed BAR0 MMIO layout (does not require parsing PCI caps).
+    Drivers may still validate the virtio vendor-specific capability list (recommended).
   - Programs queues via `queue_desc/queue_avail/queue_used` and `queue_enable`.
 
 - `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
