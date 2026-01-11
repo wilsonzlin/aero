@@ -374,8 +374,6 @@ enum class ResourceKind : uint32_t {
 };
 
 struct AeroGpuAdapter {
-  std::atomic<uint32_t> next_handle{1};
-
   const D3D10DDI_ADAPTERCALLBACKS* callbacks = nullptr;
 
   aerogpu_umd_private_v1 umd_private = {};
@@ -3614,10 +3612,7 @@ HRESULT APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* sampler = new (hSampler.pDrvPrivate) AeroGpuSampler();
-  sampler->handle = dev->adapter->next_handle.fetch_add(1);
-  if (sampler->handle == kInvalidHandle) {
-    sampler->handle = dev->adapter->next_handle.fetch_add(1);
-  }
+  sampler->handle = allocate_global_handle(dev->adapter);
   if (!sampler->handle) {
     sampler->~AeroGpuSampler();
     return E_FAIL;
