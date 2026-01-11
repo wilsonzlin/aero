@@ -219,7 +219,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     if missing:
         raise ValidationError(
             f"Spec {spec_path} is missing required driver entries: {', '.join(missing)}\n"
-            "Remediation: update tools/packaging/specs/win7-virtio-win.json to include them."
+            f"Remediation: update {spec_path} to include them."
         )
 
     if devices.virtio_blk_service.strip().lower() != "viostor":
@@ -263,7 +263,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     blk_match = _find_first_match(blk_patterns, devices.virtio_blk_hwids)
     if not blk_match:
         raise ValidationError(
-            "Mismatch: win7-virtio-win.json expects viostor HWIDs that don't match devices.cmd.\n"
+            "Mismatch: packaging spec expects viostor HWIDs that don't match devices.cmd.\n"
+            f"Spec: {spec_path}\n"
             "\n"
             f"Spec patterns (viostor.expected_hardware_ids):\n{_format_bullets(blk_patterns)}\n"
             "\n"
@@ -272,8 +273,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "Remediation:\n"
             "- If the emulator/device contract changed (new PCI VEN/DEV IDs), update BOTH:\n"
             "  * guest-tools/config/devices.cmd (AERO_VIRTIO_BLK_HWIDS)\n"
-            "  * tools/packaging/specs/win7-virtio-win.json (viostor.expected_hardware_ids)\n"
-            "- Otherwise, fix the regex in win7-virtio-win.json so it matches the HWIDs used by Guest Tools.\n"
+            f"  * {spec_path} (viostor.expected_hardware_ids)\n"
+            f"- Otherwise, fix the regex in {spec_path} so it matches the HWIDs used by Guest Tools.\n"
         )
 
     blk_uncovered = _find_uncovered_hwids(blk_patterns, devices.virtio_blk_hwids)
@@ -293,7 +294,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     net_match = _find_first_match(net_patterns, devices.virtio_net_hwids)
     if not net_match:
         raise ValidationError(
-            "Mismatch: win7-virtio-win.json expects netkvm HWIDs that don't match devices.cmd.\n"
+            "Mismatch: packaging spec expects netkvm HWIDs that don't match devices.cmd.\n"
+            f"Spec: {spec_path}\n"
             "\n"
             f"Spec patterns (netkvm.expected_hardware_ids):\n{_format_bullets(net_patterns)}\n"
             "\n"
@@ -302,8 +304,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "Remediation:\n"
             "- If the emulator/device contract changed (new PCI VEN/DEV IDs), update BOTH:\n"
             "  * guest-tools/config/devices.cmd (AERO_VIRTIO_NET_HWIDS)\n"
-            "  * tools/packaging/specs/win7-virtio-win.json (netkvm.expected_hardware_ids)\n"
-            "- Otherwise, fix the regex in win7-virtio-win.json so it matches the HWIDs used by Guest Tools.\n"
+            f"  * {spec_path} (netkvm.expected_hardware_ids)\n"
+            f"- Otherwise, fix the regex in {spec_path} so it matches the HWIDs used by Guest Tools.\n"
         )
 
     net_uncovered = _find_uncovered_hwids(net_patterns, devices.virtio_net_hwids)
