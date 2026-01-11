@@ -174,7 +174,10 @@ def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
             "(ensure the guest is configured with --test-snd/--require-snd or capture flags)"
         )
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled" in tail:
-        return "FAIL: virtio-snd capture test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+        return (
+            "FAIL: virtio-snd capture test was skipped (disabled via --disable-snd or --disable-snd-capture) "
+            "but --with-virtio-snd was enabled"
+        )
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing" in tail:
         return "FAIL: virtio-snd capture test was skipped (device missing) but --with-virtio-snd was enabled"
 
