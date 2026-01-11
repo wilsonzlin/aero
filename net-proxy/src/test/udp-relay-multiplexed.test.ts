@@ -30,7 +30,7 @@ async function startUdpEchoServer(type: "udp4" | "udp6", host: string): Promise<
 
 async function startUdpReplyFromDifferentPortServer(
   host: string
-): Promise<{ port: number; received: Promise<void>; close: () => Promise<void> }> {
+): Promise<{ port: number; senderPort: number; received: Promise<void>; close: () => Promise<void> }> {
   const server = dgram.createSocket("udp4");
   let sender: dgram.Socket | null = null;
   let receivedResolve: (() => void) | null = null;
@@ -75,6 +75,9 @@ async function startUdpReplyFromDifferentPortServer(
     throw new Error("failed to allocate distinct UDP sender port");
   }
 
+  const senderAddr = sender.address();
+  assert.ok(typeof senderAddr !== "string");
+
   server.on("message", (msg, rinfo) => {
     receivedResolve?.();
     sender?.send(msg, rinfo.port, rinfo.address);
@@ -82,6 +85,7 @@ async function startUdpReplyFromDifferentPortServer(
 
   return {
     port: addr.port,
+    senderPort: senderAddr.port,
     received,
     close: async () =>
       new Promise<void>((resolve) => {
@@ -298,6 +302,53 @@ test("udp multiplexed relay: drops packets from unexpected remote ports", async 
       })
     ]);
     await noMessagePromise;
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+    ws = null;
+  } finally {
+    ws?.terminate();
+    await proxy.close();
+    await server.close();
+  }
+});
+
+test("udp multiplexed relay: inbound filter mode any accepts packets from unexpected remote ports", async () => {
+  const server = await startUdpReplyFromDifferentPortServer("127.0.0.1");
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    udpRelayInboundFilterMode: "any"
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+  let ws: WebSocket | null = null;
+
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/udp`);
+
+    const payload = Buffer.from([0x11, 0x22, 0x33]);
+    const guestPort = 12345;
+    const frame = encodeUdpRelayV1Datagram({
+      guestPort,
+      remoteIpv4: [127, 0, 0, 1],
+      remotePort: server.port,
+      payload
+    });
+
+    const receivedPromise = waitForBinaryMessage(ws);
+    ws.send(frame);
+
+    await server.received;
+    const received = await receivedPromise;
+    const decoded = decodeUdpRelayFrame(received);
+    assert.equal(decoded.version, 1);
+    assert.equal(decoded.guestPort, guestPort);
+    assert.deepEqual(decoded.remoteIpv4, [127, 0, 0, 1]);
+    assert.equal(decoded.remotePort, server.senderPort);
+    assert.deepEqual(decoded.payload, payload);
 
     const closePromise = waitForClose(ws);
     ws.close(1000, "done");
