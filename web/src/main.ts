@@ -2835,6 +2835,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   let selectedInfo: { vendorId: number; productId: number; productName?: string } | null = null;
   let selectedError: string | null = null;
   let lastRequest: UsbPassthroughDemoRunMessage["request"] | null = null;
+  let configTotalLenHint: number | null = null;
 
   const runDeviceButton = el("button", {
     text: "Run GET_DESCRIPTOR(Device)",
@@ -2856,6 +2857,22 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const runConfigFullButton = el("button", {
+    text: "Run GET_DESCRIPTOR(Configuration full)",
+    onclick: () => {
+      if (configTotalLenHint === null) return;
+      lastRequest = "configDescriptor";
+      lastResult = null;
+      refreshUi();
+      attachedIoWorker?.postMessage({
+        type: "usb.demo.run",
+        request: "configDescriptor",
+        length: configTotalLenHint,
+      } satisfies UsbPassthroughDemoRunMessage);
+    },
+  }) as HTMLButtonElement;
+  runConfigFullButton.hidden = true;
+
   function formatHexBytes(bytes: Uint8Array): string {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
   }
@@ -2865,6 +2882,8 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     const selected = !!selectedInfo;
     runDeviceButton.disabled = !workerReady || !selected;
     runConfigButton.disabled = !workerReady || !selected;
+    configTotalLenHint = null;
+    runConfigFullButton.hidden = true;
 
     const selectedLine = selectedInfo
       ? `selected=${selectedInfo.productName ?? "(unnamed)"} vid=0x${selectedInfo.vendorId.toString(16).padStart(4, "0")} pid=0x${selectedInfo.productId
@@ -2905,7 +2924,13 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
             .toString(16)
             .padStart(4, "0")})`;
         } else if (totalLen !== null && numInterfaces !== null) {
-          resultLine.textContent = `Result: success (config totalLen=${totalLen} interfaces=${numInterfaces})`;
+          const truncated = totalLen > bytes.byteLength;
+          if (truncated) {
+            configTotalLenHint = totalLen;
+            runConfigFullButton.hidden = false;
+            runConfigFullButton.disabled = !workerReady || !selected;
+          }
+          resultLine.textContent = `Result: success (config totalLen=${totalLen} interfaces=${numInterfaces}${truncated ? ` truncated=${bytes.byteLength}` : ""})`;
         } else {
           resultLine.textContent = `Result: success (bytes=${bytes.byteLength})`;
         }
@@ -3009,7 +3034,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     el("h2", { text: "WebUSB passthrough demo (IO worker + UsbBroker)" }),
     hint,
     status,
-    el("div", { class: "row" }, runDeviceButton, runConfigButton, clearButton),
+    el("div", { class: "row" }, runDeviceButton, runConfigButton, runConfigFullButton, clearButton),
     resultLine,
     bytesLine,
     errorLine,
