@@ -77,7 +77,10 @@ async function captureGpuSmokeFrameRGBA(page: Page): Promise<RgbaImage> {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(browserUint8ToBase64Source());
+  // `page.setContent()` uses `document.write()` (no navigation), so `addInitScript`
+  // does not run. Inject the helper into the current document instead so it remains
+  // available across `setContent()` calls.
+  await page.addScriptTag({ content: browserUint8ToBase64Source() });
 });
 
 test('VGA text mode microtest (chars+attrs) matches golden', async ({ page }, testInfo) => {
