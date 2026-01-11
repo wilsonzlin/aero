@@ -106,6 +106,134 @@ fn indirect_descriptors_are_expanded() {
 }
 
 #[test]
+fn indirect_descriptor_len_not_multiple_of_16_is_rejected() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    let indirect = 0x8000;
+
+    // An indirect descriptor's len must be a multiple of 16.
+    write_desc(&mut mem, desc, 0, indirect, 15, VIRTQ_DESC_F_INDIRECT, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 4,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let popped = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    match popped {
+        PoppedDescriptorChain::Invalid { head_index, error } => {
+            assert_eq!(head_index, 0);
+            assert_eq!(error, VirtQueueError::IndirectDescriptorLenNotMultipleOf16 { len: 15 });
+        }
+        PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
+    }
+}
+
+#[test]
+fn indirect_descriptor_with_next_flag_is_rejected() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    let indirect = 0x8000;
+
+    // Indirect descriptors must not also set NEXT.
+    write_desc(
+        &mut mem,
+        desc,
+        0,
+        indirect,
+        16,
+        VIRTQ_DESC_F_INDIRECT | VIRTQ_DESC_F_NEXT,
+        0,
+    );
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 4,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let popped = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    match popped {
+        PoppedDescriptorChain::Invalid { head_index, error } => {
+            assert_eq!(head_index, 0);
+            assert_eq!(error, VirtQueueError::IndirectDescriptorHasNext);
+        }
+        PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
+    }
+}
+
+#[test]
+fn indirect_descriptor_table_too_large_is_rejected() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    let indirect = 0x8000;
+
+    // len/16 must fit in u16. 0x100000 bytes => 65536 descriptors, which is too large.
+    write_desc(&mut mem, desc, 0, indirect, 0x100000, VIRTQ_DESC_F_INDIRECT, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 4,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let popped = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    match popped {
+        PoppedDescriptorChain::Invalid { head_index, error } => {
+            assert_eq!(head_index, 0);
+            assert_eq!(
+                error,
+                VirtQueueError::IndirectDescriptorTableTooLarge { count: 65536 }
+            );
+        }
+        PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
+    }
+}
+
+#[test]
 fn nested_indirect_descriptors_are_rejected() {
     let mut mem = GuestRam::new(0x10000);
     let desc = 0x1000;
