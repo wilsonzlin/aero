@@ -134,9 +134,18 @@ if not "!T:~10,1!"=="" (
   exit /b 1
 )
 if not "!T:~9,1!"=="" (
-  if "!T!" gtr "4294967295" (
+  rem Compare against 4294967295 without overflow: split into two 5-digit chunks.
+  set "HI=!T:~0,5!"
+  set "LO=!T:~5,5!"
+  if !HI! gtr 42949 (
     echo ERROR: invalid --timeout-ms value: !TIMEOUT_MS! ^(must be ^<= 4294967295^)
     exit /b 1
+  )
+  if "!HI!"=="42949" (
+    if !LO! gtr 67295 (
+      echo ERROR: invalid --timeout-ms value: !TIMEOUT_MS! ^(must be ^<= 4294967295^)
+      exit /b 1
+    )
   )
 )
 exit /b 0
