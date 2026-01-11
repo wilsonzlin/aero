@@ -13,6 +13,25 @@ drivers/aerogpu/kmd/
 
 The device ABI is defined in `drivers/aerogpu/protocol/aerogpu_protocol.h`.
 
+## Building (WDK 10 / MSBuild)
+
+This miniport can be built via the **WDK 10** MSBuild project at:
+
+* `drivers/aerogpu/aerogpu_kmd.vcxproj`
+* or the combined driver stack solution: `drivers/aerogpu/aerogpu.sln`
+
+From a VS2022 Developer Command Prompt (with WDK 10 installed):
+
+```bat
+cd \path\to\repo
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
+```
+
+Configuration mapping:
+
+* `Debug` ~= `chk` (defines `DBG=1`, enabling `DbgPrintEx` logging)
+* `Release` ~= `fre`
+
 ## Building (WDK 7.1)
 
 Recommended (build everything via scripts):
