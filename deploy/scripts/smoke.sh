@@ -97,6 +97,13 @@ pick_udp_port_range() {
       return 0
     fi
   done
+
+  # Should be extremely rare (requires a very "busy" host). Fall back to a random
+  # range without checking so we at least avoid the fixed 50000-50100 defaults.
+  local start=$((min_start + RANDOM % (max_start - min_start + 1)))
+  SMOKE_WEBRTC_UDP_PORT_MIN="$start"
+  SMOKE_WEBRTC_UDP_PORT_MAX=$((start + size - 1))
+  return 0
 }
 
 pick_udp_port_range
