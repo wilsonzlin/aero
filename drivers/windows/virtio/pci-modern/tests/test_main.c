@@ -349,6 +349,21 @@ static void TestRejectBadVendor(void)
 	ExpectInitFail("bad_vendor", &dev, VIRTIO_PCI_MODERN_INIT_ERR_VENDOR_MISMATCH);
 }
 
+static void TestRejectInvalidMode(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, (VIRTIO_PCI_MODERN_TRANSPORT_MODE)2, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_INVALID_PARAMETER);
+	assert(t.InitError == VIRTIO_PCI_MODERN_INIT_ERR_BAD_ARGUMENT);
+}
+
 static void TestRejectNonModernDeviceId(void)
 {
 	FAKE_DEV dev;
@@ -1187,6 +1202,7 @@ static void TestDeviceConfigBoundsClampedToMappedBar0(void)
 int main(void)
 {
 	TestInitOk();
+	TestRejectInvalidMode();
 	TestRejectBadVendor();
 	TestRejectNonModernDeviceId();
 	TestRejectBadRevision();
