@@ -1,25 +1,24 @@
 import { parentPort, workerData } from "node:worker_threads";
 
-import { RingBuffer } from "./ring_buffer.ts";
+import { RingBuffer } from "../ipc/ring_buffer.ts";
 
 type WorkerData = {
   sab: SharedArrayBuffer;
-  byteOffset: number;
-  byteLength: number;
+  offsetBytes: number;
   count: number;
 };
 
-const { sab, byteOffset, byteLength, count } = workerData as WorkerData;
+const { sab, offsetBytes, count } = workerData as WorkerData;
 
-const ring = new RingBuffer(sab, byteOffset, byteLength);
+const ring = new RingBuffer(sab, offsetBytes);
 
 const received: number[] = [];
 
-async function run(): Promise<void> {
+function run(): void {
   while (received.length < count) {
-    const msg = ring.pop();
+    const msg = ring.tryPop();
     if (!msg) {
-      await ring.waitForData(1000);
+      ring.waitForData(1000);
       continue;
     }
     if (msg.byteLength !== 4) continue;
@@ -30,4 +29,5 @@ async function run(): Promise<void> {
   parentPort?.postMessage(received);
 }
 
-void run();
+run();
+

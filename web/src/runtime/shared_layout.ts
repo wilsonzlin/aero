@@ -1,4 +1,4 @@
-import { RingBuffer } from "./ring_buffer";
+import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
 
@@ -231,8 +231,8 @@ export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout
   return { guest_base: guestBase, guest_size: guestSize, runtime_reserved: runtimeReserved || guestBase, wasm_pages: totalPages };
 }
 
-const RING_REGION_BYTES = RingBuffer.byteLengthForCapacity(COMMAND_RING_CAPACITY_BYTES);
-const EVENT_RING_REGION_BYTES = RingBuffer.byteLengthForCapacity(EVENT_RING_CAPACITY_BYTES);
+const RING_REGION_BYTES = ringCtrl.BYTES + COMMAND_RING_CAPACITY_BYTES;
+const EVENT_RING_REGION_BYTES = ringCtrl.BYTES + EVENT_RING_CAPACITY_BYTES;
 
 const CONTROL_LAYOUT = (() => {
   let offset = 0;
@@ -297,6 +297,7 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(status, StatusIndex.GuestBase, layout.guest_base | 0);
   Atomics.store(status, StatusIndex.GuestSize, layout.guest_size | 0);
   Atomics.store(status, StatusIndex.RuntimeReserved, layout.runtime_reserved | 0);
+  initControlRings(control);
 
   return {
     control,
@@ -312,6 +313,32 @@ export function allocateSharedMemorySegments(options?: {
       { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
     ]).buffer,
   };
+}
+
+function initControlRings(control: SharedArrayBuffer): void {
+  if (COMMAND_RING_CAPACITY_BYTES % RECORD_ALIGN !== 0) {
+    throw new Error(`COMMAND_RING_CAPACITY_BYTES must be aligned to ${RECORD_ALIGN}`);
+  }
+  if (EVENT_RING_CAPACITY_BYTES % RECORD_ALIGN !== 0) {
+    throw new Error(`EVENT_RING_CAPACITY_BYTES must be aligned to ${RECORD_ALIGN}`);
+  }
+
+  for (const role of WORKER_ROLES) {
+    const regions = ringRegionsForWorker(role);
+    initRing(control, regions.command.byteOffset, regions.command.byteLength);
+    initRing(control, regions.event.byteOffset, regions.event.byteLength);
+  }
+}
+
+function initRing(control: SharedArrayBuffer, byteOffset: number, byteLength: number): void {
+  const capacityBytes = byteLength - ringCtrl.BYTES;
+  if (capacityBytes < 0) {
+    throw new Error("ring region too small");
+  }
+  if (capacityBytes % RECORD_ALIGN !== 0) {
+    throw new Error(`ring capacity must be aligned to ${RECORD_ALIGN}`);
+  }
+  new Int32Array(control, byteOffset, ringCtrl.WORDS).set([0, 0, 0, capacityBytes]);
 }
 
 export function createSharedMemoryViews(segments: SharedMemorySegments): SharedMemoryViews {

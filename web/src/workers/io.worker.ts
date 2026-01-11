@@ -2,14 +2,13 @@
 
 import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
-import { decodeCommand, encodeEvent, type Command as IpcCommand } from "../ipc/protocol";
-import type { RingBuffer as IpcRingBuffer } from "../ipc/ring_buffer";
+import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
+import { RingBuffer } from "../ipc/ring_buffer";
 import { InputEventType } from "../input/event_queue";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
-import { RingBuffer as RuntimeRingBuffer } from "../runtime/ring_buffer";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
@@ -25,7 +24,6 @@ import {
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
-  decodeProtocolMessage,
 } from "../runtime/protocol";
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
@@ -40,12 +38,13 @@ type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayB
 
 let role: "cpu" | "gpu" | "io" | "jit" = "io";
 let status!: Int32Array;
-let runtimeCommandRing!: RuntimeRingBuffer;
-
 let guestU8!: Uint8Array;
 
-let ioCmdRing: IpcRingBuffer | null = null;
-let ioEvtRing: IpcRingBuffer | null = null;
+let commandRing!: RingBuffer;
+let eventRing: RingBuffer | null = null;
+
+let ioCmdRing: RingBuffer | null = null;
+let ioEvtRing: RingBuffer | null = null;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -178,105 +177,116 @@ async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const data = ev.data as
-    | Partial<WorkerInitMessage>
-    | Partial<ConfigUpdateMessage>
-    | Partial<InputBatchMessage>
-    | Partial<OpenActiveDiskRequest>
-    | Partial<SetMicrophoneRingBufferMessage>
-    | undefined;
-  if (!data) return;
+  try {
+    const data = ev.data as
+      | Partial<WorkerInitMessage>
+      | Partial<ConfigUpdateMessage>
+      | Partial<InputBatchMessage>
+      | Partial<OpenActiveDiskRequest>
+      | Partial<SetMicrophoneRingBufferMessage>
+      | undefined;
+    if (!data) return;
 
-  if ((data as Partial<ConfigUpdateMessage>).kind === "config.update") {
-    const update = data as ConfigUpdateMessage;
-    currentConfig = update.config;
-    currentConfigVersion = update.version;
-    ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
-    return;
-  }
+    if ((data as Partial<ConfigUpdateMessage>).kind === "config.update") {
+      const update = data as ConfigUpdateMessage;
+      currentConfig = update.config;
+      currentConfigVersion = update.version;
+      ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+      return;
+    }
 
-  if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
-    void handleOpenActiveDisk(data as OpenActiveDiskRequest);
-    return;
-  }
+    if ((data as Partial<OpenActiveDiskRequest>).type === "openActiveDisk") {
+      void handleOpenActiveDisk(data as OpenActiveDiskRequest);
+      return;
+    }
 
-  if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
-    const msg = data as Partial<SetMicrophoneRingBufferMessage>;
-    attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
-    return;
-  }
+    if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
+      const msg = data as Partial<SetMicrophoneRingBufferMessage>;
+      attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
+      return;
+    }
 
-  // First message is the shared-memory init handshake.
-  if ((data as Partial<WorkerInitMessage>).kind === "init") {
-    const init = data as WorkerInitMessage;
-    perf.spanBegin("worker:boot");
-    try {
-      void perf.spanAsync("wasm:init", async () => {
-        try {
-          const { api } = await initWasmForContext({
-            variant: init.wasmVariant ?? "auto",
-            module: init.wasmModule,
-            memory: init.guestMemory,
-          });
-          usbHid = new api.UsbHidBridge();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[io.worker] wasm:init failed: ${message}`);
-        }
-      });
-
-      perf.spanBegin("worker:init");
+    // First message is the shared-memory init handshake.
+    if ((data as Partial<WorkerInitMessage>).kind === "init") {
+      const init = data as WorkerInitMessage;
+      perf.spanBegin("worker:boot");
       try {
-        role = init.role ?? "io";
-        const segments = {
-          control: init.controlSab!,
-          guestMemory: init.guestMemory!,
-          vgaFramebuffer: init.vgaFramebuffer!,
-          ioIpc: init.ioIpcSab!,
-        };
-        const views = createSharedMemoryViews(segments);
-        status = views.status;
-        guestU8 = views.guestU8;
-        const regions = ringRegionsForWorker(role);
-        runtimeCommandRing = new RuntimeRingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
-        ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
-        ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+        void perf.spanAsync("wasm:init", async () => {
+          try {
+            const { api } = await initWasmForContext({
+              variant: init.wasmVariant ?? "auto",
+              module: init.wasmModule,
+              memory: init.guestMemory,
+            });
+            usbHid = new api.UsbHidBridge();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[io.worker] wasm:init failed: ${message}`);
+            pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
+          }
+        });
 
-        if (init.perfChannel) {
-          perfWriter = new PerfWriter(init.perfChannel.buffer, {
-            workerKind: init.perfChannel.workerKind,
-            runStartEpochMs: init.perfChannel.runStartEpochMs,
-          });
-          perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+        perf.spanBegin("worker:init");
+        try {
+          role = init.role ?? "io";
+          const segments = {
+            control: init.controlSab!,
+            guestMemory: init.guestMemory!,
+            vgaFramebuffer: init.vgaFramebuffer!,
+            ioIpc: init.ioIpcSab!,
+          };
+          const views = createSharedMemoryViews(segments);
+          status = views.status;
+          guestU8 = views.guestU8;
+          const regions = ringRegionsForWorker(role);
+          commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+          eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+          ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
+          ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+
+          if (init.perfChannel) {
+            perfWriter = new PerfWriter(init.perfChannel.buffer, {
+              workerKind: init.perfChannel.workerKind,
+              runStartEpochMs: init.perfChannel.runStartEpochMs,
+            });
+            perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+            perfLastFrameId = 0;
+            perfIoMs = 0;
+            perfIoReadBytes = 0;
+            perfIoWriteBytes = 0;
+          }
+          pushEvent({ kind: "log", level: "info", message: "worker ready" });
+
+          setReadyFlag(status, role, true);
+          ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
+          if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
+        } finally {
+          perf.spanEnd("worker:init");
         }
-
-        setReadyFlag(status, role, true);
-        ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
-        if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
       } finally {
-        perf.spanEnd("worker:init");
+        perf.spanEnd("worker:boot");
       }
-    } finally {
-      perf.spanEnd("worker:boot");
+
+      startPolling();
+      return;
     }
 
-    startPolling();
-    return;
-  }
-
-  // Input is delivered via structured `postMessage` to avoid SharedArrayBuffer contention on the
-  // main thread and to keep the hot path in JS simple.
-  if ((data as Partial<InputBatchMessage>).type === "in:input-batch") {
-    const msg = data as Partial<InputBatchMessage>;
-    if (!(msg.buffer instanceof ArrayBuffer)) return;
-    const buffer = msg.buffer;
-    if (started) {
-      handleInputBatch(buffer);
+    // Input is delivered via structured `postMessage` to avoid SharedArrayBuffer contention on the
+    // main thread and to keep the hot path in JS simple.
+    if ((data as Partial<InputBatchMessage>).type === "in:input-batch") {
+      const msg = data as Partial<InputBatchMessage>;
+      if (!(msg.buffer instanceof ArrayBuffer)) return;
+      const buffer = msg.buffer;
+      if (started) {
+        handleInputBatch(buffer);
+      }
+      if ((msg as { recycle?: unknown }).recycle === true) {
+        ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
+      }
+      return;
     }
-    if ((msg as { recycle?: unknown }).recycle === true) {
-      ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
-    }
-    return;
+  } catch (err) {
+    fatal(err);
   }
 };
 
@@ -300,11 +310,15 @@ function startPolling(): void {
 
 function drainRuntimeCommands(): void {
   while (true) {
-    const bytes = runtimeCommandRing.pop();
+    const bytes = commandRing.tryPop();
     if (!bytes) break;
-    const cmd = decodeProtocolMessage(bytes);
-    if (!cmd) continue;
-    if (cmd.type === MessageType.STOP) {
+    let cmd: Command;
+    try {
+      cmd = decodeCommand(bytes);
+    } catch {
+      continue;
+    }
+    if (cmd.kind === "shutdown") {
       Atomics.store(status, StatusIndex.StopRequested, 1);
     }
   }
@@ -319,7 +333,7 @@ function drainIoIpcCommands(): void {
     const bytes = cmdRing.tryPop();
     if (!bytes) break;
 
-    let cmd: IpcCommand;
+    let cmd: Command;
     try {
       cmd = decodeCommand(bytes);
     } catch {
@@ -367,7 +381,7 @@ function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
   return guestU8.subarray(start, start + (len >>> 0));
 }
 
-function handleDiskRead(cmd: Extract<IpcCommand, { kind: "diskRead" }>): void {
+function handleDiskRead(cmd: Extract<Command, { kind: "diskRead" }>): void {
   const id = cmd.id >>> 0;
   const len = cmd.len >>> 0;
   const handle = activeAccessHandle;
@@ -399,7 +413,7 @@ function handleDiskRead(cmd: Extract<IpcCommand, { kind: "diskRead" }>): void {
   }
 }
 
-function handleDiskWrite(cmd: Extract<IpcCommand, { kind: "diskWrite" }>): void {
+function handleDiskWrite(cmd: Extract<Command, { kind: "diskWrite" }>): void {
   const id = cmd.id >>> 0;
   const len = cmd.len >>> 0;
   const handle = activeAccessHandle;
@@ -498,8 +512,37 @@ function shutdown(): void {
   activeAccessHandle?.close();
   usbHid?.free();
   usbHid = null;
+  pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
   setReadyFlag(status, role, false);
   ctx.close();
 }
 
 void currentConfig;
+
+function pushEvent(evt: Event): void {
+  if (!eventRing) return;
+  eventRing.tryPush(encodeEvent(evt));
+}
+
+function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
+  if (!eventRing) return;
+  const payload = encodeEvent(evt);
+  if (eventRing.tryPush(payload)) return;
+  try {
+    eventRing.pushBlocking(payload, timeoutMs);
+  } catch {
+    // ignore
+  }
+}
+
+function fatal(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  pushEventBlocking({ kind: "panic", message });
+  try {
+    setReadyFlag(status, role, false);
+  } catch {
+    // ignore if we haven't initialized shared memory yet.
+  }
+  ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+  ctx.close();
+}

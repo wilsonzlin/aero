@@ -5,7 +5,8 @@ import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
-import { RingBuffer } from "../runtime/ring_buffer";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
@@ -13,9 +14,7 @@ import {
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
-  decodeProtocolMessage,
 } from "../runtime/protocol";
-import { waitUntilNotEqual } from "../runtime/atomics_wait";
 import { fnv1a32Hex } from "../utils/fnv1a";
 import { type JitCompileRequest, type JitWorkerResponse, isJitCompileRequest } from "./jit_protocol";
 
@@ -26,6 +25,7 @@ void installWorkerPerfHandlers();
 let role: "cpu" | "gpu" | "io" | "jit" = "jit";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
+let eventRing: RingBuffer | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -115,23 +115,9 @@ function cacheSet(key: string, module: WebAssembly.Module): void {
 }
 
 async function waitForCommandRingDataNonBlocking(timeoutMs?: number): Promise<void> {
-  // `RingBuffer.waitForData()` uses blocking Atomics.wait() in workers for efficiency.
-  //
-  // The JIT worker also services structured `postMessage()` requests, so we must
-  // not block the worker thread; otherwise `jit:compile` messages would never
-  // be delivered while we're waiting for ring-buffer commands.
-  const start = timeoutMs === undefined ? 0 : performance.now();
-  while (true) {
-    // RingBuffer internal layout: meta[0]=head, meta[1]=tail.
-    const head = Atomics.load(commandRing.meta, 0);
-    const tail = Atomics.load(commandRing.meta, 1);
-    if (head !== tail) return;
-
-    const remaining =
-      timeoutMs === undefined ? undefined : Math.max(0, timeoutMs - (performance.now() - start));
-    const result = await waitUntilNotEqual(commandRing.meta, 0, head, { timeoutMs: remaining, canBlock: false });
-    if (result === "timed-out") return;
-  }
+  // JIT worker must remain responsive to structured `postMessage()` compile requests,
+  // so avoid blocking `Atomics.wait()` here.
+  await commandRing.waitForDataAsync(timeoutMs);
 }
 
 let perfWriter: PerfWriter | null = null;
@@ -168,20 +154,22 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     perf.spanBegin("wasm:init");
     perf.spanEnd("wasm:init");
 
-      perf.spanBegin("worker:init");
-      try {
-        role = init.role ?? "jit";
-        maybeUpdatePlatformFeatures(init);
-        recomputeJitEnabled();
-        const segments = {
-          control: init.controlSab!,
-          guestMemory: init.guestMemory!,
-          vgaFramebuffer: init.vgaFramebuffer!,
-          ioIpc: init.ioIpcSab!,
-        };
-        status = createSharedMemoryViews(segments).status;
-        const regions = ringRegionsForWorker(role);
-        commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+    perf.spanBegin("worker:init");
+    try {
+      role = init.role ?? "jit";
+      maybeUpdatePlatformFeatures(init);
+      recomputeJitEnabled();
+      const segments = {
+        control: init.controlSab!,
+        guestMemory: init.guestMemory!,
+        vgaFramebuffer: init.vgaFramebuffer!,
+        ioIpc: init.ioIpcSab!,
+      };
+      status = createSharedMemoryViews(segments).status;
+      const regions = ringRegionsForWorker(role);
+      commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+      pushEvent({ kind: "log", level: "info", message: "worker ready" });
 
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {
@@ -318,23 +306,53 @@ function postJitResponse(msg: JitWorkerResponse): void {
 }
 
 async function runLoop(): Promise<void> {
-  while (true) {
+  try {
     while (true) {
-      const bytes = commandRing.pop();
-      if (!bytes) break;
-      const cmd = decodeProtocolMessage(bytes);
-      if (!cmd) continue;
-      if (cmd.type === MessageType.STOP) {
-        Atomics.store(status, StatusIndex.StopRequested, 1);
+      while (true) {
+        const bytes = commandRing.tryPop();
+        if (!bytes) break;
+        let cmd: Command;
+        try {
+          cmd = decodeCommand(bytes);
+        } catch {
+          continue;
+        }
+        if (cmd.kind === "shutdown") {
+          Atomics.store(status, StatusIndex.StopRequested, 1);
+        }
       }
-    }
 
-    if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
-    await waitForCommandRingDataNonBlocking();
+      if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
+      await waitForCommandRingDataNonBlocking();
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    pushEventBlocking({ kind: "panic", message });
+    setReadyFlag(status, role, false);
+    ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+    ctx.close();
+    return;
   }
 
+  pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
   setReadyFlag(status, role, false);
   ctx.close();
 }
 
 void currentConfig;
+
+function pushEvent(evt: Event): void {
+  if (!eventRing) return;
+  eventRing.tryPush(encodeEvent(evt));
+}
+
+function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
+  if (!eventRing) return;
+  const payload = encodeEvent(evt);
+  if (eventRing.tryPush(payload)) return;
+  try {
+    eventRing.pushBlocking(payload, timeoutMs);
+  } catch {
+    // ignore
+  }
+}

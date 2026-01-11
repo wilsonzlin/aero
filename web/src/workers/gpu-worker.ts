@@ -49,10 +49,11 @@ import {
   HEADER_INDEX_WIDTH,
 } from "../display/framebuffer_protocol";
 
-import { GpuTelemetry } from "../../gpu/telemetry.ts";
-import type { AeroConfig } from "../config/aero_config";
-import type { WorkerRole } from "../runtime/shared_layout";
-import { createSharedMemoryViews, setReadyFlag } from "../runtime/shared_layout";
+import { GpuTelemetry } from '../../gpu/telemetry.ts';
+import type { AeroConfig } from '../config/aero_config';
+import { createSharedMemoryViews, ringRegionsForWorker, setReadyFlag, StatusIndex, type WorkerRole } from '../runtime/shared_layout';
+import { RingBuffer } from '../ipc/ring_buffer';
+import { decodeCommand, encodeEvent, type Command, type Event } from '../ipc/protocol';
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -89,6 +90,7 @@ const postToMain = (msg: GpuRuntimeOutMessage, transfer?: Transferable[]) => {
 
 const postRuntimeError = (message: string) => {
   if (!status) return;
+  pushRuntimeEvent({ kind: 'log', level: 'error', message });
   ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
 };
 
@@ -102,6 +104,9 @@ let perfFrameHeader: Int32Array | null = null;
 let perfCurrentFrameId = 0;
 let perfGpuMs = 0;
 let perfUploadBytes = 0;
+let commandRing: RingBuffer | null = null;
+let eventRing: RingBuffer | null = null;
+let runtimePollTimer: number | null = null;
 
 // Optional `present()` entrypoint supplied by a dynamically imported module.
 // When unset, the worker uses the built-in presenter backends.
@@ -725,6 +730,11 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   role = init.role ?? 'gpu';
   const segments = { control: init.controlSab, guestMemory: init.guestMemory, vgaFramebuffer: init.vgaFramebuffer, ioIpc: init.ioIpcSab };
   status = createSharedMemoryViews(segments).status;
+
+  const regions = ringRegionsForWorker(role);
+  commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+  eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+
   setReadyFlag(status, role, true);
 
   if (init.frameStateSab) {
@@ -741,9 +751,55 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
     perfGpuMs = 0;
     perfUploadBytes = 0;
   }
-
+  pushRuntimeEvent({ kind: 'log', level: 'info', message: 'worker ready' });
+  startRuntimePolling();
   ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
 };
+
+function startRuntimePolling(): void {
+  if (!status || runtimePollTimer !== null) return;
+  // Keep the GPU worker responsive to `postMessage` frame scheduler traffic: avoid blocking
+  // waits and instead poll the shutdown command ring at a low rate.
+  runtimePollTimer = setInterval(() => {
+    drainRuntimeCommands();
+    if (status && Atomics.load(status, StatusIndex.StopRequested) === 1) {
+      shutdownRuntime();
+    }
+  }, 8) as unknown as number;
+}
+
+function drainRuntimeCommands(): void {
+  if (!status || !commandRing) return;
+  while (true) {
+    const bytes = commandRing.tryPop();
+    if (!bytes) break;
+    let cmd: Command;
+    try {
+      cmd = decodeCommand(bytes);
+    } catch {
+      continue;
+    }
+    if (cmd.kind === 'shutdown') {
+      Atomics.store(status, StatusIndex.StopRequested, 1);
+    }
+  }
+}
+
+function shutdownRuntime(): void {
+  if (!status) return;
+  if (runtimePollTimer !== null) {
+    clearInterval(runtimePollTimer);
+    runtimePollTimer = null;
+  }
+  pushRuntimeEvent({ kind: 'log', level: 'info', message: 'worker shutdown' });
+  setReadyFlag(status, role, false);
+  ctx.close();
+}
+
+function pushRuntimeEvent(evt: Event): void {
+  if (!eventRing) return;
+  eventRing.tryPush(encodeEvent(evt));
+}
 
 ctx.onmessage = (event: MessageEvent<unknown>) => {
   const data = event.data;

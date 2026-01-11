@@ -2,8 +2,8 @@
 
 import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
-import { decodeEvent, encodeCommand } from "../ipc/protocol";
-import type { RingBuffer as IpcRingBuffer } from "../ipc/ring_buffer";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { decodeCommand, decodeEvent, encodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -21,7 +21,6 @@ import {
   storeHeaderI32,
   wrapSharedFramebuffer,
 } from "../display/framebuffer_protocol";
-import { RingBuffer as RuntimeRingBuffer } from "../runtime/ring_buffer";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
@@ -38,8 +37,6 @@ import {
   type SetMicrophoneRingBufferMessage,
   type SetAudioRingBufferMessage,
   type WorkerInitMessage,
-  decodeProtocolMessage,
-  encodeProtocolMessage,
 } from "../runtime/protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 
@@ -49,8 +46,8 @@ void installWorkerPerfHandlers();
 
 let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
 let status!: Int32Array;
-let commandRing!: RuntimeRingBuffer;
-let eventRing!: RuntimeRingBuffer;
+let commandRing!: RingBuffer;
+let eventRing!: RingBuffer;
 let guestI32!: Int32Array;
 let guestU8!: Uint8Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
@@ -452,8 +449,8 @@ function pumpMicLoopback(maxWriteFrames: number): number {
   return totalWritten;
 }
 
-let ioCmdRing: IpcRingBuffer | null = null;
-let ioEvtRing: IpcRingBuffer | null = null;
+let ioCmdRing: RingBuffer | null = null;
+let ioEvtRing: RingBuffer | null = null;
 
 let diskDemoStarted = false;
 let diskDemoResponses = 0;
@@ -547,9 +544,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       });
 
       const regions = ringRegionsForWorker(role);
-      commandRing = new RuntimeRingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
-      eventRing = new RuntimeRingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
-
+      commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
 
@@ -601,10 +597,12 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         const value = api.add(20, 22);
         ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         // WASM init is best-effort: keep the CPU worker alive so non-WASM demos
         // (including AudioWorklet ring-buffer smoke tests) can run in environments
         // where the generated wasm-pack output is absent.
         console.error("WASM init failed in CPU worker:", err);
+        pushEvent({ kind: "log", level: "error", message: `WASM init failed: ${message}` });
         wasmApi = null;
         maybeInitAudioOutput();
       }
@@ -622,7 +620,19 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
   void runLoop();
 }
 
-async function runLoop(): Promise<void> {
+function runLoop(): void {
+  try {
+    runLoopInner();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    pushEventBlocking({ kind: "panic", message });
+    setReadyFlag(status, role, false);
+    ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+    ctx.close();
+  }
+}
+
+function runLoopInner(): void {
   let running = false;
   const heartbeatIntervalMs = 250;
   const frameIntervalMs = 1000 / 60;
@@ -639,7 +649,7 @@ async function runLoop(): Promise<void> {
     { width: 1024, height: 768 },
   ] as const;
   let modeIndex = 0;
-  let mode = modes[0];
+  let mode: (typeof modes)[number] = modes[0];
   let demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + mode.width * mode.height * 4);
   const demoFbLinearOffset = guestU8.byteOffset + DEMO_FB_OFFSET;
 
@@ -661,12 +671,16 @@ async function runLoop(): Promise<void> {
   while (true) {
     // Drain commands.
     while (true) {
-      const bytes = commandRing.pop();
+      const bytes = commandRing.tryPop();
       if (!bytes) break;
-      const cmd = decodeProtocolMessage(bytes);
-      if (!cmd) continue;
+      let cmd: Command;
+      try {
+        cmd = decodeCommand(bytes);
+      } catch {
+        continue;
+      }
 
-      if (cmd.type === MessageType.START) {
+      if (cmd.kind === "nop") {
         running = true;
         perfCpuMs = 0;
         perfInstructions = 0n;
@@ -678,7 +692,9 @@ async function runLoop(): Promise<void> {
           diskDemoStarted = true;
           void runDiskReadDemo();
         }
-      } else if (cmd.type === MessageType.STOP) {
+        // Ack acts as a cheap "ring is alive" signal for the coordinator.
+        pushEvent({ kind: "ack", seq: cmd.seq });
+      } else if (cmd.kind === "shutdown") {
         Atomics.store(status, StatusIndex.StopRequested, 1);
       }
     }
@@ -738,7 +754,7 @@ async function runLoop(): Promise<void> {
         Atomics.add(guestI32, 0, 1);
         perf.counter("heartbeatCounter", counter);
         // Best-effort: heartbeat events are allowed to drop if the ring is full.
-        eventRing.push(encodeProtocolMessage({ type: MessageType.HEARTBEAT, role, counter }));
+        pushEvent({ kind: "ack", seq: counter });
         nextHeartbeatMs = now + heartbeatIntervalMs;
       }
 
@@ -785,14 +801,14 @@ async function runLoop(): Promise<void> {
 
     // Sleep until either new commands arrive or the next heartbeat tick.
     if (!running) {
-      await commandRing.waitForData();
+      commandRing.waitForData(1000);
       continue;
     }
 
     const now = performance.now();
     const nextAudioMs = workletBridge ? nextAudioFillDeadlineMs : Number.POSITIVE_INFINITY;
     const until = Math.min(nextHeartbeatMs, nextFrameMs, nextModeSwitchMs, nextAudioMs) - now;
-    await commandRing.waitForData(Math.max(0, Math.min(heartbeatIntervalMs, until)));
+    commandRing.waitForData(Math.max(0, Math.min(heartbeatIntervalMs, until)));
   }
 
   setReadyFlag(status, role, false);
@@ -855,6 +871,24 @@ async function runDiskReadDemo(): Promise<void> {
       if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
       return;
     }
+  }
+}
+
+function pushEvent(evt: Event): void {
+  try {
+    eventRing.tryPush(encodeEvent(evt));
+  } catch {
+    // Ignore malformed events.
+  }
+}
+
+function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
+  const payload = encodeEvent(evt);
+  if (eventRing.tryPush(payload)) return;
+  try {
+    eventRing.pushBlocking(payload, timeoutMs);
+  } catch {
+    // Ignore if the ring is wedged; postMessage ERROR remains a backup.
   }
 }
 

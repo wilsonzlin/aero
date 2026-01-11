@@ -1,5 +1,6 @@
 import type { AeroConfig } from "../config/aero_config";
-import { RingBuffer } from "./ring_buffer";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { decodeEvent, encodeCommand, type Command, type Event } from "../ipc/protocol";
 import { perf } from "../perf/perf";
 import type { PlatformFeatureReport } from "../platform/features";
 import { WorkerKind } from "../perf/record.js";
@@ -24,8 +25,6 @@ import {
   type SetMicrophoneRingBufferMessage,
   type WorkerInitMessage,
   type WasmReadyMessage,
-  decodeProtocolMessage,
-  encodeProtocolMessage,
 } from "./protocol";
 import type { WasmVariant } from "./wasm_context";
 import { precompileWasm } from "./wasm_preload";
@@ -82,6 +81,7 @@ export class WorkerCoordinator {
   private runId = 0;
   private frameStateSab?: SharedArrayBuffer;
   private platformFeatures: PlatformFeatureReport | null = null;
+  private nextCmdSeq = 1;
 
   private lastHeartbeatFromRing = 0;
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
@@ -127,6 +127,7 @@ export class WorkerCoordinator {
     this.shared = shared;
     this.runId += 1;
     const runId = this.runId;
+    this.nextCmdSeq = 1;
     this.workerConfigAckVersions = {};
     // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
     // Keeping it separate from the main control region avoids growing the core IPC layout.
@@ -136,10 +137,8 @@ export class WorkerCoordinator {
 
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
-      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
-      const eventRing = new RingBuffer(segments.control, regions.event.byteOffset, regions.event.byteLength);
-      commandRing.reset();
-      eventRing.reset();
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      const eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
 
       // IMPORTANT: Keep the `new Worker(new URL(..., import.meta.url), ...)` shape so Vite
       // can statically detect and bundle workers (including their own dependencies/assets).
@@ -233,10 +232,9 @@ export class WorkerCoordinator {
     for (const role of WORKER_ROLES) {
       const info = this.workers[role];
       if (!info) continue;
-      info.commandRing.push(encodeProtocolMessage({ type: MessageType.STOP }));
-      info.commandRing.notifyData();
-      info.eventRing.notifyData();
-      info.worker.terminate();
+      // Best-effort: workers are expected to observe the stop request via the
+      // shutdown command or shared StopRequested flag.
+      void this.trySendCommand(info, { kind: "shutdown" });
       info.status = { state: "stopped" };
       setReadyFlag(shared.status, role, false);
     }
@@ -532,8 +530,7 @@ export class WorkerCoordinator {
       }
 
       // Kick the worker to start its minimal demo loop.
-      info.commandRing.push(encodeProtocolMessage({ type: MessageType.START }));
-      info.commandRing.notifyData();
+      void this.trySendCommand(info, { kind: "nop", seq: this.nextCmdSeq++ });
       return;
     }
 
@@ -559,13 +556,17 @@ export class WorkerCoordinator {
 
   private drainEventRing(info: WorkerInfo): void {
     while (true) {
-      const payload = info.eventRing.pop();
+      const payload = info.eventRing.tryPop();
       if (!payload) break;
 
-      const msg = decodeProtocolMessage(payload);
-      if (msg?.type === MessageType.HEARTBEAT) {
-        this.lastHeartbeatFromRing = msg.counter;
+      let evt: Event;
+      try {
+        evt = decodeEvent(payload);
+      } catch (err) {
+        console.error(`[${info.role}] Failed to decode event`, err);
+        continue;
       }
+      this.handleEvent(info, evt);
     }
   }
   private async eventLoop(role: WorkerRole, runId: number): Promise<void> {
@@ -578,6 +579,51 @@ export class WorkerCoordinator {
       if (!this.shared || this.runId !== runId) return;
       await info.eventRing.waitForDataAsync(1000);
     }
+  }
+
+  private handleEvent(info: WorkerInfo, evt: Event): void {
+    const shared = this.shared;
+    if (!shared) return;
+
+    switch (evt.kind) {
+      case "ack":
+        this.lastHeartbeatFromRing = evt.seq;
+        return;
+      case "log": {
+        const prefix = `[${info.role}]`;
+        switch (evt.level) {
+          case "trace":
+            console.debug(prefix, evt.message);
+            break;
+          case "debug":
+            console.debug(prefix, evt.message);
+            break;
+          case "info":
+            console.info(prefix, evt.message);
+            break;
+          case "warn":
+            console.warn(prefix, evt.message);
+            break;
+          case "error":
+            console.error(prefix, evt.message);
+            break;
+        }
+        return;
+      }
+      case "panic":
+        info.status = { state: "failed", error: evt.message };
+        setReadyFlag(shared.status, info.role, false);
+        return;
+      default:
+        // Ignore events that aren't currently consumed by the JS coordinator.
+        return;
+    }
+  }
+
+  private trySendCommand(info: WorkerInfo, cmd: Command): boolean {
+    // Coordinator runs on the browser main thread where `Atomics.wait` is not
+    // allowed, so this must be non-blocking.
+    return info.commandRing.tryPush(encodeCommand(cmd));
   }
 }
 

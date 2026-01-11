@@ -89,10 +89,13 @@ describe('waitUntilNotEqual', () => {
         import { parentPort, workerData } from 'node:worker_threads';
         const i32 = new Int32Array(workerData.sab);
         parentPort?.postMessage('ready');
-        setTimeout(() => {
-          Atomics.store(i32, 0, 1);
-          Atomics.notify(i32, 0, 1);
-        }, 10);
+        parentPort?.once('message', (msg) => {
+          if (msg !== 'go') return;
+          setTimeout(() => {
+            Atomics.store(i32, 0, 1);
+            Atomics.notify(i32, 0, 1);
+          }, 10);
+        });
       `,
         { eval: true, type: 'module', workerData: { sab } },
       );
@@ -104,6 +107,7 @@ describe('waitUntilNotEqual', () => {
         await new Promise<void>((resolve) => {
           notifier.once('message', () => resolve());
         });
+        notifier.postMessage('go');
         await expect(waitUntilNotEqual(i32, 0, 0, { canBlock: true, timeoutMs: 5_000 })).resolves.toBe('ok');
       } finally {
         await notifier.terminate();

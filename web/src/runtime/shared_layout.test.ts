@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { RingBuffer } from "./ring_buffer";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
+import { Worker } from "node:worker_threads";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
@@ -19,8 +21,8 @@ describe("runtime/shared_layout", () => {
       { name: "status", start: 0, end: STATUS_BYTES },
     ];
 
-    const expectedCommandBytes = RingBuffer.byteLengthForCapacity(COMMAND_RING_CAPACITY_BYTES);
-    const expectedEventBytes = RingBuffer.byteLengthForCapacity(EVENT_RING_CAPACITY_BYTES);
+    const expectedCommandBytes = ringCtrl.BYTES + COMMAND_RING_CAPACITY_BYTES;
+    const expectedEventBytes = ringCtrl.BYTES + EVENT_RING_CAPACITY_BYTES;
 
     for (const role of WORKER_ROLES) {
       const r = ringRegionsForWorker(role);
@@ -51,6 +53,57 @@ describe("runtime/shared_layout", () => {
       const prev = sorted[i - 1];
       const cur = sorted[i];
       expect(cur.start).toBeGreaterThanOrEqual(prev.end);
+    }
+  });
+
+  it("initializes ring headers using the AIPC layout", () => {
+    expect(COMMAND_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
+    expect(EVENT_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
+
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    for (const role of WORKER_ROLES) {
+      const regions = ringRegionsForWorker(role);
+
+      const cmdCtrl = new Int32Array(segments.control, regions.command.byteOffset, ringCtrl.WORDS);
+      expect(Array.from(cmdCtrl)).toEqual([0, 0, 0, COMMAND_RING_CAPACITY_BYTES]);
+
+      const evtCtrl = new Int32Array(segments.control, regions.event.byteOffset, ringCtrl.WORDS);
+      expect(Array.from(evtCtrl)).toEqual([0, 0, 0, EVENT_RING_CAPACITY_BYTES]);
+    }
+  });
+
+  it("transfers messages across threads using a shared_layout ring", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const regions = ringRegionsForWorker("cpu");
+    const ring = new RingBuffer(segments.control, regions.command.byteOffset);
+
+    const count = 100;
+    const worker = new Worker(new URL("./shared_layout_ring_consumer_worker.ts", import.meta.url), {
+      type: "module",
+      workerData: { sab: segments.control, offsetBytes: regions.command.byteOffset, count },
+      execArgv: ["--experimental-strip-types"],
+    });
+
+    try {
+      for (let i = 0; i < count; i++) {
+        const payload = new Uint8Array(4);
+        new DataView(payload.buffer).setUint32(0, i, true);
+        while (!ring.tryPush(payload)) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      const received = await new Promise<number[]>((resolve, reject) => {
+        worker.once("message", (msg) => resolve(msg as number[]));
+        worker.once("error", reject);
+        worker.once("exit", (code) => {
+          if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));
+        });
+      });
+
+      expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
+    } finally {
+      await worker.terminate();
     }
   });
 
