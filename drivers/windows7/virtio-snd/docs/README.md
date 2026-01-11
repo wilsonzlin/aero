@@ -51,7 +51,8 @@ installs the same driver/service as `aero-virtio-snd.inf`, matches the same Aero
 `CatalogFile = virtio-snd.cat`.
 
 CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match
-the same hardware IDs.
+the same hardware IDs. The default CI/Guest Tools driver bundle therefore includes only the strict Aero contract v1
+package (the opt-in QEMU compatibility package is not staged by default).
 
 See also: [`pci-hwids.md`](pci-hwids.md) and `inf/aero-virtio-snd.inf`.
 
@@ -112,6 +113,9 @@ weakening the default Aero contract-v1 INF:
 
 The two INFs intentionally have **no overlapping hardware IDs**, so they do not compete for the
 same device.
+
+Note: only the **Aero contract v1** variant is CI-packaged by default; the QEMU compatibility variant is a manual,
+opt-in package.
 
 ## Architecture (what’s built by default)
 
@@ -599,6 +603,8 @@ The staged output can be copied into:
 ```text
 guest-tools\drivers\<arch>\virtio-snd\
 ```
+
+Note: the default Guest Tools tree does not include the QEMU compatibility variant.
 
 ## Installing (development/testing)
 
