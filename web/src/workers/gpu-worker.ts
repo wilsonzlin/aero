@@ -1392,7 +1392,6 @@ const cmdStreamRequiresD3d9Executor = (cmdStream: ArrayBuffer): boolean => {
   }
   return false;
 };
-
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
   const vsyncPaced = cmdStreamHasVsyncPresent(req.cmdStream);
@@ -1405,41 +1404,8 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
   let submitOk = false;
   try {
     await maybeSendReady();
-    if (requiresD3d9) {
-      const backend = presenter?.backend ?? "webgpu";
-      const wasm = await ensureAerogpuWasmD3d9(backend);
 
-      if (guestU8) {
-        wasm.set_guest_memory(guestU8);
-      } else {
-        wasm.clear_guest_memory();
-      }
-
-      const cmdU8 = new Uint8Array(req.cmdStream);
-      const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
-
-      const submit = wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
-      presentCount = submit.presentCount;
-
-      if (presentCount !== undefined) {
-        const shot = await wasm.request_screenshot_info();
-        const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
-        aerogpuState.lastPresentedFrame = frame;
-        aerogpuLastPresentedFrame = frame;
-
-        if (presenter) {
-          if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
-            presenterSrcWidth = shot.width;
-            presenterSrcHeight = shot.height;
-            if (presenter.backend === "webgpu") surfaceReconfigures += 1;
-            presenter.resize(shot.width, shot.height, outputDpr);
-          }
-          presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
-        }
-      }
-
-      submitOk = true;
-    } else {
+    const runCpu = () => {
       const allocTable = req.allocTable ? decodeAerogpuAllocTable(req.allocTable) : null;
       const presentDelta = executeAerogpuCmdStream(aerogpuState, req.cmdStream, {
         allocTable,
@@ -1453,6 +1419,69 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         }
       }
       submitOk = true;
+    };
+
+    const forceRawBackend = runtimeOptions?.forceBackend === "webgl2_raw";
+    const shouldUseWasmExecutor =
+      !forceRawBackend && (requiresD3d9 || presenter?.backend === "webgpu" || presenter?.backend === "webgl2_wgpu");
+
+    if (shouldUseWasmExecutor) {
+      const backend = presenter?.backend ?? "webgpu";
+
+      let wasm: AeroGpuWasmApi | null = null;
+      try {
+        wasm = await ensureAerogpuWasmD3d9(backend);
+        if (!wasm.has_submit_aerogpu_d3d9()) {
+          throw new Error("aero-gpu wasm export submit_aerogpu_d3d9 is missing (outdated bundle?)");
+        }
+      } catch (err) {
+        // If the wasm executor is unavailable, fall back to the lightweight CPU executor so
+        // test harnesses can keep running even when the bundle is missing or WebGPU is unavailable.
+        emitGpuEvent({
+          time_ms: performance.now(),
+          backend_kind: backendKindForEvent(),
+          severity: "warn",
+          category: "AerogpuInit",
+          message: err instanceof Error ? err.message : String(err),
+          details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+        });
+        runCpu();
+      }
+
+      if (wasm) {
+        if (guestU8) {
+          wasm.set_guest_memory(guestU8);
+        } else {
+          wasm.clear_guest_memory();
+        }
+
+        const cmdU8 = new Uint8Array(req.cmdStream);
+        const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
+
+        const submit = wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
+        presentCount = submit.presentCount;
+
+        if (presentCount !== undefined) {
+          const shot = await wasm.request_screenshot_info();
+          const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
+          aerogpuState.lastPresentedFrame = frame;
+          aerogpuLastPresentedFrame = frame;
+
+          if (presenter) {
+            if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
+              presenterSrcWidth = shot.width;
+              presenterSrcHeight = shot.height;
+              if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+              presenter.resize(shot.width, shot.height, outputDpr);
+            }
+            presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
+          }
+        }
+
+        submitOk = true;
+      }
+    } else {
+      runCpu();
     }
   } catch (err) {
     sendError(err);
@@ -1733,6 +1762,15 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   status = views.status;
   // Guest physical addresses (GPAs) in AeroGPU submissions are byte offsets into this view.
   guestU8 = views.guestU8;
+  if (aerogpuWasm) {
+    try {
+      // If aero-gpu-wasm is already loaded (e.g. via the webgl2_wgpu presenter), plumb the
+      // shared guest RAM view immediately so alloc_table submissions can resolve GPAs.
+      aerogpuWasm.set_guest_memory(guestU8);
+    } catch {
+      // Ignore; wasm module may not have been initialized yet.
+    }
+  }
 
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
@@ -1886,6 +1924,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         aerogpuWasmD3d9Backend = null;
         aerogpuWasmD3d9InternalCanvas = null;
         if (aerogpuWasm) {
+          try {
+            aerogpuWasm.clear_guest_memory();
+          } catch {
+            // Ignore; best-effort cleanup.
+          }
           try {
             aerogpuWasm.destroy_gpu();
           } catch {
@@ -2283,6 +2326,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       aerogpuWasmD3d9Backend = null;
       aerogpuWasmD3d9InternalCanvas = null;
       if (aerogpuWasm) {
+        try {
+          aerogpuWasm.clear_guest_memory();
+        } catch {
+          // Ignore; best-effort cleanup.
+        }
         try {
           aerogpuWasm.destroy_gpu();
         } catch {

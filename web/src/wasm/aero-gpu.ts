@@ -188,6 +188,11 @@ export function submit_aerogpu(cmdStream: Uint8Array, signalFence: bigint, alloc
   return mod.submit_aerogpu(cmdStream, signalFence, allocTable) as SubmitAerogpuResult;
 }
 
+export function has_submit_aerogpu_d3d9(): boolean {
+  const mod = requireLoaded();
+  return typeof mod.submit_aerogpu_d3d9 === "function";
+}
+
 export async function init_aerogpu_d3d9(
   offscreenCanvas?: OffscreenCanvas | null,
   options: GpuWorkerInitOptions = {},
@@ -204,6 +209,9 @@ export function submit_aerogpu_d3d9(
   allocTable?: Uint8Array,
 ): SubmitAerogpuResult {
   const mod = requireLoaded();
+  if (typeof mod.submit_aerogpu_d3d9 !== "function") {
+    throw new Error("aero-gpu wasm export submit_aerogpu_d3d9 is missing (outdated bundle?)");
+  }
   return mod.submit_aerogpu_d3d9(cmdStream, signalFence, contextId, allocTable) as SubmitAerogpuResult;
 }
 
