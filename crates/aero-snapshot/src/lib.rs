@@ -445,7 +445,6 @@ fn prescan_snapshot<R: Read + Seek>(r: &mut R) -> Result<SnapshotPrescan> {
 struct SectionHeader {
     id: SectionId,
     version: u16,
-    flags: u16,
     len: u64,
 }
 
@@ -516,12 +515,11 @@ fn read_section_header<R: Read>(r: &mut R) -> Result<Option<SectionHeader>> {
     r.read_exact(&mut tag_bytes[1..])?;
     let id = SectionId(u32::from_le_bytes(tag_bytes));
     let version = r.read_u16_le()?;
-    let flags = r.read_u16_le()?;
+    let _flags = r.read_u16_le()?;
     let len = r.read_u64_le()?;
     Ok(Some(SectionHeader {
         id,
         version,
-        flags,
         len,
     }))
 }
