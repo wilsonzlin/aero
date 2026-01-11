@@ -26,7 +26,8 @@ struct Cli {
 
     /// Machine-readable device contract used to generate `config/devices.cmd`.
     ///
-    /// If omitted, defaults to `../docs/windows-device-contract.json` relative to `--guest-tools-dir`.
+    /// If omitted, the packager searches for `docs/windows-device-contract.json` by walking up from
+    /// `--guest-tools-dir` (useful when Guest Tools are staged under `out/...`).
     #[arg(long)]
     windows_device_contract: Option<PathBuf>,
 
@@ -65,17 +66,8 @@ fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var("SOURCE_DATE_EPOCH").ok()?.parse().ok())
         .unwrap_or(0);
 
-    let windows_device_contract_path = match cli.windows_device_contract {
-        Some(p) => p,
-        None => {
-            let base = cli
-                .guest_tools_dir
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."));
-            base.join("docs").join("windows-device-contract.json")
-        }
-    };
+    let windows_device_contract_path =
+        resolve_windows_device_contract_path(&cli.guest_tools_dir, cli.windows_device_contract);
 
     let config = aero_packager::PackageConfig {
         drivers_dir: cli.drivers_dir,
@@ -98,4 +90,35 @@ fn main() -> anyhow::Result<()> {
         outputs.manifest_path.display()
     );
     Ok(())
+}
+
+fn resolve_windows_device_contract_path(
+    guest_tools_dir: &PathBuf,
+    explicit: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(p) = explicit {
+        return p;
+    }
+
+    // Most packager workflows point `--guest-tools-dir` at either:
+    // - repo_root/guest-tools (dev)
+    // - repo_root/out/_staging_guest_tools/guest-tools (CI staging)
+    //
+    // Search upward for the canonical device contract, rather than assuming a fixed relative path.
+    let mut cur: Option<&std::path::Path> = Some(guest_tools_dir.as_path());
+    for _ in 0..16 {
+        let Some(p) = cur else { break };
+        let candidate = p.join("docs").join("windows-device-contract.json");
+        if candidate.is_file() {
+            return candidate;
+        }
+        cur = p.parent();
+    }
+
+    // Fallback to the previous behavior for error messages / debugging.
+    guest_tools_dir
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("docs")
+        .join("windows-device-contract.json")
 }
