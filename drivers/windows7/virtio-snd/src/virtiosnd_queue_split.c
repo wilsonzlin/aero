@@ -223,6 +223,12 @@ VirtioSndQueueSplitCreate(
         goto Fail;
     }
 
+    /*
+     * This DMA buffer is shared with the (potentially untrusted) device; clear it
+     * to avoid leaking stale kernel memory.
+     */
+    RtlZeroMemory(qs->RingVa, ring_bytes);
+
     qs->RingPa = MmGetPhysicalAddress(qs->RingVa);
     qs->RingBytes = ring_bytes;
 
@@ -245,6 +251,7 @@ VirtioSndQueueSplitCreate(
 
             qs->IndirectPoolVa = MmAllocateContiguousMemorySpecifyCache(indirect_bytes, low, high, skip, MmNonCached);
             if (qs->IndirectPoolVa != NULL) {
+                RtlZeroMemory(qs->IndirectPoolVa, indirect_bytes);
                 qs->IndirectPoolPa = MmGetPhysicalAddress(qs->IndirectPoolVa);
                 qs->IndirectPoolBytes = indirect_bytes;
             } else {
