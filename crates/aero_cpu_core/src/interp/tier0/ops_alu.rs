@@ -208,7 +208,13 @@ pub(crate) fn add_with_flags(
     (res, flags)
 }
 
-fn sub_with_flags(state: &CpuState, a: u64, b: u64, borrow_in: u64, bits: u32) -> (u64, u64) {
+pub(crate) fn sub_with_flags(
+    state: &CpuState,
+    a: u64,
+    b: u64,
+    borrow_in: u64,
+    bits: u32,
+) -> (u64, u64) {
     let mask = mask_bits(bits);
     let a_m = a & mask;
     let b_m = b & mask;

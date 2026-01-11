@@ -1,0 +1,487 @@
+use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_DF, FLAG_SF, FLAG_ZF};
+use aero_x86::Register;
+
+fn run_to_halt<B: CpuBus>(state: &mut CpuState, bus: &mut B, max: u64) {
+    let mut steps = 0u64;
+    while steps < max {
+        let res = run_batch(state, bus, 1024);
+        steps += res.executed;
+        match res.exit {
+            BatchExit::Completed | BatchExit::Branch => continue,
+            BatchExit::Halted => return,
+            BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
+            BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+        }
+    }
+    panic!("program did not halt");
+}
+
+#[derive(Debug)]
+struct CountingBus {
+    inner: FlatTestBus,
+    bulk_copy_calls: usize,
+    bulk_set_calls: usize,
+}
+
+impl CountingBus {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: FlatTestBus::new(size),
+            bulk_copy_calls: 0,
+            bulk_set_calls: 0,
+        }
+    }
+}
+
+impl CpuBus for CountingBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, aero_cpu_core::Exception> {
+        self.inner.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, aero_cpu_core::Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, aero_cpu_core::Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, aero_cpu_core::Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, aero_cpu_core::Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(
+        &mut self,
+        dst: u64,
+        src: u64,
+        len: usize,
+    ) -> Result<bool, aero_cpu_core::Exception> {
+        self.bulk_copy_calls += 1;
+        self.inner.bulk_copy(dst, src, len)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(
+        &mut self,
+        dst: u64,
+        pattern: &[u8],
+        repeat: usize,
+    ) -> Result<bool, aero_cpu_core::Exception> {
+        self.bulk_set_calls += 1;
+        self.inner.bulk_set(dst, pattern, repeat)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    fn io_write(
+        &mut self,
+        port: u16,
+        size: u32,
+        val: u64,
+    ) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.io_write(port, size, val)
+    }
+}
+
+#[test]
+fn rep_movsb_df0_uses_bulk_copy_and_increments() {
+    let count = 256u32;
+
+    let code = [0xF3, 0xA4, 0xF4]; // rep movsb; hlt
+    let mut bus = CountingBus::new(0x4000);
+    bus.inner.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0;
+    state.write_reg(Register::ESI, 0x100);
+    state.write_reg(Register::EDI, 0x200);
+    state.write_reg(Register::ECX, count as u64);
+
+    for i in 0..count as u64 {
+        bus.inner.write_u8(0x100 + i, (i ^ 0x5A) as u8).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 1);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::ESI), 0x100 + count as u64);
+    assert_eq!(state.read_reg(Register::EDI), 0x200 + count as u64);
+
+    for i in 0..count as u64 {
+        assert_eq!(
+            bus.inner.read_u8(0x200 + i).unwrap(),
+            (i ^ 0x5A) as u8
+        );
+    }
+}
+
+#[test]
+fn rep_movsb_df1_uses_bulk_copy_and_decrements() {
+    let count = 256u32;
+    let src_start = 0x300u64;
+    let dst_start = 0x500u64;
+
+    let code = [0xF3, 0xA4, 0xF4]; // rep movsb; hlt
+    let mut bus = CountingBus::new(0x2000);
+    bus.inner.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.set_flag(FLAG_DF, true);
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0;
+    state.write_reg(Register::ESI, (src_start + count as u64 - 1) as u64);
+    state.write_reg(Register::EDI, (dst_start + count as u64 - 1) as u64);
+    state.write_reg(Register::ECX, count as u64);
+
+    for i in 0..count as u64 {
+        bus.inner
+            .write_u8(src_start + i, (i ^ 0xA5) as u8)
+            .unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 1);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::ESI), src_start - 1);
+    assert_eq!(state.read_reg(Register::EDI), dst_start - 1);
+
+    for i in 0..count as u64 {
+        assert_eq!(
+            bus.inner.read_u8(dst_start + i).unwrap(),
+            (i ^ 0xA5) as u8
+        );
+    }
+}
+
+#[test]
+fn rep_movsb_overlap_hazard_df0_falls_back_to_element_wise() {
+    // Hazard case: DF=0 copies low->high, and destination starts inside the source range at a
+    // higher address. The result differs from memmove; we must not take the bulk-copy fast path.
+    let count = 256u32;
+
+    let code = [0xF3, 0xA4, 0xF4]; // rep movsb; hlt
+    let mut bus = CountingBus::new(0x2000);
+    bus.inner.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0;
+    state.write_reg(Register::ESI, 0x100);
+    state.write_reg(Register::EDI, 0x101);
+    state.write_reg(Register::ECX, count as u64);
+
+    bus.inner.write_u8(0x100, 0xAA).unwrap();
+    for i in 1..=count as u64 {
+        bus.inner.write_u8(0x100 + i, i as u8).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::ESI), 0x100 + count as u64);
+    assert_eq!(state.read_reg(Register::EDI), 0x101 + count as u64);
+
+    for i in 1..=count as u64 {
+        assert_eq!(bus.inner.read_u8(0x100 + i).unwrap(), 0xAA);
+    }
+}
+
+#[test]
+fn rep_stosb_uses_bulk_set() {
+    let count = 256u32;
+
+    let code = [0xF3, 0xAA, 0xF4]; // rep stosb; hlt
+    let mut bus = CountingBus::new(0x2000);
+    bus.inner.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.es.base = 0;
+    state.write_reg(Register::EDI, 0x200);
+    state.write_reg(Register::ECX, count as u64);
+    state.write_reg(Register::AL, 0x5A);
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_set_calls, 1);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::EDI), 0x200 + count as u64);
+    for i in 0..count as u64 {
+        assert_eq!(bus.inner.read_u8(0x200 + i).unwrap(), 0x5A);
+    }
+}
+
+#[test]
+fn repe_cmpsb_stops_on_mismatch() {
+    let code = [0xF3, 0xA6, 0xF4]; // repe cmpsb; hlt
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0x1000;
+    state.segments.es.base = 0x2000;
+    state.write_reg(Register::ESI, 0x10);
+    state.write_reg(Register::EDI, 0x20);
+    state.write_reg(Register::ECX, 5);
+
+    // First 3 bytes match, 4th differs.
+    for i in 0..5u64 {
+        let src = if i == 3 { 0x99 } else { i as u8 };
+        bus.write_u8(0x1000 + 0x10 + i, src).unwrap();
+        bus.write_u8(0x2000 + 0x20 + i, i as u8).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    // Mismatch at i=3 means 4 iterations executed.
+    assert_eq!(state.read_reg(Register::ESI), 0x14);
+    assert_eq!(state.read_reg(Register::EDI), 0x24);
+    assert_eq!(state.read_reg(Register::ECX), 1);
+    assert!(!state.get_flag(FLAG_ZF));
+}
+
+#[test]
+fn repne_scasb_stops_on_match() {
+    let code = [0xF2, 0xAE, 0xF4]; // repne scasb; hlt
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.es.base = 0x3000;
+    state.write_reg(Register::EDI, 0x10);
+    state.write_reg(Register::ECX, 6);
+    state.write_reg(Register::AL, 0x7F);
+
+    let hay = [0x00, 0x01, 0x02, 0x7F, 0x03, 0x04];
+    for (i, &b) in hay.iter().enumerate() {
+        bus.write_u8(0x3000 + 0x10 + i as u64, b).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(state.read_reg(Register::EDI), 0x14);
+    assert_eq!(state.read_reg(Register::ECX), 2);
+    assert!(state.get_flag(FLAG_ZF));
+}
+
+#[test]
+fn cmpsb_flag_order_is_src_minus_dest() {
+    // Intel: CMPS sets flags as if computing SRC - DEST.
+    let code = [0xA6, 0xF4]; // cmpsb; hlt
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0x1000;
+    state.segments.es.base = 0x2000;
+    state.write_reg(Register::ESI, 0x10);
+    state.write_reg(Register::EDI, 0x20);
+
+    bus.write_u8(0x1000 + 0x10, 0x01).unwrap(); // SRC
+    bus.write_u8(0x2000 + 0x20, 0x02).unwrap(); // DEST
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert!(!state.get_flag(FLAG_ZF));
+    assert!(state.get_flag(FLAG_CF));
+    assert!(state.get_flag(FLAG_SF));
+}
+
+#[test]
+fn addr_size_override_uses_esi_edi_ecx_in_long_mode() {
+    let code = [0x67, 0xF3, 0xA4, 0xF4]; // addr-size override + rep movsb; hlt
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+
+    // High bits set; address-size override must use the low 32 bits.
+    state.write_reg(Register::RSI, 0xAAAA_BBBB_0000_0010);
+    state.write_reg(Register::RDI, 0xCCCC_DDDD_0000_0020);
+    state.write_reg(Register::RCX, 0x1_0000_0002); // ECX=2, RCX high bits non-zero
+
+    bus.write_u8(0x10, 0x10).unwrap();
+    bus.write_u8(0x11, 0x11).unwrap();
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.read_u8(0x20).unwrap(), 0x10);
+    assert_eq!(bus.read_u8(0x21).unwrap(), 0x11);
+
+    // ESI/EDI were used and updated, zero-extending into RSI/RDI.
+    assert_eq!(state.read_reg(Register::RSI), 0x0000_0000_0000_0012);
+    assert_eq!(state.read_reg(Register::RDI), 0x0000_0000_0000_0022);
+
+    // Count uses ECX, and writing ECX in long mode zero-extends RCX.
+    assert_eq!(state.read_reg(Register::RCX), 0);
+}
+
+#[test]
+fn addr_size_override_16bit_mode_selects_32bit_index_and_count_regs() {
+    // Use CMPSB + REPE with a mismatch on the first element so we only execute one iteration. This
+    // keeps the test fast even if the 32-bit counter register contains high bits.
+    let code = [0x67, 0xF3, 0xA6, 0xF4]; // addr-size override + repe cmpsb; hlt
+    let mut bus = FlatTestBus::new(0x20000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0;
+
+    state.write_reg(Register::ESI, 0x1_0000);
+    state.write_reg(Register::EDI, 0x1_0100);
+    state.write_reg(Register::ECX, 0x1_0000); // CX=0, ECX non-zero
+
+    // Force mismatch immediately (ZF=0) so REPE stops after one iteration.
+    bus.write_u8(0x1_0000, 0x01).unwrap(); // SRC
+    bus.write_u8(0x1_0100, 0x02).unwrap(); // DEST
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(state.read_reg(Register::ESI), 0x1_0001);
+    assert_eq!(state.read_reg(Register::EDI), 0x1_0101);
+    assert_eq!(state.read_reg(Register::ECX), 0x0_FFFF);
+    assert!(!state.get_flag(FLAG_ZF));
+}
+
+#[test]
+fn addr_size_override_32bit_mode_selects_16bit_index_regs() {
+    let code = [0x67, 0xA4, 0xF4]; // addr-size override + movsb; hlt
+    let mut bus = FlatTestBus::new(0x20000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0;
+
+    // High 16 bits set so SI/DI (16-bit) differ from ESI/EDI (32-bit) but all
+    // addresses still stay within the test bus.
+    state.write_reg(Register::ESI, 0x1_0010);
+    state.write_reg(Register::EDI, 0x1_0020);
+
+    bus.write_u8(0x10, 0xAA).unwrap();
+    bus.write_u8(0x1_0010, 0xBB).unwrap();
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    // Should have copied from DS:SI (0x10) to ES:DI (0x20).
+    assert_eq!(bus.read_u8(0x20).unwrap(), 0xAA);
+    assert_eq!(bus.read_u8(0x1_0020).unwrap(), 0x00);
+}
+
+#[test]
+fn addr_size_override_32bit_mode_selects_cx_as_rep_counter() {
+    // With address-size override in 32-bit mode, the REP counter is CX. Here CX=0 but ECX is
+    // non-zero; the instruction must become a no-op.
+    let code = [0x67, 0xF3, 0xA6, 0xF4]; // addr-size override + repe cmpsb; hlt
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0;
+
+    // ECX=0x0001_0000, CX=0
+    state.write_reg(Register::ECX, 0x0001_0000);
+    state.write_reg(Register::ESI, 0x10);
+    state.write_reg(Register::EDI, 0x20);
+
+    bus.write_u8(0x10, 0x01).unwrap();
+    bus.write_u8(0x20, 0x02).unwrap();
+    let flags_before = state.rflags();
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(state.read_reg(Register::ECX), 0x0001_0000);
+    assert_eq!(state.read_reg(Register::ESI), 0x10);
+    assert_eq!(state.read_reg(Register::EDI), 0x20);
+    assert_eq!(state.rflags(), flags_before);
+}
+
+#[test]
+fn segment_override_applies_to_source_only_for_movs() {
+    let code = [0x64, 0xA4, 0xF4]; // fs movsb; hlt
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0x1000;
+    state.segments.fs.base = 0x3000;
+    state.segments.es.base = 0x5000;
+    state.write_reg(Register::ESI, 0x10);
+    state.write_reg(Register::EDI, 0x20);
+
+    bus.write_u8(0x1000 + 0x10, 0xAA).unwrap();
+    bus.write_u8(0x3000 + 0x10, 0xBB).unwrap();
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.read_u8(0x5000 + 0x20).unwrap(), 0xBB);
+    assert_ne!(bus.read_u8(0x1000 + 0x20).unwrap(), 0xBB);
+}

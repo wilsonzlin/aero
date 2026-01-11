@@ -38,10 +38,11 @@ pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Ex
             return Err(e);
         }
     };
+    let addr_size_override = has_addr_size_override(&bytes, state.bitness());
     let decoded =
         aero_x86::decode(&bytes, ip, state.bitness()).map_err(|_| Exception::InvalidOpcode)?;
     let next_ip = ip.wrapping_add(decoded.len as u64) & state.mode.ip_mask();
-    let outcome = match exec_decoded(state, bus, &decoded, next_ip) {
+    let outcome = match exec_decoded(state, bus, &decoded, next_ip, addr_size_override) {
         Ok(v) => v,
         Err(e) => {
             state.apply_exception_side_effects(&e);
@@ -61,6 +62,30 @@ pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Ex
         ExecOutcome::Branch => Ok(StepExit::Branch),
         ExecOutcome::Assist(r) => Ok(StepExit::Assist(r)),
     }
+}
+
+fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
+    let mut i = 0usize;
+    let mut seen = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let is_legacy_prefix = matches!(
+            b,
+            0xF0 | 0xF2 | 0xF3 // lock/rep
+                | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65 // segment overrides
+                | 0x66 // operand-size override
+                | 0x67 // address-size override
+        );
+        let is_rex = bitness == 64 && (0x40..=0x4F).contains(&b);
+        if !(is_legacy_prefix || is_rex) {
+            break;
+        }
+        if b == 0x67 {
+            seen = true;
+        }
+        i += 1;
+    }
+    seen
 }
 
 pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -> BatchResult {

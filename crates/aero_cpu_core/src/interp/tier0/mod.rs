@@ -3,6 +3,7 @@ pub mod exec;
 mod ops_alu;
 mod ops_cf;
 mod ops_data;
+mod ops_string;
 mod ops_x87;
 
 use crate::exception::{AssistReason, Exception};
@@ -23,6 +24,7 @@ fn exec_decoded<B: CpuBus>(
     bus: &mut B,
     decoded: &DecodedInst,
     next_ip: u64,
+    addr_size_override: bool,
 ) -> Result<ExecOutcome, Exception> {
     let mnem = decoded.instr.mnemonic();
     if ops_cf::handles_mnemonic(mnem) {
@@ -36,6 +38,9 @@ fn exec_decoded<B: CpuBus>(
     }
     if ops_x87::handles_mnemonic(mnem) {
         return ops_x87::exec(state, bus, decoded, next_ip);
+    }
+    if ops_string::handles(&decoded.instr) {
+        return ops_string::exec(state, bus, decoded, next_ip, addr_size_override);
     }
 
     match mnem {
