@@ -44,7 +44,7 @@ export class L2TunnelTelemetry {
     }
     if (ev.type === "error") {
       const message = ev.error instanceof Error ? ev.error.message : String(ev.error);
-      this.setConnectionState("error", { detail: message, level: "warn" });
+      this.setConnectionState("error", { detail: message, level: "error" });
       return;
     }
     // Ignore keepalive pongs; they're too noisy to surface in logs.
