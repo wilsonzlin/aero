@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "aerogpu_d3d9_objects.h"
@@ -515,6 +516,30 @@ bool TestEventQueryGetDataSemantics() {
   return true;
 }
 
+bool TestInvalidPayloadArgs() {
+  uint8_t buf[256] = {};
+
+  SpanCmdStreamWriter w(buf, sizeof(buf));
+  w.reset();
+
+  auto* cmd =
+      w.append_with_payload<aerogpu_cmd_create_shader_dxbc>(AEROGPU_CMD_CREATE_SHADER_DXBC, nullptr, 4);
+  if (!Check(cmd == nullptr, "append_with_payload rejects null payload")) {
+    return false;
+  }
+  if (!Check(w.error() == CmdStreamError::kInvalidArgument, "null payload sets kInvalidArgument")) {
+    return false;
+  }
+
+  w.reset();
+  const size_t too_large = std::numeric_limits<size_t>::max();
+  cmd = w.append_with_payload<aerogpu_cmd_create_shader_dxbc>(AEROGPU_CMD_CREATE_SHADER_DXBC, buf, too_large);
+  if (!Check(cmd == nullptr, "append_with_payload rejects oversized payload")) {
+    return false;
+  }
+  return Check(w.error() == CmdStreamError::kSizeTooLarge, "oversized payload sets kSizeTooLarge");
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -528,5 +553,6 @@ int main() {
   failures += !aerogpu::TestFixedPacketPadding();
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();
+  failures += !aerogpu::TestInvalidPayloadArgs();
   return failures ? 1 : 0;
 }
