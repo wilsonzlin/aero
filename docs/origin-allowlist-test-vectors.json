@@ -29,6 +29,8 @@
   { "raw": "https://example.com\u200b:443", "normalized": null },
   { "raw": "https://مثال.إختبار", "normalized": null },
   { "raw": "https://example.com/path", "normalized": null },
+  { "raw": "https://example.com/.", "normalized": null },
+  { "raw": "https://example.com/..", "normalized": null },
   { "raw": "https://example.com?x=1", "normalized": null },
   { "raw": "https://example.com#frag", "normalized": null },
   { "raw": "https://user:pass@example.com", "normalized": null },

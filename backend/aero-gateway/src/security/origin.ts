@@ -34,6 +34,11 @@ export function normalizeOriginString(origin: string): string | null {
   const schemePrefix = lower.startsWith('http://') ? 'http://' : lower.startsWith('https://') ? 'https://' : null;
   if (!schemePrefix) return null;
   if (trimmed.charAt(schemePrefix.length) === '/') return null;
+  // Allow an optional trailing slash, but reject any other path segments.
+  // WHATWG URL parsers normalize dot segments (e.g. "/." or "/..") to "/",
+  // which could cause us to accept non-origin strings in allowlist checks.
+  const pathStart = trimmed.indexOf('/', schemePrefix.length);
+  if (pathStart !== -1 && pathStart !== trimmed.length - 1) return null;
   // Reject backslashes; some URL parsers normalize them to `/`, which can
   // silently change the host/path boundary.
   if (trimmed.includes('\\')) return null;

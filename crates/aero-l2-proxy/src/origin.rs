@@ -126,8 +126,17 @@ pub fn normalize_origin(input: &str) -> Option<String> {
     } else {
         return None;
     };
+    let scheme_len = trimmed.len().saturating_sub(rest.len());
     if rest.starts_with('/') {
         return None;
+    }
+    // Allow an optional trailing slash, but reject any other path segments.
+    // The `url` crate normalizes dot segments (e.g. "/." or "/..") to "/",
+    // which would otherwise cause non-origin strings to be accepted.
+    if let Some(pos) = trimmed[scheme_len..].find('/') {
+        if scheme_len + pos != trimmed.len() - 1 {
+            return None;
+        }
     }
     // Reject backslashes; some URL parsers normalize them to `/`, which can
     // silently change the host/path boundary.
