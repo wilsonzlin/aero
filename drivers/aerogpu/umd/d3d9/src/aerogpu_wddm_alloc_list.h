@@ -71,15 +71,29 @@ struct AllocRef {
   void rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_capacity);
 
   UINT list_len() const {
-    return list_len_;
-  }
+     return list_len_;
+   }
   UINT list_capacity() const {
-    return list_capacity_;
+     return list_capacity_;
+   }
+
+  // Effective capacity considering both the runtime-provided allocation list size
+  // and the KMD-advertised max allocation-list slot-id.
+  UINT list_capacity_effective() const {
+    if (max_allocation_list_slot_id_ == std::numeric_limits<UINT>::max()) {
+      return list_capacity_;
+    }
+    const uint64_t max_slots = static_cast<uint64_t>(max_allocation_list_slot_id_) + 1ull;
+    return (max_slots < static_cast<uint64_t>(list_capacity_)) ? static_cast<UINT>(max_slots) : list_capacity_;
   }
 
-   D3DDDI_ALLOCATIONLIST* list_base() const {
-     return list_base_;
-   }
+  bool contains_alloc_id(UINT alloc_id) const {
+    return alloc_id_to_handle_.find(alloc_id) != alloc_id_to_handle_.end();
+  }
+
+    D3DDDI_ALLOCATIONLIST* list_base() const {
+      return list_base_;
+    }
 
   // `share_token` is required to disambiguate alloc_id aliases (same shared allocation opened
   // multiple times) from alloc_id collisions (different allocations accidentally sharing an ID).

@@ -2612,17 +2612,24 @@ HRESULT track_draw_state_locked(Device* dev) {
   }
   add_alloc(dev->index_buffer);
 
-  const UINT needed = static_cast<UINT>(unique_alloc_len);
-  if (needed != 0) {
-    const UINT cap = dev->alloc_list_tracker.list_capacity();
-    if (needed > cap) {
+  const UINT needed_total = static_cast<UINT>(unique_alloc_len);
+  if (needed_total != 0) {
+    const UINT cap = dev->alloc_list_tracker.list_capacity_effective();
+    if (needed_total > cap) {
       logf("aerogpu-d3d9: draw requires %u allocations but allocation list capacity is %u\n",
-           static_cast<unsigned>(needed),
+           static_cast<unsigned>(needed_total),
            static_cast<unsigned>(cap));
       return E_FAIL;
     }
 
-    if (dev->alloc_list_tracker.list_len() + needed > cap) {
+    UINT needed_new = 0;
+    for (size_t i = 0; i < unique_alloc_len; ++i) {
+      if (!dev->alloc_list_tracker.contains_alloc_id(unique_allocs[i])) {
+        needed_new++;
+      }
+    }
+    const UINT existing = dev->alloc_list_tracker.list_len();
+    if (existing > cap || needed_new > cap - existing) {
       (void)submit(dev);
     }
   }
@@ -2712,17 +2719,24 @@ HRESULT track_render_targets_locked(Device* dev) {
   }
   add_alloc(dev->depth_stencil);
 
-  const UINT needed = static_cast<UINT>(unique_alloc_len);
-  if (needed != 0) {
-    const UINT cap = dev->alloc_list_tracker.list_capacity();
-    if (needed > cap) {
+  const UINT needed_total = static_cast<UINT>(unique_alloc_len);
+  if (needed_total != 0) {
+    const UINT cap = dev->alloc_list_tracker.list_capacity_effective();
+    if (needed_total > cap) {
       logf("aerogpu-d3d9: render target bindings require %u allocations but allocation list capacity is %u\n",
-           static_cast<unsigned>(needed),
+           static_cast<unsigned>(needed_total),
            static_cast<unsigned>(cap));
       return E_FAIL;
     }
 
-    if (dev->alloc_list_tracker.list_len() + needed > cap) {
+    UINT needed_new = 0;
+    for (size_t i = 0; i < unique_alloc_len; ++i) {
+      if (!dev->alloc_list_tracker.contains_alloc_id(unique_allocs[i])) {
+        needed_new++;
+      }
+    }
+    const UINT existing = dev->alloc_list_tracker.list_len();
+    if (existing > cap || needed_new > cap - existing) {
       (void)submit(dev);
     }
   }
