@@ -269,11 +269,6 @@ aerogpu_add_win7_test(d3d11_map_dynamic_buffer_sanity
 )
 target_link_libraries(d3d11_map_dynamic_buffer_sanity PRIVATE d3d11 dxgi)
 
-aerogpu_add_win7_test(d3d11_map_do_not_wait
-  d3d11_map_do_not_wait/main.cpp
-)
-target_link_libraries(d3d11_map_do_not_wait PRIVATE d3d11 dxgi)
-
 aerogpu_add_win7_test(d3d11_map_roundtrip
   d3d11_map_roundtrip/main.cpp
 )

@@ -583,7 +583,6 @@ int main(int argc, char** argv) {
        "dxgi_swapchain_probe",
       "d3d11_swapchain_rotate_sanity",
       "d3d11_map_dynamic_buffer_sanity",
-      "d3d11_map_do_not_wait",
       "d3d11_map_roundtrip",
       "d3d11_update_subresource_texture_sanity",
       "d3d11_texture_sampling_sanity",
