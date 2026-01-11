@@ -28,6 +28,7 @@ typedef struct _VIRTIOSND_WAVERT_MINIPORT {
 
     PVIRTIOSND_BACKEND Backend;
     VIRTIOSND_PORTCLS_DX Dx;
+    BOOLEAN UseVirtioBackend;
 
     KSPIN_LOCK Lock;
     PVIRTIOSND_WAVERT_STREAM RenderStream;
@@ -525,7 +526,7 @@ VirtIoSndWaveRtDpcRoutine(
 
         goto Exit;
 #else
-        if (dx == NULL || dx->Removed || !dx->Started) {
+        if (stream->Miniport == NULL || !stream->Miniport->UseVirtioBackend || dx == NULL || dx->Removed || !dx->Started) {
             /*
              * If the virtio transport is unavailable (e.g. ForceNullBackend bring-up,
              * START_DEVICE failure, or device removal), keep the WaveRT capture pin
@@ -919,6 +920,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
     forceNullBackend = FALSE;
     dx = VirtIoSndAdapterContext_Lookup(UnknownAdapter, &forceNullBackend);
     miniport->Dx = dx;
+    miniport->UseVirtioBackend = FALSE;
 
     if (!forceNullBackend && dx != NULL) {
         #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
@@ -927,6 +929,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
         status = VirtIoSndBackendVirtio_Create(dx, &miniport->Backend);
         #endif
         if (NT_SUCCESS(status)) {
+            miniport->UseVirtioBackend = TRUE;
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
             VIRTIOSND_TRACE("wavert: using legacy-ioport virtio backend\n");
 #else
@@ -1422,7 +1425,7 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
             (VOID)InterlockedExchange(&stream->RxInFlight, 0);
             KeSetEvent(&stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
 #else
-            if (dx != NULL && dx->Started && !dx->Removed) {
+            if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
                 if (state == KSSTATE_RUN) {
                     (VOID)VirtioSndCtrlStop1(&dx->Control);
                 }
@@ -1723,7 +1726,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     return STATUS_INVALID_DEVICE_STATE;
                 }
 
-                if (dx != NULL && dx->Started && !dx->Removed) {
+                if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
                     if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
                         status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
                         if (!NT_SUCCESS(status)) {
@@ -1781,7 +1784,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     return STATUS_INVALID_DEVICE_STATE;
                 }
 
-                if (dx != NULL && dx->Started && !dx->Removed) {
+                if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
                     status = VirtioSndCtrlStart1(&dx->Control);
                     if (!NT_SUCCESS(status)) {
                         return status;
@@ -1810,7 +1813,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 stream->State = KSSTATE_PAUSE;
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-                if (dx != NULL && dx->Started && !dx->Removed) {
+                if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
                     (VOID)VirtioSndCtrlStop1(&dx->Control);
                 } else {
                     (VOID)InterlockedExchange(&stream->RxInFlight, 0);
@@ -1836,7 +1839,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
                 VirtIoSndWaveRtStopTimer(stream);
 
-                if (dx != NULL && dx->Started && !dx->Removed) {
+                if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
                     (VOID)VirtioSndCtrlRelease1(&dx->Control);
                 }
 
