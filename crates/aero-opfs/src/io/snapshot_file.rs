@@ -386,8 +386,8 @@ where
                 ));
             }
 
-            let max_len = (JS_MAX_SAFE_INTEGER - self.pos) as usize;
-            if buf.len() > max_len {
+            let remaining = JS_MAX_SAFE_INTEGER - self.pos;
+            if (buf.len() as u64) > remaining {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!(
