@@ -544,7 +544,6 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   UINT16 headId;
   ULONG i;
   VIRTQ_SG segs[AEROVBLK_MAX_SG_ELEMENTS + 2];
-  BOOLEAN needKick;
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
 
@@ -626,10 +625,8 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   }
 
   VirtqSplitPublish(devExt->Vq, headId);
-  needKick = VirtqSplitKickPrepare(devExt->Vq);
-  if (needKick) {
-    AerovblkVirtioNotifyQueue0(devExt);
-  }
+  /* Contract v1 requires always-notify semantics (EVENT_IDX not negotiated). */
+  AerovblkVirtioNotifyQueue0(devExt);
   VirtqSplitKickCommit(devExt->Vq);
 
   StorPortReleaseSpinLock(devExt, &lock);
