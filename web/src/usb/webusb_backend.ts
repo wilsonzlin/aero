@@ -3,6 +3,9 @@
 // This module provides a small, JS-friendly executor for the Rust-side
 // `UsbHostAction` / `UsbHostCompletion` contract.
 
+import { formatWebUsbError } from "../platform/webusb_troubleshooting";
+import { isWebUsbProtectedInterfaceClass } from "../platform/webusb";
+
 export interface SetupPacket {
   bmRequestType: number;
   bRequest: number;
@@ -46,8 +49,27 @@ function assertWebUsbSupported(): void {
 }
 
 function formatThrownError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return formatWebUsbError(err);
+}
+
+function wrapWithCause(message: string, cause: unknown): Error {
+  const error = new Error(message);
+  // Not all runtimes support the `ErrorOptions` constructor parameter, but
+  // attaching `cause` is still useful for debugging and for our WebUSB
+  // troubleshooting helper, which can walk `Error.cause` chains.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (error as any).cause = cause;
+  } catch {
+    // ignore
+  }
+  return error;
+}
+
+function interfaceIsWebUsbProtected(iface: Pick<USBInterface, "alternates">): boolean {
+  const alternates = iface.alternates ?? [];
+  if (alternates.length === 0) return false;
+  return alternates.every((alt) => isWebUsbProtectedInterfaceClass(alt.interfaceClass));
 }
 
 export type BmRequestDirection = "hostToDevice" | "deviceToHost";
@@ -244,7 +266,7 @@ export class WebUsbBackend {
       try {
         await this.device.open();
       } catch (err) {
-        throw new Error(`Failed to open USB device: ${formatThrownError(err)}`);
+        throw wrapWithCause("Failed to open USB device", err);
       }
     }
 
@@ -256,7 +278,7 @@ export class WebUsbBackend {
       try {
         await this.device.selectConfiguration(configs[0].configurationValue);
       } catch (err) {
-        throw new Error(`Failed to select USB configuration: ${formatThrownError(err)}`);
+        throw wrapWithCause("Failed to select USB configuration", err);
       }
     }
 
@@ -291,6 +313,10 @@ export class WebUsbBackend {
         claimedAny = true;
         continue;
       }
+      if (interfaceIsWebUsbProtected(iface)) {
+        // Skip interfaces that are likely blocked by Chromium's protected interface class list.
+        continue;
+      }
       try {
         await this.device.claimInterface(ifaceNum);
       } catch (err) {
@@ -303,7 +329,7 @@ export class WebUsbBackend {
     }
 
     if (!claimedAny && firstClaimErr) {
-      throw new Error(`Failed to claim any USB interface: ${formatThrownError(firstClaimErr)}`);
+      throw wrapWithCause("Failed to claim any USB interface", firstClaimErr);
     }
   }
 
