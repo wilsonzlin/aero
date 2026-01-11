@@ -183,26 +183,17 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             bail!("{name}: hardware_id_patterns is empty");
         }
         let expected_substr = format!("VEN_{vendor:04X}&DEV_{did:04X}");
-        let mut any_matches_id = false;
+        let mut has_canonical_vendor_device = false;
         for pat in &dev.hardware_id_patterns {
             validate_hwid_literal(pat)
                 .with_context(|| format!("{name}: invalid hardware_id_patterns entry"))?;
-            let upper = pat.to_ascii_uppercase();
-            let matches_id = upper.contains(&expected_substr);
-            if matches_id {
-                any_matches_id = true;
-            } else if dev.virtio_device_type.is_some() {
-                // Virtio devices are modern-only; the contract should not list alternate HWID
-                // families here. (Transitional IDs are tracked separately via
-                // pci_device_id_transitional.)
-                bail!(
-                    "{name}: hardware_id_patterns entry does not match pci_vendor_id/pci_device_id ({expected_substr}): {pat}"
-                );
+            if pat.to_ascii_uppercase().contains(&expected_substr) {
+                has_canonical_vendor_device = true;
             }
         }
-        if !any_matches_id {
+        if !has_canonical_vendor_device {
             bail!(
-                "{name}: hardware_id_patterns must include at least one entry matching pci_vendor_id/pci_device_id ({expected_substr})"
+                "{name}: hardware_id_patterns is missing canonical pci_vendor_id/pci_device_id pattern (expected to contain {expected_substr})"
             );
         }
 
@@ -243,6 +234,18 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                 bail!(
                     "{name}: pci_device_id_transitional must be 0x1000 + (virtio_device_type - 1) (expected {expected_transitional:#06x}, found {trans:#06x})"
                 );
+            }
+
+            // Contract policy: virtio HWIDs are modern-only for AERO-W7-VIRTIO v1. Transitional IDs
+            // are recorded separately as `pci_device_id_transitional` for reference, but must not
+            // appear in `hardware_id_patterns`.
+            let expected_substr = format!("VEN_{vendor:04X}&DEV_{did:04X}");
+            for pat in &dev.hardware_id_patterns {
+                if !pat.to_ascii_uppercase().contains(&expected_substr) {
+                    bail!(
+                        "{name}: virtio hardware_id_patterns must be modern-only and contain {expected_substr} (got {pat:?})"
+                    );
+                }
             }
 
             // Contract v1 is revision-gated (REV_01). The contract includes less-specific HWIDs for
