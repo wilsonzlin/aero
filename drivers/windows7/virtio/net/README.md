@@ -15,8 +15,10 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 - Presents a standard Ethernet NIC to Windows (NDIS 6.20)
 - Backs TX/RX using **virtio-net split virtqueues** (virtio 1.0+ **modern** virtio-pci, BAR0 MMIO transport)
-- Uses the shared Win7 miniport modern transport helper in `drivers/windows7/virtio/common/` (`virtio_pci_modern_miniport.*`)
-- Uses the shared portable split-ring engine in `drivers/windows7/virtio/common/` (`virtqueue_split_legacy.*`)
+- Uses the canonical, WDF-free virtio-pci modern transport:
+  - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.{c,h}`
+- Uses the canonical, WDF-free split-ring virtqueue engine:
+  - `drivers/windows/virtio/common/virtqueue_split.{c,h}`
 
 ## Features (minimal bring-up)
 

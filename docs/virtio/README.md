@@ -51,6 +51,10 @@ These are the build entry points that pull in each implementation (kept here so
 it’s obvious which driver binaries are expected to link which engine):
 
 - Canonical engine (`drivers/windows/virtio/common/virtqueue_split.c`)
+  - `drivers/windows7/virtio/blk/aerovblk.vcxproj`
+  - `drivers/windows7/virtio/blk/sources` (WinDDK 7600 `build.exe`)
+  - `drivers/windows7/virtio/net/aerovnet.vcxproj`
+  - `drivers/windows7/virtio/net/sources` (WinDDK 7600 `build.exe`)
   - `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
   - `drivers/windows7/virtio-snd/src/sources` (WinDDK 7600 `build.exe`)
   - `drivers/windows/virtio-input/virtio-input.vcxproj`
@@ -60,11 +64,8 @@ it’s obvious which driver binaries are expected to link which engine):
     - `drivers/windows/virtio/common/tests/Makefile`
 
 - Legacy portable engine (`drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`)
-  - `drivers/windows7/virtio/blk/aerovblk.vcxproj`
-  - `drivers/windows7/virtio/blk/sources` (WinDDK 7600 `build.exe`)
-  - `drivers/windows7/virtio/net/aerovnet.vcxproj`
-  - `drivers/windows7/virtio/net/sources` (WinDDK 7600 `build.exe`)
   - Host tests: `drivers/windows7/virtio/common/tests/CMakeLists.txt`
+  - `drivers/windows7/virtio-snd/src/virtiosnd_backend_virtio.c` (experimental backend; not compiled by default)
 
 CI enforces this wiring via:
 
