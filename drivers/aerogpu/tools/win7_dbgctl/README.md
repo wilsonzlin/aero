@@ -49,6 +49,8 @@ Minimum supported commands:
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
   Works on both legacy and new AeroGPU devices as long as the device exposes
   `AEROGPU_FEATURE_VBLANK` in `FEATURES_LO/HI`.
+  When available, it also prints `vblank_interrupt_type` (the `DXGK_INTERRUPT_TYPE`
+  value dxgkrnl enabled via `DxgkDdiControlInterrupt`).
   Use `--vblank-samples` to observe changes over time and estimate the effective Hz/jitter.
 
   Alias: `aerogpu_dbgctl --query-vblank`
@@ -91,6 +93,7 @@ aerogpu_dbgctl --selftest --timeout-ms 2000
 
 Notes:
 - `IRQ_ACTIVE` is `IRQ_STATUS & IRQ_ENABLE` (i.e. causes that can currently assert the interrupt line).
+- Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; if `--wait-vblank` or `--query-scanline` fail with `STATUS_INVALID_PARAMETER`, dbgctl retries with source 0 (AeroGPU currently implements a single source).
 
 ## Build (Windows 7)
 

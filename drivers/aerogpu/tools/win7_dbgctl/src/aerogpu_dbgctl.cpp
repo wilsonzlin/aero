@@ -28,6 +28,10 @@ typedef LONG NTSTATUS;
 #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
 #endif
 
+#ifndef STATUS_INVALID_PARAMETER
+#define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
+#endif
+
 typedef UINT D3DKMT_HANDLE;
 
 static const uint32_t kAerogpuIrqFence = (1u << 0);
@@ -860,38 +864,56 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     return 1;
   }
 
-  if (!StartWaitThread(waiter, f, hAdapter, vidpnSourceId)) {
+  uint32_t effectiveVidpnSourceId = vidpnSourceId;
+  if (!StartWaitThread(waiter, f, hAdapter, effectiveVidpnSourceId)) {
     fwprintf(stderr, L"Failed to start wait thread\n");
     HeapFree(GetProcessHeap(), 0, waiter);
     return 1;
   }
 
-  // Prime: perform one wait so subsequent deltas represent full vblank periods.
-  SetEvent(waiter->request_event);
-  DWORD w = WaitForSingleObject(waiter->done_event, timeoutMs);
-  if (w == WAIT_TIMEOUT) {
-    fwprintf(stderr, L"vblank wait timed out after %lu ms (sample 1/%lu)\n", (unsigned long)timeoutMs,
-             (unsigned long)samples);
-    if (skipCloseAdapter) {
-      // The wait thread may be blocked inside the kernel thunk. Avoid calling
-      // D3DKMTCloseAdapter in this case; just exit the process.
-      *skipCloseAdapter = true;
+  DWORD w = 0;
+  NTSTATUS st = 0;
+  for (;;) {
+    // Prime: perform one wait so subsequent deltas represent full vblank periods.
+    SetEvent(waiter->request_event);
+    w = WaitForSingleObject(waiter->done_event, timeoutMs);
+    if (w == WAIT_TIMEOUT) {
+      fwprintf(stderr, L"vblank wait timed out after %lu ms (sample 1/%lu)\n", (unsigned long)timeoutMs,
+               (unsigned long)samples);
+      if (skipCloseAdapter) {
+        // The wait thread may be blocked inside the kernel thunk. Avoid calling
+        // D3DKMTCloseAdapter in this case; just exit the process.
+        *skipCloseAdapter = true;
+      }
+      return 2;
     }
-    return 2;
-  }
-  if (w != WAIT_OBJECT_0) {
-    fwprintf(stderr, L"WaitForSingleObject failed (rc=%lu)\n", (unsigned long)w);
-    StopWaitThread(waiter);
-    HeapFree(GetProcessHeap(), 0, waiter);
-    return 2;
-  }
+    if (w != WAIT_OBJECT_0) {
+      fwprintf(stderr, L"WaitForSingleObject failed (rc=%lu)\n", (unsigned long)w);
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
+      return 2;
+    }
 
-  NTSTATUS st = (NTSTATUS)InterlockedCompareExchange(&waiter->last_status, 0, 0);
-  if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTWaitForVerticalBlankEvent failed", f, st);
-    StopWaitThread(waiter);
-    HeapFree(GetProcessHeap(), 0, waiter);
-    return 2;
+    st = (NTSTATUS)InterlockedCompareExchange(&waiter->last_status, 0, 0);
+    if (st == STATUS_INVALID_PARAMETER && effectiveVidpnSourceId != 0) {
+      wprintf(L"WaitForVBlank: VidPnSourceId=%lu not supported; retrying with source 0\n",
+              (unsigned long)effectiveVidpnSourceId);
+      StopWaitThread(waiter);
+      effectiveVidpnSourceId = 0;
+      if (!StartWaitThread(waiter, f, hAdapter, effectiveVidpnSourceId)) {
+        fwprintf(stderr, L"Failed to restart wait thread\n");
+        HeapFree(GetProcessHeap(), 0, waiter);
+        return 1;
+      }
+      continue;
+    }
+    if (!NT_SUCCESS(st)) {
+      PrintNtStatus(L"D3DKMTWaitForVerticalBlankEvent failed", f, st);
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
+      return 2;
+    }
+    break;
   }
 
   LARGE_INTEGER last;
@@ -981,13 +1003,21 @@ static int DoQueryScanline(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32
   uint32_t minLine = 0xFFFFFFFFu;
   uint32_t maxLine = 0;
 
+  uint32_t effectiveVidpnSourceId = vidpnSourceId;
   for (uint32_t i = 0; i < samples; ++i) {
     D3DKMT_GETSCANLINE s;
     ZeroMemory(&s, sizeof(s));
     s.hAdapter = hAdapter;
-    s.VidPnSourceId = vidpnSourceId;
+    s.VidPnSourceId = effectiveVidpnSourceId;
 
     NTSTATUS st = f->GetScanLine(&s);
+    if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && effectiveVidpnSourceId != 0) {
+      wprintf(L"GetScanLine: VidPnSourceId=%lu not supported; retrying with source 0\n",
+              (unsigned long)effectiveVidpnSourceId);
+      effectiveVidpnSourceId = 0;
+      s.VidPnSourceId = effectiveVidpnSourceId;
+      st = f->GetScanLine(&s);
+    }
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"D3DKMTGetScanLine failed", f, st);
       return 2;
@@ -1041,10 +1071,12 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   uint64_t perVblankUsSum = 0;
   uint64_t perVblankUsSamples = 0;
 
+  uint32_t effectiveVidpnSourceId = vidpnSourceId;
   for (uint32_t i = 0; i < samples; ++i) {
-    if (!QueryVblank(f, hAdapter, vidpnSourceId, &q, &supported)) {
+    if (!QueryVblank(f, hAdapter, effectiveVidpnSourceId, &q, &supported)) {
       return 2;
     }
+    effectiveVidpnSourceId = q.vidpn_source_id;
 
     if (samples > 1) {
       wprintf(L"Sample %lu/%lu:\n", (unsigned long)(i + 1), (unsigned long)samples);
@@ -1054,7 +1086,7 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       D3DKMT_GETSCANLINE s;
       ZeroMemory(&s, sizeof(s));
       s.hAdapter = hAdapter;
-      s.VidPnSourceId = vidpnSourceId;
+      s.VidPnSourceId = effectiveVidpnSourceId;
       NTSTATUS st = f->GetScanLine(&s);
       if (NT_SUCCESS(st)) {
         wprintf(L"  scanline: %lu%s\n", (unsigned long)s.ScanLine, s.InVerticalBlank ? L" (vblank)" : L"");

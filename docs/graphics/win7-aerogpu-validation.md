@@ -409,7 +409,7 @@ aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 | `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
 | `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
 | `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
-| `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz) | DWM stutter / Basic fallback |
+| `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz). Also prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt`. | DWM stutter / Basic fallback |
 | `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` | verifying vblank interrupts/waits work |
 | `--query-scanline` | `D3DKMTGetScanLine` (scanline + vblank state) | sanity-check scanline/vblank state queries |
 | `log level <err|warn|info|trace>` | sets runtime verbosity | enable before repro |
