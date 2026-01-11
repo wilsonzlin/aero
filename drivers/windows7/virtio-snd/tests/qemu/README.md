@@ -235,11 +235,12 @@ The selftest logs to:
    C:\AeroTests\aero-virtio-selftest.exe --test-snd
    ```
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected)
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (you forgot `--test-snd`)
-   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing` (driver bound but Topology KS interface missing)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (you forgot `--test-snd`)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
 
 If WASAPI fails, the tool logs a line like:
 
@@ -247,7 +248,7 @@ If WASAPI fails, the tool logs a line like:
 
 Common `reason=` values include:
 
-- `no_default_endpoint` (no default render endpoint available)
+- `no_matching_endpoint` (no matching ACTIVE virtio-snd render endpoint found)
 - `initialize_shared_failed` / `unsupported_stream_format`
 
 If QEMU is using the `wav` audiodev backend, successful playback should also produce a non-empty
