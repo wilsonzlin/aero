@@ -315,6 +315,9 @@ If you must fetch cross-origin from S3 (directly or via a CDN that forwards pref
     <AllowedMethod>HEAD</AllowedMethod>
     <AllowedMethod>OPTIONS</AllowedMethod>
     <AllowedHeader>Range</AllowedHeader>
+    <AllowedHeader>If-Range</AllowedHeader>
+    <AllowedHeader>If-None-Match</AllowedHeader>
+    <AllowedHeader>If-Modified-Since</AllowedHeader>
     <AllowedHeader>Origin</AllowedHeader>
     <AllowedHeader>Access-Control-Request-Method</AllowedHeader>
     <AllowedHeader>Access-Control-Request-Headers</AllowedHeader>
@@ -338,6 +341,9 @@ If you must fetch cross-origin from S3 (directly or via a CDN that forwards pref
       "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
       "AllowedHeaders": [
         "Range",
+        "If-Range",
+        "If-None-Match",
+        "If-Modified-Since",
         "Origin",
         "Access-Control-Request-Method",
         "Access-Control-Request-Headers"
