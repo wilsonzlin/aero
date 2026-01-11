@@ -113,6 +113,9 @@ The browser still needs to deal with the fact the guest NIC is L2:
 Browser forwards **raw Ethernet frames** from the emulated NIC to the proxy, and receives frames
 back from the proxy.
 
+**Wire protocol:** see [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md) (versioned framing +
+PING/PONG + size limits).
+
 Proxy implementation variants:
 
 1) **Kernel bridge via TAP** (privileged): create TAP per VM session, bridge/NAT in the host.
@@ -196,6 +199,10 @@ network stack (server-side slirp/NAT).**
 This RFC is accompanied by a minimal prototype that demonstrates the Option C shape:
 
 **Security note:** this prototype is for experimentation only and is not hardened for production use. For a maintained, policy-driven relay, use `backend/aero-gateway` (or `net-proxy/` for local development).
+
+**Protocol note:** the prototype tunnels raw Ethernet frames with no control plane. Production
+implementations should use the versioned L2 tunnel protocol described in
+[`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md).
 
 - Client (“browser side”) sends:
   - ARP request (to discover gateway MAC)

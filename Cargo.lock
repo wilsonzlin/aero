@@ -279,6 +279,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-l2-protocol"
+version = "0.1.0"
+
+[[package]]
 name = "aero-mem"
 version = "0.1.0"
 dependencies = [
