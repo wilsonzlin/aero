@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -49,7 +51,7 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd depth test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -89,7 +91,7 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
                 color: [1.0, 0.0, 0.0, 1.0],
             },
         ];
-        let vb_bytes = bytemuck::bytes_of(&vertices);
+        let vb_bytes = bytemuck::cast_slice(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
         let guest_mem = VecGuestMemory::new(0x1000);
@@ -114,7 +116,7 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
 
-        // CREATE_BUFFER (VB)
+        // CREATE_BUFFER (VB, guest-backed)
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
         stream.extend_from_slice(&VB.to_le_bytes());
         stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER).to_le_bytes());
@@ -147,7 +149,7 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
 
-        // CREATE_TEXTURE2D (Depth32Float)
+        // CREATE_TEXTURE2D (DS)
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
         stream.extend_from_slice(&DS.to_le_bytes());
         stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL).to_le_bytes());
@@ -188,8 +190,8 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         stream.extend_from_slice(&1u32.to_le_bytes()); // depth_write_enable
         stream.extend_from_slice(&(AerogpuCompareFunc::Less as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // stencil_enable
-        stream.push(0); // stencil_read_mask
-        stream.push(0); // stencil_write_mask
+        stream.push(0xFF); // stencil_read_mask
+        stream.push(0xFF); // stencil_write_mask
         stream.extend_from_slice(&[0u8; 2]); // reserved0
         end_cmd(&mut stream, start);
 
@@ -304,3 +306,4 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         }
     });
 }
+

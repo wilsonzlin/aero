@@ -1039,7 +1039,6 @@ impl AerogpuD3d11Executor {
         drop(pass);
         Ok(())
     }
-
     fn exec_create_buffer(&mut self, cmd_bytes: &[u8], allocs: &AllocTable) -> Result<()> {
         // struct aerogpu_cmd_create_buffer (40 bytes)
         if cmd_bytes.len() != 40 {
@@ -2602,10 +2601,15 @@ impl AerogpuD3d11Executor {
         let depth_func = u32::from_le(state.depth_func);
         let stencil_enable = u32::from_le(state.stencil_enable) != 0;
 
+        let depth_compare = map_compare_func(depth_func).unwrap_or(wgpu::CompareFunction::Always);
+
         self.state.depth_enable = depth_enable;
-        self.state.depth_write_enable = depth_write_enable;
-        self.state.depth_compare =
-            map_compare_func(depth_func).unwrap_or(wgpu::CompareFunction::Always);
+        self.state.depth_write_enable = depth_enable && depth_write_enable;
+        self.state.depth_compare = if depth_enable {
+            depth_compare
+        } else {
+            wgpu::CompareFunction::Always
+        };
         self.state.stencil_enable = stencil_enable;
         self.state.stencil_read_mask = state.stencil_read_mask;
         self.state.stencil_write_mask = state.stencil_write_mask;
@@ -3447,6 +3451,13 @@ fn get_or_create_render_pipeline_for_state<'a>(
             .get(&ds_id)
             .ok_or_else(|| anyhow!("unknown depth-stencil texture {ds_id}"))?;
         let format = tex.desc.format;
+        if !texture_format_has_depth(format) {
+            bail!(
+                "depth-stencil texture {ds_id} has non-depth format {:?}",
+                format
+            );
+        }
+
         let depth_compare = if state.depth_enable {
             state.depth_compare
         } else {
@@ -3454,8 +3465,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
         };
         let depth_write_enabled = state.depth_enable && state.depth_write_enable;
 
-        let (read_mask, write_mask) = if texture_format_has_stencil(format) && state.stencil_enable
-        {
+        let (read_mask, write_mask) = if texture_format_has_stencil(format) && state.stencil_enable {
             (
                 state.stencil_read_mask as u32,
                 state.stencil_write_mask as u32,
