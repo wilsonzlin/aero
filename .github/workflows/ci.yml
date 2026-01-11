@@ -81,7 +81,7 @@ jobs:
           win7_virtio_snd_changed=false
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
-            if [[ "$file" == drivers/windows7/virtio-snd/* || "$file" == drivers/windows7/virtio/common/* ]]; then
+            if [[ "$file" == drivers/windows7/virtio-snd/* || "$file" == drivers/windows7/virtio/common/* || "$file" == .github/workflows/ci.yml ]]; then
               win7_virtio_snd_changed=true
               break
             fi
