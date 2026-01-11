@@ -214,6 +214,7 @@ struct CodecPinWidget {
     conn_select: u8,
     pin_ctl: u8,
     config_default: u32,
+    power_state: u8,
 }
 
 impl CodecOutputWidget {
@@ -265,6 +266,7 @@ impl HdaCodec {
                 pin_ctl: 0x40,
                 // Default config: line out, rear, green, 1/8" jack, association 1, sequence 0.
                 config_default: 0x0101_0010,
+                power_state: 0,
             },
             input: CodecInputWidget {
                 stream_id: 0,
@@ -277,6 +279,7 @@ impl HdaCodec {
                 pin_ctl: 0x00,
                 // Default config: microphone input, rear, 1/8" jack.
                 config_default: 0x01A1_0010,
+                power_state: 0,
             },
             afg_power_state: 0, // D0
         }
@@ -398,6 +401,12 @@ impl HdaCodec {
                 self.output_pin.pin_ctl = payload8;
                 0
             }
+            0x705 => {
+                // SET_POWER_STATE
+                self.output_pin.power_state = payload8 & 0x3;
+                0
+            }
+            0xF05 => self.output_pin.power_state as u32,
             0xF09 => {
                 // GET_PIN_SENSE: report presence detect (bit31).
                 1 << 31
@@ -421,6 +430,11 @@ impl HdaCodec {
                 self.mic_pin.pin_ctl = payload8;
                 0
             }
+            0x705 => {
+                self.mic_pin.power_state = payload8 & 0x3;
+                0
+            }
+            0xF05 => self.mic_pin.power_state as u32,
             0xF09 => 1 << 31,
             0xF1C => self.mic_pin.config_default,
             _ => 0,
