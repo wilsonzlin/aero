@@ -160,7 +160,20 @@ async function startL2Proxy(opts: {
     ...process.env,
     RUST_LOG: process.env.RUST_LOG ?? 'error',
     AERO_L2_PROXY_LISTEN_ADDR: `127.0.0.1:${opts.port}`,
-    AERO_L2_ALLOWED_ORIGINS: opts.allowedOrigin,
+    // Prefer the shared `ALLOWED_ORIGINS` env var name (also used by the gateway and WebRTC relay).
+    // Explicitly clear `AERO_L2_ALLOWED_ORIGINS` to avoid inheriting developer overrides while still
+    // exercising the fallback behavior.
+    AERO_L2_ALLOWED_ORIGINS: '',
+    ALLOWED_ORIGINS: opts.allowedOrigin,
+    AERO_L2_ALLOWED_ORIGINS_EXTRA: '',
+    AERO_L2_ALLOWED_HOSTS: '',
+    AERO_L2_TRUST_PROXY_HOST: '',
+    // Ensure this test doesn't inherit developer auth-mode overrides.
+    AERO_L2_AUTH_MODE: '',
+    AERO_L2_API_KEY: '',
+    AERO_L2_JWT_SECRET: '',
+    AERO_L2_SESSION_SECRET: '',
+    SESSION_SECRET: '',
     // Token auth: browser clients pass `?token=...` since WebSocket headers are restricted.
     AERO_L2_TOKEN: opts.token,
     // Ensure this test doesn't inherit local developer quotas/keepalive settings.
