@@ -32,6 +32,8 @@ import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
+import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
+import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
@@ -70,6 +72,9 @@ let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
 let netTxRing: RingBuffer | null = null;
 let netRxRing: RingBuffer | null = null;
+let l2TunnelForwarder: L2TunnelForwarder | null = null;
+let l2TunnelClient: WebSocketL2TunnelClient | null = null;
+let l2TunnelProxyUrl: string | null = null;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -326,6 +331,27 @@ let shuttingDown = false;
 let ioServerAbort: AbortController | null = null;
 let ioServerTask: Promise<void> | null = null;
 
+function applyL2TunnelConfig(config: AeroConfig | null): void {
+  const proxyUrl = config?.proxyUrl ?? null;
+  if (!l2TunnelForwarder) return;
+
+  // Ensure we stop/close the previous tunnel when the proxy URL changes.
+  if (proxyUrl !== l2TunnelProxyUrl) {
+    l2TunnelForwarder.stop();
+    l2TunnelClient = null;
+    l2TunnelProxyUrl = proxyUrl;
+  }
+
+  if (proxyUrl === null) return;
+
+  if (!l2TunnelClient) {
+    l2TunnelClient = new WebSocketL2TunnelClient(proxyUrl, l2TunnelForwarder.sink);
+    l2TunnelForwarder.setTunnel(l2TunnelClient);
+  }
+
+  l2TunnelForwarder.start();
+}
+
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
@@ -581,6 +607,21 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
       netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
       netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+      l2TunnelForwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
+        onTunnelEvent: (ev) => {
+          if (ev.type === "open") {
+            pushEvent({ kind: "log", level: "info", message: "L2 tunnel connected" });
+          } else if (ev.type === "close") {
+            const suffix = ev.code === undefined ? "" : ` (code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ""})`;
+            pushEvent({ kind: "log", level: "warn", message: `L2 tunnel disconnected${suffix}` });
+          } else if (ev.type === "error") {
+            const msg = ev.error instanceof Error ? ev.error.message : String(ev.error);
+            pushEvent({ kind: "log", level: "warn", message: `L2 tunnel error: ${msg}` });
+          }
+        },
+      });
+      // Apply any config already received before the init handshake completed.
+      applyL2TunnelConfig(currentConfig);
 
       const irqSink: IrqSink = {
         raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
@@ -679,6 +720,12 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       currentConfig = update.config;
       currentConfigVersion = update.version;
       ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+      try {
+        applyL2TunnelConfig(currentConfig);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[io.worker] Failed to apply L2 tunnel config:", message);
+      }
       return;
     }
 
@@ -879,6 +926,7 @@ function startIoIpcServer(): void {
       mgr.tick(nowMs);
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
+      l2TunnelForwarder?.tick();
 
       if (perfActive) perfIoMs += performance.now() - t0;
       maybeEmitPerfSample();
@@ -1148,6 +1196,10 @@ function shutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
   ioServerAbort?.abort();
+  l2TunnelForwarder?.stop();
+  l2TunnelForwarder = null;
+  l2TunnelClient = null;
+  l2TunnelProxyUrl = null;
   if (usbPassthroughDebugTimer !== undefined) {
     clearInterval(usbPassthroughDebugTimer);
     usbPassthroughDebugTimer = undefined;
@@ -1214,6 +1266,10 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
 
 function fatal(err: unknown): void {
   ioServerAbort?.abort();
+  l2TunnelForwarder?.stop();
+  l2TunnelForwarder = null;
+  l2TunnelClient = null;
+  l2TunnelProxyUrl = null;
   const message = err instanceof Error ? err.message : String(err);
   pushEventBlocking({ kind: "panic", message });
   try {
