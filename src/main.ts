@@ -1138,10 +1138,10 @@ function renderAudioPanel(): HTMLElement {
         const level = output.getBufferLevelFrames();
         const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
         if (prefillFrames > 0) {
-          output.writeInterleaved(
-            new Float32Array(prefillFrames * output.ringBuffer.channelCount),
-            output.context.sampleRate,
-          );
+          // `SharedArrayBuffer` is guaranteed to be zero-initialized, and this demo always uses a
+          // freshly allocated ring buffer. Avoid allocating/copying a large Float32Array of zeros
+          // by simply advancing the write index to "claim" silent frames.
+          Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
         }
 
         workerCoordinator.setAudioOutputRingBuffer(
@@ -1193,10 +1193,10 @@ function renderAudioPanel(): HTMLElement {
       const level = output.getBufferLevelFrames();
       const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
       if (prefillFrames > 0) {
-        output.writeInterleaved(
-          new Float32Array(prefillFrames * output.ringBuffer.channelCount),
-          output.context.sampleRate,
-        );
+        // `SharedArrayBuffer` is guaranteed to be zero-initialized, and this demo always uses a
+        // freshly allocated ring buffer. Avoid allocating/copying a large Float32Array of zeros
+        // by simply advancing the write index to "claim" silent frames.
+        Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
       }
 
       // Start the CPU worker in a standalone "audio demo" mode.
@@ -1356,7 +1356,10 @@ function renderAudioPanel(): HTMLElement {
       const existingLevel = output.getBufferLevelFrames();
       const prefillFrames = Math.max(0, targetPrefillFrames - existingLevel);
       if (prefillFrames > 0) {
-        output.writeInterleaved(new Float32Array(prefillFrames * output.ringBuffer.channelCount), sr);
+        // `SharedArrayBuffer` is guaranteed to be zero-initialized, and this demo always uses a
+        // freshly allocated ring buffer. Avoid allocating/copying a large Float32Array of zeros
+        // by simply advancing the write index to "claim" silent frames.
+        Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
       }
 
       const workerConfig: AeroConfig = {

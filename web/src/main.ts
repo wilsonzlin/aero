@@ -2263,10 +2263,10 @@ function renderAudioPanel(): HTMLElement {
         const level = output.getBufferLevelFrames();
         const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
         if (prefillFrames > 0) {
-          output.writeInterleaved(
-            new Float32Array(prefillFrames * output.ringBuffer.channelCount),
-            output.context.sampleRate,
-          );
+          // `SharedArrayBuffer` is guaranteed to be zero-initialized, and this demo always uses a
+          // freshly allocated ring buffer. Avoid allocating/copying a large Float32Array of zeros
+          // by simply advancing the write index to "claim" silent frames.
+          Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
         }
 
         workerCoordinator.setAudioOutputRingBuffer(
@@ -2352,10 +2352,10 @@ function renderAudioPanel(): HTMLElement {
       const level = output.getBufferLevelFrames();
       const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
       if (prefillFrames > 0) {
-        output.writeInterleaved(
-          new Float32Array(prefillFrames * output.ringBuffer.channelCount),
-          output.context.sampleRate,
-        );
+        // `SharedArrayBuffer` is guaranteed to be zero-initialized, and this demo always uses a
+        // freshly allocated ring buffer. Avoid allocating/copying a large Float32Array of zeros
+        // by simply advancing the write index to "claim" silent frames.
+        Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
       }
 
       // Start the CPU worker in a standalone "audio demo" mode.
@@ -2498,8 +2498,15 @@ function renderAudioPanel(): HTMLElement {
       // Prefill ~200ms of silence so the AudioWorklet doesn't count underruns
       // while the workers spin up.
       const sr = output.context.sampleRate;
-      const prefillFrames = Math.floor(sr / 5);
-      output.writeInterleaved(new Float32Array(prefillFrames * output.ringBuffer.channelCount), sr);
+      const targetPrefillFrames = Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 5));
+      const existingLevel = output.getBufferLevelFrames();
+      const prefillFrames = Math.max(0, targetPrefillFrames - existingLevel);
+      if (prefillFrames > 0) {
+        // `SharedArrayBuffer` is guaranteed to be zero-initialized, and this demo always uses a
+        // freshly allocated ring buffer. Avoid allocating/copying a large Float32Array of zeros
+        // by simply advancing the write index to "claim" silent frames.
+        Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
+      }
 
       // Default to the worker-based loopback path; fall back to a main-thread
       // pump if the worker harness cannot start (e.g. shared WebAssembly.Memory
