@@ -364,33 +364,6 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     let addr_size_override = has_addr_size_override(&bytes, cpu.cpu.state.bitness());
                     let decoded = aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness())
                         .expect("decode tier0 assist");
-                    // Keep address-size override prefix state in sync with `assist::handle_assist`.
-                    // Tier-0 already fetched the instruction bytes, so we parse the legacy prefix
-                    // stream here and pass the result into `handle_assist_decoded`.
-                    let addr_size_override = {
-                        let bitness = cpu.cpu.state.bitness();
-                        let mut i = 0usize;
-                        let mut seen = false;
-                        while i < bytes.len() {
-                            let b = bytes[i];
-                            let is_legacy_prefix = matches!(
-                                b,
-                                0xF0 | 0xF2 | 0xF3 // lock/rep
-                                    | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65 // segment overrides
-                                    | 0x66 // operand-size override
-                                    | 0x67 // address-size override
-                            );
-                            let is_rex = bitness == 64 && (0x40..=0x4F).contains(&b);
-                            if !(is_legacy_prefix || is_rex) {
-                                break;
-                            }
-                            if b == 0x67 {
-                                seen = true;
-                            }
-                            i += 1;
-                        }
-                        seen
-                    };
                     let inhibits_interrupt = matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
                         && decoded.instr.op_count() > 0
                         && decoded.instr.op_kind(0) == OpKind::Register
