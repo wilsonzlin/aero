@@ -1415,11 +1415,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: internal writeback size mismatch".into(),
                 ));
             }
-            let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed".into(),
-                )
-            })?;
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
             })?;
@@ -1683,11 +1678,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                     ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
                 })?;
 
-            let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed".into(),
-                )
-            })?;
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation(
                     "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
@@ -1711,24 +1701,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                 return Err(ExecutorError::Validation(
                     "COPY_TEXTURE2D: missing dst row_pitch_bytes for writeback".into(),
                 ));
-            }
-
-            let table = alloc_table.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
-                )
-            })?;
-            let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
-                ExecutorError::Validation(format!(
-                    "COPY_TEXTURE2D: unknown dst backing_alloc_id={}",
-                    dst_backing.alloc_id
-                ))
-            })?;
-            if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
-                return Err(ExecutorError::Validation(format!(
-                    "COPY_TEXTURE2D: dst backing_alloc_id={} is read-only",
-                    dst_backing.alloc_id
-                )));
             }
 
             for row in 0..height {

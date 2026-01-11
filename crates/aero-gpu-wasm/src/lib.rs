@@ -340,6 +340,7 @@ mod wasm {
             entries.push((
                 alloc_id,
                 AllocEntry {
+                    flags: entry.flags,
                     gpa: entry.gpa,
                     size_bytes: entry.size_bytes,
                 },
@@ -351,7 +352,9 @@ mod wasm {
             });
         }
 
-        Ok((AllocTable::new(entries), allocations))
+        let table =
+            AllocTable::new(entries).map_err(|err| JsValue::from_str(&err.to_string()))?;
+        Ok((table, allocations))
     }
 
     #[wasm_bindgen]
