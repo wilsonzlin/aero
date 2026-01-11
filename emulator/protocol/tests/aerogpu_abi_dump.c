@@ -106,6 +106,24 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, offset_bytes);
   PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, size_bytes);
 
+  /* Fixed-layout packet fields (helps catch accidental field reordering). */
+  PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, resource_handle);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, stage);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, start_register);
+  PRINT_OFF("aerogpu_cmd_create_input_layout", struct aerogpu_cmd_create_input_layout, input_layout_handle);
+  PRINT_OFF("aerogpu_cmd_destroy_input_layout", struct aerogpu_cmd_destroy_input_layout, input_layout_handle);
+  PRINT_OFF("aerogpu_cmd_set_input_layout", struct aerogpu_cmd_set_input_layout, input_layout_handle);
+  PRINT_OFF("aerogpu_cmd_set_primitive_topology", struct aerogpu_cmd_set_primitive_topology, topology);
+  PRINT_OFF("aerogpu_cmd_set_texture", struct aerogpu_cmd_set_texture, shader_stage);
+  PRINT_OFF("aerogpu_cmd_set_texture", struct aerogpu_cmd_set_texture, slot);
+  PRINT_OFF("aerogpu_cmd_set_texture", struct aerogpu_cmd_set_texture, texture);
+  PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, shader_stage);
+  PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, slot);
+  PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, state);
+  PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, value);
+  PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, state);
+  PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, value);
+
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, magic);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, abi_version);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, size_bytes);

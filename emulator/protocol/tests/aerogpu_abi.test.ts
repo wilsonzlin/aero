@@ -446,6 +446,24 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_cmd_upload_resource", "offset_bytes"), 16);
   assert.equal(off("aerogpu_cmd_upload_resource", "size_bytes"), 24);
 
+  // Fixed-layout packet fields (helps catch accidental field reordering).
+  assert.equal(off("aerogpu_cmd_upload_resource", "resource_handle"), 8);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_f", "stage"), 8);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_f", "start_register"), 12);
+  assert.equal(off("aerogpu_cmd_create_input_layout", "input_layout_handle"), 8);
+  assert.equal(off("aerogpu_cmd_destroy_input_layout", "input_layout_handle"), 8);
+  assert.equal(off("aerogpu_cmd_set_input_layout", "input_layout_handle"), 8);
+  assert.equal(off("aerogpu_cmd_set_primitive_topology", "topology"), 8);
+  assert.equal(off("aerogpu_cmd_set_texture", "shader_stage"), 8);
+  assert.equal(off("aerogpu_cmd_set_texture", "slot"), 12);
+  assert.equal(off("aerogpu_cmd_set_texture", "texture"), 16);
+  assert.equal(off("aerogpu_cmd_set_sampler_state", "shader_stage"), 8);
+  assert.equal(off("aerogpu_cmd_set_sampler_state", "slot"), 12);
+  assert.equal(off("aerogpu_cmd_set_sampler_state", "state"), 16);
+  assert.equal(off("aerogpu_cmd_set_sampler_state", "value"), 20);
+  assert.equal(off("aerogpu_cmd_set_render_state", "state"), 8);
+  assert.equal(off("aerogpu_cmd_set_render_state", "value"), 12);
+
   assert.equal(off("aerogpu_wddm_alloc_priv", "magic"), 0);
   assert.equal(off("aerogpu_wddm_alloc_priv", "version"), 4);
   assert.equal(off("aerogpu_wddm_alloc_priv", "alloc_id"), 8);

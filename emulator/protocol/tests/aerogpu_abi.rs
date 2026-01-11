@@ -495,6 +495,94 @@ fn rust_layout_matches_c_headers() {
         "element_count"
     );
 
+    // Fixed-layout packet fields (helps catch accidental field reordering).
+    assert_off!(
+        AerogpuCmdUploadResource,
+        resource_handle,
+        "aerogpu_cmd_upload_resource",
+        "resource_handle"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsF,
+        stage,
+        "aerogpu_cmd_set_shader_constants_f",
+        "stage"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsF,
+        start_register,
+        "aerogpu_cmd_set_shader_constants_f",
+        "start_register"
+    );
+    assert_off!(
+        AerogpuCmdCreateInputLayout,
+        input_layout_handle,
+        "aerogpu_cmd_create_input_layout",
+        "input_layout_handle"
+    );
+    assert_off!(
+        AerogpuCmdDestroyInputLayout,
+        input_layout_handle,
+        "aerogpu_cmd_destroy_input_layout",
+        "input_layout_handle"
+    );
+    assert_off!(
+        AerogpuCmdSetInputLayout,
+        input_layout_handle,
+        "aerogpu_cmd_set_input_layout",
+        "input_layout_handle"
+    );
+    assert_off!(
+        AerogpuCmdSetPrimitiveTopology,
+        topology,
+        "aerogpu_cmd_set_primitive_topology",
+        "topology"
+    );
+    assert_off!(
+        AerogpuCmdSetTexture,
+        shader_stage,
+        "aerogpu_cmd_set_texture",
+        "shader_stage"
+    );
+    assert_off!(AerogpuCmdSetTexture, slot, "aerogpu_cmd_set_texture", "slot");
+    assert_off!(AerogpuCmdSetTexture, texture, "aerogpu_cmd_set_texture", "texture");
+    assert_off!(
+        AerogpuCmdSetSamplerState,
+        shader_stage,
+        "aerogpu_cmd_set_sampler_state",
+        "shader_stage"
+    );
+    assert_off!(
+        AerogpuCmdSetSamplerState,
+        slot,
+        "aerogpu_cmd_set_sampler_state",
+        "slot"
+    );
+    assert_off!(
+        AerogpuCmdSetSamplerState,
+        state,
+        "aerogpu_cmd_set_sampler_state",
+        "state"
+    );
+    assert_off!(
+        AerogpuCmdSetSamplerState,
+        value,
+        "aerogpu_cmd_set_sampler_state",
+        "value"
+    );
+    assert_off!(
+        AerogpuCmdSetRenderState,
+        state,
+        "aerogpu_cmd_set_render_state",
+        "state"
+    );
+    assert_off!(
+        AerogpuCmdSetRenderState,
+        value,
+        "aerogpu_cmd_set_render_state",
+        "value"
+    );
+
     // WDDM allocation private-data contract (stable across x86/x64).
     assert_eq!(abi.size("aerogpu_wddm_alloc_priv"), 40);
     assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "magic"), 0);
