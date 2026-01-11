@@ -28,7 +28,7 @@ behind an external USB hub device).
   and then the appropriate client driver (e.g. `kbdhid.sys` / `mouhid.sys`)
 
 Reference implementation (browser/WASM): `crates/aero-usb/src/hid.rs` (`UsbHidCompositeInput`).
-(A legacy native emulator harness keeps an older equivalent under `crates/emulator`.)
+(A legacy native emulator harness keeps an older equivalent under `crates/emulator/src/io/usb/*`.)
 
 ---
 
