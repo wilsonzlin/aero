@@ -1,6 +1,7 @@
 pub mod gamepad;
 pub mod keyboard;
 pub mod mouse;
+pub mod composite;
 pub mod usage;
 
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;

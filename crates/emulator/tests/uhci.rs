@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
@@ -321,7 +322,7 @@ fn uhci_interrupt_in_polling_reads_gamepad_reports() {
     uhci.controller
         .hub_mut()
         .attach(0, Box::new(gamepad.clone()));
-    uhci.controller.hub_mut().force_enable_for_tests(0);
+    reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
     uhci.port_write(0x00, 2, 0x0001);
@@ -405,4 +406,156 @@ fn uhci_interrupt_in_polling_reads_gamepad_reports() {
     let st = mem.read_u32(TD0 as u64 + 4);
     assert!(st & TD_STATUS_ACTIVE != 0);
     assert!(st & (1 << 19) != 0); // NAK
+}
+
+#[test]
+fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let composite = UsbCompositeHidInputHandle::new();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(composite.clone()));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // SET_ADDRESS(5).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // SET_CONFIGURATION(1).
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // Fetch report descriptors for each interface and verify the first few bytes.
+    // bmRequestType = 0x81 (DeviceToHost, Standard, Interface)
+    // wValue = 0x2200 (Report descriptor)
+    for (iface, expected_usage) in [(0u16, 0x06u8), (1, 0x02u8), (2, 0x05u8)] {
+        mem.write_physical(
+            BUF_SETUP as u64,
+            &[0x81, 0x06, 0x00, 0x22, iface as u8, 0x00, 0x40, 0x00],
+        );
+        write_td(
+            &mut mem,
+            TD0,
+            TD1,
+            td_status(true, false),
+            td_token(PID_SETUP, 5, 0, 0, 8),
+            BUF_SETUP,
+        );
+        write_td(
+            &mut mem,
+            TD1,
+            TD2,
+            td_status(true, false),
+            td_token(PID_IN, 5, 0, 1, 64),
+            BUF_DATA,
+        );
+        write_td(
+            &mut mem,
+            TD2,
+            1,
+            td_status(true, true),
+            td_token(PID_OUT, 5, 0, 1, 0),
+            0,
+        );
+        run_one_frame(&mut uhci, &mut mem, TD0);
+
+        let prefix = mem.slice(BUF_DATA as usize..BUF_DATA as usize + 4);
+        assert_eq!(prefix[0], 0x05); // Usage Page
+        assert_eq!(prefix[1], 0x01); // Generic Desktop
+        assert_eq!(prefix[2], 0x09); // Usage
+        assert_eq!(prefix[3], expected_usage);
+    }
+
+    composite.key_event(0x04, true); // 'a'
+    composite.mouse_movement(10, -5);
+    composite.gamepad_button_event(0x0001, true);
+
+    // Poll keyboard interrupt endpoint 1.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
+        [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]
+    );
+
+    // Poll mouse interrupt endpoint 2.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 2, 0, 4),
+        BUF_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 4),
+        [0x00, 10u8, (-5i8) as u8, 0x00]
+    );
+
+    // Poll gamepad interrupt endpoint 3.
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 3, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
+        [0x01, 0x00, 0, 0, 0, 0, 0, 0]
+    );
 }
