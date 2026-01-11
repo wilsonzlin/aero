@@ -20,6 +20,8 @@ pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
 pub use spec::{DriverSpec, PackagingSpec};
 
+const CANONICAL_WINDOWS_DEVICE_CONTRACT_NAME: &str = "aero-windows-pci-device-contract";
+
 /// Configuration for producing the distributable "Aero Drivers / Guest Tools" media.
 #[derive(Debug, Clone)]
 pub struct PackageConfig {
@@ -51,8 +53,23 @@ struct FileToPackage {
 }
 
 fn guest_tools_devices_cmd_service_overrides_for_spec(
+    contract: &windows_device_contract::WindowsDeviceContract,
     spec: &PackagingSpec,
 ) -> GuestToolsDevicesCmdServiceOverrides {
+    // The Windows device contract is the source of truth for `config/devices.cmd` service
+    // names. Only apply spec-based overrides for legacy/back-compat behaviour when using
+    // the canonical in-repo contract.
+    //
+    // Virtio-win Guest Tools builds should pass `docs/windows-device-contract-virtio-win.json`
+    // (or a derived override) so the contract itself controls service naming.
+    if !contract
+        .contract_name
+        .trim()
+        .eq_ignore_ascii_case(CANONICAL_WINDOWS_DEVICE_CONTRACT_NAME)
+    {
+        return GuestToolsDevicesCmdServiceOverrides::default();
+    }
+
     let driver_names: HashSet<String> = spec
         .drivers
         .iter()
@@ -89,7 +106,15 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
 
-    let service_overrides = guest_tools_devices_cmd_service_overrides_for_spec(&spec);
+    let contract = windows_device_contract::load_windows_device_contract(&config.windows_device_contract_path)
+        .with_context(|| {
+            format!(
+                "load windows device contract {}",
+                config.windows_device_contract_path.display()
+            )
+        })?;
+
+    let service_overrides = guest_tools_devices_cmd_service_overrides_for_spec(&contract, &spec);
     let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
         &config.windows_device_contract_path,
         &service_overrides,

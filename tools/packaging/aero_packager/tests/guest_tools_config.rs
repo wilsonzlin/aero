@@ -89,8 +89,12 @@ fn virtio_win_packaging_overrides_service_names_in_devices_cmd() -> anyhow::Resu
     };
     let outputs = aero_packager::package_guest_tools(&config)?;
 
-    // Confirm that the packager generated a devices.cmd that matches the upstream virtio-win
-    // service name, even though the in-repo Windows device contract uses Aero service names.
+    // Legacy/back-compat: confirm that the packager can still generate a virtio-win-compatible
+    // devices.cmd when the canonical Aero device contract is used, by applying spec-based
+    // service overrides for `viostor`/`netkvm`.
+    //
+    // Newer virtio-win workflows should prefer passing the virtio-win contract variant
+    // (`docs/windows-device-contract-virtio-win.json`) so the contract remains the source of truth.
     let zip_file = fs::File::open(&outputs.zip_path)?;
     let mut zip = zip::ZipArchive::new(zip_file)?;
     let mut entry = zip.by_name("config/devices.cmd")?;
@@ -104,6 +108,95 @@ fn virtio_win_packaging_overrides_service_names_in_devices_cmd() -> anyhow::Resu
     assert!(
         contents.contains("set \"AERO_VIRTIO_NET_SERVICE=netkvm\""),
         "expected virtio-win netkvm service name override in packaged devices.cmd, got:\n{contents}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn virtio_win_contract_service_names_are_not_overridden() -> anyhow::Result<()> {
+    let packager_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = packager_root.join("..").join("..").join("..");
+
+    let guest_tools_dir = repo_root
+        .join("tools")
+        .join("packaging")
+        .join("aero_packager")
+        .join("testdata")
+        .join("guest-tools-no-certs");
+
+    let spec_path = repo_root
+        .join("tools")
+        .join("packaging")
+        .join("specs")
+        .join("win7-virtio-win.json");
+
+    // Start from the virtio-win contract variant, but change the virtio-blk service name to a
+    // custom value. The packager should respect the contract when it is non-canonical rather than
+    // blindly overriding based on the spec driver names.
+    let base_contract_path = repo_root
+        .join("docs")
+        .join("windows-device-contract-virtio-win.json");
+    let mut contract_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&base_contract_path)?)?;
+    let devices = contract_json
+        .get_mut("devices")
+        .and_then(|v| v.as_array_mut())
+        .expect("windows device contract must contain devices[] array");
+    for dev in devices.iter_mut() {
+        if dev.get("device").and_then(|v| v.as_str()) == Some("virtio-blk") {
+            dev["driver_service_name"] = serde_json::Value::String("viostor_custom".to_string());
+        }
+    }
+    let contract_tmp = tempfile::NamedTempFile::new()?;
+    fs::write(
+        contract_tmp.path(),
+        serde_json::to_string_pretty(&contract_json)?,
+    )?;
+
+    // Build a minimal virtio-win-style driver tree containing `viostor` and `netkvm`.
+    let drivers_tmp = tempfile::tempdir()?;
+    for arch in ["x86", "amd64"] {
+        let arch_dir = drivers_tmp.path().join(arch);
+        fs::create_dir_all(&arch_dir)?;
+
+        let viostor = arch_dir.join("viostor");
+        fs::create_dir_all(&viostor)?;
+        fs::write(viostor.join("viostor.inf"), "PCI\\VEN_1AF4&DEV_1042\n")?;
+        fs::write(viostor.join("viostor.sys"), b"dummy")?;
+        fs::write(viostor.join("viostor.cat"), b"dummy")?;
+
+        let netkvm = arch_dir.join("netkvm");
+        fs::create_dir_all(&netkvm)?;
+        fs::write(netkvm.join("netkvm.inf"), "PCI\\VEN_1AF4&DEV_1041\n")?;
+        fs::write(netkvm.join("netkvm.sys"), b"dummy")?;
+        fs::write(netkvm.join("netkvm.cat"), b"dummy")?;
+    }
+
+    let out_dir = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir,
+        windows_device_contract_path: contract_tmp.path().to_path_buf(),
+        out_dir: out_dir.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::None,
+        source_date_epoch: 0,
+    };
+    let outputs = aero_packager::package_guest_tools(&config)?;
+
+    let zip_file = fs::File::open(&outputs.zip_path)?;
+    let mut zip = zip::ZipArchive::new(zip_file)?;
+    let mut entry = zip.by_name("config/devices.cmd")?;
+    let mut contents = String::new();
+    entry.read_to_string(&mut contents)?;
+
+    assert!(
+        contents.contains("set \"AERO_VIRTIO_BLK_SERVICE=viostor_custom\""),
+        "expected contract-provided service name in packaged devices.cmd, got:\n{contents}"
     );
 
     Ok(())
