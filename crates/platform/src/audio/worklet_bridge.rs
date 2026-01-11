@@ -44,6 +44,15 @@ pub fn buffer_byte_len(capacity_frames: u32, channel_count: u32) -> usize {
     HEADER_BYTES + capacity_frames as usize * channel_count as usize * core::mem::size_of::<f32>()
 }
 
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn layout_bytes_u32(capacity_frames: u32, channel_count: u32) -> Option<(u32, u32)> {
+    let sample_capacity = capacity_frames.checked_mul(channel_count)?;
+    let sample_bytes = sample_capacity.checked_mul(core::mem::size_of::<f32>() as u32)?;
+    let byte_len = (HEADER_BYTES as u32).checked_add(sample_bytes)?;
+    Some((byte_len, sample_capacity))
+}
+
 /// A small, pure-Rust ring buffer used for unit testing index math and wrap-around.
 ///
 /// In wasm, the actual storage is a `SharedArrayBuffer` accessed via typed-array
@@ -309,7 +318,8 @@ mod wasm {
                 return Err(JsValue::from_str("channel_count must be non-zero"));
             }
 
-            let byte_len = buffer_byte_len(capacity_frames, channel_count) as u32;
+            let (byte_len, sample_capacity) = layout_bytes_u32(capacity_frames, channel_count)
+                .ok_or_else(|| JsValue::from_str("Requested ring buffer layout exceeds 4GiB"))?;
             let sab = SharedArrayBuffer::new(byte_len);
 
             let header =
@@ -317,7 +327,7 @@ mod wasm {
             let samples = Float32Array::new_with_byte_offset_and_length(
                 &sab,
                 HEADER_BYTES as u32,
-                capacity_frames * channel_count,
+                sample_capacity,
             );
 
             // Explicitly reset shared state.
@@ -353,7 +363,8 @@ mod wasm {
                 return Err(JsValue::from_str("channel_count must be non-zero"));
             }
 
-            let required = buffer_byte_len(capacity_frames, channel_count) as u32;
+            let (required, sample_capacity) = layout_bytes_u32(capacity_frames, channel_count)
+                .ok_or_else(|| JsValue::from_str("Requested ring buffer layout exceeds 4GiB"))?;
             if sab.byte_length() < required {
                 return Err(JsValue::from_str(
                     "SharedArrayBuffer is too small for the requested layout",
@@ -365,7 +376,7 @@ mod wasm {
             let samples = Float32Array::new_with_byte_offset_and_length(
                 &sab,
                 HEADER_BYTES as u32,
-                capacity_frames * channel_count,
+                sample_capacity,
             );
 
             Ok(Self {
