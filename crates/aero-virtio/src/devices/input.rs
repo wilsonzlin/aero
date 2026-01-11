@@ -73,12 +73,23 @@ impl VirtioDevice for VirtioInput {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        if queue_index != 0 {
-            return Err(VirtioDeviceError::Unsupported);
+        match queue_index {
+            // eventq
+            0 => {
+                self.buffers.push_back(chain);
+                self.flush_events(queue, mem)
+            }
+            // statusq
+            1 => {
+                // Contract v1: the guest may post LED/output events. We don't model LEDs
+                // yet, but we must consume and complete the chain so the guest driver
+                // can reclaim the descriptors.
+                queue
+                    .add_used(mem, chain.head_index(), 0)
+                    .map_err(|_| VirtioDeviceError::IoError)
+            }
+            _ => Err(VirtioDeviceError::Unsupported),
         }
-
-        self.buffers.push_back(chain);
-        self.flush_events(queue, mem)
     }
 
     fn poll_queue(

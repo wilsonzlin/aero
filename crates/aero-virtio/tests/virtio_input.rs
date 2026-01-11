@@ -188,7 +188,7 @@ fn virtio_input_posts_buffers_then_delivers_events() {
 }
 
 #[test]
-fn virtio_input_statusq_does_not_stall_queue_on_device_error() {
+fn virtio_input_statusq_buffers_are_consumed() {
     let input = VirtioInput::new();
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
 
@@ -236,8 +236,8 @@ fn virtio_input_statusq_does_not_stall_queue_on_device_error() {
             | VIRTIO_STATUS_DRIVER_OK,
     );
 
-    // Configure status queue 1. The current VirtioInput device model does not implement statusq
-    // semantics; the virtio-pci transport must still complete the chain to avoid wedging the queue.
+    // Configure status queue 1. Contract v1 requires the device to consume and complete all
+    // statusq buffers (it may ignore their contents).
     let desc = 0x5000;
     let avail = 0x6000;
     let used = 0x7000;
