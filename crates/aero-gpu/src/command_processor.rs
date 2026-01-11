@@ -128,10 +128,7 @@ impl AeroGpuCommandProcessor {
                     self.shared_surface_aliases
                         .insert(out_resource_handle, original);
                 }
-                AeroGpuCmd::Flush
-                | AeroGpuCmd::Nop
-                | AeroGpuCmd::DebugMarker { .. }
-                | AeroGpuCmd::Unknown { .. } => {
+                _ => {
                     // For now the processor treats most commands as "handled elsewhere".
                 }
             }

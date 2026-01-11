@@ -63,8 +63,11 @@ pub use profiler::{
     FrameTimingsReport, GpuBackendKind, GpuProfiler, GpuProfilerConfig, GpuTimestampPhase,
 };
 pub use protocol::{
-    parse_cmd_stream, AeroGpuCmd, AeroGpuCmdHdr, AeroGpuCmdStreamHeader,
-    AeroGpuCmdStreamParseError, AeroGpuCmdStreamView, AeroGpuOpcode, AEROGPU_CMD_STREAM_MAGIC,
+    parse_cmd_stream, AeroGpuBlendState, AeroGpuCmd, AeroGpuCmdHdr, AeroGpuCmdStreamHeader,
+    AeroGpuCmdStreamParseError, AeroGpuCmdStreamView, AeroGpuDepthStencilState,
+    AeroGpuInputLayoutBlobHeader, AeroGpuInputLayoutElementDxgi, AeroGpuOpcode,
+    AeroGpuRasterizerState, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
 };
 pub use readback::readback_rgba8;
 pub use texture_format::{TextureFormat, TextureFormatSelection, TextureUploadTransform};
