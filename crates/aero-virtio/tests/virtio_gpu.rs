@@ -494,3 +494,128 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
 
     assert_eq!(&*shared_scanout.borrow(), expected.as_slice());
 }
+
+#[test]
+fn virtio_gpu_rejects_oversize_request_without_wedging_queue() {
+    const MAX_REQ_BYTES: usize = 256 * 1024;
+
+    let shared_scanout = Rc::new(RefCell::new(Vec::new()));
+    let gpu = VirtioGpu2d::new(4, 4, SharedScanout(shared_scanout));
+    let mut dev = VirtioPciDevice::new(Box::new(gpu), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation (accept whatever the device offers).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure queue 0 (controlq).
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    let qsz = bar_read_u16(&mut dev, caps.common + 0x18);
+    assert!(qsz >= 8);
+
+    let desc = 0x4000;
+    let avail = 0x5000;
+    let used = 0x6000;
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Init rings.
+    write_u16_le(&mut mem, avail, 0).unwrap(); // flags
+    write_u16_le(&mut mem, avail + 2, 0).unwrap(); // idx
+    write_u16_le(&mut mem, used, 0).unwrap(); // flags
+    write_u16_le(&mut mem, used + 2, 0).unwrap(); // idx
+
+    let mut avail_idx = 0u16;
+    let mut used_idx = 0u16;
+
+    // Submit an oversized request descriptor chain. The device must reject it without trying to
+    // buffer unbounded request bytes, but the transport must still advance used->idx so the queue
+    // doesn't wedge.
+    let req_addr = 0x7000;
+    let resp_addr = 0x8000;
+    mem.write(resp_addr, &[0u8; 64]).unwrap();
+    write_desc(
+        &mut mem,
+        desc,
+        0,
+        req_addr,
+        (MAX_REQ_BYTES as u32) + 1,
+        0x0001,
+        1,
+    );
+    write_desc(&mut mem, desc, 1, resp_addr, 64, 0x0002, 0);
+
+    let ring_index = (avail_idx % qsz) as u64;
+    write_u16_le(&mut mem, avail + 4 + ring_index * 2, 0).unwrap();
+    avail_idx = avail_idx.wrapping_add(1);
+    write_u16_le(&mut mem, avail + 2, avail_idx).unwrap();
+
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+
+    let used_ring_index = (used_idx % qsz) as u64;
+    let used_elem = used + 4 + used_ring_index * 8;
+    assert_eq!(read_u32_le(&mem, used_elem).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, used_elem + 4).unwrap(), 0);
+    used_idx = used_idx.wrapping_add(1);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x16), 0);
+
+    // A follow-up valid request must still complete (queue not wedged).
+    let resp = submit_control(
+        &mut dev,
+        &mut mem,
+        &caps,
+        qsz,
+        desc,
+        avail,
+        used,
+        &mut avail_idx,
+        &mut used_idx,
+        req_addr,
+        resp_addr,
+        &ctrl_hdr(proto::VIRTIO_GPU_CMD_GET_DISPLAY_INFO),
+        512,
+    );
+    assert_eq!(
+        u32::from_le_bytes(resp[0..4].try_into().unwrap()),
+        proto::VIRTIO_GPU_RESP_OK_DISPLAY_INFO
+    );
+}

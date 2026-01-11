@@ -67,6 +67,10 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
+        // Virtio-gpu control commands are small; cap request buffering so a malicious guest can't
+        // force the host to allocate unbounded memory by advertising a giant descriptor length.
+        const MAX_REQ_BYTES: usize = 256 * 1024;
+
         let descs = chain.descriptors();
         if descs.is_empty() {
             return Err(VirtioDeviceError::BadDescriptorChain);
@@ -86,8 +90,13 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
                 // Virtio requires all device-writable descriptors to come after the readable ones.
                 return Err(VirtioDeviceError::BadDescriptorChain);
             }
+            let len = d.len as usize;
+            let remaining = MAX_REQ_BYTES.saturating_sub(req.len());
+            if len > remaining {
+                return Err(VirtioDeviceError::BadDescriptorChain);
+            }
             let chunk = mem
-                .get_slice(d.addr, d.len as usize)
+                .get_slice(d.addr, len)
                 .map_err(|_| VirtioDeviceError::IoError)?;
             req.extend_from_slice(chunk);
         }
