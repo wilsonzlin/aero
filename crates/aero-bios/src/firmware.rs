@@ -281,7 +281,9 @@ impl Bios {
             e820,
             pci_devices: Vec::new(),
             acpi,
-            a20_gate: Box::new(LocalA20Gate { enabled: true }),
+            // On real hardware the A20 line is typically disabled after reset and enabled
+            // during POST before firmware writes to memory above 1MiB.
+            a20_gate: Box::new(LocalA20Gate { enabled: false }),
             last_disk_status: 0,
             video_mode: 0x03,
             active_page: 0,
@@ -330,6 +332,13 @@ impl Bios {
         _kbd: &mut K,
         mut pci: Option<&mut dyn PciConfigSpace>,
     ) {
+        // Ensure A20 is enabled before touching memory above 1MiB (ACPI tables, etc).
+        //
+        // This call is intentionally routed through the `A20Gate` hook so emulators can
+        // wire POST's A20 enable to the same underlying A20 line used by the physical
+        // memory bus for address masking.
+        self.a20_gate.set_a20_enabled(true);
+
         // Disable interrupts.
         cpu.eflags &= !FLAG_IF;
 
@@ -1216,7 +1225,9 @@ impl Bios {
             }
             0x2403 => {
                 // Query A20 support. We claim keyboard-controller and fast-A20 support.
-                cpu.set_bx(0x0003);
+                // Return value is a bitmask of supported A20 control methods.
+                // We advertise keyboard-controller + port 0x92 + INT15 services.
+                cpu.set_bx(0x0007);
                 cpu.set_cf(false);
                 cpu.set_ah(0);
                 return;
