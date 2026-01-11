@@ -972,10 +972,13 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankInterruptTime100ns, 0);
     adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
+    BOOLEAN interruptRegistered = FALSE;
     if (adapter->DxgkInterface.DxgkCbRegisterInterrupt) {
         NTSTATUS st = adapter->DxgkInterface.DxgkCbRegisterInterrupt(adapter->StartInfo.hDxgkHandle);
         if (!NT_SUCCESS(st)) {
             AEROGPU_LOG("StartDevice: DxgkCbRegisterInterrupt failed 0x%08lx", st);
+        } else {
+            interruptRegistered = TRUE;
         }
     }
 
@@ -1023,6 +1026,24 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
                 KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
             }
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        } else if (adapter->Bar0) {
+            /*
+             * The legacy device doesn't have an IRQ_ENABLE mask; ack everything
+             * so any level-triggered interrupt deasserts.
+             */
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+        }
+
+        /*
+         * If `StartDevice` fails, dxgkrnl will not call StopDevice. Clean up
+         * the registered interrupt handler explicitly to avoid leaving a stale
+         * ISR callback installed.
+         */
+        if (interruptRegistered && adapter->DxgkInterface.DxgkCbDisableInterrupt) {
+            adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
+        }
+        if (interruptRegistered && adapter->DxgkInterface.DxgkCbUnregisterInterrupt) {
+            adapter->DxgkInterface.DxgkCbUnregisterInterrupt(adapter->StartInfo.hDxgkHandle);
         }
 
         AeroGpuRingCleanup(adapter);
