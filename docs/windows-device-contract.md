@@ -81,8 +81,8 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 >
 > Legacy note: some bring-up builds may still expose the legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`.
-> The supported Win7 display driver INFs match both `PCI\VEN_A3A0&DEV_0001` (preferred, versioned ABI)
-> and `PCI\VEN_1AED&DEV_0001` (legacy bring-up ABI) during migration.
+> The in-tree Win7 display driver INFs intentionally match only `PCI\VEN_A3A0&DEV_0001`;
+> installing against the legacy device model requires a custom INF.
 >
 > Older prototypes used PCI vendor 1AE0; those stacks are deprecated and must not be treated as the
 > Windows driver binding contract.
@@ -103,7 +103,7 @@ All numeric values are shown as hexadecimal.
 Notes:
 
 - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
-- `aerogpu.inf` also matches the legacy AeroGPU HWID `1AED:0001`.
+- The legacy AeroGPU HWID `1AED:0001` is supported by the KMD but intentionally not matched by the in-tree INFs; installing against it requires a custom INF.
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
 
 Compatibility note (non-canonical virtio PCI Device IDs):
