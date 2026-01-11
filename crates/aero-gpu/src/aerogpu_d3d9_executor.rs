@@ -225,6 +225,7 @@ enum Resource {
     Buffer {
         buffer: wgpu::Buffer,
         size: u64,
+        usage_flags: u32,
         backing: Option<GuestBufferBacking>,
         dirty_ranges: Vec<Range<u64>>,
     },
@@ -232,6 +233,8 @@ enum Resource {
         texture: wgpu::Texture,
         view: wgpu::TextureView,
         view_srgb: Option<wgpu::TextureView>,
+        usage_flags: u32,
+        format_raw: u32,
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
@@ -1073,6 +1076,7 @@ impl AerogpuD3d9Executor {
             | AeroGpuCmd::Unknown { .. } => Ok(()),
             AeroGpuCmd::CreateBuffer {
                 buffer_handle,
+                usage_flags,
                 size_bytes,
                 backing_alloc_id,
                 backing_offset_bytes,
@@ -1083,7 +1087,17 @@ impl AerogpuD3d9Executor {
                         "CREATE_BUFFER: resource handle 0 is reserved".into(),
                     ));
                 }
-                if self.handle_in_use(buffer_handle) {
+                if self.shaders.contains_key(&buffer_handle)
+                    || self.input_layouts.contains_key(&buffer_handle)
+                {
+                    return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
+                }
+                // Underlying handles remain reserved as long as any aliases still reference them.
+                // If the original handle was destroyed, reject reusing it until the underlying
+                // resource is fully released.
+                if !self.resource_handles.contains_key(&buffer_handle)
+                    && self.resource_refcounts.contains_key(&buffer_handle)
+                {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
                 }
 
@@ -1120,30 +1134,64 @@ impl AerogpuD3d9Executor {
                         base_gpa: entry.gpa + backing_offset,
                     })
                 };
-                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("aerogpu-d3d9.buffer"),
-                    size: size_bytes,
-                    usage: wgpu::BufferUsages::COPY_DST
+
+                if self.resource_handles.contains_key(&buffer_handle) {
+                    let underlying = self.resolve_resource_handle(buffer_handle)?;
+                    let Some(res) = self.resources.get_mut(&underlying) else {
+                        return Err(AerogpuD3d9Error::UnknownResource(buffer_handle));
+                    };
+                    match res {
+                        Resource::Buffer {
+                            size,
+                            usage_flags: existing_usage_flags,
+                            backing: existing_backing,
+                            ..
+                        } => {
+                            if *size != size_bytes || *existing_usage_flags != usage_flags {
+                                return Err(AerogpuD3d9Error::Validation(format!(
+                                    "CREATE_* for existing handle {buffer_handle} has mismatched immutable properties; destroy and recreate the handle"
+                                )));
+                            }
+                            *existing_backing = backing;
+                            Ok(())
+                        }
+                        Resource::Texture2d { .. } => Err(AerogpuD3d9Error::Validation(format!(
+                            "CREATE_BUFFER: handle {buffer_handle} is already bound to a texture"
+                        ))),
+                    }
+                } else {
+                    let mut buffer_usage = wgpu::BufferUsages::COPY_DST
                         | wgpu::BufferUsages::COPY_SRC
                         | wgpu::BufferUsages::VERTEX
-                        | wgpu::BufferUsages::INDEX,
-                    mapped_at_creation: false,
-                });
-                self.resources.insert(
-                    buffer_handle,
-                    Resource::Buffer {
-                        buffer,
+                        | wgpu::BufferUsages::INDEX;
+                    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
+                        buffer_usage |= wgpu::BufferUsages::UNIFORM;
+                    }
+
+                    let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("aerogpu-d3d9.buffer"),
                         size: size_bytes,
-                        backing,
-                        dirty_ranges: Vec::new(),
-                    },
-                );
-                self.register_resource_handle(buffer_handle);
-                Ok(())
+                        usage: buffer_usage,
+                        mapped_at_creation: false,
+                    });
+                    self.resources.insert(
+                        buffer_handle,
+                        Resource::Buffer {
+                            buffer,
+                            size: size_bytes,
+                            usage_flags,
+                            backing,
+                            dirty_ranges: Vec::new(),
+                        },
+                    );
+                    self.register_resource_handle(buffer_handle);
+                    Ok(())
+                }
             }
             AeroGpuCmd::CreateTexture2d {
                 texture_handle,
-                format,
+                usage_flags,
+                format: format_raw,
                 width,
                 height,
                 mip_levels,
@@ -1158,7 +1206,14 @@ impl AerogpuD3d9Executor {
                         "CREATE_TEXTURE2D: resource handle 0 is reserved".into(),
                     ));
                 }
-                if self.handle_in_use(texture_handle) {
+                if self.shaders.contains_key(&texture_handle)
+                    || self.input_layouts.contains_key(&texture_handle)
+                {
+                    return Err(AerogpuD3d9Error::ResourceHandleInUse(texture_handle));
+                }
+                if !self.resource_handles.contains_key(&texture_handle)
+                    && self.resource_refcounts.contains_key(&texture_handle)
+                {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(texture_handle));
                 }
                 if width == 0 || height == 0 {
@@ -1171,7 +1226,7 @@ impl AerogpuD3d9Executor {
                         "CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1".into(),
                     ));
                 }
-                let format = map_aerogpu_format(format)?;
+                let format = map_aerogpu_format(format_raw)?;
                 let mip_level_count = mip_levels;
                 let backing = if backing_alloc_id == 0 {
                     None
@@ -1227,62 +1282,107 @@ impl AerogpuD3d9Executor {
                         size_bytes: required,
                     })
                 };
-                let view_formats = match format {
-                    wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
-                    wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
-                    _ => Vec::new(),
-                };
-                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("aerogpu-d3d9.texture2d"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: array_layers,
-                    },
-                    mip_level_count,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::COPY_DST
-                        | wgpu::TextureUsages::COPY_SRC
-                        | wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &view_formats,
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let view_srgb = match format {
-                    wgpu::TextureFormat::Rgba8Unorm => {
-                        Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-                            ..Default::default()
-                        }))
+
+                if self.resource_handles.contains_key(&texture_handle) {
+                    let underlying = self.resolve_resource_handle(texture_handle)?;
+                    let Some(res) = self.resources.get_mut(&underlying) else {
+                        return Err(AerogpuD3d9Error::UnknownResource(texture_handle));
+                    };
+                    match res {
+                        Resource::Texture2d {
+                            usage_flags: existing_usage_flags,
+                            format_raw: existing_format_raw,
+                            width: existing_width,
+                            height: existing_height,
+                            mip_level_count: existing_mip_levels,
+                            array_layers: existing_layers,
+                            row_pitch_bytes: existing_row_pitch_bytes,
+                            backing: existing_backing,
+                            ..
+                        } => {
+                            if *existing_usage_flags != usage_flags
+                                || *existing_format_raw != format_raw
+                                || *existing_width != width
+                                || *existing_height != height
+                                || *existing_mip_levels != mip_level_count
+                                || *existing_layers != array_layers
+                                || *existing_row_pitch_bytes != row_pitch_bytes
+                            {
+                                return Err(AerogpuD3d9Error::Validation(format!(
+                                    "CREATE_* for existing handle {texture_handle} has mismatched immutable properties; destroy and recreate the handle"
+                                )));
+                            }
+                            *existing_backing = backing;
+                            Ok(())
+                        }
+                        Resource::Buffer { .. } => Err(AerogpuD3d9Error::Validation(format!(
+                            "CREATE_TEXTURE2D: handle {texture_handle} is already bound to a buffer"
+                        ))),
                     }
-                    wgpu::TextureFormat::Bgra8Unorm => {
-                        Some(texture.create_view(&wgpu::TextureViewDescriptor {
-                            format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
-                            ..Default::default()
-                        }))
-                    }
-                    _ => None,
-                };
-                self.resources.insert(
-                    texture_handle,
-                    Resource::Texture2d {
-                        texture,
-                        view,
-                        view_srgb,
-                        format,
-                        width,
-                        height,
+                } else {
+                    let view_formats = match format {
+                        wgpu::TextureFormat::Rgba8Unorm => {
+                            vec![wgpu::TextureFormat::Rgba8UnormSrgb]
+                        }
+                        wgpu::TextureFormat::Bgra8Unorm => {
+                            vec![wgpu::TextureFormat::Bgra8UnormSrgb]
+                        }
+                        _ => Vec::new(),
+                    };
+                    let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("aerogpu-d3d9.texture2d"),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: array_layers,
+                        },
                         mip_level_count,
-                        array_layers,
-                        row_pitch_bytes,
-                        backing,
-                        dirty_ranges: Vec::new(),
-                    },
-                );
-                self.register_resource_handle(texture_handle);
-                Ok(())
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage: wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::COPY_SRC
+                            | wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                        view_formats: &view_formats,
+                    });
+                    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    let view_srgb = match format {
+                        wgpu::TextureFormat::Rgba8Unorm => {
+                            Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                                ..Default::default()
+                            }))
+                        }
+                        wgpu::TextureFormat::Bgra8Unorm => {
+                            Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                                format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                                ..Default::default()
+                            }))
+                        }
+                        _ => None,
+                    };
+                    self.resources.insert(
+                        texture_handle,
+                        Resource::Texture2d {
+                            texture,
+                            view,
+                            view_srgb,
+                            usage_flags,
+                            format_raw,
+                            format,
+                            width,
+                            height,
+                            mip_level_count,
+                            array_layers,
+                            row_pitch_bytes,
+                            backing,
+                            dirty_ranges: Vec::new(),
+                        },
+                    );
+                    self.register_resource_handle(texture_handle);
+                    Ok(())
+                }
             }
             AeroGpuCmd::DestroyResource { resource_handle } => {
                 self.destroy_resource_handle(resource_handle);

@@ -802,6 +802,178 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
 }
 
 #[test]
+fn d3d9_create_buffer_rebind_updates_guest_backing() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
+
+    const SRC_HANDLE: u32 = 1;
+    const DST_HANDLE: u32 = 2;
+
+    const ALLOC_A: u32 = 1;
+    const ALLOC_B: u32 = 2;
+    const GPA_A: u64 = 0x1000;
+    const GPA_B: u64 = 0x2000;
+
+    let guest_memory = VecGuestMemory::new(0x8000);
+    let alloc_table = AllocTable::new([
+        (
+            ALLOC_A,
+            AllocEntry {
+                gpa: GPA_A,
+                size_bytes: 0x1000,
+            },
+        ),
+        (
+            ALLOC_B,
+            AllocEntry {
+                gpa: GPA_B,
+                size_bytes: 0x1000,
+            },
+        ),
+    ]);
+
+    let pattern_a = [0x01u8; 16];
+    let pattern_b = [0xBBu8; 16];
+
+    let stream_a = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, ALLOC_A);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pattern_a.len() as u64); // size_bytes
+            out.extend_from_slice(&pattern_a);
+        });
+
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, 16); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream_a, &guest_memory, Some(&alloc_table))
+        .expect("first submit should succeed");
+
+    let mut out_a = vec![0u8; pattern_a.len()];
+    guest_memory.read(GPA_A, &mut out_a).unwrap();
+    assert_eq!(&out_a, &pattern_a);
+
+    let stream_b = build_stream(|out| {
+        // Rebind dst to a different allocation ID.
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, ALLOC_B);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pattern_b.len() as u64); // size_bytes
+            out.extend_from_slice(&pattern_b);
+        });
+
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, 16); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream_b, &guest_memory, Some(&alloc_table))
+        .expect("second submit should succeed");
+
+    let mut out_a_after = vec![0u8; pattern_a.len()];
+    guest_memory.read(GPA_A, &mut out_a_after).unwrap();
+    assert_eq!(
+        &out_a_after, &pattern_a,
+        "rebind should not change previously written backing"
+    );
+
+    let mut out_b = vec![0u8; pattern_b.len()];
+    guest_memory.read(GPA_B, &mut out_b).unwrap();
+    assert_eq!(&out_b, &pattern_b);
+}
+
+#[test]
+fn d3d9_create_buffer_rebind_rejects_mismatched_size() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, 1); // buffer_handle
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, 1); // buffer_handle
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 32); // size_bytes (mismatch)
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected mismatched CREATE_BUFFER rebind to fail"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("mismatched immutable")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
@@ -916,6 +1088,235 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
     expected[row_pitch as usize..row_pitch as usize + bpr as usize]
         .copy_from_slice(&src_tex_data[bpr as usize..bpr as usize * 2]);
     assert_eq!(out, expected);
+}
+
+#[test]
+fn d3d9_create_texture2d_rebind_updates_guest_backing() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const FORMAT_RGBA8: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
+
+    const ALLOC_A: u32 = 1;
+    const ALLOC_B: u32 = 2;
+    const GPA_A: u64 = 0x1000;
+    const GPA_B: u64 = 0x2000;
+
+    let width = 1u32;
+    let height = 1u32;
+    let row_pitch = 8u32;
+    let backing_len = (row_pitch * height) as usize;
+    let bpr = (width * 4) as usize;
+
+    let guest_memory = VecGuestMemory::new(0x8000);
+    guest_memory
+        .write(GPA_A, &vec![0xEEu8; backing_len])
+        .unwrap();
+    guest_memory
+        .write(GPA_B, &vec![0xEEu8; backing_len])
+        .unwrap();
+
+    let alloc_table = AllocTable::new([
+        (
+            ALLOC_A,
+            AllocEntry {
+                gpa: GPA_A,
+                size_bytes: 0x1000,
+            },
+        ),
+        (
+            ALLOC_B,
+            AllocEntry {
+                gpa: GPA_B,
+                size_bytes: 0x1000,
+            },
+        ),
+    ]);
+
+    let pixel_a = [0x10u8, 0x20, 0x30, 0x40];
+    let pixel_b = [0xABu8, 0xCD, 0xEF, 0x01];
+
+    let stream_a = build_stream(|out| {
+        // Host-owned source texture.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, FORMAT_RGBA8);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pixel_a.len() as u64); // size_bytes
+            out.extend_from_slice(&pixel_a);
+        });
+
+        // Guest-backed destination texture with padded row pitch.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, FORMAT_RGBA8);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, row_pitch);
+            push_u32(out, ALLOC_A);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream_a, &guest_memory, Some(&alloc_table))
+        .expect("first submit should succeed");
+
+    let mut out_a = vec![0u8; backing_len];
+    guest_memory.read(GPA_A, &mut out_a).unwrap();
+    let mut expected_a = vec![0xEEu8; backing_len];
+    expected_a[0..bpr].copy_from_slice(&pixel_a);
+    assert_eq!(out_a, expected_a);
+
+    let stream_b = build_stream(|out| {
+        // Rebind destination to a different allocation ID.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, FORMAT_RGBA8);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, row_pitch);
+            push_u32(out, ALLOC_B);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pixel_b.len() as u64); // size_bytes
+            out.extend_from_slice(&pixel_b);
+        });
+
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream_b, &guest_memory, Some(&alloc_table))
+        .expect("second submit should succeed");
+
+    let mut out_a_after = vec![0u8; backing_len];
+    guest_memory.read(GPA_A, &mut out_a_after).unwrap();
+    assert_eq!(out_a_after, expected_a);
+
+    let mut out_b = vec![0u8; backing_len];
+    guest_memory.read(GPA_B, &mut out_b).unwrap();
+    let mut expected_b = vec![0xEEu8; backing_len];
+    expected_b[0..bpr].copy_from_slice(&pixel_b);
+    assert_eq!(out_b, expected_b);
+}
+
+#[test]
+fn d3d9_create_texture2d_rebind_rejects_mismatched_format() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 1); // texture_handle
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 1); // texture_handle
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AerogpuFormat::B8G8R8A8Unorm as u32); // format (mismatch)
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected mismatched CREATE_TEXTURE2D rebind to fail"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("mismatched immutable")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]
