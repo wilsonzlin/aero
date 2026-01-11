@@ -281,7 +281,12 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
       queue = [];
       this.inputReports.set(msg.deviceId, queue);
     }
-    queue.push(msg);
+    // `HidInputReportMessage.data` is normally ArrayBuffer-backed because it's
+    // transferred over postMessage. Some fast paths (SharedArrayBuffer rings)
+    // can deliver views backed by SharedArrayBuffer; copy those so buffered
+    // reports remain valid after the ring memory is reused.
+    const data = ensureArrayBufferBacked(msg.data);
+    queue.push({ ...msg, data });
     if (queue.length > MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE) {
       queue.splice(0, queue.length - MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE);
     }
