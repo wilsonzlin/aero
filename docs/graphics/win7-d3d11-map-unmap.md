@@ -319,7 +319,7 @@ Other validation:
   * `E_INVALIDARG` for illegal MapType/Flags/usage/subresource combinations.
   * `DXGI_ERROR_WAS_STILL_DRAWING` for DO_NOT_WAIT contention.
 * `pfnUnmap` is `void`:
-  * if the Unmap arguments are invalid (unknown resource, bad subresource, Unmap without a prior successful Map), report via the runtime callback `pfnSetErrorCb(hRTDevice, E_INVALIDARG)` and return.
+  * if the Unmap arguments are invalid (unknown resource, bad subresource, Unmap without a prior successful Map), report via the runtime callback `pfnSetErrorCb(<device-handle>, E_INVALIDARG)` (using whatever handle type your headers declare: `HRTDEVICE` vs `HDEVICE`) and return.
 
 Do **not** silently ignore invalid Unmap in AeroGPU; hiding these errors makes runtime/device-state bugs extremely difficult to diagnose.
 
@@ -422,7 +422,7 @@ HRESULT APIENTRY Map(hContext, hResource, Subresource, MapType, MapFlags, pOut) 
 void APIENTRY Unmap(hContext, hResource, Subresource) {
   Resource* res = lookup_resource(hResource);
   if (!res || !is_mapped(res, Subresource)) {
-    callbacks->pfnSetErrorCb(hRTDevice, E_INVALIDARG);
+    callbacks->pfnSetErrorCb(<device-handle>, E_INVALIDARG);
     return;
   }
 
@@ -441,7 +441,7 @@ void APIENTRY Unmap(hContext, hResource, Subresource) {
 
   HRESULT hr = callbacks->pfnUnlockCb(hRTDevice, &unlock);
   if (FAILED(hr)) {
-    callbacks->pfnSetErrorCb(hRTDevice, hr);
+    callbacks->pfnSetErrorCb(<device-handle>, hr);
   }
 
   clear_mapped(res, Subresource);
