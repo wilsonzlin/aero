@@ -107,6 +107,19 @@ npm -w web run dev
 npm -w backend/aero-gateway test
 ```
 
+## Security header regression tests (COOP/COEP/CSP)
+
+Cross-origin isolation and Aero’s WASM/JIT features depend on a consistent set of security headers
+(COOP/COEP/CORP/OAC + CSP with `wasm-unsafe-eval`). To prevent template/server drift, the repo includes:
+
+```bash
+# Fast static validation (templates + Vite configs + proxies)
+npm run check:security-headers
+
+# Runtime validation (Playwright, preview server)
+npm run test:security-headers
+```
+
 ### Manual (equivalent) commands
 
 From the repo root:
