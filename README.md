@@ -281,6 +281,8 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 
   The same service also exposes `GET /udp` as a WebSocket UDP relay fallback using the same v1/v2 framing (useful when WebRTC isn’t available).
 
+  When deploying the relay separately, `backend/aero-gateway` can optionally mint short-lived relay credentials via the `udpRelay` field in `POST /session` (or `POST /udp-relay/token`).
+
 ### Local dev workflow (run alongside Vite)
 
 This repo includes a standalone proxy service at [`net-proxy/`](./net-proxy/) that’s convenient to run next to `vite dev`.
