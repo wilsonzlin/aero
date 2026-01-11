@@ -145,6 +145,23 @@ fn dxbc_get_signature_falls_back_to_v1_chunk_id() {
 }
 
 #[test]
+fn dxbc_get_signature_falls_back_from_v1_to_base_chunk_id() {
+    let sig_bytes = build_signature_chunk();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Some callers prefer to use the v1 chunk IDs, but the container may still
+    // use the base `*SGN` naming.
+    let sig = dxbc
+        .get_signature(FourCC(*b"ISG1"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
 fn signature_chunk_table_out_of_bounds_is_rejected() {
     // Declares one entry, but doesn't provide enough bytes for the table.
     let mut bytes = Vec::new();

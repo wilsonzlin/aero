@@ -236,12 +236,14 @@ impl<'a> DxbcFile<'a> {
         }
 
         // Some toolchains emit signature chunk variant IDs with a trailing `1`
-        // (e.g. `ISG1` instead of `ISGN`). Fall back to the corresponding
-        // variant when a caller asks for the base chunk ID.
+        // (e.g. `ISG1` instead of `ISGN`). Accept either spelling.
         let fallback_kind = match kind.0 {
             [b'I', b'S', b'G', b'N'] => Some(FourCC(*b"ISG1")),
             [b'O', b'S', b'G', b'N'] => Some(FourCC(*b"OSG1")),
             [b'P', b'S', b'G', b'N'] => Some(FourCC(*b"PSG1")),
+            [b'I', b'S', b'G', b'1'] => Some(FourCC(*b"ISGN")),
+            [b'O', b'S', b'G', b'1'] => Some(FourCC(*b"OSGN")),
+            [b'P', b'S', b'G', b'1'] => Some(FourCC(*b"PSGN")),
             _ => None,
         }?;
 
