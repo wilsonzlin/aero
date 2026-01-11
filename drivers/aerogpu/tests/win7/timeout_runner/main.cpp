@@ -276,13 +276,35 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Best-effort job object so a timed out test can't leave behind orphaned helper processes.
+  // Some tests spawn child processes; JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ensures the whole tree
+  // is cleaned up when we terminate the job.
+  HANDLE job = CreateJobObjectW(NULL, NULL);
+  if (job) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+    ZeroMemory(&info, sizeof(info));
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info)) ||
+        !AssignProcessToJobObject(job, pi.hProcess)) {
+      CloseHandle(job);
+      job = NULL;
+    }
+  }
+
   DWORD wait = WaitForSingleObject(pi.hProcess, timeout_ms);
   if (wait == WAIT_TIMEOUT) {
     printf("FAIL: timeout_runner: process timed out after %lu ms: %s\n",
            (unsigned long)timeout_ms,
            argv[2]);
-    TerminateProcess(pi.hProcess, 124);
+    if (job) {
+      TerminateJobObject(job, 124);
+    } else {
+      TerminateProcess(pi.hProcess, 124);
+    }
     WaitForSingleObject(pi.hProcess, 5000);
+    if (job) {
+      CloseHandle(job);
+    }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     if (emit_json) {
@@ -298,8 +320,15 @@ int main(int argc, char** argv) {
     DWORD err = GetLastError();
     const std::string msg = "WaitForSingleObject failed: " + aerogpu_test::Win32ErrorToString(err);
     printf("FAIL: timeout_runner: %s\n", msg.c_str());
-    TerminateProcess(pi.hProcess, 1);
+    if (job) {
+      TerminateJobObject(job, 1);
+    } else {
+      TerminateProcess(pi.hProcess, 1);
+    }
     WaitForSingleObject(pi.hProcess, 5000);
+    if (job) {
+      CloseHandle(job);
+    }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     if (emit_json) {
@@ -319,6 +348,9 @@ int main(int argc, char** argv) {
     }
   }
 
+  if (job) {
+    CloseHandle(job);
+  }
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
   if (emit_json && !json_path_w.empty()) {
