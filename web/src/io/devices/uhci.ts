@@ -5,7 +5,15 @@ import type { IrqSink, TickableDevice } from "../device_manager.ts";
 export type UhciControllerBridgeLike = {
   io_read(offset: number, size: number): number;
   io_write(offset: number, size: number, value: number): void;
-  tick_1ms(): void;
+  /**
+   * Legacy 1ms stepping API (older WASM builds).
+   */
+  tick_1ms?: () => void;
+  /**
+   * Newer stepping APIs (batch + single-frame).
+   */
+  step_frames?: (frames: number) => void;
+  step_frame?: () => void;
   irq_asserted(): boolean;
   free(): void;
 };
@@ -101,8 +109,17 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     let frames = Math.floor(this.#accumulatedMs / UHCI_FRAME_MS);
     frames = Math.min(frames, UHCI_MAX_FRAMES_PER_TICK);
     if (frames > 0) {
-      for (let i = 0; i < frames; i++) {
-        this.#bridge.tick_1ms();
+      const bridge = this.#bridge;
+      try {
+        if (typeof bridge.step_frames === "function") {
+          bridge.step_frames(frames);
+        } else if (typeof bridge.tick_1ms === "function") {
+          for (let i = 0; i < frames; i++) bridge.tick_1ms();
+        } else if (typeof bridge.step_frame === "function") {
+          for (let i = 0; i < frames; i++) bridge.step_frame();
+        }
+      } catch {
+        // ignore device errors during tick
       }
       this.#accumulatedMs -= frames * UHCI_FRAME_MS;
     }
@@ -137,4 +154,3 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-

@@ -316,7 +316,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
 
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
-    const guestPath = msg.guestPath;
+    const guestPath = msg.guestPath ?? (msg.guestPort !== undefined ? [msg.guestPort] : undefined);
 
     try {
       const UsbBridge = this.api.UsbHidPassthroughBridge;
