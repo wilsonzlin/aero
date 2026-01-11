@@ -820,7 +820,15 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   function createWebgl2Backend(canvas) {
-    const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true });
+    // Important: request a non-MSAA default framebuffer.
+    //
+    // We use `blitFramebuffer` when replaying AeroGPU submission traces that
+    // render into an offscreen texture and then present to the default
+    // framebuffer. In WebGL2, blitting into a multisampled default framebuffer
+    // (antialias=true) can fail with `INVALID_OPERATION` on some drivers (notably
+    // Chromium headless / SwiftShader), which would make `readPixels()` return
+    // all-zero results and break determinism tests.
+    const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true, antialias: false });
     if (!gl) fail("WebGL2 is not available");
 
     // Reduce driver variance for screenshot comparisons.
@@ -1145,7 +1153,9 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   function createAerogpuWebgl2Backend(canvas) {
-    const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true });
+    // See `createWebgl2Backend` for why `antialias:false` matters for determinism
+    // and for `blitFramebuffer` support when presenting offscreen render targets.
+    const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true, antialias: false });
     if (!gl) fail("WebGL2 is not available");
 
     // Reduce driver variance for screenshot comparisons.
