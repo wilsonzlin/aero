@@ -12,6 +12,28 @@ This repo contains a reference implementation of a versioned, forward-compatible
 
 ---
 
+## Snapshot tooling (xtask)
+
+During development it's often useful to sanity-check an `aero-snapshot` file without writing one-off Rust code or accidentally decompressing multi-GB RAM payloads.
+
+The repo provides a small CLI via `xtask`:
+
+```bash
+# Print the header/META/section table + RAM encoding summary (no RAM decompression).
+cargo xtask snapshot inspect path/to/snapshot.aerosnap
+
+# Validate section framing and known section payloads (still no RAM decompression).
+cargo xtask snapshot validate path/to/snapshot.aerosnap
+
+# Fully restore the snapshot into a dummy target (includes RAM decompression).
+# This mode refuses snapshots with >512MiB RAM as a safety limit.
+cargo xtask snapshot validate --deep path/to/snapshot.aerosnap
+```
+
+On success, `validate` prints `valid snapshot` and exits 0.
+
+---
+
 ## Snapshot file format (v1)
 
 ### Global header
