@@ -198,8 +198,11 @@ class _ExtractTarget:
 
 
 def _split_any_sep(p: str) -> list[str]:
-    p = p.strip().lstrip("./")
-    p = p.replace("\\", "/")
+    p = p.strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    while p.startswith("/"):
+        p = p[1:]
     return [c for c in p.split("/") if c]
 
 
@@ -209,6 +212,24 @@ def _find_child_dir(node: _IsoNode, names: Iterable[str]) -> Optional[_IsoNode]:
         if hit is not None:
             return hit
     return None
+
+
+def _validate_iso_paths_safe(paths: Iterable[str]) -> None:
+    bad: list[str] = []
+    for p in paths:
+        parts = _split_any_sep(p)
+        if any(part in (".", "..") for part in parts):
+            bad.append(p)
+    if bad:
+        head = bad[:10]
+        formatted = "\n".join(f"- {p}" for p in head)
+        extra = ""
+        if len(bad) > len(head):
+            extra = f"\n... and {len(bad) - len(head)} more"
+        raise SystemExit(
+            "virtio-win ISO contains unsafe path components ('.' or '..'):\n"
+            f"{formatted}{extra}"
+        )
 
 
 def _build_tree_from_paths(paths: Iterable[str]) -> _IsoNode:
@@ -600,6 +621,7 @@ def main() -> int:
         assert sevenz is not None
         try:
             paths_norm, sep_for_7z, is_folder = _list_iso_paths_with_7z(sevenz, iso_path)
+            _validate_iso_paths_safe(paths_norm)
             tree = _build_tree_from_paths(paths_norm)
             targets, missing_optional = _select_extract_targets(tree)
 
@@ -663,6 +685,7 @@ def main() -> int:
         finally:
             iso.close()
 
+        _validate_iso_paths_safe(all_paths)
         tree = _build_tree_from_paths(all_paths)
         targets, missing_optional = _select_extract_targets(tree)
         extra_root_files = extracted_notice_files + extracted_metadata_files
