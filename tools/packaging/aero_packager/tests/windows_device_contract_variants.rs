@@ -130,6 +130,22 @@ fn json_u64(contract_path: &PathBuf, v: &serde_json::Value, field: &str) -> Opti
     })
 }
 
+fn json_opt_str(contract_path: &PathBuf, v: &serde_json::Value, field: &str) -> Option<String> {
+    let Some(raw) = v.get(field) else {
+        return None;
+    };
+    Some(
+        raw.as_str()
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: {field} must be a string when present",
+                    contract_path.display()
+                )
+            })
+            .to_string(),
+    )
+}
+
 #[test]
 fn virtio_win_device_contract_only_overrides_service_names() -> anyhow::Result<()> {
     let packager_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -236,6 +252,13 @@ fn virtio_win_device_contract_only_overrides_service_names() -> anyhow::Result<(
             json_str(&base_contract, base_dev, "pci_device_id").to_ascii_lowercase(),
             json_str(&virtio_contract, virtio_dev, "pci_device_id").to_ascii_lowercase(),
             "{device_name}: pci_device_id drift between canonical and virtio-win contract"
+        );
+        assert_eq!(
+            json_opt_str(&base_contract, base_dev, "pci_device_id_transitional")
+                .map(|s| s.to_ascii_lowercase()),
+            json_opt_str(&virtio_contract, virtio_dev, "pci_device_id_transitional")
+                .map(|s| s.to_ascii_lowercase()),
+            "{device_name}: pci_device_id_transitional drift between canonical and virtio-win contract"
         );
         assert_eq!(
             json_array_strings(&base_contract, base_dev, "hardware_id_patterns"),
