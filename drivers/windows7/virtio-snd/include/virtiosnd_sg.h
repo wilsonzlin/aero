@@ -34,6 +34,7 @@ extern "C" {
  * Returns a conservative upper bound on SG entries required for the described
  * region. Returns 0 on invalid parameters.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
                                       _In_ ULONG BufferBytes,
                                       _In_ ULONG OffsetBytes,
@@ -55,16 +56,38 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
 VOID VirtIoSndSgFlushIoBuffers(_In_ PMDL Mdl, _In_ BOOLEAN DeviceWrites);
 
 /*
- * Builds a virtio scatter/gather list for the described region.
+ * Builds a virtio scatter/gather list for the described region (TX / device reads).
+ *
+ * This matches the original virtio-snd TX usage: the device reads from guest
+ * memory, so descriptors have device_writes = FALSE and KeFlushIoBuffers is
+ * invoked with ReadOperation = FALSE.
  *
  * On success, Out[0..*OutCount) contains the SG entries and *OutCount is set.
  * On failure, *OutCount is set to 0.
  *
- * This helper also calls VirtIoSndSgFlushIoBuffers(Mdl, DeviceWrites) before
- * returning. For DeviceWrites == TRUE, callers must flush again after DMA
- * completion (before reading captured audio samples).
+ * This helper also calls VirtIoSndSgFlushIoBuffers(Mdl, FALSE) before returning.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_Must_inspect_result_
 NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
+                                      _In_ ULONG BufferBytes,
+                                      _In_ ULONG OffsetBytes,
+                                      _In_ ULONG LengthBytes,
+                                      _In_ BOOLEAN Wrap,
+                                      _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
+                                      _In_ USHORT MaxElems,
+                                      _Out_ USHORT *OutCount);
+
+/*
+ * Extended form that allows selecting descriptor direction (TX vs RX).
+ *
+ * For RX buffers (DeviceWrites == TRUE), callers must call
+ * VirtIoSndSgFlushIoBuffers(Mdl, TRUE) again after DMA completion (before
+ * reading captured audio samples).
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_Must_inspect_result_
+NTSTATUS VirtIoSndSgBuildFromMdlRegionEx(_In_ PMDL Mdl,
                                         _In_ ULONG BufferBytes,
                                         _In_ ULONG OffsetBytes,
                                         _In_ ULONG LengthBytes,

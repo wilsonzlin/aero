@@ -31,14 +31,12 @@ NTSTATUS VirtIoSndTxSgBuildFromMdlRegion(PMDL Mdl,
                                         USHORT MaxElems,
                                         USHORT *OutCount)
 {
-    return VirtIoSndSgBuildFromMdlRegion(
-        Mdl,
-        BufferBytes,
-        OffsetBytes,
-        LengthBytes,
-        Wrap,
-        FALSE /* DeviceWrites (TX) */,
-        (virtio_sg_entry_t *)Out,
-        MaxElems,
-        OutCount);
+    return VirtIoSndSgBuildFromMdlRegion(Mdl,
+                                        BufferBytes,
+                                        OffsetBytes,
+                                        LengthBytes,
+                                        Wrap,
+                                        (virtio_sg_entry_t *)Out,
+                                        MaxElems,
+                                        OutCount);
 }

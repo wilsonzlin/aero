@@ -61,7 +61,7 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
                                       _In_ ULONG BufferBytes,
                                       _In_ ULONG OffsetBytes,
                                       _In_ ULONG LengthBytes,
-                                     _In_ BOOLEAN Wrap)
+                                      _In_ BOOLEAN Wrap)
 {
     ULONG mdl_byte_offset;
     ULONG mdl_byte_count;
@@ -83,15 +83,36 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
                                                     Wrap ? VIRTIO_TRUE : VIRTIO_FALSE);
 }
 
-NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
-                                       _In_ ULONG BufferBytes,
-                                       _In_ ULONG OffsetBytes,
-                                       _In_ ULONG LengthBytes,
-                                       _In_ BOOLEAN Wrap,
-                                       _In_ BOOLEAN DeviceWrites,
-                                       _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
-                                       _In_ USHORT MaxElems,
-                                       _Out_ USHORT *OutCount)
+_Use_decl_annotations_
+NTSTATUS VirtIoSndSgBuildFromMdlRegion(PMDL Mdl,
+                                      ULONG BufferBytes,
+                                      ULONG OffsetBytes,
+                                      ULONG LengthBytes,
+                                      BOOLEAN Wrap,
+                                      virtio_sg_entry_t *Out,
+                                      USHORT MaxElems,
+                                      USHORT *OutCount)
+{
+    return VirtIoSndSgBuildFromMdlRegionEx(Mdl,
+                                          BufferBytes,
+                                          OffsetBytes,
+                                          LengthBytes,
+                                          Wrap,
+                                          FALSE /* DeviceWrites (TX) */,
+                                          Out,
+                                          MaxElems,
+                                          OutCount);
+}
+
+NTSTATUS VirtIoSndSgBuildFromMdlRegionEx(_In_ PMDL Mdl,
+                                        _In_ ULONG BufferBytes,
+                                        _In_ ULONG OffsetBytes,
+                                        _In_ ULONG LengthBytes,
+                                        _In_ BOOLEAN Wrap,
+                                        _In_ BOOLEAN DeviceWrites,
+                                        _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
+                                        _In_ USHORT MaxElems,
+                                        _Out_ USHORT *OutCount)
 {
     ULONG mdl_byte_offset;
     ULONG mdl_byte_count;
