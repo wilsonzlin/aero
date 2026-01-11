@@ -38,6 +38,7 @@ If you have not installed Guest Tools yet, start here:
   - [Black screen after switching to the Aero GPU](#issue-black-screen-after-switching-to-the-aero-gpu)
   - [Aero theme not available (stuck in basic graphics mode)](#issue-aero-theme-not-available-stuck-in-basic-graphics-mode)
   - [32-bit D3D9 apps fail on Windows 7 x64 (missing WOW64 UMD)](#issue-32-bit-d3d9-apps-fail-on-windows-7-x64-missing-wow64-umd)
+  - [32-bit D3D11 apps fail on Windows 7 x64 (missing WOW64 D3D10/11 UMD)](#issue-32-bit-d3d11-apps-fail-on-windows-7-x64-missing-wow64-d3d1011-umd)
 - Guest Tools installation problems:
   - [`setup.cmd` fails (won't run)](#issue-setupcmd-fails-wont-run)
   - [Safe Mode recovery tips](#safe-mode-recovery-tips)
@@ -407,10 +408,10 @@ This only applies if you are attempting to install Windows directly onto **virti
 - Either:
   - Install Windows using baseline **AHCI** first (recommended), then switch to virtio-blk after running Guest Tools, **or**
   - Attach a driver media disk and use **Load Driver** during Windows Setup:
-    - Drivers ISO: browse `drivers\...\x86\` or `drivers\...\x64\` as appropriate
-    - FAT driver disk (`*-fat.vhd`): browse `x86\` or `x64\` (see [`docs/16-driver-install-media.md`](./16-driver-install-media.md))
-    - Then select the storage driver `.inf` and continue installation, **or**
-  - Slipstream the virtio-blk driver into `sources\\boot.wim` (indexes 1 and 2) and rebuild the ISO.
+     - Drivers ISO: browse `drivers\...\x86\` or `drivers\...\x64\` as appropriate
+     - FAT driver disk (`*-fat.vhd`): browse `x86\` or `x64\` (see [`docs/16-driver-install-media.md`](./16-driver-install-media.md))
+     - Then select the storage driver `.inf` and continue installation, **or**
+  - Slipstream the virtio-blk driver into `sources\boot.wim` (indexes 1 and 2) and rebuild the ISO.
 
 ## Issue: `setup.cmd` fails (won't run)
 
@@ -491,27 +492,66 @@ If you must keep the Aero GPU selected while recovering, use Safe Mode (below) s
 
 On Windows 7 x64, the display driver package must install **both**:
 
-- a 64-bit D3D9 UMD to `C:\\Windows\\System32\\` (despite the name, `System32` is the **64-bit** system directory on x64), and
-- a 32-bit (WOW64) D3D9 UMD to `C:\\Windows\\SysWOW64\\` (`SysWOW64` holds the **32-bit** system DLLs on x64).
+- a 64-bit D3D9 UMD to `C:\Windows\System32\` (despite the name, `System32` is the **64-bit** system directory on x64), and
+- a 32-bit (WOW64) D3D9 UMD to `C:\Windows\SysWOW64\` (`SysWOW64` holds the **32-bit** system DLLs on x64).
 
 If the `SysWOW64` UMD is missing, **32-bit apps will not be able to use D3D9** even though 64-bit apps may work.
 
 **Fix**
 
 1. Confirm the expected UMD files exist on the guest:
-    - `C:\\Windows\\System32\\aerogpu_d3d9_x64.dll`
-    - `C:\\Windows\\SysWOW64\\aerogpu_d3d9.dll`
+    - `C:\Windows\System32\aerogpu_d3d9_x64.dll`
+    - `C:\Windows\SysWOW64\aerogpu_d3d9.dll`
     - Tip: `verify.cmd` reports this under **AeroGPU D3D9 UMD DLL placement**.
 2. Run the guest-side D3D validation suite (recommended) to confirm the *runtime* actually loads the correct UMD DLL:
-    - `drivers\\aerogpu\\tests\\win7\\run_all.cmd --require-umd`
+    - `drivers\aerogpu\tests\win7\run_all.cmd --require-umd`
     - Or just the D3D9 test:
-      - `drivers\\aerogpu\\tests\\win7\\bin\\d3d9ex_triangle.exe --require-umd`
-    - The test output should include the resolved UMD path. For a 32-bit test binary on a Win7 x64 guest it should be tagged as `(WOW64)` and typically resolve to `C:\\Windows\\SysWOW64\\aerogpu_d3d9.dll`.
+      - `drivers\aerogpu\tests\win7\bin\d3d9ex_triangle.exe --require-umd`
+    - The test output should include the resolved UMD path. For a 32-bit test binary on a Win7 x64 guest it should be tagged as `(WOW64)` and typically resolve to `C:\Windows\SysWOW64\aerogpu_d3d9.dll`.
 3. If the `SysWOW64` DLL is missing, reinstall using the supported AeroGPU Win7 package:
     - `drivers/aerogpu/packaging/win7/README.md`
     - Ensure your build/staging workflow includes the WOW64 UMD in the **x64** package:
       - If you are using CI-produced packages, `out/packages/aerogpu/x64/` should contain both `aerogpu_d3d9_x64.dll` and `aerogpu_d3d9.dll`.
-      - If you are staging from a repo-local build, use `drivers\\aerogpu\\build\\stage_packaging_win7.cmd fre x64`.
+      - If you are staging from a repo-local build, use `drivers\aerogpu\build\stage_packaging_win7.cmd fre x64`.
+4. Reboot the guest after reinstalling the display driver.
+
+## Issue: 32-bit D3D11 apps fail on Windows 7 x64 (missing WOW64 D3D10/11 UMD)
+
+**Symptoms**
+
+- 64-bit D3D10/D3D11 apps work, but **32-bit** D3D10/D3D11 apps fail to start or fail to create a device.
+- Common failures show up in 32-bit apps calling `D3D10CreateDevice*` / `D3D11CreateDevice*` (often `E_FAIL` / `DXGI_ERROR_UNSUPPORTED`), or the app may crash during device creation if the runtime can’t load the expected UMD.
+
+**Why it happens**
+
+If you install the DX11-capable AeroGPU driver package (`aerogpu_dx11.inf`) on Windows 7 x64, the package must install **both**:
+
+- a 64-bit D3D10/11 UMD to `C:\Windows\System32\`:
+  - `C:\Windows\System32\aerogpu_d3d10_x64.dll`
+- a 32-bit (WOW64) D3D10/11 UMD to `C:\Windows\SysWOW64\`:
+  - `C:\Windows\SysWOW64\aerogpu_d3d10.dll`
+
+The UMD filenames are also registered in the adapter’s registry key:
+
+- `UserModeDriverName = "aerogpu_d3d10_x64.dll"` (native x64)
+- `UserModeDriverNameWow = "aerogpu_d3d10.dll"` (WOW64 x86)
+
+If the WOW64 UMD is missing or not registered, **32-bit D3D10/D3D11 apps will not be able to use AeroGPU** even though 64-bit apps may work.
+
+**Fix**
+
+1. Confirm the expected UMD files exist on the guest:
+   - `C:\Windows\System32\aerogpu_d3d10_x64.dll`
+   - `C:\Windows\SysWOW64\aerogpu_d3d10.dll`
+   - Tip: `verify.cmd` reports this under **AeroGPU D3D10/11 UMD DLL placement** (if any D3D10/11 UMD DLLs are detected).
+2. Confirm the UMD registry values:
+   - From a DX11-capable driver package, run:
+     - `drivers\aerogpu\packaging\win7\verify_umd_registration.cmd dx11`
+   - This prints and validates `UserModeDriverName` / `UserModeDriverNameWow`.
+3. Run the guest-side D3D validation suite (recommended) to confirm the runtime loads the correct UMD DLL:
+   - `drivers\aerogpu\tests\win7\run_all.cmd --require-umd`
+   - Or just the D3D11 test:
+     - `drivers\aerogpu\tests\win7\bin\d3d11_triangle.exe --require-umd`
 4. Reboot the guest after reinstalling the display driver.
 
 ## Safe Mode recovery tips

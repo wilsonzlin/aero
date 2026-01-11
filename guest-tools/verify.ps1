@@ -2092,6 +2092,76 @@ try {
         Add-Check "aerogpu_umd_files" "AeroGPU D3D9 UMD DLL placement" "WARN" ("Failed: " + $_.Exception.Message) $null @()
     }
 
+    # --- AeroGPU D3D10/11 UMD DLL placement (optional) ---
+    # Only required if the DX11-capable driver package is installed.
+    try {
+        $gpuDetected = $false
+        foreach ($d in $devices) {
+            $pnpid = "" + $d.pnp_device_id
+            if ($pnpid -and $gpuRegex -and ($pnpid -match $gpuRegex)) {
+                $gpuDetected = $true
+                break
+            }
+        }
+
+        $dxStatus = "PASS"
+        $dxSummary = ""
+        $dxDetails = @()
+        $dxData = @{
+            gpu_detected = $gpuDetected
+            is_64bit = $null
+            expected_files = @()
+            present_files = @()
+            missing_files = @()
+        }
+
+        if (-not $gpuDetected) {
+            # Avoid a redundant WARN: missing GPU is already surfaced by device_binding_graphics.
+            $dxSummary = "Skipped: no AeroGPU device detected."
+        } else {
+            $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+            $dxData.is_64bit = $is64
+
+            $expected = @()
+            if ($is64) {
+                $expected += (Join-Path (Join-Path $env:SystemRoot "System32") "aerogpu_d3d10_x64.dll")
+                $expected += (Join-Path (Join-Path $env:SystemRoot "SysWOW64") "aerogpu_d3d10.dll")
+            } else {
+                $expected += (Join-Path (Join-Path $env:SystemRoot "System32") "aerogpu_d3d10.dll")
+            }
+            $dxData.expected_files = $expected
+
+            $present = @()
+            $missing = @()
+            foreach ($p in $expected) {
+                if (Test-Path $p) { $present += $p } else { $missing += $p }
+            }
+            $dxData.present_files = $present
+            $dxData.missing_files = $missing
+
+            if ($present.Count -eq 0) {
+                $dxSummary = "Skipped: AeroGPU D3D10/11 UMD DLL(s) not detected (D3D10/11 is optional)."
+            } elseif ($missing.Count -gt 0) {
+                $dxStatus = "WARN"
+                $dxSummary = "Missing expected AeroGPU D3D10/11 UMD DLL(s) (" + $missing.Count + "/" + $expected.Count + ")."
+                $dxDetails += "Expected D3D10/11 UMD file(s):"
+                foreach ($p in $expected) { $dxDetails += ("  - " + $p) }
+                $dxDetails += "Missing:"
+                foreach ($p in $missing) { $dxDetails += ("  - " + $p) }
+                if ($is64) {
+                    $dxDetails += "WOW64 D3D10/11 UMD is required for 32-bit D3D10/D3D11 apps on Win7 x64."
+                    $dxDetails += "See: docs/windows7-driver-troubleshooting.md#issue-32-bit-d3d11-apps-fail-on-windows-7-x64-missing-wow64-d3d1011-umd"
+                }
+            } else {
+                $dxSummary = "AeroGPU D3D10/11 UMD DLL(s) are present."
+            }
+        }
+
+        Add-Check "aerogpu_d3d10_umd_files" "AeroGPU D3D10/11 UMD DLL placement" $dxStatus $dxSummary $dxData $dxDetails
+    } catch {
+        Add-Check "aerogpu_d3d10_umd_files" "AeroGPU D3D10/11 UMD DLL placement" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+    }
+
     Add-DeviceBindingCheck `
         "device_binding_audio" `
         "Device Binding: Audio (virtio-snd)" `
