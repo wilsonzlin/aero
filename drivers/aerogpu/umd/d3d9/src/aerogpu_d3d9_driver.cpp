@@ -220,6 +220,7 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnDeletePatch);
 AEROGPU_DEFINE_HAS_MEMBER(pfnProcessVertices);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetRasterStatus);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetDialogBoxMode);
+AEROGPU_DEFINE_HAS_MEMBER(pfnDrawIndexedPrimitiveUP);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -359,6 +360,10 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRasterStatus, D3d9TraceFunc::DeviceGetRasterS
 
 // Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
+
+// Legacy user-pointer draw path (indexed). Not supported yet.
+AEROGPU_D3D9_DEFINE_DDI_STUB(
+    pfnDrawIndexedPrimitiveUP, D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7856,6 +7861,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnDrawPrimitive, device_draw_primitive);
   if constexpr (aerogpu_has_member_pfnDrawPrimitiveUP<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnDrawPrimitiveUP, device_draw_primitive_up);
+  }
+  if constexpr (aerogpu_has_member_pfnDrawIndexedPrimitiveUP<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnDrawIndexedPrimitiveUP,
+        aerogpu_d3d9_stub_pfnDrawIndexedPrimitiveUP<decltype(pDeviceFuncs->pfnDrawIndexedPrimitiveUP)>::pfnDrawIndexedPrimitiveUP);
   }
   AEROGPU_SET_D3D9DDI_FN(pfnDrawIndexedPrimitive, device_draw_indexed_primitive);
   if constexpr (aerogpu_has_member_pfnDrawPrimitive2<D3D9DDI_DEVICEFUNCS>::value) {

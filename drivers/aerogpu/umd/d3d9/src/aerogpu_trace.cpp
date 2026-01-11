@@ -346,6 +346,8 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetRasterStatus (stub)";
     case D3d9TraceFunc::DeviceSetDialogBoxMode:
       return "Device::SetDialogBoxMode (stub)";
+    case D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP:
+      return "Device::DrawIndexedPrimitiveUP (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }
