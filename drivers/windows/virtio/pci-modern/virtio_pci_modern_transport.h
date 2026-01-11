@@ -14,6 +14,7 @@
  *   - PCI Subsystem Vendor ID == 0x1AF4
  *   - PCI Interrupt Pin == 1 (INTA#)
  *   - BAR0 is 64-bit MMIO (no legacy I/O port BAR0)
+ *   - BAR0 base address in PCI config space matches the caller-supplied BAR0 PA
  *   - COMMON/NOTIFY/ISR/DEVICE vendor caps present and reference BAR0
  *   - Fixed BAR0 offsets: 0x0000 / 0x1000 / 0x2000 / 0x3000
  *   - notify_off_multiplier == 4

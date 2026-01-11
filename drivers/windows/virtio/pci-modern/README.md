@@ -35,6 +35,7 @@ It is designed to be linked into:
 - PCI Subsystem Vendor ID **MUST** be `0x1AF4`
 - PCI Interrupt Pin **MUST** be `1` (INTA#)
 - BAR0 **MUST** be a 64-bit memory BAR (MMIO), not I/O space
+- BAR0 base address in PCI config **MUST** match the BAR0 physical address passed by the driver
 - PCI capability list **MUST** be present (Status bit 4 set)
 - Capability list pointers **MUST** be 4-byte aligned and acyclic
 - Required virtio vendor caps **MUST** exist and reference BAR0:
