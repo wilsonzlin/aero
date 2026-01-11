@@ -1723,7 +1723,7 @@ try {
     $pnp = Invoke-Capture "pnputil.exe" @("-e")
     $raw = $pnp.output
 
-    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","virtioinput","viosnd","aerosnd","virtiosnd","aeroviosnd")
+    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","virtioinput","viosnd","aerosnd","virtiosnd","aeroviosnd","aeroviosnd_legacy")
     foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
         if ($s -and ("" + $s).Trim().Length -gt 0) {
             $kw = ("" + $s).Trim().ToLower()
@@ -1842,7 +1842,7 @@ try {
     $devconDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $devconPath = Join-Path $devconDir "devcon.exe"
 
-    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput","virtioinput")
+    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","aeroviosnd_legacy","vioinput","virtioinput")
     foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
         if ($s -and ("" + $s).Trim().Length -gt 0) { $svcCandidates = @((("" + $s).Trim())) + $svcCandidates }
     }
@@ -1993,7 +1993,7 @@ try {
     if ($cfgVirtioNetService) { $networkServiceCandidates = @($cfgVirtioNetService) + $networkServiceCandidates }
     $graphicsServiceCandidates = @("viogpu","aerogpu","aero-gpu")
     if ($cfgGpuService) { $graphicsServiceCandidates = @($cfgGpuService) + $graphicsServiceCandidates }
-    $audioServiceCandidates = @("aeroviosnd","viosnd","aerosnd","virtiosnd")
+    $audioServiceCandidates = @("aeroviosnd","aeroviosnd_legacy","viosnd","aerosnd","virtiosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
     $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
     $inputServiceCandidates = @("virtioinput","vioinput","aeroinput")
