@@ -1,5 +1,5 @@
-use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::input_layout::fnv1a_32;
+use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::FourCC;
 use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -18,6 +18,8 @@ const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const OPCODE_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
 const OPCODE_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
 const OPCODE_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+const OPCODE_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
+const OPCODE_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
 
 const OPCODE_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
 const OPCODE_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
@@ -231,8 +233,10 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
             }
         };
 
-        const VB: u32 = 1;
-        const RT: u32 = 2;
+        const VB_SRC: u32 = 1;
+        const VB_DST: u32 = 2;
+        const RT: u32 = 3;
+        const RT_COPY: u32 = 4;
         const VS: u32 = 10;
         const PS: u32 = 11;
         const IL: u32 = 20;
@@ -306,7 +310,7 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
 
         // CREATE_BUFFER (VB)
         let start = begin_cmd(&mut stream, OPCODE_CREATE_BUFFER);
-        stream.extend_from_slice(&VB.to_le_bytes());
+        stream.extend_from_slice(&VB_SRC.to_le_bytes());
         stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER).to_le_bytes());
         stream.extend_from_slice(&vb_size.to_le_bytes());
         stream.extend_from_slice(&alloc_id.to_le_bytes());
@@ -316,15 +320,51 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
 
         // RESOURCE_DIRTY_RANGE (full VB)
         let start = begin_cmd(&mut stream, OPCODE_RESOURCE_DIRTY_RANGE);
-        stream.extend_from_slice(&VB.to_le_bytes());
+        stream.extend_from_slice(&VB_SRC.to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
         stream.extend_from_slice(&vb_size.to_le_bytes()); // size_bytes
         end_cmd(&mut stream, start);
 
+        // CREATE_BUFFER (host-side VB destination)
+        let start = begin_cmd(&mut stream, OPCODE_CREATE_BUFFER);
+        stream.extend_from_slice(&VB_DST.to_le_bytes());
+        stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER).to_le_bytes());
+        stream.extend_from_slice(&vb_size.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id (host allocated)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER (VB_SRC -> VB_DST)
+        let start = begin_cmd(&mut stream, OPCODE_COPY_BUFFER);
+        stream.extend_from_slice(&VB_DST.to_le_bytes()); // dst_buffer
+        stream.extend_from_slice(&VB_SRC.to_le_bytes()); // src_buffer
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&vb_size.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
         // CREATE_TEXTURE2D (RT)
         let start = begin_cmd(&mut stream, OPCODE_CREATE_TEXTURE2D);
         stream.extend_from_slice(&RT.to_le_bytes());
+        stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_RENDER_TARGET).to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id (host alloc)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_TEXTURE2D (copy destination)
+        let start = begin_cmd(&mut stream, OPCODE_CREATE_TEXTURE2D);
+        stream.extend_from_slice(&RT_COPY.to_le_bytes());
         stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_RENDER_TARGET).to_le_bytes());
         stream.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
         stream.extend_from_slice(&4u32.to_le_bytes()); // width
@@ -423,7 +463,7 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
         let start = begin_cmd(&mut stream, OPCODE_SET_VERTEX_BUFFERS);
         stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
         stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
-        stream.extend_from_slice(&VB.to_le_bytes());
+        stream.extend_from_slice(&VB_DST.to_le_bytes());
         stream.extend_from_slice(&(std::mem::size_of::<Vertex>() as u32).to_le_bytes()); // stride
         stream.extend_from_slice(&0u32.to_le_bytes()); // offset
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
@@ -443,6 +483,24 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance
         end_cmd(&mut stream, start);
 
+        // COPY_TEXTURE2D (RT -> RT_COPY)
+        let start = begin_cmd(&mut stream, OPCODE_COPY_TEXTURE2D);
+        stream.extend_from_slice(&RT_COPY.to_le_bytes()); // dst_texture
+        stream.extend_from_slice(&RT.to_le_bytes()); // src_texture
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
         // PRESENT
         let start = begin_cmd(&mut stream, OPCODE_PRESENT);
         stream.extend_from_slice(&0u32.to_le_bytes()); // scanout_id
@@ -458,7 +516,7 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
             .unwrap();
         exec.poll_wait();
 
-        let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+        let pixels = exec.read_texture_rgba8(RT_COPY).await.unwrap();
         assert_eq!(pixels.len(), 4 * 4 * 4);
         for px in pixels.chunks_exact(4) {
             assert_eq!(px, &[255, 0, 0, 255]);

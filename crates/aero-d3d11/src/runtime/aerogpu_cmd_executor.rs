@@ -8,9 +8,10 @@ use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
     AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -33,6 +34,8 @@ const OPCODE_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
 const OPCODE_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
 const OPCODE_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
 const OPCODE_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+const OPCODE_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
+const OPCODE_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
 
 const OPCODE_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
 const OPCODE_DESTROY_SHADER: u32 = AerogpuCmdOpcode::DestroyShader as u32;
@@ -503,6 +506,10 @@ impl AerogpuD3d11Executor {
             OPCODE_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes),
             OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes),
             OPCODE_UPLOAD_RESOURCE => self.exec_upload_resource(cmd_bytes),
+            OPCODE_COPY_BUFFER => self.exec_copy_buffer(encoder, cmd_bytes, allocs, guest_mem),
+            OPCODE_COPY_TEXTURE2D => {
+                self.exec_copy_texture2d(encoder, cmd_bytes, allocs, guest_mem)
+            }
             OPCODE_CREATE_SHADER_DXBC => self.exec_create_shader_dxbc(cmd_bytes),
             OPCODE_DESTROY_SHADER => self.exec_destroy_shader(cmd_bytes),
             OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes),
@@ -577,13 +584,14 @@ impl AerogpuD3d11Executor {
         let state = &self.state;
         let resources = &self.resources;
 
-        let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) = get_or_create_render_pipeline_for_state(
-            &self.device,
-            &mut self.pipeline_cache,
-            &self.pipeline_layout_empty,
-            resources,
-            state,
-        )?;
+        let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
+            get_or_create_render_pipeline_for_state(
+                &self.device,
+                &mut self.pipeline_cache,
+                &self.pipeline_layout_empty,
+                resources,
+                state,
+            )?;
 
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
             Vec::with_capacity(state.render_targets.len());
@@ -980,6 +988,193 @@ impl AerogpuD3d11Executor {
                 tex_mut.dirty = false;
             }
             return Ok(());
+        }
+
+        Ok(())
+    }
+
+    fn exec_copy_buffer(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        cmd_bytes: &[u8],
+        allocs: &AllocTable,
+        guest_mem: &dyn GuestMemory,
+    ) -> Result<()> {
+        // struct aerogpu_cmd_copy_buffer (48 bytes)
+        if cmd_bytes.len() != 48 {
+            bail!("COPY_BUFFER: expected 48 bytes, got {}", cmd_bytes.len());
+        }
+        let dst_buffer = read_u32_le(cmd_bytes, 8)?;
+        let src_buffer = read_u32_le(cmd_bytes, 12)?;
+        let dst_offset_bytes = read_u64_le(cmd_bytes, 16)?;
+        let src_offset_bytes = read_u64_le(cmd_bytes, 24)?;
+        let size_bytes = read_u64_le(cmd_bytes, 32)?;
+        let flags = read_u32_le(cmd_bytes, 40)?;
+
+        if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+            bail!("COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet");
+        }
+        if flags != 0 {
+            bail!("COPY_BUFFER: unknown flags {flags:#x}");
+        }
+        if size_bytes == 0 {
+            return Ok(());
+        }
+        if dst_buffer == 0 || src_buffer == 0 {
+            bail!("COPY_BUFFER: resource handles must be non-zero");
+        }
+        if dst_buffer == src_buffer {
+            bail!("COPY_BUFFER: src==dst is not supported");
+        }
+
+        // Ensure the source buffer reflects any CPU writes from guest memory before copying.
+        self.ensure_buffer_uploaded(src_buffer, allocs, guest_mem)?;
+
+        // Encode the copy.
+        {
+            let src = self
+                .resources
+                .buffers
+                .get(&src_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown src buffer {src_buffer}"))?;
+            let dst = self
+                .resources
+                .buffers
+                .get(&dst_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
+
+            let src_end = src_offset_bytes
+                .checked_add(size_bytes)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows u64"))?;
+            let dst_end = dst_offset_bytes
+                .checked_add(size_bytes)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: dst range overflows u64"))?;
+            if src_end > src.size || dst_end > dst.size {
+                bail!("COPY_BUFFER: out of bounds copy");
+            }
+
+            encoder.copy_buffer_to_buffer(
+                &src.buffer,
+                src_offset_bytes,
+                &dst.buffer,
+                dst_offset_bytes,
+                size_bytes,
+            );
+        }
+
+        // The destination GPU buffer content has changed; discard any pending "dirty" ranges that
+        // would otherwise cause us to overwrite the copy with stale guest-memory contents.
+        if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
+            dst.dirty = None;
+        }
+
+        Ok(())
+    }
+
+    fn exec_copy_texture2d(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        cmd_bytes: &[u8],
+        allocs: &AllocTable,
+        guest_mem: &dyn GuestMemory,
+    ) -> Result<()> {
+        // struct aerogpu_cmd_copy_texture2d (64 bytes)
+        if cmd_bytes.len() != 64 {
+            bail!("COPY_TEXTURE2D: expected 64 bytes, got {}", cmd_bytes.len());
+        }
+        let dst_texture = read_u32_le(cmd_bytes, 8)?;
+        let src_texture = read_u32_le(cmd_bytes, 12)?;
+        let dst_mip_level = read_u32_le(cmd_bytes, 16)?;
+        let dst_array_layer = read_u32_le(cmd_bytes, 20)?;
+        let src_mip_level = read_u32_le(cmd_bytes, 24)?;
+        let src_array_layer = read_u32_le(cmd_bytes, 28)?;
+        let dst_x = read_u32_le(cmd_bytes, 32)?;
+        let dst_y = read_u32_le(cmd_bytes, 36)?;
+        let src_x = read_u32_le(cmd_bytes, 40)?;
+        let src_y = read_u32_le(cmd_bytes, 44)?;
+        let width = read_u32_le(cmd_bytes, 48)?;
+        let height = read_u32_le(cmd_bytes, 52)?;
+        let flags = read_u32_le(cmd_bytes, 56)?;
+
+        if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+            bail!("COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet");
+        }
+        if flags != 0 {
+            bail!("COPY_TEXTURE2D: unknown flags {flags:#x}");
+        }
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        if dst_texture == 0 || src_texture == 0 {
+            bail!("COPY_TEXTURE2D: resource handles must be non-zero");
+        }
+
+        // Ensure the source texture reflects any CPU writes from guest memory before copying.
+        self.ensure_texture_uploaded(src_texture, allocs, guest_mem)?;
+
+        let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
+
+        {
+            let src = self
+                .resources
+                .textures
+                .get(&src_texture)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown src texture {src_texture}"))?;
+            let dst = self
+                .resources
+                .textures
+                .get(&dst_texture)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
+
+            if src.desc.format != dst.desc.format {
+                bail!("COPY_TEXTURE2D: format mismatch");
+            }
+
+            let src_w = mip_extent(src.desc.width, src_mip_level);
+            let src_h = mip_extent(src.desc.height, src_mip_level);
+            let dst_w = mip_extent(dst.desc.width, dst_mip_level);
+            let dst_h = mip_extent(dst.desc.height, dst_mip_level);
+
+            if src_x.saturating_add(width) > src_w || src_y.saturating_add(height) > src_h {
+                bail!("COPY_TEXTURE2D: src rect out of bounds");
+            }
+            if dst_x.saturating_add(width) > dst_w || dst_y.saturating_add(height) > dst_h {
+                bail!("COPY_TEXTURE2D: dst rect out of bounds");
+            }
+
+            encoder.copy_texture_to_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &src.texture,
+                    mip_level: src_mip_level,
+                    origin: wgpu::Origin3d {
+                        x: src_x,
+                        y: src_y,
+                        z: src_array_layer,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyTexture {
+                    texture: &dst.texture,
+                    mip_level: dst_mip_level,
+                    origin: wgpu::Origin3d {
+                        x: dst_x,
+                        y: dst_y,
+                        z: dst_array_layer,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        // The destination GPU texture content has changed; discard any pending "dirty" marker that
+        // would otherwise cause us to overwrite the copy with stale guest-memory contents.
+        if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
+            dst.dirty = false;
         }
 
         Ok(())
