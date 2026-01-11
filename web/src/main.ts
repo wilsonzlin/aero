@@ -3071,18 +3071,26 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   const lastCompletionLine = el("pre", { class: "mono", text: "Last completion: (none)" });
   const errorLine = el("div", { class: "bad", text: "" });
 
+  function hex8(value: number): string {
+    return `0x${(value & 0xff).toString(16).padStart(2, "0")}`;
+  }
+
+  function hex16(value: number): string {
+    return `0x${(value & 0xffff).toString(16).padStart(4, "0")}`;
+  }
+
   function describeAction(action: UsbHostAction): string {
     switch (action.kind) {
       case "controlIn":
-        return `controlIn id=${action.id} bmRequestType=0x${action.setup.bmRequestType.toString(16)} bRequest=0x${action.setup.bRequest.toString(
-          16,
-        )} wValue=0x${action.setup.wValue.toString(16)} wIndex=0x${action.setup.wIndex.toString(16)} wLength=${action.setup.wLength}`;
+        return `controlIn id=${action.id} bmRequestType=${hex8(action.setup.bmRequestType)} bRequest=${hex8(action.setup.bRequest)} wValue=${hex16(
+          action.setup.wValue,
+        )} wIndex=${hex16(action.setup.wIndex)} wLength=${action.setup.wLength}`;
       case "controlOut":
         return `controlOut id=${action.id} bytes=${action.data.byteLength}`;
       case "bulkIn":
-        return `bulkIn id=${action.id} ep=${action.endpoint} len=${action.length}`;
+        return `bulkIn id=${action.id} ep=${hex8(action.endpoint)} len=${action.length}`;
       case "bulkOut":
-        return `bulkOut id=${action.id} ep=${action.endpoint} bytes=${action.data.byteLength}`;
+        return `bulkOut id=${action.id} ep=${hex8(action.endpoint)} bytes=${action.data.byteLength}`;
       default: {
         const neverAction: never = action;
         return `unknown action ${(neverAction as unknown as { kind?: unknown }).kind ?? "?"}`;
