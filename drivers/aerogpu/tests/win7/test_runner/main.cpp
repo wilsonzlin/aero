@@ -317,6 +317,21 @@ static RunResult RunProcessWithTimeoutW(const std::wstring& exe_path,
     return out;
   }
 
+  // Best-effort job object to ensure child process trees are cleaned up on timeout.
+  // Some tests spawn helper processes; without this, a timeout can leave orphans running and
+  // interfere with subsequent tests.
+  HANDLE job = CreateJobObjectW(NULL, NULL);
+  if (job) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+    ZeroMemory(&info, sizeof(info));
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info)) ||
+        !AssignProcessToJobObject(job, pi.hProcess)) {
+      CloseHandle(job);
+      job = NULL;
+    }
+  }
+
   out.started = true;
 
   DWORD wait = WAIT_OBJECT_0;
@@ -328,12 +343,20 @@ static RunResult RunProcessWithTimeoutW(const std::wstring& exe_path,
 
   if (wait == WAIT_TIMEOUT) {
     out.timed_out = true;
-    TerminateProcess(pi.hProcess, 124);
+    if (job) {
+      TerminateJobObject(job, 124);
+    } else {
+      TerminateProcess(pi.hProcess, 124);
+    }
     WaitForSingleObject(pi.hProcess, 5000);
     out.exit_code = 124;
   } else if (wait != WAIT_OBJECT_0) {
     out.err = "WaitForSingleObject failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
-    TerminateProcess(pi.hProcess, 1);
+    if (job) {
+      TerminateJobObject(job, 1);
+    } else {
+      TerminateProcess(pi.hProcess, 1);
+    }
     WaitForSingleObject(pi.hProcess, 5000);
     out.exit_code = 1;
   } else {
@@ -345,6 +368,9 @@ static RunResult RunProcessWithTimeoutW(const std::wstring& exe_path,
     out.exit_code = exit_code;
   }
 
+  if (job) {
+    CloseHandle(job);
+  }
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
   return out;
