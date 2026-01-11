@@ -38,6 +38,7 @@ VirtIoSndAcquirePciBusInterface(
     )
 {
     KEVENT event;
+    IO_STATUS_BLOCK iosb;
     PIRP irp;
     PIO_STACK_LOCATION stack;
     NTSTATUS status;
@@ -67,7 +68,12 @@ VirtIoSndAcquirePciBusInterface(
 
     irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
     irp->IoStatus.Information = 0;
+    RtlZeroMemory(&iosb, sizeof(iosb));
+    irp->UserIosb = &iosb;
+    irp->UserEvent = &event;
+    irp->Tail.Overlay.Thread = PsGetCurrentThread();
     irp->RequestorMode = KernelMode;
+    irp->Flags = IRP_SYNCHRONOUS_API;
 
     stack = IoGetNextIrpStackLocation(irp);
     stack->MajorFunction = IRP_MJ_PNP;
