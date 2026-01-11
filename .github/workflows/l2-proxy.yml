@@ -10,8 +10,8 @@ on:
       - crates/aero-net-stack/**
       - crates/nt-packetlib/**
       - docs/l2-tunnel-*.md
-      - docs/adr/0005-networking-l2-tunnel.md
-      - tests/protocol-vectors/**
+      - docs/adr/0013-networking-l2-tunnel.md
+      - protocol-vectors/**
       - .github/workflows/l2-proxy.yml
   pull_request:
     paths:
@@ -20,8 +20,8 @@ on:
       - crates/aero-net-stack/**
       - crates/nt-packetlib/**
       - docs/l2-tunnel-*.md
-      - docs/adr/0005-networking-l2-tunnel.md
-      - tests/protocol-vectors/**
+      - docs/adr/0013-networking-l2-tunnel.md
+      - protocol-vectors/**
       - .github/workflows/l2-proxy.yml
   workflow_dispatch:
 
