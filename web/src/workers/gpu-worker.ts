@@ -213,6 +213,7 @@ type AeroGpuWasmApi = typeof import("../wasm/aero-gpu.ts");
 let aerogpuWasm: AeroGpuWasmApi | null = null;
 let aerogpuWasmLoadPromise: Promise<AeroGpuWasmApi> | null = null;
 let aerogpuWasmD3d9InitPromise: Promise<void> | null = null;
+let aerogpuWasmD3d9InitBackend: PresenterBackendKind | null = null;
 let aerogpuWasmD3d9Backend: PresenterBackendKind | null = null;
 let aerogpuWasmD3d9InternalCanvas: OffscreenCanvas | null = null;
 
@@ -232,27 +233,37 @@ async function loadAerogpuWasm(): Promise<AeroGpuWasmApi> {
 async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<AeroGpuWasmApi> {
   const mod = await loadAerogpuWasm();
 
-  // Re-init if the backend target changed (webgpu <-> webgl2_wgpu).
-  if (aerogpuWasmD3d9Backend && aerogpuWasmD3d9Backend !== backend) {
-    try {
-      mod.destroy_gpu();
-    } catch {
-      // Ignore.
-    }
+  // The wasm D3D9 executor is wgpu-backed. When the worker is using the raw WebGL2 presenter we
+  // still run the executor on the wgpu WebGL2 backend (not the raw backend).
+  const normalizedBackend: PresenterBackendKind = backend === "webgl2_raw" ? "webgl2_wgpu" : backend;
+
+  // If WebGPU init failed previously, the executor may be running on the WebGL2 backend even
+  // though the caller requested WebGPU. Treat that as a satisfied init so we don't keep retrying
+  // WebGPU on every submit.
+  if (normalizedBackend === "webgpu" && aerogpuWasmD3d9Backend === "webgl2_wgpu") return mod;
+
+  // If an init for a different backend is in flight, wait for it to finish first.
+  if (aerogpuWasmD3d9InitPromise && aerogpuWasmD3d9InitBackend !== normalizedBackend) {
+    await aerogpuWasmD3d9InitPromise;
+  }
+
+  // Reset if the backend target changed (webgpu <-> webgl2_wgpu).
+  if (aerogpuWasmD3d9Backend && aerogpuWasmD3d9Backend !== normalizedBackend) {
     aerogpuWasmD3d9Backend = null;
     aerogpuWasmD3d9InternalCanvas = null;
   }
 
-  if (aerogpuWasmD3d9Backend === backend) return mod;
+  if (aerogpuWasmD3d9Backend === normalizedBackend) return mod;
 
   if (!aerogpuWasmD3d9InitPromise) {
+    aerogpuWasmD3d9InitBackend = normalizedBackend;
     aerogpuWasmD3d9InitPromise = (async () => {
       const requiredFeatures = runtimeOptions?.presenter?.requiredFeatures as unknown as string[] | undefined;
 
-      if (backend === "webgpu") {
+      if (normalizedBackend === "webgpu") {
         try {
           await mod.init_aerogpu_d3d9(undefined, { preferWebGpu: true, disableWebGpu: false, requiredFeatures });
-          aerogpuWasmD3d9Backend = backend;
+          aerogpuWasmD3d9Backend = "webgpu";
           return;
         } catch {
           // Fall back to the wgpu WebGL2 backend using an internal OffscreenCanvas.
@@ -267,7 +278,7 @@ async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<Aer
         disableWebGpu: true,
         requiredFeatures,
       });
-      aerogpuWasmD3d9Backend = backend;
+      aerogpuWasmD3d9Backend = "webgl2_wgpu";
     })()
       .catch((err) => {
         // Ensure failed inits can be retried.
@@ -277,6 +288,7 @@ async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<Aer
       })
       .finally(() => {
         aerogpuWasmD3d9InitPromise = null;
+        aerogpuWasmD3d9InitBackend = null;
       });
   }
 
@@ -1429,12 +1441,24 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
       submitOk = true;
     };
 
-    const forceRawBackend = runtimeOptions?.forceBackend === "webgl2_raw";
-    const shouldUseWasmExecutor =
-      !forceRawBackend && (requiresD3d9 || presenter?.backend === "webgpu" || presenter?.backend === "webgl2_wgpu");
+    const forcedBackend = runtimeOptions?.forceBackend;
+    const forceRawBackend = forcedBackend === "webgl2_raw";
+    const selectedBackend = presenter?.backend ?? forcedBackend;
+    const isWgpuBackend = selectedBackend === "webgpu" || selectedBackend === "webgl2_wgpu";
+
+    const shouldUseWasmExecutor = !forceRawBackend && (requiresD3d9 || isWgpuBackend);
 
     if (shouldUseWasmExecutor) {
-      const backend = presenter?.backend ?? "webgpu";
+      const disableWebGpu = runtimeOptions?.disableWebGpu === true;
+      const preferWebGpu = runtimeOptions?.preferWebGpu !== false;
+      const backend: PresenterBackendKind =
+        selectedBackend === "webgpu" || selectedBackend === "webgl2_wgpu"
+          ? selectedBackend
+          : selectedBackend === "webgl2_raw"
+            ? "webgl2_wgpu"
+            : disableWebGpu || !preferWebGpu
+              ? "webgl2_wgpu"
+              : "webgpu";
 
       let wasm: AeroGpuWasmApi | null = null;
       try {
@@ -1707,6 +1731,29 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
         };
       }
 
+      // Warm up the wasm-backed AeroGPU D3D9 executor when we have a wgpu-based presenter so the
+      // first submit_aerogpu doesn't pay the init cost.
+      if (presenter.backend === "webgpu" || presenter.backend === "webgl2_wgpu") {
+        void ensureAerogpuWasmD3d9(presenter.backend)
+          .then((wasm) => {
+            if (guestU8) {
+              wasm.set_guest_memory(guestU8);
+            } else {
+              wasm.clear_guest_memory();
+            }
+          })
+          .catch((err) => {
+            emitGpuEvent({
+              time_ms: performance.now(),
+              backend_kind: backendKindForEvent(),
+              severity: "warn",
+              category: "AerogpuInit",
+              message: err instanceof Error ? err.message : String(err),
+              details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+            });
+          });
+      }
+
       return;
     } catch (err) {
       if (!firstError) firstError = err;
@@ -1930,6 +1977,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         resetAerogpuContexts();
         // Reset wasm-backed executor state (if it was used previously).
         aerogpuWasmD3d9InitPromise = null;
+        aerogpuWasmD3d9InitBackend = null;
         aerogpuWasmD3d9Backend = null;
         aerogpuWasmD3d9InternalCanvas = null;
         if (aerogpuWasm) {
@@ -1943,6 +1991,31 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           } catch {
             // Ignore; wasm module may not be initialized.
           }
+        }
+
+        // Headless mode: if the caller explicitly forced a wgpu-based backend, pre-initialize the
+        // wasm D3D9 executor immediately so headless AeroGPU submissions can run without waiting
+        // for a presenter surface.
+        const forcedBackend = runtimeOptions?.forceBackend;
+        if (!runtimeCanvas && (forcedBackend === "webgpu" || forcedBackend === "webgl2_wgpu")) {
+          void ensureAerogpuWasmD3d9(forcedBackend)
+            .then((wasm) => {
+              if (guestU8) {
+                wasm.set_guest_memory(guestU8);
+              } else {
+                wasm.clear_guest_memory();
+              }
+            })
+            .catch((err) => {
+              emitGpuEvent({
+                time_ms: performance.now(),
+                backend_kind: backendKindForEvent(),
+                severity: "warn",
+                category: "AerogpuInit",
+                message: err instanceof Error ? err.message : String(err),
+                details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+              });
+            });
         }
         aerogpuSubmitChain = Promise.resolve();
         aerogpuPendingSubmitComplete.length = 0;
@@ -2332,6 +2405,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeReadySent = false;
       resetAerogpuContexts();
       aerogpuWasmD3d9InitPromise = null;
+      aerogpuWasmD3d9InitBackend = null;
       aerogpuWasmD3d9Backend = null;
       aerogpuWasmD3d9InternalCanvas = null;
       if (aerogpuWasm) {
