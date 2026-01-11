@@ -4249,6 +4249,7 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   void* cmd_ptr = nullptr;
   void* dma_ptr = nullptr;
   uint32_t cap = 0;
+  bool cap_from_dma_buffer_size = false;
 
   if constexpr (has_member_pDmaBuffer<Arg>::value) {
     dma_ptr = args.pDmaBuffer;
@@ -4261,6 +4262,7 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   }
   if constexpr (has_member_DmaBufferSize<Arg>::value) {
     cap = static_cast<uint32_t>(args.DmaBufferSize);
+    cap_from_dma_buffer_size = (cap != 0);
   }
   if constexpr (has_member_CommandBufferSize<Arg>::value) {
     if (cap == 0) {
@@ -4272,6 +4274,20 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   }
   if (!dma_ptr) {
     dma_ptr = cmd_ptr;
+  }
+  if (cap_from_dma_buffer_size && cmd_ptr && dma_ptr && cmd_ptr != dma_ptr) {
+    // Some runtimes return pDmaBuffer as the base pointer + DmaBufferSize for the
+    // full buffer, but return a potentially offset pCommandBuffer for actual
+    // command emission. In that case, the effective command buffer capacity is
+    // reduced by the offset within the DMA buffer.
+    const uintptr_t base = reinterpret_cast<uintptr_t>(dma_ptr);
+    const uintptr_t cmd = reinterpret_cast<uintptr_t>(cmd_ptr);
+    if (cmd >= base) {
+      const uintptr_t offset = cmd - base;
+      if (offset < static_cast<uintptr_t>(cap)) {
+        cap -= static_cast<uint32_t>(offset);
+      }
+    }
   }
 
   WddmAllocationList* alloc_list = nullptr;
@@ -4386,6 +4402,7 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   void* cmd_ptr = nullptr;
   void* dma_ptr = nullptr;
   uint32_t cap = 0;
+  bool cap_from_dma_buffer_size = false;
   if constexpr (has_member_pDmaBuffer<Arg>::value) {
     dma_ptr = args.pDmaBuffer;
     cmd_ptr = args.pDmaBuffer;
@@ -4401,6 +4418,7 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   if constexpr (has_member_DmaBufferSize<Arg>::value) {
     if (cap == 0) {
       cap = static_cast<uint32_t>(args.DmaBufferSize);
+      cap_from_dma_buffer_size = (cap != 0);
     }
   }
   if (!cmd_ptr) {
@@ -4408,6 +4426,16 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   }
   if (!dma_ptr) {
     dma_ptr = cmd_ptr;
+  }
+  if (cap_from_dma_buffer_size && cmd_ptr && dma_ptr && cmd_ptr != dma_ptr) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(dma_ptr);
+    const uintptr_t cmd = reinterpret_cast<uintptr_t>(cmd_ptr);
+    if (cmd >= base) {
+      const uintptr_t offset = cmd - base;
+      if (offset < static_cast<uintptr_t>(cap)) {
+        cap -= static_cast<uint32_t>(offset);
+      }
+    }
   }
 
   // Some runtimes only return the new command buffer via GetCommandBufferCb and

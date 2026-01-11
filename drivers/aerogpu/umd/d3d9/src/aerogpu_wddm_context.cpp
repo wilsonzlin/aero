@@ -199,9 +199,11 @@ HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hD
   if constexpr (has_member_pDmaBuffer<Arg>::value) {
     ctxOut->pDmaBuffer = static_cast<uint8_t*>(data.pDmaBuffer);
   }
+  bool size_from_dma_buffer_size = false;
   if constexpr (has_member_DmaBufferSize<Arg>::value) {
     if (ctxOut->CommandBufferSize == 0 && data.DmaBufferSize) {
       ctxOut->CommandBufferSize = data.DmaBufferSize;
+      size_from_dma_buffer_size = true;
     }
   }
   if (!ctxOut->pDmaBuffer) {
@@ -209,6 +211,22 @@ HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hD
   }
   if (!ctxOut->pCommandBuffer && ctxOut->pDmaBuffer) {
     ctxOut->pCommandBuffer = ctxOut->pDmaBuffer;
+  }
+  if (size_from_dma_buffer_size && ctxOut->pDmaBuffer && ctxOut->pCommandBuffer && ctxOut->pDmaBuffer != ctxOut->pCommandBuffer) {
+    // Some runtime callback structs expose a base `pDmaBuffer` pointer with a
+    // `DmaBufferSize` for the full buffer, plus a potentially offset
+    // `pCommandBuffer` pointer. When we fall back to `DmaBufferSize` because the
+    // runtime did not provide `CommandBufferSize`, adjust the effective command
+    // buffer capacity by subtracting the command-buffer offset from the DMA
+    // buffer base.
+    const uintptr_t base = reinterpret_cast<uintptr_t>(ctxOut->pDmaBuffer);
+    const uintptr_t cmd = reinterpret_cast<uintptr_t>(ctxOut->pCommandBuffer);
+    if (cmd >= base) {
+      const uintptr_t offset = cmd - base;
+      if (offset < static_cast<uintptr_t>(ctxOut->CommandBufferSize)) {
+        ctxOut->CommandBufferSize -= static_cast<uint32_t>(offset);
+      }
+    }
   }
   if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
     ctxOut->pDmaBufferPrivateData = data.pDmaBufferPrivateData;
