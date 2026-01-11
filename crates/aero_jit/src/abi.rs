@@ -29,8 +29,7 @@ pub const CPU_XMM_OFF: [u32; 16] = [
 ];
 
 /// Total size (in bytes) of [`aero_cpu_core::state::CpuState`].
-pub const CPU_STATE_SIZE: u32 = 1056;
+pub const CPU_STATE_SIZE: u32 = 1072;
 
 /// Alignment (in bytes) of [`aero_cpu_core::state::CpuState`].
 pub const CPU_STATE_ALIGN: u32 = 16;
-
