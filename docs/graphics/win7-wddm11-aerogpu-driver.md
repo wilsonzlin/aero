@@ -810,13 +810,14 @@ See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windo
     - the signed package directory: `out/packages/aerogpu/x86/` or `out/packages/aerogpu/x64/`
     - the signing cert: `out/certs/aero-test.cer`
  
- 3. In the Win7 VM (as Administrator), trust the certificate and enable test signing:
- 
- ```bat
- cd drivers\aerogpu\packaging\win7
- trust_test_cert.cmd aero-test.cer
- shutdown /r /t 0
- ```
+  3. In the Win7 VM (as Administrator), trust the certificate and enable test signing:
+  
+  ```bat
+  :: Copy drivers\\aerogpu\\packaging\\win7\\trust_test_cert.cmd into the VM (next to aero-test.cer),
+  :: then run:
+  trust_test_cert.cmd aero-test.cer
+  shutdown /r /t 0
+  ```
  
  4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
  

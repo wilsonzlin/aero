@@ -114,13 +114,14 @@ Typical dev install flows:
      ```
   2. Copy `out/packages/aerogpu/<x86|x64>/` and `out/certs/aero-test.cer` into the Win7 VM.
   3. In the Win7 VM (Admin), trust the certificate and enable test signing:
-     ```bat
-     cd drivers\aerogpu\packaging\win7
-     trust_test_cert.cmd aero-test.cer
-     shutdown /r /t 0
-     ```
+      ```bat
+      :: Copy drivers\\aerogpu\\packaging\\win7\\trust_test_cert.cmd into the VM (next to aero-test.cer),
+      :: then run:
+      trust_test_cert.cmd aero-test.cer
+      shutdown /r /t 0
+      ```
   4. After reboot, install the signed INF from the copied package directory:
-     ```bat
+      ```bat
      pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
      ```
 
