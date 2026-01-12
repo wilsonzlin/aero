@@ -34,6 +34,8 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
   const serialTx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
   const irqSink: IrqSink = {
     raiseIrq: (irq) => {
+      // IRQs are transported as line level transitions (assert/deassert). Edge-triggered sources
+      // are represented as explicit pulses (raise then lower). See `docs/irq-semantics.md`.
       writeIoMessage(irqTx, { type: IO_OP_IRQ_RAISE, id: 0, addrLo: irq & 0xff, addrHi: 0, size: 0, value: 0 });
       respRing.pushBlocking(irqTx);
     },

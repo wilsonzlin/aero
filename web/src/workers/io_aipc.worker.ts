@@ -36,6 +36,8 @@ ctx.onmessage = (ev: MessageEvent<IoAipcWorkerInitMessage>) => {
   const evtQ = openRingByKind(ipcBuffer, evtKind);
 
   const irqSink: IrqSink = {
+    // IRQ events are line level transitions (assert/deassert) transported over AIPC. Edge-triggered
+    // devices must emit explicit pulses (`raiseIrq` then `lowerIrq`). See `docs/irq-semantics.md`.
     raiseIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
     lowerIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
   };

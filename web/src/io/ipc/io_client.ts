@@ -16,6 +16,17 @@ import {
   writeIoMessage,
 } from "./io_protocol.ts";
 
+/**
+ * IRQ callback invoked when the IO worker emits an IRQ message on the response ring.
+ *
+ * `level=true` corresponds to {@link IO_OP_IRQ_RAISE} (line asserted) and `level=false`
+ * corresponds to {@link IO_OP_IRQ_LOWER} (line deasserted).
+ *
+ * These events model IRQ *line levels*. Edge-triggered interrupts are represented as explicit
+ * pulses (0→1→0).
+ *
+ * See `docs/irq-semantics.md`.
+ */
 export type IrqCallback = (irq: number, level: boolean) => void;
 export type A20Callback = (enabled: boolean) => void;
 export type ResetCallback = () => void;
