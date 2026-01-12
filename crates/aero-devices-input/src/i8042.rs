@@ -340,6 +340,13 @@ impl I8042Controller {
     /// Host-side injection helper: translate a browser code to Set-2 and feed it
     /// into the keyboard device.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
+        // If the keyboard port is disabled, the controller suppresses keyboard output (clock line
+        // held low). Host-side key injection should not buffer scancodes and deliver them later
+        // once the guest re-enables the port, as that would manifest as a burst of stale key
+        // events.
+        if !self.keyboard_port_enabled() {
+            return;
+        }
         let Some(sc) = browser_code_to_set2(code) else {
             return;
         };
@@ -357,11 +364,17 @@ impl I8042Controller {
     /// - keyboard scanning enabled/disabled state, and
     /// - i8042 command-byte Set-2 -> Set-1 translation when enabled.
     pub fn inject_keyboard_bytes(&mut self, bytes: &[u8]) {
+        if !self.keyboard_port_enabled() {
+            return;
+        }
         self.keyboard.inject_bytes(bytes);
         self.service_output();
     }
 
     pub fn inject_set2_key(&mut self, scancode: Set2Scancode, pressed: bool) {
+        if !self.keyboard_port_enabled() {
+            return;
+        }
         self.keyboard.inject_key(scancode, pressed);
         self.service_output();
     }
@@ -376,6 +389,9 @@ impl I8042Controller {
     /// - IRQ generation matches the normal "keyboard produced output" path.
     pub fn inject_key_scancode_bytes(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
+            return;
+        }
+        if !self.keyboard_port_enabled() {
             return;
         }
         self.keyboard.inject_scancode_bytes(bytes);
@@ -1068,5 +1084,34 @@ mod tests {
         // Reading the final byte should not generate any additional pulses.
         let _ = dev.read_port(0x60);
         assert!(raised.borrow().is_empty());
+    }
+
+    #[test]
+    fn keyboard_injection_drops_scancodes_when_port_disabled() {
+        let mut dev = I8042Controller::new();
+
+        // Disable the keyboard port (0xAD).
+        dev.write_port(0x64, 0xAD);
+
+        // Inject a key while the port is disabled. The controller should not buffer it.
+        dev.inject_key_scancode_bytes(&[0x1c]);
+
+        assert!(
+            !dev.keyboard.has_output(),
+            "keyboard should not buffer output"
+        );
+        assert!(dev.output_buffer.is_none());
+        assert_eq!(dev.status & STATUS_OBF, 0);
+
+        // Re-enable the keyboard port (0xAE). No buffered key should appear.
+        dev.write_port(0x64, 0xAE);
+        assert!(dev.output_buffer.is_none());
+        assert_eq!(dev.status & STATUS_OBF, 0);
+
+        // Ensure injection works again when enabled.
+        dev.inject_key_scancode_bytes(&[0x1c]);
+        assert!(dev.output_buffer.is_some());
+        // Translation is enabled by default (Set-2 -> Set-1), so 0x1c ("A" in Set-2) becomes 0x1e.
+        assert_eq!(dev.read_port(0x60), 0x1e);
     }
 }
