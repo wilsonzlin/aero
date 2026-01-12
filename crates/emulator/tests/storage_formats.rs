@@ -334,6 +334,19 @@ fn detect_qcow2_magic_with_truncated_header_is_qcow2() {
 }
 
 #[test]
+fn detect_vhd_cookie_with_truncated_footer_is_vhd() {
+    let mut storage = MemStorage::with_len(8);
+    storage.write_at(0, b"conectix").unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Vhd);
+
+    let res = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("vhd file too small"))
+    ));
+}
+
+#[test]
 fn detect_vhd_cookie_without_plausible_footer_is_raw() {
     let mut storage = MemStorage::with_len(512);
     let mut footer = [0u8; 512];

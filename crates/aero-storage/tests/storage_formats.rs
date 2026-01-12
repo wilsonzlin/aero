@@ -317,6 +317,18 @@ fn detect_format_does_not_misclassify_vhd_cookie_without_valid_footer_fields() {
 }
 
 #[test]
+fn detect_format_recognizes_truncated_vhd_cookie() {
+    // Truncated files that still begin with the VHD cookie should not silently open as raw.
+    let mut backend = MemBackend::with_len(8).unwrap();
+    backend.write_at(0, b"conectix").unwrap();
+
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Vhd);
+
+    let err = DiskImage::open_auto(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("vhd file too small")));
+}
+
+#[test]
 fn detect_format_does_not_misclassify_qcow2_magic_with_bad_version() {
     let mut backend = MemBackend::with_len(8).unwrap();
     backend.write_at(0, b"QFI\xfb").unwrap();

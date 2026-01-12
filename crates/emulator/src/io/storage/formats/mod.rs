@@ -42,6 +42,13 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
                 return Ok(DiskFormat::Qcow2);
             }
         }
+
+        // Dynamic VHDs store a footer copy at offset 0. If the file begins with the VHD cookie but
+        // is too small to contain a complete footer, still treat it as a VHD so `open_auto`
+        // returns a corruption error instead of silently falling back to raw.
+        if len < 512 && first8 == VHD_COOKIE {
+            return Ok(DiskFormat::Vhd);
+        }
     }
 
     if len >= 512 {

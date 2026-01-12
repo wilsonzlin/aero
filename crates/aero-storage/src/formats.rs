@@ -71,7 +71,14 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
         }
 
         // VHD dynamic disks commonly store a footer copy at offset 0.
-        if first8 == VHD_COOKIE && len >= VHD_FOOTER_SIZE as u64 {
+        if first8 == VHD_COOKIE {
+            // If the file begins with the VHD cookie but is too small to contain a complete footer,
+            // still treat it as a VHD so callers get a structured corruption error instead of
+            // silently falling back to raw.
+            if len < VHD_FOOTER_SIZE as u64 {
+                return Ok(DiskFormat::Vhd);
+            }
+
             let mut footer = [0u8; VHD_FOOTER_SIZE];
             backend.read_at(0, &mut footer)?;
             if looks_like_vhd_footer(&footer, len) {
