@@ -378,15 +378,9 @@ fn run_wasm_inner(
     ram: Vec<u8>,
     ram_size: u64,
     prefill_tlb: Option<(u64, u64)>,
+    options: Tier1WasmOptions,
 ) -> (u64, CpuState, Vec<u8>, HostState) {
-    let wasm = Tier1WasmCodegen::new()
-        .compile_block_with_options(
-            block,
-            Tier1WasmOptions {
-                inline_tlb: true,
-                ..Default::default()
-            },
-        );
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(block, options);
     validate_wasm(&wasm);
 
     let ram_base = (JIT_CTX_PTR as u64) + (JitContext::TOTAL_BYTE_SIZE as u64);
@@ -454,7 +448,17 @@ fn run_wasm(
     ram: Vec<u8>,
     ram_size: u64,
 ) -> (u64, CpuState, Vec<u8>, HostState) {
-    run_wasm_inner(block, cpu, ram, ram_size, None)
+    run_wasm_inner(
+        block,
+        cpu,
+        ram,
+        ram_size,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    )
 }
 
 fn run_wasm_with_prefilled_tlb(
@@ -465,7 +469,17 @@ fn run_wasm_with_prefilled_tlb(
     vaddr: u64,
     tlb_data: u64,
 ) -> (u64, CpuState, Vec<u8>, HostState) {
-    run_wasm_inner(block, cpu, ram, ram_size, Some((vaddr, tlb_data)))
+    run_wasm_inner(
+        block,
+        cpu,
+        ram,
+        ram_size,
+        Some((vaddr, tlb_data)),
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    )
 }
 
 #[test]
@@ -523,6 +537,60 @@ fn tier1_inline_tlb_same_page_access_hits_and_caches() {
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_can_disable_store_fastpath() {
+    let mut b = IrBuilder::new(0x1000);
+
+    let addr = b.const_int(Width::W64, 0x1000);
+    let v = b.const_int(Width::W32, 0x1234_5678);
+    b.store(Width::W32, addr, v);
+
+    let ld = b.load(Width::W32, addr);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        ld,
+    );
+
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    let ram = vec![0u8; 0x10000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x10000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_stores: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234_5678);
+
+    assert_eq!(&got_ram[0x1000..0x1004], &0x1234_5678u32.to_le_bytes(),);
+
+    // Store goes through the helper path.
+    assert_eq!(host_state.slow_mem_writes, 1);
+    // Load still uses the inline-TLB fast-path.
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
 }
 
 #[test]

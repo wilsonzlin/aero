@@ -126,6 +126,17 @@ impl<P, R> Tier1Compiler<P, R> {
         self.wasm_options.inline_tlb = inline_tlb;
         self
     }
+
+    /// Configure whether inline-TLB mode is allowed to emit direct guest RAM stores.
+    ///
+    /// When disabled, Tier-1 stores always use the imported slow helpers (`env.mem_write_*`), which
+    /// allows the embedder/runtime to observe writes (MMIO classification, self-modifying code
+    /// invalidation, etc).
+    #[must_use]
+    pub fn with_inline_tlb_stores(mut self, inline_tlb_stores: bool) -> Self {
+        self.wasm_options.inline_tlb_stores = inline_tlb_stores;
+        self
+    }
 }
 
 impl<P, R> Tier1Compiler<P, R>

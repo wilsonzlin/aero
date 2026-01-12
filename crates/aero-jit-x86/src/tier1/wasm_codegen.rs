@@ -24,11 +24,18 @@ pub const EXPORT_TIER1_BLOCK_FN: &str = EXPORT_BLOCK_FN;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tier1WasmOptions {
-    /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
-    /// and stores.
+    /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads.
     ///
     /// Note: this option is ignored unless the crate feature `tier1-inline-tlb` is enabled.
     pub inline_tlb: bool,
+
+    /// When [`Self::inline_tlb`] is enabled, allow stores to use the same inline-TLB fast-path as
+    /// loads.
+    ///
+    /// When disabled, Tier-1 stores always go through the imported slow helpers (`env.mem_write_*`)
+    /// so the host runtime can observe writes (MMIO classification, self-modifying code
+    /// invalidation via `jit.on_guest_write(..)`, etc).
+    pub inline_tlb_stores: bool,
 
     /// Whether the imported `env.memory` is expected to be a shared memory (i.e. created with
     /// `WebAssembly.Memory({ shared: true, ... })`).
@@ -47,6 +54,9 @@ impl Default for Tier1WasmOptions {
     fn default() -> Self {
         Self {
             inline_tlb: false,
+            // Preserve historical behaviour: when callers enable `inline_tlb`, stores take the
+            // fast-path by default unless explicitly disabled.
+            inline_tlb_stores: true,
             // Preserve existing behaviour by default: import an unshared memory with min=1 and no
             // maximum.
             memory_shared: false,
@@ -116,15 +126,17 @@ impl Tier1WasmCodegen {
         {
             options.inline_tlb = false;
         }
-        if options.inline_tlb
-            && !block
-                .insts
-                .iter()
-                .any(|inst| matches!(inst, IrInst::Load { .. } | IrInst::Store { .. }))
-        {
-            // Inline-TLB is a pure memory fast-path; blocks with no memory ops don't need the extra
-            // imports/locals.
-            options.inline_tlb = false;
+        if options.inline_tlb {
+            let uses_inline_tlb = block.insts.iter().any(|inst| match inst {
+                IrInst::Load { .. } => true,
+                IrInst::Store { .. } => options.inline_tlb_stores,
+                _ => false,
+            });
+            if !uses_inline_tlb {
+                // Inline-TLB is a pure memory fast-path; blocks with no inline-TLB-eligible memory
+                // ops don't need the extra imports/locals.
+                options.inline_tlb = false;
+            }
         }
         let mut module = Module::new();
 
@@ -334,10 +346,11 @@ impl Tier1WasmCodegen {
         func.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
         if options.inline_tlb {
-            let has_store_mem = block
-                .insts
-                .iter()
-                .any(|inst| matches!(inst, IrInst::Store { .. }));
+            let has_store_mem = options.inline_tlb_stores
+                && block
+                    .insts
+                    .iter()
+                    .any(|inst| matches!(inst, IrInst::Store { .. }));
             if has_store_mem {
                 // Cache the code-version table pointer and length in locals so the RAM write
                 // fast-path can bump code page versions without repeated loads from `cpu_ptr`.
@@ -692,8 +705,8 @@ impl Emitter<'_> {
                 self.depth -= 1;
             }
             IrInst::Store { addr, src, width } => {
-                if !self.options.inline_tlb {
-                    // Baseline mode: always go through the imported slow helpers.
+                if !self.options.inline_tlb || !self.options.inline_tlb_stores {
+                    // Slow path: always go through the imported helpers.
                     self.func
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.func
