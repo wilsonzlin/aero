@@ -545,16 +545,40 @@ impl D3D11Runtime {
         let bytes_per_row = payload[5];
         let bytes = Self::take_bytes(payload, 6)?;
 
-        let texture_format = self
+        let texture_desc = self
             .resources
             .textures
             .get(&texture_id)
             .ok_or_else(|| anyhow!("unknown texture {texture_id}"))?
             .desc
-            .format;
+            .clone();
+        let texture_format = texture_desc.format;
 
         if width == 0 || height == 0 {
             bail!("UpdateTexture2D width/height must be non-zero");
+        }
+        if mip_level >= texture_desc.mip_level_count {
+            bail!(
+                "UpdateTexture2D mip_level {mip_level} out of range (mip_level_count={})",
+                texture_desc.mip_level_count
+            );
+        }
+        if array_layer >= texture_desc.array_layers {
+            bail!(
+                "UpdateTexture2D array_layer {array_layer} out of range (array_layers={})",
+                texture_desc.array_layers
+            );
+        }
+        let mip_width = texture_desc.width.checked_shr(mip_level).unwrap_or(0).max(1);
+        let mip_height = texture_desc
+            .height
+            .checked_shr(mip_level)
+            .unwrap_or(0)
+            .max(1);
+        if width > mip_width || height > mip_height {
+            bail!(
+                "UpdateTexture2D update extent {width}x{height} out of bounds for mip {mip_level} (mip_size={mip_width}x{mip_height})"
+            );
         }
 
         let bytes_per_texel = match texture_format {
@@ -685,14 +709,53 @@ impl D3D11Runtime {
             Some(array_layer_count)
         };
 
+        if base_mip_level >= texture.desc.mip_level_count {
+            bail!(
+                "CreateTextureView base_mip_level {base_mip_level} out of range (mip_level_count={})",
+                texture.desc.mip_level_count
+            );
+        }
+        let resolved_mip_level_count = mip_level_count.unwrap_or(texture.desc.mip_level_count - base_mip_level);
+        if base_mip_level
+            .checked_add(resolved_mip_level_count)
+            .ok_or_else(|| anyhow!("CreateTextureView mip level overflow"))?
+            > texture.desc.mip_level_count
+        {
+            bail!(
+                "CreateTextureView mip range out of bounds (base_mip_level={base_mip_level} mip_level_count={resolved_mip_level_count} total_mips={})",
+                texture.desc.mip_level_count
+            );
+        }
+
+        if base_array_layer >= texture.desc.array_layers {
+            bail!(
+                "CreateTextureView base_array_layer {base_array_layer} out of range (array_layers={})",
+                texture.desc.array_layers
+            );
+        }
+        let resolved_array_layer_count =
+            array_layer_count.unwrap_or(texture.desc.array_layers - base_array_layer);
+        if base_array_layer
+            .checked_add(resolved_array_layer_count)
+            .ok_or_else(|| anyhow!("CreateTextureView array layer overflow"))?
+            > texture.desc.array_layers
+        {
+            bail!(
+                "CreateTextureView array range out of bounds (base_array_layer={base_array_layer} array_layer_count={resolved_array_layer_count} total_layers={})",
+                texture.desc.array_layers
+            );
+        }
+
+        let view_dimension = if resolved_array_layer_count == 1 {
+            wgpu::TextureViewDimension::D2
+        } else {
+            wgpu::TextureViewDimension::D2Array
+        };
+
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("aero-d3d11 texture view"),
             format: None,
-            dimension: Some(if texture.desc.array_layers > 1 {
-                wgpu::TextureViewDimension::D2Array
-            } else {
-                wgpu::TextureViewDimension::D2
-            }),
+            dimension: Some(view_dimension),
             aspect: wgpu::TextureAspect::All,
             base_mip_level,
             mip_level_count,

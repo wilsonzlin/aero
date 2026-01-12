@@ -845,6 +845,13 @@ impl D3D9Runtime {
             .ok_or(RuntimeError::UnknownTexture(texture_id))?
             .desc;
 
+        if mip_level >= desc.mip_level_count {
+            return Err(RuntimeError::Validation(format!(
+                "write_texture_full_mip: mip_level {mip_level} out of range (mip_level_count={})",
+                desc.mip_level_count
+            )));
+        }
+
         let expected_width = (desc.width >> mip_level).max(1);
         let expected_height = (desc.height >> mip_level).max(1);
         if width != expected_width || height != expected_height {
