@@ -90,6 +90,36 @@ static CM_PARTIAL_RESOURCE_DESCRIPTOR make_int_desc(void)
     return desc;
 }
 
+static void test_connect_validation(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, NULL, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_INVALID_PARAMETER);
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, NULL);
+    assert(status == STATUS_INVALID_PARAMETER);
+
+    status = VirtioIntxConnect(NULL, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+
+    desc.Type = 0;
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_INVALID_PARAMETER);
+
+    desc = make_int_desc();
+    desc.Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_NOT_SUPPORTED);
+}
+
 static void test_spurious_interrupt(void)
 {
     VIRTIO_INTX intx;
@@ -331,6 +361,7 @@ static void test_evt_dpc_dispatch_override(void)
 
 int main(void)
 {
+    test_connect_validation();
     test_spurious_interrupt();
     test_queue_config_dispatch();
     test_bit_accumulation_single_dpc();

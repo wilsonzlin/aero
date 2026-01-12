@@ -69,7 +69,7 @@ add_executable(virtio_intx_wdm_tests
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_intx_wdm.c
 )
 
-target_include_directories(virtio_intx_wdm_tests PRIVATE
+target_include_directories(virtio_intx_wdm_tests BEFORE PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/wdk_stubs
     ${CMAKE_CURRENT_LIST_DIR}/../include
     ${CMAKE_CURRENT_LIST_DIR}
