@@ -244,6 +244,16 @@ const existingRustflags = process.env.RUSTFLAGS?.trim() ?? "";
 // Avoid accidentally inheriting target features (especially `+atomics`) from a user's environment.
 const rustflagsWithoutTargetFeatures = existingRustflags
     .replace(/-C\s*target-feature=[^ ]+/g, "")
+    // Avoid inheriting wasm memory import/export knobs; the build script controls those per-package.
+    .replace(/-C\s*link-arg=--import-memory\b/g, "")
+    .replace(/-C\s*link-arg=--export-memory\b/g, "")
+    .replace(/-C\s*link-arg=--shared-memory\b/g, "")
+    .replace(/-C\s*link-arg=--stack-first\b/g, "")
+    .replace(/-C\s*link-arg=--max-memory(=[^ ]+)?/g, "")
+    .replace(/-C\s*link-arg=--export=__wasm_init_tls\b/g, "")
+    .replace(/-C\s*link-arg=--export=__tls_base\b/g, "")
+    .replace(/-C\s*link-arg=--export=__tls_size\b/g, "")
+    .replace(/-C\s*link-arg=--export=__tls_align\b/g, "")
     // Keep release builds reproducible by stripping codegen knobs we explicitly control.
     .replace(/-C\s*opt-level=[^ ]+/g, "")
     .replace(/-C\s*lto(=[^ ]+)?/g, "")
