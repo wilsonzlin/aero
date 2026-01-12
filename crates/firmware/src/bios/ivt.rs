@@ -106,7 +106,7 @@ mod tests {
     use memory::MemoryBus as _;
 
     #[test]
-    fn init_bda_initializes_equipment_word() {
+    fn init_bda_initializes_core_fields() {
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         init_bda(&mut mem);
 
