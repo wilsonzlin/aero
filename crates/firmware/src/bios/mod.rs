@@ -86,6 +86,14 @@ pub enum DiskError {
     OutOfRange,
 }
 
+/// Minimal 512-byte-sector read interface used by the legacy BIOS INT 13h implementation.
+///
+/// # Canonical trait note
+///
+/// This trait is **firmware-specific** and should not be used as a general-purpose disk image or
+/// device/controller abstraction. Outside of BIOS code, prefer the canonical synchronous disk
+/// traits (`aero_storage::StorageBackend` / `aero_storage::VirtualDisk`) and adapt as needed. See
+/// `docs/20-storage-trait-consolidation.md`.
 pub trait BlockDevice {
     fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError>;
 

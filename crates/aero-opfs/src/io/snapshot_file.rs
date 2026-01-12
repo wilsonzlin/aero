@@ -7,6 +7,12 @@ const JS_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991; // 2^53 - 1
 /// `Read`/`Write`/`Seek` stream.
 ///
 /// This is public so that unit tests can provide an in-memory mock handle.
+///
+/// # Canonical trait note
+///
+/// This trait is a small, `std::io`-oriented helper and is **not** the repo's canonical random-access
+/// storage abstraction. Prefer `aero_storage::StorageBackend` / `aero_storage::VirtualDisk` for the
+/// main synchronous disk/controller stack (see `docs/20-storage-trait-consolidation.md`).
 pub trait OpfsSyncFileHandle {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize>;
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<usize>;

@@ -43,6 +43,10 @@ See also:
   Defined in: [`crates/aero-virtio/src/devices/blk.rs`](../crates/aero-virtio/src/devices/blk.rs)
 - `aero_io_snapshot::io::storage::state::DiskBackend` (sync, byte-addressed backend used by the snapshot layer)\
   Defined in: [`crates/aero-io-snapshot/src/io/storage/state.rs`](../crates/aero-io-snapshot/src/io/storage/state.rs)
+- `aero_opfs::io::snapshot_file::OpfsSyncFileHandle` (sync, byte-addressed file-handle interface used to adapt OPFS `SyncAccessHandle` to `std::io::{Read, Write, Seek}`)\
+  Defined in: [`crates/aero-opfs/src/io/snapshot_file.rs`](../crates/aero-opfs/src/io/snapshot_file.rs)
+- `firmware::bios::BlockDevice` (sync, 512-byte-sector read-only block device interface used by the legacy BIOS INT 13h implementation)\
+  Defined in: [`crates/firmware/src/bios/mod.rs`](../crates/firmware/src/bios/mod.rs)
 
 ### Rust (legacy, synchronous)
 
