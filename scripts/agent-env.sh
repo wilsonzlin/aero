@@ -96,6 +96,7 @@ esac
 #
 # In constrained agent sandboxes we intermittently hit rustc panics like:
 #   "failed to spawn helper thread (WouldBlock)"
+#   "called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }"
 # when Cargo runs too many rustc processes/threads in parallel, or when
 # an address-space limit (RLIMIT_AS) is set too low for rustc/LLVM's virtual
 # memory reservations. Prefer reliability over speed: default to -j1.
