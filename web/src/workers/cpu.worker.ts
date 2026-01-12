@@ -538,6 +538,41 @@ function guestBoundsCheck(offset: number, len: number): void {
   }
 }
 
+function guestRangesOverlap(aStart: number, aLen: number, bStart: number, bLen: number): boolean {
+  const aEnd = aStart + aLen;
+  const bEnd = bStart + bLen;
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function guestAssertNoOverlapWithDemoRegions(offset: number, len: number, label: string): void {
+  // The CPU worker continuously publishes frames into guest RAM for the embedded shared framebuffer
+  // and demo framebuffer scratch paths. Any harness that uses fixed guest offsets must keep its
+  // scratch buffers disjoint from those regions or it will be corrupted in the background.
+  const demoFbStart = DEMO_FB_OFFSET;
+  const demoFbLen = DEMO_FB_MAX_BYTES;
+  if (guestRangesOverlap(offset, len, demoFbStart, demoFbLen)) {
+    throw new Error(
+      `${label} guest range overlaps DEMO_FB region: [0x${offset.toString(16)}, +0x${len.toString(16)}] intersects ` +
+        `[0x${demoFbStart.toString(16)}, +0x${demoFbLen.toString(16)}]`,
+    );
+  }
+
+  const header = sharedHeader;
+  const layout = sharedLayout;
+  // Only check against the shared framebuffer when it is embedded in guest RAM (it may fall back to a
+  // standalone SharedArrayBuffer when guest memory is tiny, e.g. unit tests).
+  if (header && layout && header.buffer === guestU8.buffer) {
+    const sharedStart = header.byteOffset - guestU8.byteOffset;
+    const sharedLen = layout.totalBytes;
+    if (guestRangesOverlap(offset, len, sharedStart, sharedLen)) {
+      throw new Error(
+        `${label} guest range overlaps shared framebuffer region: [0x${offset.toString(16)}, +0x${len.toString(16)}] intersects ` +
+          `[0x${sharedStart.toString(16)}, +0x${sharedLen.toString(16)}]`,
+      );
+    }
+  }
+}
+
 // MMIO register offsets used by the HDA PCI playback harness.
 const HDA_REG_INTCTL = 0x20n;
 const HDA_REG_CORBCTL = 0x4cn;
@@ -772,6 +807,9 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   guestBoundsCheck(corbBase, CORB_BYTES);
   guestBoundsCheck(rirbBase, RIRB_BYTES);
   guestBoundsCheck(bdlBase, 16);
+  guestAssertNoOverlapWithDemoRegions(corbBase, CORB_BYTES, "HDA PCI CORB");
+  guestAssertNoOverlapWithDemoRegions(rirbBase, RIRB_BYTES, "HDA PCI RIRB");
+  guestAssertNoOverlapWithDemoRegions(bdlBase, 16, "HDA PCI BDL");
 
   // Configure CORB/RIRB to exercise the command/response path.
   client.mmioWrite(bar0Base + REG_CORBLBASE, 4, corbBase);
@@ -825,6 +863,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   const pcmLenBytes = frames * bytesPerFrame;
 
   guestBoundsCheck(pcmBase, pcmLenBytes);
+  guestAssertNoOverlapWithDemoRegions(pcmBase, pcmLenBytes, "HDA PCI PCM");
 
   for (let n = 0; n < frames; n++) {
     const t = n / sampleRate;
@@ -1557,6 +1596,10 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     guestBoundsCheck(rirbBase, 16);
     guestBoundsCheck(bdlBase, 16);
     guestBoundsCheck(pcmBase, pcmBytes);
+    guestAssertNoOverlapWithDemoRegions(corbBase, 8, "HDA capture CORB");
+    guestAssertNoOverlapWithDemoRegions(rirbBase, 16, "HDA capture RIRB");
+    guestAssertNoOverlapWithDemoRegions(bdlBase, 16, "HDA capture BDL");
+    guestAssertNoOverlapWithDemoRegions(pcmBase, pcmBytes, "HDA capture PCM");
 
     // Clear the target PCM buffer so the main thread can detect progress reliably.
     guestU8.fill(0, pcmBase, pcmBase + pcmBytes);
