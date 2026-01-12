@@ -1862,6 +1862,12 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         } catch {
           // ignore
         }
+        try {
+          // Backwards-compatible signal for older/alternate JIT hosts that report commit status via a global flag.
+          (globalThis as any).__aero_jit_last_committed = false;
+        } catch {
+          // ignore
+        }
         return -1n;
       };
       setReadyFlag(status, role, true);
