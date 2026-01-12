@@ -945,4 +945,47 @@ describe("io/bus/pci", () => {
     expect(mmioBus2.read(0x8000_0000n, 4)).toBe(0xcafe_babe);
     expect(reads2).toBe(1);
   });
+
+  it("replays PCI command register side effects (onPciCommandWrite) when restoring snapshots", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "snap_cmd_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+    // Enable memory decoding + bus mastering.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0006);
+
+    const snapshot = pciBus.saveState();
+
+    const portBus2 = new PortIoBus();
+    const mmioBus2 = new MmioBus();
+    const pciBus2 = new PciBus(portBus2, mmioBus2);
+    pciBus2.registerToPortBus();
+
+    let restoredCommand = -1;
+    const dev2: PciDevice = {
+      name: "snap_cmd_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      onPciCommandWrite: (command) => {
+        restoredCommand = command & 0xffff;
+      },
+    };
+    pciBus2.registerDevice(dev2, { device: 0, function: 0 });
+
+    pciBus2.loadState(snapshot);
+
+    expect(restoredCommand).toBe(0x0006);
+  });
 });
