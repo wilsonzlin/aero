@@ -49,6 +49,15 @@ uint32_t g_trace_filter_count = 0;
 
 std::atomic<bool> g_trace_dumped{false};
 
+uint32_t popcount_u32(uint32_t v) {
+  uint32_t count = 0;
+  while (v) {
+    v &= (v - 1);
+    ++count;
+  }
+  return count;
+}
+
 bool trace_icontains(const char* s, const char* needle_lower) {
   if (!s || !needle_lower) {
     return false;
@@ -639,7 +648,7 @@ void d3d9_trace_init_from_env() {
     }
 
     for (uint32_t i = 0; i < kSeenWordCount; ++i) {
-      g_trace_filter_count += static_cast<uint32_t>(__builtin_popcount(g_trace_filter[i]));
+      g_trace_filter_count += popcount_u32(g_trace_filter[i]);
     }
   }
 
