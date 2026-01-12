@@ -122,6 +122,8 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
+    // UHCI uses DMA to walk the schedule; enable PCI Bus Mastering to allow DMA.
+    ctrl.set_pci_command(0x0004);
 
     // PCI Bus Master Enable gates UHCI DMA. When exercising the bridge directly (without the JS
     // PCI bus), explicitly enable bus mastering so frame stepping can access guest memory.
