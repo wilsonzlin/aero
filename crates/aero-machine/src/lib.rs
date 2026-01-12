@@ -2385,10 +2385,6 @@ impl Machine {
             ));
         }
 
-        // The host is explicitly attaching a disk backend. Do not auto-attach/overwrite this slot
-        // with the machine's `SharedDisk` on future `set_disk_backend()` / `set_disk_image()` calls.
-        self.virtio_blk_auto_attach_shared_disk = false;
-
         let (command, bar0_base) = if let Some(pci_cfg) = &self.pci_cfg {
             let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
             let mut pci_cfg = pci_cfg.borrow_mut();
@@ -2584,46 +2580,21 @@ impl Machine {
     ///
     /// This makes BIOS INT13 disk reads and virtio-blk DMA observe the same underlying bytes.
     ///
-    /// If the virtio-blk controller is not present, this is a no-op.
+    /// If the virtio-blk controller is not present, this is a no-op and returns `Ok(())`.
     ///
     /// This method is idempotent: once the shared disk is attached/configured for virtio-blk,
     /// further calls will not replace the existing backend.
-    pub fn attach_shared_disk_to_virtio_blk(&mut self) {
-        let Some(virtio_blk) = &self.virtio_blk else {
-            return;
-        };
+    pub fn attach_shared_disk_to_virtio_blk(&mut self) -> Result<(), MachineError> {
+        if self.virtio_blk.is_none() {
+            return Ok(());
+        }
         if self.virtio_blk_auto_attach_shared_disk {
-            return;
+            return Ok(());
         }
 
-        *virtio_blk.borrow_mut() = VirtioPciDevice::new(
-            Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
-            Box::new(NoopVirtioInterruptSink),
-        );
+        self.swap_virtio_blk_backend_preserving_state(Box::new(self.disk.clone()))?;
         self.virtio_blk_auto_attach_shared_disk = true;
-
-        // Keep the device model's internal PCI config state coherent with the canonical PCI config
-        // space so snapshots taken immediately after swapping the backend see a consistent config
-        // image.
-        if let Some(pci_cfg) = &self.pci_cfg {
-            let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-            let (command, bar0_base) = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let cfg = pci_cfg.bus_mut().device_config(bdf);
-                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                let bar0_base = cfg
-                    .and_then(|cfg| cfg.bar_range(0))
-                    .map(|range| range.base)
-                    .unwrap_or(0);
-                (command, bar0_base)
-            };
-
-            let mut dev = virtio_blk.borrow_mut();
-            dev.set_pci_command(command);
-            if bar0_base != 0 {
-                dev.config_mut().set_bar_base(0, bar0_base);
-            }
-        }
+        Ok(())
     }
 
     /// Detach any drive currently attached to the canonical AHCI port 0.

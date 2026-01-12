@@ -296,7 +296,8 @@ fn set_disk_backend_does_not_clobber_custom_virtio_blk_backend() {
     );
 
     // Re-attaching the shared disk should drop the custom backend (sanity check).
-    m.attach_shared_disk_to_virtio_blk();
+    m.attach_shared_disk_to_virtio_blk()
+        .expect("attaching shared disk to virtio-blk should succeed");
     assert!(
         dropped.load(Ordering::SeqCst),
         "re-attaching SharedDisk should drop the previous custom virtio-blk backend"
