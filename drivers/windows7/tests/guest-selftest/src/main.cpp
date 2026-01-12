@@ -1508,9 +1508,18 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   // Populate SCSI addressing fields for pass-through. Some stacks require these to be set correctly.
   // If the query fails, fall back to 0/0/0 (common for single-disk virtio-blk setups).
   SCSI_ADDRESS addr{};
+  addr.Length = sizeof(addr);
   DWORD addr_bytes = 0;
   if (DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_GET_ADDRESS, nullptr, 0, &addr, sizeof(addr), &addr_bytes,
                       nullptr)) {
+    if (addr_bytes < sizeof(addr)) {
+      log.Logf("virtio-blk: REPORT_LUNS warning: IOCTL_SCSI_GET_ADDRESS returned short bytes=%lu (using 0/0/0)",
+               static_cast<unsigned long>(addr_bytes));
+      addr.PortNumber = 0;
+      addr.PathId = 0;
+      addr.TargetId = 0;
+      addr.Lun = 0;
+    }
     log.Logf("virtio-blk: REPORT_LUNS scsi_address port=%u path=%u target=%u lun=%u",
              static_cast<unsigned>(addr.PortNumber), static_cast<unsigned>(addr.PathId),
              static_cast<unsigned>(addr.TargetId), static_cast<unsigned>(addr.Lun));
