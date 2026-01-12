@@ -390,15 +390,31 @@ if command -v node >/dev/null 2>&1; then
              return;
            }
 
-           const l2Path = payload?.endpoints?.l2;
-           if (typeof l2Path !== "string" || l2Path.length === 0) {
-             reject(new Error("missing endpoints.l2 in /session response"));
-             return;
-           }
+            const l2Path = payload?.endpoints?.l2;
+            if (typeof l2Path !== "string" || l2Path.length === 0) {
+              reject(new Error("missing endpoints.l2 in /session response"));
+              return;
+            }
 
-           const udpRelay = payload.udpRelay;
-           if (!udpRelay || typeof udpRelay !== "object") {
-             reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
+            const l2Limits = payload?.limits?.l2;
+            if (!l2Limits || typeof l2Limits !== "object") {
+              reject(new Error("missing limits.l2 in /session response"));
+              return;
+            }
+            const maxFramePayloadBytes = l2Limits.maxFramePayloadBytes;
+            const maxControlPayloadBytes = l2Limits.maxControlPayloadBytes;
+            if (!Number.isInteger(maxFramePayloadBytes) || maxFramePayloadBytes <= 0) {
+              reject(new Error(`invalid limits.l2.maxFramePayloadBytes: ${maxFramePayloadBytes}`));
+              return;
+            }
+            if (!Number.isInteger(maxControlPayloadBytes) || maxControlPayloadBytes <= 0) {
+              reject(new Error(`invalid limits.l2.maxControlPayloadBytes: ${maxControlPayloadBytes}`));
+              return;
+            }
+ 
+            const udpRelay = payload.udpRelay;
+            if (!udpRelay || typeof udpRelay !== "object") {
+              reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
              return;
            }
           if (udpRelay.baseUrl !== `https://${host}`) {
