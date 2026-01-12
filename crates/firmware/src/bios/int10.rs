@@ -89,6 +89,35 @@ impl Bios {
                     },
                 );
             }
+            0x07 => {
+                // Scroll down
+                let lines = cpu.al();
+                let attr = cpu.bh();
+                let top_row = cpu.ch();
+                let top_col = cpu.cl();
+                let bottom_row = cpu.dh();
+                let bottom_col = cpu.dl();
+                let page = BiosDataArea::read_active_page(memory);
+                self.video.vga.scroll_down(
+                    memory,
+                    page,
+                    lines,
+                    attr,
+                    crate::video::vga::TextWindow {
+                        top_row,
+                        top_col,
+                        bottom_row,
+                        bottom_col,
+                    },
+                );
+            }
+            0x08 => {
+                // Read Character and Attribute at Cursor
+                let page = cpu.bh();
+                let (ch, attr) = self.video.vga.read_char_attr_at_cursor(memory, page);
+                cpu.set_al(ch);
+                cpu.set_ah(attr);
+            }
             0x1A => {
                 // Display Combination Code (VGA).
                 //

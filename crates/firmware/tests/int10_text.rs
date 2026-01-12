@@ -166,3 +166,68 @@ fn int10_text_active_page_affects_cursor_and_scroll() {
     assert_eq!(mem.read_u8(page0_base), b' ');
     assert_eq!(mem.read_u8(page0_base + 1), 0x07);
 }
+
+#[test]
+fn int10_read_char_attr_at_cursor_reads_text_cell() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Place cursor at (row=3, col=4).
+    cpu.set_ax(0x0200);
+    cpu.set_bx(0x0000);
+    cpu.set_dx((3u16 << 8) | 4u16);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // AH=09: write 'Z' with attribute 0x1E at cursor (does not move cursor).
+    cpu.set_ax(0x095A);
+    cpu.set_bx(0x001E);
+    cpu.set_cx(1);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // AH=08: read back character/attribute.
+    cpu.set_ax(0x0800);
+    cpu.set_bx(0x0000);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(cpu.al(), b'Z');
+    assert_eq!(cpu.ah(), 0x1E);
+}
+
+#[test]
+fn int10_scroll_down_moves_screen_contents_down() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Place markers in the top-left column.
+    // row 0 col 0: 'A'
+    // row 1 col 0: 'B'
+    mem.write_u8(0xB8000, b'A');
+    mem.write_u8(0xB8001, 0x1F);
+    mem.write_u8(0xB8000 + (80 * 2) as u64, b'B');
+    mem.write_u8(0xB8000 + (80 * 2 + 1) as u64, 0x2E);
+
+    // AH=07h: scroll down by 1 line.
+    cpu.set_ax(0x0701);
+    cpu.set_bx(0x0700); // BH=fill attr 0x07
+    cpu.set_cx(0x0000); // top row/col
+    cpu.set_dx((24u16 << 8) | 79u16); // bottom row/col
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // The top-left cell should now be blank, and row 1 should contain the old row 0 value.
+    assert_eq!(mem.read_u8(0xB8000), b' ');
+    assert_eq!(mem.read_u8(0xB8001), 0x07);
+    assert_eq!(mem.read_u8(0xB8000 + (80 * 2) as u64), b'A');
+    assert_eq!(mem.read_u8(0xB8000 + (80 * 2 + 1) as u64), 0x1F);
+    assert_eq!(mem.read_u8(0xB8000 + (2 * 80 * 2) as u64), b'B');
+    assert_eq!(mem.read_u8(0xB8000 + (2 * 80 * 2 + 1) as u64), 0x2E);
+}

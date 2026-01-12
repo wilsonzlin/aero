@@ -166,6 +166,53 @@ impl VgaDevice {
         }
     }
 
+    pub fn scroll_down(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        page: u8,
+        lines: u8,
+        attr: u8,
+        window: TextWindow,
+    ) {
+        let cols = BiosDataArea::read_screen_cols(mem);
+        let rows = 25u16;
+        let base = self.text_base_for_page(mem, page);
+        let top_row = window.top_row as u16;
+        let top_col = window.top_col as u16;
+        let bottom_row = window.bottom_row.min((rows - 1) as u8) as u16;
+        let bottom_col = window.bottom_col.min((cols - 1) as u8) as u16;
+
+        let lines = lines as u16;
+        let window_rows = bottom_row - top_row + 1;
+        let scroll_lines = if lines == 0 || lines > window_rows {
+            window_rows
+        } else {
+            lines
+        };
+
+        // Iterate bottom-up so we don't overwrite the source rows before copying.
+        for row in (0..window_rows).rev() {
+            let dst_r = top_row + row;
+            for col in 0..=(bottom_col - top_col) {
+                let dst_c = top_col + col;
+                if row >= scroll_lines {
+                    let src_r = top_row + row - scroll_lines;
+                    let src_c = top_col + col;
+                    let src_off = self.text_offset(cols, src_r, src_c);
+                    let ch = mem.read_u8(base + src_off);
+                    let at = mem.read_u8(base + src_off + 1);
+                    let dst_off = self.text_offset(cols, dst_r, dst_c);
+                    mem.write_u8(base + dst_off, ch);
+                    mem.write_u8(base + dst_off + 1, at);
+                } else {
+                    let dst_off = self.text_offset(cols, dst_r, dst_c);
+                    mem.write_u8(base + dst_off, b' ');
+                    mem.write_u8(base + dst_off + 1, attr);
+                }
+            }
+        }
+    }
+
     pub fn write_char_attr(
         &mut self,
         mem: &mut impl MemoryBus,
@@ -194,6 +241,16 @@ impl VgaDevice {
             self.write_text_cell_at_base(mem, base, row, col, ch, attr);
             linear += 1;
         }
+    }
+
+    pub fn read_char_attr_at_cursor(&self, mem: &mut impl MemoryBus, page: u8) -> (u8, u8) {
+        let (row, col) = BiosDataArea::read_cursor_pos(mem, page);
+        let cols = BiosDataArea::read_screen_cols(mem).max(1);
+        let base = self.text_base_for_page(mem, page);
+        let off = self.text_offset(cols, row as u16, col as u16);
+        let ch = mem.read_u8(base + off);
+        let attr = mem.read_u8(base + off + 1);
+        (ch, attr)
     }
 
     fn clear_text_buffer(&self, mem: &mut impl MemoryBus, attr: u8) {
