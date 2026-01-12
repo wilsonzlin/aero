@@ -1255,4 +1255,21 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(err.to_string(), "PRDT too large for DMA write");
     }
+
+    #[test]
+    fn dma_rejects_empty_prdt() {
+        // PRDTL=0 cannot satisfy any non-empty DMA transfer.
+        let (_ctl, _irq, mut mem, mut drive) = setup_controller();
+        let header = CommandHeader { ctba: 0, prdtl: 0 };
+
+        let err =
+            dma_read_sectors_into_guest(&mut mem, &header, &mut drive, 0, SECTOR_SIZE).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(err.to_string(), "PRDT too small for DMA write");
+
+        let err =
+            dma_write_sectors_from_guest(&mut mem, &header, &mut drive, 0, SECTOR_SIZE).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(err.to_string(), "PRDT too small for DMA read");
+    }
 }
