@@ -632,6 +632,71 @@ fn machine_ide_primary_dma_write_updates_disk_and_wakes_halted_cpu_via_irq14() {
     );
 }
 
+#[test]
+fn machine_ide_altstatus_does_not_clear_irq_pending_but_status_does() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on IDE taskfile interrupt latching semantics.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Attach a small disk so the primary channel responds.
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    m.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Enable PCI I/O decoding for the IDE function.
+    let bdf = IDE_PIIX3.bdf;
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+
+    // Issue ATA IDENTIFY DEVICE (0xEC).
+    m.io_write(0x1F6, 1, 0xA0);
+    m.io_write(0x1F7, 1, 0xEC);
+
+    // The command should latch an interrupt condition.
+    assert!(
+        m.ide()
+            .expect("ide enabled")
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "expected primary IRQ to be pending after IDENTIFY"
+    );
+
+    // Reading alternate status must *not* clear the IRQ latch.
+    let _ = m.io_read(0x3F6, 1);
+    assert!(
+        m.ide()
+            .expect("ide enabled")
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "ALTSTATUS read should not clear the IRQ latch"
+    );
+
+    // Reading STATUS must clear the IRQ latch.
+    let _ = m.io_read(0x1F7, 1);
+    assert!(
+        !m.ide()
+            .expect("ide enabled")
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "STATUS read should clear the IRQ latch"
+    );
+}
+
 fn send_atapi_packet(m: &mut Machine, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
     m.io_write(base + 1, 1, u32::from(features));
     m.io_write(base + 4, 1, u32::from(byte_count & 0xFF));
