@@ -11,10 +11,10 @@ pub mod pci;
 pub mod pic8259;
 pub mod pit8254;
 pub mod serial;
+pub mod usb;
 
 pub mod io;
 pub mod storage;
-pub mod usb;
 
 pub mod hpet;
 pub mod ioapic;

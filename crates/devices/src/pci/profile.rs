@@ -513,7 +513,14 @@ pub const CANONICAL_IO_DEVICES: &[PciDeviceProfile] = &[
 pub fn build_canonical_io_bus() -> PciBus {
     let mut bus = PciPlatform::build_bus();
     for profile in CANONICAL_IO_DEVICES {
-        bus.add_device(profile.bdf, Box::new(ProfiledPciDevice::new(*profile)));
+        if profile.bdf == USB_UHCI_PIIX3.bdf {
+            bus.add_device(
+                profile.bdf,
+                Box::new(crate::usb::uhci::UhciPciDevice::default()),
+            );
+        } else {
+            bus.add_device(profile.bdf, Box::new(ProfiledPciDevice::new(*profile)));
+        }
     }
     bus
 }
