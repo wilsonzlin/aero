@@ -31,7 +31,10 @@ fn env_var_truthy(name: &str) -> bool {
 
 pub(crate) fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
-    negotiated_features_for_available(available, env_var_truthy(DISABLE_WGPU_TEXTURE_COMPRESSION_ENV))
+    negotiated_features_for_available(
+        available,
+        env_var_truthy(DISABLE_WGPU_TEXTURE_COMPRESSION_ENV),
+    )
 }
 
 fn negotiated_features_for_available(
@@ -79,5 +82,14 @@ mod tests {
     fn negotiated_features_only_requests_adapter_supported_bits() {
         let requested = negotiated_features_for_available(wgpu::Features::empty(), false);
         assert!(requested.is_empty());
+    }
+
+    #[test]
+    fn negotiated_features_only_requests_supported_compression_features() {
+        let available = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let requested = negotiated_features_for_available(available, false);
+        assert!(requested.contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
+        assert!(!requested.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2));
+        assert!(!requested.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR));
     }
 }
