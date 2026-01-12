@@ -1361,7 +1361,12 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     scsiLba = (ULONGLONG)AerovblkBe32ToCpu(&srb->Cdb[2]);
     blocks = (ULONG)AerovblkBe16ToCpu(&srb->Cdb[7]);
     if (blocks == 0) {
-      blocks = 65536;
+      /*
+       * SCSI READ/WRITE(10): transfer length of 0 means no data transfer.
+       * Complete successfully without issuing any device I/O.
+       */
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+      return TRUE;
     }
 
     sectorsPerBlock = AerovblkSectorsPerLogicalBlock(devExt);
