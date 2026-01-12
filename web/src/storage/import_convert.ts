@@ -310,7 +310,9 @@ function assertBlockSize(blockSize: number): void {
 const AEROSPAR_MAGIC = "AEROSPAR";
 const AEROSPAR_VERSION = 1;
 const AEROSPAR_HEADER_SIZE = 64;
-const AEROSPAR_MAX_TABLE_BYTES = 128 * 1024 * 1024;
+// Must remain <= the browser-side runtime limit in `web/src/storage/opfs_sparse.ts` so converted
+// disks can be opened by `OpfsAeroSparseDisk`.
+const AEROSPAR_MAX_TABLE_BYTES = 64 * 1024 * 1024;
 const AEROSPAR_MAX_TABLE_ENTRIES = AEROSPAR_MAX_TABLE_BYTES / 8;
 
 type AeroSparseHeader = {

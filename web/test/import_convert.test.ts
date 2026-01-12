@@ -588,7 +588,7 @@ test("convertToAeroSparse: rejects raw disk size not multiple of 512", async () 
   );
 });
 
-test("convertToAeroSparse: rejects aerosparse allocation table larger than 128MiB", async () => {
+test("convertToAeroSparse: rejects aerosparse allocation table larger than 64MiB", async () => {
   class HugeZeroSource {
     readonly size: number;
     constructor(size: number) {
@@ -599,7 +599,7 @@ test("convertToAeroSparse: rejects aerosparse allocation table larger than 128Mi
     }
   }
 
-  const maxTableEntries = (128 * 1024 * 1024) / 8;
+  const maxTableEntries = (64 * 1024 * 1024) / 8;
   const diskSizeBytes = (maxTableEntries + 1) * 512;
   const src = new HugeZeroSource(diskSizeBytes);
   const sync = new MemSyncAccessHandle();
