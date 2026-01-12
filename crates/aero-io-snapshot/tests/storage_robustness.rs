@@ -292,3 +292,74 @@ fn ide_snapshot_rejects_oversized_dma_buffer() {
         SnapshotError::InvalidFieldEncoding("ide dma buffer too large")
     );
 }
+
+#[test]
+fn ide_snapshot_rejects_short_atapi_packet_buffer() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // Build a minimally-valid primary-channel payload that claims an ATAPI PACKET transfer
+    // but provides a data buffer smaller than 12 bytes. The emulator assumes a 12-byte packet
+    // and would panic if this were allowed through decoding.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind (AtapiPacket=4)
+        .u8(2) // PioOut
+        .u8(4)
+        // data_index + data_len (len too small)
+        .u32(0)
+        .u32(1)
+        .bytes(&[0u8])
+        // pio_write absent
+        .u8(0)
+        // pending_dma absent
+        .u8(0)
+        // bus master regs
+        .u8(0)
+        .u8(0)
+        .u32(0)
+        // drives (2)
+        .u8(0)
+        .u8(0)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject short ATAPI packet buffer");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide atapi packet buffer too small")
+    );
+}

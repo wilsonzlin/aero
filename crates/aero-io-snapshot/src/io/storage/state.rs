@@ -938,6 +938,11 @@ impl IdeChannelState {
         if data_len > MAX_IDE_DATA_BUFFER_BYTES {
             return Err(SnapshotError::InvalidFieldEncoding("ide pio buffer too large"));
         }
+        if matches!(transfer_kind, Some(IdeTransferKind::AtapiPacket)) && data_len < 12 {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "ide atapi packet buffer too small",
+            ));
+        }
         if data_index as usize > data_len {
             return Err(SnapshotError::InvalidFieldEncoding("ide pio data_index"));
         }
