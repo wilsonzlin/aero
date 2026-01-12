@@ -194,6 +194,30 @@ impl Default for IoPortBus {
     }
 }
 
+impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception> {
+        match size {
+            1 | 2 | 4 => Ok(u64::from(self.read(port, size as u8))),
+            _ => Err(aero_cpu_core::Exception::Unimplemented("io_read size")),
+        }
+    }
+
+    fn io_write(
+        &mut self,
+        port: u16,
+        size: u32,
+        val: u64,
+    ) -> Result<(), aero_cpu_core::Exception> {
+        match size {
+            1 | 2 | 4 => {
+                self.write(port, size as u8, val as u32);
+                Ok(())
+            }
+            _ => Err(aero_cpu_core::Exception::Unimplemented("io_write size")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
