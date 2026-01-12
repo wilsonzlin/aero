@@ -829,7 +829,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               error: serializeVmSnapshotError(err),
             } satisfies VmSnapshotResumedMessage);
           }
-           return;
+          return;
         }
         default:
           return;
