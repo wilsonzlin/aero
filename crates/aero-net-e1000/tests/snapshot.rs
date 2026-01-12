@@ -429,3 +429,76 @@ fn snapshot_roundtrip_preserves_pci_bar_probe_flags() {
     // Deterministic encoding check.
     assert_eq!(restored.save_state(), snapshot);
 }
+
+#[test]
+fn snapshot_rejects_out_of_range_tx_ring_indices() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_TDLEN: u16 = 52;
+    const TAG_TDH: u16 = 53;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_TDLEN, 4 * 16);
+    w.field_u32(TAG_TDH, 4); // out of range (valid: 0..=3)
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 tx ring indices")
+    );
+}
+
+#[test]
+fn snapshot_rejects_out_of_range_rx_ring_indices() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_RDLEN: u16 = 42;
+    const TAG_RDT: u16 = 44;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(TAG_RDLEN, 2 * 16);
+    w.field_u32(TAG_RDT, 2); // out of range (valid: 0..=1)
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 rx ring indices")
+    );
+}
+
+#[test]
+fn snapshot_rejects_other_regs_duplicate_key() {
+    const TAG_OTHER_REGS: u16 = 90;
+
+    // other_regs field encoding: count (u32) then count*(key u32, val u32).
+    // Provide the same key twice.
+    let other = Encoder::new()
+        .u32(2)
+        .u32(0x1234)
+        .u32(0xDEAD_BEEF)
+        .u32(0x1234)
+        .u32(0xBEEF_DEAD)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_OTHER_REGS, other);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 other_regs duplicate key")
+    );
+}
