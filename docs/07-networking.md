@@ -1138,6 +1138,9 @@ In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there i
 - **Save capture to OPFS** (Origin Private File System) at a configurable path (default
   `captures/aero-net-trace.pcapng`).
 
+Disabling tracing stops recording new frames but does **not** automatically clear any frames already
+buffered in memory (use **Clear capture** or download/export to reset).
+
 If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
 is missing) or the net worker isn't running, enabling or downloading will fail with an error.
 
