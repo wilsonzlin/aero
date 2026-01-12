@@ -693,9 +693,9 @@ const alignUp = (value: number, align: number): number => {
   return Math.ceil(value / align) * align;
 };
 
-const bytesPerRowForUpload = (rowBytes: number, copyHeight: number): number => {
+const bytesPerRowForUpload = (rowBytes: number, copyHeight: number, bytesPerRowAlignment: number): number => {
   if (copyHeight <= 1) return rowBytes;
-  return alignUp(rowBytes, COPY_BYTES_PER_ROW_ALIGNMENT);
+  return alignUp(rowBytes, bytesPerRowAlignment);
 };
 
 const requiredDataLen = (bytesPerRow: number, rowBytes: number, copyHeight: number): number => {
@@ -706,9 +706,29 @@ const requiredDataLen = (bytesPerRow: number, rowBytes: number, copyHeight: numb
 const clampInt = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, Math.trunc(value)));
 
+const bytesPerRowAlignmentForPresenterBackend = (backend: PresenterBackendKind | null): number => {
+  // Telemetry-only estimate of texture upload bandwidth.
+  //
+  // WebGPU (and the wgpu-backed WebGL2 presenter) are constrained by the WebGPU 256-byte
+  // bytesPerRow alignment requirement. The raw WebGL2 presenter uploads with gl.tex(Sub)Image2D
+  // and does not require this padding.
+  switch (backend) {
+    case "webgl2_raw":
+      return 1;
+    case "webgpu":
+    case "webgl2_wgpu":
+      return COPY_BYTES_PER_ROW_ALIGNMENT;
+    default:
+      // Headless/unknown/custom presenter: no upload occurs, but keep the historical WebGPU-style
+      // alignment so existing telemetry remains comparable.
+      return COPY_BYTES_PER_ROW_ALIGNMENT;
+  }
+};
+
 const estimateTextureUploadBytes = (
   layout: SharedFramebufferLayout | null,
   dirtyRects: DirtyRect[] | null,
+  bytesPerRowAlignment: number,
 ): number => {
   if (!layout) return 0;
 
@@ -725,7 +745,7 @@ const estimateTextureUploadBytes = (
     if (w === 0 || h === 0) continue;
 
     const rowBytes = w * BYTES_PER_PIXEL_RGBA8;
-    const bytesPerRow = bytesPerRowForUpload(rowBytes, h);
+    const bytesPerRow = bytesPerRowForUpload(rowBytes, h, bytesPerRowAlignment);
     total += requiredDataLen(bytesPerRow, rowBytes, h);
   }
 
@@ -1412,9 +1432,9 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
   return null;
 };
 
-const estimateFullFrameUploadBytes = (width: number, height: number): number => {
+const estimateFullFrameUploadBytes = (width: number, height: number, bytesPerRowAlignment: number): number => {
   const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  const bytesPerRow = bytesPerRowForUpload(rowBytes, height);
+  const bytesPerRow = bytesPerRowForUpload(rowBytes, height, bytesPerRowAlignment);
   return requiredDataLen(bytesPerRow, rowBytes, height);
 };
 
@@ -1743,10 +1763,11 @@ const handleTick = async () => {
         telemetry.beginFrame(lastFrameStartMs);
 
         const frame = getCurrentFrameInfo();
+        const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter?.backend ?? null);
         const textureUploadBytes = frame?.sharedLayout
-          ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects)
+          ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects, bytesPerRowAlignment)
           : frame
-            ? estimateFullFrameUploadBytes(frame.width, frame.height)
+            ? estimateFullFrameUploadBytes(frame.width, frame.height, bytesPerRowAlignment)
             : 0;
         telemetry.recordTextureUploadBytes(textureUploadBytes);
         perf.counter("textureUploadBytes", textureUploadBytes);
