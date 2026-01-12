@@ -24,6 +24,10 @@ On the client side, the storage subsystem uses `StreamingDisk` (see [05 - Storag
 2. Lazily fetch missing byte ranges from a remote image over HTTP `Range`.
 3. Cache fetched chunks locally (e.g. OPFS + sparse format).
 
+Implementation note: the canonical Rust `StreamingDisk` implementation lives in
+`crates/aero-storage` (`aero_storage::StreamingDisk`). For the repo-wide canonical disk/backend
+trait mapping, see: [`20-storage-trait-consolidation.md`](../20-storage-trait-consolidation.md).
+
 This allows the emulator to boot quickly and only download the parts of the OS/image that are actually accessed.
 
 For the hosted-service model (user uploads, ownership/visibility, lease scopes, and writeback options), see: [Disk Image Lifecycle and Access Control](../17-disk-image-lifecycle-and-access-control.md).
