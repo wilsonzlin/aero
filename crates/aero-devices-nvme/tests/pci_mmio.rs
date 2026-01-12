@@ -33,3 +33,25 @@ fn bar0_mmio_requires_pci_memory_space_enable() {
     assert_eq!(cc & 1, 1);
 }
 
+#[test]
+fn nvme_irq_level_is_gated_by_pci_command_intx_disable() {
+    let mut dev = NvmePciDevice::default();
+
+    // Force a pending legacy interrupt without going through full queue processing.
+    dev.controller_mut().intx_level = true;
+    dev.config_mut().set_command(0x0002); // MEM
+
+    assert!(dev.irq_level());
+
+    // PCI command bit 10 disables legacy INTx assertion.
+    dev.config_mut().set_command(0x0002 | (1 << 10));
+    assert!(
+        !dev.irq_level(),
+        "IRQ must be suppressed when PCI COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx without touching controller state: the pending interrupt should become
+    // visible again.
+    dev.config_mut().set_command(0x0002);
+    assert!(dev.irq_level());
+}
