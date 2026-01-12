@@ -115,7 +115,17 @@ typedef struct virtqueue_split {
 
     virtio_bool_t event_idx;
     virtio_bool_t indirect_desc;
+
+    /*
+     * Error flags latched by the virtqueue implementation when it detects
+     * corruption or invalid device behaviour. Query via
+     * virtqueue_split_get_error_flags().
+     */
+    uint32_t error_flags;
 } virtqueue_split_t;
+
+/* virtqueue_split_t::error_flags bits */
+#define VIRTQUEUE_SPLIT_ERR_INVALID_USED_ID (1u << 0)
 
 /*
  * Compute the ring buffer size required for a split ring with `queue_size`
@@ -200,5 +210,9 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq);
  * On success, `*out_cookie` and `*out_len` are set.
  */
 virtio_bool_t virtqueue_split_pop_used(virtqueue_split_t *vq, void **out_cookie, uint32_t *out_len);
+
+/* Read/clear virtqueue_split_t::error_flags. */
+uint32_t virtqueue_split_get_error_flags(const virtqueue_split_t *vq);
+void virtqueue_split_clear_error_flags(virtqueue_split_t *vq);
 
 #endif /* AERO_VIRTQUEUE_SPLIT_LEGACY_H_ */

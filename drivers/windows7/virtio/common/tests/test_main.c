@@ -321,6 +321,55 @@ static void test_invalid_queue_align(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_invalid_used_id(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    void *cookie;
+    uint32_t used_len;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4096, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4096,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    assert(virtqueue_split_get_error_flags(&vq) == 0);
+
+    /* Inject a malformed used entry without any in-flight descriptors. */
+    vq.used->ring[0].id = (uint32_t)vq.queue_size + 1u;
+    vq.used->ring[0].len = 0xdeadbeefu;
+    vq.used->idx = 1;
+
+    cookie = (void *)(uintptr_t)0x1111u;
+    used_len = 0xbeefu;
+    assert(virtqueue_split_pop_used(&vq, &cookie, &used_len) == VIRTIO_TRUE);
+    assert(cookie == NULL);
+    assert(used_len == 0);
+    assert(vq.last_used_idx == 1);
+
+    assert((virtqueue_split_get_error_flags(&vq) & VIRTQUEUE_SPLIT_ERR_INVALID_USED_ID) != 0);
+    virtqueue_split_clear_error_flags(&vq);
+    assert(virtqueue_split_get_error_flags(&vq) == 0);
+
+    assert(vq.num_free == vq.queue_size);
+    validate_queue(&vq);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_indirect_descriptors(void)
 {
     test_os_ctx_t os_ctx;
@@ -1072,6 +1121,7 @@ int main(void)
     test_wraparound();
     test_small_queue_align();
     test_invalid_queue_align();
+    test_invalid_used_id();
     test_indirect_descriptors();
     test_reset();
     test_reset_queue_align4();

@@ -341,6 +341,7 @@ void virtqueue_split_reset(virtqueue_split_t *vq)
     vq->avail_idx = 0;
     vq->last_used_idx = 0;
     vq->last_kick_avail = 0;
+    vq->error_flags = 0;
 
     /* Rebuild descriptor free list and clear cookies. */
     vq->free_head = 0;
@@ -573,8 +574,20 @@ virtio_bool_t virtqueue_split_pop_used(virtqueue_split_t *vq, void **out_cookie,
     uint16_t used_idx;
     vring_used_elem_t elem;
     uint16_t slot;
+    uint32_t id32;
     uint16_t id;
     void *cookie;
+
+    /*
+     * Defensive API: always clear outputs so callers cannot observe stale values
+     * when the device produces malformed used entries.
+     */
+    if (out_cookie != NULL) {
+        *out_cookie = NULL;
+    }
+    if (out_len != NULL) {
+        *out_len = 0;
+    }
 
     if (vq == NULL || vq->used == NULL) {
         return VIRTIO_FALSE;
@@ -591,13 +604,15 @@ virtio_bool_t virtqueue_split_pop_used(virtqueue_split_t *vq, void **out_cookie,
     elem = vq->used->ring[slot];
     vq->last_used_idx++;
 
-    id = (uint16_t)elem.id;
-    if (id >= vq->queue_size) {
+    id32 = elem.id;
+    if (id32 >= (uint32_t)vq->queue_size) {
+        vq->error_flags |= VIRTQUEUE_SPLIT_ERR_INVALID_USED_ID;
         if (vq->os != NULL && vq->os->log != NULL) {
-            vq->os->log(vq->os_ctx, "virtqueue_split: invalid used id %u", (unsigned)id);
+            vq->os->log(vq->os_ctx, "virtqueue_split: invalid used id %u", (unsigned)id32);
         }
         return VIRTIO_TRUE; /* consumed entry */
     }
+    id = (uint16_t)id32;
 
     cookie = vq->cookies[id];
     vq->cookies[id] = NULL;
@@ -611,4 +626,20 @@ virtio_bool_t virtqueue_split_pop_used(virtqueue_split_t *vq, void **out_cookie,
     }
 
     return VIRTIO_TRUE;
+}
+
+uint32_t virtqueue_split_get_error_flags(const virtqueue_split_t *vq)
+{
+    if (vq == NULL) {
+        return 0;
+    }
+    return vq->error_flags;
+}
+
+void virtqueue_split_clear_error_flags(virtqueue_split_t *vq)
+{
+    if (vq == NULL) {
+        return;
+    }
+    vq->error_flags = 0;
 }
