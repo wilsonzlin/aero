@@ -973,6 +973,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   ULONG bytesRead;
   USHORT vendorId;
   USHORT deviceId;
+  ULONG accessRangeIndex;
   USHORT hwQueueSize;
   volatile UINT16* notifyAddr;
   volatile UINT16* expectedNotifyAddr;
@@ -992,14 +993,6 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   *again = FALSE;
 
   if (configInfo->NumberOfAccessRanges < 1) {
-    return SP_RETURN_NOT_FOUND;
-  }
-
-  range = &configInfo->AccessRanges[0];
-  if (!range->RangeInMemory) {
-    return SP_RETURN_NOT_FOUND;
-  }
-  if (range->RangeLength < AEROVBLK_BAR0_MIN_LEN) {
     return SP_RETURN_NOT_FOUND;
   }
 
@@ -1030,7 +1023,10 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
     return SP_RETURN_NOT_FOUND;
   }
 
-  /* Contract v1: BAR0 must be 64-bit MMIO and must match the mapped range. */
+  /*
+   * Contract v1: BAR0 must be 64-bit MMIO and must match the mapped range.
+   * Some platforms report multiple access ranges; do not assume BAR0 is at index 0.
+   */
   {
     ULONG bar0Low;
     ULONG bar0High;
@@ -1049,7 +1045,27 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
     }
 
     bar0Base = ((ULONGLONG)bar0High << 32) | (ULONGLONG)(bar0Low & ~0xFu);
-    if (bar0Base != (ULONGLONG)range->RangeStart.QuadPart) {
+
+    range = NULL;
+    for (accessRangeIndex = 0; accessRangeIndex < configInfo->NumberOfAccessRanges; ++accessRangeIndex) {
+      PACCESS_RANGE candidate;
+
+      candidate = &configInfo->AccessRanges[accessRangeIndex];
+      if (!candidate->RangeInMemory) {
+        continue;
+      }
+      if (candidate->RangeLength < AEROVBLK_BAR0_MIN_LEN) {
+        continue;
+      }
+      if ((ULONGLONG)candidate->RangeStart.QuadPart != bar0Base) {
+        continue;
+      }
+
+      range = candidate;
+      break;
+    }
+
+    if (range == NULL) {
       return SP_RETURN_NOT_FOUND;
     }
   }
