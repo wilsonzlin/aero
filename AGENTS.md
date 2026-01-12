@@ -540,7 +540,7 @@ pub trait DisplayAdapter {
 | JIT Strategy            | Tiered (interpreter → baseline → optimizing)                    | Balance startup time vs peak perf                                                 |
 | WASM Threading          | SharedArrayBuffer + Atomics                                     | True parallelism required                                                         |
 | Graphics API            | WebGPU (fallback: WebGL2)                                       | Hardware acceleration essential                                                   |
-| Storage Backend         | OPFS primary, IndexedDB fallback                                | Large file support                                                                |
+| Storage Backend         | OPFS primary; IndexedDB fallback (async-only)                   | Large file support (OPFS); host-side caches/tools (IndexedDB)                     |
 | Network Transport       | L2 tunnel over WebSocket (default), optional WebRTC DataChannel | Keep the browser as a frame forwarder; proxy runs the user-space stack (ADR 0013) |
 | Audio Processing        | AudioWorklet                                                    | Low latency audio                                                                 |
 | USB passthrough stack   | `crates/aero-usb` + `web/src/usb/*` (ADR 0015)                  | Single canonical browser USB/UHCI stack; deterministic device models in Rust      |

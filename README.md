@@ -461,9 +461,10 @@ Notes:
 - Only `mode: "interpreter"` is expected to work initially; JIT modes may be unimplemented.
 - The benchmark validates a payload checksum and throws on mismatch (correctness guardrail).
 
-## Disk image manager UI (OPFS)
+## Disk image manager UI (OPFS + IndexedDB fallback)
 
-The `web/` app includes a **Disk Images** panel backed by OPFS (Origin Private File System):
+The `web/` app includes a **Disk Images** panel backed by OPFS (Origin Private File System)
+when available, with an IndexedDB fallback when OPFS sync access handles are unavailable.
 
 - Import with progress, list/delete, export/download
 - Select an image as “active” (persisted in `localStorage`)
@@ -480,8 +481,9 @@ In a Chromium-based browser with OPFS support:
 5. Select a disk as **Active** and click **Open active disk in I/O worker**.
    - The worker will attempt to create a `FileSystemSyncAccessHandle` and report the disk size.
 
-If the UI shows “OPFS unavailable”, the app falls back to an in-memory store; images will not persist across reloads and the
-I/O worker cannot open a sync access handle.
+If OPFS sync access handles are unavailable, the disk manager falls back to IndexedDB for persistence.
+In that mode, the I/O worker cannot open a `FileSystemSyncAccessHandle` and the synchronous Rust
+disk/controller path is unavailable (see `docs/19-indexeddb-storage-story.md`).
 
 ## Troubleshooting
 
