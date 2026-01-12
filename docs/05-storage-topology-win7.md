@@ -48,6 +48,9 @@ tests and bring-up.
 `aero_pc_platform::PcPlatform::new_with_windows7_storage_topology(...)` additionally attaches an
 AHCI HDD (port 0) and an IDE/ATAPI CD-ROM (secondary master) so tests can validate real I/O.
 
+`aero_machine::MachineConfig::win7_storage(...)` (or `aero_machine::Machine::new_with_win7_storage(...)`)
+enables the same canonical controller set in the full-system `Machine` integration layer.
+
 ---
 
 ## Boot flows (normative)
