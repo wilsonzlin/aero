@@ -17,6 +17,10 @@ export const L2_TUNNEL_TYPE_ERROR = 0x7f;
 export const L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD = 2048;
 export const L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD = 256;
 
+// Header bytes for the structured ERROR payload encoding:
+//   code (u16 BE) | msg_len (u16 BE)
+export const L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN = 4;
+
 // Structured `ERROR` payload codes (see `docs/l2-tunnel-protocol.md`).
 export const L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR = 1;
 export const L2_TUNNEL_ERROR_CODE_AUTH_REQUIRED = 2;
@@ -75,11 +79,11 @@ export function encodeStructuredErrorPayload(code: number, message: string, maxP
     throw new RangeError(`code must be a u16 (0..=65535), got ${code}`);
   }
   assertNonNegative("maxPayloadBytes", maxPayloadBytes);
-  if (maxPayloadBytes < 4) {
+  if (maxPayloadBytes < L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN) {
     return new Uint8Array();
   }
 
-  const maxMsgLen = Math.min(maxPayloadBytes - 4, 0xffff);
+  const maxMsgLen = Math.min(maxPayloadBytes - L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN, 0xffff);
 
   let msgBytes = structuredErrorTextEncoder.encode(message);
   if (msgBytes.length > maxMsgLen) {
@@ -96,11 +100,11 @@ export function encodeStructuredErrorPayload(code: number, message: string, maxP
     msgBytes = msgBytes.subarray(0, end);
   }
 
-  const out = new Uint8Array(4 + msgBytes.length);
+  const out = new Uint8Array(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN + msgBytes.length);
   const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
   dv.setUint16(0, code, false);
   dv.setUint16(2, msgBytes.length, false);
-  out.set(msgBytes, 4);
+  out.set(msgBytes, L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN);
   return out;
 }
 
@@ -110,13 +114,13 @@ export function encodeStructuredErrorPayload(code: number, message: string, maxP
  * Returns `{ code, message }` only if the payload matches the exact structured encoding.
  */
 export function decodeStructuredErrorPayload(payload: Uint8Array): StructuredErrorPayload | null {
-  if (payload.byteLength < 4) return null;
+  if (payload.byteLength < L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN) return null;
   const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const code = dv.getUint16(0, false);
   const msgLen = dv.getUint16(2, false);
-  if (payload.byteLength !== 4 + msgLen) return null;
+  if (payload.byteLength !== L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN + msgLen) return null;
   try {
-    const msgBytes = payload.subarray(4);
+    const msgBytes = payload.subarray(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN);
     const message = structuredErrorTextDecoder.decode(msgBytes);
     return { code, message };
   } catch {
