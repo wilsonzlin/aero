@@ -3,6 +3,8 @@ name = "aero-jit-wasm"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Browser wasm-bindgen Tier-1 JIT compiler (x86 -> standalone WASM blocks) for Aero"
+repository = "https://github.com/wilsonzlin/aero"
 
 [features]
 # Internal feature used by the build system to ensure the threaded/shared-memory
@@ -25,4 +27,3 @@ js-sys = "0.3"
 aero-jit-x86 = { path = "../aero-jit-x86", features = ["tier1-inline-tlb"] }
 aero-types = { path = "../aero-types" }
 wasmparser = "0.244.0"
-
