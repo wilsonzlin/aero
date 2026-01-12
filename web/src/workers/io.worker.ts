@@ -2558,7 +2558,13 @@ function runHdaMicCaptureTest(requestId: number): void {
     mmioWrite(0x5c, 1, 0x03); // RIRBCTL.RUN | RIRBCTL.RINTCTL
     mmioWrite(0x4c, 1, 0x02); // CORBCTL.RUN
 
-    // Submit 2 commands (CORBWP=1) and step briefly to service them.
+    // Submit the 2 commands in two steps. With CORBSIZE=2 entries, CORBWP is only 1-bit wide,
+    // so a single update to CORBWP=1 cannot represent \"two pending entries\" (RP==WP is empty).
+    //
+    // 1) CORBWP=0 -> process CORB[0]
+    // 2) CORBWP=1 -> process CORB[1]
+    mmioWrite(0x48, 2, 0x0000); // CORBWP
+    stepFrames(1);
     mmioWrite(0x48, 2, 0x0001); // CORBWP
     stepFrames(1);
 
