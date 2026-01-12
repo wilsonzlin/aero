@@ -177,12 +177,28 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
         let restorePromise: Promise<void> | null = null;
         let restoredRead: number | null = null;
         let restoredWrite: number | null = null;
+        let resumeSentAtMs: number | null = null;
         let resumedAtMs: number | null = null;
         let resumedRead0: number | null = null;
         let resumedWrite0: number | null = null;
+        let burstBaselineWrite: number | null = null;
+        let burstStartAtMs: number | null = null;
+        let burstSampleScheduled = false;
+        const originalPostMessage = io.postMessage.bind(io);
+        let postMessageWrapped = false;
+        let postMessageRestorePending = false;
 
         const cleanup = () => {
           io.removeEventListener("message", onMessage as EventListener);
+          if (postMessageRestorePending) {
+            try {
+              // Restore the original postMessage implementation so we don't interfere with subsequent coordinator ops.
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (io as any).postMessage = originalPostMessage;
+            } catch {
+              // ignore best-effort
+            }
+          }
           clearTimeout(timeout);
         };
 
@@ -195,6 +211,81 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
 
         const timeout = setTimeout(() => fail(new Error("Timed out waiting for snapshot restore burst probe.")), 180_000);
 
+        const scheduleBurstSample = (startAtMs: number, baselineWrite: number) => {
+          if (burstSampleScheduled) return;
+          burstSampleScheduled = true;
+          burstStartAtMs = startAtMs;
+          burstBaselineWrite = baselineWrite;
+          setTimeout(() => {
+            if (resolved) return;
+            if (burstStartAtMs === null || burstBaselineWrite === null) {
+              fail(new Error("Internal error: missing burst sample state."));
+              return;
+            }
+            const t1 = performance.now();
+            const read1 = Atomics.load(ring.readIndex, 0) >>> 0;
+            const write1 = Atomics.load(ring.writeIndex, 0) >>> 0;
+            const elapsedMs = t1 - burstStartAtMs;
+            const writeDelta = ((write1 - burstBaselineWrite) >>> 0) as number;
+            const maxWriteDelta = Math.ceil((sr * Math.max(0, elapsedMs + slackMs)) / 1000);
+
+            const payload = {
+              ok: true as const,
+              sr,
+              restoredRead: (restoredRead ?? 0) >>> 0,
+              restoredWrite: (restoredWrite ?? 0) >>> 0,
+              resumedRead0: (resumedRead0 ?? 0) >>> 0,
+              resumedWrite0: (resumedWrite0 ?? 0) >>> 0,
+              resumedAtMs: resumedAtMs ?? burstStartAtMs,
+              read1,
+              write1,
+              elapsedMs,
+              writeDelta,
+              maxWriteDelta,
+            };
+
+            const finishOk = () => {
+              if (resolved) return;
+              resolved = true;
+              cleanup();
+              resolve(payload);
+            };
+
+            const pending = restorePromise;
+            if (!pending) {
+              finishOk();
+              return;
+            }
+
+            pending.then(finishOk).catch((err) => fail(err));
+          }, sampleWindowMs);
+        };
+
+        // Intercept the coordinator's `vm.snapshot.resume` request so we can start our measurement window
+        // before the IO worker has a chance to tick and potentially burst-write.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (io as any).postMessage = (message: unknown, transfer?: unknown) => {
+            try {
+              const rec = message as { kind?: unknown } | null;
+              if (rec && typeof rec === "object" && rec.kind === "vm.snapshot.resume" && resumeSentAtMs === null) {
+                resumeSentAtMs = performance.now();
+                if (typeof restoredWrite === "number") {
+                  scheduleBurstSample(resumeSentAtMs, restoredWrite);
+                }
+              }
+            } catch {
+              // ignore
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return originalPostMessage(message as any, transfer as any);
+          };
+          postMessageWrapped = true;
+          postMessageRestorePending = true;
+        } catch {
+          postMessageWrapped = false;
+        }
+
         const onMessage = (ev: MessageEvent<unknown>) => {
           const data = ev.data as SnapshotMsg | null;
           if (!data || typeof data !== "object") return;
@@ -206,6 +297,11 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
             }
             restoredRead = Atomics.load(ring.readIndex, 0) >>> 0;
             restoredWrite = Atomics.load(ring.writeIndex, 0) >>> 0;
+            // In the normal (non-failing) flow, the coordinator has not yet resumed the VM.
+            // If we already observed the resume request, schedule the burst sample now.
+            if (resumeSentAtMs !== null && typeof restoredWrite === "number") {
+              scheduleBurstSample(resumeSentAtMs, restoredWrite);
+            }
             return;
           }
 
@@ -222,49 +318,14 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
             resumedRead0 = Atomics.load(ring.readIndex, 0) >>> 0;
             resumedWrite0 = Atomics.load(ring.writeIndex, 0) >>> 0;
 
-            // Measure the immediate post-resume write delta. Keep the sample window well below the
-            // IO-worker HDA max-delta clamp (100ms), otherwise a regression could hide inside the
-            // elapsed-time math.
-            const t0 = resumedAtMs;
-            setTimeout(() => {
-              if (resolved) return;
-              const t1 = performance.now();
-              const read1 = Atomics.load(ring.readIndex, 0) >>> 0;
-              const write1 = Atomics.load(ring.writeIndex, 0) >>> 0;
-              const elapsedMs = t1 - t0;
-              const writeDelta = ((write1 - (resumedWrite0 as number)) >>> 0) as number;
-              const maxWriteDelta = Math.ceil((sr * Math.max(0, elapsedMs + slackMs)) / 1000);
-
-              const payload = {
-                ok: true as const,
-                sr,
-                restoredRead: restoredRead as number,
-                restoredWrite: restoredWrite as number,
-                resumedRead0: resumedRead0 as number,
-                resumedWrite0: resumedWrite0 as number,
-                resumedAtMs: t0,
-                read1,
-                write1,
-                elapsedMs,
-                writeDelta,
-                maxWriteDelta,
-              };
-
-              const finishOk = () => {
-                if (resolved) return;
-                resolved = true;
-                cleanup();
-                resolve(payload);
-              };
-
-              const pending = restorePromise;
-              if (!pending) {
-                finishOk();
-                return;
-              }
-
-              pending.then(finishOk).catch((err) => fail(err));
-            }, sampleWindowMs);
+            // Fallback: if we couldn't intercept the `vm.snapshot.resume` request (e.g. postMessage is non-writable),
+            // start the burst window at the time we observe `vm.snapshot.resumed`.
+            //
+            // This is slightly weaker (a burst could occur before this event is delivered), but still catches many
+            // regressions and keeps the test from hanging.
+            if (!burstSampleScheduled && typeof resumedWrite0 === "number") {
+              scheduleBurstSample(resumedAtMs, resumedWrite0);
+            }
           }
         };
 
@@ -275,6 +336,11 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
           restorePromise.catch((err: unknown) => fail(err));
         } catch (err) {
           fail(err);
+        }
+
+        // If we fail to wrap postMessage, make sure we don't accidentally leave it overridden.
+        if (!postMessageWrapped) {
+          postMessageRestorePending = false;
         }
       });
     },
