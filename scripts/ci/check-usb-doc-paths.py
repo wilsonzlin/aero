@@ -36,6 +36,13 @@ def iter_markdown_files(repo_root: Path) -> list[Path]:
     if docs_dir.exists():
         files.extend(sorted(docs_dir.rglob("*.md")))
 
+    # The repo has a small set of per-workstream onboarding docs under
+    # `instructions/`. These are effectively "docs" too, and have historically
+    # been a source of stale path pointers during refactors.
+    instructions_dir = repo_root / "instructions"
+    if instructions_dir.exists():
+        files.extend(sorted(instructions_dir.rglob("*.md")))
+
     agents = repo_root / "AGENTS.md"
     if agents.exists():
         files.append(agents)
