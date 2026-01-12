@@ -399,7 +399,10 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const msg = ev.data as Partial<MachineVgaWorkerStartMessage & MachineVgaWorkerStopMessage> | null | undefined;
+  // Treat messages as untrusted input from the main thread; parse defensively.
+  //
+  // Note: use a union here (not an intersection) so `msg.type` remains a usable discriminant.
+  const msg = ev.data as Partial<MachineVgaWorkerStartMessage | MachineVgaWorkerStopMessage> | null | undefined;
   if (!msg || typeof msg.type !== "string") return;
 
   if (msg.type === "machineVga.stop") {
