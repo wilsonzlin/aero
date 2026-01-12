@@ -47,6 +47,14 @@ describe("keyboardCodeToHidUsage", () => {
       expect(keyboardCodeToHidUsage(code)).toBe(expectedByCode.get(code) ?? null);
     }
 
+    // The PS/2 scancode tables are the only input backend available before USB/virtio drivers are
+    // up. Any code present in the shared HID usage fixture should therefore also exist in the
+    // scancode mapping table.
+    const missingScancodes = Array.from(expectedByCode.keys())
+      .filter((code) => !(code in scancodes.ps2_set2))
+      .sort();
+    expect(missingScancodes).toEqual([]);
+
     expect(keyboardCodeToHidUsage("NoSuchKey")).toBeNull();
   });
 });
