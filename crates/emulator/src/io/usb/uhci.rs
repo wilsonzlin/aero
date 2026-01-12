@@ -7,6 +7,9 @@ use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hid::mouse::UsbHidMouseHandle;
 pub use aero_usb::uhci::{regs, UhciController};
 
+use aero_devices::pci::profile::USB_UHCI_PIIX3;
+use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
+
 use crate::io::pci::{PciConfigSpace, PciDevice};
 use crate::io::PortIO;
 use memory::MemoryBus;
@@ -51,11 +54,16 @@ impl UhciPciDevice {
         // BAR4 (I/O) at 0x20.
         config.set_u32(0x20, (io_base as u32) | 0x1);
 
-        // Interrupt line: canonical profile routes 00:01.2 INTA# to IRQ 11.
-        config.write(0x3c, 1, 0x0b);
+        // Interrupt pin/line match the canonical PCI INTx router configuration.
+        let pin = USB_UHCI_PIIX3
+            .interrupt_pin
+            .expect("UHCI profile should provide interrupt pin");
+        config.write(0x3d, 1, u32::from(pin.to_config_u8()));
 
-        // Interrupt pin INTA#.
-        config.write(0x3d, 1, 1);
+        let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+        let gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, pin);
+        let line = u8::try_from(gsi).unwrap_or(0xFF);
+        config.write(0x3c, 1, u32::from(line));
 
         Self {
             config,
