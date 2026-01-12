@@ -6,12 +6,14 @@
 
 pub mod bus;
 pub mod dirty;
+pub mod mapped;
 pub mod mmu;
 pub mod phys;
 pub mod tlb;
 
 pub use bus::{Bus, MapError, MemoryBus, MmioHandler, MmioRegion, PhysicalMemoryBus, RomRegion};
 pub use dirty::{DirtyGuestMemory, DirtyTracker};
+pub use mapped::{GuestMemoryMapping, MappedGuestMemory, MappedGuestMemoryError};
 pub use mmu::{AccessType, Mmu, TranslateError};
 pub use phys::{DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory};
 pub use tlb::{PageSize, Tlb, TlbEntry};
