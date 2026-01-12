@@ -1187,22 +1187,33 @@ impl UhciRuntime {
         // so we cannot recreate them here. Instead, we keep track of their `UsbHidPassthroughHandle`s when
         // they are attached and reattach them after snapshot reset so the hub snapshot can load their
         // dynamic state.
-        if self.external_hub.is_some() {
-            let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = self
-                .usb_hid_passthrough_devices
-                .iter()
-                .map(|(path, dev)| (path.clone(), dev.clone()))
-                .collect();
+        if let Some(hub_state) = hub_state_bytes {
+            // Only reattach passthrough devices that the external hub snapshot expects to exist.
+            //
+            // `UsbHubDevice::load_state` restores the `connected` flag from the snapshot regardless
+            // of whether a device is actually attached in memory. If we blindly attach all JS-owned
+            // passthrough devices here, we can end up with "hidden" devices (device present but
+            // connected=false) that later reappear after an upstream hub bus reset.
+            let expected_ports =
+                match Self::external_hub_ports_with_snapshot_devices(hub_state) {
+                    Ok(ports) => ports,
+                    Err(err) => {
+                        self.reset_for_snapshot_restore();
+                        return Err(err);
+                    }
+                };
 
-            for (path, dev) in passthrough_to_reattach {
-                if path.len() < 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
-                    continue;
-                }
-                let hub_port = path[1];
+            for hub_port in expected_ports {
                 // Avoid clobbering WebHID devices restored from the snapshot.
                 if self.webhid_hub_ports.contains_key(&hub_port) {
                     continue;
                 }
+
+                let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
+                let Some(dev) = self.usb_hid_passthrough_devices.get(&path[..]).cloned() else {
+                    continue;
+                };
+
                 // Best-effort: if a passthrough device can't be reattached, continue restoring the
                 // snapshot so other devices still come back.
                 let _ = crate::uhci_controller_bridge::attach_device_at_path(
@@ -1255,6 +1266,85 @@ impl UhciRuntime {
 }
 
 impl UhciRuntime {
+    fn external_hub_ports_with_snapshot_devices(hub_state: &[u8]) -> Result<Vec<u8>, JsValue> {
+        const TAG_PORTS: u16 = 6;
+
+        let r = SnapshotReader::parse(hub_state, UsbHubDevice::DEVICE_ID)
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+        r.ensure_device_major(UsbHubDevice::DEVICE_VERSION.major)
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+
+        let Some(buf) = r.bytes(TAG_PORTS) else {
+            return Ok(Vec::new());
+        };
+
+        let mut d = Decoder::new(buf);
+        let port_records = d
+            .vec_bytes()
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+        d.finish()
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+
+        let mut ports = Vec::new();
+        for (idx, rec) in port_records.iter().enumerate() {
+            let mut pd = Decoder::new(rec);
+            // Keep this in sync with `UsbHubDevice::save_state` (`crates/aero-usb/src/hub.rs`).
+            let _connected = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _connect_change = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _enabled = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _enable_change = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _suspended = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _suspend_change = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _powered = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _reset = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _reset_countdown_ms = pd
+                .u8()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _reset_change = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let has_device_state = pd
+                .bool()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            if has_device_state {
+                let len = pd
+                    .u32()
+                    .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?
+                    as usize;
+                let _ = pd
+                    .bytes(len)
+                    .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            }
+            pd.finish()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+
+            if has_device_state {
+                let port = (idx + 1)
+                    .try_into()
+                    .map_err(|_| js_error("UHCI runtime snapshot external hub has too many ports"))?;
+                ports.push(port);
+            }
+        }
+
+        Ok(ports)
+    }
+
     fn port_is_free(&self, port: usize) -> bool {
         if port >= PORT_COUNT {
             return false;

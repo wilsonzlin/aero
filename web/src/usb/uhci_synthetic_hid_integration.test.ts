@@ -156,6 +156,52 @@ function controlNoData(opts: {
   tick1ms(uhci);
 }
 
+function controlIn(opts: {
+  uhci: { io_write(offset: number, size: number, value: number): void };
+  view: DataView;
+  guestBase: number;
+  alloc: Alloc;
+  flBase: number;
+  devAddr: number;
+  setup: SetupPacket;
+}): Uint8Array {
+  const { uhci, view, guestBase, alloc, flBase, devAddr, setup } = opts;
+
+  const qhAddr = alloc.alloc(0x20, 0x10);
+  const setupBuf = alloc.alloc(8, 0x10);
+  const dataBuf = alloc.alloc(setup.wLength, 0x10);
+  const setupTd = alloc.alloc(0x20, 0x10);
+  const dataTd = alloc.alloc(0x20, 0x10);
+  const statusTd = alloc.alloc(0x20, 0x10);
+
+  const bytes = encodeSetupPacket(setup);
+  new Uint8Array(view.buffer).set(bytes, guestBase + setupBuf);
+
+  writeTd(view, guestBase, setupTd, dataTd, tdCtrl(true, false), tdToken(PID_SETUP, devAddr, 0, false, 8), setupBuf);
+  writeTd(
+    view,
+    guestBase,
+    dataTd,
+    statusTd,
+    tdCtrl(true, false),
+    tdToken(PID_IN, devAddr, 0, true, setup.wLength),
+    dataBuf,
+  );
+  writeTd(view, guestBase, statusTd, LINK_PTR_T, tdCtrl(true, true), tdToken(PID_OUT, devAddr, 0, true, 0), 0);
+  writeQh(view, guestBase, qhAddr, LINK_PTR_T, setupTd);
+  installFrameList(view, guestBase, flBase, qhAddr);
+
+  uhci.io_write(REG_FLBASEADD, 4, flBase >>> 0);
+  tick1ms(uhci);
+
+  const ctrlSts = view.getUint32(guestBase + dataTd + 4, true);
+  expect(ctrlSts & TD_CTRL_ACTIVE).toBe(0);
+  const gotLen = actlen(ctrlSts);
+  const out = new Uint8Array(gotLen);
+  out.set(new Uint8Array(view.buffer).subarray(guestBase + dataBuf, guestBase + dataBuf + gotLen));
+  return out;
+}
+
 function interruptIn(opts: {
   uhci: { io_write(offset: number, size: number, value: number): void };
   view: DataView;
@@ -676,5 +722,129 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
+  });
+
+  it("does not resurrect extra UsbHidPassthroughBridge devices not present in the snapshot after restore + hub reset", async () => {
+    const desiredGuestBytes = 2 * 1024 * 1024;
+    const layoutHint = computeGuestRamLayout(desiredGuestBytes);
+    const memory = new WebAssembly.Memory({ initial: layoutHint.wasm_pages, maximum: layoutHint.wasm_pages });
+
+    let api: Awaited<ReturnType<typeof initWasm>>["api"];
+    try {
+      ({ api } = await initWasm({ variant: "single", memory }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Missing single-thread WASM package")) return;
+      throw err;
+    }
+
+    assertWasmMemoryWiring({ api, memory, context: "uhci_synthetic_hid_integration.test (snapshot extra device)" });
+    if (!api.UhciRuntime) return;
+    if (!api.UsbHidPassthroughBridge) return;
+
+    const layout = api.guest_ram_layout(desiredGuestBytes);
+    const guestBase = layout.guest_base >>> 0;
+    const guestSize = layout.guest_size >>> 0;
+    expect(guestBase).toBeGreaterThan(0);
+    expect(guestSize).toBeGreaterThan(0x20000);
+
+    const runtime = new api.UhciRuntime(guestBase, guestSize);
+    if (typeof runtime.attach_usb_hid_passthrough_device !== "function") return;
+    const save =
+      (runtime as unknown as { save_state?: unknown }).save_state ?? (runtime as unknown as { snapshot_state?: unknown }).snapshot_state;
+    const load =
+      (runtime as unknown as { load_state?: unknown }).load_state ?? (runtime as unknown as { restore_state?: unknown }).restore_state;
+    if (typeof save !== "function" || typeof load !== "function") return;
+
+    const HidBridge = api.UsbHidPassthroughBridge;
+    const keyboardDev = new HidBridge(
+      0x1234,
+      0x0001,
+      "Aero",
+      "Keyboard",
+      undefined,
+      USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
+      false,
+      USB_HID_INTERFACE_SUBCLASS_BOOT,
+      USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
+    );
+    const mouseDev = new HidBridge(
+      0x1234,
+      0x0002,
+      "Aero",
+      "Mouse",
+      undefined,
+      USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+      false,
+      USB_HID_INTERFACE_SUBCLASS_BOOT,
+      USB_HID_INTERFACE_PROTOCOL_MOUSE,
+    );
+    const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+
+    runtime.attach_usb_hid_passthrough_device([0, 1], keyboardDev);
+    runtime.attach_usb_hid_passthrough_device([0, 2], mouseDev);
+    runtime.attach_usb_hid_passthrough_device([0, 3], gamepadDev);
+
+    const snapshotBytes = save.call(runtime) as unknown;
+    expect(snapshotBytes).toBeInstanceOf(Uint8Array);
+
+    // Attach an extra passthrough device after the snapshot is taken. The runtime will retain the
+    // handle across restores, but it should not reattach it unless the snapshot includes it.
+    const extraDev = new HidBridge(0x1234, 0x0004, "Aero", "Extra", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    runtime.attach_usb_hid_passthrough_device([0, 4], extraDev);
+
+    load.call(runtime, snapshotBytes);
+
+    const uhci: { io_write(offset: number, size: number, value: number): void; step_frame(): void; tick_1ms(): void } = {
+      io_write: (offset, size, value) => runtime.port_write(offset >>> 0, size >>> 0, value >>> 0),
+      step_frame: () => runtime.step_frame(),
+      tick_1ms: () => runtime.tick_1ms(),
+    };
+
+    const view = new DataView(memory.buffer);
+    const alloc = new Alloc(0x2000);
+    const flBase = 0x1000;
+
+    // Trigger an upstream bus reset of the hub via the UHCI root port. A buggy restore path can
+    // resurrect devices that were not present in the snapshot when the hub recomputes
+    // port.connected from port.device.is_some().
+    uhci.io_write(REG_PORTSC1, 2, PORTSC_PR);
+    for (let i = 0; i < 50; i += 1) tick1ms(uhci);
+
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS | USBCMD_MAXP);
+
+    // Enumerate + configure the hub at address 0 -> 1 after the bus reset.
+    controlNoData({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 0,
+      setup: { bmRequestType: 0x00, bRequest: 0x05, wValue: 1, wIndex: 0, wLength: 0 },
+    });
+    controlNoData({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 1,
+      setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 1, wIndex: 0, wLength: 0 },
+    });
+
+    // Hub class request: GetPortStatus (USB 2.0 hub spec 11.24.2.7).
+    const portStatus = controlIn({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 1,
+      setup: { bmRequestType: 0xa3, bRequest: 0x00, wValue: 0, wIndex: 4, wLength: 4 },
+    });
+    expect(portStatus.length).toBe(4);
+    const st = portStatus[0]! | (portStatus[1]! << 8);
+    expect(st & 0x0001).toBe(0);
   });
 });
