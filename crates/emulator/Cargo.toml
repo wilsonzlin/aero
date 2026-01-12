@@ -51,6 +51,7 @@ anyhow = "1"
 image = { version = "0.25.5", default-features = false, features = ["png", "pnm"] }
 tempfile = "3"
 firmware = { path = "../firmware" }
+aero-net-pump = { path = "../aero-net-pump" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
