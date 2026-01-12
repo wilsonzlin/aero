@@ -640,6 +640,38 @@ static void test_setup_queue_programs_addresses_and_enables(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_setup_queue_enable_readback_failure(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.ignore_queue_enable_write = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetupQueue(&dev, 0, 0x1111, 0x2222, 0x3333);
+    assert(st == STATUS_IO_DEVICE_ERROR);
+    assert(sim.queues[0].queue_enable == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_get_num_queues_and_queue_size(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1334,6 +1366,7 @@ int main(void)
     test_negotiate_features_success_and_status_sequence();
     test_negotiate_features_device_rejects_features_ok();
     test_setup_queue_programs_addresses_and_enables();
+    test_setup_queue_enable_readback_failure();
     test_get_num_queues_and_queue_size();
     test_setup_queue_not_found_when_size_zero();
     test_disable_queue_clears_enable();

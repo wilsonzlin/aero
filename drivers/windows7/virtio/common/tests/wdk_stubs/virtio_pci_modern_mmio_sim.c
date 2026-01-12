@@ -409,7 +409,12 @@ static BOOLEAN virtio_modern_mmio_write(volatile VOID* Register, size_t Width, U
                     if (Width == 2) {
                         if (g_sim->queue_select < g_sim->num_queues &&
                             g_sim->queue_select < (uint16_t)VIRTIO_PCI_MODERN_MMIO_SIM_MAX_QUEUES) {
-                            g_sim->queues[g_sim->queue_select].queue_enable = (uint16_t)Value;
+                            if (g_sim->ignore_queue_enable_write == 0) {
+                                g_sim->queues[g_sim->queue_select].queue_enable = (uint16_t)Value;
+                            } else {
+                                g_sim->queues[g_sim->queue_select].queue_enable = 0;
+                                Value = 0;
+                            }
                         }
                         mmio_store(Register, Width, Value);
                         return TRUE;
