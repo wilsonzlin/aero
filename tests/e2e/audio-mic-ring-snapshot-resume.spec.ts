@@ -74,16 +74,10 @@ test("Worker snapshot resume discards buffered mic samples (stale latency avoida
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
     const statuses = coord?.getWorkerStatuses?.();
-    // Wait for *all* workers to reach READY so the coordinator won't later re-send
-    // `setMicrophoneRingBuffer(null)` during late READY handling (it re-syncs ring
-    // attachments on every READY event).
-    return (
-      statuses?.cpu?.state === "ready" &&
-      statuses?.io?.state === "ready" &&
-      statuses?.gpu?.state === "ready" &&
-      statuses?.jit?.state === "ready" &&
-      statuses?.net?.state === "ready"
-    );
+    // Wait for CPU+IO to reach READY before attaching: the coordinator re-applies ring
+    // attachments when audio workers report READY, and we want our direct test attachment
+    // (bypassing the coordinator policy) to happen after that.
+    return statuses?.cpu?.state === "ready" && statuses?.io?.state === "ready";
   });
 
   await page.waitForFunction(() => {
