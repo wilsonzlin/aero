@@ -164,6 +164,11 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
     }
 }
 
+/// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an emulator [`DiskBackend`].
+pub fn from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
+    Box::new(AeroVirtualDiskAsNvmeBackend::new(disk))
+}
+
 fn map_storage_disk_error(
     err: StorageDiskError,
     lba: u64,

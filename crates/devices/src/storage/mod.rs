@@ -46,14 +46,25 @@ impl VirtualDrive {
         }
     }
 
+    /// Wrap a boxed [`aero_storage::VirtualDisk`] as a `aero-devices` [`DiskBackend`].
+    ///
+    /// This is a convenience for the common case where the disk is already stored behind a
+    /// trait object (`Box<dyn VirtualDisk>`). The adapter enforces 512-byte alignment and
+    /// bounds checks at the device boundary.
+    pub fn new_from_aero_virtual_disk(
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> Self {
+        Self::new(
+            512,
+            Box::new(AeroVirtualDiskAsDeviceBackend::new(disk)),
+        )
+    }
+
     pub fn new_from_aero_storage<D>(disk: D) -> Self
     where
         D: aero_storage::VirtualDisk + Send + 'static,
     {
-        Self::new(
-            512,
-            Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk))),
-        )
+        Self::new_from_aero_virtual_disk(Box::new(disk))
     }
 
     pub fn sector_size(&self) -> u32 {
