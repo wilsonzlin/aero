@@ -1094,18 +1094,23 @@ impl Machine {
     /// - bit 2: middle
     pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
         let buttons = buttons & 0x07;
-        let changed = self.ps2_mouse_buttons ^ buttons;
-        if changed == 0 {
+        // `ps2_mouse_buttons` is a host-side cache used to compute transitions. Certain lifecycle
+        // events (e.g. snapshot restore) can make the cached value stale relative to the guest
+        // device state; in that case we "invalidate" the cache by setting any bits outside the
+        // 3-button mask and force a full resync on the next injection call.
+        let force = (self.ps2_mouse_buttons & !0x07) != 0;
+        let changed = (self.ps2_mouse_buttons ^ buttons) & 0x07;
+        if !force && changed == 0 {
             return;
         }
 
-        if (changed & 0x01) != 0 {
+        if force || (changed & 0x01) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Left, (buttons & 0x01) != 0);
         }
-        if (changed & 0x02) != 0 {
+        if force || (changed & 0x02) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Right, (buttons & 0x02) != 0);
         }
-        if (changed & 0x04) != 0 {
+        if force || (changed & 0x04) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Middle, (buttons & 0x04) != 0);
         }
 
@@ -3306,6 +3311,38 @@ mod tests {
         // Next injection should re-sync and clear the invalid marker.
         m.inject_ps2_mouse_buttons(0x00);
         assert_eq!(m.ps2_mouse_buttons, 0x00);
+    }
+
+    #[test]
+    fn snapshot_restore_allows_resyncing_ps2_mouse_buttons_to_pressed_state() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        // Take a snapshot with mouse reporting enabled so button injections generate packets.
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        {
+            let ctrl = src.i8042.as_ref().expect("i8042 enabled").clone();
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(src.io.read_u8(0x60), 0xFA); // mouse ACK
+
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        // Post-restore the cache is invalid; the first absolute mask should force a resync.
+        assert_eq!(restored.ps2_mouse_buttons, 0xFF);
+
+        restored.inject_ps2_mouse_buttons(0x01); // left pressed
+
+        // The first generated packet should reflect the left button down and no movement.
+        let packet: Vec<u8> = (0..3).map(|_| restored.io.read_u8(0x60)).collect();
+        assert_eq!(packet, vec![0x09, 0x00, 0x00]);
     }
 
     fn write_ivt_entry(m: &mut Machine, vector: u8, offset: u16, segment: u16) {
