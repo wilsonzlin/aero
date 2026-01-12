@@ -153,9 +153,17 @@ pub fn compile_tier1_block(
             ))
         })?;
 
-    if let Some(addr) = bus.first_oob_addr.get() {
+    let block_end = entry_rip.checked_add(compilation.byte_len as u64).ok_or_else(|| {
+        js_error("compile_tier1_block: entry_rip + compiled block length overflowed u64")
+    })?;
+    if block_end > code_end {
+        // Note: Tier-1's decoder always reads a 15-byte window per instruction, so out-of-bounds
+        // reads can occur even when the *decoded* instruction stream stays within the provided
+        // slice. We only error when the decoded block's byte length actually exceeds the input
+        // coverage.
+        let addr = bus.first_oob_addr.get().unwrap_or(code_end);
         return Err(js_error(format!(
-            "compile_tier1_block: attempted to read code byte at guest address {addr:#x}, but provided code_bytes covers [{entry_rip:#x}, {code_end:#x})"
+            "compile_tier1_block: decoded block ends at {block_end:#x}, but provided code_bytes covers [{entry_rip:#x}, {code_end:#x}) (first out-of-bounds read at {addr:#x})"
         )));
     }
 
