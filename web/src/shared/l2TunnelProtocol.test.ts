@@ -12,8 +12,10 @@ import {
   L2_TUNNEL_SUBPROTOCOL,
   L2_TUNNEL_VERSION,
   L2TunnelDecodeError,
+  decodeStructuredErrorPayload,
   decodeL2Message,
   encodeError,
+  encodeStructuredErrorPayload,
   encodeL2Frame,
   encodePing,
   encodePong,
@@ -25,6 +27,10 @@ type L2ValidVector = {
   flags: number;
   payloadHex: string;
   wireHex: string;
+  structured?: {
+    code: number;
+    message: string;
+  };
 };
 
 type L2InvalidVector = {
@@ -79,6 +85,11 @@ describe("l2TunnelProtocol", () => {
       expect(decoded.type).toBe(v.msgType);
       expect(decoded.flags).toBe(v.flags);
       expect(encodeHex(decoded.payload)).toBe(v.payloadHex);
+      if (v.structured) {
+        const expectedPayload = encodeStructuredErrorPayload(v.structured.code, v.structured.message, Number.MAX_SAFE_INTEGER);
+        expect(Buffer.from(decoded.payload)).toEqual(Buffer.from(expectedPayload));
+        expect(decodeStructuredErrorPayload(decoded.payload)).toEqual(v.structured);
+      }
 
       let encoded: Uint8Array;
       switch (v.msgType) {
