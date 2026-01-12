@@ -122,6 +122,14 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId("device.999")).toBe(999);
     expect(vmSnapshotDeviceIdToKind(999)).toBe("device.999");
 
+    // Boundary: accept full u32 range for forward-compatible `device.<id>` kinds.
+    expect(vmSnapshotDeviceKindToId("device.4294967295")).toBe(0xffff_ffff);
+    expect(vmSnapshotDeviceIdToKind(0xffff_ffff)).toBe("device.4294967295");
+    // Out-of-range u32 should be rejected.
+    expect(vmSnapshotDeviceKindToId("device.4294967296")).toBeNull();
+    // Negative IDs are not valid in the `device.<id>` spelling.
+    expect(vmSnapshotDeviceKindToId("device.-1")).toBeNull();
+
     expect(vmSnapshotDeviceKindToId("unknown")).toBeNull();
   });
 
