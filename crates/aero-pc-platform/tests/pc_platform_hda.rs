@@ -1,8 +1,11 @@
 use aero_devices::pci::profile::HDA_ICH6;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
-use aero_pc_platform::PcPlatform;
+use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
+use memory::{DenseMemory, GuestMemory, GuestMemoryResult};
 use memory::MemoryBus as _;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -43,6 +46,48 @@ fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
     pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
+
+struct RecordingRam {
+    inner: DenseMemory,
+    writes: Rc<RefCell<Vec<(u64, Vec<u8>)>>>,
+}
+
+impl RecordingRam {
+    fn new(size: u64) -> (Self, Rc<RefCell<Vec<(u64, Vec<u8>)>>>) {
+        let writes = Rc::new(RefCell::new(Vec::new()));
+        let inner = DenseMemory::new(size).unwrap();
+        (
+            Self {
+                inner,
+                writes: writes.clone(),
+            },
+            writes,
+        )
+    }
+}
+
+impl GuestMemory for RecordingRam {
+    fn size(&self) -> u64 {
+        self.inner.size()
+    }
+
+    fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+        self.inner.read_into(paddr, dst)
+    }
+
+    fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+        self.writes.borrow_mut().push((paddr, src.to_vec()));
+        self.inner.write_from(paddr, src)
+    }
+
+    fn get_slice(&self, paddr: u64, len: usize) -> Option<&[u8]> {
+        self.inner.get_slice(paddr, len)
+    }
+
+    fn get_slice_mut(&mut self, paddr: u64, len: usize) -> Option<&mut [u8]> {
+        self.inner.get_slice_mut(paddr, len)
+    }
 }
 
 #[test]
@@ -332,4 +377,61 @@ fn pc_platform_routes_hda_intx_via_ioapic_in_apic_mode() {
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
     pc.interrupts.borrow_mut().acknowledge(vector as u8);
     pc.interrupts.borrow_mut().eoi(vector as u8);
+}
+
+#[test]
+fn pc_platform_uses_provided_guest_memory_for_device_dma_writes() {
+    let (ram, writes) = RecordingRam::new(2 * 1024 * 1024);
+    let mut pc = PcPlatform::new_with_config_and_ram(
+        Box::new(ram),
+        PcPlatformConfig {
+            enable_hda: true,
+            ..Default::default()
+        },
+    );
+
+    let bar0_base = read_hda_bar0_base(&mut pc);
+
+    // Bring controller out of reset.
+    pc.memory.write_u32(bar0_base + 0x08, 1);
+
+    let bdf = HDA_ICH6.bdf;
+    // Allow the device model to DMA from guest memory (CORB/RIRB).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let corb_base = 0x1000u64;
+    let rirb_base = 0x2000u64;
+
+    // Queue a single verb in CORB so processing causes a RIRB write.
+    pc.memory.write_u32(corb_base, 0x000f_0000);
+
+    pc.memory.write_u32(bar0_base + 0x40, corb_base as u32); // CORBLBASE
+    pc.memory.write_u32(bar0_base + 0x50, rirb_base as u32); // RIRBLBASE
+    pc.memory.write_u16(bar0_base + 0x4a, 0x00ff); // CORBRP
+    pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
+
+    pc.memory
+        .write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
+    pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL
+    pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL
+    pc.memory.write_u16(bar0_base + 0x48, 0x0000); // CORBWP
+
+    // Discard any setup writes performed by the test itself. We want to observe the DMA write
+    // performed by the device model during processing.
+    writes.borrow_mut().clear();
+
+    pc.process_hda(0);
+
+    let expected = 0x1af4_1620u32;
+    assert_eq!(pc.memory.read_u32(rirb_base), expected);
+
+    let writes = writes.borrow();
+    assert!(
+        writes.iter().any(|(paddr, bytes)| {
+            *paddr == rirb_base
+                && bytes.len() >= 4
+                && u32::from_le_bytes(bytes[..4].try_into().expect("checked length")) == expected
+        }),
+        "expected a DMA write to RIRB to be routed through the provided GuestMemory"
+    );
 }

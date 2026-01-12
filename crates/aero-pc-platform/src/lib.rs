@@ -28,7 +28,7 @@ use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
 use aero_net_e1000::E1000Device;
 use aero_storage::VirtualDisk;
-use memory::MmioHandler;
+use memory::{DenseMemory, GuestMemory, MmioHandler};
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -777,11 +777,17 @@ impl PcPlatform {
     }
 
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram(Box::new(ram), config)
+    }
+
+    pub fn new_with_config_and_ram(ram: Box<dyn GuestMemory>, config: PcPlatformConfig) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
-        let mut memory = MemoryBus::new(filter, ram_size);
+        let ram_size = ram.size();
+        let mut memory = MemoryBus::with_ram(filter, ram);
 
         let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
 
@@ -799,7 +805,7 @@ impl PcPlatform {
 
         let rtc_irq8 = PlatformIrqLine::isa(interrupts.clone(), 8);
         let rtc = Rc::new(RefCell::new(RtcCmos::new(clock.clone(), rtc_irq8)));
-        rtc.borrow_mut().set_memory_size_bytes(ram_size as u64);
+        rtc.borrow_mut().set_memory_size_bytes(ram_size);
         register_rtc_cmos(&mut io, rtc.clone());
 
         let i8042_ports = I8042Ports::new();
