@@ -17,6 +17,7 @@ use aero_cpu_core::interrupts::InterruptController as _;
 use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::CpuCore;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
+use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig, ResetEvent};
 use aero_platform::reset::ResetKind;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
@@ -384,47 +385,63 @@ impl PcMachine {
     /// When no backend is attached, guest TX frames are still processed (DMA + descriptor
     /// completion), but are dropped on the floor.
     pub fn poll_network(&mut self) {
-        if !self.bus.platform.has_e1000() {
+        let Some(e1000) = self.bus.platform.e1000() else {
             return;
-        }
+        };
 
         // Move the backend out to avoid borrow conflicts between `self.bus.platform` and
         // `self.network_backend`.
         let mut backend = self.network_backend.take();
 
-        // Run DMA once before draining/pushing frames so register-only writes (like updating
-        // TDT/RDT) can take effect.
-        self.bus.platform.process_e1000();
-
-        // 2) Drain guest->host frames.
+        // Budgets for pumping guest ↔ host frames per emulation slice.
         const MAX_TX_FRAMES_PER_POLL: usize = 256;
-        let mut tx_budget = MAX_TX_FRAMES_PER_POLL;
-        while tx_budget != 0 {
-            let Some(frame) = self.bus.platform.e1000_pop_tx_frame() else {
-                break;
-            };
-            tx_budget -= 1;
+        const MAX_RX_FRAMES_PER_POLL: usize = 256;
 
-            if let Some(backend) = backend.as_mut() {
-                backend.transmit(frame);
+        // Keep the device model's internal PCI config image in sync with the platform PCI config
+        // space. The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config
+        // state.
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let (command, bar0_base, bar1_base) = {
+            let mut pci_cfg = self.bus.platform.pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(0))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            let bar1_base = cfg
+                .and_then(|cfg| cfg.bar_range(1))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base, bar1_base)
+        };
+
+        let mut dev = e1000.borrow_mut();
+        dev.pci_config_write(0x04, 2, u32::from(command));
+        if let Ok(bar0_base) = u32::try_from(bar0_base) {
+            if bar0_base != 0 {
+                dev.pci_config_write(0x10, 4, bar0_base);
+            }
+        }
+        if let Ok(bar1_base) = u32::try_from(bar1_base) {
+            if bar1_base != 0 {
+                dev.pci_config_write(0x14, 4, bar1_base);
             }
         }
 
-        // 3) Drain host->guest frames.
-        if let Some(backend) = backend.as_mut() {
-            const MAX_RX_FRAMES_PER_POLL: usize = 256;
-            let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
-            while rx_budget != 0 {
-                let Some(frame) = backend.poll_receive() else {
-                    break;
-                };
-                rx_budget -= 1;
-                self.bus.platform.e1000_enqueue_rx_frame(frame);
-            }
-
-            // 4) Flush RX delivery for newly enqueued frames.
-            self.bus.platform.process_e1000();
-        }
+        // Pump:
+        // 1) DMA poll
+        // 2) drain guest TX -> backend (or drop when no backend is installed)
+        // 3) drain backend RX -> guest
+        // 4) DMA poll to flush RX into guest buffers
+        tick_e1000(
+            &mut dev,
+            &mut self.bus.platform.memory,
+            &mut backend,
+            MAX_TX_FRAMES_PER_POLL,
+            MAX_RX_FRAMES_PER_POLL,
+        );
+        drop(dev);
 
         self.network_backend = backend;
     }

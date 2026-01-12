@@ -1889,6 +1889,16 @@ impl PcPlatform {
         self.e1000.as_ref().map(|e1000| e1000.borrow().mac_addr())
     }
 
+    /// Snapshot/restore + integration hook: returns a clone of the shared E1000 device model.
+    ///
+    /// Most users should interact with the E1000 through the platform PCI/MMIO/PIO buses and the
+    /// host-facing queue helpers (`process_e1000`, `e1000_pop_tx_frame`, `e1000_enqueue_rx_frame`).
+    /// This accessor exists for higher-level glue code that wants direct access to the device
+    /// model, e.g. to share common pump logic across integration layers.
+    pub fn e1000(&self) -> Option<Rc<RefCell<E1000Device>>> {
+        self.e1000.clone()
+    }
+
     pub fn e1000_pop_tx_frame(&mut self) -> Option<Vec<u8>> {
         self.e1000
             .as_ref()
