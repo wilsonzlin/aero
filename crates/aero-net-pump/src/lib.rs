@@ -1167,11 +1167,12 @@ mod tests {
         }
     }
 
-    fn read_rx_desc_len_status(mem: &TestMem, addr: u64) -> (u16, u8) {
+    fn read_rx_desc_len_status_errors(mem: &TestMem, addr: u64) -> (u16, u8, u8) {
         let len_bytes = mem.read_vec(addr + 8, 2);
         let len = u16::from_le_bytes([len_bytes[0], len_bytes[1]]);
         let status = mem.read_vec(addr + 12, 1)[0];
-        (len, status)
+        let errors = mem.read_vec(addr + 13, 1)[0];
+        (len, status, errors)
     }
 
     #[test]
@@ -1268,8 +1269,8 @@ mod tests {
         );
 
         const DD_EOP: u8 = 0b0000_0011;
-        let (rx0_len, rx0_status) = read_rx_desc_len_status(&mem, 0x2000);
-        let (rx1_len, rx1_status) = read_rx_desc_len_status(&mem, 0x2010);
+        let (rx0_len, rx0_status, rx0_errors) = read_rx_desc_len_status_errors(&mem, 0x2000);
+        let (rx1_len, rx1_status, rx1_errors) = read_rx_desc_len_status_errors(&mem, 0x2010);
         assert!(
             rx0_len > 0,
             "RX desc 0 should have non-zero length after DMA (got {rx0_len})"
@@ -1288,6 +1289,8 @@ mod tests {
             DD_EOP,
             "RX desc 1 should have DD|EOP set (status={rx1_status:#04x})"
         );
+        assert_eq!(rx0_errors, 0, "RX desc 0 should have no errors");
+        assert_eq!(rx1_errors, 0, "RX desc 1 should have no errors");
         assert!(
             (rx0_len as usize) <= RX_BUF_SIZE,
             "RX desc 0 length exceeds RX buffer size: len={rx0_len} buf_size={RX_BUF_SIZE}"
@@ -1423,8 +1426,8 @@ mod tests {
             "expected RDH==4 after receiving 2 DHCP ACK frames"
         );
 
-        let (rx2_len, rx2_status) = read_rx_desc_len_status(&mem, 0x2020);
-        let (rx3_len, rx3_status) = read_rx_desc_len_status(&mem, 0x2030);
+        let (rx2_len, rx2_status, rx2_errors) = read_rx_desc_len_status_errors(&mem, 0x2020);
+        let (rx3_len, rx3_status, rx3_errors) = read_rx_desc_len_status_errors(&mem, 0x2030);
         assert!(
             rx2_len > 0,
             "RX desc 2 should have non-zero length after DMA (got {rx2_len})"
@@ -1443,6 +1446,8 @@ mod tests {
             DD_EOP,
             "RX desc 3 should have DD|EOP set (status={rx3_status:#04x})"
         );
+        assert_eq!(rx2_errors, 0, "RX desc 2 should have no errors");
+        assert_eq!(rx3_errors, 0, "RX desc 3 should have no errors");
         assert!(
             (rx2_len as usize) <= RX_BUF_SIZE,
             "RX desc 2 length exceeds RX buffer size: len={rx2_len} buf_size={RX_BUF_SIZE}"
@@ -1520,11 +1525,15 @@ mod tests {
         // Remaining RX descriptors/buffers should be untouched (we only expect 4 total frames).
         for i in 4..rx_desc_count {
             let desc_addr = 0x2000 + (i as u64) * 16;
-            let (len, status) = read_rx_desc_len_status(&mem, desc_addr);
+            let (len, status, errors) = read_rx_desc_len_status_errors(&mem, desc_addr);
             assert_eq!(len, 0, "unexpected RX desc {i} length (expected unused)");
             assert_eq!(
                 status, 0,
                 "unexpected RX desc {i} status (expected unused)"
+            );
+            assert_eq!(
+                errors, 0,
+                "unexpected RX desc {i} errors field (expected unused)"
             );
             assert!(
                 mem.read_vec(rx_bufs[i as usize], RX_BUF_SIZE)
