@@ -27,6 +27,12 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
+/// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
+/// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
+///
+/// NVMe is currently hard-coded to 512-byte sectors. If the underlying virtual disk
+/// capacity is not a multiple of 512, the trailing partial sector is ignored and
+/// only the largest whole-sector prefix is exposed via [`DiskBackend::total_sectors`].
 pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
 use memory::MemoryBus;
 

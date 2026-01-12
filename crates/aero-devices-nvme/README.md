@@ -27,7 +27,7 @@ Many Aero disk image formats are implemented in the [`aero-storage`](../aero-sto
 behind the [`aero_storage::VirtualDisk`] trait.
 
 To use an `aero-storage` disk with the NVMe controller without duplicating disk abstractions,
-wrap it with [`aero_storage_adapters::AeroVirtualDiskAsNvmeBackend`] (or the convenience helper
+wrap it with [`aero_devices_nvme::AeroStorageDiskAdapter`] (or use the convenience helper
 [`aero_devices_nvme::from_virtual_disk`]).
 
 ## Interrupts
