@@ -115,22 +115,47 @@ function addAuthHeader(headers: Headers, authToken?: string): void {
   headers.set("X-API-Key", authToken);
 }
 
-function toWebSocketUrl(baseUrl: string, path: string): URL {
-  const url = new URL(baseUrl);
-  switch (url.protocol) {
-    case "http:":
-      url.protocol = "ws:";
-      break;
-    case "https:":
-      url.protocol = "wss:";
-      break;
-    case "ws:":
-    case "wss:":
-      // Preserve secure origins (never downgrade wss:// to ws://).
-      break;
-    default:
-      throw new Error(`unsupported relay base URL protocol for WebSocket signaling: ${url.protocol}`);
+type RelayUrlTransport = "http" | "ws";
+
+const mapRelayBaseUrlProtocol = (protocol: string, transport: RelayUrlTransport): string => {
+  // `fetch()` only supports http(s); relay callers may have a ws(s) relay URL
+  // already in hand, so we normalize between the two transports.
+  switch (transport) {
+    case "http":
+      switch (protocol) {
+        case "http:":
+        case "https:":
+          return protocol;
+        case "ws:":
+          return "http:";
+        case "wss:":
+          return "https:";
+        default:
+          throw new Error(`unsupported relay baseUrl scheme for HTTP transport: ${protocol}`);
+      }
+    case "ws":
+      switch (protocol) {
+        case "ws:":
+        case "wss:":
+          return protocol;
+        case "http:":
+          return "ws:";
+        case "https:":
+          return "wss:";
+        default:
+          throw new Error(`unsupported relay baseUrl scheme for WebSocket transport: ${protocol}`);
+      }
   }
+};
+
+const resolveRelayBaseUrl = (baseUrl: string, transport: RelayUrlTransport): URL => {
+  const url = new URL(baseUrl);
+  url.protocol = mapRelayBaseUrlProtocol(url.protocol, transport);
+  return url;
+};
+
+export function toWebSocketUrl(baseUrl: string, path: string): URL {
+  const url = resolveRelayBaseUrl(baseUrl, "ws");
   url.pathname = `${url.pathname.replace(/\/$/, "")}${path}`;
   return url;
 }
@@ -141,21 +166,8 @@ function toWebSocketUrlWithQueryAuth(baseUrl: string, path: string, authToken: s
   return url;
 }
 
-function toHttpUrl(baseUrl: string, path: string): URL {
-  const url = new URL(baseUrl);
-  switch (url.protocol) {
-    case "ws:":
-      url.protocol = "http:";
-      break;
-    case "wss:":
-      url.protocol = "https:";
-      break;
-    case "http:":
-    case "https:":
-      break;
-    default:
-      throw new Error(`unsupported relay base URL protocol for HTTP endpoints: ${url.protocol}`);
-  }
+export function toHttpUrl(baseUrl: string, path: string): URL {
+  const url = resolveRelayBaseUrl(baseUrl, "http");
   url.pathname = `${url.pathname.replace(/\/$/, "")}${path}`;
   return url;
 }
