@@ -15,6 +15,9 @@ use crate::{DiskError, Result};
 /// **Important (wasm32):** this trait is intentionally *synchronous* because it is used by
 /// `aero_storage::VirtualDisk` and the Rust device/controller stack (e.g. AHCI/IDE).
 ///
+/// Errors are reported via [`DiskError`]. In particular, [`DiskError::Io`] stores a plain
+/// `String` so wasm32 implementations can propagate errors originating from JavaScript/DOM APIs.
+///
 /// Browser IndexedDB APIs are Promise-based (async) and therefore cannot implement this trait
 /// safely in the *same* Worker thread. Supporting IndexedDB would require an explicit split
 /// (separate storage worker + RPC/serialization layer), which is currently out of scope.

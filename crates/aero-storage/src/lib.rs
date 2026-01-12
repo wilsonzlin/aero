@@ -40,6 +40,13 @@
 //! Note: IndexedDB-based storage is generally async and is not currently exposed as a
 //! synchronous [`StorageBackend`] in this crate. The async IndexedDB block store lives in
 //! `crates/st-idb`.
+//!
+//! ## Errors
+//!
+//! Fallible operations return [`Result`], which uses the unified [`DiskError`] type. `DiskError`
+//! is shared across both native and wasm32 backends (including `crates/aero-opfs`), and its
+//! [`DiskError::Io`] variant intentionally stores a human-readable `String` so browser backends
+//! can surface JavaScript/DOM errors without requiring `std::io::Error`.
 
 mod backend;
 mod cache;
