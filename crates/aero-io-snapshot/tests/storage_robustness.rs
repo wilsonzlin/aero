@@ -223,3 +223,72 @@ fn ide_snapshot_rejects_oversized_pio_data_buffer() {
         SnapshotError::InvalidFieldEncoding("ide pio buffer too large")
     );
 }
+
+#[test]
+fn ide_snapshot_rejects_oversized_dma_buffer() {
+    // Keep in sync with `MAX_IDE_DATA_BUFFER_BYTES` in `aero-io-snapshot`.
+    const MAX_IDE_BUF: u32 = 16 * 1024 * 1024;
+
+    const TAG_PRIMARY: u16 = 2;
+
+    // Build a minimally-valid primary-channel payload with a pending DMA request that
+    // declares an excessive buffer length. The decoder should reject it without allocating.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len + data bytes (empty)
+        .u32(0)
+        .u32(0)
+        // pio_write absent
+        .u8(0)
+        // pending_dma present
+        .u8(1)
+        // dma direction
+        .u8(0)
+        // dma buffer length (oversized)
+        .u32(MAX_IDE_BUF + 1)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject oversized DMA buffer");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide dma buffer too large")
+    );
+}
