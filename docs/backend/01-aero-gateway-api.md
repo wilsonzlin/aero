@@ -139,6 +139,8 @@ Notes:
 - `endpoints.l2` is routed by the **edge reverse proxy** to `aero-l2-proxy` (the Rust L2 tunnel proxy). It is not served by the `backend/aero-gateway` Node.js process.
 - `endpoints.udpRelayToken` may return `404` when the gateway is not configured with `UDP_RELAY_BASE_URL`.
 - `limits.l2` describes protocol-level payload limits for the L2 tunnel (`FRAME` vs control messages).
+  - These values are **deployment dependent** and should match the configured `aero-l2-proxy` limits.
+  - Recommended defaults are `2048` bytes for `FRAME` payloads and `256` bytes for control payloads (see [`docs/l2-tunnel-protocol.md`](../l2-tunnel-protocol.md)).
 
 Example `limits.l2`:
 
