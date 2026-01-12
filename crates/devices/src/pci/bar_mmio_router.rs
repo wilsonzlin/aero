@@ -187,7 +187,8 @@ impl MmioHandler for PciBarMmioRouter {
             .bars
             .get_mut(&key)
             .expect("handler disappeared during dispatch");
-        handler.read(dev_offset, size)
+        // Ensure callers never observe junk in the upper bits for sub-8-byte reads.
+        handler.read(dev_offset, size) & all_ones(size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
@@ -207,7 +208,9 @@ impl MmioHandler for PciBarMmioRouter {
             .bars
             .get_mut(&key)
             .expect("handler disappeared during dispatch");
-        handler.write(dev_offset, size, value);
+        // Mask writes so device models that treat `value` as a full 64-bit quantity still observe
+        // correct byte-enable semantics.
+        handler.write(dev_offset, size, value & all_ones(size));
     }
 }
 
@@ -665,5 +668,81 @@ mod tests {
         let state = state.lock().unwrap();
         assert!(state.reads.is_empty());
         assert!(state.writes.is_empty());
+    }
+
+    #[test]
+    fn masks_read_and_write_values_to_access_size() {
+        let window_base = 0x8000_0000;
+        let bdf = PciBdf::new(0, 11, 0);
+
+        #[derive(Default)]
+        struct State {
+            reads: Vec<(u64, usize)>,
+            writes: Vec<(u64, usize, u64)>,
+        }
+
+        #[derive(Clone)]
+        struct AllOnesMmio {
+            state: Arc<Mutex<State>>,
+        }
+
+        impl MmioHandler for AllOnesMmio {
+            fn read(&mut self, offset: u64, size: usize) -> u64 {
+                self.state.lock().unwrap().reads.push((offset, size));
+                u64::MAX
+            }
+
+            fn write(&mut self, offset: u64, size: usize, value: u64) {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .writes
+                    .push((offset, size, value));
+            }
+        }
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let state = Arc::new(Mutex::new(State::default()));
+        let mmio = AllOnesMmio {
+            state: state.clone(),
+        };
+
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_bar(bdf, 0, Box::new(mmio));
+
+        // Program BAR0 and enable MEM decoding.
+        let bar0_base = window_base + 0x2000;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+        }
+
+        let off = (bar0_base - window_base) + 0x10;
+
+        // Underlying handler returns `u64::MAX` regardless of size, but the router should mask the
+        // returned value down to the requested width.
+        assert_eq!(MmioHandler::read(&mut router, off, 1), 0xFF);
+        assert_eq!(MmioHandler::read(&mut router, off, 4), 0xFFFF_FFFF);
+
+        // Writes should also be masked before reaching the handler.
+        MmioHandler::write(&mut router, off, 4, u64::MAX);
+        let state = state.lock().unwrap();
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.writes[0].2, 0xFFFF_FFFF);
     }
 }
