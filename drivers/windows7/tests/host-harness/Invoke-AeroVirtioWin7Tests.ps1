@@ -1003,6 +1003,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
   )
 
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $lastErr = ""
   while ([DateTime]::UtcNow -lt $deadline) {
     $client = $null
     try {
@@ -1055,8 +1056,12 @@ function Try-AeroQmpInjectVirtioInputEvents {
         @{ type = "btn"; data = @{ down = $false; button = "left" } }
       )
 
+      $kbdMode = if ([string]::IsNullOrEmpty($kbdDevice)) { "broadcast" } else { "device" }
+      $mouseMode = if ([string]::IsNullOrEmpty($mouseDevice)) { "broadcast" } else { "device" }
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|kbd_mode=$kbdMode|mouse_mode=$mouseMode"
       return $true
     } catch {
+      try { $lastErr = [string]$_.Exception.Message } catch { }
       Start-Sleep -Milliseconds 100
       continue
     } finally {
@@ -1064,6 +1069,11 @@ function Try-AeroQmpInjectVirtioInputEvents {
     }
   }
 
+  $reason = "timeout"
+  if (-not [string]::IsNullOrEmpty($lastErr)) {
+    $reason = Sanitize-AeroMarkerValue $lastErr
+  }
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason=$reason"
   return $false
 }
 

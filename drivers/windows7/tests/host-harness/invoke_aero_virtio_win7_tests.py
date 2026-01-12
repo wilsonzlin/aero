@@ -374,7 +374,13 @@ def _qmp_input_send_event_cmd(
     return {"execute": "input-send-event", "arguments": args}
 
 
-def _try_qmp_input_inject_virtio_input_events(endpoint: _QmpEndpoint) -> None:
+@dataclass(frozen=True)
+class _VirtioInputQmpInjectInfo:
+    keyboard_device: Optional[str]
+    mouse_device: Optional[str]
+
+
+def _try_qmp_input_inject_virtio_input_events(endpoint: _QmpEndpoint) -> _VirtioInputQmpInjectInfo:
     """
     Inject a small, deterministic keyboard + mouse sequence via QMP.
 
@@ -424,6 +430,8 @@ def _try_qmp_input_inject_virtio_input_events(endpoint: _QmpEndpoint) -> None:
         mouse_device = send([_qmp_btn_event("left", down=True)], device=mouse_device)
         time.sleep(0.05)
         mouse_device = send([_qmp_btn_event("left", down=False)], device=mouse_device)
+
+        return _VirtioInputQmpInjectInfo(keyboard_device=kbd_device, mouse_device=mouse_device)
 
 
 def _find_free_tcp_port() -> Optional[int]:
@@ -1101,8 +1109,18 @@ def main() -> int:
                             result_code = 1
                             break
                         try:
-                            _try_qmp_input_inject_virtio_input_events(qmp_endpoint)
+                            info = _try_qmp_input_inject_virtio_input_events(qmp_endpoint)
+                            kbd_mode = "broadcast" if info.keyboard_device is None else "device"
+                            mouse_mode = "broadcast" if info.mouse_device is None else "device"
+                            print(
+                                f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
+                            )
                         except Exception as e:
+                            reason = _sanitize_marker_value(str(e) or type(e).__name__)
+                            print(
+                                f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason={reason}",
+                                file=sys.stderr,
+                            )
                             print(
                                 f"FAIL: failed to inject virtio-input events via QMP: {e}",
                                 file=sys.stderr,
