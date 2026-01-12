@@ -119,6 +119,11 @@ static NTSTATUS VirtioInputMapWriteReportBuffer(_In_ WDFREQUEST Request, _Outptr
         return STATUS_INVALID_PARAMETER;
     }
 
+    /*
+     * We only inspect the first byte (report ID inference) and potentially the
+     * second byte (keyboard LED bitfield). Avoid probing/locking large user
+     * buffers unnecessarily.
+     */
     mapLen = ctx->ReportBufferLen;
     if (mapLen > 2) {
         mapLen = 2;
