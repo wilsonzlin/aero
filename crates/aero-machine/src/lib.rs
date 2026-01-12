@@ -3713,10 +3713,13 @@ impl Machine {
                     // Process AHCI once more here so guests that issue an AHCI command and then
                     // execute `HLT` can still make DMA progress and be woken by INTx within the
                     // same `run_slice` call.
+                    //
+                    // Note: `poll_platform_interrupt` synchronizes PCI INTx source levels into the
+                    // platform interrupt controller before polling, so we do not need an explicit
+                    // `sync_pci_intx_sources_to_interrupts` call here.
                     self.process_ide();
                     self.process_ahci();
                     self.process_ide();
-                    self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
@@ -3726,7 +3729,6 @@ impl Machine {
                     self.process_ide();
                     self.process_ahci();
                     self.process_ide();
-                    self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
