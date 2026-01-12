@@ -192,9 +192,21 @@ static NTSTATUS VirtioInputPrepareReadRequest(_In_ WDFREQUEST Request, _In_ size
     ctx->ReportBufferLen = xfer->reportBufferLen;
 
     if (requestorMode == UserMode) {
+        SIZE_T mapLen;
+
+        /*
+         * Only map/lock what we can actually write. The virtio-input HID reports
+         * are small (<= VIRTIO_INPUT_REPORT_MAX_SIZE), so avoid pinning large
+         * user buffers if a caller passes an excessively-large length.
+         */
+        mapLen = xfer->reportBufferLen;
+        if (mapLen > VIRTIO_INPUT_REPORT_MAX_SIZE) {
+            mapLen = VIRTIO_INPUT_REPORT_MAX_SIZE;
+        }
+
         status = VirtioInputMapUserAddress(
             xfer->reportBuffer,
-            xfer->reportBufferLen,
+            mapLen,
             IoWriteAccess,
             &ctx->ReportBufferMdl,
             (PVOID *)&ctx->ReportBuffer);
