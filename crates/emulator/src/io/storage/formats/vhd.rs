@@ -354,12 +354,24 @@ impl<S: ByteStorage> VhdDisk<S> {
                     .ok_or(DiskError::OutOfBounds)?;
                 let data_region_start = 512u64.max(dyn_header_end).max(bat_end_on_disk);
 
-                let mut allocated_blocks: Vec<u64> = Vec::new();
-                for bat_entry in &bat {
-                    if *bat_entry == u32::MAX {
+                let block_total_sectors = block_total_size
+                    .checked_div(SECTOR_SIZE as u64)
+                    .ok_or(DiskError::OutOfBounds)?;
+
+                // Collect allocated block starts (in 512-byte sectors, same units as the BAT) so
+                // the overlap check doesn't require building an additional Vec<u64> of byte
+                // offsets proportional to the BAT size.
+                let allocated_count = bat.iter().filter(|e| **e != u32::MAX).count();
+                let mut allocated_blocks: Vec<u32> = Vec::new();
+                allocated_blocks
+                    .try_reserve_exact(allocated_count)
+                    .map_err(|_| DiskError::QuotaExceeded)?;
+
+                for &bat_entry in &bat {
+                    if bat_entry == u32::MAX {
                         continue;
                     }
-                    let block_start = (*bat_entry as u64)
+                    let block_start = (bat_entry as u64)
                         .checked_mul(SECTOR_SIZE as u64)
                         .ok_or(DiskError::OutOfBounds)?;
                     if block_start < data_region_start {
@@ -371,15 +383,16 @@ impl<S: ByteStorage> VhdDisk<S> {
                     if block_end > footer_offset {
                         return Err(DiskError::CorruptImage("vhd block overlaps footer"));
                     }
-                    allocated_blocks.push(block_start);
+
+                    allocated_blocks.push(bat_entry);
                 }
 
                 allocated_blocks.sort_unstable();
                 for w in allocated_blocks.windows(2) {
-                    let prev_start = w[0];
-                    let next_start = w[1];
+                    let prev_start = w[0] as u64;
+                    let next_start = w[1] as u64;
                     let prev_end = prev_start
-                        .checked_add(block_total_size)
+                        .checked_add(block_total_sectors)
                         .ok_or(DiskError::OutOfBounds)?;
                     if next_start < prev_end {
                         return Err(DiskError::CorruptImage("vhd blocks overlap"));
