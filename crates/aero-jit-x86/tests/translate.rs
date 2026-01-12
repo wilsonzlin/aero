@@ -565,11 +565,11 @@ block 0x6000:
   write.rbx v0
   v1 = read.rbx
   v2 = const.i64 0xd
-  v3 = shr.i64 v1, v2 ; flags=CF|PF|AF|ZF|SF|OF
+  v3 = shr.i64 v1, v2
   write.rbx v3
   v4 = read.rbx
   v5 = const.i64 0x1
-  v6 = shl.i64 v4, v5 ; flags=CF|PF|AF|ZF|SF|OF
+  v6 = shl.i64 v4, v5
   write.rbx v6
   v7 = read.rsp
   v8 = load.i64 [v7]
@@ -742,6 +742,47 @@ block 0x6400:
   v2 = const.i8 0x1
   v3 = sar.i8 v1, v2
   write.al v3
+  v4 = read.rsp
+  v5 = load.i64 [v4]
+  v6 = const.i64 0x8
+  v7 = add.i64 v4, v6
+  write.rsp v7
+  term jmp [v5]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
+
+#[test]
+fn group2_shl_ah_imm1_decodes_high8_reg() {
+    // mov ax, 0x0100   (AH=1, AL=0)
+    // shl ah, 1        (D0 /4, high-8 register encoding without REX)
+    // ret
+    let code = [
+        0x66, 0xb8, 0x00, 0x01, // mov ax, 0x0100
+        0xd0, 0xe4, // shl ah, 1
+        0xc3, // ret
+    ];
+
+    let entry = 0x6500u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let expected = "\
+block 0x6500:
+  v0 = const.i16 0x100
+  write.ax v0
+  v1 = read.ah
+  v2 = const.i8 0x1
+  v3 = shl.i8 v1, v2
+  write.ah v3
   v4 = read.rsp
   v5 = load.i64 [v4]
   v6 = const.i64 0x8
