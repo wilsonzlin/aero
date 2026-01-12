@@ -134,6 +134,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::HPET` (`17`) — HPET timer state
 - `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state
 - `DeviceId::E1000` (`19`) — Intel E1000 NIC (`aero-net-e1000`, inner `E1K0`)
+- `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NETS`)
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
@@ -247,7 +248,7 @@ Canonical identifiers (outer `DeviceId` + web/WASM `kind` string):
 | Layer | Outer `DeviceId` | Numeric id | `DeviceId::name()` | Recommended `kind` | Notes |
 |---|---|---:|---|---|---|
 | NIC (E1000) | `DeviceId::E1000` | `19` | `"E1000"` | `net.e1000` | Registers + descriptor ring state + pending frames. Payload is an `aero-io-snapshot` blob (inner `DEVICE_ID = E1K0`). |
-| Net stack/backend | `DeviceId::NET_STACK` | `20` | `"NET_STACK"` | `net.stack` | User-space network stack / NAT / DHCP / connection bookkeeping. Payload is an `aero-io-snapshot` blob. |
+| Net stack/backend | `DeviceId::NET_STACK` | `20` | `"NET_STACK"` | `net.stack` | User-space network stack / NAT / DHCP / connection bookkeeping. Payload is an `aero-io-snapshot` blob (inner `DEVICE_ID = NETS`). |
 
 Payload convention:
 

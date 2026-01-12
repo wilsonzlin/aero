@@ -358,6 +358,8 @@ For a consistent snapshot:
 
 This is the same fundamental constraint as TCP proxy sockets: the transport itself is a host resource and must be treated as reset on restore.
 
+Web runtime note: the current worker runtime implements this by having the net worker participate in the snapshot control protocol (`vm.snapshot.pause` / `vm.snapshot.resume`) and stop/drain the forwarder while paused.
+
 ## E1000 NIC Emulation
 
 ### Register Interface
