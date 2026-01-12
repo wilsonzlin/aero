@@ -49,5 +49,14 @@ fn win7_storage_controllers_have_stable_bdfs_and_intx_gsis() {
         13,
         "NVMe INTA# should route to GSI 13"
     );
-}
 
+    // The PCI config-space Interrupt Line register should be programmed consistently with the
+    // router expectations, so guests can discover the routing during enumeration.
+    let mut ide_cfg = IDE_PIIX3.build_config_space();
+    let mut ahci_cfg = SATA_AHCI_ICH9.build_config_space();
+    let mut nvme_cfg = NVME_CONTROLLER.build_config_space();
+
+    assert_eq!(ide_cfg.interrupt_line(), 11);
+    assert_eq!(ahci_cfg.interrupt_line(), 12);
+    assert_eq!(nvme_cfg.interrupt_line(), 13);
+}
