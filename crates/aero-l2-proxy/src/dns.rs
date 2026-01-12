@@ -41,6 +41,9 @@ impl DnsService {
 
     pub async fn resolve_ipv4(&self, name: &str) -> Result<(Option<Ipv4Addr>, u32, bool)> {
         let name_norm = normalize_dns_name(name);
+        if name_norm.is_empty() {
+            return Ok((None, 0, false));
+        }
 
         if let Some(ip) = self.static_a.get(name_norm.as_ref()).copied() {
             // Treat test-mode mappings as authoritative and stable.
