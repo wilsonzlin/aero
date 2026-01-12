@@ -2210,6 +2210,150 @@ bool TestHostOwnedCopyResourceTextureReadback() {
   return true;
 }
 
+bool TestHostOwnedCopyResourceBcTextureReadback() {
+#if AEROGPU_ABI_MINOR < 2
+  // ABI 1.2 adds BC formats.
+  return true;
+#else
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(copy bc tex2d host-owned)")) {
+    return false;
+  }
+
+  struct Case {
+    const char* name;
+    uint32_t dxgi_format;
+    uint32_t block_bytes;
+  };
+
+  static constexpr uint32_t kWidth = 5;
+  static constexpr uint32_t kHeight = 5;
+
+  static constexpr Case kCases[] = {
+      {"DXGI_FORMAT_BC1_UNORM", kDxgiFormatBc1Unorm, 8},
+      {"DXGI_FORMAT_BC7_UNORM", kDxgiFormatBc7Unorm, 16},
+  };
+
+  auto div_round_up = [](uint32_t v, uint32_t d) -> uint32_t { return (v + d - 1) / d; };
+  const uint32_t blocks_w = div_round_up(kWidth, 4);
+  const uint32_t blocks_h = div_round_up(kHeight, 4);
+
+  for (const auto& c : kCases) {
+    TestResource src{};
+    TestResource dst{};
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/kWidth,
+                                                /*height=*/kHeight,
+                                                c.dxgi_format,
+                                                AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                &src),
+               "CreateStagingTexture2DWithFormat(src bc)")) {
+      return false;
+    }
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/kWidth,
+                                                /*height=*/kHeight,
+                                                c.dxgi_format,
+                                                AEROGPU_D3D11_CPU_ACCESS_READ,
+                                                &dst),
+               "CreateStagingTexture2DWithFormat(dst bc)")) {
+      return false;
+    }
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                        src.hResource,
+                                                        /*subresource=*/0,
+                                                        AEROGPU_DDI_MAP_WRITE,
+                                                        /*map_flags=*/0,
+                                                        &mapped);
+    if (!Check(hr == S_OK, "StagingResourceMap(WRITE) src bc tex2d")) {
+      return false;
+    }
+    if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+      return false;
+    }
+    if (!Check(mapped.RowPitch != 0, "Map returned RowPitch")) {
+      return false;
+    }
+
+    const uint32_t row_bytes = blocks_w * c.block_bytes;
+    const uint32_t row_pitch = mapped.RowPitch;
+    const uint32_t depth_pitch = mapped.DepthPitch;
+    if (!Check(row_pitch == row_bytes, "Map RowPitch matches tight BC row bytes (host-owned)")) {
+      return false;
+    }
+    if (!Check(depth_pitch == row_pitch * blocks_h, "Map DepthPitch matches BC block rows")) {
+      return false;
+    }
+
+    std::vector<uint8_t> expected(static_cast<size_t>(depth_pitch), 0);
+    auto* src_bytes = static_cast<uint8_t*>(mapped.pData);
+    for (uint32_t y = 0; y < blocks_h; y++) {
+      for (uint32_t x = 0; x < row_bytes; x++) {
+        const uint8_t v = static_cast<uint8_t>((y + 1u) * 19u + x);
+        src_bytes[static_cast<size_t>(y) * row_pitch + x] = v;
+        expected[static_cast<size_t>(y) * row_pitch + x] = v;
+      }
+    }
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, src.hResource, /*subresource=*/0);
+
+    dev.device_funcs.pfnCopyResource(dev.hDevice, dst.hResource, src.hResource);
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE readback = {};
+    hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                dst.hResource,
+                                                /*subresource=*/0,
+                                                AEROGPU_DDI_MAP_READ,
+                                                /*map_flags=*/0,
+                                                &readback);
+    if (!Check(hr == S_OK, "StagingResourceMap(READ) dst bc tex2d")) {
+      return false;
+    }
+    if (!Check(readback.pData != nullptr, "Map(READ) returned non-null pData")) {
+      return false;
+    }
+    if (!Check(readback.RowPitch == row_pitch, "dst RowPitch matches src RowPitch")) {
+      return false;
+    }
+    if (!Check(readback.DepthPitch == depth_pitch, "dst DepthPitch matches src DepthPitch")) {
+      return false;
+    }
+    if (!Check(std::memcmp(readback.pData, expected.data(), expected.size()) == 0, "CopyResource bc tex2d bytes")) {
+      return false;
+    }
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, dst.hResource, /*subresource=*/0);
+
+    if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+      return false;
+    }
+    const uint8_t* stream = dev.harness.last_stream.data();
+    const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+    if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D) == 1, "COPY_TEXTURE2D emitted")) {
+      return false;
+    }
+    CmdLoc copy_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!Check(copy_loc.hdr != nullptr, "COPY_TEXTURE2D location")) {
+      return false;
+    }
+    const auto* copy_cmd = reinterpret_cast<const aerogpu_cmd_copy_texture2d*>(stream + copy_loc.offset);
+    if (!Check((copy_cmd->flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) == 0,
+               "COPY_TEXTURE2D must not have WRITEBACK_DST flag")) {
+      return false;
+    }
+
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+#endif
+}
+
 bool TestSubmitAllocListTracksBoundShaderResource() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(track SRV alloc)")) {
@@ -2476,6 +2620,150 @@ bool TestGuestBackedCopyResourceTextureReadback() {
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
+}
+
+bool TestGuestBackedCopyResourceBcTextureReadback() {
+#if AEROGPU_ABI_MINOR < 2
+  // ABI 1.2 adds BC formats.
+  return true;
+#else
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(copy bc tex2d guest-backed)")) {
+    return false;
+  }
+
+  struct Case {
+    const char* name;
+    uint32_t dxgi_format;
+    uint32_t block_bytes;
+  };
+
+  static constexpr uint32_t kWidth = 5;
+  static constexpr uint32_t kHeight = 5;
+
+  static constexpr Case kCases[] = {
+      {"DXGI_FORMAT_BC1_UNORM", kDxgiFormatBc1Unorm, 8},
+      {"DXGI_FORMAT_BC7_UNORM", kDxgiFormatBc7Unorm, 16},
+  };
+
+  auto div_round_up = [](uint32_t v, uint32_t d) -> uint32_t { return (v + d - 1) / d; };
+  const uint32_t blocks_w = div_round_up(kWidth, 4);
+  const uint32_t blocks_h = div_round_up(kHeight, 4);
+
+  for (const auto& c : kCases) {
+    TestResource src{};
+    TestResource dst{};
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/kWidth,
+                                                /*height=*/kHeight,
+                                                c.dxgi_format,
+                                                AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                &src),
+               "CreateStagingTexture2DWithFormat(src bc guest-backed)")) {
+      return false;
+    }
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/kWidth,
+                                                /*height=*/kHeight,
+                                                c.dxgi_format,
+                                                AEROGPU_D3D11_CPU_ACCESS_READ,
+                                                &dst),
+               "CreateStagingTexture2DWithFormat(dst bc guest-backed)")) {
+      return false;
+    }
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                        src.hResource,
+                                                        /*subresource=*/0,
+                                                        AEROGPU_DDI_MAP_WRITE,
+                                                        /*map_flags=*/0,
+                                                        &mapped);
+    if (!Check(hr == S_OK, "StagingResourceMap(WRITE) src bc tex2d")) {
+      return false;
+    }
+    if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+      return false;
+    }
+    if (!Check(mapped.RowPitch != 0, "Map returned RowPitch")) {
+      return false;
+    }
+
+    const uint32_t row_bytes = blocks_w * c.block_bytes;
+    const uint32_t row_pitch = mapped.RowPitch;
+    const uint32_t depth_pitch = mapped.DepthPitch;
+    if (!Check(row_pitch >= row_bytes, "Map RowPitch >= tight BC row bytes")) {
+      return false;
+    }
+    if (!Check(depth_pitch == row_pitch * blocks_h, "Map DepthPitch matches BC block rows")) {
+      return false;
+    }
+
+    std::vector<uint8_t> expected(static_cast<size_t>(depth_pitch), 0);
+    auto* src_bytes = static_cast<uint8_t*>(mapped.pData);
+    for (uint32_t y = 0; y < blocks_h; y++) {
+      for (uint32_t x = 0; x < row_bytes; x++) {
+        const uint8_t v = static_cast<uint8_t>((y + 1u) * 19u + x);
+        src_bytes[static_cast<size_t>(y) * row_pitch + x] = v;
+        expected[static_cast<size_t>(y) * row_pitch + x] = v;
+      }
+      // Leave padding bytes untouched (they are initially zero); expected remains zero.
+    }
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, src.hResource, /*subresource=*/0);
+
+    dev.device_funcs.pfnCopyResource(dev.hDevice, dst.hResource, src.hResource);
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE readback = {};
+    hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                dst.hResource,
+                                                /*subresource=*/0,
+                                                AEROGPU_DDI_MAP_READ,
+                                                /*map_flags=*/0,
+                                                &readback);
+    if (!Check(hr == S_OK, "StagingResourceMap(READ) dst bc tex2d")) {
+      return false;
+    }
+    if (!Check(readback.pData != nullptr, "Map(READ) returned non-null pData")) {
+      return false;
+    }
+    if (!Check(readback.RowPitch == row_pitch, "dst RowPitch matches src RowPitch")) {
+      return false;
+    }
+    if (!Check(readback.DepthPitch == depth_pitch, "dst DepthPitch matches src DepthPitch")) {
+      return false;
+    }
+    if (!Check(std::memcmp(readback.pData, expected.data(), expected.size()) == 0, "CopyResource bc tex2d bytes")) {
+      return false;
+    }
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, dst.hResource, /*subresource=*/0);
+
+    if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+      return false;
+    }
+    const uint8_t* stream = dev.harness.last_stream.data();
+    const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+    if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D) == 1, "COPY_TEXTURE2D emitted")) {
+      return false;
+    }
+    CmdLoc copy_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!Check(copy_loc.hdr != nullptr, "COPY_TEXTURE2D location")) {
+      return false;
+    }
+    const auto* copy_cmd = reinterpret_cast<const aerogpu_cmd_copy_texture2d*>(stream + copy_loc.offset);
+    if (!Check((copy_cmd->flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0, "COPY_TEXTURE2D has WRITEBACK_DST flag")) {
+      return false;
+    }
+
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+#endif
 }
 
 bool TestHostOwnedUpdateSubresourceUPBufferUploads() {
@@ -4827,8 +5115,10 @@ int main() {
   ok &= TestSubmitAllocListTracksBoundShaderResource();
   ok &= TestHostOwnedCopyResourceBufferReadback();
   ok &= TestHostOwnedCopyResourceTextureReadback();
+  ok &= TestHostOwnedCopyResourceBcTextureReadback();
   ok &= TestGuestBackedCopyResourceBufferReadback();
   ok &= TestGuestBackedCopyResourceTextureReadback();
+  ok &= TestGuestBackedCopyResourceBcTextureReadback();
   ok &= TestHostOwnedUpdateSubresourceUPBufferUploads();
   ok &= TestGuestBackedUpdateSubresourceUPBufferDirtyRange();
   ok &= TestHostOwnedUpdateSubresourceUPTextureUploads();
