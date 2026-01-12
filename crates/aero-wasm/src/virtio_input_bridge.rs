@@ -182,7 +182,7 @@ impl VirtioInputPciDeviceCore {
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::*;
-    use aero_virtio::memory::{GuestMemoryError, GuestMemory as VirtioGuestMemory};
+    use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError};
     use wasm_bindgen::prelude::*;
 
     fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -205,8 +205,10 @@ mod wasm {
             if guest_base == 0 {
                 return Err(js_error("guestBase must be non-zero"));
             }
+ 
             let mem_len = wasm_memory_byte_len();
-            if u64::from(guest_base) >= mem_len {
+            let guest_base_u64 = u64::from(guest_base);
+            if guest_base_u64 >= mem_len {
                 return Err(js_error(format!(
                     "Guest RAM mapping out of bounds: guest_base=0x{guest_base:x} wasm_mem=0x{mem_len:x}"
                 )));
@@ -215,17 +217,20 @@ mod wasm {
             // Match other WASM bridges (e.g. UHCI/E1000): treat `guest_size=0` as "use the
             // remainder of linear memory".
             let guest_size_u64 = if guest_size == 0 {
-                mem_len.saturating_sub(u64::from(guest_base))
+                mem_len - guest_base_u64
             } else {
                 u64::from(guest_size)
             };
 
-            let end = u64::from(guest_base).saturating_add(guest_size_u64);
+            let end = guest_base_u64
+                .checked_add(guest_size_u64)
+                .ok_or_else(|| js_error("guestBase + guestSize overflow"))?;
             if end > mem_len {
                 return Err(js_error(format!(
                     "Guest RAM mapping out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} end=0x{end:x} wasm_mem=0x{mem_len:x}"
                 )));
             }
+
             Ok(Self {
                 guest_base,
                 guest_size: guest_size_u64,
@@ -299,6 +304,9 @@ mod wasm {
         ///
         /// `guest_base` and `guest_size` come from the shared guest RAM layout contract
         /// (`web/src/runtime/shared_layout.ts`).
+        ///
+        /// When `guest_size == 0`, the device treats the remainder of wasm linear memory as guest
+        /// RAM (mirrors `UhciControllerBridge`).
         #[wasm_bindgen(constructor)]
         pub fn new(guest_base: u32, guest_size: u32, kind: String) -> Result<Self, JsValue> {
             let kind_enum = match kind.as_str() {
@@ -306,7 +314,7 @@ mod wasm {
                 "mouse" => VirtioInputDeviceKind::Mouse,
                 _ => {
                     return Err(js_error(
-                        r#"Invalid virtio-input kind (expected "keyboard" or "mouse")"#,
+                        r#"Invalid virtio-input kind (expected \"keyboard\" or \"mouse\")"#,
                     ));
                 }
             };
@@ -325,6 +333,16 @@ mod wasm {
         pub fn mmio_write(&mut self, offset: u32, size: u8, value: u32) {
             self.inner
                 .mmio_write(u64::from(offset), size, value, &mut self.mem);
+        }
+
+        /// Read alias retained for older call sites.
+        pub fn bar0_read(&mut self, offset: u32, size: u8) -> u32 {
+            self.mmio_read(offset, size)
+        }
+
+        /// Write alias retained for older call sites.
+        pub fn bar0_write(&mut self, offset: u32, size: u8, value: u32) {
+            self.mmio_write(offset, size, value)
         }
 
         /// Process pending queue work (device-driven paths, completed buffers, interrupts).
@@ -355,6 +373,11 @@ mod wasm {
             self.inner.inject_rel(dx, dy, &mut self.mem);
         }
 
+        /// Alias for `inject_rel`.
+        pub fn inject_rel_move(&mut self, dx: i32, dy: i32) {
+            self.inject_rel(dx, dy)
+        }
+
         /// Inject a mouse button event (mouse devices only).
         pub fn inject_button(&mut self, btn: u32, pressed: bool) {
             let Ok(code) = u16::try_from(btn) else {
@@ -368,7 +391,6 @@ mod wasm {
             self.inner.inject_wheel(delta, &mut self.mem);
         }
     }
-
 }
 
 #[cfg(target_arch = "wasm32")]
