@@ -58,20 +58,21 @@ export function installAeroGlobal(): void {
       throw new Error('Guest CPU benchmark: options object is required (expected "variant" and "mode").');
     }
     const result = await runGuestCpuBench(opts as GuestCpuBenchOpts);
+    const typed = result as GuestCpuBenchRun;
     const exported: GuestCpuBenchPerfExport = {
-      iters_per_run: result.iters_per_run,
-      warmup_runs: result.warmup_runs,
-      measured_runs: result.measured_runs,
+      iters_per_run: typed.iters_per_run,
+      warmup_runs: typed.warmup_runs,
+      measured_runs: typed.measured_runs,
       results: [
         {
-          variant: result.variant,
-          mode: result.mode,
-          mips_mean: result.mips_mean,
-          mips_stddev: result.mips_stddev,
-          mips_min: result.mips_min,
-          mips_max: result.mips_max,
-          expected_checksum: result.expected_checksum,
-          observed_checksum: result.observed_checksum,
+          variant: typed.variant,
+          mode: typed.mode,
+          mips_mean: typed.mips_mean,
+          mips_stddev: typed.mips_stddev,
+          mips_min: typed.mips_min,
+          mips_max: typed.mips_max,
+          expected_checksum: typed.expected_checksum,
+          observed_checksum: typed.observed_checksum,
         },
       ],
     };

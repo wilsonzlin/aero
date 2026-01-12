@@ -680,8 +680,8 @@ export interface WasmApi {
      * Used by the browser CPU worker runtime and the root Vite harness JIT smoke test
      * (`src/workers/cpu-worker.ts`).
      *
-     * Optional while older WASM builds are still in circulation.
-     */
+    * Optional while older WASM builds are still in circulation.
+    */
     WasmTieredVm?: new (guestBase: number, guestSize: number) => {
         reset_real_mode(entryIp: number): void;
 
