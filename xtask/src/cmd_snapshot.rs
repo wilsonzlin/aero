@@ -19,7 +19,8 @@ Usage:
   cargo xtask snapshot validate [--deep] <path>
 
 Subcommands:
-  inspect    Print header, META fields, section table, and RAM encoding summary.
+  inspect    Print header, META fields, section table, and per-section summaries
+            (CPU/MMU/DEVICES/CPUS/DISKS/RAM when present).
   validate   Structural validation without decompressing RAM.
             Use --deep to fully restore/decompress into a dummy target (small files only).
 "
