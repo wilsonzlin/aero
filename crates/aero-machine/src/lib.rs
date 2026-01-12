@@ -3897,7 +3897,9 @@ mod tests {
         };
 
         let mut src = Machine::new(cfg.clone()).unwrap();
-        src.cpu.pending.inhibit_interrupts_for_one_instruction();
+        // Use a non-standard value (>1) to ensure snapshot/restore preserves the raw counter rather
+        // than clamping it to the Tier-0 current "0/1 only" semantics.
+        src.cpu.pending.set_interrupt_inhibit(7);
         src.cpu.pending.inject_external_interrupt(0x20);
         src.cpu.pending.inject_external_interrupt(0x21);
         let snap = src.take_snapshot_full().unwrap();
@@ -3909,7 +3911,7 @@ mod tests {
         restored.restore_snapshot_bytes(&snap).unwrap();
 
         assert!(!restored.cpu.pending.has_pending_event());
-        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 1);
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 7);
         assert_eq!(
             restored
                 .cpu
