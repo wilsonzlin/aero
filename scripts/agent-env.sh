@@ -36,12 +36,17 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
   *)
     custom="$AERO_ISOLATE_CARGO_HOME"
     # Expand the common `~/` shorthand (tilde is not expanded inside variables).
-    if [[ "$custom" == "~"* ]]; then
+    #
+    # Only support `~` and `~/...` here; other forms like `~user/...` are shell-specific and would
+    # require `eval`/`getent`-style expansion (which we intentionally avoid in an agent script).
+    if [[ "$custom" == "~" || "$custom" == "~/"* ]]; then
       if [[ -z "${HOME:-}" ]]; then
         echo "warning: cannot expand '~' in AERO_ISOLATE_CARGO_HOME because HOME is unset; using literal path: $custom" >&2
       else
         custom="${custom/#\~/$HOME}"
       fi
+    elif [[ "$custom" == "~"* ]]; then
+      echo "warning: AERO_ISOLATE_CARGO_HOME only supports '~' or '~/' expansion; using literal path: $custom" >&2
     fi
     # Treat non-absolute paths as relative to the repo root so the behavior is stable
     # even when sourcing from a different working directory.

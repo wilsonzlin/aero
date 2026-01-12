@@ -84,6 +84,33 @@ test("agent-env: AERO_ISOLATE_CARGO_HOME expands ~ using HOME", { skip: process.
   }
 });
 
+test("agent-env: AERO_ISOLATE_CARGO_HOME only expands ~ or ~/ (not ~user)", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-agent-env-home-user-"));
+  try {
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_HOME"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        // `~user` expansion is intentionally not supported; treat it as a literal path.
+        AERO_ISOLATE_CARGO_HOME: "~otheruser/my-cargo-home",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, path.join(repoRoot, "~otheruser/my-cargo-home"));
+    assert.ok(fs.existsSync(stdout), `expected literal cargo home directory to exist: ${stdout}`);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: sets AERO_ALLOW_UNSUPPORTED_NODE when Node major differs from .nvmrc", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
