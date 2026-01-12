@@ -373,6 +373,20 @@ fn handle_int13(
             cpu.rflags |= FLAG_CF;
             cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
         }
+        0x05 => {
+            // Format track (CHS).
+            //
+            // Like other write operations, formatting is not supported with the current read-only
+            // [`BlockDevice`] implementation.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            bios.last_int13_status = 0x03; // write protected
+            cpu.rflags |= FLAG_CF;
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
+        }
         0x04 => {
             // Verify sectors (CHS).
             //
@@ -449,6 +463,33 @@ fn handle_int13(
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
+        }
+        0x0C => {
+            // Seek (CHS).
+            //
+            // Real hardware performs a mechanical seek; we model disk I/O synchronously so this is
+            // a validation/no-op path.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            let cl = (cpu.gpr[gpr::RCX] & 0xFF) as u8;
+            let ch = ((cpu.gpr[gpr::RCX] >> 8) & 0xFF) as u8;
+            let dh = ((cpu.gpr[gpr::RDX] >> 8) & 0xFF) as u8;
+
+            let cylinder = ((ch as u16) | (((cl as u16) & 0xC0) << 2)) as u32;
+            let head = dh as u32;
+
+            let (cylinders, heads, _) = geometry_for_drive(drive, disk.size_in_sectors());
+            if head >= u32::from(heads) || cylinder >= u32::from(cylinders) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
         }
         0x10 => {
             // Check drive ready.
@@ -1394,6 +1435,64 @@ mod tests {
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
+    }
+
+    #[test]
+    fn int13_format_track_reports_write_protected() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0500; // AH=05h format track
+        cpu.gpr[gpr::RCX] = 0x0001; // CH=0, CL=1
+        cpu.gpr[gpr::RDX] = 0x0000; // DH=0, DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
+    }
+
+    #[test]
+    fn int13_seek_reports_success_for_valid_chs() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0C00; // AH=0Ch seek
+        cpu.gpr[gpr::RCX] = 0x0000; // CH=0, CL=0 (cylinder 0)
+        cpu.gpr[gpr::RDX] = 0x0100; // DH=1, DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int13_seek_reports_error_for_invalid_cylinder() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0C00; // AH=0Ch seek
+        // Cylinder 80 (out of range for 1.44MiB floppy: cylinders are 0..=79).
+        cpu.gpr[gpr::RCX] = 0x5000; // CH=0x50, CL=0
+        cpu.gpr[gpr::RDX] = 0x0000; // DH=0, DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
     }
 
     #[test]
