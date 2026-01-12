@@ -169,12 +169,14 @@ The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state*
 
 **Snapshot layout constraint:** `aero_snapshot` rejects duplicate `(DeviceId, version, flags)` tuples in `DEVICES` (see above). Since `DeviceState.version/flags` mirror `aero-io-snapshot` `(major, minor)`, the PCI core must be stored as a **single** `DeviceId::PCI` entry.
 
-That `DeviceId::PCI` entry should contain an `aero-io-snapshot` blob with inner TLVs (nested io-snapshots) for:
+That `DeviceId::PCI` entry should contain an `aero-io-snapshot` blob produced by the PCI core wrapper
+(`aero_devices::pci::PciCoreSnapshot`, inner `DEVICE_ID = PCIC`). The wrapper nests the following
+sub-snapshots as TLV fields (forward-compatible by skipping unknown tags):
 
-- `PCPT` — `PciConfigPorts`: wraps the config mechanism state and per-function config spaces:
+- tag `1`: `PCPT` — `PciConfigPorts`: wraps the config mechanism state and per-function config spaces:
   - `PCF1` — `PciConfigMechanism1` 0xCF8 address latch
   - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
-- `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
+- tag `2`: `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
 
 Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the platform interrupt controller complex** to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
 
