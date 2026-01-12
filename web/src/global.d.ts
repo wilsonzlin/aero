@@ -65,14 +65,5 @@ declare global {
      */
     __aero_mmio_read?: (addr: bigint, size: number) => number;
     __aero_mmio_write?: (addr: bigint, size: number, value: number) => void;
-
-    /**
-     * Optional Tier-1 JIT commit-status flag.
-     *
-     * Newer JIT hosts report commit status via the in-memory `commit_flag` slot. Older/alternate
-     * hosts may instead set this global to `false` to indicate the last Tier-1 block did not
-     * commit (e.g. it was stubbed or rolled back).
-     */
-    __aero_jit_last_committed?: boolean;
   }
 }
