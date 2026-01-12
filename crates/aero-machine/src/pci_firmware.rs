@@ -298,6 +298,12 @@ mod tests {
             .unwrap()
             .interrupt_line();
         assert_eq!(line, expected);
+        let pin = pci_ports
+            .bus_mut()
+            .device_config_mut(bdf)
+            .unwrap()
+            .interrupt_pin();
+        assert_eq!(pin, PciInterruptPin::IntA.to_config_u8());
     }
 
     #[test]
@@ -332,5 +338,7 @@ mod tests {
 
         let line = pci_bus.device_config_mut(bdf).unwrap().interrupt_line();
         assert_eq!(line, expected);
+        let pin = pci_bus.device_config_mut(bdf).unwrap().interrupt_pin();
+        assert_eq!(pin, PciInterruptPin::IntA.to_config_u8());
     }
 }
