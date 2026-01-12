@@ -4159,6 +4159,43 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
+    fn create_texture2d_bc_falls_back_for_tiny_dimensions_even_if_bc_enabled() {
+        pollster::block_on(async {
+            let Some((device, queue)) =
+                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
+            else {
+                // Adapter/device does not support BC compression; nothing to validate here.
+                return;
+            };
+
+            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+            // wgpu validation rejects creating BC textures unless the base mip is block-aligned
+            // (4x4), even when the base mip is smaller than a full block (e.g. 1x1 BC1).
+            exec.exec_create_texture2d(
+                CreateTexture2dArgs {
+                    texture_handle: 1,
+                    usage_flags: cmd::AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: pci::AerogpuFormat::BC1RgbaUnorm as u32,
+                    width: 1,
+                    height: 1,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes: 0,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+                None,
+            )
+            .expect("CREATE_TEXTURE2D must succeed");
+
+            let tex = exec.textures.get(&1).expect("texture must exist");
+            assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn create_texture2d_bc_falls_back_when_intermediate_mip_is_not_block_aligned_even_if_bc_enabled(
     ) {
         pollster::block_on(async {
