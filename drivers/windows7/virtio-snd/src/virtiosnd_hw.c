@@ -410,9 +410,10 @@ static NTSTATUS VirtIoSndFindBar0Resource(_In_ ULONGLONG bar0Base,
                     continue;
                 }
 
-                UNREFERENCED_PARAMETER(transLenBytes);
-
                 if (rawLenBytes == 0) {
+                    return STATUS_DEVICE_CONFIGURATION_ERROR;
+                }
+                if (transLenBytes == 0) {
                     return STATUS_DEVICE_CONFIGURATION_ERROR;
                 }
                 if (rawLenBytes > 0xFFFFFFFFull || transLenBytes > 0xFFFFFFFFull) {
@@ -421,6 +422,9 @@ static NTSTATUS VirtIoSndFindBar0Resource(_In_ ULONGLONG bar0Base,
 
                 if (transLenBytes < rawLenBytes) {
                     rawLenBytes = transLenBytes;
+                }
+                if (rawLenBytes == 0) {
+                    return STATUS_DEVICE_CONFIGURATION_ERROR;
                 }
 
                 len = (ULONG)rawLenBytes;
