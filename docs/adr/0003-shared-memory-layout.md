@@ -51,7 +51,7 @@ We reserve a fixed, page-aligned region at the bottom of wasm linear memory for 
     `guest_size ≤ PCI_MMIO_BASE` (currently `PCI_MMIO_BASE = 0xE0000000`, i.e. 3.5 GiB)
     - Note: on the canonical PC/Q35 platform, the reserved below-4 GiB PCI/MMIO hole is larger
       (`0xC000_0000..0x1_0000_0000`), with PCIe ECAM at `0xB000_0000..0xC000_0000`. The web layout
-      currently treats only the high sub-window as the “PCI MMIO aperture” for BAR assignment.
+      currently treats only the high sub-window as the “PCI MMIO BAR window” for BAR assignment.
 
 The guest RAM mapping is:
 
