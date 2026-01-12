@@ -29,7 +29,7 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 /// - guest TCP stream proxied via the current `/tcp` WebSocket contract (Aero Gateway;
 ///   `GET /tcp?v=1&host=<host>&port=<port>`; legacy `target=<host>:<port>` is also accepted)
 /// - guest UDP datagram proxied via host-side UDP relay (test harness)
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn net_e2e() {
     let tcp_echo = TcpEchoServer::spawn().await;
     let udp_echo = UdpEchoServer::spawn().await;
