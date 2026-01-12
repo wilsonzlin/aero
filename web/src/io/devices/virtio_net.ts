@@ -165,7 +165,10 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
       // BAR0 is 0x4000 bytes, so offset fits in a JS number.
       value = this.#bridge.mmio_read(Number(offset), size) >>> 0;
     } catch {
-      value = defaultReadValue(size);
+      // Virtio contract v1 expects undefined MMIO reads within BAR0 to return 0.
+      // Treat device-side errors the same way to avoid spurious all-ones reads
+      // confusing drivers.
+      value = 0;
     }
     this.#syncIrq();
     return maskToSize(value, size);
@@ -239,4 +242,3 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-
