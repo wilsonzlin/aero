@@ -388,6 +388,10 @@ static void test_isr_defensive_null_service_context(void)
     /* Without a service context, the ISR can't ACK (it doesn't know the register). */
     assert(isr_reg == VIRTIO_PCI_ISR_QUEUE_INTERRUPT);
 
+    assert(intx.SpuriousCount == 0);
+    assert(intx.IsrCount == 0);
+    assert(intx.DpcInFlight == 0);
+
     VirtioIntxDisconnect(&intx);
 }
 
@@ -799,6 +803,8 @@ static void test_bit_accumulation_single_dpc(void)
     assert(intx.PendingIsrStatus == (VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT));
     assert(intx.DpcInFlight == 1);
     assert(intx.Dpc.Inserted != FALSE);
+    assert(intx.IsrCount == 2);
+    assert(intx.SpuriousCount == 0);
 
     /* Only one DPC should be queued/runnable. */
     assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
@@ -844,6 +850,8 @@ static void test_evt_dpc_accumulation_single_dpc(void)
     assert(intx.PendingIsrStatus == (VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT));
     assert(intx.DpcInFlight == 1);
     assert(intx.Dpc.Inserted != FALSE);
+    assert(intx.IsrCount == 2);
+    assert(intx.SpuriousCount == 0);
 
     assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
     assert(WdkTestRunQueuedDpc(&intx.Dpc) == FALSE);
