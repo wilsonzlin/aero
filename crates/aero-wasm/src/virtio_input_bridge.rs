@@ -275,6 +275,9 @@ mod wasm {
 
         fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
             if len == 0 {
+                if addr > self.guest_size {
+                    return Err(GuestMemoryError::OutOfBounds { addr, len });
+                }
                 return Ok(&[]);
             }
             let linear = self.linear_offset(addr, len)?;
@@ -285,6 +288,9 @@ mod wasm {
 
         fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
             if len == 0 {
+                if addr > self.guest_size {
+                    return Err(GuestMemoryError::OutOfBounds { addr, len });
+                }
                 // Safety: a zero-length slice may be created from a dangling pointer.
                 return Ok(unsafe {
                     core::slice::from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
