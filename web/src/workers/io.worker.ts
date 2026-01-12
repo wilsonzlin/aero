@@ -2104,6 +2104,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         const message = err instanceof Error ? err.message : String(err);
         if (err instanceof WasmMemoryWiringError) {
           console.error(`[io.worker] ${message}`);
+          // Emit a log entry in addition to the fatal panic so callers inspecting the
+          // runtime event stream (without special-casing `panic`) still see a clear,
+          // actionable error explaining why the worker is terminating.
+          pushEventBlocking({ kind: "log", level: "error", message });
           fatal(err);
           return;
         }
