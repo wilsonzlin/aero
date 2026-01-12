@@ -1418,6 +1418,46 @@ fn vhd_dynamic_failed_bat_write_does_not_leave_cached_bat_entry() {
     let mut back = vec![0xAAu8; SECTOR_SIZE];
     disk.read_sectors(0, &mut back).unwrap();
     assert!(back.iter().all(|b| *b == 0));
+
+    // The failed allocation must not corrupt the VHD footer at EOF: the image should remain
+    // openable even after the error.
+    let backend = disk.into_backend();
+    let mut reopened = VhdDisk::open(backend).unwrap();
+    let mut back2 = vec![0xAAu8; SECTOR_SIZE];
+    reopened.read_sectors(0, &mut back2).unwrap();
+    assert!(back2.iter().all(|b| *b == 0));
+}
+
+#[test]
+fn vhd_dynamic_failed_footer_write_rolls_back_resize() {
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+    let initial_len = backend.len().unwrap();
+
+    // Compute where the new EOF footer would be written for the first allocated block.
+    let old_footer_offset = initial_len - (SECTOR_SIZE as u64);
+    let sectors_per_block = (block_size as u64) / SECTOR_SIZE as u64;
+    let bitmap_bytes = sectors_per_block.div_ceil(8);
+    let bitmap_size = bitmap_bytes.div_ceil(SECTOR_SIZE as u64) * SECTOR_SIZE as u64;
+    let new_footer_offset = old_footer_offset + bitmap_size + block_size as u64;
+
+    // Fail the 512-byte footer write to the new end-of-file.
+    let backend = FailOnWriteBackend::new(backend, new_footer_offset, SECTOR_SIZE);
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // The allocation should have rolled back the file resize so the original footer remains
+    // at EOF and the image is still openable.
+    let mut backend = disk.into_backend();
+    assert_eq!(backend.len().unwrap(), initial_len);
+
+    let mut reopened = VhdDisk::open(backend).unwrap();
+    let mut back = vec![0xAAu8; SECTOR_SIZE];
+    reopened.read_sectors(0, &mut back).unwrap();
+    assert!(back.iter().all(|b| *b == 0));
 }
 
 #[test]

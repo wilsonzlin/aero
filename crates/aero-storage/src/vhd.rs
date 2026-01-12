@@ -581,10 +581,21 @@ impl<B: StorageBackend> VhdDisk<B> {
 
         self.backend.set_len(new_len)?;
 
-        // Initialize the per-block bitmap. The data area can remain uninitialized because
-        // reads for sectors with bitmap=0 must return zeros.
+        // For dynamic VHDs, the footer must always exist at the end of the file. We are about to
+        // overwrite the old footer (at `old_footer_offset`) with the new block's bitmap, so write
+        // the footer to its new location *first*. If this write fails, roll back the resize so
+        // the original footer remains at EOF.
+        self.footer.rewrite_checksum();
+        if let Err(e) = self.backend.write_at(new_footer_offset, &self.footer.raw) {
+            let _ = self.backend.set_len(file_len);
+            return Err(e);
+        }
+
+        // Initialize the per-block bitmap. The data area can remain uninitialized because reads
+        // for sectors with bitmap=0 must return zeros.
         write_zeroes(&mut self.backend, old_footer_offset, bitmap_size)?;
 
+        // Update the BAT entry last: this is what makes the new block reachable.
         let block_sector: u32 = (old_footer_offset / SECTOR_SIZE as u64)
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd block offset"))?;
@@ -595,11 +606,6 @@ impl<B: StorageBackend> VhdDisk<B> {
         self.backend
             .write_at(bat_entry_offset, &block_sector.to_be_bytes())?;
         self.bat[block_index] = block_sector;
-
-        // The dynamic disk footer must exist at both offset 0 and the end of the file.
-        self.footer.rewrite_checksum();
-        self.backend.write_at(0, &self.footer.raw)?;
-        self.backend.write_at(new_footer_offset, &self.footer.raw)?;
 
         let bitmap_size_usize: usize = bitmap_size
             .try_into()
