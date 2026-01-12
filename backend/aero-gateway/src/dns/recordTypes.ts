@@ -22,7 +22,15 @@ export function parseDnsRecordType(value: string): number {
     throw new Error('DNS record type cannot be empty');
   }
 
-  if (/^\d+$/.test(trimmed)) {
+  let isNumeric = true;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const c = trimmed.charCodeAt(i);
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) {
+      isNumeric = false;
+      break;
+    }
+  }
+  if (isNumeric) {
     const parsed = Number.parseInt(trimmed, 10);
     if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 0xffff) {
       throw new Error(`Invalid DNS record type number: ${value}`);
