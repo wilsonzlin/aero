@@ -80,6 +80,20 @@ if [[ $# -lt 1 ]]; then
     exit 1
 fi
 
+# If the working tree is partially broken (e.g. missing tracked files), fail with a
+# clear, copy/paste remediation command.
+for rel in "with-timeout.sh" "run_limited.sh"; do
+    dep="${SCRIPT_DIR}/${rel}"
+    if [[ ! -f "${dep}" ]]; then
+        echo "[safe-run] error: missing required script: scripts/${rel}" >&2
+        echo "[safe-run] Your checkout may be incomplete. Try:" >&2
+        echo "  git checkout -- scripts" >&2
+        echo "  # or reset the whole working tree:" >&2
+        echo "  git checkout -- ." >&2
+        exit 1
+    fi
+done
+
 echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2

@@ -231,7 +231,8 @@ for rel in \
   "tools/packaging/aero_packager/testdata/drivers-aero-virtio/x86/aero_virtio_net/aero_virtio_net.sys"
 do
   path="$REPO_ROOT/$rel"
-  if [[ ! -f "$path" ]]; then
+  # -s requires the file exist and be non-empty (a 0-byte fixture is almost always a broken checkout).
+  if [[ ! -s "$path" ]]; then
     MISSING_FIXTURES+=("$rel")
   fi
 done
