@@ -1909,6 +1909,26 @@ fn vhd_dynamic_rejects_truncated_bat_when_max_table_entries_exceeds_file() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_bat_too_small_when_max_table_entries_is_insufficient() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Reduce max_table_entries below the required number of blocks for the advertised virtual size.
+    // This should be rejected before any BAT reads.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let mut dyn_header = [0u8; 1024];
+    backend.read_at(dyn_header_offset, &mut dyn_header).unwrap();
+    write_be_u32(&mut dyn_header, 28, 3); // required_entries is 4 for 64KiB/16KiB
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
+    backend.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("vhd bat too small")));
+}
+
+#[test]
 fn vhd_dynamic_rejects_bat_overlapping_dynamic_header() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;
