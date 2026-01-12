@@ -1,5 +1,9 @@
 # 19 - IndexedDB storage story (async vs sync)
 
+See also:
+
+- `docs/20-storage-trait-consolidation.md` (repo-wide disk/backend trait inventory + canonical trait guidance)
+
 ## Context / problem statement
 
 In this repo there are **two different “storage stacks”**:
@@ -213,4 +217,3 @@ reintroduce an impossible fallback):
    - Likely targets:
      - `crates/aero-devices-storage/tests/*` (controller integration tests)
      - Any future wasm boot harness once the Rust controller is wired into the web runtime.
-

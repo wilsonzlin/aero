@@ -8,6 +8,8 @@ pub const SECTOR_SIZE: usize = 512;
 /// Implementations are byte-addressed (`read_at` / `write_at`) for easy composition with
 /// block caches and sparse formats, but the emulator-facing API is *sector-based* via
 /// `read_sectors` / `write_sectors`.
+///
+/// See `docs/20-storage-trait-consolidation.md` for the repo-wide trait consolidation plan.
 pub trait VirtualDisk {
     /// Disk capacity in bytes.
     fn capacity_bytes(&self) -> u64;

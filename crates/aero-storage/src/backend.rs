@@ -26,6 +26,8 @@ use crate::{DiskError, Result};
 ///
 /// This trait also allows the pure Rust disk image formats to be unit-tested without any
 /// browser APIs.
+///
+/// See `docs/20-storage-trait-consolidation.md` for the repo-wide trait consolidation plan.
 pub trait StorageBackend {
     /// Current length in bytes.
     fn len(&mut self) -> Result<u64>;

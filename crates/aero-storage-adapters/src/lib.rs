@@ -10,6 +10,9 @@
 //! traits (Rust orphan rules), but using a shared wrapper type avoids duplicating the
 //! underlying disk abstraction.
 //!
+//! See `docs/20-storage-trait-consolidation.md` for the repo-wide storage trait consolidation plan
+//! and guidance on where adapter types vs trait impls should live.
+//!
 //! ## Usage (examples)
 //!
 //! Wrap an [`aero_storage::VirtualDisk`] for use with the NVMe device model:
