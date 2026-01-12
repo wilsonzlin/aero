@@ -7,6 +7,19 @@ const THREADED_WASM_BINARY = fileURLToPath(
 );
 const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
 
+if (process.env.CI && !HAS_THREADED_WASM_BINARY) {
+  throw new Error(
+    [
+      "Threaded WASM package missing in CI.",
+      "",
+      `Expected: ${THREADED_WASM_BINARY}`,
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n"),
+  );
+}
+
 async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }

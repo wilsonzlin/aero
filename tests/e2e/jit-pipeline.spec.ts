@@ -17,6 +17,21 @@ const HAS_THREADED_AERO_WASM_BINARY =
   (existsSync(THREADED_AERO_WASM_BINARY_RELEASE) && existsSync(THREADED_AERO_WASM_JS_RELEASE)) ||
   (existsSync(THREADED_AERO_WASM_BINARY_DEV) && existsSync(THREADED_AERO_WASM_JS_DEV));
 
+if (process.env.CI && !HAS_THREADED_AERO_WASM_BINARY) {
+  throw new Error(
+    [
+      'Threaded aero-wasm package missing in CI.',
+      '',
+      'Build it with (from the repo root):',
+      '  npm -w web run wasm:build',
+      '',
+      'Expected one of:',
+      `- ${THREADED_AERO_WASM_BINARY_RELEASE} (+ ${THREADED_AERO_WASM_JS_RELEASE})`,
+      `- ${THREADED_AERO_WASM_BINARY_DEV} (+ ${THREADED_AERO_WASM_JS_DEV})`,
+    ].join('\n'),
+  );
+}
+
 const JIT_WASM_BINARY_RELEASE = fileURLToPath(
   new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url),
 );
