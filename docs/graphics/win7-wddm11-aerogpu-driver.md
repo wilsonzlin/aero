@@ -97,14 +97,15 @@ For a minimal D3D10/D3D11 UMD bring-up checklist (DDI entrypoints, FL10_0 target
 - `docs/graphics/win7-d3d11ddi-function-tables.md` (D3D11 `d3d11umddi.h` function-table checklist: REQUIRED vs stubbable for a crash-free FL10_0 skeleton)
   
 ### 2.3 INF + packaging
- 
- We ship a standard display driver package:
- 
- - `aerogpu.inf` — device installation + registry configuration
- - `aerogpu.cat` — signed catalog
+  
+ We ship a standard display driver package (D3D9-only `aerogpu.inf`, and an optional DX11-capable variant `aerogpu_dx11.inf`):
+  
+ - `aerogpu.inf` / `aerogpu_dx11.inf` — device installation + registry configuration
+ - `aerogpu.cat` / `aerogpu_dx11.cat` — signed catalog
  - `aerogpu.sys` — KMD
  - `aerogpu_d3d9_x64.dll` / `aerogpu_d3d9.dll` — D3D9 UMDs (x64 + WOW64/x86)
-  
+ - `aerogpu_d3d10_x64.dll` / `aerogpu_d3d10.dll` — D3D10/11 UMDs (x64 + WOW64/x86; required only for `aerogpu_dx11.inf`)
+   
  **INF essentials (Win7 WDDM):**
   
  - Device is class `Display` (`{4d36e968-e325-11ce-bfc1-08002be10318}`)
