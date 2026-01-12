@@ -220,7 +220,7 @@ Expected:
 
 ### 3.3 What `0xFFFF` means (and when it’s expected)
 
-`0xFFFF` is `VIRTIO_MSI_NO_VECTOR`.
+`0xFFFF` is `VIRTIO_PCI_MSI_NO_VECTOR` (“no vector assigned”).
 
 You should treat it as:
 

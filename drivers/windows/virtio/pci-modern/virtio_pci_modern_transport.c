@@ -1016,9 +1016,11 @@ NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT
 	read_vector = t->CommonCfg->msix_config;
 
 	/*
-	 * Virtio spec: devices return 0xFFFF when MSI-X vector assignment fails.
+	 * Virtio spec: devices return VIRTIO_PCI_MSI_NO_VECTOR when MSI-X vector
+	 * assignment fails.
 	 *
-	 * When disabling vectors (vector == NO_VECTOR), accept a 0xFFFF readback.
+	 * When disabling vectors (vector == VIRTIO_PCI_MSI_NO_VECTOR), accept a
+	 * VIRTIO_PCI_MSI_NO_VECTOR readback.
 	 */
 	if (vector == VIRTIO_PCI_MSI_NO_VECTOR) {
 		return (read_vector == VIRTIO_PCI_MSI_NO_VECTOR) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
