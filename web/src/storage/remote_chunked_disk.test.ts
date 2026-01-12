@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
+import { MAX_REMOTE_CHUNK_COUNT, RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
 import { remoteChunkedDeliveryType, RemoteCacheManager } from "./remote_cache_manager";
 
@@ -160,6 +160,78 @@ describe("RemoteChunkedDisk", () => {
   afterEach(async () => {
     if (closeServer) await closeServer();
     closeServer = null;
+  });
+
+  it("rejects manifests with too many chunks", async () => {
+    const chunkSize = 512;
+    const chunkCount = MAX_REMOTE_CHUNK_COUNT + 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: String(chunkCount - 1).length,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+      }),
+    ).rejects.toThrow(/chunkCount.*max/i);
+  });
+
+  it("rejects manifests with chunk sizes larger than 64MiB", async () => {
+    const chunkSize = 128 * 1024 * 1024;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+      }),
+    ).rejects.toThrow(/chunkSize.*max/i);
   });
 
   it("maps byte offsets to chunk indexes and serves data from cache on repeat reads", async () => {

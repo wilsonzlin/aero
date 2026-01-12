@@ -393,6 +393,18 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("rejects chunk sizes larger than 64MiB", async () => {
+    const chunkSize = 128 * 1024 * 1024;
+    await expect(
+      RemoteRangeDisk.open("http://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "too-big-chunk", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/chunkSize.*max/i);
+  });
+
   it("single read triggers exactly one Range fetch", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);

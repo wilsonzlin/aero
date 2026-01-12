@@ -12,6 +12,9 @@ import {
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
 import { RemoteCacheManager, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } from "./remote_cache_manager";
 
+// Keep in sync with the Rust snapshot bounds where sensible.
+const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
+
 export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
   // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
   // by the environment (same-origin session cookies, signed cookies, etc).
@@ -182,6 +185,9 @@ function isPowerOfTwo(n: number): boolean {
 function assertValidChunkSize(chunkSize: number): void {
   if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
     throw new Error(`invalid chunkSize=${chunkSize}`);
+  }
+  if (chunkSize > MAX_REMOTE_CHUNK_SIZE_BYTES) {
+    throw new Error(`chunkSize too large: max=${MAX_REMOTE_CHUNK_SIZE_BYTES} got=${chunkSize}`);
   }
   if (chunkSize % SECTOR_SIZE !== 0) {
     throw new Error(`chunkSize must be a multiple of ${SECTOR_SIZE}`);

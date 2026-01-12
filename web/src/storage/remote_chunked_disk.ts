@@ -12,6 +12,21 @@ import {
   type DiskAccessLease,
 } from "./disk_access_lease";
 
+/**
+ * Defensive bounds to avoid pathological allocations / fetch buffers when handling untrusted
+ * remote manifests.
+ *
+ * Keep in sync with the Rust snapshot bounds where sensible.
+ */
+export const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
+/**
+ * Upper bound on manifest chunk count to avoid allocating massive JS arrays.
+ *
+ * 500k chunks supports multi-terabyte images with typical chunk sizes while still preventing
+ * unbounded allocations on malicious inputs.
+ */
+export const MAX_REMOTE_CHUNK_COUNT = 500_000;
+
 export type ChunkedDiskManifestV1 = {
   schema: "aero.chunked-disk-image.v1";
   imageId?: string;
@@ -451,7 +466,13 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
   if (chunkSize % SECTOR_SIZE !== 0) {
     throw new Error(`chunkSize must be a multiple of ${SECTOR_SIZE}`);
   }
+  if (chunkSize > MAX_REMOTE_CHUNK_SIZE_BYTES) {
+    throw new Error(`chunkSize too large: max=${MAX_REMOTE_CHUNK_SIZE_BYTES} got=${chunkSize}`);
+  }
   if (chunkCount <= 0) throw new Error("chunkCount must be > 0");
+  if (chunkCount > MAX_REMOTE_CHUNK_COUNT) {
+    throw new Error(`chunkCount too large: max=${MAX_REMOTE_CHUNK_COUNT} got=${chunkCount}`);
+  }
   if (chunkIndexWidth <= 0) throw new Error("chunkIndexWidth must be > 0");
 
   const expectedChunkCount = Math.ceil(totalSize / chunkSize);
