@@ -179,8 +179,9 @@ fn snapshot_loads_legacy_device_id_header() {
 
     // Older snapshots used an accidental device id for the network stack blob. Ensure we can still
     // decode them.
+    const LEGACY_DEVICE_ID: [u8; 4] = [0x4e, 0x53, 0x54, 0x4b];
     let mut legacy = bytes.clone();
-    legacy[8..12].copy_from_slice(b"NSTK");
+    legacy[8..12].copy_from_slice(&LEGACY_DEVICE_ID);
 
     let mut restored = NetworkStack::new(cfg);
     restored
