@@ -129,6 +129,10 @@ impl PciDevice for HdaPciConfigDevice {
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 struct AhciPciConfigDevice {
@@ -156,6 +160,10 @@ impl PciDevice for AhciPciConfigDevice {
 
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
     }
 }
 
@@ -191,6 +199,10 @@ impl PciDevice for E1000PciConfigDevice {
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 struct VirtioBlkPciConfigDevice {
@@ -211,6 +223,10 @@ impl PciDevice for VirtioBlkPciConfigDevice {
 
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
     }
 }
 
@@ -240,6 +256,10 @@ impl PciDevice for NvmePciConfigDevice {
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 struct IdePciConfigDevice {
@@ -265,6 +285,10 @@ impl PciDevice for Piix3IsaPciConfigDevice {
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 impl IdePciConfigDevice {
@@ -288,6 +312,10 @@ impl PciDevice for IdePciConfigDevice {
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 struct UhciPciConfigDevice {
@@ -308,6 +336,10 @@ impl PciDevice for UhciPciConfigDevice {
 
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.config
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
     }
 }
 
@@ -1856,6 +1888,15 @@ impl PcPlatform {
     pub fn reset_pci(&mut self) {
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
+
+        // Re-populate `Interrupt Line`/`Interrupt Pin` config-space fields for devices that are
+        // wired through this platform's INTx router.
+        for src in &self.pci_intx_sources {
+            if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(src.bdf) {
+                self.pci_intx
+                    .configure_device_intx(src.bdf, Some(src.pin), cfg);
+            }
+        }
     }
 
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
@@ -2000,6 +2041,28 @@ impl PcPlatform {
 
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
+
+            // Re-populate `Interrupt Line`/`Interrupt Pin` config-space fields for devices that are
+            // wired through this platform's INTx router.
+            for src in &self.pci_intx_sources {
+                if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(src.bdf) {
+                    self.pci_intx
+                        .configure_device_intx(src.bdf, Some(src.pin), cfg);
+                }
+            }
+        }
+
+        // Reset selected runtime PCI device models that live outside the `PciBus` (which only owns
+        // guest-visible config space for this platform).
+        if let Some(ahci) = self.ahci.as_ref() {
+            ahci.borrow_mut().reset();
+        }
+        if let Some(uhci) = self.uhci.as_ref() {
+            uhci.borrow_mut().reset();
+        }
+        if let Some(e1000) = self.e1000.as_ref() {
+            // Equivalent to a guest write of CTRL.RST.
+            e1000.borrow_mut().mmio_write_u32_reg(0x0000, 1u32 << 26);
         }
 
         // Reset host-side tick accumulators.

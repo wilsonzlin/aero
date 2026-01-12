@@ -219,6 +219,17 @@ impl PciDevice for AhciPciDevice {
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        // Preserve BAR programming but disable decoding.
+        self.config.set_command(0);
+
+        // Reset the AHCI controller register state while preserving attached drives.
+        //
+        // This models a power-on (GHC.HR) reset which firmware/guests commonly use to get back to a
+        // known baseline.
+        self.controller.write_u32(0x04, 1);
+    }
 }
 
 impl MmioHandler for AhciPciDevice {
