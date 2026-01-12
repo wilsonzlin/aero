@@ -625,7 +625,14 @@ async function convertVhdToSparse(
   const expectedEntries = divCeil(logicalSize, dyn.blockSize);
   if (dyn.maxTableEntries < expectedEntries) throw new Error("VHD max_table_entries too small");
 
-  const bat = await VhdBat.read(src, dyn.tableOffset, dyn.maxTableEntries);
+  // Validate the on-disk BAT size based on max_table_entries. We only need to read entries required
+  // for the advertised disk size, but the metadata region must still be coherent and bounded.
+  const batBytesOnDisk = dyn.maxTableEntries * 4;
+  if (!Number.isSafeInteger(batBytesOnDisk) || batBytesOnDisk > VHD_MAX_BAT_BYTES) throw new Error("VHD BAT too large");
+
+  // Only read the entries required for the advertised virtual size. This avoids allocating
+  // memory proportional to max_table_entries when it is larger than needed.
+  const bat = await VhdBat.read(src, dyn.tableOffset, expectedEntries);
   const writer = new AeroSparseWriter(sync, logicalSize, dyn.blockSize);
   let crc = crc32Init();
 
@@ -641,7 +648,7 @@ async function convertVhdToSparse(
 
   // Pre-validate BAT entries to avoid reading metadata as block payload when the image is corrupt.
   const footerOffset = src.size - 512;
-  const batBytes = dyn.maxTableEntries * 4;
+  const batBytes = batBytesOnDisk;
   const metadataRanges: Array<{ start: number; end: number }> = [
     { start: 0, end: 512 }, // footer copy
     { start: footer.dataOffset, end: footer.dataOffset + 1024 }, // dynamic header
