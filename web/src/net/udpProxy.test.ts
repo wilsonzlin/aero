@@ -101,6 +101,27 @@ describe("WebSocketUdpProxyClient", () => {
     }
   });
 
+  it("keeps wss:// scheme when provided explicitly", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalWebSocket = g.WebSocket;
+    g.WebSocket = FakeWebSocket;
+
+    try {
+      const client = new WebSocketUdpProxyClient("wss://example.com/base", () => {});
+      const connectPromise = client.connect();
+
+      expect(lastSocket).not.toBeNull();
+      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
+
+      lastSocket!.triggerOpen();
+      lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
+      await connectPromise;
+    } finally {
+      if (originalWebSocket === undefined) delete g.WebSocket;
+      else g.WebSocket = originalWebSocket;
+    }
+  });
+
   it("resolves same-origin /path base URLs against location.href when available", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const originalWebSocket = g.WebSocket;
