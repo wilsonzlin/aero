@@ -636,10 +636,13 @@ fn vhd_rejects_bad_footer_checksum_through_open_auto() {
 fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
     let mut storage = make_vhd_dynamic_empty(1024 * 1024, 64 * 1024);
 
-    // Clobber the checksum field (offset 36) without changing the rest of the header.
+    // Corrupt only the checksum field (offset 36) without changing the rest of the header.
     let dyn_header_offset = 512u64;
+    let mut checksum = [0u8; 4];
+    storage.read_at(dyn_header_offset + 36, &mut checksum).unwrap();
+    let bad = u32::from_be_bytes(checksum) ^ 1;
     storage
-        .write_at(dyn_header_offset + 36, &0u32.to_be_bytes())
+        .write_at(dyn_header_offset + 36, &bad.to_be_bytes())
         .unwrap();
 
     let res = emulator::io::storage::formats::VhdDisk::open(storage);
