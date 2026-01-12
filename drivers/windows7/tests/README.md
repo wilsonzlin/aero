@@ -32,8 +32,10 @@ drivers/windows7/tests/
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Emits a `virtio-input-events` marker that can be used to validate **end-to-end input report delivery** when the host
-  harness injects deterministic keyboard/mouse events via QMP (`input-send-event`). This path reads HID input reports
-  directly from the virtio-input HID interface so it does not depend on UI focus.
+  harness injects deterministic keyboard/mouse events via QMP (`input-send-event`).
+  - This path reads HID input reports directly from the virtio-input HID interface so it does not depend on UI focus.
+  - By default the guest selftest reports `virtio-input-events|SKIP|flag_not_set`; provision the guest to run the
+    selftest with `--test-input-events` to enable it.
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
@@ -52,8 +54,11 @@ The selftest emits machine-parseable markers:
 ```
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
- # (virtio-input-events is exercised only when the host harness injects input via QMP):
- AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+
+ # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
  # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
@@ -100,8 +105,9 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
 - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
   virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
-  - When `-WithVirtioInputEvents` / `--with-virtio-input-events` is enabled, the harness also injects a small keyboard +
-    mouse sequence via QMP (`input-send-event`) and requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+  - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
+    is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
     - The harness also emits a host marker for the injection step itself:
       `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|...`
 - Exits with `0` on PASS, non-zero on FAIL/timeout.

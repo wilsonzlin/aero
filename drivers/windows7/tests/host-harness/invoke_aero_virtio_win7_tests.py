@@ -35,14 +35,15 @@ It:
 - optionally enables a QMP monitor to:
   - request a graceful QEMU shutdown so side-effectful devices (notably the `wav` audiodev backend) can flush/finalize
     their output files before verification
-  - inject deterministic virtio-input events via `input-send-event` (when `--with-virtio-input-events` is enabled)
+  - inject deterministic virtio-input events via `input-send-event` (when `--with-input-events` /
+    `--with-virtio-input-events` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
      virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), and virtio-net
      so older selftest binaries cannot accidentally pass
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
-  - when --with-virtio-input-events is enabled, virtio-input-events must PASS (not FAIL/missing)
+  - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
 """
 
 from __future__ import annotations
