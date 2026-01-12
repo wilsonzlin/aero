@@ -1,10 +1,10 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
-use aero_devices::clock::ManualClock;
+use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::irq::IrqLine;
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_platform::io::PortIoDevice;
 
 #[derive(Clone)]
@@ -146,4 +146,70 @@ fn snapshot_encodes_pm_timer_ticks_and_fractional_remainder() {
 
     assert_eq!(ticks, expected_ticks & 0x00FF_FFFF);
     assert_eq!(remainder, expected_remainder);
+}
+
+#[derive(Clone)]
+struct CountingClock {
+    now_ns: Rc<Cell<u64>>,
+    calls: Rc<Cell<u32>>,
+    step_ns: u64,
+}
+
+impl CountingClock {
+    fn new(step_ns: u64) -> Self {
+        Self {
+            now_ns: Rc::new(Cell::new(0)),
+            calls: Rc::new(Cell::new(0)),
+            step_ns,
+        }
+    }
+
+    fn calls(&self) -> u32 {
+        self.calls.get()
+    }
+
+    fn reset_calls(&self) {
+        self.calls.set(0);
+    }
+}
+
+impl Clock for CountingClock {
+    fn now_ns(&self) -> u64 {
+        let v = self.now_ns.get();
+        self.calls.set(self.calls.get().wrapping_add(1));
+        self.now_ns.set(v.wrapping_add(self.step_ns));
+        v
+    }
+}
+
+#[test]
+fn snapshot_load_samples_clock_once_for_timer_restore() {
+    let cfg = AcpiPmConfig::default();
+    let clock = CountingClock::new(1_000_000_000);
+
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    clock.reset_calls();
+
+    // Normal snapshots: restore via elapsed_ns.
+    const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u64(TAG_PM_TIMER_ELAPSED_NS, 123);
+    pm.load_state(&w.finish()).unwrap();
+    assert_eq!(
+        clock.calls(),
+        1,
+        "ACPI PM load_state should sample Clock::now_ns once when re-anchoring the PM timer"
+    );
+
+    // Forward-compatible snapshots: restore via ticks-only fallback.
+    clock.reset_calls();
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, 0x00AB_CDEF);
+    pm.load_state(&w.finish()).unwrap();
+    assert_eq!(
+        clock.calls(),
+        1,
+        "ticks-only ACPI PM load_state should sample Clock::now_ns once"
+    );
 }

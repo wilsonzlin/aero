@@ -497,6 +497,11 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         // other snapshot consumers may restore into an already-running instance, and introducing a
         // spurious SCI deassert/reassert edge can create an extra interrupt in edge-triggered PIC
         // mode (and generally adds non-deterministic timing).
+        //
+        // Sample the clock once and reuse that value throughout restore so snapshot restore is
+        // deterministic even under unusual clock implementations (e.g. test clocks that advance on
+        // each `now_ns()` call).
+        let now = self.clock.now_ns();
         self.pm1_sts = 0;
         self.pm1_en = 0;
         self.pm1_cnt = if self.cfg.start_enabled {
@@ -510,7 +515,8 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         for b in &mut self.gpe0_en {
             *b = 0;
         }
-        self.reset_timer_base();
+        self.timer_base_ns = now;
+        self.timer_last_clock_ns = now;
 
         if let Some(v) = r.u16(TAG_PM1_STS)? {
             self.pm1_sts = v;
@@ -535,7 +541,6 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
             }
         }
 
-        let now = self.clock.now_ns();
         if let Some(elapsed) = r.u64(TAG_PM_TIMER_ELAPSED_NS)? {
             self.timer_base_ns = now.wrapping_sub(elapsed);
         } else if let Some(ticks) = r.u32(TAG_PM_TIMER_TICKS)? {
