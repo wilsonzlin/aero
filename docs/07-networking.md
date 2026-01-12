@@ -296,10 +296,17 @@ See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
 
 ## Snapshot/Restore (Save States)
 
-Network snapshots are split into two layers:
+Network snapshots are split into two layers, each stored as its own `DEVICES` entry in the VM snapshot:
 
-1. **NIC device model** (e1000/virtio-net): registers + DMA rings.
-2. **User-space network stack**: DHCP/NAT state and host-proxy connection bookkeeping.
+1. **NIC device model** (e.g. E1000): registers + DMA rings.
+2. **Network backend/stack**: DHCP/NAT state and host-proxy connection bookkeeping.
+
+Concrete mapping (canonical identifiers):
+
+| Layer | Outer `DeviceId` | Web/WASM `kind` string | What it covers |
+|---|---|---|---|
+| NIC (E1000) | `DeviceId::E1000` (`19`) | `net.e1000` | Guest-visible NIC state: registers, descriptor rings, pending RX/TX bookkeeping. |
+| Net stack/backend | `DeviceId::NET_STACK` (`20`) | `net.stack` | User-space stack / NAT / DHCP state + proxy bookkeeping. |
 
 ### What must be captured
 
@@ -319,12 +326,23 @@ Browser-hosted networking relies on WebSocket/WebRTC transports and a proxy serv
 - browser WebSocket objects cannot be serialized
 - server-side TCP sockets are independent of client snapshot state
 
-**Policy on restore:**
+**Policy on restore (expected behavior):**
 
 - **Drop**: immediately close all active proxy connections and let the guest reconnect.
 - **Reconnect**: preserve connection IDs/endpoints and attempt a best-effort reconnect; if reconnection fails, drop.
 
 For deterministic testing, prefer **Drop** (removes timing-dependent reconnection behavior).
+
+### L2 tunnel forwarder (Option C) pause/drain policy
+
+When using the production L2 tunnel path (ADR 0013), the browser runtime includes a dedicated network worker that forwards raw Ethernet frames between shared rings (`NET_TX`/`NET_RX`) and the tunnel transport (WebSocket/DataChannel).
+
+For a consistent snapshot:
+
+- The tunnel forwarder should be **paused/drained** during snapshot (stop reading/writing frames so the IO worker’s NIC state cannot race with in-flight tunnel activity).
+- On resume/restore, the forwarder should be **restarted** and establish a fresh tunnel connection.
+
+This is the same fundamental constraint as TCP proxy sockets: the transport itself is a host resource and must be treated as reset on restore.
 
 ## E1000 NIC Emulation
 

@@ -184,6 +184,32 @@ be captured/restored by the interrupt controller (PIC/APIC) device state. On res
 device must avoid emitting spurious IRQ pulses purely due to buffered output bytes (see
 [`docs/irq-semantics.md`](./irq-semantics.md)).
 
+#### Networking (`DeviceId::E1000`, `DeviceId::NET_STACK`)
+
+Networking snapshots in Aero are split into two `DEVICES` entries:
+
+1. **NIC device model state** (guest-visible hardware)
+2. **Network backend/stack state** (guest-visible “host-side” network behavior)
+
+Canonical identifiers (outer `DeviceId` + web/WASM `kind` string):
+
+| Layer | Outer `DeviceId` | Numeric id | `DeviceId::name()` | Recommended `kind` | Notes |
+|---|---|---:|---|---|---|
+| NIC (E1000) | `DeviceId::E1000` | `19` | `"E1000"` | `net.e1000` | Registers + descriptor ring state + pending frames. Payload is an `aero-io-snapshot` blob (inner `DEVICE_ID = E1K0`). |
+| Net stack/backend | `DeviceId::NET_STACK` | `20` | `"NET_STACK"` | `net.stack` | User-space network stack / NAT / DHCP / connection bookkeeping. Payload is an `aero-io-snapshot` blob. |
+
+Payload convention:
+
+- `DeviceState.data` stores the raw `aero-io-snapshot` TLV blob returned by `IoSnapshot::save_state()` (including the inner 16-byte `AERO` header).
+- `DeviceState.version` / `DeviceState.flags` mirror the **inner device** `SnapshotVersion (major, minor)` from the contained `aero-io-snapshot` header.
+
+Restore semantics (what is *not* bit-restorable):
+
+- **Active TCP proxy connections** (e.g. WebSocket `/tcp` or `/tcp-mux` streams) are host resources and cannot be snapshotted/restored bit-for-bit.
+- **L2 tunnel transports** (WebSocket `/l2` sessions, WebRTC DataChannels) are host resources and cannot be snapshotted/restored bit-for-bit.
+
+On restore, integrations should treat these host resources as reset: immediately drop/close any live proxy/tunnel connections and re-establish them (or leave them disconnected and let the guest reconnect) after the VM resumes.
+
 ### PCI core state (`aero-devices`)
 
 The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal
