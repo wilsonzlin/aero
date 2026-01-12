@@ -126,6 +126,12 @@ pub fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels
         return false;
     }
 
+    // wgpu/WebGPU validation currently requires the base mip dimensions to be block-aligned (4x4 for
+    // BC formats), even when the base mip is smaller than a full block (e.g. 1x1/2x2).
+    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
+        return false;
+    }
+
     for level in 0..mip_levels {
         let w = mip_extent(width, level);
         let h = mip_extent(height, level);
