@@ -1,3 +1,12 @@
+//! WASM-side bridge for exposing a guest-visible Intel HD Audio (HDA) controller.
+//!
+//! The browser I/O worker exposes this as a PCI function with an MMIO BAR; MMIO reads/writes are
+//! forwarded into this bridge which updates the Rust device model (`aero_audio::hda::HdaController`).
+//!
+//! The HDA controller performs DMA reads/writes (BDL, PCM buffers, position buffer, CORB/RIRB, ...)
+//! directly against guest RAM. In the browser runtime, guest physical address 0 maps to
+//! `guest_base` within the module's linear memory (see `guest_ram_layout`); this bridge uses the
+//! OOB-safe guest memory adapter (`HdaGuestMemory`) from `lib.rs` to provide that memory interface.
 #![cfg(target_arch = "wasm32")]
 
 use wasm_bindgen::prelude::*;
@@ -5,175 +14,259 @@ use wasm_bindgen::prelude::*;
 use js_sys::SharedArrayBuffer;
 
 use aero_audio::hda::HdaController;
-use aero_audio::mem::MemoryAccess;
+use aero_audio::sink::AudioSink;
+
 use aero_platform::audio::mic_bridge::MicBridge;
+use aero_platform::audio::worklet_bridge::WorkletBridge;
 
-fn js_error(message: &str) -> JsValue {
-    js_sys::Error::new(message).into()
+fn js_error(message: impl core::fmt::Display) -> JsValue {
+    js_sys::Error::new(&message.to_string()).into()
 }
 
-/// Contiguous guest-physical memory view backed by the module's linear memory.
-///
-/// This is similar to the `LinearGuestMemory` wrapper used by the UHCI runtime, but implements
-/// the `aero_audio::mem::MemoryAccess` trait used by the HDA controller model.
-#[derive(Clone, Copy)]
-struct LinearGuestMemory {
-    guest_base: u32,
-    guest_size: u32,
+fn wasm_memory_byte_len() -> u64 {
+    let pages = core::arch::wasm32::memory_size(0) as u64;
+    pages.saturating_mul(64 * 1024)
 }
 
-impl LinearGuestMemory {
-    fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        if guest_base == 0 {
-            return Err(js_error("guest_base must be non-zero"));
-        }
-        if guest_size == 0 {
-            return Err(js_error("guest_size must be non-zero"));
-        }
-
-        let pages = core::arch::wasm32::memory_size(0) as u64;
-        let mem_bytes = pages.saturating_mul(64 * 1024);
-
-        let end = guest_base as u64 + guest_size as u64;
-        if end > mem_bytes {
-            return Err(js_error(&format!(
-                "Guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_mem_bytes=0x{mem_bytes:x}"
-            )));
-        }
-
-        Ok(Self {
-            guest_base,
-            guest_size,
-        })
-    }
-
-    #[inline]
-    fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
-        let paddr_u32 = u32::try_from(paddr).ok()?;
-        if paddr_u32 >= self.guest_size {
-            return None;
-        }
-        let end = paddr_u32.checked_add(len as u32)?;
-        if end > self.guest_size {
-            return None;
-        }
-        self.guest_base.checked_add(paddr_u32)
+fn validate_mmio_size(size: u32) -> Option<usize> {
+    match size {
+        1 | 2 | 4 => Some(size as usize),
+        _ => None,
     }
 }
 
-impl MemoryAccess for LinearGuestMemory {
-    fn read_physical(&self, addr: u64, buf: &mut [u8]) {
-        let Some(linear) = self.translate(addr, buf.len()) else {
-            buf.fill(0);
+struct WorkletBridgeSink<'a> {
+    bridge: &'a WorkletBridge,
+    channel_count: u32,
+}
+
+impl<'a> AudioSink for WorkletBridgeSink<'a> {
+    fn push_interleaved_f32(&mut self, samples: &[f32]) {
+        if samples.is_empty() || self.channel_count == 0 {
             return;
-        };
-
-        // Safety: `translate` bounds-checks that `[linear, linear+len)` is within the module's
-        // linear memory and within the guest RAM region.
-        unsafe {
-            let src = core::slice::from_raw_parts(linear as *const u8, buf.len());
-            buf.copy_from_slice(src);
         }
-    }
-
-    fn write_physical(&mut self, addr: u64, buf: &[u8]) {
-        let Some(linear) = self.translate(addr, buf.len()) else {
-            return;
-        };
-
-        // Safety: `translate` bounds-checks that `[linear, linear+len)` is within the module's
-        // linear memory and within the guest RAM region.
-        unsafe {
-            let dst = core::slice::from_raw_parts_mut(linear as *mut u8, buf.len());
-            dst.copy_from_slice(buf);
-        }
+        let _ = self.bridge.write_f32_interleaved(samples);
     }
 }
 
-/// Minimal JS<->WASM bridge for the `aero_audio::hda::HdaController` device model.
+/// WASM export: reusable HDA controller model for the browser I/O worker.
 ///
-/// This is intended to be owned by the browser I/O worker:
-/// - JS implements the PCI config/BAR plumbing.
-/// - Rust implements the full HDA MMIO + DMA engine.
-///
-/// Microphone samples are pulled from a `SharedArrayBuffer` mic ring buffer produced by the
-/// browser audio graph (AudioWorklet or synthetic mic), using `aero_platform::audio::mic_bridge::MicBridge`.
+/// The controller reads/writes guest RAM directly from the module's linear memory (shared across
+/// workers in the threaded build) using `guest_base` and `guest_size` from the `guest_ram_layout`
+/// contract.
 #[wasm_bindgen]
 pub struct HdaControllerBridge {
     hda: HdaController,
-    mem: LinearGuestMemory,
-    mic: Option<MicBridge>,
+    mem: crate::HdaGuestMemory,
+
+    audio_ring: Option<WorkletBridge>,
+    mic_ring: Option<MicBridge>,
 }
 
 #[wasm_bindgen]
 impl HdaControllerBridge {
+    /// Create a new HDA controller bound to the provided guest RAM mapping.
+    ///
+    /// - `guest_base` is the byte offset inside wasm linear memory where guest physical address 0
+    ///   begins (see `guest_ram_layout`).
+    /// - `guest_size` is the guest RAM size in bytes. Pass `0` to use "the remainder of linear
+    ///   memory" as guest RAM (mirrors `WasmVm` and other device bridges).
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        let mem = LinearGuestMemory::new(guest_base, guest_size)?;
+        if guest_base == 0 {
+            return Err(js_error("guest_base must be non-zero"));
+        }
+
+        let mem_bytes = wasm_memory_byte_len();
+        let guest_size_u64 = if guest_size == 0 {
+            mem_bytes.saturating_sub(guest_base as u64)
+        } else {
+            guest_size as u64
+        };
+
+        let end = (guest_base as u64)
+            .checked_add(guest_size_u64)
+            .ok_or_else(|| js_error("guest_base + guest_size overflow"))?;
+        if end > mem_bytes {
+            return Err(js_error(format!(
+                "guest RAM out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} wasm_mem=0x{mem_bytes:x}"
+            )));
+        }
+
         Ok(Self {
             hda: HdaController::new(),
-            mem,
-            mic: None,
+            mem: crate::HdaGuestMemory {
+                guest_base,
+                guest_size: guest_size_u64,
+            },
+            audio_ring: None,
+            mic_ring: None,
         })
     }
 
-    /// Return whether the device's interrupt line should be asserted.
+    /// Read from the HDA MMIO region.
     ///
-    /// This is derived from guest-visible HDA INTCTL/INTSTS state.
-    pub fn irq_level(&self) -> bool {
-        self.hda.irq_level()
-    }
-
+    /// `size` must be 1, 2, or 4; invalid sizes return 0.
     pub fn mmio_read(&mut self, offset: u32, size: u32) -> u32 {
-        let size = size as usize;
-        if !matches!(size, 1 | 2 | 4) {
+        let Some(size) = validate_mmio_size(size) else {
             return 0;
-        }
+        };
         self.hda.mmio_read(offset as u64, size) as u32
     }
 
+    /// Write to the HDA MMIO region.
+    ///
+    /// `size` must be 1, 2, or 4; invalid sizes are ignored.
     pub fn mmio_write(&mut self, offset: u32, size: u32, value: u32) {
-        let size = size as usize;
-        if !matches!(size, 1 | 2 | 4) {
+        let Some(size) = validate_mmio_size(size) else {
+            return;
+        };
+        self.hda.mmio_write(offset as u64, size, value as u64);
+    }
+
+    /// Attach the audio output ring buffer (producer side; AudioWorklet is the consumer).
+    ///
+    /// `channel_count` must be 2 (stereo).
+    pub fn attach_audio_ring(
+        &mut self,
+        ring_sab: SharedArrayBuffer,
+        capacity_frames: u32,
+        channel_count: u32,
+    ) -> Result<(), JsValue> {
+        if capacity_frames == 0 {
+            return Err(js_error("capacityFrames must be non-zero"));
+        }
+        if channel_count != 2 {
+            return Err(js_error("channelCount must be 2 for HDA output (stereo)"));
+        }
+
+        let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
+        self.audio_ring = Some(bridge);
+        Ok(())
+    }
+
+    pub fn detach_audio_ring(&mut self) {
+        self.audio_ring = None;
+    }
+
+    /// Attach the microphone capture ring buffer (consumer side; AudioWorklet is the producer).
+    pub fn attach_mic_ring(
+        &mut self,
+        ring_sab: SharedArrayBuffer,
+        sample_rate: u32,
+    ) -> Result<(), JsValue> {
+        if sample_rate == 0 {
+            return Err(js_error("sampleRate must be non-zero"));
+        }
+
+        let bridge = MicBridge::from_shared_buffer(ring_sab)?;
+        self.hda.set_capture_sample_rate_hz(sample_rate);
+        self.mic_ring = Some(bridge);
+        Ok(())
+    }
+
+    pub fn detach_mic_ring(&mut self) {
+        self.mic_ring = None;
+    }
+
+    /// Set the host/output sample rate used by the controller when emitting audio.
+    pub fn set_output_rate_hz(&mut self, rate: u32) -> Result<(), JsValue> {
+        if rate == 0 {
+            return Err(js_error("rate must be non-zero"));
+        }
+        self.hda.set_output_rate_hz(rate);
+        Ok(())
+    }
+
+    /// Advance the HDA device by `frames` worth of host time.
+    ///
+    /// - If an audio ring is attached, produced audio is written into it.
+    /// - If a microphone ring is attached, capture DMA consumes samples from it.
+    /// - If no rings are attached, the device still advances so guest-visible state (DMA position,
+    ///   interrupts, etc.) progresses; host audio is dropped.
+    pub fn process(&mut self, frames: u32) {
+        if frames == 0 {
             return;
         }
-        self.hda
-            .mmio_write(offset as u64, size, u64::from(value));
-    }
 
-    /// Advance the HDA device model by `frames` of host time.
-    ///
-    /// `frames` is interpreted at the controller's configured host/output sample rate
-    /// (`HdaController::output_rate_hz`, default 48kHz).
-    pub fn step_frames(&mut self, frames: u32) {
         let frames = frames as usize;
-        if let Some(mic) = self.mic.as_mut() {
-            self.hda.process_with_capture(&mut self.mem, frames, mic);
-        } else {
-            self.hda.process(&mut self.mem, frames);
+
+        let hda = &mut self.hda;
+        let mem = &mut self.mem;
+
+        match (&self.audio_ring, &mut self.mic_ring) {
+            (Some(ring), Some(mic)) => {
+                let mut sink = WorkletBridgeSink {
+                    bridge: ring,
+                    channel_count: ring.channel_count(),
+                };
+                hda.process_into_with_capture(mem, frames, &mut sink, mic);
+            }
+            (Some(ring), None) => {
+                let mut sink = WorkletBridgeSink {
+                    bridge: ring,
+                    channel_count: ring.channel_count(),
+                };
+                hda.process_into(mem, frames, &mut sink);
+            }
+            (None, Some(mic)) => {
+                hda.process_with_capture(mem, frames, mic);
+            }
+            (None, None) => {
+                hda.process(mem, frames);
+            }
         }
     }
 
-    /// Attach (or detach) a microphone capture ring buffer.
+    /// Alias for [`Self::process`] retained for older call sites.
+    pub fn step_frames(&mut self, frames: u32) {
+        self.process(frames);
+    }
+
+    /// Compatibility shim: attach/detach the mic ring buffer without setting a sample rate.
     ///
-    /// When attached, captured samples are consumed from the ring buffer and fed into the HDA
-    /// capture stream (SD1) via `HdaController::process_with_capture`.
+    /// Prefer [`Self::attach_mic_ring`] + [`Self::detach_mic_ring`] for new code.
     pub fn set_mic_ring_buffer(&mut self, sab: Option<SharedArrayBuffer>) -> Result<(), JsValue> {
-        self.mic = match sab {
+        self.mic_ring = match sab {
             Some(sab) => Some(MicBridge::from_shared_buffer(sab)?),
             None => None,
         };
         Ok(())
     }
 
-    /// Set the host/input sample rate used when consuming microphone samples.
+    /// Compatibility shim for older call sites: set the capture sample rate without attaching a ring.
     ///
-    /// This must match the sample rate of the microphone capture graph (e.g. `AudioContext.sampleRate`).
-    pub fn set_capture_sample_rate_hz(&mut self, capture_sample_rate_hz: u32) {
-        if capture_sample_rate_hz == 0 {
+    /// Prefer passing the rate to [`Self::attach_mic_ring`].
+    pub fn set_capture_sample_rate_hz(&mut self, sample_rate_hz: u32) {
+        if sample_rate_hz == 0 {
             return;
         }
-        self.hda.set_capture_sample_rate_hz(capture_sample_rate_hz);
+        self.hda.set_capture_sample_rate_hz(sample_rate_hz);
+    }
+
+    /// Whether the guest-visible interrupt line should be asserted.
+    pub fn irq_level(&self) -> bool {
+        self.hda.irq_level()
+    }
+
+    /// If an audio ring is attached, returns its current buffered level (frames).
+    ///
+    /// Returns 0 if no ring is attached.
+    pub fn buffer_level_frames(&self) -> u32 {
+        self.audio_ring
+            .as_ref()
+            .map(|r| r.buffer_level_frames())
+            .unwrap_or(0)
+    }
+
+    /// If an audio ring is attached, returns its total producer overrun counter (frames dropped).
+    ///
+    /// Returns 0 if no ring is attached.
+    pub fn overrun_count(&self) -> u32 {
+        self.audio_ring
+            .as_ref()
+            .map(|r| r.overrun_count())
+            .unwrap_or(0)
     }
 }
 

@@ -749,18 +749,43 @@ export interface WasmApi {
     };
 
     /**
-     * IO-worker bridge around the Rust `aero_audio::hda::HdaController` device model.
+     * Guest-visible Intel HD Audio (HDA) controller bridge (MMIO + DMA).
      *
-     * Exposes MMIO read/write + a coarse `step_frames` entrypoint for advancing the
-     * device on the IO worker tick.
+     * Intended for the browser IO worker: JS provides the PCI/MMIO plumbing and drives
+     * time progression; Rust provides the full HDA device model.
+     *
+     * Optional for older WASM builds.
      */
     HdaControllerBridge?: new (guestBase: number, guestSize: number) => {
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
+
+        attach_audio_ring(ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number): void;
+        detach_audio_ring(): void;
+
+        attach_mic_ring(ringSab: SharedArrayBuffer, sampleRate: number): void;
+        detach_mic_ring(): void;
+
+        set_output_rate_hz(rate: number): void;
+        process(frames: number): void;
+
+        /**
+         * Alias for {@link process} retained for older call sites.
+         */
         step_frames(frames: number): void;
+
         irq_level(): boolean;
+
+        /**
+         * Legacy mic ring attachment helper retained for older call sites.
+         *
+         * Prefer {@link attach_mic_ring} + {@link detach_mic_ring} for new code.
+         */
         set_mic_ring_buffer(sab?: SharedArrayBuffer): void;
         set_capture_sample_rate_hz(sampleRateHz: number): void;
+
+        buffer_level_frames(): number;
+        overrun_count(): number;
         free(): void;
     };
 }
