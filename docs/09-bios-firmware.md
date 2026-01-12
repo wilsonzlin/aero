@@ -756,7 +756,7 @@ impl Bios {
                 region_type: E820_RAM,
                 extended_attributes: 1,
             },
-            // EBDA (usually at 639KB)
+            // EBDA (at 0x9F000 = 636KiB)
             E820Entry {
                 base: 0x0009_F000,
                 length: 0x0000_1000,
