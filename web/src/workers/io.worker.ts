@@ -382,6 +382,14 @@ const MAX_SYNTHETIC_USB_HID_OUTPUT_REPORTS_PER_TICK = 64;
 let snapshotPaused = false;
 let snapshotOpInFlight = false;
 
+// Device blobs recovered from the most recent VM snapshot restore. We keep these around so that
+// unknown/unhandled device state can roundtrip through restore → save without being silently
+// dropped (forward compatibility).
+//
+// NOTE: These are stored as `Uint8Array` so the IO worker can keep a stable copy even when we
+// transfer `ArrayBuffer` payloads to the coordinator.
+let snapshotRestoredDeviceBlobs: Array<{ kind: string; bytes: Uint8Array }> = [];
+
 // Many IO worker devices (notably audio DMA engines) advance guest-visible state based on
 // host time deltas (`nowMs` passed to `DeviceManager.tick`). During VM snapshot
 // save/restore we intentionally pause device ticking, but the browser's wall-clock
@@ -2091,10 +2099,28 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     const usb = snapshotUsbDeviceState();
     const ps2 = snapshotI8042DeviceState();
     const hda = snapshotAudioHdaDeviceState();
+
+    // Merge in any previously restored device blobs so unknown/unhandled device state survives a
+    // restore → save cycle (forward compatibility).
+    const freshDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
+    if (usb) freshDevices.push(usb);
+    if (ps2) freshDevices.push(ps2);
+    if (hda) freshDevices.push(hda);
+
+    const freshKinds = new Set(freshDevices.map((d) => d.kind));
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
-    if (usb) devices.push(usb);
-    if (ps2) devices.push(ps2);
-    if (hda) devices.push(hda);
+    const seen = new Set<string>();
+    for (const cached of snapshotRestoredDeviceBlobs) {
+      if (freshKinds.has(cached.kind)) continue;
+      if (seen.has(cached.kind)) continue;
+      devices.push(cached);
+      seen.add(cached.kind);
+    }
+    for (const dev of freshDevices) {
+      if (seen.has(dev.kind)) continue;
+      devices.push(dev);
+      seen.add(dev.kind);
+    }
 
     const saveExport = resolveVmSnapshotSaveToOpfsExport(api);
     if (!saveExport) {
@@ -2170,11 +2196,13 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
 
       const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
       const devices: VmSnapshotDeviceBlob[] = [];
+      const cachedDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
       for (const entry of devicesRaw) {
         if (!entry || typeof entry !== "object") continue;
         const e = entry as { kind?: unknown; bytes?: unknown };
         if (typeof e.kind !== "string") continue;
         if (!(e.bytes instanceof Uint8Array)) continue;
+        cachedDevices.push({ kind: e.kind, bytes: e.bytes });
         devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
       }
 
@@ -2211,6 +2239,8 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         restoreI8042DeviceState(i8042Blob.bytes);
       }
 
+      snapshotRestoredDeviceBlobs = cachedDevices;
+
       return {
         cpu: copyU8ToArrayBuffer(rec.cpu),
         mmu: copyU8ToArrayBuffer(rec.mmu),
@@ -2229,6 +2259,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
 
       const devices: VmSnapshotDeviceBlob[] = [];
+      const cachedDevices: Array<{ kind: string; bytes: Uint8Array }> = [];
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
@@ -2262,6 +2293,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
           hdaBytes = e.data;
         }
+        cachedDevices.push({ kind, bytes: e.data });
         devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
       }
 
@@ -2274,6 +2306,8 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       if (hdaBytes) {
         restoreAudioHdaDeviceState(hdaBytes);
       }
+
+      snapshotRestoredDeviceBlobs = cachedDevices;
 
       return {
         cpu: copyU8ToArrayBuffer(rec.cpu),
