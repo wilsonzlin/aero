@@ -1272,8 +1272,12 @@ async function setupAudio() {
 
 ```javascript
 function setupPointerLock(canvas) {
-    canvas.addEventListener('click', () => {
+    canvas.addEventListener('click', (event) => {
         if (document.pointerLockElement !== canvas) {
+            // Avoid bubbling the click to app-level handlers while transitioning
+            // into capture mode.
+            event.preventDefault();
+            event.stopPropagation();
             canvas.requestPointerLock();
         }
     });
@@ -1288,6 +1292,9 @@ function setupPointerLock(canvas) {
     });
     
     function handleMouseMove(event) {
+        // Prevent page-level listeners from observing pointer-locked movement.
+        event.preventDefault();
+        event.stopPropagation();
         // movementX/Y give delta since last event
         emulator.mouseMove(event.movementX, event.movementY);
     }
@@ -1295,7 +1302,7 @@ function setupPointerLock(canvas) {
 ```
 
 ### Keyboard Handling
- 
+
 ```javascript
 function setupKeyboard(canvas) {
     // Make canvas focusable
@@ -1303,6 +1310,7 @@ function setupKeyboard(canvas) {
     
     canvas.addEventListener('keydown', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         
         const scancode = keyCodeToScancode(event.code);
         if (scancode !== 0) {
@@ -1312,6 +1320,7 @@ function setupKeyboard(canvas) {
     
     canvas.addEventListener('keyup', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         
         const scancode = keyCodeToScancode(event.code);
         if (scancode !== 0) {
