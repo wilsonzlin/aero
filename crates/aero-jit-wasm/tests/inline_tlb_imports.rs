@@ -7,17 +7,14 @@ use wasmparser::{Parser, Payload};
 fn imports(bytes: &[u8]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
-        match payload.expect("valid wasm") {
-            Payload::ImportSection(reader) => {
-                for group in reader {
-                    let group = group.expect("valid import group");
-                    for import in group {
-                        let (_idx, import) = import.expect("valid import");
-                        out.push((import.module.to_string(), import.name.to_string()));
-                    }
+        if let Payload::ImportSection(reader) = payload.expect("valid wasm") {
+            for group in reader {
+                let group = group.expect("valid import group");
+                for import in group {
+                    let (_idx, import) = import.expect("valid import");
+                    out.push((import.module.to_string(), import.name.to_string()));
                 }
             }
-            _ => {}
         }
     }
     out
@@ -33,12 +30,16 @@ fn inline_tlb_controls_import_set() {
     b.store(Width::W32, addr, value);
     let block = b.finish(IrTerminator::ExitToInterpreter { next_rip: 0 });
 
-    let mut inline_opts = Tier1WasmOptions::default();
-    inline_opts.inline_tlb = true;
+    let inline_opts = Tier1WasmOptions {
+        inline_tlb: true,
+        ..Default::default()
+    };
     let wasm_inline = Tier1WasmCodegen::new().compile_block_with_options(&block, inline_opts);
 
-    let mut baseline_opts = Tier1WasmOptions::default();
-    baseline_opts.inline_tlb = false;
+    let baseline_opts = Tier1WasmOptions {
+        inline_tlb: false,
+        ..Default::default()
+    };
     let wasm_baseline = Tier1WasmCodegen::new().compile_block_with_options(&block, baseline_opts);
 
     let inline_imports = imports(&wasm_inline);
