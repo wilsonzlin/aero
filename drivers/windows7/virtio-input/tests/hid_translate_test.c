@@ -183,6 +183,9 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_RIGHTSHIFT) == 0);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_RIGHTALT) == 0);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_RIGHTMETA) == 0);
+
+  /* Unsupported keys should not map to any usage. */
+  assert(hid_translate_linux_key_to_hid_usage(0) == 0);
 }
 
 static void test_keyboard_modifier_reports(void) {
@@ -295,6 +298,19 @@ static void test_keyboard_ctrl_alt_delete_report(void) {
 
   uint8_t expect3[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0x00, 0, 0, 0, 0, 0, 0, 0};
   expect_report(&cap, 2, expect3, sizeof(expect3));
+}
+
+static void test_keyboard_unsupported_key_ignored(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Linux KEY_RESERVED=0 is not mapped; should produce no report. */
+  send_key(&t, 0, 1);
+  send_syn(&t);
+  assert(cap.count == 0);
 }
 
 static void test_keyboard_lock_keys_reports(void) {
@@ -592,6 +608,7 @@ int main(void) {
   test_keyboard_modifier_reports();
   test_keyboard_all_modifier_bits_report();
   test_keyboard_ctrl_alt_delete_report();
+  test_keyboard_unsupported_key_ignored();
   test_keyboard_lock_keys_reports();
   test_keyboard_reports();
   test_keyboard_function_key_reports();
