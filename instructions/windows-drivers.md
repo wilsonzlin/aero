@@ -165,6 +165,9 @@ cmake -S . -B build-virtio-host-tests -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGP
 cmake --build build-virtio-host-tests
 ctest --test-dir build-virtio-host-tests --output-on-failure
 
+# Portable virtio PCI capability parser tests (virtio-core; no Windows/WDK required)
+./drivers/win7/virtio/tests/build_and_run.sh
+
 # Host-side C++ unit tests for AeroGPU UMD helpers (command stream writer, submit buffer utils)
 cmake -S . -B build-aerogpu-host-tests -DAERO_AEROGPU_BUILD_TESTS=ON -DAERO_VIRTIO_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build-aerogpu-host-tests
