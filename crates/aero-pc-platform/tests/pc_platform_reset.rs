@@ -6,6 +6,7 @@ use aero_devices::pci::profile::{
 };
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
+use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, ResetEvent};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -99,6 +100,75 @@ fn read_virtio_blk_bar0_base(pc: &mut PcPlatform) -> u64 {
     let bar0_lo = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
     let bar0_hi = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x14);
     (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xffff_fff0)
+}
+
+// -------------------------------------------------------------------------
+// Minimal AHCI DMA helpers (port 0)
+// -------------------------------------------------------------------------
+
+const AHCI_HBA_GHC: u64 = 0x04;
+const AHCI_PORT_BASE: u64 = 0x100;
+const AHCI_PORT_REG_CLB: u64 = 0x00;
+const AHCI_PORT_REG_CLBU: u64 = 0x04;
+const AHCI_PORT_REG_FB: u64 = 0x08;
+const AHCI_PORT_REG_FBU: u64 = 0x0C;
+const AHCI_PORT_REG_IE: u64 = 0x14;
+const AHCI_PORT_REG_CMD: u64 = 0x18;
+const AHCI_PORT_REG_CI: u64 = 0x38;
+
+const AHCI_GHC_IE: u32 = 1 << 1;
+const AHCI_GHC_AE: u32 = 1 << 31;
+
+const AHCI_PORT_CMD_ST: u32 = 1 << 0;
+const AHCI_PORT_CMD_FRE: u32 = 1 << 4;
+
+const AHCI_PORT_IS_DHRS: u32 = 1 << 0;
+
+fn ahci_write_cmd_header(
+    pc: &mut PcPlatform,
+    clb: u64,
+    slot: usize,
+    ctba: u64,
+    prdtl: u16,
+    write: bool,
+) {
+    let cfl = 5u32;
+    let w = if write { 1u32 << 6 } else { 0 };
+    let flags = cfl | w | ((prdtl as u32) << 16);
+    let addr = clb + (slot as u64) * 32;
+    pc.memory.write_u32(addr, flags);
+    pc.memory.write_u32(addr + 4, 0); // PRDBC
+    pc.memory.write_u32(addr + 8, ctba as u32);
+    pc.memory.write_u32(addr + 12, (ctba >> 32) as u32);
+}
+
+fn ahci_write_prdt(pc: &mut PcPlatform, ctba: u64, entry: usize, dba: u64, dbc: u32) {
+    let addr = ctba + 0x80 + (entry as u64) * 16;
+    pc.memory.write_u32(addr, dba as u32);
+    pc.memory.write_u32(addr + 4, (dba >> 32) as u32);
+    pc.memory.write_u32(addr + 8, 0);
+    // DBC field stores byte_count-1 in bits 0..21.
+    pc.memory.write_u32(addr + 12, (dbc - 1) & 0x003F_FFFF);
+}
+
+fn ahci_write_cfis(pc: &mut PcPlatform, ctba: u64, command: u8, lba: u64, count: u16) {
+    let mut cfis = [0u8; 64];
+    cfis[0] = 0x27;
+    cfis[1] = 0x80;
+    cfis[2] = command;
+    cfis[7] = 0x40; // LBA mode
+
+    cfis[4] = (lba & 0xFF) as u8;
+    cfis[5] = ((lba >> 8) & 0xFF) as u8;
+    cfis[6] = ((lba >> 16) & 0xFF) as u8;
+    cfis[8] = ((lba >> 24) & 0xFF) as u8;
+    cfis[9] = ((lba >> 32) & 0xFF) as u8;
+    cfis[10] = ((lba >> 40) & 0xFF) as u8;
+
+    cfis[12] = (count & 0xFF) as u8;
+    cfis[13] = (count >> 8) as u8;
+
+    pc.memory.write_physical(ctba, &cfis);
 }
 
 #[test]
@@ -420,4 +490,69 @@ fn pc_platform_reset_resets_virtio_blk_transport_state_and_preserves_disk_backen
         dropped.load(Ordering::SeqCst),
         "dropping the platform should drop the virtio-blk disk backend"
     );
+}
+
+#[test]
+fn pc_platform_reset_preserves_ahci_attached_disk() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    sector0[510] = 0x55;
+    sector0[511] = 0xAA;
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+
+    // Reset after the disk has been attached; the disk must remain present.
+    pc.reset();
+
+    // Enable A20 so high MMIO addresses don't alias across the 1MiB boundary.
+    pc.io.write_u8(0x92, 0x02);
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+    // Enable MMIO decoding + DMA.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    let bar5_base = read_ahci_bar5_base(&mut pc);
+    assert_ne!(bar5_base, 0);
+
+    // Program HBA + port 0 registers.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let read_buf = 0x4000u64;
+
+    pc.memory
+        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory
+        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory
+        .write_u32(bar5_base + AHCI_HBA_GHC, AHCI_GHC_AE | AHCI_GHC_IE);
+    pc.memory
+        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_IE, AHCI_PORT_IS_DHRS);
+    pc.memory.write_u32(
+        bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CMD,
+        AHCI_PORT_CMD_ST | AHCI_PORT_CMD_FRE,
+    );
+
+    // READ DMA EXT for LBA 0, 1 sector.
+    ahci_write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    ahci_write_cfis(&mut pc, ctba, ATA_CMD_READ_DMA_EXT, 0, 1);
+    ahci_write_prdt(&mut pc, ctba, 0, read_buf, SECTOR_SIZE as u32);
+
+    pc.memory.write_u32(read_buf, 0);
+    pc.memory
+        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CI, 1);
+    pc.process_ahci();
+
+    let mut out = [0u8; SECTOR_SIZE];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out[0..4], b"BOOT");
+    assert_eq!(&out[510..512], &[0x55, 0xAA]);
 }
