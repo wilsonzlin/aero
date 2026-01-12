@@ -5731,10 +5731,21 @@ impl snapshot::SnapshotTarget for Machine {
             &self.virtio_net,
             by_id.remove(&snapshot::DeviceId::VIRTIO_NET),
         ) {
-            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                &state,
-                &mut *virtio.borrow_mut(),
-            );
+            let mut virtio = virtio.borrow_mut();
+
+            // Virtio-net's RX queue pops available buffers and caches them internally (without
+            // producing used entries) until a host frame arrives. Those cached buffers are
+            // runtime-only and are not currently serialized in snapshot state. Clear them before
+            // applying the transport snapshot, then rewind queue progress so the transport will
+            // re-pop the guest-provided buffers post-restore.
+            if let Some(net) =
+                virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>()
+            {
+                aero_virtio::devices::VirtioDevice::reset(net);
+            }
+
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
+            virtio.rewind_queue_next_avail_to_next_used(0);
         }
 
         // Restore USB controller state after the interrupt controller + PCI core so its IRQ level

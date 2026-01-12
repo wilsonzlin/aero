@@ -1,9 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::rc::Rc;
+use std::{cell::RefCell, collections::VecDeque};
 
 use aero_devices::pci::{profile, PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
+use aero_net_backend::NetworkBackend;
 use aero_platform::interrupts::InterruptController;
 use aero_virtio::devices::net_offload::VirtioNetHdr;
 use aero_virtio::pci::{
@@ -11,7 +13,7 @@ use aero_virtio::pci::{
     VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
     VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_virtio::queue::VIRTQ_DESC_F_NEXT;
+use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 use pretty_assertions::{assert_eq, assert_ne};
 
 #[derive(Default)]
@@ -21,6 +23,22 @@ struct Caps {
     isr: u64,
     device: u64,
     notify_mult: u32,
+}
+
+#[derive(Debug, Default)]
+struct BackendState {
+    rx: VecDeque<Vec<u8>>,
+}
+
+#[derive(Clone)]
+struct TestBackend(Rc<RefCell<BackendState>>);
+
+impl NetworkBackend for TestBackend {
+    fn transmit(&mut self, _frame: Vec<u8>) {}
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        self.0.borrow_mut().rx.pop_front()
+    }
 }
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
@@ -310,4 +328,166 @@ fn snapshot_restore_roundtrips_virtio_net_state_and_redrives_intx_level() {
         Some(expected_vector),
         "expected PCI INTx (GSI {gsi}) to deliver vector 0x{expected_vector:02x} after restore"
     );
+}
+
+#[test]
+fn snapshot_restore_replays_inflight_virtio_net_rx_buffers() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 8 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_net: true,
+        enable_e1000: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let backend_state = Rc::new(RefCell::new(BackendState::default()));
+    vm.set_network_backend(Box::new(TestBackend(backend_state.clone())));
+
+    let bdf = profile::VIRTIO_NET.bdf;
+
+    // Enable PCI bus mastering so the device is allowed to DMA.
+    let command = cfg_read(&mut vm, bdf, 0x04, 2) as u16;
+    cfg_write(&mut vm, bdf, 0x04, 2, u32::from(command | (1 << 2)));
+
+    // Read BAR0 base address via PCI config ports.
+    let bar0_lo = cfg_read(&mut vm, bdf, 0x10, 4) as u64;
+    let bar0_hi = cfg_read(&mut vm, bdf, 0x14, 4) as u64;
+    let bar0_base = (bar0_hi << 32) | (bar0_lo & !0xFu64);
+    assert_ne!(bar0_base, 0, "expected virtio-net BAR0 to be assigned");
+
+    // Parse virtio vendor-specific caps to find BAR0 offsets.
+    let cfg_bytes = read_config_space_256(&mut vm, bdf);
+    let caps = parse_caps(&cfg_bytes);
+    assert_ne!(caps.notify, 0);
+    assert_ne!(caps.device, 0);
+
+    // Feature negotiation: accept everything the device offers.
+    vm.write_physical_u8(bar0_base + caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    vm.write_physical_u8(
+        bar0_base + caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    vm.write_physical_u32(bar0_base + caps.common, 0);
+    let f0 = vm.read_physical_u32(bar0_base + caps.common + 0x04);
+    vm.write_physical_u32(bar0_base + caps.common + 0x08, 0);
+    vm.write_physical_u32(bar0_base + caps.common + 0x0c, f0);
+
+    vm.write_physical_u32(bar0_base + caps.common, 1);
+    let f1 = vm.read_physical_u32(bar0_base + caps.common + 0x04);
+    vm.write_physical_u32(bar0_base + caps.common + 0x08, 1);
+    vm.write_physical_u32(bar0_base + caps.common + 0x0c, f1);
+
+    vm.write_physical_u8(
+        bar0_base + caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    vm.write_physical_u8(
+        bar0_base + caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Place virtqueue in RAM above 2MiB so it is not affected by A20 wrap even if A20 is disabled.
+    let rx_desc = 0x200000;
+    let rx_avail = 0x201000;
+    let rx_used = 0x202000;
+    let buf_addr = 0x203000;
+    let buf_len = 64u32;
+
+    // Configure RX queue 0.
+    vm.write_physical_u16(bar0_base + caps.common + 0x16, 0);
+    assert!(vm.read_physical_u16(bar0_base + caps.common + 0x18) >= 8);
+    vm.write_physical_u64(bar0_base + caps.common + 0x20, rx_desc);
+    vm.write_physical_u64(bar0_base + caps.common + 0x28, rx_avail);
+    vm.write_physical_u64(bar0_base + caps.common + 0x30, rx_used);
+    vm.write_physical_u16(bar0_base + caps.common + 0x1c, 1);
+
+    // Guest posts one RX buffer that will remain in-flight at snapshot time.
+    vm.write_physical(buf_addr, &vec![0xccu8; buf_len as usize]);
+    write_desc(
+        &mut vm,
+        rx_desc,
+        0,
+        buf_addr,
+        buf_len,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    // avail idx = 1, ring[0] = 0.
+    vm.write_physical_u16(rx_avail, 0);
+    vm.write_physical_u16(rx_avail + 2, 1);
+    vm.write_physical_u16(rx_avail + 4, 0);
+
+    vm.write_physical_u16(rx_used, 0);
+    vm.write_physical_u16(rx_used + 2, 0);
+
+    // Poll once with no incoming frames: transport should pop the avail entry and cache it in the
+    // virtio-net device (no used entry yet).
+    vm.poll_network();
+    assert_eq!(vm.read_physical_u16(rx_used + 2), 0);
+    let virtio = vm.virtio_net().expect("virtio-net enabled");
+    let (next_avail, next_used, _event_idx) = virtio
+        .borrow()
+        .debug_queue_progress(0)
+        .expect("rxq should be configured");
+    assert_eq!(next_avail, 1);
+    assert_eq!(next_used, 0);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+
+    // Mutate post-snapshot runtime state: deliver a frame so the cached RX buffer is consumed.
+    let frame1 = vec![0x11u8; 14];
+    backend_state.borrow_mut().rx.push_back(frame1.clone());
+    vm.poll_network();
+    assert_eq!(vm.read_physical_u16(rx_used + 2), 1);
+    assert_eq!(
+        vm.read_physical_u32(rx_used + 8),
+        (VirtioNetHdr::BASE_LEN + frame1.len()) as u32
+    );
+    assert!(backend_state.borrow().rx.is_empty());
+
+    // Restoring should rewind guest-visible state (used.idx back to 0), while also ensuring the
+    // in-flight RX buffer becomes available again for host RX.
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+    assert_eq!(vm.read_physical_u16(rx_used + 2), 0);
+    assert_eq!(
+        vm.read_physical_bytes(buf_addr, buf_len as usize),
+        vec![0xccu8; buf_len as usize],
+        "guest RX buffer should be restored back to its pre-snapshot contents"
+    );
+
+    // Snapshots intentionally do not embed host backends, and `restore_snapshot_*` drops any
+    // currently attached network backend. Reattach our test backend so RX can make progress.
+    vm.set_network_backend(Box::new(TestBackend(backend_state.clone())));
+
+    // Now deliver another frame without re-posting any RX buffers. Without the restore fix, the
+    // virtio-net device has no cached buffers and the transport thinks the avail entry was
+    // already consumed, so RX would stall forever.
+    let frame2 = vec![0x22u8; 14];
+    backend_state.borrow_mut().rx.push_back(frame2.clone());
+    vm.poll_network();
+
+    assert_eq!(vm.read_physical_u16(rx_used + 2), 1);
+    assert_eq!(
+        vm.read_physical_u32(rx_used + 8),
+        (VirtioNetHdr::BASE_LEN + frame2.len()) as u32
+    );
+    assert_eq!(
+        vm.read_physical_bytes(
+            buf_addr + VirtioNetHdr::BASE_LEN as u64,
+            frame2.len()
+        ),
+        frame2
+    );
+    assert!(backend_state.borrow().rx.is_empty());
 }
