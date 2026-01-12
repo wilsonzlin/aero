@@ -128,6 +128,11 @@ fn e1000_pci_mmio_tx_rx_are_bridged_via_network_backend_and_gated_by_bme() {
     let desc_after = m.read_physical_bytes(tx_desc_base, 16);
     assert_eq!(desc_after[12] & 0x01, 0x01, "DD should be set after TX DMA");
 
+    // Disable bus mastering again: DMA must stop immediately, but host->guest frames should still be
+    // queued internally for later delivery.
+    let cmd = cfg_read_u16(&mut m, bdf, 0x04);
+    cfg_write_u16(&mut m, bdf, 0x04, cmd & !(1 << 2));
+
     // ----------------------
     // RX: inject from backend
     // ----------------------
@@ -149,8 +154,21 @@ fn e1000_pci_mmio_tx_rx_are_bridged_via_network_backend_and_gated_by_bme() {
     m.write_physical_u32(bar0_base + 0x0100, 1 << 1); // RCTL.EN (2048-byte buffers)
 
     let rx_frame: Vec<u8> = (0..MIN_L2_FRAME_LEN).rev().map(|i| i as u8).collect();
+    // Fill the RX buffer with a sentinel value so we can detect unexpected DMA while BME=0.
+    m.write_physical(rx_buf, &vec![0xaa; rx_frame.len()]);
     state.borrow_mut().rx.push_back(rx_frame.clone());
 
+    // With BME=0, polling must not DMA into guest memory or update RX descriptors.
+    m.poll_network();
+
+    let rx_buf_before_bme = m.read_physical_bytes(rx_buf, rx_frame.len());
+    assert_eq!(rx_buf_before_bme, vec![0xaa; rx_frame.len()]);
+    let rx_desc_after_bme0 = m.read_physical_bytes(rx_desc_base, 16);
+    assert_eq!(rx_desc_after_bme0[12] & 0x03, 0, "RX desc should not complete while BME=0");
+
+    // Re-enable BME: the queued frame should now be DMA'd into the guest RX ring.
+    let cmd = cfg_read_u16(&mut m, bdf, 0x04);
+    cfg_write_u16(&mut m, bdf, 0x04, cmd | (1 << 2));
     m.poll_network();
 
     let rx_buf_bytes = m.read_physical_bytes(rx_buf, rx_frame.len());
