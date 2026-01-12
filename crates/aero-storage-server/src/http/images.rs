@@ -293,14 +293,96 @@ async fn serve_image(
             return not_modified_response(&state, &req_headers, &meta, cache_control);
         }
 
+        let range_only_mode = state.require_range && want_body;
         let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
-        if range_header.is_none() && state.require_range && want_body {
+        if range_header.is_none() && range_only_mode {
             // Range-only mode: avoid accidental full-object downloads when a browser/crawler hits the
             // bytes endpoint without `Range`.
             state.metrics.inc_range_request_invalid();
             return range_not_satisfiable(&state, &req_headers, len);
         }
         if let Some(range_header) = range_header {
+            // Range-only mode: never fall back to a `200 OK` full response body.
+            if range_only_mode {
+                let specs = match parse_range_header(range_header) {
+                    Ok(Some(v)) => v,
+                    Ok(None) => {
+                        // Unsupported range units (e.g. `items=...`) must not be treated as "ignore
+                        // Range": that would allow bypassing range-only mode and streaming the full
+                        // image.
+                        state.metrics.inc_range_request_invalid();
+                        return range_not_satisfiable(&state, &req_headers, len);
+                    }
+                    Err(
+                        RangeParseError::HeaderTooLarge { .. }
+                        | RangeParseError::TooManyRanges { .. },
+                    ) => {
+                        state.metrics.inc_range_request_invalid();
+                        return response_with_status(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            &state,
+                            &req_headers,
+                        );
+                    }
+                    Err(_) => {
+                        // For syntactically invalid ranges, follow our public contract and return
+                        // `416`. (See `docs/16-disk-image-streaming-auth.md`.)
+                        state.metrics.inc_range_request_invalid();
+                        return range_not_satisfiable(&state, &req_headers, len);
+                    }
+                };
+
+                // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return
+                // `200 OK`. In range-only mode, return `412` instead.
+                if !cache::if_range_allows_range(
+                    &req_headers,
+                    Some(&current_etag),
+                    meta.last_modified,
+                ) {
+                    state.metrics.inc_range_request_invalid();
+                    return response_with_status(
+                        StatusCode::PRECONDITION_FAILED,
+                        &state,
+                        &req_headers,
+                    );
+                }
+
+                let range = match resolve_range(&specs, len, state.range_options) {
+                    Ok(r) => r,
+                    // Abuse guard: we cap the maximum single-range response size to avoid clients
+                    // forcing huge reads (amplification / resource exhaustion).
+                    Err(RangeResolveError::TooManyBytes) => {
+                        state.metrics.inc_range_request_invalid();
+                        return response_with_status(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            &state,
+                            &req_headers,
+                        );
+                    }
+                    // Disk streaming only supports a single range per request.
+                    Err(
+                        RangeResolveError::MultiRangeNotSupported
+                        | RangeResolveError::Unsatisfiable,
+                    ) => {
+                        state.metrics.inc_range_request_invalid();
+                        return range_not_satisfiable(&state, &req_headers, len);
+                    }
+                };
+
+                state.metrics.inc_range_request_valid();
+
+                return single_range_response(
+                    &state,
+                    &req_headers,
+                    &image_id,
+                    meta,
+                    range,
+                    want_body,
+                    cache_control,
+                )
+                .await;
+            }
+
             // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
             if !cache::if_range_allows_range(&req_headers, Some(&current_etag), meta.last_modified) {
                 return full_response(&state, &req_headers, &image_id, meta, want_body, cache_control)

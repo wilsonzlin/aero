@@ -65,6 +65,9 @@ Notes:
   protect it with `--metrics-auth-token`, or disable it with `--disable-metrics`.
   - If both `--disable-metrics` and `--metrics-auth-token` are set, disablement wins (the endpoint
     will not be mounted).
+- `--require-range` rejects `GET` requests that would otherwise stream the full image body.
+  - Missing/invalid/unsupported `Range` → `416 Range Not Satisfiable`.
+  - `If-Range` present but not usable (mismatch/weak/invalid/no validator) → `412 Precondition Failed`.
 
 ## Run
 
