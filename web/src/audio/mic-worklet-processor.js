@@ -57,8 +57,15 @@ export class AeroMicCaptureProcessor extends WorkletProcessorBase {
           data = null;
         } else {
           capacity = headerCap || data.length;
-          if (capacity > 0) {
+          // Keep in sync with `mic_ring.js` + the Rust `MicBridge` cap.
+          const MAX_CAPACITY_SAMPLES = 1_048_576; // 2^20 mono samples (~21s @ 48kHz)
+          if (capacity > 0 && capacity <= MAX_CAPACITY_SAMPLES) {
             rb = { header, data, capacity };
+          } else {
+            header = null;
+            data = null;
+            capacity = 0;
+            rb = null;
           }
         }
       } catch (_e) {
