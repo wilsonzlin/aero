@@ -1,6 +1,8 @@
 #include "aerogpu_trace.h"
 #include "trace_test_utils.h"
 
+#include <cstring>
+
 int main() {
   using namespace aerogpu_d3d9_trace_test;
   const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_dump_on_stub_tests");
@@ -27,10 +29,24 @@ int main() {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
+
+  // Subsequent stubbed calls should not trigger additional dumps (dump is one-shot).
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xdef, 0, 0, 0);
+    trace.ret(S_OK);
+  }
  
   std::fflush(stderr);
  
   const std::string output = slurp_file(out_path);
+  int dump_count = 0;
+  for (size_t pos = 0; (pos = output.find("dump reason=", pos)) != std::string::npos; ++dump_count) {
+    pos += std::strlen("dump reason=");
+  }
+  if (dump_count != 1) {
+    std::fprintf(stdout, "FAIL: expected exactly one dump reason line (count=%d log=%s)\n", dump_count, out_path.c_str());
+    return 1;
+  }
   if (output.find("dump reason=Device::ProcessVertices (stub)") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected dump reason Device::ProcessVertices (stub) (log=%s)\n", out_path.c_str());
     return 1;
