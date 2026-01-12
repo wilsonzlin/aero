@@ -389,6 +389,35 @@ fn dsdt_contains_pci_routing_and_resources() {
         );
     }
 
+    // `_PIC` should program the IMCR (ports 0x22/0x23) so the platform switches
+    // between legacy PIC routing and APIC/IOAPIC routing.
+    let imcr_opregion = [
+        &[0x5B, 0x80][..], // OperationRegionOp (ExtOpPrefix + Op)
+        &b"IMCR"[..],      // NameSeg
+        &[0x01, 0x0A, 0x22, 0x0A, 0x02][..], // SystemIO, base 0x22, length 2
+    ]
+    .concat();
+    assert!(
+        find_subslice(aml, &imcr_opregion).is_some(),
+        "DSDT AML missing IMCR SystemIO OperationRegion for ports 0x22..0x23"
+    );
+
+    let pic_body = [
+        &b"_PIC"[..],
+        &[0x01][..], // 1 arg
+        &[0x70, 0x68][..],
+        &b"PICM"[..],
+        &[0x70, 0x0A, 0x70][..],
+        &b"IMCS"[..],
+        &[0x7B, 0x68, 0x01][..],
+        &b"IMCD"[..],
+    ]
+    .concat();
+    assert!(
+        find_subslice(aml, &pic_body).is_some(),
+        "DSDT AML missing _PIC body that programs IMCR select/data"
+    );
+
     // Validate the `_PRT` mapping matches the default PCI INTx router config.
     let prt = parse_prt_entries(aml).expect("_PRT package should parse");
     assert_eq!(prt.len(), 31 * 4);

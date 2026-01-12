@@ -651,7 +651,15 @@ Use a simple fixed I/O layout and make FADT/DSDT/device-model agree (the default
 At minimum, include the sleep-type package that matches the `SLP_TYP` value the PM device expects:
 
 ```asl
-Method (_PIC, 1) { } // no-op is fine; OS uses this to select APIC vs PIC model
+/*
+ * `_PIC` must switch the platform interrupt router between legacy PIC and APIC
+ * mode. Many ACPI/APIC OSes (including Windows) rely on `_PIC(1)` to program
+ * the chipset IMCR (ports 0x22/0x23); if the OS never writes those ports
+ * directly, leaving `_PIC` as a no-op can result in lost interrupts.
+ */
+OperationRegion (IMCR, SystemIO, 0x22, 0x02)
+Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
+Method (_PIC, 1) { Store (0x70, IMCS); And (Arg0, One, IMCD) }
 
 Name (_S5, Package () { 0x05, 0x05 }) // required for soft-off
 ```

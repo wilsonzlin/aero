@@ -14,9 +14,29 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AERODSDT", 0x00000001)
     Name (_S5, Package (0x02) { 0x05, 0x05 })
 
     Name (PICM, Zero)
+
+    /*
+     * IMCR (Interrupt Mode Configuration Register)
+     *
+     * Some chipsets provide an IMCR at ports 0x22/0x23 that switches ISA IRQ
+     * routing between the legacy 8259 PIC and the APIC/IOAPIC.
+     *
+     * Writing bit0 to IMCR register 0x70 selects:
+     *   0 = PIC (legacy)
+     *   1 = APIC (I/O APIC)
+     */
+    OperationRegion (IMCR, SystemIO, 0x22, 0x02)
+    Field (IMCR, ByteAcc, NoLock, Preserve)
+    {
+        IMCS, 8, // select port (0x22)
+        IMCD, 8, // data port (0x23)
+    }
+
     Method (_PIC, 1, NotSerialized)
     {
         Store (Arg0, PICM)
+        Store (0x70, IMCS)
+        And (Arg0, One, IMCD)
     }
 
     Scope (\_SB_)
