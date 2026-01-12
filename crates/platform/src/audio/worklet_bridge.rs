@@ -546,17 +546,14 @@ mod wasm {
         /// snapshot; restore intentionally leaves them untouched.
         pub fn restore_state(&self, state: &AudioWorkletRingState) {
             // Snapshot restore should generally recreate the same ring capacity (the host runtime
-            // decides the ring size). In debug builds, assert to catch integration bugs. In release
-            // builds, handle mismatches safely by clamping to the smaller of the two capacities.
+            // decides the ring size). However, for robustness (and because snapshots may come from
+            // untrusted/corrupt sources), tolerate mismatches safely by clamping against the
+            // smaller of the snapshot capacity and the actual ring capacity.
             //
             // This avoids restoring a state whose `write_pos - read_pos` would imply an impossible
             // buffer level for the current ring and prevents pathological "permanently full" rings
             // when restoring from untrusted/corrupt snapshot inputs.
             let effective_capacity = if state.capacity_frames != 0 {
-                debug_assert_eq!(
-                    state.capacity_frames, self.capacity_frames,
-                    "AudioWorklet ring capacity mismatch during restore"
-                );
                 state.capacity_frames.min(self.capacity_frames)
             } else {
                 self.capacity_frames

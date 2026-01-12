@@ -1,10 +1,11 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_platform::audio::worklet_bridge::{
-    WorkletBridge, HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX,
-    UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX,
-};
+use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
 use aero_platform::audio::mic_bridge as mic_ring;
+use aero_platform::audio::worklet_bridge::{
+    HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX, UNDERRUN_COUNT_INDEX,
+    WRITE_FRAME_INDEX, WorkletBridge,
+};
 use aero_wasm::{attach_mic_bridge, HdaControllerBridge, VirtioSndPciBridge};
 use js_sys::{Float32Array, SharedArrayBuffer, Uint32Array};
 use wasm_bindgen::prelude::*;
@@ -111,6 +112,27 @@ fn worklet_bridge_restore_does_not_modify_underrun_overrun_counters() {
     for i in 0..samples.length() {
         assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
     }
+}
+
+#[wasm_bindgen_test]
+fn worklet_bridge_restore_tolerates_capacity_mismatch_and_clamps_indices() {
+    let bridge = WorkletBridge::new(8, 2).unwrap();
+    let sab = bridge.shared_buffer();
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+
+    // Snapshot capacity is smaller than the actual ring. Restore should still succeed and clamp
+    // against `min(snapshot_cap, ring_cap)`.
+    let state = AudioWorkletRingState {
+        capacity_frames: 4,
+        read_pos: 0,
+        write_pos: 100,
+    };
+
+    bridge.restore_state(&state);
+
+    // Clamp readPos to a consistent "full" state (available = capacity_frames = 4).
+    assert_eq!(atomics_load_u32(&header, READ_FRAME_INDEX as u32), 96);
+    assert_eq!(atomics_load_u32(&header, WRITE_FRAME_INDEX as u32), 100);
 }
 
 #[wasm_bindgen_test]
