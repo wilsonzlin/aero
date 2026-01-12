@@ -686,7 +686,9 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
         let version = read_u16_le(file)?;
         let flags = read_u16_le(file)?;
         if !seen.insert((id, version, flags)) {
-            return Err(XtaskError::Message("duplicate device entry".to_string()));
+            return Err(XtaskError::Message(
+                "duplicate device entry (id/version/flags must be unique)".to_string(),
+            ));
         }
         let len = read_u64_le(file)?;
         if len > MAX_DEVICE_ENTRY_LEN {

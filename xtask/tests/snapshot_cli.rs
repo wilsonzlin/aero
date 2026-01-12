@@ -959,7 +959,9 @@ fn snapshot_validate_rejects_duplicate_device_entries() {
         .args(["snapshot", "validate", snap.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("duplicate device entry"));
+        .stderr(predicate::str::contains(
+            "duplicate device entry (id/version/flags must be unique)",
+        ));
 }
 
 #[test]
