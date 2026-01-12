@@ -1896,11 +1896,15 @@ impl PcPlatform {
 
         // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
         let bus_master_enabled = (command & (1 << 2)) != 0;
-        if !bus_master_enabled {
-            return;
+        {
+            // Keep the E1000 model's internal PCI command register in sync with the platform's PCI
+            // config space. The device model gates DMA on its own `pci` state.
+            let mut dev = e1000.borrow_mut();
+            dev.pci.write(0x04, 2, command as u32);
+            if bus_master_enabled {
+                dev.poll(&mut self.memory);
+            }
         }
-
-        e1000.borrow_mut().poll(&mut self.memory);
     }
 
     pub fn poll_pci_intx_lines(&mut self) {

@@ -42,7 +42,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
-use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
+use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
@@ -579,6 +579,13 @@ impl Machine {
     /// Detach (drop) any currently installed network backend.
     pub fn detach_network(&mut self) {
         self.network_backend = None;
+    }
+
+    /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
+    pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.network_backend
+            .as_ref()
+            .and_then(|backend| backend.l2_ring_stats())
     }
 
     /// Debug/testing helper: read a single guest physical byte.
@@ -1584,17 +1591,18 @@ impl snapshot::SnapshotTarget for Machine {
         let mut restored_pci_intx = false;
         // 2) Restore PCI devices (config ports + INTx router).
         //
-        // Newer snapshots store both under a single `DeviceId::PCI` entry using
-        // `aero_devices::pci::PciCoreSnapshot`.
+        // Prefer restoring from the combined `DeviceId::PCI` entry (`PCIC`) when present. For
+        // backward compatibility, also accept older snapshots that stored config ports under
+        // `DeviceId::PCI_CFG` and INTx routing under `DeviceId::PCI_INTX`.
         let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
         let mut pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
 
-        if let Some(state) = pci_state {
-            if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
-                // Prefer decoding the combined PCI core wrapper (`PCIC`) first. If decoding fails,
-                // treat `DeviceId::PCI` as the legacy config-ports-only (`PCPT`) payload.
-                let core_result = {
-                    let mut pci_cfg = pci_cfg.borrow_mut();
+            if let Some(state) = pci_state {
+                if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
+                    // Prefer decoding the combined PCI core wrapper (`PCIC`) first. If decoding fails,
+                    // treat `DeviceId::PCI` as the legacy config-ports-only (`PCPT`) payload.
+                    let core_result = {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
                     let mut pci_intx = pci_intx.borrow_mut();
                     let mut core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
                     snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut core)

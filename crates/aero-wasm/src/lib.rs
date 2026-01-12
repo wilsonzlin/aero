@@ -82,9 +82,9 @@ mod webusb_uhci_bridge;
 pub use webusb_uhci_bridge::WebUsbUhciBridge;
 
 mod virtio_input_bridge;
-pub use virtio_input_bridge::VirtioInputPciDeviceCore;
 #[cfg(target_arch = "wasm32")]
 pub use virtio_input_bridge::VirtioInputPciDevice;
+pub use virtio_input_bridge::VirtioInputPciDeviceCore;
 
 #[cfg(target_arch = "wasm32")]
 mod virtio_net_pci_bridge;
@@ -106,7 +106,7 @@ use aero_opfs::OpfsSyncFile;
 use aero_platform::audio::mic_bridge::MicBridge;
 
 #[cfg(target_arch = "wasm32")]
-use js_sys::{Object, Reflect, SharedArrayBuffer, Uint8Array};
+use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
@@ -2311,7 +2311,11 @@ impl Machine {
         &mut self,
         io_ipc: SharedArrayBuffer,
     ) -> Result<(), JsValue> {
-        let tx = open_ring_by_kind(io_ipc.clone(), aero_ipc::layout::io_ipc_queue_kind::NET_TX, 0)?;
+        let tx = open_ring_by_kind(
+            io_ipc.clone(),
+            aero_ipc::layout::io_ipc_queue_kind::NET_TX,
+            0,
+        )?;
         let rx = open_ring_by_kind(io_ipc, aero_ipc::layout::io_ipc_queue_kind::NET_RX, 0)?;
         self.attach_l2_tunnel_rings(tx, rx)
     }
@@ -2329,6 +2333,50 @@ impl Machine {
     /// Prefer [`Machine::detach_network`] for new code.
     pub fn detach_net_rings(&mut self) {
         self.detach_network();
+    }
+
+    /// Return best-effort stats for the attached `NET_TX`/`NET_RX` ring backend (or `null`).
+    ///
+    /// Values are exposed as JS `BigInt` so callers do not lose precision for long-running VMs.
+    #[cfg(target_arch = "wasm32")]
+    pub fn net_stats(&self) -> JsValue {
+        let Some(stats) = self.inner.network_backend_l2_ring_stats() else {
+            return JsValue::NULL;
+        };
+
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_pushed_frames"),
+            &BigInt::from(stats.tx_pushed_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_oversize"),
+            &BigInt::from(stats.tx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_full"),
+            &BigInt::from(stats.tx_dropped_full).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_popped_frames"),
+            &BigInt::from(stats.rx_popped_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_dropped_oversize"),
+            &BigInt::from(stats.rx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_corrupt"),
+            &BigInt::from(stats.rx_corrupt).into(),
+        );
+
+        obj.into()
     }
 
     // -------------------------------------------------------------------------

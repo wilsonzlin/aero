@@ -23,4 +23,10 @@ fn machine_can_attach_net_rings() {
 
     m.attach_l2_tunnel_rings(net_tx, net_rx)
         .expect("attach_l2_tunnel_rings");
+
+    let stats = m.net_stats();
+    assert!(
+        !stats.is_null(),
+        "expected net_stats() to return an object after attaching rings"
+    );
 }
