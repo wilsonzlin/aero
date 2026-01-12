@@ -554,6 +554,19 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             }
             cpu.rflags &= !FLAG_CF;
         }
+        0x03 => {
+            // Set typematic rate/delay.
+            //
+            // We do not currently emulate the i8042 typematic timing; accept the request and
+            // report success.
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x04 => {
+            // Set keyboard click (AT and later).
+            //
+            // We do not emulate the PC speaker key click; accept the request and report success.
+            cpu.rflags &= !FLAG_CF;
+        }
         0x05 => {
             // Store keystroke in buffer (CH=scan code, CL=ASCII).
             //
@@ -1133,6 +1146,28 @@ fn build_e820_map(
         handle_int16(&mut bios, &mut cpu);
         assert_eq!(cpu.rflags & FLAG_ZF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x2222);
+    }
+
+    #[test]
+    fn int16_set_typematic_rate_delay_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        cpu.gpr[gpr::RAX] = 0x031F; // AH=03h, AL=typematic value
+        handle_int16(&mut bios, &mut cpu);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+    }
+
+    #[test]
+    fn int16_set_keyboard_click_reports_success() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        cpu.gpr[gpr::RAX] = 0x0401; // AH=04h, AL=enable click
+        handle_int16(&mut bios, &mut cpu);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
     }
 
     #[test]
