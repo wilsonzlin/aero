@@ -455,9 +455,9 @@ fn qcow2_truncated_l2_table_returns_corrupt_image() {
         storage.write_at(off, &1u16.to_be_bytes()).unwrap();
     }
 
-    let mut disk = emulator::io::storage::formats::Qcow2Disk::open(storage).unwrap();
-    let mut sector = [0u8; SECTOR_SIZE];
-    let err = disk.read_sectors(0, &mut sector).unwrap_err();
+    let err = emulator::io::storage::formats::Qcow2Disk::open(storage)
+        .err()
+        .expect("expected open to fail");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 l2 table truncated")

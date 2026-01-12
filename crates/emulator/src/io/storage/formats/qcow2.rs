@@ -458,12 +458,20 @@ impl<S: ByteStorage> Qcow2Disk<S> {
     }
 
     fn build_metadata_clusters(&mut self) -> DiskResult<()> {
+        let cluster_size = self.cluster_size();
+        let file_len = self.storage.len()?;
         let mut clusters = Vec::new();
 
         for &l1_entry in &self.l1_table {
             let Some(l2_offset) = self.l2_table_offset_from_l1_entry(l1_entry)? else {
                 continue;
             };
+            let end = l2_offset
+                .checked_add(cluster_size)
+                .ok_or(DiskError::OutOfBounds)?;
+            if end > file_len {
+                return Err(DiskError::CorruptImage("qcow2 l2 table truncated"));
+            }
             clusters
                 .try_reserve(1)
                 .map_err(|_| DiskError::QuotaExceeded)?;
@@ -474,6 +482,12 @@ impl<S: ByteStorage> Qcow2Disk<S> {
             let Some(block_offset) = self.refcount_block_offset_from_entry(entry)? else {
                 continue;
             };
+            let end = block_offset
+                .checked_add(cluster_size)
+                .ok_or(DiskError::OutOfBounds)?;
+            if end > file_len {
+                return Err(DiskError::CorruptImage("qcow2 refcount block truncated"));
+            }
             clusters
                 .try_reserve(1)
                 .map_err(|_| DiskError::QuotaExceeded)?;
