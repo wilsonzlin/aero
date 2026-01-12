@@ -10,6 +10,7 @@ mod helpers;
 
 use aero_devices::pci::profile;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _};
 use memory::MemoryBus as _;
@@ -587,5 +588,343 @@ fn st010_ide_pio_atapi_and_busmaster_dma() {
     assert_eq!(
         dma1,
         [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+    );
+}
+
+#[test]
+fn st010_ahci_snapshot_roundtrip_preserves_intx_level() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: true,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+
+    // Attach a small in-memory disk with a known marker at LBA 4 so the port is "present" and
+    // snapshot restore won't reset registers when we re-attach the backend.
+    let mut disk = RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
+    disk.write_at(4 * aero_storage::SECTOR_SIZE as u64, &[9, 8, 7, 6])
+        .unwrap();
+    pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+
+    let bdf = profile::SATA_AHCI_ICH9.bdf;
+    let bar5 = pci_read_bar(&mut pc, bdf, 5);
+
+    // Enable MMIO + bus mastering.
+    let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
+    cmd |= 0x0006; // MEM + BUSMASTER
+    pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
+
+    // Observe INTx via the PIC.
+    unmask_pic_irq(&mut pc, 12);
+
+    // Minimal AHCI command (same programming model as the main AHCI test).
+    let mut alloc = GuestAllocator::new(2 * 1024 * 1024, 0x1000);
+    let clb = alloc.alloc_bytes(1024, 1024);
+    let fb = alloc.alloc_bytes(256, 256);
+    let ctba = alloc.alloc_bytes(256, 128);
+    let data_buf = alloc.alloc_bytes(aero_storage::SECTOR_SIZE, 512);
+
+    const HBA_GHC: u64 = 0x04;
+    const PORT_BASE: u64 = 0x100;
+    const PORT_CLB: u64 = 0x00;
+    const PORT_CLBU: u64 = 0x04;
+    const PORT_FB: u64 = 0x08;
+    const PORT_FBU: u64 = 0x0C;
+    const PORT_IS: u64 = 0x10;
+    const PORT_IE: u64 = 0x14;
+    const PORT_CMD: u64 = 0x18;
+    const PORT_CI: u64 = 0x38;
+
+    const GHC_IE: u32 = 1 << 1;
+    const GHC_AE: u32 = 1 << 31;
+    const PORT_IS_DHRS: u32 = 1 << 0;
+    const PORT_CMD_ST: u32 = 1 << 0;
+    const PORT_CMD_FRE: u32 = 1 << 4;
+
+    pc.memory.write_u32(bar5.base + HBA_GHC, GHC_IE | GHC_AE);
+    pc.memory
+        .write_u32(bar5.base + PORT_BASE + PORT_CLB, clb as u32);
+    pc.memory.write_u32(bar5.base + PORT_BASE + PORT_CLBU, 0);
+    pc.memory
+        .write_u32(bar5.base + PORT_BASE + PORT_FB, fb as u32);
+    pc.memory.write_u32(bar5.base + PORT_BASE + PORT_FBU, 0);
+    pc.memory
+        .write_u32(bar5.base + PORT_BASE + PORT_IE, PORT_IS_DHRS);
+    pc.memory
+        .write_u32(bar5.base + PORT_BASE + PORT_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+    const ATA_CMD_READ_DMA_EXT: u8 = aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
+
+    let cfl = 5u32;
+    let prdtl = 1u32;
+    pc.memory.write_u32(clb + 0, cfl | (prdtl << 16));
+    pc.memory.write_u32(clb + 4, 0);
+    pc.memory.write_u32(clb + 8, ctba as u32);
+    pc.memory.write_u32(clb + 12, 0);
+
+    let mut cfis = [0u8; 64];
+    cfis[0] = 0x27;
+    cfis[1] = 0x80;
+    cfis[2] = ATA_CMD_READ_DMA_EXT;
+    cfis[7] = 0x40;
+    let lba: u64 = 4;
+    cfis[4] = (lba & 0xFF) as u8;
+    cfis[5] = ((lba >> 8) & 0xFF) as u8;
+    cfis[6] = ((lba >> 16) & 0xFF) as u8;
+    cfis[8] = ((lba >> 24) & 0xFF) as u8;
+    cfis[9] = ((lba >> 32) & 0xFF) as u8;
+    cfis[10] = ((lba >> 40) & 0xFF) as u8;
+    cfis[12] = 1;
+    mem_write(&mut pc, ctba, &cfis);
+
+    let prd = ctba + 0x80;
+    pc.memory.write_u32(prd + 0, data_buf as u32);
+    pc.memory.write_u32(prd + 4, 0);
+    pc.memory.write_u32(prd + 8, 0);
+    pc.memory.write_u32(prd + 12, (aero_storage::SECTOR_SIZE as u32 - 1) | (1 << 31));
+
+    pc.memory
+        .write_u32(bar5.base + PORT_BASE + PORT_IS, PORT_IS_DHRS);
+    pc.memory.write_u32(bar5.base + PORT_BASE + PORT_CI, 1);
+
+    pc.process_ahci();
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&pc), Some(12));
+
+    let ahci_state = pc
+        .ahci
+        .as_ref()
+        .expect("ahci enabled")
+        .borrow()
+        .save_state();
+
+    // Restore into a fresh platform instance.
+    let mut pc2 = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: true,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    pc2.ahci
+        .as_ref()
+        .expect("ahci enabled")
+        .borrow_mut()
+        .load_state(&ahci_state)
+        .unwrap();
+
+    // Re-attach the host disk backend post-restore (AHCI snapshots drop backends).
+    let mut disk2 =
+        RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
+    disk2
+        .write_at(4 * aero_storage::SECTOR_SIZE as u64, &[9, 8, 7, 6])
+        .unwrap();
+    pc2.attach_ahci_disk_port0(Box::new(disk2)).unwrap();
+
+    unmask_pic_irq(&mut pc2, 12);
+    let mut cmd2 = pci_cfg_read_u16(&mut pc2, bdf, 0x04);
+    cmd2 |= 0x0006;
+    pci_cfg_write_u16(&mut pc2, bdf, 0x04, cmd2);
+
+    pc2.poll_pci_intx_lines();
+    assert_eq!(
+        pic_pending_irq(&pc2),
+        Some(12),
+        "AHCI INTx should remain asserted after snapshot/restore"
+    );
+}
+
+#[test]
+fn st010_nvme_snapshot_roundtrip_preserves_intx_level() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+
+    let bdf = profile::NVME_CONTROLLER.bdf;
+    let bar0 = pci_read_bar(&mut pc, bdf, 0);
+    assert_eq!(bar0.kind, BarKind::Mem64);
+
+    unmask_pic_irq(&mut pc, 13);
+
+    let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
+    cmd |= 0x0006; // MEM + BUSMASTER
+    pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
+
+    let mut alloc = GuestAllocator::new(2 * 1024 * 1024, 0x1000);
+    let asq = alloc.alloc_bytes(4096, 4096);
+    let acq = alloc.alloc_bytes(4096, 4096);
+    let identify = alloc.alloc_bytes(4096, 4096);
+
+    pc.memory.write_u32(bar0.base + 0x24, 0x0001_0001);
+    pc.memory.write_u64(bar0.base + 0x28, asq);
+    pc.memory.write_u64(bar0.base + 0x30, acq);
+    pc.memory.write_u32(bar0.base + 0x14, 1);
+
+    let cid: u16 = 1;
+    let dw0 = (0x06u32) | ((cid as u32) << 16); // IDENTIFY
+    pc.memory.write_u32(asq + 0, dw0);
+    pc.memory.write_u64(asq + 24, identify);
+    pc.memory.write_u32(asq + 40, 1); // CNS=1
+
+    pc.memory.write_u32(bar0.base + 0x1000, 1);
+    pc.process_nvme();
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&pc), Some(13));
+
+    let nvme_state = pc
+        .nvme
+        .as_ref()
+        .expect("nvme enabled")
+        .borrow()
+        .save_state();
+
+    let mut pc2 = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    pc2.nvme
+        .as_ref()
+        .expect("nvme enabled")
+        .borrow_mut()
+        .load_state(&nvme_state)
+        .unwrap();
+
+    unmask_pic_irq(&mut pc2, 13);
+    let mut cmd2 = pci_cfg_read_u16(&mut pc2, bdf, 0x04);
+    cmd2 |= 0x0006;
+    pci_cfg_write_u16(&mut pc2, bdf, 0x04, cmd2);
+
+    pc2.poll_pci_intx_lines();
+    assert_eq!(
+        pic_pending_irq(&pc2),
+        Some(13),
+        "NVMe INTx should remain asserted after snapshot/restore"
+    );
+}
+
+#[test]
+fn st010_ide_snapshot_roundtrip_preserves_irq14_level() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ide: true,
+            enable_uhci: false,
+            enable_ahci: false,
+            ..Default::default()
+        },
+    );
+
+    let bdf = profile::IDE_PIIX3.bdf;
+    let bar4 = pci_read_bar(&mut pc, bdf, 4);
+    assert_eq!(bar4.kind, BarKind::Io);
+
+    let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
+    cmd |= 0x0005; // IO + BUSMASTER
+    pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
+
+    // Attach HDD + ISO backends.
+    let mut hdd = RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
+    let mut sector0 = [0u8; aero_storage::SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        let half = (i >= 256) as u8;
+        *b = (i as u8).wrapping_add(1 + half * 16);
+    }
+    hdd.write_at(0, &sector0).unwrap();
+    pc.attach_ide_primary_master_disk(Box::new(hdd)).unwrap();
+
+    let mut iso = RawDisk::create(MemBackend::new(), 4 * 2048).unwrap();
+    iso.write_at(2048, b"WORLD").unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso)).unwrap();
+
+    // Trigger a Bus Master DMA transfer to raise IRQ14, then snapshot.
+    let bus_master_base = bar4.base as u16;
+    let prd_addr = 0x2000u64;
+    let buf0 = 0x0FF00u64;
+    let buf1 = 0x10000u64;
+
+    pc.memory.write_u32(prd_addr + 0, buf0 as u32);
+    pc.memory.write_u16(prd_addr + 4, 256);
+    pc.memory.write_u16(prd_addr + 6, 0x0000);
+    pc.memory.write_u32(prd_addr + 8, buf1 as u32);
+    pc.memory.write_u16(prd_addr + 12, 256);
+    pc.memory.write_u16(prd_addr + 14, 0x8000);
+
+    pc.io.write(bus_master_base + 2, 1, 0x06);
+    pc.io.write(bus_master_base + 4, 4, prd_addr as u32);
+
+    let pri_cmd = PRIMARY_PORTS.cmd_base;
+    pc.io.write(pri_cmd + 6, 1, 0xE0);
+    pc.io.write(pri_cmd + 2, 1, 1);
+    pc.io.write(pri_cmd + 3, 1, 0);
+    pc.io.write(pri_cmd + 4, 1, 0);
+    pc.io.write(pri_cmd + 5, 1, 0);
+    pc.io.write(pri_cmd + 7, 1, 0xC8);
+    pc.io.write(bus_master_base + 0, 1, 0x09);
+
+    pc.process_ide();
+
+    unmask_pic_irq(&mut pc, 14);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pic_pending_irq(&pc), Some(14));
+
+    let ide_state = pc
+        .ide
+        .as_ref()
+        .expect("ide enabled")
+        .borrow()
+        .save_state();
+
+    let mut pc2 = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ide: true,
+            enable_uhci: false,
+            enable_ahci: false,
+            ..Default::default()
+        },
+    );
+    pc2.ide
+        .as_ref()
+        .expect("ide enabled")
+        .borrow_mut()
+        .load_state(&ide_state)
+        .unwrap();
+
+    // Re-attach backends post-restore (IDE snapshots drop host disks/ISOs).
+    let mut hdd2 =
+        RawDisk::create(MemBackend::new(), 8 * aero_storage::SECTOR_SIZE as u64).unwrap();
+    hdd2.write_at(0, &sector0).unwrap();
+    pc2.attach_ide_primary_master_disk(Box::new(hdd2)).unwrap();
+
+    let mut iso2 = RawDisk::create(MemBackend::new(), 4 * 2048).unwrap();
+    iso2.write_at(2048, b"WORLD").unwrap();
+    pc2.attach_ide_secondary_master_iso(Box::new(iso2)).unwrap();
+
+    let mut cmd2 = pci_cfg_read_u16(&mut pc2, bdf, 0x04);
+    cmd2 |= 0x0005;
+    pci_cfg_write_u16(&mut pc2, bdf, 0x04, cmd2);
+
+    unmask_pic_irq(&mut pc2, 14);
+    pc2.poll_pci_intx_lines();
+    assert_eq!(
+        pic_pending_irq(&pc2),
+        Some(14),
+        "IDE primary IRQ14 should remain asserted after snapshot/restore"
     );
 }
