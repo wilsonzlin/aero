@@ -1538,7 +1538,19 @@ function renderNetTracePanel(): HTMLElement {
       // we forward the clear command immediately.
       workerCoordinator.clearNetTrace();
     },
-    getStats: () => workerCoordinator.getNetTraceStats(),
+    getStats: async () => {
+      // Avoid spamming the UI with errors when the VM/net worker isn't running yet.
+      // We can only fetch real stats once the net worker is ready.
+      const state = workerCoordinator.getVmState();
+      if (state === "stopped" || state === "poweredOff" || state === "failed") {
+        return { enabled: workerCoordinator.isNetTraceEnabled(), records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 };
+      }
+      const netStatus = workerCoordinator.getWorkerStatuses().net;
+      if (netStatus.state !== "ready") {
+        return { enabled: workerCoordinator.isNetTraceEnabled(), records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 };
+      }
+      return await workerCoordinator.getNetTraceStats(1000);
+    },
     downloadPcapng: async () => {
       requireWorkersRunning();
       return await workerCoordinator.takeNetTracePcapng(30_000);
