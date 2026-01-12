@@ -1,8 +1,10 @@
 mod common;
 
 use aero_gpu::AerogpuD3d9Executor;
+use aero_gpu::stats::GpuStats;
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
+use std::sync::Arc;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(cmd::AerogpuCmdStreamHeader, size_bytes);
@@ -235,7 +237,12 @@ fn create_executor_with_d24s8_support() -> Option<AerogpuD3d9Executor> {
         Err(err) => panic!("request_device failed: {err}"),
     };
 
-    Some(AerogpuD3d9Executor::new(device, queue, downlevel_flags))
+    Some(AerogpuD3d9Executor::new(
+        device,
+        queue,
+        downlevel_flags,
+        Arc::new(GpuStats::new()),
+    ))
 }
 
 #[test]
@@ -558,4 +565,3 @@ fn d3d9_cmd_stream_two_sided_stencil_mode() {
     // Overlap: CCW triangle wins, should be green.
     assert_eq!(pixel_at(&rgba, width, 34, 32), [0, 255, 0, 255]);
 }
-
