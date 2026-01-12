@@ -245,3 +245,84 @@ fn pc_platform_gates_e1000_tx_dma_on_pci_bus_master_enable() {
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 11);
 }
+
+#[test]
+fn pc_platform_e1000_dma_writes_mark_dirty_pages_when_enabled() {
+    let mut pc = PcPlatform::new_with_e1000_dirty_tracking(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
+    assert_ne!(
+        command & 0x2,
+        0,
+        "BIOS POST should enable memory decoding for E1000"
+    );
+    assert_eq!(
+        command & (1 << 2),
+        0,
+        "BIOS POST should not enable bus mastering for E1000"
+    );
+
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
+
+    // RX ring: 2 descriptors => 1 usable due to head/tail semantics.
+    let ring_base = 0x1000u64;
+    let buf_addr = 0x2000u64;
+
+    // Descriptor 0: buffer at 0x2000.
+    pc.memory.write_physical(ring_base, &buf_addr.to_le_bytes());
+
+    // Program RX ring.
+    pc.memory.write_u32(bar0_base + 0x2800, ring_base as u32); // RDBAL
+    pc.memory.write_u32(bar0_base + 0x2804, 0); // RDBAH
+    pc.memory.write_u32(bar0_base + 0x2808, 2 * 16); // RDLEN
+    pc.memory.write_u32(bar0_base + 0x2810, 0); // RDH
+    pc.memory.write_u32(bar0_base + 0x2818, 1); // RDT
+    pc.memory.write_u32(bar0_base + 0x0100, 1 << 1); // RCTL.EN
+
+    // Clear dirty tracking for CPU-initiated descriptor setup writes. We want to observe only DMA
+    // writes performed by the device model.
+    pc.memory.clear_dirty();
+
+    let frame = build_test_frame(b"dirty");
+    pc.e1000_enqueue_rx_frame(frame.clone());
+
+    // With COMMAND.BME=0, the device must not DMA into guest RAM.
+    pc.process_e1000();
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(dirty.is_empty(), "unexpected dirty pages with BME=0: {dirty:?}");
+
+    // Enable bus mastering and poll again: DMA should now deliver the frame and mark the RX buffer
+    // page (and descriptor page) dirty.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        (command as u16) | (1 << 2),
+    );
+
+    pc.process_e1000();
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_buf_page = buf_addr / page_size;
+    let expected_desc_page = ring_base / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_buf_page),
+        "dirty pages should include RX buffer page {expected_buf_page} (got {dirty:?})"
+    );
+    assert!(
+        dirty.contains(&expected_desc_page),
+        "dirty pages should include RX descriptor page {expected_desc_page} (got {dirty:?})"
+    );
+}
