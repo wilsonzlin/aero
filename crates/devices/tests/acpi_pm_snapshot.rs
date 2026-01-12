@@ -448,3 +448,29 @@ fn snapshot_restore_rejects_invalid_pm_timer_remainder() {
         "invalid remainders must be rejected (expected SnapshotError::InvalidFieldEncoding)"
     );
 }
+
+#[test]
+fn snapshot_restore_ignores_malformed_tick_fields_when_elapsed_ns_is_present() {
+    const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const TAG_PM_TIMER_REMAINDER: u16 = 9;
+
+    let cfg = AcpiPmConfig::default();
+    let mut pm = AcpiPmIo::new(cfg);
+
+    // If elapsed-ns is present, load_state should not require tick-based fields to be valid; they
+    // are redundant and should be ignored to maximize forward compatibility / robustness against
+    // snapshot corruption in unused fields.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u64(TAG_PM_TIMER_ELAPSED_NS, 0);
+    w.field_bytes(TAG_PM_TIMER_TICKS, vec![0xAA]); // invalid u32 encoding
+    w.field_bytes(TAG_PM_TIMER_REMAINDER, vec![0xBB]); // invalid u32 encoding
+    let bytes = w.finish();
+
+    pm.load_state(&bytes).unwrap();
+    assert_eq!(
+        pm.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF,
+        0,
+        "restored PM_TMR should use elapsed-ns and start from 0"
+    );
+}
