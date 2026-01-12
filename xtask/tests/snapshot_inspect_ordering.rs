@@ -1175,6 +1175,8 @@ fn snapshot_inspect_decodes_serial_device_state() {
         .assert()
         .success()
         .stdout(predicate::str::contains("SERIAL(8)"))
-        .stdout(predicate::str::contains("serial_prefix=\"0123456789abcdef\""))
+        .stdout(predicate::str::contains(
+            "serial_prefix=\"0123456789abcdef\"",
+        ))
         .stdout(predicate::str::contains("serial_tail=\"ZYXWVUTSRQPONMLK\""));
 }

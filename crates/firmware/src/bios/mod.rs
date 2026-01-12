@@ -611,7 +611,10 @@ mod tests {
             read_vec(&mut mem, 0x1E),
             (DISKETTE_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
         );
-        assert_eq!(read_vec(&mut mem, 0x1F), (VGA_FONT_8X8_OFFSET, BIOS_SEGMENT));
+        assert_eq!(
+            read_vec(&mut mem, 0x1F),
+            (VGA_FONT_8X8_OFFSET, BIOS_SEGMENT)
+        );
         assert_eq!(
             read_vec(&mut mem, 0x41),
             (FIXED_DISK_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
