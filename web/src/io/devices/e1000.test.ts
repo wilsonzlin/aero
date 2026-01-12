@@ -155,6 +155,7 @@ describe("io/devices/E1000PciDevice", () => {
     // First frame becomes pending (ring full); second frame should be the next one flushed after
     // snapshot restore because the pending host-side buffer is intentionally cleared.
     const txQueue: Uint8Array[] = [new Uint8Array([0x01]), new Uint8Array([0x02])];
+    let irq = false;
     const bridge: E1000BridgeLike = {
       mmio_read: vi.fn(() => 0),
       mmio_write: vi.fn(),
@@ -163,7 +164,7 @@ describe("io/devices/E1000PciDevice", () => {
       poll: vi.fn(),
       receive_frame: vi.fn(),
       pop_tx_frame: vi.fn(() => txQueue.shift()),
-      irq_level: vi.fn(() => true),
+      irq_level: vi.fn(() => irq),
       free: vi.fn(),
     };
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
@@ -174,6 +175,7 @@ describe("io/devices/E1000PciDevice", () => {
     expect(bridge.pop_tx_frame).toHaveBeenCalledTimes(1);
 
     // Snapshot restore should clear transient state and re-drive the INTx level.
+    irq = true;
     dev.onSnapshotRestore();
     expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
     expect(irqSink.raiseIrq).toHaveBeenCalledWith(10);
