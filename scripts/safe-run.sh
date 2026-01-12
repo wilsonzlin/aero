@@ -115,22 +115,16 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 # If you want to set codegen-units for a specific invocation, use:
 #   AERO_RUST_CODEGEN_UNITS=<n> (alias: AERO_CODEGEN_UNITS)
 is_cargo_cmd=false
-_aero_injected_codegen_units=0
-_aero_injected_codegen_units_value=""
-_aero_injected_codegen_units_is_explicit=0
 if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
     is_cargo_cmd=true
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
         # `AERO_CODEGEN_UNITS` is a shorthand alias for `AERO_RUST_CODEGEN_UNITS`.
         if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" || -n "${AERO_CODEGEN_UNITS:-}" ]]; then
-            _aero_injected_codegen_units_is_explicit=1
             _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS:-${AERO_CODEGEN_UNITS}}"
             if [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
                 export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${_aero_codegen_units}"
                 export RUSTFLAGS="${RUSTFLAGS# }"
-                _aero_injected_codegen_units=1
-                _aero_injected_codegen_units_value="${_aero_codegen_units}"
             else
                 echo "[safe-run] warning: invalid AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS value: ${_aero_codegen_units} (expected positive integer); skipping codegen-units override" >&2
             fi
@@ -282,17 +276,6 @@ fi
 
 attempt=1
 while true; do
-    # If we injected codegen-units and hit the thread-spawn ICE, fall back to the most conservative
-    # setting on retry to reduce rustc's helper threads.
-    #
-    # If the user explicitly set AERO_RUST_CODEGEN_UNITS/AERO_CODEGEN_UNITS, respect it and do not
-    # override; they can opt into the more conservative setting themselves if desired.
-    if [[ "${attempt}" -gt 1 && "${_aero_injected_codegen_units:-0}" -eq 1 ]]; then
-        if [[ "${_aero_injected_codegen_units_is_explicit:-0}" -eq 0 && -n "${_aero_injected_codegen_units_value:-}" && "${_aero_injected_codegen_units_value}" != "1" ]]; then
-            export RUSTFLAGS="${RUSTFLAGS//codegen-units=${_aero_injected_codegen_units_value}/codegen-units=1}"
-        fi
-    fi
-
     stderr_log="$(mktemp "${TMPDIR:-/tmp}/aero-safe-run-stderr.XXXXXX")"
 
     set +e
