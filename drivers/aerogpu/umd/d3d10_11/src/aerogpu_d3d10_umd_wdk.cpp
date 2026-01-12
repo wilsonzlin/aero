@@ -1927,30 +1927,33 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     // Consume the (potentially updated) allocation private driver data. For
     // shared allocations, the Win7 KMD fills a stable non-zero share_token.
     aerogpu_wddm_alloc_priv_v2 priv_out{};
-    if (ConsumeWddmAllocPrivV2(alloc_info[0].pPrivateDriverData,
-                               static_cast<UINT>(alloc_info[0].PrivateDriverDataSize),
-                               &priv_out)) {
-      if (priv_out.alloc_id != 0) {
-        alloc_id = priv_out.alloc_id;
-      }
-      if (is_shared) {
-        if ((priv_out.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) == 0 || priv_out.share_token == 0) {
+    const bool have_priv_out = ConsumeWddmAllocPrivV2(alloc_info[0].pPrivateDriverData,
+                                                      static_cast<UINT>(alloc_info[0].PrivateDriverDataSize),
+                                                      &priv_out);
+    if (have_priv_out && priv_out.alloc_id != 0) {
+      alloc_id = priv_out.alloc_id;
+    }
+    uint64_t share_token = 0;
+    bool share_token_ok = true;
+    if (is_shared) {
+      share_token_ok = have_priv_out &&
+                       ((priv_out.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) != 0) &&
+                       (priv_out.share_token != 0);
+      if (share_token_ok) {
+        share_token = priv_out.share_token;
+      } else {
+        if (!have_priv_out) {
+          static std::once_flag log_once;
+          std::call_once(log_once, [] {
+            AEROGPU_D3D10_11_LOG("D3D10 CreateResource: shared allocation missing/invalid private driver data");
+          });
+        } else {
           static std::once_flag log_once;
           std::call_once(log_once, [] {
             AEROGPU_D3D10_11_LOG("D3D10 CreateResource: shared allocation missing share_token in returned private data");
           });
-          return E_FAIL;
         }
-        res->share_token = priv_out.share_token;
-      } else {
-        res->share_token = 0;
       }
-    } else if (is_shared) {
-      static std::once_flag log_once;
-      std::call_once(log_once, [] {
-        AEROGPU_D3D10_11_LOG("D3D10 CreateResource: shared allocation missing/invalid private driver data");
-      });
-      return E_FAIL;
     }
 
     uint64_t km_resource = 0;
@@ -1991,12 +1994,10 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_FAIL;
     }
 
-    // Treat the private driver data blob as in/out so the Win7 KMD can fill
-    // `share_token` for shared allocations (mirrors the D3D9Ex UMD contract).
-    const uint64_t share_token = static_cast<uint64_t>(priv.share_token);
-    if (is_shared && share_token == 0) {
+    if (is_shared && !share_token_ok) {
       // If the KMD does not return a stable token, shared surface interop cannot
-      // work across processes; fail cleanly.
+      // work across processes; fail cleanly. Free the allocation handles that
+      // were created by AllocateCb before returning an error.
       D3DDDICB_DEALLOCATE dealloc = {};
       D3DKMT_HANDLE h = static_cast<D3DKMT_HANDLE>(km_alloc);
       __if_exists(D3DDDICB_DEALLOCATE::hContext) {
