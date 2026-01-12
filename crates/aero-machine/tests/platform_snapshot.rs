@@ -508,7 +508,10 @@ fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
     cfg_write(&mut src, bdf, 0x10, 4, 0x9000_0000);
     let legacy_state = {
         let pci_cfg = pci_cfg.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI_CFG, &*pci_cfg)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI_CFG,
+            &*pci_cfg,
+        )
     };
 
     // Restore into a fresh machine and ensure the canonical state wins even if the legacy entry
