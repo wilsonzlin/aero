@@ -732,12 +732,15 @@ def main() -> int:
     )
     parser.add_argument(
         "--with-input-events",
+        "--with-virtio-input-events",
         "--require-virtio-input-events",
+        "--enable-virtio-input-events",
         dest="with_input_events",
         action="store_true",
         help=(
             "Inject deterministic keyboard/mouse events via QMP (input-send-event) and require the guest "
-            "virtio-input-events selftest marker to PASS. "
+            "virtio-input-events selftest marker to PASS. Also emits a host marker: "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|... "
             "This requires a guest image provisioned with --test-input-events (or env var)."
         ),
     )
@@ -783,17 +786,8 @@ def main() -> int:
         default=50,
         help="RMS threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 50)",
     )
-    parser.add_argument(
-        "--with-virtio-input-events",
-        "--enable-virtio-input-events",
-        dest="enable_virtio_input_events",
-        action="store_true",
-        help=(
-            "Inject deterministic virtio-input keyboard/mouse events via QMP (input-send-event) and require the guest "
-            "virtio-input-events selftest marker to PASS. Also emits a host marker: "
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|..."
-        ),
-    )
+    # NOTE: `--with-virtio-input-events`/`--enable-virtio-input-events` used to be separate flags; they remain accepted
+    # as aliases for `--with-input-events` for backwards compatibility.
     parser.add_argument(
         "--follow-serial",
         action="store_true",
@@ -802,7 +796,7 @@ def main() -> int:
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
-    need_input_events = bool(args.with_input_events or args.enable_virtio_input_events)
+    need_input_events = bool(args.with_input_events)
 
     if not args.enable_virtio_snd:
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
