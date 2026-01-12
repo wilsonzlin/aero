@@ -24,6 +24,7 @@ The WASM-facing wrapper exposes input injection methods that map directly to PS/
 Example:
 
 ```ts
+// `initWasm` is the browser/worker WASM loader in `web/src/runtime/wasm_loader.ts`.
 const { api } = await initWasm({ variant: "single" });
 const machine = new api.Machine(64 * 1024 * 1024);
 
@@ -36,6 +37,10 @@ machine.inject_mouse_button(0, false); // left up
 machine.inject_mouse_buttons_mask(0x01 | 0x02); // left+right held
 machine.inject_mouse_buttons_mask(0x00); // release all
 ```
+
+Note: the PS/2 mouse model only emits movement packets when mouse reporting is enabled (e.g. after
+the guest sends `0xF4` via the i8042 “write to mouse” command). Most OS drivers enable this during
+boot; very early bare-metal tests may need to do so explicitly.
 
 For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices. The definitive virtio-input device contract for Aero (transport + queues + event codes) is specified in [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
 
