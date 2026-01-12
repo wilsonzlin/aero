@@ -1,5 +1,5 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
-import type { PciAddress, PciBar, PciDevice } from "../bus/pci.ts";
+import type { PciBar, PciCapability, PciDevice } from "../bus/pci.ts";
 import type { IrqSink } from "../device_manager.ts";
 
 export type VirtioInputPciDeviceLike = {
@@ -132,6 +132,41 @@ function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
   if (size === 2) return value & 0xffff;
   return value >>> 0;
+}
+
+function writeU32LE(buf: Uint8Array, off: number, value: number): void {
+  buf[off] = value & 0xff;
+  buf[off + 1] = (value >>> 8) & 0xff;
+  buf[off + 2] = (value >>> 16) & 0xff;
+  buf[off + 3] = (value >>> 24) & 0xff;
+}
+
+function virtioVendorCap(opts: {
+  cfgType: number;
+  bar: number;
+  offset: number;
+  length: number;
+  notifyOffMultiplier?: number;
+}): PciCapability {
+  const capLen = opts.notifyOffMultiplier !== undefined ? 20 : 16;
+  const bytes = new Uint8Array(capLen);
+  // Standard PCI capability header.
+  bytes[0] = 0x09; // Vendor-specific
+  bytes[1] = 0x00; // next pointer (patched by PCI bus)
+  bytes[2] = capLen & 0xff;
+
+  // virtio_pci_cap fields.
+  bytes[3] = opts.cfgType & 0xff;
+  bytes[4] = opts.bar & 0xff;
+  bytes[5] = 0x00; // id (unused)
+  bytes[6] = 0x00;
+  bytes[7] = 0x00;
+  writeU32LE(bytes, 8, opts.offset >>> 0);
+  writeU32LE(bytes, 12, opts.length >>> 0);
+  if (opts.notifyOffMultiplier !== undefined) {
+    writeU32LE(bytes, 16, opts.notifyOffMultiplier >>> 0);
+  }
+  return { bytes };
 }
 
 /**
@@ -329,36 +364,6 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
   }
 }
 
-function writeU32LE(buf: Uint8Array, off: number, value: number): void {
-  buf[off] = value & 0xff;
-  buf[off + 1] = (value >>> 8) & 0xff;
-  buf[off + 2] = (value >>> 16) & 0xff;
-  buf[off + 3] = (value >>> 24) & 0xff;
-}
-
-function initVirtioCap(
-  cfg: Uint8Array,
-  capOff: number,
-  opts: { next: number; capLen: number; cfgType: number; bar: number; offset: number; length: number; notifyOffMultiplier?: number },
-): void {
-  // Standard PCI cap header.
-  cfg[capOff + 0] = 0x09; // Vendor-specific
-  cfg[capOff + 1] = opts.next & 0xff;
-  cfg[capOff + 2] = opts.capLen & 0xff;
-
-  // virtio_pci_cap fields.
-  cfg[capOff + 3] = opts.cfgType & 0xff;
-  cfg[capOff + 4] = opts.bar & 0xff;
-  cfg[capOff + 5] = 0x00; // id (unused)
-  cfg[capOff + 6] = 0x00;
-  cfg[capOff + 7] = 0x00;
-  writeU32LE(cfg, capOff + 8, opts.offset >>> 0);
-  writeU32LE(cfg, capOff + 12, opts.length >>> 0);
-  if (opts.notifyOffMultiplier !== undefined) {
-    writeU32LE(cfg, capOff + 16, opts.notifyOffMultiplier >>> 0);
-  }
-}
-
 export class VirtioInputPciFunction implements PciDevice {
   readonly name: string;
   readonly vendorId = VIRTIO_VENDOR_ID;
@@ -374,6 +379,14 @@ export class VirtioInputPciFunction implements PciDevice {
   readonly bdf: PciAddress;
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_INPUT_MMIO_BAR_SIZE }, null, null, null, null, null];
+  readonly capabilities: ReadonlyArray<PciCapability> = [
+    // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
+    // The PCI bus will install these starting at 0x40 with 4-byte aligned pointers.
+    virtioVendorCap({ cfgType: 1, bar: 0, offset: 0x0000, length: 0x0100 }), // COMMON_CFG
+    virtioVendorCap({ cfgType: 2, bar: 0, offset: 0x1000, length: 0x0100, notifyOffMultiplier: 4 }), // NOTIFY_CFG
+    virtioVendorCap({ cfgType: 3, bar: 0, offset: 0x2000, length: 0x0020 }), // ISR_CFG
+    virtioVendorCap({ cfgType: 4, bar: 0, offset: 0x3000, length: 0x0100 }), // DEVICE_CFG
+  ];
 
   readonly #dev: VirtioInputPciDeviceLike;
   readonly #irqSink: IrqSink;
@@ -392,27 +405,6 @@ export class VirtioInputPciFunction implements PciDevice {
     this.subsystemId = opts.kind === "keyboard" ? VIRTIO_INPUT_SUBSYSTEM_KEYBOARD : VIRTIO_INPUT_SUBSYSTEM_MOUSE;
     this.headerType = opts.kind === "keyboard" ? 0x80 : 0x00;
     this.bdf = { bus: 0, device: VIRTIO_INPUT_PCI_DEVICE, function: opts.kind === "keyboard" ? 0 : 1 };
-  }
-
-  initConfigSpace(config: Uint8Array, _addr: PciAddress): void {
-    // PCI status bit 4: capability list present.
-    config[0x06] = (config[0x06]! | 0x10) & 0xff;
-    // Capability pointer (start of list).
-    config[0x34] = 0x50;
-
-    // Virtio vendor-specific capabilities (contract v1 fixed layout).
-    initVirtioCap(config, 0x50, { next: 0x60, capLen: 16, cfgType: 1, bar: 0, offset: 0x0000, length: 0x0100 });
-    initVirtioCap(config, 0x60, {
-      next: 0x74,
-      capLen: 20,
-      cfgType: 2,
-      bar: 0,
-      offset: 0x1000,
-      length: 0x0100,
-      notifyOffMultiplier: 4,
-    });
-    initVirtioCap(config, 0x74, { next: 0x84, capLen: 16, cfgType: 3, bar: 0, offset: 0x2000, length: 0x0020 });
-    initVirtioCap(config, 0x84, { next: 0x00, capLen: 16, cfgType: 4, bar: 0, offset: 0x3000, length: 0x0100 });
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
