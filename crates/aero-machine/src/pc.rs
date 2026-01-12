@@ -369,16 +369,18 @@ impl PcMachine {
 
     /// Poll the E1000 + network backend bridge once (DMA + TX/RX frame pumping).
     ///
-    /// Returns quickly when E1000 is disabled/not present, or when no backend is attached.
+    /// Returns quickly when E1000 is disabled/not present.
+    ///
+    /// When no backend is attached, guest TX frames are still processed (DMA + descriptor
+    /// completion), but are dropped on the floor.
     pub fn poll_network(&mut self) {
         if !self.bus.platform.has_e1000() {
             return;
         }
 
-        // Avoid draining TX frames unless we can actually deliver them to a backend.
-        let Some(mut backend) = self.network_backend.take() else {
-            return;
-        };
+        // Move the backend out to avoid borrow conflicts between `self.bus.platform` and
+        // `self.network_backend`.
+        let mut backend = self.network_backend.take();
 
         // Run DMA once before draining/pushing frames so register-only writes (like updating
         // TDT/RDT) can take effect.
@@ -392,23 +394,29 @@ impl PcMachine {
                 break;
             };
             tx_budget -= 1;
-            backend.transmit(frame);
+
+            if let Some(backend) = backend.as_mut() {
+                backend.transmit(frame);
+            }
         }
- 
+
         // 3) Drain host->guest frames.
-        const MAX_RX_FRAMES_PER_POLL: usize = 256;
-        let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
-        while rx_budget != 0 {
-            let Some(frame) = backend.poll_receive() else {
-                break;
-            };
-            rx_budget -= 1;
-            self.bus.platform.e1000_enqueue_rx_frame(frame);
+        if let Some(backend) = backend.as_mut() {
+            const MAX_RX_FRAMES_PER_POLL: usize = 256;
+            let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
+            while rx_budget != 0 {
+                let Some(frame) = backend.poll_receive() else {
+                    break;
+                };
+                rx_budget -= 1;
+                self.bus.platform.e1000_enqueue_rx_frame(frame);
+            }
+
+            // 4) Flush RX delivery for newly enqueued frames.
+            self.bus.platform.process_e1000();
         }
- 
-        // 4) Flush RX delivery for newly enqueued frames.
-        self.bus.platform.process_e1000();
-        self.network_backend = Some(backend);
+
+        self.network_backend = backend;
     }
 
     /// Run the CPU for at most `max_insts` guest instructions.

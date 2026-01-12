@@ -667,50 +667,6 @@ fn all_ones(size: usize) -> u64 {
     }
 }
 
-/// AHCI ABAR (BAR5) handler registered via the platform's [`PciBarMmioRouter`].
-///
-/// The AHCI device model gates MMIO accesses on PCI COMMAND.MEM (bit 1). The PC platform maintains
-/// a separate canonical PCI config space (`PciConfigPorts`) for guest enumeration, so we must
-/// mirror the live PCI command (and BAR base) into the AHCI model before each MMIO access.
-struct PcAhciMmioBar {
-    pci_cfg: SharedPciConfigPorts,
-    ahci: Rc<RefCell<AhciPciDevice>>,
-    bdf: PciBdf,
-}
-
-impl PcAhciMmioBar {
-    fn sync_pci_state(&mut self) {
-        let (command, bar5_base) = {
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(self.bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar5_base = cfg
-                .and_then(|cfg| cfg.bar_range(5))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            (command, bar5_base)
-        };
-
-        let mut ahci = self.ahci.borrow_mut();
-        ahci.config_mut().set_command(command);
-        if bar5_base != 0 {
-            ahci.config_mut().set_bar_base(5, bar5_base);
-        }
-    }
-}
-
-impl PciBarMmioHandler for PcAhciMmioBar {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        self.sync_pci_state();
-        self.ahci.borrow_mut().mmio_read(offset, size)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        self.sync_pci_state();
-        self.ahci.borrow_mut().mmio_write(offset, size, value);
-    }
-}
-
 /// NVMe BAR0 handler registered via the platform's [`PciBarMmioRouter`].
 ///
 /// The NVMe device model gates MMIO accesses on PCI COMMAND.MEM (bit 1). The PC platform maintains
