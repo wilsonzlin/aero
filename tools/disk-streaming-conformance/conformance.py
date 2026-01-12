@@ -771,6 +771,21 @@ def _test_if_range_matches_etag(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+def _test_etag_strength(etag: str | None) -> TestResult:
+    name = "HEAD: ETag is strong (recommended for If-Range)"
+    if etag is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)")
+    etag = etag.strip()
+    if _is_weak_etag(etag):
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=f"ETag is weak ({etag!r}); If-Range requires a strong ETag",
+        )
+    if not etag.startswith('"'):
+        return TestResult(name=name, status="WARN", details=f"ETag does not look quoted: {etag!r}")
+    return TestResult(name=name, status="PASS")
+
 def _test_if_range_mismatch(
     *,
     base_url: str,
@@ -1293,6 +1308,7 @@ def main(argv: Sequence[str]) -> int:
     etag = head_info.etag if head_info is not None else None
     last_modified = head_info.last_modified if head_info is not None else None
 
+    results.append(_test_etag_strength(etag))
     results.append(
         _test_content_headers(
             name="HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff",

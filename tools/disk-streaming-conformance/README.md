@@ -14,6 +14,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - `If-Range` semantics (defence against mixed-version bytes):
   - `GET Range` with `If-Range: <strong-etag>` returns `206` (skipped if ETag is missing or weak)
   - `GET Range` with `If-Range: "mismatch"` returns `200` (preferred) or `412`
+- (Recommended) `ETag` is a strong validator (not `W/"..."`) so `If-Range` can be used safely
 - Conditional caching works when validators are present:
   - `GET` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
   - `HEAD` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
@@ -85,6 +86,7 @@ Disk streaming conformance
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
+PASS HEAD: ETag is strong (recommended for If-Range)
 PASS HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff
 PASS CORS: Allow-Credentials does not contradict Allow-Origin - (no Allow-Credentials)
 SKIP CORS: Vary includes Origin when Allow-Origin echoes a specific origin - skipped (Allow-Origin is '*')
@@ -104,7 +106,7 @@ PASS GET: If-Modified-Since returns 304 Not Modified - status=304
 PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match - status=204
 PASS OPTIONS: CORS preflight allows If-Modified-Since header - status=204
 
-Summary: 17 passed, 0 failed, 0 warned, 2 skipped
+Summary: 18 passed, 0 failed, 0 warned, 2 skipped
 ```
 
 ## Strict mode
@@ -114,6 +116,7 @@ Summary: 17 passed, 0 failed, 0 warned, 2 skipped
 - `Transfer-Encoding: chunked` on `206` responses (some CDNs mishandle it)
 - Missing `Cross-Origin-Resource-Policy`
 - `Cross-Origin-Resource-Policy` present but with an unexpected value
+- Weak `ETag` validators (If-Range requires strong ETag)
 - Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
