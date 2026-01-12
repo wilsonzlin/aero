@@ -34,6 +34,10 @@ pub(crate) enum SharedSurfaceError {
         "shared surface handle 0x{handle:08X} is already an alias for 0x{underlying:08X}"
     )]
     HandleIsAlias { handle: u32, underlying: u32 },
+    #[error(
+        "shared surface handle 0x{0:08X} is still in use (underlying id kept alive by shared surface aliases)"
+    )]
+    HandleStillInUse(u32),
 }
 
 /// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
@@ -94,6 +98,12 @@ impl SharedSurfaceTable {
                 });
             }
             return Ok(());
+        }
+        if self.refcounts.contains_key(&handle) {
+            // Underlying handles remain reserved as long as any aliases still reference them. If
+            // the original handle was destroyed, it must not be reused as a new original until
+            // the underlying resource is fully released.
+            return Err(SharedSurfaceError::HandleStillInUse(handle));
         }
         self.handles.insert(handle, handle);
         *self.refcounts.entry(handle).or_insert(0) += 1;
@@ -171,6 +181,12 @@ impl SharedSurfaceTable {
             }
             return Ok(());
         }
+        if self.refcounts.contains_key(&out_resource_handle) {
+            // Underlying handles remain reserved as long as any aliases still reference them. If
+            // an original handle was destroyed, it must not be reused as a new alias handle until
+            // the underlying resource is fully released.
+            return Err(SharedSurfaceError::HandleStillInUse(out_resource_handle));
+        }
 
         self.handles.insert(out_resource_handle, underlying);
         *self.refcounts.entry(underlying).or_insert(0) += 1;
@@ -199,7 +215,15 @@ impl SharedSurfaceTable {
             return None;
         }
 
-        let underlying = self.handles.remove(&handle)?;
+        let Some(underlying) = self.handles.remove(&handle) else {
+            // If the original handle has already been destroyed (removed from `handles`) but the
+            // underlying resource is still alive due to aliases, treat duplicate destroys as an
+            // idempotent no-op.
+            if self.refcounts.contains_key(&handle) {
+                return Some((handle, false));
+            }
+            return None;
+        };
         let Some(count) = self.refcounts.get_mut(&underlying) else {
             // Table invariant broken (handle tracked but no refcount entry). Treat as last-ref so
             // callers can clean up the underlying resource instead of leaking it.

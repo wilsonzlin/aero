@@ -139,3 +139,68 @@ fn shared_surface_register_handle_rejects_alias_handles() {
         Err(SharedSurfaceError::HandleIsAlias { .. })
     ));
 }
+
+#[test]
+fn shared_surface_import_into_reserved_underlying_handle_is_rejected() {
+    let mut table = SharedSurfaceTable::default();
+    let original = 1u32;
+    let alias = 2u32;
+    let token = 0x1234_5678u64;
+
+    table.register_handle(original).unwrap();
+    table.export(original, token).unwrap();
+    table.import(alias, token).unwrap();
+
+    // Destroy the original handle wrapper while an alias is still alive.
+    assert_eq!(table.destroy_handle(original), Some((original, false)));
+
+    // Attempting to re-import into the destroyed original handle must be rejected, because the
+    // underlying ID is still reserved by the live alias.
+    assert!(matches!(
+        table.import(original, token),
+        Err(SharedSurfaceError::HandleStillInUse(h)) if h == original
+    ));
+}
+
+#[test]
+fn shared_surface_register_handle_reuse_while_alias_alive_is_rejected() {
+    let mut table = SharedSurfaceTable::default();
+    let original = 1u32;
+    let alias = 2u32;
+    let token = 0x1234_5678u64;
+
+    table.register_handle(original).unwrap();
+    table.export(original, token).unwrap();
+    table.import(alias, token).unwrap();
+
+    // Destroy the original handle wrapper while an alias is still alive.
+    assert_eq!(table.destroy_handle(original), Some((original, false)));
+
+    // Underlying handles must remain reserved until all aliases are released.
+    assert!(matches!(
+        table.register_handle(original),
+        Err(SharedSurfaceError::HandleStillInUse(h)) if h == original
+    ));
+}
+
+#[test]
+fn shared_surface_double_destroy_of_original_handle_is_idempotent() {
+    let mut table = SharedSurfaceTable::default();
+    let original = 1u32;
+    let alias = 2u32;
+    let token = 0x1234_5678u64;
+
+    table.register_handle(original).unwrap();
+    table.export(original, token).unwrap();
+    table.import(alias, token).unwrap();
+
+    // First destroy drops the original handle wrapper, but does not destroy the underlying
+    // resource because an alias is still alive.
+    assert_eq!(table.destroy_handle(original), Some((original, false)));
+
+    // Duplicate destroy must be a no-op (must not decrement refcount).
+    assert_eq!(table.destroy_handle(original), Some((original, false)));
+
+    // Final destroy (alias) should free the underlying resource.
+    assert_eq!(table.destroy_handle(alias), Some((original, true)));
+}

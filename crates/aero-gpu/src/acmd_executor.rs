@@ -177,6 +177,12 @@ impl AeroGpuAcmdExecutor {
                     height,
                     ..
                 } => {
+                    if self.textures.contains_key(&texture_handle) {
+                        return Err(AeroGpuAcmdExecutorError::Backend(format!(
+                            "CREATE_TEXTURE2D: texture_handle 0x{texture_handle:08X} is still in use"
+                        )));
+                    }
+
                     let format = map_texture_format(format)?;
 
                     let texture = self.device.create_texture(&wgpu::TextureDescriptor {
