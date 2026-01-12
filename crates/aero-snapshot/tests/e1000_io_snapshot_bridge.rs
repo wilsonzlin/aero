@@ -40,7 +40,9 @@ fn e1000_io_snapshot_roundtrips_through_bridge() {
     let mut restored = E1000Device::new([0; 6]);
     apply_io_snapshot_to_device(&state, &mut restored).unwrap();
 
-    // BAR0 should be aligned on restore.
+    // BAR0 should retain the device's normal PCI BAR masking rules:
+    // - low attribute bits cleared,
+    // - address bits below the BAR size hardwired to 0 (alignment).
     let expected_bar0 = 0xDEAD_BEEF & (!(E1000_MMIO_SIZE - 1) & 0xFFFF_FFF0);
     assert_eq!(restored.pci_read_u32(0x10), expected_bar0);
     // BAR1 probe reads return the size mask.
