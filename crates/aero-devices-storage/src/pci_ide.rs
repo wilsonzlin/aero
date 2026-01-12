@@ -573,7 +573,6 @@ impl IdeController {
             bus_master: [BusMasterChannel::new(), BusMasterChannel::new()],
         }
     }
-
     /// Reset the controller's guest-visible register/state machine back to its power-on baseline,
     /// while preserving attached drives/media/backends.
     pub fn reset(&mut self) {
