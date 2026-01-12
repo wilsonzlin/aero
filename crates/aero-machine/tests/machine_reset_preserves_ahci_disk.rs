@@ -2,8 +2,12 @@
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -121,7 +125,7 @@ fn machine_reset_preserves_ahci_disk_port0_backend() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 

@@ -12,10 +12,14 @@ use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_devices_storage::pci_ide::SECONDARY_PORTS;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use pretty_assertions::assert_eq;
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -107,7 +111,7 @@ fn ahci_read_sector0(m: &mut Machine) -> [u8; SECTOR_SIZE] {
     let bar5_base: u64 = 0xE100_0000;
 
     // Reprogram BAR5 within the platform's PCI MMIO window (deterministic address).
-    write_cfg_u32(m, bdf, 0x24, bar5_base as u32);
+    write_cfg_u32(m, bdf, AHCI_ABAR_CFG_OFFSET, bar5_base as u32);
 
     // Enable memory decoding + bus mastering (required for DMA processing).
     write_cfg_u16(m, bdf, 0x04, 0x0006);

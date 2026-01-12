@@ -188,6 +188,7 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
 
     // Configure RX queue 0.
     m.write_physical_u16(bar0_base + caps.common + 0x16, 0);
+    let rx_notify_off = m.read_physical_u16(bar0_base + caps.common + 0x1e);
     assert!(m.read_physical_u16(bar0_base + caps.common + 0x18) >= 8);
     m.write_physical_u64(bar0_base + caps.common + 0x20, rx_desc);
     m.write_physical_u64(bar0_base + caps.common + 0x28, rx_avail);
@@ -196,6 +197,7 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
 
     // Configure TX queue 1.
     m.write_physical_u16(bar0_base + caps.common + 0x16, 1);
+    let tx_notify_off = m.read_physical_u16(bar0_base + caps.common + 0x1e);
     assert!(m.read_physical_u16(bar0_base + caps.common + 0x18) >= 8);
     m.write_physical_u64(bar0_base + caps.common + 0x20, tx_desc);
     m.write_physical_u64(bar0_base + caps.common + 0x28, tx_avail);
@@ -228,7 +230,9 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
     m.write_physical_u16(tx_used + 2, 0);
 
     // Notify TX queue 1 and poll the machine once.
-    m.write_physical_u16(bar0_base + caps.notify + u64::from(caps.notify_mult), 1);
+    let tx_notify_addr =
+        bar0_base + caps.notify + u64::from(tx_notify_off) * u64::from(caps.notify_mult);
+    m.write_physical_u16(tx_notify_addr, 1);
     m.poll_network();
 
     assert!(state.borrow().tx.is_empty(), "TX should be gated while BME=0");
@@ -277,7 +281,9 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
     m.write_physical_u16(rx_used, 0);
     m.write_physical_u16(rx_used + 2, 0);
 
-    m.write_physical_u16(bar0_base + caps.notify, 0);
+    let rx_notify_addr =
+        bar0_base + caps.notify + u64::from(rx_notify_off) * u64::from(caps.notify_mult);
+    m.write_physical_u16(rx_notify_addr, 0);
     m.poll_network();
     assert_eq!(m.read_physical_u16(rx_used + 2), 0);
 

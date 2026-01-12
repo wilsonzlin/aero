@@ -2,6 +2,7 @@
 
 use aero_devices::pci::profile::{NIC_E1000_82540EM, SATA_AHCI_ICH9};
 use aero_devices::pci::PciInterruptPin;
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_net_e1000::ICR_TXDW;
@@ -927,7 +928,9 @@ fn pc_machine_delivers_ahci_pci_intx_via_legacy_pic() {
             .device_config(bdf)
             .expect("AHCI config function must exist");
         assert_ne!(cfg.command() & 0x2, 0, "AHCI MMIO decoding must be enabled");
-        cfg.bar_range(5).expect("AHCI BAR5 must exist").base
+        cfg.bar_range(AHCI_ABAR_BAR_INDEX)
+            .expect("AHCI BAR5 must exist")
+            .base
     };
     assert_ne!(
         bar5_base, 0,

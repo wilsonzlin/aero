@@ -5,12 +5,16 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use aero_snapshot::io_snapshot_bridge::apply_io_snapshot_to_device;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use pretty_assertions::assert_eq;
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 const HBA_GHC: u64 = 0x04;
 const HBA_VS: u64 = 0x10;
@@ -112,7 +116,7 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
     let bar5_base: u64 = 0xE100_0000;
 
     // Program PCI config: BAR5 (ABAR), COMMAND.MEM + COMMAND.BME.
-    write_cfg_u32(&mut src, bdf, 0x24, bar5_base as u32);
+    write_cfg_u32(&mut src, bdf, AHCI_ABAR_CFG_OFFSET, bar5_base as u32);
     write_cfg_u16(&mut src, bdf, 0x04, 0x0006);
 
     // Sanity-check that MMIO is live (AHCI VS register).

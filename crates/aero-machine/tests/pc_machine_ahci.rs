@@ -1,11 +1,15 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -227,7 +231,7 @@ fn pc_machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 

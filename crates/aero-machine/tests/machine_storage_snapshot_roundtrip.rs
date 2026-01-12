@@ -3,6 +3,7 @@
 use aero_devices::pci::{profile, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
@@ -33,6 +34,9 @@ const PORT_CMD_ST: u32 = 1 << 0;
 const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -505,9 +509,12 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     }
 
     let ahci_abar = {
-        // BAR5 at offset 0x24. Mask off the low flag bits (MMIO BAR).
+        // Mask off the low flag bits (MMIO BAR).
         let bdf = profile::SATA_AHCI_ICH9.bdf;
-        u64::from(read_cfg_u32(&mut src, bdf.bus, bdf.device, bdf.function, 0x24) & 0xFFFF_FFF0)
+        u64::from(
+            read_cfg_u32(&mut src, bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET)
+                & 0xFFFF_FFF0,
+        )
     };
     assert!(ahci_abar != 0, "AHCI BAR5 must be programmed");
 
@@ -643,7 +650,13 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     let ahci_abar2 = {
         let bdf = profile::SATA_AHCI_ICH9.bdf;
         u64::from(
-            read_cfg_u32(&mut restored, bdf.bus, bdf.device, bdf.function, 0x24) & 0xFFFF_FFF0,
+            read_cfg_u32(
+                &mut restored,
+                bdf.bus,
+                bdf.device,
+                bdf.function,
+                AHCI_ABAR_CFG_OFFSET,
+            ) & 0xFFFF_FFF0,
         )
     };
     assert_eq!(
