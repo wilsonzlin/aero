@@ -1227,7 +1227,7 @@ When present, it implements:
 Some builds may additionally expose:
 
 - `clear(): void | Promise<void>` (drop buffered frames)
-- `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops; some builds may expose `stats()` instead)
+- `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops)
   - When implemented in the web runtime, it typically returns:
     `{ enabled, records, bytes, droppedRecords, droppedBytes }` (same shape as `NetTracer.stats()` in `web/src/net/net_tracer.ts`).
 
