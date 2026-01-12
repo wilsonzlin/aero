@@ -274,6 +274,11 @@ pub trait DiskBackend: Send + Sync {
 }
 ```
 
+Note: in the current codebase, the canonical traits live in `crates/aero-storage/`:
+`aero_storage::VirtualDisk` (byte-addressed with sector helpers) and
+`aero_storage::StorageBackend` (resizable byte storage). Device models that use their own
+disk traits typically consume an `aero_storage::VirtualDisk` via `crates/aero-storage-adapters/`.
+
 **Implementation status (reference implementation):**
 The canonical Rust disk image formats live in `crates/aero-storage/` and currently support:
 
