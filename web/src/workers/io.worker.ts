@@ -13,6 +13,13 @@ import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } fro
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring, WasmMemoryWiringError } from "../runtime/wasm_memory_probe";
 import {
+  layoutFromHeader,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SharedFramebufferHeaderIndex,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+} from "../ipc/shared-layout";
+import {
   serializeVmSnapshotError,
   type CoordinatorToWorkerSnapshotMessage,
   type VmSnapshotDeviceBlob,
@@ -176,6 +183,42 @@ let status!: Int32Array;
 let guestU8!: Uint8Array;
 let guestBase = 0;
 let guestSize = 0;
+let sharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
+
+function rangesOverlap(aStart: number, aLen: number, bStart: number, bLen: number): boolean {
+  const aEnd = aStart + aLen;
+  const bEnd = bStart + bLen;
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function assertNoGuestOverlapWithSharedFramebuffer(guestOffset: number, len: number, label: string): void {
+  const shared = sharedFramebuffer;
+  if (!shared) return;
+  // Only relevant when the shared framebuffer is embedded in guest RAM (it may fall back to a dedicated
+  // SharedArrayBuffer when guest memory is tiny).
+  if (shared.sab !== (guestU8.buffer as unknown as SharedArrayBuffer)) return;
+  const base = guestBase >>> 0;
+  if (shared.offsetBytes < base) return;
+  const sharedGuestOffset = (shared.offsetBytes - base) >>> 0;
+
+  const header = new Int32Array(shared.sab, shared.offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+  const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC) | 0;
+  const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION) | 0;
+  if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) {
+    // If the header is invalid, do not guess at the layout; failing later with the normal
+    // shared framebuffer consumer path will be clearer.
+    return;
+  }
+  const layout = layoutFromHeader(header);
+
+  if (rangesOverlap(guestOffset, len, sharedGuestOffset, layout.totalBytes)) {
+    throw new Error(
+      `${label} guest range overlaps embedded shared framebuffer region: ` +
+        `[0x${guestOffset.toString(16)}, +0x${len.toString(16)}] intersects ` +
+        `[0x${sharedGuestOffset.toString(16)}, +0x${layout.totalBytes.toString(16)}]`,
+    );
+  }
+}
 
 let commandRing!: RingBuffer;
 let eventRing: RingBuffer | null = null;
@@ -2496,6 +2539,13 @@ function runHdaMicCaptureTest(requestId: number): void {
       }
     };
 
+    // Ensure these fixed-offset harness buffers do not overlap the always-on shared framebuffer demo
+    // region embedded in guest RAM.
+    assertNoGuestOverlapWithSharedFramebuffer(corbBase, 8, "HDA test CORB");
+    assertNoGuestOverlapWithSharedFramebuffer(rirbBase, 16, "HDA test RIRB");
+    assertNoGuestOverlapWithSharedFramebuffer(bdlBase, 16, "HDA test BDL");
+    assertNoGuestOverlapWithSharedFramebuffer(pcmBase, pcmBytes, "HDA test PCM");
+
     const writeU32 = (guestOffset: number, value: number) => {
       ensureRange(guestOffset, 4);
       view.setUint32(guestOffset >>> 0, value >>> 0, true);
@@ -3251,6 +3301,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       guestU8 = views.guestU8;
       guestBase = views.guestLayout.guest_base >>> 0;
       guestSize = views.guestLayout.guest_size >>> 0;
+      sharedFramebuffer = { sab: segments.sharedFramebuffer, offsetBytes: segments.sharedFramebufferOffsetBytes ?? 0 };
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
