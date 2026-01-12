@@ -932,6 +932,39 @@ mod tests {
             led_bitmap[(LED_SCROLLL / 8) as usize] & (1u8 << (LED_SCROLLL % 8)),
             0
         );
+
+        // Mouse variant: event types include SYN/KEY/REL and excludes LED.
+        let event_vq = VirtQueue::new(8, 0, 0, 0);
+        let status_vq = VirtQueue::new(8, 0, 0, 0);
+        let mut mouse = VirtioInputDevice::new(VirtioInputDeviceKind::Mouse, event_vq, status_vq);
+
+        mouse.write_config(0, &[VIRTIO_INPUT_CFG_ID_NAME]);
+        let name_len = mouse.read_config(2, 1)[0] as usize;
+        let name_payload = mouse.read_config(8, name_len);
+        assert!(name_payload.starts_with(b"Aero Virtio Mouse"));
+
+        mouse.write_config(0, &[VIRTIO_INPUT_CFG_EV_BITS, 0]);
+        let ev_bitmap = mouse.read_config(8, 128);
+        assert_ne!(ev_bitmap[(EV_SYN / 8) as usize] & (1u8 << (EV_SYN % 8)), 0);
+        assert_ne!(ev_bitmap[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
+        assert_ne!(ev_bitmap[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
+        assert_eq!(ev_bitmap[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
+
+        mouse.write_config(1, &[EV_KEY as u8]);
+        let key_bitmap = mouse.read_config(8, 128);
+        assert_ne!(
+            key_bitmap[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8)),
+            0
+        );
+
+        mouse.write_config(1, &[EV_REL as u8]);
+        let rel_bitmap = mouse.read_config(8, 128);
+        assert_ne!(rel_bitmap[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
+        assert_ne!(rel_bitmap[(REL_Y / 8) as usize] & (1u8 << (REL_Y % 8)), 0);
+        assert_ne!(
+            rel_bitmap[(REL_WHEEL / 8) as usize] & (1u8 << (REL_WHEEL % 8)),
+            0
+        );
     }
 
     #[test]
