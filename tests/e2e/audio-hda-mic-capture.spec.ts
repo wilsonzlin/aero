@@ -67,6 +67,10 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     Atomics.store(header, MIC_DROPPED_SAMPLES_INDEX, 0);
     Atomics.store(header, MIC_CAPACITY_SAMPLES_INDEX, capacitySamples >>> 0);
 
+    // Expose for the assertion step so we can verify the IO worker consumed samples.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroTestMicRingSab = sab;
+
     coord.setMicrophoneRingBuffer(sab, 48_000);
     },
     {
@@ -129,4 +133,33 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
   for (const b of bytes) if (b !== 0) nonZero += 1;
 
   expect(nonZero).toBeGreaterThan(0);
+
+  // Decode as signed 16-bit PCM (the harness programs 16-bit mono).
+  const view = new DataView(pcm);
+  let posSamples = 0;
+  let negSamples = 0;
+  for (let off = 0; off + 1 < view.byteLength; off += 2) {
+    const s = view.getInt16(off, true);
+    if (s > 0) posSamples += 1;
+    else if (s < 0) negSamples += 1;
+  }
+  expect(posSamples).toBeGreaterThan(0);
+  expect(negSamples).toBeGreaterThan(0);
+
+  // Confirm that the mic ring consumer advanced (IO worker actually read from the ring).
+  const micAfter = await page.evaluate(
+    ({ MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sab = (globalThis as any).__aeroTestMicRingSab as SharedArrayBuffer | undefined;
+      if (!sab) return null;
+      const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+      return {
+        read: Atomics.load(header, MIC_READ_POS_INDEX) >>> 0,
+        write: Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0,
+        dropped: Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0,
+      };
+    },
+    { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX },
+  );
+  expect(micAfter?.read ?? 0).toBeGreaterThan(0);
 });
