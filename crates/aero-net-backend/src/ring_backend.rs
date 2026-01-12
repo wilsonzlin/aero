@@ -236,6 +236,10 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
             }
         }
     }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        Some(self.stats())
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +278,18 @@ mod tests {
         assert_eq!(backend.poll_receive(), Some(vec![9]));
         assert_eq!(backend.poll_receive(), Some(vec![8, 7]));
         assert_eq!(backend.poll_receive(), None);
+    }
+
+    #[test]
+    fn l2_ring_stats_is_available_through_network_backend_trait_object() {
+        let tx = Arc::new(RingBuffer::new(64));
+        let rx = Arc::new(RingBuffer::new(64));
+
+        let backend: Box<dyn NetworkBackend> = Box::new(L2TunnelRingBackend::new(tx, rx));
+        assert_eq!(
+            backend.l2_ring_stats(),
+            Some(L2TunnelRingBackendStats::default())
+        );
     }
 
     #[test]
