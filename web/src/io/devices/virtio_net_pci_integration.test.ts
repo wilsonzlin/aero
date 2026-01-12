@@ -250,6 +250,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       const bar0Low = cfgReadU32(pciAddr, 0x10);
       const bar0High = cfgReadU32(pciAddr, 0x14);
       const bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
+      expect(bar0Base).toBe(newBarBase);
 
       // Read full PCI config space (for capability parsing).
       const cfg = new Uint8Array(256);
