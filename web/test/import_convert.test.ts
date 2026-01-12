@@ -450,6 +450,15 @@ test("convertToAeroSparse: raw roundtrip preserves logical bytes and sparseness"
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
 });
 
+test("convertToAeroSparse: rejects huge output blockSizeBytes", async () => {
+  const src = new MemSource(new Uint8Array(512));
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "raw", sync, { blockSizeBytes: 128 * 1024 * 1024 }),
+    (err: any) => err instanceof Error && /blockSizeBytes too large/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () => {
   const { file, logical } = buildQcow2Fixture();
   const src = new MemSource(file);

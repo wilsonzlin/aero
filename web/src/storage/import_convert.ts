@@ -35,6 +35,9 @@ export interface ImportConvertOptions {
   onProgress?: (p: ImportProgress) => void;
 }
 
+// Browser conversion happens in-memory; avoid allocating absurdly large per-block buffers.
+const MAX_CONVERT_BLOCK_BYTES = 64 * 1024 * 1024; // 64 MiB
+
 export type SyncAccessHandleLike = {
   read(buffer: ArrayBufferView, options?: { at: number }): number;
   write(buffer: ArrayBufferView, options?: { at: number }): number;
@@ -274,6 +277,7 @@ export async function convertToAeroSparse(
 ): Promise<{ manifest: ImportManifest }> {
   const blockSize = options.blockSizeBytes ?? RANGE_STREAM_CHUNK_SIZE;
   assertBlockSize(blockSize);
+  if (blockSize > MAX_CONVERT_BLOCK_BYTES) throw new Error("blockSizeBytes too large");
 
   switch (originalFormat) {
     case "raw":
