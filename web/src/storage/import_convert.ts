@@ -403,7 +403,18 @@ class AeroSparseWriter {
       allocatedBlocks: 0,
     };
     this.sync.write(encodeAeroSparseHeader(header), { at: 0 });
-    this.sync.write(new Uint8Array(tableBytes), { at: AEROSPAR_HEADER_SIZE });
+    // Zero the on-disk table region in chunks to avoid allocating `tableBytes` all at once.
+    // This matters for large but still-valid sparse images (e.g. multi-GB disks with small block sizes).
+    const zeroChunk = new Uint8Array(Math.min(64 * 1024, tableBytes));
+    let remaining = tableBytes;
+    let off = AEROSPAR_HEADER_SIZE;
+    while (remaining > 0) {
+      const len = Math.min(remaining, zeroChunk.byteLength);
+      const written = this.sync.write(zeroChunk.subarray(0, len), { at: off });
+      if (written !== len) throw new Error(`short write at=${off}: expected=${len} actual=${written}`);
+      off += len;
+      remaining -= len;
+    }
   }
 
   get convertedSize(): number {
