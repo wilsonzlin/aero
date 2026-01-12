@@ -1258,3 +1258,151 @@ fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_
     restored.process_virtio_blk();
     assert_eq!(restored.memory.read_u16(USED_RING + 2), 1);
 }
+
+#[test]
+fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_write_without_renotify(
+) {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const DISK_SECTORS: u64 = 8;
+    const TEST_SECTOR: u64 = 3;
+    const ORIGINAL: [u8; 4] = [9, 8, 7, 6];
+    const WRITTEN: [u8; 4] = [1, 2, 3, 4];
+
+    // Seed the target sector so we can assert the WRITE is applied after restore.
+    let mut disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * VIRTIO_BLK_SECTOR_SIZE)
+        .expect("failed to allocate in-memory virtio-blk disk");
+    disk.write_at(TEST_SECTOR * VIRTIO_BLK_SECTOR_SIZE, &ORIGINAL)
+        .unwrap();
+
+    let mut pc = PcPlatform::new_with_virtio_blk_disk(RAM_SIZE, Box::new(disk));
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Enable memory decoding + Bus Mastering.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+    assert_eq!(bar0_base % 0x4000, 0);
+
+    const COMMON: u64 = 0x0000;
+    const NOTIFY: u64 = 0x1000;
+
+    // Basic feature negotiation (accept whatever the device offers).
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
+
+    pc.memory.write_u32(bar0_base + COMMON, 0);
+    let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 0);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
+
+    pc.memory.write_u32(bar0_base + COMMON, 1);
+    let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
+
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8); // + FEATURES_OK
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8 | 4); // + DRIVER_OK
+
+    // Configure queue 0.
+    const DESC_TABLE: u64 = 0x4000;
+    const AVAIL_RING: u64 = 0x5000;
+    const USED_RING: u64 = 0x6000;
+    pc.memory.write_u16(bar0_base + COMMON + 0x16, 0); // queue_select
+    let qsz = pc.memory.read_u16(bar0_base + COMMON + 0x18);
+    assert!(qsz >= 8);
+    pc.memory.write_u64(bar0_base + COMMON + 0x20, DESC_TABLE);
+    pc.memory.write_u64(bar0_base + COMMON + 0x28, AVAIL_RING);
+    pc.memory.write_u64(bar0_base + COMMON + 0x30, USED_RING);
+    pc.memory.write_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    // Build a minimal WRITE request for `TEST_SECTOR`.
+    const VIRTIO_BLK_T_OUT: u32 = 1;
+    const VIRTQ_DESC_F_NEXT: u16 = 0x0001;
+    const VIRTQ_DESC_F_WRITE: u16 = 0x0002;
+
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+    pc.memory.write_u32(header, VIRTIO_BLK_T_OUT);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, TEST_SECTOR);
+
+    let mut payload = [0u8; VIRTIO_BLK_SECTOR_SIZE as usize];
+    payload[..WRITTEN.len()].copy_from_slice(&WRITTEN);
+    pc.memory.write_physical(data, &payload);
+    pc.memory.write_u8(status, 0xff);
+
+    write_desc(&mut pc, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut pc,
+        DESC_TABLE,
+        1,
+        data,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(&mut pc, DESC_TABLE, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 1);
+    pc.memory.write_u16(AVAIL_RING + 4, 0);
+    pc.memory.write_u16(USED_RING, 0);
+    pc.memory.write_u16(USED_RING + 2, 0);
+
+    // Kick the queue but snapshot before processing.
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+    assert_eq!(pc.memory.read_u8(status), 0xff);
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 0);
+
+    let dev_snap = pc.virtio_blk.as_ref().unwrap().borrow().save_state();
+    let pci_snap = pc.pci_cfg.borrow().save_state();
+    let mut ram_img = vec![0u8; RAM_SIZE];
+    pc.memory.read_physical(0, &mut ram_img);
+
+    // Restore into a fresh platform with a disk seeded to match the pre-write snapshot state.
+    let mut disk2 = RawDisk::create(MemBackend::new(), DISK_SECTORS * VIRTIO_BLK_SECTOR_SIZE)
+        .expect("failed to allocate in-memory virtio-blk disk");
+    disk2
+        .write_at(TEST_SECTOR * VIRTIO_BLK_SECTOR_SIZE, &ORIGINAL)
+        .unwrap();
+
+    let mut restored = PcPlatform::new_with_virtio_blk_disk(RAM_SIZE, Box::new(disk2));
+    restored.memory.write_physical(0, &ram_img);
+    restored.pci_cfg.borrow_mut().load_state(&pci_snap).unwrap();
+    restored
+        .virtio_blk
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .load_state(&dev_snap)
+        .unwrap();
+
+    // Without re-notifying, the platform should still process the pending avail entry.
+    restored.process_virtio_blk();
+    assert_eq!(restored.memory.read_u8(status), 0);
+    assert_eq!(restored.memory.read_u16(USED_RING + 2), 1);
+
+    // And the disk should observe the new bytes.
+    let mut on_disk = [0u8; 4];
+    {
+        let virtio = restored.virtio_blk.as_ref().unwrap();
+        let mut virtio = virtio.borrow_mut();
+        let blk = virtio
+            .device_as_any_mut()
+            .downcast_mut::<VirtioBlk<Box<dyn VirtualDisk + Send>>>()
+            .expect("virtio device should be VirtioBlk");
+        BlockBackend::read_at(
+            blk.backend_mut(),
+            TEST_SECTOR * VIRTIO_BLK_SECTOR_SIZE,
+            &mut on_disk,
+        )
+        .expect("disk read should succeed");
+    }
+    assert_eq!(on_disk, WRITTEN);
+
+    // Ensure we don't duplicate completions without a new avail entry.
+    restored.process_virtio_blk();
+    assert_eq!(restored.memory.read_u16(USED_RING + 2), 1);
+}
