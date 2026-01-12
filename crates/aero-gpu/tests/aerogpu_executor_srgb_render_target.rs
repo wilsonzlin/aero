@@ -152,9 +152,11 @@ fn executor_clear_srgb_render_target_is_supported() {
             // CLEAR to solid red.
             emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, AEROGPU_CLEAR_COLOR);
-                push_f32_bits(out, 1.0);
-                push_f32_bits(out, 0.0);
-                push_f32_bits(out, 0.0);
+                // Clear colors are specified in linear space, so 0.5 should be encoded to roughly
+                // 188 in an sRGB render target.
+                push_f32_bits(out, 0.5);
+                push_f32_bits(out, 0.5);
+                push_f32_bits(out, 0.5);
                 push_f32_bits(out, 1.0);
                 push_f32_bits(out, 1.0); // depth (unused)
                 push_u32(out, 0); // stencil
@@ -180,7 +182,11 @@ fn executor_clear_srgb_render_target_is_supported() {
             },
         )
         .await;
-        assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
+        let px = &rgba[0..4];
+        assert!(
+            (185..=190).contains(&px[0]) && px[0] == px[1] && px[1] == px[2],
+            "expected sRGB-encoded ~188 gray, got {px:?}"
+        );
+        assert_eq!(px[3], 255);
     });
 }
-
