@@ -34,6 +34,12 @@ const TD_CTRL_ACTLEN_MASK: u32 = 0x7FF;
 const TD_TOKEN_ENDPT_SHIFT: u32 = 15;
 const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
 
+// PCI command register bit: Bus Master Enable (BME).
+//
+// The WASM UHCI bridges gate DMA/ticking on BME so that devices can't read/write guest RAM unless
+// the guest has explicitly enabled bus mastering via PCI config space.
+const PCI_COMMAND_BME: u32 = 1 << 2;
+
 fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
     let addr = addr as usize;
     mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
@@ -122,12 +128,9 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
-    // UHCI uses DMA to walk the schedule; enable PCI Bus Mastering to allow DMA.
-    ctrl.set_pci_command(0x0004);
-
     // PCI Bus Master Enable gates UHCI DMA. When exercising the bridge directly (without the JS
     // PCI bus), explicitly enable bus mastering so frame stepping can access guest memory.
-    ctrl.set_pci_command(1 << 2);
+    ctrl.set_pci_command(PCI_COMMAND_BME);
 
     // Attach a trivial device at root port 0 so we can complete a single IN TD.
     ctrl.connect_device_for_test(0, Box::new(SimpleInDevice::new(b"ABCD")));

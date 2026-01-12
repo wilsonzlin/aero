@@ -16,6 +16,12 @@ const USBCMD_RUN: u32 = 1 << 0;
 const USBINTR_IOC: u32 = 1 << 2;
 const PORTSC_PR: u32 = 1 << 9;
 
+// PCI command register bit: Bus Master Enable (BME).
+//
+// The WASM UHCI bridges gate DMA/ticking on BME so that devices can't read/write guest RAM unless
+// the guest has explicitly enabled bus mastering via PCI config space.
+const PCI_COMMAND_BME: u32 = 1 << 2;
+
 const LINK_PTR_T: u32 = 1 << 0;
 const LINK_PTR_Q: u32 = 1 << 1;
 
@@ -105,7 +111,7 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
 
     let mut bridge = WebUsbUhciBridge::new(guest_base);
     // Enable PCI bus mastering so the bridge is allowed to DMA into the guest frame list.
-    bridge.set_pci_command(1 << 2);
+    bridge.set_pci_command(PCI_COMMAND_BME);
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD, 4, fl_base);
@@ -193,7 +199,7 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
     let mut bridge =
         UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
     // Enable PCI bus mastering so the bridge is allowed to DMA into the guest frame list.
-    bridge.set_pci_command(1 << 2);
+    bridge.set_pci_command(PCI_COMMAND_BME);
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD as u16, 4, fl_guest);
