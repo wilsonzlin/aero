@@ -1,28 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import { getRingBufferOverrunCount, writeRingBufferInterleaved, type AudioRingBufferLayout } from "./audio";
+import {
+  HEADER_U32_LEN,
+  READ_FRAME_INDEX,
+  WRITE_FRAME_INDEX,
+  framesAvailable,
+  framesFree,
+  requiredBytes,
+  wrapRingBuffer,
+} from "../audio/audio_worklet_ring";
 
 function createTestRingBuffer(channelCount: number, capacityFrames: number): AudioRingBufferLayout {
-  const headerU32Len = 4;
-  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
-  const sampleCapacity = capacityFrames * channelCount;
-  const buffer = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
+  const buffer = new SharedArrayBuffer(requiredBytes(capacityFrames, channelCount));
+  const views = wrapRingBuffer(buffer, capacityFrames, channelCount);
 
-  const header = new Uint32Array(buffer, 0, headerU32Len);
-  const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
-
-  for (let i = 0; i < headerU32Len; i++) {
-    Atomics.store(header, i, 0);
+  for (let i = 0; i < HEADER_U32_LEN; i++) {
+    Atomics.store(views.header, i, 0);
   }
 
   return {
     buffer,
-    header,
-    readIndex: header.subarray(0, 1),
-    writeIndex: header.subarray(1, 2),
-    underrunCount: header.subarray(2, 3),
-    overrunCount: header.subarray(3, 4),
-    samples,
+    ...views,
     channelCount,
     capacityFrames,
   };
@@ -95,5 +94,30 @@ describe("writeRingBufferInterleaved overrun telemetry", () => {
     expect(getRingBufferOverrunCount(ring)).toBe(0);
 
     expect(ring.samples).toEqual(Float32Array.from([102, 103, 104, 105, 4, 5, 100, 101]));
+  });
+});
+
+describe("audio_worklet_ring layout helpers", () => {
+  it("computes frame deltas as wrapping u32 values", () => {
+    // 1 - 0xffff_fffe == 3 (mod 2^32)
+    expect(framesAvailable(0xffff_fffe, 1)).toBe(3);
+  });
+
+  it("computes free frames using clamped availability", () => {
+    // Producer has written 10 frames but consumer hasn't read any, capacity is 4.
+    // Availability clamps to 4, so free is 0.
+    expect(framesFree(0, 10, 4)).toBe(0);
+  });
+
+  it("wrapRingBuffer provides typed views with expected indexing", () => {
+    const sab = new SharedArrayBuffer(requiredBytes(4, 2));
+    const ring = wrapRingBuffer(sab, 4, 2);
+
+    Atomics.store(ring.header, READ_FRAME_INDEX, 123);
+    Atomics.store(ring.header, WRITE_FRAME_INDEX, 456);
+    expect(Atomics.load(ring.readIndex, 0)).toBe(123);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(456);
+
+    expect(ring.samples.length).toBe(8);
   });
 });

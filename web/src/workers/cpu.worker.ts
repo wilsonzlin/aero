@@ -53,6 +53,17 @@ import {
 } from "../audio/mic_ring.js";
 import type { MicRingBuffer } from "../audio/mic_ring.js";
 import {
+  HEADER_U32_LEN as AUDIO_HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX as AUDIO_OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX as AUDIO_READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX as AUDIO_UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX as AUDIO_WRITE_FRAME_INDEX,
+  framesAvailableClamped as audioFramesAvailableClamped,
+  framesFree as audioFramesFree,
+  requiredBytes as audioRingRequiredBytes,
+  wrapRingBuffer as wrapAudioRingBuffer,
+} from "../audio/audio_worklet_ring";
+import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
   MessageType,
@@ -246,10 +257,9 @@ function maybePostHdaDemoStats(): void {
 }
 
 function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
-  const read = Atomics.load(header, 0) >>> 0;
-  const write = Atomics.load(header, 1) >>> 0;
-  const available = (write - read) >>> 0;
-  return Math.min(available, capacityFrames);
+  const read = Atomics.load(header, AUDIO_READ_FRAME_INDEX) >>> 0;
+  const write = Atomics.load(header, AUDIO_WRITE_FRAME_INDEX) >>> 0;
+  return audioFramesAvailableClamped(read, write, capacityFrames);
 }
 
 function stopHdaDemo(): void {
@@ -328,7 +338,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   }
 
   hdaDemoInstance = demo;
-  const header = new Uint32Array(msg.ringBuffer, 0, 4);
+  const header = new Uint32Array(msg.ringBuffer, 0, AUDIO_HEADER_U32_LEN);
   hdaDemoHeader = header;
   hdaDemoCapacityFrames = capacityFrames;
   hdaDemoSampleRate = sampleRate;
@@ -416,13 +426,6 @@ let nextAudioFillDeadlineMs = 0;
 // producer and the CPU worker must not write fallback samples.
 let cpuIsAudioRingProducer = false;
 
-const AUDIO_HEADER_U32_LEN = 4;
-const AUDIO_HEADER_BYTES = AUDIO_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
-const AUDIO_READ_FRAME_INDEX = 0;
-const AUDIO_WRITE_FRAME_INDEX = 1;
-const AUDIO_UNDERRUN_COUNT_INDEX = 2;
-const AUDIO_OVERRUN_COUNT_INDEX = 3;
-
 function detachMicBridge(): void {
   if (wasmMicBridge && typeof wasmMicBridge.free === "function") {
     wasmMicBridge.free();
@@ -491,18 +494,6 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
   maybeInitMicBridge();
 }
 
-function audioFramesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
-  return (writeFrameIndex - readFrameIndex) >>> 0;
-}
-
-function audioFramesAvailableClamped(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
-  return Math.min(audioFramesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
-}
-
-function audioFramesFree(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
-  return capacityFrames - audioFramesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
-}
-
 class JsWorkletBridge {
   readonly capacity_frames: number;
   readonly channel_count: number;
@@ -513,14 +504,14 @@ class JsWorkletBridge {
     this.capacity_frames = capacityFrames;
     this.channel_count = channelCount;
 
-    const sampleCapacity = capacityFrames * channelCount;
-    const requiredBytes = AUDIO_HEADER_BYTES + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;
+    const requiredBytes = audioRingRequiredBytes(capacityFrames, channelCount);
     if (sab.byteLength < requiredBytes) {
       throw new Error(`audio ring buffer is too small: need ${requiredBytes} bytes, got ${sab.byteLength} bytes`);
     }
 
-    this.header = new Uint32Array(sab, 0, AUDIO_HEADER_U32_LEN);
-    this.samples = new Float32Array(sab, AUDIO_HEADER_BYTES, sampleCapacity);
+    const views = wrapAudioRingBuffer(sab, capacityFrames, channelCount);
+    this.header = views.header;
+    this.samples = views.samples;
   }
 
   buffer_level_frames(): number {

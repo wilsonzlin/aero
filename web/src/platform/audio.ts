@@ -1,3 +1,15 @@
+import {
+  HEADER_BYTES as AUDIO_WORKLET_RING_HEADER_BYTES,
+  OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+  framesAvailableClamped,
+  framesFree,
+  requiredBytes as audioWorkletRingRequiredBytes,
+  wrapRingBuffer as wrapAudioWorkletRingBuffer,
+} from "../audio/audio_worklet_ring";
+
 // The audio worklet processor is loaded at runtime via `AudioWorklet.addModule()`.
 //
 // Use `new URL(..., import.meta.url)` instead of Vite-only `?worker&url` imports so that:
@@ -263,61 +275,35 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
     throw new Error("SharedArrayBuffer is required for Aero audio ring buffers.");
   }
 
-  const sampleCapacity = ringBufferFrames * channelCount;
-  const headerU32Len = 4;
-  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
-  const buffer = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
-  const header = new Uint32Array(buffer, 0, headerU32Len);
-  const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
+  const buffer = new SharedArrayBuffer(audioWorkletRingRequiredBytes(ringBufferFrames, channelCount));
+  const views = wrapAudioWorkletRingBuffer(buffer, ringBufferFrames, channelCount);
 
-  Atomics.store(header, 0, 0);
-  Atomics.store(header, 1, 0);
-  Atomics.store(header, 2, 0);
-  Atomics.store(header, 3, 0);
+  Atomics.store(views.header, READ_FRAME_INDEX, 0);
+  Atomics.store(views.header, WRITE_FRAME_INDEX, 0);
+  Atomics.store(views.header, UNDERRUN_COUNT_INDEX, 0);
+  Atomics.store(views.header, OVERRUN_COUNT_INDEX, 0);
 
   return {
     buffer,
-    header,
-    readIndex: header.subarray(0, 1),
-    writeIndex: header.subarray(1, 2),
-    underrunCount: header.subarray(2, 3),
-    overrunCount: header.subarray(3, 4),
-    samples,
+    ...views,
     channelCount,
     capacityFrames: ringBufferFrames,
   };
 }
 
 function wrapRingBuffer(buffer: SharedArrayBuffer, channelCount: number, ringBufferFrames: number): AudioRingBufferLayout {
-  const headerU32Len = 4;
-  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
-  const sampleCapacity = ringBufferFrames * channelCount;
-  const requiredBytes = headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;
-  if (buffer.byteLength < requiredBytes) {
-    throw new Error(
-      `Provided ring buffer is too small: need ${requiredBytes} bytes, got ${buffer.byteLength} bytes`,
-    );
-  }
-
-  const header = new Uint32Array(buffer, 0, headerU32Len);
-  const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
+  const views = wrapAudioWorkletRingBuffer(buffer, ringBufferFrames, channelCount);
 
   return {
     buffer,
-    header,
-    readIndex: header.subarray(0, 1),
-    writeIndex: header.subarray(1, 2),
-    underrunCount: header.subarray(2, 3),
-    overrunCount: header.subarray(3, 4),
-    samples,
+    ...views,
     channelCount,
     capacityFrames: ringBufferFrames,
   };
 }
 
 function inferRingBufferFrames(buffer: SharedArrayBuffer, channelCount: number): number {
-  const headerBytes = 4 * Uint32Array.BYTES_PER_ELEMENT;
-  const payloadBytes = buffer.byteLength - headerBytes;
+  const payloadBytes = buffer.byteLength - AUDIO_WORKLET_RING_HEADER_BYTES;
   if (payloadBytes < 0 || payloadBytes % Float32Array.BYTES_PER_ELEMENT !== 0) {
     throw new Error("Provided ring buffer has an invalid byte length.");
   }
@@ -328,27 +314,6 @@ function inferRingBufferFrames(buffer: SharedArrayBuffer, channelCount: number):
   return sampleCapacity / channelCount;
 }
 
-const READ_FRAME_INDEX = 0;
-const WRITE_FRAME_INDEX = 1;
-const UNDERRUN_COUNT = 2;
-const OVERRUN_COUNT = 3;
-
-function framesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
-  return (writeFrameIndex - readFrameIndex) >>> 0;
-}
-
-function framesAvailableClamped(
-  readFrameIndex: number,
-  writeFrameIndex: number,
-  capacityFrames: number,
-): number {
-  return Math.min(framesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
-}
-
-function framesFree(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
-  return capacityFrames - framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
-}
-
 export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): number {
   const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
   const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
@@ -356,11 +321,11 @@ export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): num
 }
 
 export function getRingBufferUnderrunCount(ringBuffer: AudioRingBufferLayout): number {
-  return Atomics.load(ringBuffer.header, UNDERRUN_COUNT) >>> 0;
+  return Atomics.load(ringBuffer.header, UNDERRUN_COUNT_INDEX) >>> 0;
 }
 
 export function getRingBufferOverrunCount(ringBuffer: AudioRingBufferLayout): number {
-  return Atomics.load(ringBuffer.header, OVERRUN_COUNT) >>> 0;
+  return Atomics.load(ringBuffer.header, OVERRUN_COUNT_INDEX) >>> 0;
 }
 
 export function resampleLinearInterleaved(
@@ -417,7 +382,7 @@ export function writeRingBufferInterleaved(
   const free = framesFree(read, write, ringBuffer.capacityFrames);
   const framesToWrite = Math.min(requestedFrames, free);
   const droppedFrames = requestedFrames - framesToWrite;
-  if (droppedFrames > 0) Atomics.add(ringBuffer.header, OVERRUN_COUNT, droppedFrames);
+  if (droppedFrames > 0) Atomics.add(ringBuffer.header, OVERRUN_COUNT_INDEX, droppedFrames);
   if (framesToWrite === 0) return 0;
 
   const writePos = write % ringBuffer.capacityFrames;
