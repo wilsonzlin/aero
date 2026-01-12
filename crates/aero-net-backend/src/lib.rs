@@ -29,14 +29,6 @@ pub trait NetworkBackend {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }
-
-    /// Best-effort stats for the shared `NET_TX`/`NET_RX` ring backend (when supported).
-    ///
-    /// This is primarily intended for debugging the browser ring path. Backends that do not expose
-    /// these counters should return `None` (default).
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        None
-    }
 }
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
