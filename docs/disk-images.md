@@ -4,12 +4,18 @@
 
 Aero can use **raw disk images** in two ways:
 
-1. **Local images**: you provide a file (or one is generated) and Aero stores it in browser storage (OPFS).
+1. **Local images**: you provide a file (or one is generated) and Aero stores it in browser storage
+   (OPFS preferred; IndexedDB fallback in some environments).
 2. **Streaming images**: you provide a **URL** to a remote image and Aero reads it lazily, caching only the blocks/chunks it actually touches.
    - **HTTP Range** (single file): fetches with `Range: bytes=...`
    - **Chunked manifest** (many files): fetches `manifest.json` + `chunks/*.bin` with plain `GET` (no `Range` header)
 
 Streaming is essential for very large images (20GB+) because it avoids a full upfront download.
+
+Note: OPFS is the preferred backend for local images. Aero can fall back to IndexedDB for some
+host-side storage flows when OPFS sync access handles are unavailable, but IndexedDB is async-only
+and does not currently back the synchronous Rust disk/controller path; see
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
 
 ## Legal / Responsible Use (Important)
 
