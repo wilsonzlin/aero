@@ -103,7 +103,7 @@ impl SnapshotSource for TestSource {
     fn device_states(&self) -> Vec<DeviceState> {
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         let mut pci_intx = self.pci_intx.borrow_mut();
-        let core = PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+        let core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
         vec![device_state_from_io_snapshot(DeviceId::PCI, &core)]
     }
 
