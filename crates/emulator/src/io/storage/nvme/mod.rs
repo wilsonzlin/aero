@@ -506,6 +506,11 @@ impl NvmeController {
         if qid == 0 || self.io_cqs.contains_key(&qid) {
             return (0, NvmeStatus::invalid_field());
         }
+        // DoS guard: keep the number of guest-created IO queues bounded. Otherwise a malicious
+        // guest could create thousands of queues and force O(n) scans in interrupt/doorbell paths.
+        if self.num_io_cqs == 0 || self.io_cqs.len() >= usize::from(self.num_io_cqs) {
+            return (0, NvmeStatus::invalid_field());
+        }
         let size = cmd.qsize();
         if size == 0
             || size > NVME_MAX_QUEUE_ENTRIES
@@ -529,6 +534,10 @@ impl NvmeController {
     fn cmd_create_io_sq(&mut self, cmd: NvmeCommand) -> (u32, NvmeStatus) {
         let qid = cmd.qid();
         if qid == 0 || self.io_sqs.contains_key(&qid) {
+            return (0, NvmeStatus::invalid_field());
+        }
+        // DoS guard: keep the number of guest-created IO queues bounded.
+        if self.num_io_sqs == 0 || self.io_sqs.len() >= usize::from(self.num_io_sqs) {
             return (0, NvmeStatus::invalid_field());
         }
         let size = cmd.qsize();
@@ -1159,6 +1168,59 @@ mod tests {
         write_cmd(mem, 0x10_000 + 64, cmd);
         ctrl.mmio_write_u32(mem, NVME_DOORBELL_BASE, 2);
         ctrl.mmio_write_u32(mem, NVME_DOORBELL_BASE + 4, 2);
+    }
+
+    #[test]
+    fn create_io_queue_count_is_capped() {
+        let mut mem = VecMemory::new(4 * 1024 * 1024);
+        let mut ctrl = setup_controller(&mut mem);
+
+        let cq_base = 0x40_000u64;
+        let sq_base = 0x50_000u64;
+
+        let cq1 = NvmeCommand {
+            opc: OPC_ADMIN_CREATE_IO_CQ,
+            cid: 0x100,
+            nsid: 0,
+            prp1: cq_base,
+            prp2: 0,
+            cdw10: 1 | ((3u32) << 16), // qid=1, qsize=4
+            cdw11: 0,
+            cdw12: 0,
+        };
+        let (_dw0, st) = ctrl.cmd_create_io_cq(cq1);
+        assert_eq!(st, NvmeStatus::success());
+
+        let cq2 = NvmeCommand {
+            cdw10: 2 | ((3u32) << 16), // qid=2, qsize=4
+            prp1: cq_base + 0x1000,
+            ..cq1
+        };
+        let (_dw0, st) = ctrl.cmd_create_io_cq(cq2);
+        assert_eq!(st, NvmeStatus::invalid_field());
+        assert_eq!(ctrl.io_cqs.len(), 1);
+
+        let sq1 = NvmeCommand {
+            opc: OPC_ADMIN_CREATE_IO_SQ,
+            cid: 0x101,
+            nsid: 0,
+            prp1: sq_base,
+            prp2: 0,
+            cdw10: 1 | ((3u32) << 16), // qid=1, qsize=4
+            cdw11: 1,                  // cqid=1
+            cdw12: 0,
+        };
+        let (_dw0, st) = ctrl.cmd_create_io_sq(sq1);
+        assert_eq!(st, NvmeStatus::success());
+
+        let sq2 = NvmeCommand {
+            cdw10: 2 | ((3u32) << 16), // qid=2, qsize=4
+            prp1: sq_base + 0x1000,
+            ..sq1
+        };
+        let (_dw0, st) = ctrl.cmd_create_io_sq(sq2);
+        assert_eq!(st, NvmeStatus::invalid_field());
+        assert_eq!(ctrl.io_sqs.len(), 1);
     }
 
     #[test]

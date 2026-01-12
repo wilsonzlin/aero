@@ -52,6 +52,9 @@ const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 // DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
 // Identify Controller (4MiB for 4KiB pages).
 const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
+// DoS guard: cap the number of guest-created I/O queues. Otherwise a malicious guest can create
+// thousands of queues and force O(n) scans in interrupt paths and snapshot serialization.
+const NVME_MAX_IO_QUEUES: usize = 256;
 
 /// Errors returned by disk backends.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -924,8 +927,16 @@ impl NvmeController {
         if qid == 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
+        if self.io_cqs.contains_key(&qid) {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        if self.io_cqs.len() >= NVME_MAX_IO_QUEUES {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
 
-        let qsize = ((cmd.cdw10 >> 16) & 0xffff) as u16 + 1;
+        // The CQ size field is 0-based; use wrapping arithmetic so guests can't trigger a panic
+        // under overflow-check builds by passing 0xFFFF (which would encode 65536 entries).
+        let qsize = (((cmd.cdw10 >> 16) & 0xffff) as u16).wrapping_add(1);
         if qsize == 0 || qsize > 128 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
@@ -957,8 +968,16 @@ impl NvmeController {
         if qid == 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
+        if self.io_sqs.contains_key(&qid) {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        if self.io_sqs.len() >= NVME_MAX_IO_QUEUES {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
 
-        let qsize = ((cmd.cdw10 >> 16) & 0xffff) as u16 + 1;
+        // The SQ size field is 0-based; use wrapping arithmetic so guests can't trigger a panic
+        // under overflow-check builds by passing 0xFFFF (which would encode 65536 entries).
+        let qsize = (((cmd.cdw10 >> 16) & 0xffff) as u16).wrapping_add(1);
         if qsize == 0 || qsize > 128 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
@@ -2175,6 +2194,162 @@ mod tests {
         let mut data = vec![0u8; sector_size];
         disk.read_at(0, &mut data).unwrap();
         assert_eq!(data, payload.as_slice());
+    }
+
+    #[test]
+    fn create_io_cq_count_is_capped() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // Create the maximum allowed number of IO completion queues.
+        for qid in 1u16..=(NVME_MAX_IO_QUEUES as u16) {
+            let base = 0x10000u64 + (qid as u64) * (PAGE_SIZE as u64);
+            let cmd = NvmeCommand {
+                opc: 0x05,
+                cid: qid,
+                nsid: 0,
+                psdt: 0,
+                prp1: base,
+                prp2: 0,
+                cdw10: qid as u32, // qsize=1
+                cdw11: 0,
+                cdw12: 0,
+                cdw13: 0,
+                cdw14: 0,
+                cdw15: 0,
+            };
+            let (status, _result) = ctrl.cmd_create_io_cq(cmd);
+            assert_eq!(status, NvmeStatus::SUCCESS);
+        }
+        assert_eq!(ctrl.io_cqs.len(), NVME_MAX_IO_QUEUES);
+
+        // One more should be rejected.
+        let qid = (NVME_MAX_IO_QUEUES as u16) + 1;
+        let cmd = NvmeCommand {
+            opc: 0x05,
+            cid: qid,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x9000_0000,
+            prp2: 0,
+            cdw10: qid as u32,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _result) = ctrl.cmd_create_io_cq(cmd);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
+        assert_eq!(ctrl.io_cqs.len(), NVME_MAX_IO_QUEUES);
+    }
+
+    #[test]
+    fn create_io_sq_count_is_capped() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // Create a CQ needed by IO SQs (CQID=1).
+        let cq_cmd = NvmeCommand {
+            opc: 0x05,
+            cid: 0x200,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x8000_0000,
+            prp2: 0,
+            cdw10: 1, // qid=1, qsize=1
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _result) = ctrl.cmd_create_io_cq(cq_cmd);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+
+        // Create the maximum allowed number of IO submission queues, all targeting CQID 1.
+        for qid in 1u16..=(NVME_MAX_IO_QUEUES as u16) {
+            let base = 0x20000u64 + (qid as u64) * (PAGE_SIZE as u64);
+            let cmd = NvmeCommand {
+                opc: 0x01,
+                cid: qid,
+                nsid: 0,
+                psdt: 0,
+                prp1: base,
+                prp2: 0,
+                cdw10: qid as u32, // qsize=1
+                cdw11: 1,          // CQID=1
+                cdw12: 0,
+                cdw13: 0,
+                cdw14: 0,
+                cdw15: 0,
+            };
+            let (status, _result) = ctrl.cmd_create_io_sq(cmd);
+            assert_eq!(status, NvmeStatus::SUCCESS);
+        }
+        assert_eq!(ctrl.io_sqs.len(), NVME_MAX_IO_QUEUES);
+
+        // One more should be rejected.
+        let qid = (NVME_MAX_IO_QUEUES as u16) + 1;
+        let cmd = NvmeCommand {
+            opc: 0x01,
+            cid: qid,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0xA000_0000,
+            prp2: 0,
+            cdw10: qid as u32,
+            cdw11: 1,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _result) = ctrl.cmd_create_io_sq(cmd);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
+        assert_eq!(ctrl.io_sqs.len(), NVME_MAX_IO_QUEUES);
+    }
+
+    #[test]
+    fn create_io_queue_rejects_qsize_overflow_without_panicking() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // QSIZE is 0-based in CDW10[31:16]; 0xFFFF would overflow the u16 + 1 computation in debug
+        // builds if not handled defensively.
+        let cmd = NvmeCommand {
+            opc: 0x05,
+            cid: 0x1234,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x10000,
+            prp2: 0,
+            cdw10: (0xFFFFu32 << 16) | 1, // qid=1, qsize=65536 (unsupported)
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _result) = ctrl.cmd_create_io_cq(cmd);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
+
+        let cmd = NvmeCommand {
+            opc: 0x01,
+            cid: 0x1235,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x20000,
+            prp2: 0,
+            cdw10: (0xFFFFu32 << 16) | 1, // qid=1, qsize=65536 (unsupported)
+            cdw11: 1,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _result) = ctrl.cmd_create_io_sq(cmd);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
     }
 
     #[test]
