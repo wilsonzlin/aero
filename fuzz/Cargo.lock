@@ -80,6 +80,7 @@ version = "0.1.0"
 name = "aero-platform"
 version = "0.1.0"
 dependencies = [
+ "aero-cpu-core",
  "aero-interrupts",
  "aero-io-snapshot",
  "js-sys",
