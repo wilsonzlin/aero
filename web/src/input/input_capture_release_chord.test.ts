@@ -86,5 +86,81 @@ describe("InputCapture releasePointerLockChord", () => {
       expect(posted).toHaveLength(0);
     });
   });
-});
 
+  it("does not let a missing chord keyup cause a later key press to become stuck", () => {
+    withStubbedDocument((doc) => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      doc.pointerLockElement = canvas;
+
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        releasePointerLockChord: { code: "Escape" },
+      });
+
+      (capture as any).hasFocus = true;
+      (capture as any).pointerLock.locked = true;
+
+      // Trigger the host-only chord. Intentionally do NOT deliver keyup (some browsers may swallow it).
+      (capture as any).handleKeyDown({
+        code: "Escape",
+        repeat: false,
+        timeStamp: 0,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as KeyboardEvent);
+
+      // Pointer lock is now assumed to be released; subsequent Escape presses should be delivered to the guest normally.
+      (capture as any).pointerLock.locked = false;
+
+      const downPreventDefault = vi.fn();
+      const downStopPropagation = vi.fn();
+      (capture as any).handleKeyDown({
+        code: "Escape",
+        repeat: false,
+        timeStamp: 1,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault: downPreventDefault,
+        stopPropagation: downStopPropagation,
+      } as unknown as KeyboardEvent);
+
+      // Expect a HID + PS/2 event pair for keydown.
+      expect((capture as any).queue.size).toBe(2);
+
+      const upPreventDefault = vi.fn();
+      const upStopPropagation = vi.fn();
+      (capture as any).handleKeyUp({
+        code: "Escape",
+        repeat: false,
+        timeStamp: 2,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault: upPreventDefault,
+        stopPropagation: upStopPropagation,
+      } as unknown as KeyboardEvent);
+
+      // If stale suppression isn't cleared, this keyup would be swallowed and the key would stick.
+      expect((capture as any).queue.size).toBe(4);
+      expect(downPreventDefault).toHaveBeenCalled();
+      expect(downStopPropagation).toHaveBeenCalled();
+      expect(upPreventDefault).toHaveBeenCalled();
+      expect(upStopPropagation).toHaveBeenCalled();
+    });
+  });
+});

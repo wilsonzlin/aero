@@ -130,6 +130,7 @@ export class InputCapture {
     }
 
     const nowUs = toTimestampUs(performance.now());
+    this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, nowUs);
@@ -188,6 +189,14 @@ export class InputCapture {
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     if (!this.isCapturingKeyboard()) {
       return;
+    }
+
+    if (!event.repeat) {
+      // If a prior host-only chord swallowed a keydown but the browser never delivered the
+      // corresponding keyup (common for Escape used to exit pointer lock), we may have a stale
+      // suppression entry. Clear it on the next non-repeat keydown so subsequent keyup events are
+      // not accidentally swallowed (which would otherwise produce a "stuck key" in the guest).
+      this.suppressedKeyUps.delete(event.code);
     }
 
     if (this.pointerLock.isLocked && this.releaseChord && chordMatches(event, this.releaseChord)) {
