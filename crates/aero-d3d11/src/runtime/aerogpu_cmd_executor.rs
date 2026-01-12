@@ -240,6 +240,13 @@ impl SharedSurfaceTable {
                 );
             }
             return Ok(());
+        } else if self.refcounts.contains_key(&out_handle) {
+            // Underlying handles remain reserved as long as any aliases still reference them.
+            // If an original handle was destroyed, it must not be reused as a new alias handle
+            // until the underlying resource is fully released.
+            bail!(
+                "IMPORT_SHARED_SURFACE: out_resource_handle {out_handle} is still in use (underlying id kept alive by shared surface aliases)"
+            );
         }
 
         self.handles.insert(out_handle, underlying);
