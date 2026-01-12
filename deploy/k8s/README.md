@@ -2,7 +2,7 @@
 
 This directory contains a minimal **Helm chart** to deploy the Aero backend gateway (`aero-gateway`) to Kubernetes.
 
-Note: the gateway covers **TCP (WebSocket)** and **DNS-over-HTTPS**, but guest **UDP** requires deploying the separate relay service [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/) and configuring the gateway with `UDP_RELAY_BASE_URL` so `POST /session` can return `udpRelay` connection metadata (see [`docs/backend/01-aero-gateway-api.md`](../../docs/backend/01-aero-gateway-api.md)).
+Note: the gateway covers **TCP (WebSocket)** and **DNS-over-HTTPS**, but guest **UDP** requires deploying the separate relay service [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/) and configuring the gateway with `UDP_RELAY_BASE_URL` (accepts `http(s)://` or `ws(s)://`) so `POST /session` can return `udpRelay` connection metadata (see [`docs/backend/01-aero-gateway-api.md`](../../docs/backend/01-aero-gateway-api.md)).
 
 The chart includes:
 
@@ -62,7 +62,7 @@ paths:
 
 This chart deploys **only** `aero-gateway`. To support guest UDP, deploy the relay service under
 [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/) separately and configure the gateway with
-`UDP_RELAY_BASE_URL` so `POST /session` can return `udpRelay` connection metadata.
+`UDP_RELAY_BASE_URL` (accepts `http(s)://` or `ws(s)://`) so `POST /session` can return `udpRelay` connection metadata.
 
 If you want a **single-origin** deployment (recommended), configure your Ingress to route the relay's HTTP/WebSocket endpoints to the relay Service:
 

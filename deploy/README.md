@@ -31,7 +31,7 @@ The gateway (`backend/aero-gateway`) covers **TCP** (WebSocket) and **DNS-over-H
 To integrate the relay with the gateway (recommended for production):
 
 1. Deploy the relay somewhere reachable by the browser.
-2. Configure the gateway with `UDP_RELAY_BASE_URL` and a matching relay auth mode (`none`, `api_key`, or `jwt`).
+2. Configure the gateway with `UDP_RELAY_BASE_URL` (accepts `http(s)://` or `ws(s)://`) and a matching relay auth mode (`none`, `api_key`, or `jwt`).
 3. The gateway’s `POST /session` response will include an `udpRelay` field (base URL + endpoints + short‑lived token), and clients can optionally refresh the token via `POST /udp-relay/token`.
 
 ## Files
