@@ -83,6 +83,33 @@ const _: () = {
     assert!(JitContext::TOTAL_BYTE_SIZE == JitContext::BYTE_SIZE + JitContext::TLB_BYTES);
 };
 
+/// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
+pub const TIER2_CTX_OFFSET: u32 = abi::CPU_STATE_SIZE + (JitContext::TOTAL_BYTE_SIZE as u32);
+
+/// Offset of the Tier-2 trace exit reason (`u32`).
+pub const TRACE_EXIT_REASON_OFFSET: u32 = TIER2_CTX_OFFSET;
+
+/// The trace exited normally (no special handling required).
+pub const TRACE_EXIT_REASON_NONE: u32 = 0;
+
+/// The trace exited because a code page version guard failed.
+///
+/// Runtimes are expected to invalidate the cached Tier-2 trace and resume execution in the
+/// interpreter/Tier-1 at the returned RIP.
+pub const TRACE_EXIT_REASON_CODE_INVALIDATION: u32 = 1;
+
+/// Offset of a pointer (`u32`, byte offset) to the page-version table.
+pub const CODE_VERSION_TABLE_PTR_OFFSET: u32 = TIER2_CTX_OFFSET + 4;
+
+/// Offset of the length (`u32`, number of `u32` entries) of the page-version table.
+pub const CODE_VERSION_TABLE_LEN_OFFSET: u32 = TIER2_CTX_OFFSET + 8;
+
+/// Total size (in bytes) of the Tier-2 context region.
+pub const TIER2_CTX_SIZE: u32 = 12;
+
+/// Backwards-compatible alias for [`TIER2_CTX_SIZE`].
+pub const JIT_CTX_SIZE: u32 = TIER2_CTX_SIZE;
+
 #[cfg(test)]
 mod tests {
     use memoffset::offset_of;
@@ -137,30 +164,3 @@ mod tests {
         );
     }
 }
-
-/// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
-pub const TIER2_CTX_OFFSET: u32 = abi::CPU_STATE_SIZE + (JitContext::TOTAL_BYTE_SIZE as u32);
-
-/// Offset of the Tier-2 trace exit reason (`u32`).
-pub const TRACE_EXIT_REASON_OFFSET: u32 = TIER2_CTX_OFFSET;
-
-/// The trace exited normally (no special handling required).
-pub const TRACE_EXIT_REASON_NONE: u32 = 0;
-
-/// The trace exited because a code page version guard failed.
-///
-/// Runtimes are expected to invalidate the cached Tier-2 trace and resume execution in the
-/// interpreter/Tier-1 at the returned RIP.
-pub const TRACE_EXIT_REASON_CODE_INVALIDATION: u32 = 1;
-
-/// Offset of a pointer (`u32`, byte offset) to the page-version table.
-pub const CODE_VERSION_TABLE_PTR_OFFSET: u32 = TIER2_CTX_OFFSET + 4;
-
-/// Offset of the length (`u32`, number of `u32` entries) of the page-version table.
-pub const CODE_VERSION_TABLE_LEN_OFFSET: u32 = TIER2_CTX_OFFSET + 8;
-
-/// Total size (in bytes) of the Tier-2 context region.
-pub const TIER2_CTX_SIZE: u32 = 12;
-
-/// Backwards-compatible alias for [`TIER2_CTX_SIZE`].
-pub const JIT_CTX_SIZE: u32 = TIER2_CTX_SIZE;
