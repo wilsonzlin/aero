@@ -202,7 +202,17 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transpo
 VOID VirtioPciModernTransportDisableQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex);
 NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex);
 
-/* MSI-X helpers (vectors may be set to VIRTIO_PCI_MSI_NO_VECTOR to disable). */
+/*
+ * MSI-X helpers.
+ *
+ * These helpers perform a read-back check after programming the device's
+ * virtio_pci_common_cfg MSI-X vector fields:
+ * - If Vector != VIRTIO_PCI_MSI_NO_VECTOR and the device reads back
+ *   VIRTIO_PCI_MSI_NO_VECTOR or a different value, they fail with
+ *   STATUS_IO_DEVICE_ERROR.
+ * - If Vector == VIRTIO_PCI_MSI_NO_VECTOR, they accept a
+ *   VIRTIO_PCI_MSI_NO_VECTOR read-back (disable).
+ */
 NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 Vector);
 NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT16 Vector);
 
