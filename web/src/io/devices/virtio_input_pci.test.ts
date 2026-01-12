@@ -46,7 +46,7 @@ function probeMmio64BarSize(cfg: ReturnType<typeof makeCfgIo>, dev: number, fn: 
 }
 
 describe("io/devices/virtio_input PCI config", () => {
-  it("exposes canonical virtio vendor-specific capabilities at 0x40/0x50/0x64/0x74", () => {
+  it("exposes canonical virtio vendor-specific capabilities at 0x50/0x60/0x74/0x84", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
     const pciBus = new PciBus(portBus, mmioBus);
