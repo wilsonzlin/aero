@@ -4507,12 +4507,30 @@ impl Machine {
         let dx_before = self.cpu.state.gpr[gpr::RDX] as u16;
         let vbe_mode_before = self.bios.video.vbe.current_mode;
 
+        // VBE mode sets (INT 10h AX=4F02) optionally clear the framebuffer. The HLE BIOS
+        // implements this as a byte-at-a-time write loop, which is unnecessarily slow when
+        // targeting an emulated VGA device.
+        //
+        // When VGA is enabled and the guest did not request "no clear", force the BIOS path to
+        // skip its slow clear and perform a fast host-side clear after the mode is enabled.
+        let force_vbe_no_clear = vector == 0x10
+            && ax_before == 0x4F02
+            && (bx_before & 0x8000) == 0
+            && self.vga.is_some();
+        if force_vbe_no_clear {
+            self.cpu.state.gpr[gpr::RBX] |= 0x8000;
+        }
+
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         {
             let bus: &mut dyn BiosBus = &mut self.mem;
             self.bios
                 .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
+        }
+        if force_vbe_no_clear {
+            // Restore the guest-visible BX value (don't leak our forced no-clear flag).
+            self.cpu.state.gpr[gpr::RBX] &= !0x8000;
         }
         let ax_after = self.cpu.state.gpr[gpr::RAX] as u16;
 
@@ -4589,10 +4607,12 @@ impl Machine {
                             }
                         }
 
-                        // The BIOS VBE implementation clears VRAM byte-at-a-time via the
-                        // `MemoryBus` before we program the VGA device's VBE enable bits, so those
-                        // MMIO writes may have been ignored. If the guest did not set the VBE "no
-                        // clear" bit, perform an efficient host-side clear after enabling the mode.
+                        // If the guest requested a clear (BX bit15 clear), perform an efficient
+                        // host-side clear after enabling the mode.
+                        //
+                        // Note: The machine forces the BIOS to skip its byte-at-a-time clear loop
+                        // by temporarily setting the VBE no-clear flag before dispatching the
+                        // interrupt (see `force_vbe_no_clear` above).
                         if ax_before == 0x4F02 && ax_after == 0x004F && (bx_before & 0x8000) == 0 {
                             let bytes_per_pixel = (bpp as usize).div_ceil(8);
                             let clear_len = (width as usize)
