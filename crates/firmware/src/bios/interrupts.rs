@@ -333,6 +333,15 @@ fn handle_int13(
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
         }
+        0x16 => {
+            // Get disk change status.
+            //
+            // DOS programs use this to detect when a floppy disk is swapped. We do not model a
+            // disk-change line; always report "not changed" and succeed.
+            bios.last_int13_status = 0;
+            cpu.rflags &= !FLAG_CF;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+        }
         0x41 => {
             // Extensions check.
             if (cpu.gpr[gpr::RBX] & 0xFFFF) == 0x55AA && drive >= 0x80 {
@@ -1117,6 +1126,23 @@ fn build_e820_map(
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x02);
+    }
+
+    #[test]
+    fn int13_get_disk_change_status_reports_not_changed() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x1600; // AH=16h
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
     }
 
     #[test]
