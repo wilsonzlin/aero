@@ -61,7 +61,9 @@ compatibility-first defaults, keep NVMe disabled unless explicitly opted into by
   - **Port:** `0`
 
 Notes:
-- Aero’s current AHCI model is intentionally single-port for determinism.
+- The AHCI device model can support multiple ports, but the **canonical Win7 topology** attaches
+  exactly one disk at **port 0** (and typically instantiates the controller with a single
+  implemented port) for determinism.
 - Do not “move” the OS disk to another port without updating this document and any frontend/storage
   assumptions (e.g. “disk0 == AHCI port0”).
 
@@ -73,7 +75,7 @@ Notes:
   - **Drive:** master
 
 This matches the explicit attachment API in the IDE model:
-`IdeController::attach_secondary_master_atapi(...)`.
+`aero_devices_storage::pci_ide::IdeController::attach_secondary_master_atapi(...)`.
 
 ---
 
