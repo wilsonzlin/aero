@@ -336,4 +336,7 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
 
   // Correctness: runtime exits must roll back side effects so interpreter fallback can re-execute.
   expect((result as any).rollback_ok).toBe(true);
+  // i64 ABI smoke check: Tier-1 blocks return i64, which must be represented as BigInt in JS.
+  expect(getPath(result, 'jit_return_type')).toBe('bigint');
+  expect(typeof getPath(result, 'jit_return_is_sentinel')).toBe('boolean');
 });

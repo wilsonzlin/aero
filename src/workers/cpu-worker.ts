@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import type { CompileBlockResponse, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
+import { asI64, asU64, u64ToNumber } from './bigint';
 import { initWasmForContext, type WasmApi } from '../../web/src/runtime/wasm_context';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -16,6 +17,9 @@ type CpuWorkerToMainMessage =
       runtime_installed_entry_rip: number | null;
       runtime_installed_table_index: number | null;
       rollback_ok: boolean;
+      // i64/BigInt ABI smoke info (observed via `globalThis.__aero_jit_call`).
+      jit_return_type: string | null;
+      jit_return_is_sentinel: boolean;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
@@ -90,13 +94,9 @@ function platformSharedMemoryError(err: unknown): string {
 }
 
 function u64AsNumber(v: bigint): number {
-  const u = BigInt.asUintN(64, v);
+  const u = asU64(v);
   // This smoke harness only uses small addresses/values; clamp defensively.
   return u > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(u);
-}
-
-function i64ToBigInt(v: bigint): bigint {
-  return BigInt.asIntN(64, v);
 }
 
 function readMaybeNumber(vm: unknown, key: string): number {
@@ -140,7 +140,6 @@ function readMaybeNumber(vm: unknown, key: string): number {
     return 0;
   }
 }
-
 async function runTieredVm(iterations: number, threshold: number) {
   let memory: WebAssembly.Memory;
   try {
@@ -203,6 +202,8 @@ async function runTieredVm(iterations: number, threshold: number) {
 
   // Install JS-side tier-1 call table that the WASM tiered runtime imports via `globalThis.__aero_jit_call`.
   const jitFns: Array<(cpu_ptr: number, jit_ctx_ptr: number) => bigint> = [];
+  let lastJitReturnType: string | null = null;
+  let lastJitReturnIsSentinel = false;
 
   // Rollback state is scoped to a single `__aero_jit_call` invocation.
   // `env.*` imports consult these while a block is executing.
@@ -244,16 +245,23 @@ async function runTieredVm(iterations: number, threshold: number) {
     // Snapshot the CpuState ABI region so we can roll back partial side effects on runtime exit.
     const cpuSnapshot = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
 
-    let ret: bigint;
+    let rawRet: unknown;
     try {
-      ret = fn(cpuPtr, jitCtxPtr);
+      rawRet = fn(cpuPtr, jitCtxPtr);
     } finally {
       activeExitState = null;
       activeWriteLog = null;
     }
 
+    lastJitReturnType = typeof rawRet;
+    if (typeof rawRet !== 'bigint') {
+      throw new TypeError(`Tier-1 JIT block returned ${typeof rawRet}; expected bigint (wasm i64).`);
+    }
+    const ret = rawRet as bigint;
+    lastJitReturnIsSentinel = asI64(ret) === JIT_EXIT_SENTINEL_I64;
+
     // Tier-1 contract: sentinel return value requests interpreter fallback.
-    const exitToInterpreter = ret === JIT_EXIT_SENTINEL_I64;
+    const exitToInterpreter = lastJitReturnIsSentinel;
     const shouldRollback = exitToInterpreter && hostExitStateShouldRollback(exitState);
 
     if (shouldRollback) {
@@ -337,7 +345,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   onGuestWrite = (paddr: bigint, len: number) => {
     const notify = (vm as unknown as { on_guest_write?: (paddr: bigint, len: number) => void }).on_guest_write;
     if (typeof notify !== 'function') return;
-    notify.call(vm, BigInt.asUintN(64, paddr), len >>> 0);
+    notify.call(vm, asU64(paddr), len >>> 0);
   };
 
   const logWrite = (linearAddr: number, size: number) => {
@@ -350,61 +358,61 @@ async function runTieredVm(iterations: number, threshold: number) {
   // Tier-1 imports required by generated blocks (even if the smoke block doesn't use them).
   const env = {
     memory,
-    mem_read_u8: (_cpuPtr: number, addr: bigint) => dv.getUint8(guest_base + u64AsNumber(addr)),
-    mem_read_u16: (_cpuPtr: number, addr: bigint) => dv.getUint16(guest_base + u64AsNumber(addr), true),
-    mem_read_u32: (_cpuPtr: number, addr: bigint) => dv.getUint32(guest_base + u64AsNumber(addr), true) | 0,
-    mem_read_u64: (_cpuPtr: number, addr: bigint) => i64ToBigInt(dv.getBigUint64(guest_base + u64AsNumber(addr), true)),
+    mem_read_u8: (_cpuPtr: number, addr: bigint) => dv.getUint8(guest_base + u64ToNumber(addr)),
+    mem_read_u16: (_cpuPtr: number, addr: bigint) => dv.getUint16(guest_base + u64ToNumber(addr), true),
+    mem_read_u32: (_cpuPtr: number, addr: bigint) => dv.getUint32(guest_base + u64ToNumber(addr), true) | 0,
+    mem_read_u64: (_cpuPtr: number, addr: bigint) => asI64(dv.getBigUint64(guest_base + u64ToNumber(addr), true)),
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
-      const linear = guest_base + u64AsNumber(addr);
+      const linear = guest_base + u64ToNumber(addr);
       logWrite(linear, 1);
       dv.setUint8(linear, value & 0xff);
       // If the helper is used outside a JIT block (unlikely), still bump code versions.
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 1);
     },
     mem_write_u16: (_cpuPtr: number, addr: bigint, value: number) => {
-      const linear = guest_base + u64AsNumber(addr);
+      const linear = guest_base + u64ToNumber(addr);
       logWrite(linear, 2);
       dv.setUint16(linear, value & 0xffff, true);
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 2);
     },
     mem_write_u32: (_cpuPtr: number, addr: bigint, value: number) => {
-      const linear = guest_base + u64AsNumber(addr);
+      const linear = guest_base + u64ToNumber(addr);
       logWrite(linear, 4);
       dv.setUint32(linear, value >>> 0, true);
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 4);
     },
     mem_write_u64: (_cpuPtr: number, addr: bigint, value: bigint) => {
-      const linear = guest_base + u64AsNumber(addr);
+      const linear = guest_base + u64ToNumber(addr);
       logWrite(linear, 8);
-      dv.setBigUint64(linear, BigInt.asUintN(64, value), true);
+      dv.setBigUint64(linear, asU64(value), true);
       if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 8);
     },
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
-      const vaddrU = BigInt.asUintN(64, vaddr);
+      const vaddrU = asU64(vaddr);
       const vpn = vaddrU >> 12n;
       const idx = Number(vpn & 0xffn) >>> 0;
 
       const tlbSalt = dv.getBigUint64(jitCtxPtr + 8, true);
-      const tag = (vpn ^ tlbSalt) | 1n;
+      const tag = asU64((vpn ^ tlbSalt) | 1n);
 
       const isRam = vaddrU < BigInt(guest_size);
       const physBase = vaddrU & ~0xfffn;
       const flags = 1n | 2n | 4n | (isRam ? 8n : 0n);
-      const data = physBase | flags;
+      const data = asU64(physBase | flags);
 
       const entryAddr = jitCtxPtr + 16 + idx * 16;
       dv.setBigUint64(entryAddr, tag, true);
       dv.setBigUint64(entryAddr + 8, data, true);
 
-      return BigInt.asIntN(64, data);
+      return asI64(data);
     },
     jit_exit_mmio: (_cpuPtr: number, _vaddr: bigint, _size: number, _isWrite: number, _value: bigint, rip: bigint) => {
       if (activeExitState) activeExitState.mmio_exit = true;
-      return rip;
+      return asI64(rip);
     },
     jit_exit: (_kind: number, rip: bigint) => {
       if (activeExitState) activeExitState.jit_exit = true;
-      return rip;
+      return asI64(rip);
     },
     page_fault: (_cpuPtr: number, _addr: bigint) => {
       if (activeExitState) activeExitState.page_fault = true;
@@ -591,14 +599,17 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     const compileReqs = vm.drain_compile_requests();
     for (const entry_rip of compileReqs as unknown as Iterable<unknown>) {
-      let entryRipNum: number | undefined;
+      let entryRipU32: number | undefined;
       if (typeof entry_rip === 'bigint') {
-        entryRipNum = u64AsNumber(entry_rip);
+        try {
+          entryRipU32 = u64ToNumber(entry_rip) >>> 0;
+        } catch {
+          entryRipU32 = undefined;
+        }
       } else if (typeof entry_rip === 'number' && Number.isFinite(entry_rip)) {
-        entryRipNum = entry_rip >>> 0;
+        entryRipU32 = entry_rip >>> 0;
       }
-      if (entryRipNum === undefined) continue;
-      const entryRipU32 = entryRipNum >>> 0;
+      if (entryRipU32 === undefined) continue;
       if (installedByRip.has(entryRipU32)) continue;
       try {
         const resp = await requestCompile(entryRipU32);
@@ -680,6 +691,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     runtime_installed_entry_rip: runtimeInstalledEntryRip,
     runtime_installed_table_index: runtimeInstalledTableIndex,
     rollback_ok,
+    jit_return_type: lastJitReturnType,
+    jit_return_is_sentinel: lastJitReturnIsSentinel,
   });
 
   jitWorker.terminate();
