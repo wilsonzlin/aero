@@ -139,8 +139,8 @@ fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
     io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
 
     // Sector count (48-bit): high byte then low byte.
-    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
-    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, sectors >> 8);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, sectors & 0xFF);
 
     // LBA = 0 (48-bit writes: high then low per register).
     for reg in 3..=5 {
@@ -178,8 +178,8 @@ fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
     register_piix3_ide_ports(&mut io, ide.clone());
 
     io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
-    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
-    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, sectors >> 8);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, sectors & 0xFF);
 
     for reg in 3..=5 {
         io.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);

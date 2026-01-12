@@ -122,20 +122,20 @@ fn ahci_pci_snapshot_roundtrip_preserves_pci_config_mmio_regs_and_irq_level() {
         0x24u64, // CAP2
         0x28u64, // BOHC
         // Port 0
-        PORT_BASE, // CLB
-        0x100 + 0x04, // CLBU
-        0x100 + 0x08, // FB
-        0x100 + 0x0c, // FBU
-        0x100 + 0x10, // IS
-        0x100 + 0x14, // IE
-        0x100 + 0x18, // CMD
-        0x100 + 0x20, // TFD
-        0x100 + 0x24, // SIG
-        0x100 + 0x28, // SSTS
-        0x100 + 0x2c, // SCTL
-        0x100 + 0x30, // SERR
-        0x100 + 0x34, // SACT
-        0x100 + 0x38, // CI
+        PORT_BASE,        // CLB
+        PORT_BASE + 0x04, // CLBU
+        PORT_BASE + 0x08, // FB
+        PORT_BASE + 0x0c, // FBU
+        PORT_BASE + 0x10, // IS
+        PORT_BASE + 0x14, // IE
+        PORT_BASE + 0x18, // CMD
+        PORT_BASE + 0x20, // TFD
+        PORT_BASE + 0x24, // SIG
+        PORT_BASE + 0x28, // SSTS
+        PORT_BASE + 0x2c, // SCTL
+        PORT_BASE + 0x30, // SERR
+        PORT_BASE + 0x34, // SACT
+        PORT_BASE + 0x38, // CI
     ];
     let mut reg_vals = Vec::with_capacity(regs.len());
     for &off in &regs {
