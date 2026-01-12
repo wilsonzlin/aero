@@ -29,7 +29,12 @@ fn looks_like_etag(value: &str) -> bool {
         value
     };
 
-    tag.len() >= 2 && tag.starts_with('"') && tag.ends_with('"')
+    if !(tag.len() >= 2 && tag.starts_with('"') && tag.ends_with('"')) {
+        return false;
+    }
+
+    // RFC 9110 forbids `"` inside the opaque-tag; any quote would prematurely terminate the tag.
+    !tag[1..tag.len() - 1].contains('"')
 }
 
 /// Build a safe `ETag` header value.
@@ -300,5 +305,11 @@ mod tests {
             if_range_allows_range(&headers, None, Some(last_modified)),
             "expected If-Range date to match even when the resource mtime has sub-second precision"
         );
+    }
+
+    #[test]
+    fn etag_header_value_or_fallback_rejects_inner_quotes() {
+        let v = etag_header_value_or_fallback(Some("\"a\"b\""), || "W/\"fallback\"".to_string());
+        assert_eq!(v.to_str().unwrap(), "W/\"fallback\"");
     }
 }
