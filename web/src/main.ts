@@ -568,12 +568,18 @@ function downloadFile(file: Blob, filename: string): void {
 function renderMachinePanel(): HTMLElement {
   const status = el("pre", { text: "Initializing canonical machine…" });
   const vgaInfo = el("pre", { text: "" });
+  const inputHint = el("div", {
+    class: "mono",
+    text: "Tip: click the canvas to focus it; keyboard events will be forwarded to the guest via Machine.inject_browser_key().",
+  });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
+  canvas.tabIndex = 0;
   canvas.style.width = "640px";
   canvas.style.height = "400px";
   canvas.style.border = "1px solid rgba(127, 127, 127, 0.5)";
   canvas.style.background = "#000";
   canvas.style.imageRendering = "pixelated";
+  canvas.addEventListener("click", () => canvas.focus());
 
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
@@ -837,6 +843,40 @@ function renderMachinePanel(): HTMLElement {
         }
       }
 
+      let running = true;
+
+      const onKeyDown = (ev: KeyboardEvent): void => {
+        if (!running) return;
+        const fn = (machine as unknown as { inject_browser_key?: unknown }).inject_browser_key;
+        if (typeof fn !== "function") return;
+        try {
+          fn.call(machine, ev.code, true);
+          ev.preventDefault();
+        } catch {
+          // ignore
+        }
+      };
+
+      const onKeyUp = (ev: KeyboardEvent): void => {
+        if (!running) return;
+        const fn = (machine as unknown as { inject_browser_key?: unknown }).inject_browser_key;
+        if (typeof fn !== "function") return;
+        try {
+          fn.call(machine, ev.code, false);
+          ev.preventDefault();
+        } catch {
+          // ignore
+        }
+      };
+
+      canvas.addEventListener("keydown", onKeyDown);
+      canvas.addEventListener("keyup", onKeyUp);
+
+      const detachInput = () => {
+        canvas.removeEventListener("keydown", onKeyDown);
+        canvas.removeEventListener("keyup", onKeyUp);
+      };
+
       const timer = window.setInterval(() => {
         const exit = machine.run_slice(50_000);
         const exitKind = exit.kind;
@@ -856,6 +896,8 @@ function renderMachinePanel(): HTMLElement {
         // `RunExitKind::Completed` is 0. Stop once the guest halts/requests reset/needs assist.
         if (exitKind !== 0) {
           window.clearInterval(timer);
+          running = false;
+          detachInput();
           try {
             (machine as unknown as { free?: () => void }).free?.();
           } catch {
@@ -878,6 +920,7 @@ function renderMachinePanel(): HTMLElement {
     { class: "panel" },
     el("h2", { text: "Machine (canonical VM) – serial + VGA demo" }),
     status,
+    inputHint,
     el("div", { class: "row" }, canvas),
     vgaInfo,
     output,
