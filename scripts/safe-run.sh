@@ -342,6 +342,27 @@ while true; do
         exit 0
     fi
 
+    # Timeout exit codes from GNU coreutils `timeout`:
+    # - 124: command timed out (SIGTERM sent)
+    # - 137: command killed after ignoring SIGTERM (SIGKILL)
+    #
+    # These typically mean the command is legitimately slow (e.g. cold Rust build on a contended
+    # host) or hung. Provide an actionable hint for the common "needs more time" case.
+    if [[ "${status}" -eq 124 || "${status}" -eq 137 ]]; then
+        next_timeout=$((TIMEOUT * 2))
+        if [[ "${next_timeout}" -lt 1 ]]; then
+            next_timeout=1200
+        fi
+
+        echo "[safe-run] error: command exceeded timeout of ${TIMEOUT}s" >&2
+        echo "[safe-run] Tip: retry with a larger timeout, e.g.:" >&2
+        printf "[safe-run]   AERO_TIMEOUT=%s bash ./scripts/safe-run.sh" "${next_timeout}" >&2
+        for arg in "$@"; do
+            printf " %q" "${arg}" >&2
+        done
+        printf "\n" >&2
+    fi
+
     if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
         && [[ "${is_cargo_cmd}" == "true" ]] \
         && should_retry_rustc_thread_error "${stderr_log}"
