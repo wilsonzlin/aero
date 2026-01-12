@@ -400,6 +400,33 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --timeout-seconds 600
 ```
 
+Example: require end-to-end virtio-input **event delivery** (host QMP injects a deterministic keyboard/mouse sequence):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --with-input-events \
+  --timeout-seconds 600
+```
+
+Example: attach virtio-snd and capture deterministic wav output + verify non-silence:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --with-virtio-snd \
+  --virtio-snd-audio-backend wav \
+  --virtio-snd-wav-path ./out/virtio-snd.wav \
+  --virtio-snd-verify-wav \
+  --timeout-seconds 600
+```
+
+Note: `--with-virtio-snd` requires a guest image provisioned with virtio-snd capture/duplex selftests enabled (otherwise the harness will fail on `virtio-snd-duplex|SKIP|flag_not_set`). See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
+
 ---
 
 ## Quick Start Checklist
