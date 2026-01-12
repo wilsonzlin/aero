@@ -62,8 +62,14 @@ FORBIDDEN_PROJECT_SOURCES = {
 }
 
 # These are repo-root-relative paths.
+# NOTE: Keep obsolete backend experiments out of the shipped MSBuild project. In
+# particular, `virtiosnd_backend_virtio.c` is an old WDM backend that uses
+# `virtqueue_split_legacy.h` (legacy virtqueue architecture) and is not part of
+# the current `include/backend.h` interface.
 FORBIDDEN_REPO_SOURCES = {
     "drivers/windows7/virtio/common/src/virtio_pci_legacy.c",
+    "drivers/windows7/virtio-snd/src/virtiosnd_backend_virtio.c",
+    "drivers/windows7/virtio/common/src/virtqueue_split_legacy.c",
 }
 
 # Forbidden by basename/suffix (regardless of where it comes from).
@@ -396,7 +402,7 @@ def main() -> None:
 
     if forbidden_found:
         fail(
-            "aero_virtio_snd.vcxproj includes forbidden legacy transport sources:\n"
+            "aero_virtio_snd.vcxproj includes forbidden legacy/obsolete sources:\n"
             + "\n".join(f"  - {p}" for p in forbidden_found)
         )
 
