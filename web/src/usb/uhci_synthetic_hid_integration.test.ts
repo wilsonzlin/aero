@@ -878,11 +878,12 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     const guestSize = layout.guest_size >>> 0;
 
     const runtime = new api.UhciRuntime(guestBase, guestSize);
-    if (typeof runtime.attach_usb_hid_passthrough_device !== "function") return;
+    const attach = runtime.attach_usb_hid_passthrough_device;
+    if (typeof attach !== "function") return;
 
     const HidBridge = api.UsbHidPassthroughBridge;
     const dev = new HidBridge(0x1234, 0x0004, "Aero", "Nested", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
 
-    expect(() => runtime.attach_usb_hid_passthrough_device([0, 1, 1], dev)).toThrow();
+    expect(() => attach.call(runtime, [0, 1, 1], dev)).toThrow();
   });
 });
