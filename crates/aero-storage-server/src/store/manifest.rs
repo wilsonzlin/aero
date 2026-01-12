@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn invalid_id_error_is_truncated() {
-        let long_id = "a".repeat(super::super::MAX_IMAGE_ID_LEN + 10);
+        let long_id = "a".repeat(crate::store::MAX_IMAGE_ID_LEN + 10);
         let json = format!(
             r#"{{
               "images": [
@@ -429,7 +429,7 @@ mod tests {
             panic!("expected InvalidId, got {err:?}");
         };
         assert!(
-            id.len() <= super::super::MAX_IMAGE_ID_LEN,
+            id.len() <= crate::store::MAX_IMAGE_ID_LEN,
             "expected truncated id, got len={}",
             id.len()
         );
