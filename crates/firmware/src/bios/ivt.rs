@@ -5,6 +5,8 @@ use super::{
 };
 
 const BDA_EBDA_SEGMENT_OFFSET: u64 = 0x0E; // 0x40E absolute
+const BDA_COM_PORTS_OFFSET: u64 = 0x00; // 0x400 absolute
+const BDA_LPT_PORTS_OFFSET: u64 = 0x08; // 0x408 absolute
 const BDA_EQUIPMENT_WORD_OFFSET: u64 = 0x10; // 0x410 absolute
 const BDA_MEM_SIZE_KB_OFFSET: u64 = 0x13; // 0x413 absolute
 
@@ -29,6 +31,20 @@ fn handler_offset(vector: u8) -> u16 {
 }
 
 pub fn init_bda(bus: &mut dyn BiosBus) {
+    // Base I/O addresses for standard devices.
+    //
+    // These are consumed by some guests directly (rather than using BIOS INT 14h/17h). Populate a
+    // minimal, PC-compatible configuration:
+    // - COM1 present at 0x3F8
+    // - no LPT ports
+    bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 0, 0x03F8); // COM1
+    bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 2, 0x0000); // COM2
+    bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 4, 0x0000); // COM3
+    bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 6, 0x0000); // COM4
+    bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 0, 0x0000); // LPT1
+    bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 2, 0x0000); // LPT2
+    bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 4, 0x0000); // LPT3
+
     // EBDA segment pointer.
     let ebda_segment = (EBDA_BASE / 16) as u16;
     bus.write_u16(BDA_BASE + BDA_EBDA_SEGMENT_OFFSET, ebda_segment);
@@ -68,6 +84,14 @@ mod tests {
     fn init_bda_initializes_equipment_word() {
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         init_bda(&mut mem);
+
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_COM_PORTS_OFFSET), 0x03F8);
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 2), 0);
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 4), 0);
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 6), 0);
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET), 0);
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 2), 0);
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 4), 0);
 
         assert_eq!(mem.read_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET), 0x0222);
     }
