@@ -259,10 +259,10 @@ Legend:
 │        D3D9/D3D10/D3D11 Runtime             │
 │                 │                            │
 │                 ▼                            │
-│        aerogpu_umd.dll (UMD)                │  User-mode DDI implementation
+│  aerogpu_d3d9*.dll (+ optional aerogpu_d3d10*.dll) │  User-mode display drivers (UMDs)
 │                 │                            │
 │                 ▼                            │
-│        aerogpu_kmd.sys (KMD)                │  WDDM miniport driver
+│        aerogpu.sys (KMD)                    │  WDDM miniport driver
 │                 │                            │
 ├─────────────────┼───────────────────────────┤
 │                 ▼                            │
