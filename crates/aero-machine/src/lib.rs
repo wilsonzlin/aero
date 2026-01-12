@@ -2990,7 +2990,8 @@ impl Machine {
             let vga = self.vga.clone();
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
-            // immediately without needing dynamic MMIO unmap/remap support in `PhysicalMemoryBus`.
+            // immediately without needing dynamic MMIO unmap/remap support in the physical memory
+            // bus.
             self.mem.map_mmio_once(
                 pci_allocator_cfg.mmio_base,
                 pci_allocator_cfg.mmio_size,
