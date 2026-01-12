@@ -191,6 +191,17 @@ impl<B: NetworkBackend> E1000Pump<B> {
         );
     }
 
+    /// Run one pump iteration and return the number of frames processed in each direction.
+    pub fn poll_with_counts(&mut self, mem: &mut dyn MemoryBus) -> PumpCounts {
+        tick_e1000_with_counts(
+            &mut self.nic,
+            mem,
+            &mut self.backend,
+            self.max_tx_frames_per_poll,
+            self.max_rx_frames_per_poll,
+        )
+    }
+
     pub fn nic(&self) -> &E1000Device {
         &self.nic
     }
