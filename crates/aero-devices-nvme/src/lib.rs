@@ -29,7 +29,6 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
-use aero_storage::DiskError as StorageDiskError;
 /// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
 /// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
 ///
@@ -105,7 +104,7 @@ impl DiskBackend for AeroStorageDiskAdapter {
 
         self.disk_mut()
             .read_sectors(lba, buffer)
-            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
+            .map_err(|_| DiskError::Io)
     }
 
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
@@ -133,7 +132,7 @@ impl DiskBackend for AeroStorageDiskAdapter {
 
         self.disk_mut()
             .write_sectors(lba, buffer)
-            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
+            .map_err(|_| DiskError::Io)
     }
 
     fn flush(&mut self) -> DiskResult<()> {
@@ -141,30 +140,10 @@ impl DiskBackend for AeroStorageDiskAdapter {
     }
 }
 
-fn map_storage_disk_error(
-    err: StorageDiskError,
-    lba: u64,
-    sectors: u64,
-    capacity_sectors: u64,
-) -> DiskError {
-    match err {
-        // If the underlying disk reports an alignment failure, preserve it.
-        StorageDiskError::UnalignedLength { len, .. } => DiskError::UnalignedBuffer {
-            len,
-            sector_size: AeroStorageDiskAdapter::SECTOR_SIZE,
-        },
-        // If the underlying disk reports out-of-bounds, surface it as an LBA-range error.
-        StorageDiskError::OutOfBounds { .. } | StorageDiskError::OffsetOverflow => DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors,
-        },
-        // Other disk-layer errors are surfaced as generic I/O failures at the NVMe level.
-        _ => DiskError::Io,
-    }
-}
-
 /// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an NVMe [`DiskBackend`].
+///
+/// Returns `Err(DiskError::Io)` if the disk capacity is not a multiple of 512 bytes (NVMe LBAs are
+/// currently fixed at 512 bytes in this device model).
 pub fn from_virtual_disk(
     d: Box<dyn aero_storage::VirtualDisk + Send>,
 ) -> DiskResult<Box<dyn DiskBackend>> {
