@@ -1,5 +1,6 @@
 use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig, RunExit};
+use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
 
 fn run_until_halt(m: &mut Machine) {
@@ -138,7 +139,7 @@ fn bios_text_cursor_sync_updates_vga_crtc() {
     m.reset();
     run_until_halt(&mut m);
 
-    let cols = m.read_physical_u16(0x044A).max(1);
+    let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
     let expected = (u16::from(row)).saturating_mul(cols) + u16::from(col);
 
     m.io_write(0x3D4, 1, 0x0E);
