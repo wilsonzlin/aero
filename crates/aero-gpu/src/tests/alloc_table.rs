@@ -76,15 +76,11 @@ fn alloc_table_duplicate_alloc_id_is_rejected() {
 fn alloc_table_accepts_capacity_larger_than_header_size_bytes() {
     let gpa = 0x1000u64;
     let entry_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
-    let used_size_bytes = (AerogpuAllocTableHeader::SIZE_BYTES + AerogpuAllocEntry::SIZE_BYTES) as u32;
+    let used_size_bytes =
+        (AerogpuAllocTableHeader::SIZE_BYTES + AerogpuAllocEntry::SIZE_BYTES) as u32;
     let capacity_size_bytes = used_size_bytes + 4096;
 
-    let bytes = build_alloc_table_bytes(
-        used_size_bytes,
-        1,
-        entry_stride,
-        &[(1, 0x2000, 0x100)],
-    );
+    let bytes = build_alloc_table_bytes(used_size_bytes, 1, entry_stride, &[(1, 0x2000, 0x100)]);
 
     let mut mem = VecGuestMemory::new(0x6000);
     mem.write(gpa, &bytes).unwrap();
