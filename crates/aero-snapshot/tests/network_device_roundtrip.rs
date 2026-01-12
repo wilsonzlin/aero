@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use aero_io_snapshot::io::network::state::{DhcpLease, Ipv4Addr, NatKey, NatProtocol, NatValue};
+use aero_io_snapshot::io::network::state::{
+    DhcpLease, Ipv4Addr, LegacyNetworkStackState, NatKey, NatProtocol, NatValue,
+};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_net_e1000::{E1000Device, MIN_L2_FRAME_LEN};
 use aero_snapshot::io_snapshot_bridge::{
@@ -71,7 +73,7 @@ impl SnapshotSource for DeviceStateSource {
 
 struct TestSource {
     e1000: E1000Device,
-    net_stack: aero_io_snapshot::io::network::state::NetworkStackState,
+    net_stack: LegacyNetworkStackState,
     ram: Vec<u8>,
     meta: SnapshotMeta,
 }
@@ -122,7 +124,7 @@ impl SnapshotSource for TestSource {
 
 struct TestTarget {
     e1000: E1000Device,
-    net_stack: aero_io_snapshot::io::network::state::NetworkStackState,
+    net_stack: LegacyNetworkStackState,
     restored_states: Vec<DeviceState>,
     ram: Vec<u8>,
 }
@@ -133,7 +135,7 @@ impl TestTarget {
             // These are deliberately initialized to defaults. Snapshot application should populate
             // the state we care about, and the test asserts the resulting TLV bytes match.
             e1000: E1000Device::new([0x52, 0x54, 0x00, 0x00, 0x00, 0x01]),
-            net_stack: aero_io_snapshot::io::network::state::NetworkStackState::default(),
+            net_stack: LegacyNetworkStackState::default(),
             restored_states: Vec::new(),
             ram: vec![0u8; ram_len],
         }
@@ -197,7 +199,7 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     let expected_e1000_tctl = e1000.mmio_read_u32(REG_TCTL);
 
     // Build a network stack snapshot state with enough complexity to exercise encoding.
-    let mut net_stack = aero_io_snapshot::io::network::state::NetworkStackState::default();
+    let mut net_stack = LegacyNetworkStackState::default();
     net_stack.mac_addr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     net_stack.dhcp_lease = Some(DhcpLease {
         ip: Ipv4Addr::new(10, 0, 2, 15),
@@ -312,5 +314,5 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     assert_eq!(&e1000_resaved.data[..4], b"AERO");
     assert_eq!(&net_stack_resaved.data[..4], b"AERO");
     // Double-check the trait is actually in use (not an accidental dummy blob).
-    assert_eq!(<aero_io_snapshot::io::network::state::NetworkStackState as IoSnapshot>::DEVICE_ID, *b"NETS");
+    assert_eq!(<LegacyNetworkStackState as IoSnapshot>::DEVICE_ID, *b"NETL");
 }
