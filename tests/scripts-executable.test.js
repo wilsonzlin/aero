@@ -256,6 +256,26 @@ test("safe-run.sh preserves explicit RUST_TEST_THREADS for cargo test (Linux)", 
   }
 });
 
+test("safe-run.sh sanitizes invalid RUSTC_WORKER_THREADS and RAYON_NUM_THREADS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  delete env.AERO_CARGO_BUILD_JOBS;
+  env.RUSTC_WORKER_THREADS = "nope";
+  env.RAYON_NUM_THREADS = "nope";
+
+  const stdout = execFileSync(
+    path.join(repoRoot, "scripts/safe-run.sh"),
+    ["bash", "-c", 'printf "%s|%s" "$RUSTC_WORKER_THREADS" "$RAYON_NUM_THREADS"'],
+    {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(stdout, "1|1");
+});
+
 test("safe-run.sh: AERO_CARGO_BUILD_JOBS overrides CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
   const env = { ...process.env };
   env.CARGO_BUILD_JOBS = "4";

@@ -129,7 +129,17 @@ export CARGO_INCREMENTAL=1
 #   Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
 #
 # Keep rustc's worker pool aligned with overall Cargo build parallelism for reliability.
-export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
+_aero_default_rustc_worker_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_rustc_worker_threads}" =~ ^[1-9][0-9]*$ ]]; then
+  _aero_default_rustc_worker_threads=1
+fi
+if [[ -z "${RUSTC_WORKER_THREADS:-}" ]]; then
+  export RUSTC_WORKER_THREADS="${_aero_default_rustc_worker_threads}"
+elif ! [[ "${RUSTC_WORKER_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "warning: invalid RUSTC_WORKER_THREADS value: ${RUSTC_WORKER_THREADS} (expected positive integer); using ${_aero_default_rustc_worker_threads}" >&2
+  export RUSTC_WORKER_THREADS="${_aero_default_rustc_worker_threads}"
+fi
+unset _aero_default_rustc_worker_threads 2>/dev/null || true
 
 # rustc uses Rayon internally for query evaluation and other parallel work.
 # When many agents share the same host, the default Rayon thread count (often `num_cpus`) can
@@ -139,7 +149,17 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 #
 # Keep the Rayon pool size aligned with our overall Cargo build parallelism so builds remain
 # reliable under contention.
-export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
+_aero_default_rayon_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_rayon_threads}" =~ ^[1-9][0-9]*$ ]]; then
+  _aero_default_rayon_threads=1
+fi
+if [[ -z "${RAYON_NUM_THREADS:-}" ]]; then
+  export RAYON_NUM_THREADS="${_aero_default_rayon_threads}"
+elif ! [[ "${RAYON_NUM_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "warning: invalid RAYON_NUM_THREADS value: ${RAYON_NUM_THREADS} (expected positive integer); using ${_aero_default_rayon_threads}" >&2
+  export RAYON_NUM_THREADS="${_aero_default_rayon_threads}"
+fi
+unset _aero_default_rayon_threads 2>/dev/null || true
 
 # Rust's built-in test harness (libtest) defaults to running tests with one thread per CPU core.
 # Under shared-host contention this can exceed per-user thread limits (EAGAIN) and cause tests to
