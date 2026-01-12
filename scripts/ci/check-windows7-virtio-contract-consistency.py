@@ -39,6 +39,7 @@ WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contr
 # canonical INF basenames shipped by this repo. When we rename driver packages,
 # it's easy to update the INFs but forget to update these examples.
 WIN7_VIRTIO_TESTS_ROOT = REPO_ROOT / "drivers/windows7/tests"
+INSTRUCTIONS_ROOT = REPO_ROOT / "instructions"
 DEPRECATED_WIN7_TEST_INF_BASENAMES: tuple[str, ...] = (
     # Pre-rename INF basenames.
     "aerovblk.inf",
@@ -1144,11 +1145,16 @@ def main() -> None:
         contract_subsystem_ids,
     ) = parse_w7_contract_pci_identification_tables(w7_md)
 
-    deprecated_hits = scan_text_tree_for_substrings(WIN7_VIRTIO_TESTS_ROOT, DEPRECATED_WIN7_TEST_INF_BASENAMES)
+    deprecated_hits: list[str] = []
+    deprecated_hits.extend(scan_text_tree_for_substrings(WIN7_VIRTIO_TESTS_ROOT, DEPRECATED_WIN7_TEST_INF_BASENAMES))
+    # The per-workstream onboarding docs under `instructions/` also frequently mention
+    # driver package/INF names. Keep them aligned with the canonical `aero_virtio_*.inf`
+    # basenames so new contributors don't cargo-cult old names into code or scripts.
+    deprecated_hits.extend(scan_text_tree_for_substrings(INSTRUCTIONS_ROOT, DEPRECATED_WIN7_TEST_INF_BASENAMES))
     if deprecated_hits:
         errors.append(
             format_error(
-                "Win7 virtio tests reference deprecated INF basenames. Update docs/examples to use canonical aero_virtio_*.inf files:",
+                "Docs/tests reference deprecated Win7 virtio INF basenames. Update docs/examples to use canonical aero_virtio_*.inf files:",
                 deprecated_hits,
             )
         )
