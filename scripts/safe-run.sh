@@ -593,16 +593,29 @@ while true; do
         # proactive hint even on success so users know how to mitigate it.
         if grep -q "Blocking waiting for file lock on package cache" "${stderr_log}"; then
             # Only emit this hint when safe-run hasn't already been asked to isolate Cargo home.
-            case "${AERO_ISOLATE_CARGO_HOME:-}" in
-              "" | 0 | false | FALSE | no | NO | off | OFF)
-                echo "[safe-run] note: detected Cargo package-cache lock contention (\"Blocking waiting for file lock on package cache\")" >&2
-                echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state per checkout:" >&2
-                echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
-                ;;
-            esac
-        fi
-        rm -f "${stderr_log}"
-        exit 0
+             case "${AERO_ISOLATE_CARGO_HOME:-}" in
+               "" | 0 | false | FALSE | no | NO | off | OFF)
+                 echo "[safe-run] note: detected Cargo package-cache lock contention (\"Blocking waiting for file lock on package cache\")" >&2
+                 echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state per checkout:" >&2
+                 echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
+                 # If the user hasn't opted into a per-checkout Cargo home yet, create one so the
+                 # next safe-run invocation will automatically pick it up (see the early
+                 # `AERO_ISOLATE_CARGO_HOME` handling which auto-uses `./.cargo-home` when present).
+                 #
+                 # Keep this best-effort: do not fail the command if the directory cannot be
+                 # created (e.g. read-only checkout).
+                 if [[ -z "${CARGO_HOME:-}" ]] && [[ ! -d "$REPO_ROOT/.cargo-home" ]]; then
+                   if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
+                     echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
+                   else
+                     echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
+                   fi
+                 fi
+                 ;;
+             esac
+         fi
+         rm -f "${stderr_log}"
+         exit 0
     fi
 
     # Timeout exit codes from GNU coreutils `timeout`:
@@ -628,13 +641,20 @@ while true; do
         # Cargo frequently hangs here when multiple agents contend for a shared Cargo registry
         # lock (stderr includes: "Blocking waiting for file lock on package cache"). Provide a
         # targeted remediation hint.
-        if grep -q "Blocking waiting for file lock on package cache" "${stderr_log}"; then
-            echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state:" >&2
-            echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
-        fi
-    fi
+         if grep -q "Blocking waiting for file lock on package cache" "${stderr_log}"; then
+             echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state:" >&2
+             echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
+             if [[ -z "${CARGO_HOME:-}" ]] && [[ ! -d "$REPO_ROOT/.cargo-home" ]]; then
+               if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
+                 echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
+               else
+                 echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
+               fi
+             fi
+         fi
+     fi
 
-    if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
+     if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
         && [[ "${is_retryable_cmd}" == "true" ]] \
         && should_retry_rustc_thread_error "${stderr_log}"
     then
