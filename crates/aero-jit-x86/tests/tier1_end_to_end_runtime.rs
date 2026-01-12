@@ -102,9 +102,7 @@ type RuntimeSetup = (
     TestCpu,
 );
 
-fn setup_runtime(
-    hot_threshold: u32,
-) -> RuntimeSetup {
+fn setup_runtime(hot_threshold: u32) -> RuntimeSetup {
     let entry = 0x1000u64;
     let code = [
         0x83, 0xc0, 0x01, // add eax, 1

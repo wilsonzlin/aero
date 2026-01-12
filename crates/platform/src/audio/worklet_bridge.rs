@@ -103,8 +103,7 @@ impl InterleavedRingBuffer {
     /// The ring's sample contents are not restored; storage is cleared to silence.
     pub fn restore_state(&mut self, state: &AudioWorkletRingState) {
         if state.capacity_frames != 0 {
-            let restored_capacity =
-                state.capacity_frames.clamp(1, MAX_RESTORED_CAPACITY_FRAMES);
+            let restored_capacity = state.capacity_frames.clamp(1, MAX_RESTORED_CAPACITY_FRAMES);
             if restored_capacity != self.capacity_frames {
                 self.capacity_frames = restored_capacity;
                 let samples = self.capacity_frames.saturating_mul(self.channel_count) as usize;

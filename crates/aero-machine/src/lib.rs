@@ -19,9 +19,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interrupts::CpuExit;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
+use aero_cpu_core::interrupts::CpuExit;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};

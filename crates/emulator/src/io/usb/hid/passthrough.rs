@@ -844,9 +844,7 @@ fn build_config_descriptor(
     out
 }
 
-fn report_descriptor_report_lengths(
-    report_descriptor_bytes: &[u8],
-) -> ReportLengthMaps {
+fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLengthMaps {
     let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
         let (report_ids_in_use, input_bits, output_bits, feature_bits) =
             scan_report_descriptor_bits(report_descriptor_bytes);
@@ -956,7 +954,12 @@ fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
-type ReportLengthMaps = (bool, HashMap<u8, usize>, HashMap<u8, usize>, HashMap<u8, usize>);
+type ReportLengthMaps = (
+    bool,
+    HashMap<u8, usize>,
+    HashMap<u8, usize>,
+    HashMap<u8, usize>,
+);
 type ReportBitMaps = (bool, HashMap<u8, u64>, HashMap<u8, u64>, HashMap<u8, u64>);
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -976,9 +979,7 @@ fn scan_parse_unsigned(data: &[u8]) -> u32 {
     }
 }
 
-fn scan_report_descriptor_bits(
-    report_descriptor: &[u8],
-) -> ReportBitMaps {
+fn scan_report_descriptor_bits(report_descriptor: &[u8]) -> ReportBitMaps {
     let mut global = ScanGlobalState::default();
     let mut global_stack: Vec<ScanGlobalState> = Vec::new();
 

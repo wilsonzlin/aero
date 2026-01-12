@@ -49,10 +49,9 @@ fn vga_present_to_shared_framebuffer_updates_header_and_frame_counter() {
         assert_eq!(header.height.load(Ordering::Relaxed), 0);
     }
 
-    assert!(
-        vga.present_to_shared_framebuffer(&mut output)
-            .expect("present 1")
-    );
+    assert!(vga
+        .present_to_shared_framebuffer(&mut output)
+        .expect("present 1"));
 
     {
         let view = output.view_mut();
@@ -67,10 +66,9 @@ fn vga_present_to_shared_framebuffer_updates_header_and_frame_counter() {
         assert_eq!(px0, u32::from_le_bytes([255, 0, 0, 255]));
     }
 
-    assert!(
-        vga.present_to_shared_framebuffer(&mut output)
-            .expect("present 2")
-    );
+    assert!(vga
+        .present_to_shared_framebuffer(&mut output)
+        .expect("present 2"));
 
     {
         let view = output.view_mut();

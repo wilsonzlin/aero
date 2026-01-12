@@ -536,11 +536,11 @@ impl Mmu {
                 TlbEntryAttributes {
                     user: user_ok,
                     writable: writable_ok,
-                nx,
-                global,
+                    nx,
+                    global,
                     leaf_addr: pde_addr,
                     leaf_is_64: false,
-                dirty,
+                    dirty,
                 },
             );
             let paddr = pbase + (vaddr - vbase);
@@ -584,11 +584,11 @@ impl Mmu {
             TlbEntryAttributes {
                 user: user_ok,
                 writable: writable_ok,
-            nx,
-            global,
+                nx,
+                global,
                 leaf_addr: pte_addr,
                 leaf_is_64: false,
-            dirty,
+                dirty,
             },
         );
         let paddr = pbase + (vaddr - vbase);
@@ -615,13 +615,7 @@ impl Mmu {
         let pdpte_addr = pdpt_base + pdpt_index * 8;
         let pdpte = bus.read_u64(pdpte_addr);
 
-        let pdpte = match self.check_entry64(
-            bus,
-            pdpte_addr,
-            pdpte,
-            ctx,
-            EntryKind64::PdptePae,
-        )? {
+        let pdpte = match self.check_entry64(bus, pdpte_addr, pdpte, ctx, EntryKind64::PdptePae)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -638,13 +632,7 @@ impl Mmu {
         let pde_addr = pd_base + pd_index * 8;
         let pde = bus.read_u64(pde_addr);
 
-        let pde = match self.check_entry64(
-            bus,
-            pde_addr,
-            pde,
-            ctx,
-            EntryKind64::PdePae,
-        )? {
+        let pde = match self.check_entry64(bus, pde_addr, pde, ctx, EntryKind64::PdePae)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -682,7 +670,7 @@ impl Mmu {
                     global,
                     leaf_addr: pde_addr,
                     leaf_is_64: true,
-                dirty,
+                    dirty,
                 },
             );
             let paddr = pbase + (vaddr - vbase);
@@ -694,13 +682,7 @@ impl Mmu {
         let pte_addr = pt_base + pt_index * 8;
         let pte = bus.read_u64(pte_addr);
 
-        let pte = match self.check_entry64(
-            bus,
-            pte_addr,
-            pte,
-            ctx,
-            EntryKind64::PtePae,
-        )? {
+        let pte = match self.check_entry64(bus, pte_addr, pte, ctx, EntryKind64::PtePae)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -736,7 +718,7 @@ impl Mmu {
                 global,
                 leaf_addr: pte_addr,
                 leaf_is_64: true,
-            dirty,
+                dirty,
             },
         );
         let paddr = pbase + (vaddr - vbase);
@@ -763,13 +745,7 @@ impl Mmu {
         let pml4e_addr = pml4_base + pml4_index * 8;
         let pml4e = bus.read_u64(pml4e_addr);
 
-        let pml4e = match self.check_entry64(
-            bus,
-            pml4e_addr,
-            pml4e,
-            ctx,
-            EntryKind64::Pml4e,
-        )? {
+        let pml4e = match self.check_entry64(bus, pml4e_addr, pml4e, ctx, EntryKind64::Pml4e)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -783,13 +759,7 @@ impl Mmu {
         let pdpte_addr = pdpt_base + pdpt_index * 8;
         let pdpte = bus.read_u64(pdpte_addr);
 
-        let pdpte = match self.check_entry64(
-            bus,
-            pdpte_addr,
-            pdpte,
-            ctx,
-            EntryKind64::PdpteLong,
-        )? {
+        let pdpte = match self.check_entry64(bus, pdpte_addr, pdpte, ctx, EntryKind64::PdpteLong)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -827,7 +797,7 @@ impl Mmu {
                     global,
                     leaf_addr: pdpte_addr,
                     leaf_is_64: true,
-                dirty,
+                    dirty,
                 },
             );
             let paddr = pbase + (vaddr - vbase);
@@ -839,13 +809,7 @@ impl Mmu {
         let pde_addr = pd_base + pd_index * 8;
         let pde = bus.read_u64(pde_addr);
 
-        let pde = match self.check_entry64(
-            bus,
-            pde_addr,
-            pde,
-            ctx,
-            EntryKind64::PdeLong,
-        )? {
+        let pde = match self.check_entry64(bus, pde_addr, pde, ctx, EntryKind64::PdeLong)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -883,7 +847,7 @@ impl Mmu {
                     global,
                     leaf_addr: pde_addr,
                     leaf_is_64: true,
-                dirty,
+                    dirty,
                 },
             );
             let paddr = pbase + (vaddr - vbase);
@@ -895,13 +859,7 @@ impl Mmu {
         let pte_addr = pt_base + pt_index * 8;
         let pte = bus.read_u64(pte_addr);
 
-        let pte = match self.check_entry64(
-            bus,
-            pte_addr,
-            pte,
-            ctx,
-            EntryKind64::PteLong,
-        )? {
+        let pte = match self.check_entry64(bus, pte_addr, pte, ctx, EntryKind64::PteLong)? {
             Some(v) => v,
             None => return Err(self.page_fault_not_present(vaddr, access, is_user)),
         };
@@ -937,7 +895,7 @@ impl Mmu {
                 global,
                 leaf_addr: pte_addr,
                 leaf_is_64: true,
-            dirty,
+                dirty,
             },
         );
         let paddr = pbase + (vaddr - vbase);

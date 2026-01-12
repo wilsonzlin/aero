@@ -105,10 +105,8 @@ fn exec_cmpxchg8b<B: CpuBus>(
     }
     let addr = calc_ea(state, instr, next_ip, true)?;
 
-    let expected =
-        (state.read_reg(Register::EDX) << 32) | state.read_reg(Register::EAX);
-    let replacement =
-        (state.read_reg(Register::ECX) << 32) | state.read_reg(Register::EBX);
+    let expected = (state.read_reg(Register::EDX) << 32) | state.read_reg(Register::EAX);
+    let replacement = (state.read_reg(Register::ECX) << 32) | state.read_reg(Register::EBX);
 
     let (old, swapped) = if instr.has_lock_prefix() {
         super::atomic_rmw_sized(state, bus, addr, 64, |old| {

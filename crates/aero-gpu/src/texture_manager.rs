@@ -739,7 +739,8 @@ fn upload_bc(
     }
 
     // Size must be block-aligned unless the copy reaches the mip edge.
-    if (!region.size.width.is_multiple_of(4) && region.origin.x + region.size.width != mip_size.width)
+    if (!region.size.width.is_multiple_of(4)
+        && region.origin.x + region.size.width != mip_size.width)
         || (!region.size.height.is_multiple_of(4)
             && region.origin.y + region.size.height != mip_size.height)
     {

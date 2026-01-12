@@ -45,9 +45,7 @@ fn instantiate(
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
     // Helpers: operate directly on the imported linear memory.
     define_mem_helpers(&mut store, &mut linker, memory);

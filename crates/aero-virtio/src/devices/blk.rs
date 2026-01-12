@@ -120,7 +120,9 @@ impl BlockBackend for MemDisk {
     }
 
     fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset.try_into().map_err(|_| BlockBackendError::OutOfBounds)?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
         let end = offset
             .checked_add(dst.len())
             .ok_or(BlockBackendError::OutOfBounds)?;
@@ -133,7 +135,9 @@ impl BlockBackend for MemDisk {
     }
 
     fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        let offset: usize = offset.try_into().map_err(|_| BlockBackendError::OutOfBounds)?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
         let end = offset
             .checked_add(src.len())
             .ok_or(BlockBackendError::OutOfBounds)?;
@@ -291,9 +295,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
             match typ {
                 VIRTIO_BLK_T_IN => {
                     let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
-                    if data_segs.is_empty()
-                        || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
-                    {
+                    if data_segs.is_empty() || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE) {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
                         if let Some(end_off) = sector_off.checked_add(total_len) {
@@ -330,9 +332,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                 }
                 VIRTIO_BLK_T_OUT => {
                     let total_len: u64 = data_segs.iter().map(|(_, _, len)| *len as u64).sum();
-                    if data_segs.is_empty()
-                        || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
-                    {
+                    if data_segs.is_empty() || !total_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE) {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
                         if let Some(end_off) = sector_off.checked_add(total_len) {

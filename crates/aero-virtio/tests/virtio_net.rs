@@ -252,7 +252,8 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     // RX: guest posts a buffer, then host delivers a packet later.
     let rx_hdr_addr = 0x7200;
     let rx_payload_addr = 0x7300;
-    mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN]).unwrap();
+    mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN])
+        .unwrap();
     mem.write(rx_payload_addr, &[0xbb; 64]).unwrap();
 
     write_desc(
@@ -368,7 +369,8 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     // Post an RX buffer that is large enough for small frames but not for a 60-byte frame.
     let rx_hdr_addr = 0x4000;
     let rx_payload_addr = 0x4100;
-    mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN]).unwrap();
+    mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN])
+        .unwrap();
     mem.write(rx_payload_addr, &[0xbb; 32]).unwrap();
 
     write_desc(
@@ -396,11 +398,7 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     write_u16_le(&mut mem, rx_used, 0).unwrap();
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify,
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
 
     // Provide a 60-byte frame. The device must drop it and must NOT consume the chain.
     backing.borrow_mut().rx_packets.push(vec![0u8; 60]);

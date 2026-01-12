@@ -304,9 +304,7 @@ impl CmosRtc {
             .decode_field(century)
             .ok_or(RtcError::InvalidCmosField)?;
         let year = self.decode_field(year).ok_or(RtcError::InvalidCmosField)?;
-        let month = self
-            .decode_field(month)
-            .ok_or(RtcError::InvalidCmosField)?;
+        let month = self.decode_field(month).ok_or(RtcError::InvalidCmosField)?;
         let day = self.decode_field(day).ok_or(RtcError::InvalidCmosField)?;
 
         let full_year = (century as u16) * 100 + (year as u16);

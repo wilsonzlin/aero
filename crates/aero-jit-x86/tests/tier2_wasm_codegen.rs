@@ -53,9 +53,7 @@ fn instantiate_trace(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
     define_mem_helpers(&mut store, &mut linker, memory);
 
@@ -137,9 +135,7 @@ fn instantiate_trace_without_code_page_version(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker
-        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
-        .unwrap();
+    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
 
     define_mem_helpers(&mut store, &mut linker, memory);
 

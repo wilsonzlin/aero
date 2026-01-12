@@ -410,10 +410,8 @@ fn tree_get_or_create_path<'a>(root: &'a mut KeyTreeNode, path: &str) -> &'a mut
 }
 
 fn sort_tree(node: &mut KeyTreeNode) {
-    node.children
-        .sort_by_key(|a| a.name.to_uppercase());
-    node.values
-        .sort_by_key(|a| a.name.to_uppercase());
+    node.children.sort_by_key(|a| a.name.to_uppercase());
+    node.values.sort_by_key(|a| a.name.to_uppercase());
     for child in &mut node.children {
         sort_tree(child);
     }

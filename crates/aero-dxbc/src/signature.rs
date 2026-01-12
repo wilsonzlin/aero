@@ -359,11 +359,7 @@ fn read_u32_le_entry(
     })
 }
 
-fn read_cstring_entry(
-    bytes: &[u8],
-    offset: usize,
-    entry_index: usize,
-) -> Result<&str, DxbcError> {
+fn read_cstring_entry(bytes: &[u8], offset: usize, entry_index: usize) -> Result<&str, DxbcError> {
     read_cstring(bytes, offset, "semantic_name").map_err(|e| {
         DxbcError::invalid_chunk(format!(
             "entry {entry_index} semantic_name: {}",

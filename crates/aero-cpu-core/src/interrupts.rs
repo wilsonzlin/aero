@@ -848,8 +848,7 @@ fn deliver_protected_mode<B: CpuBus>(
         pending,
         delivery.saved_rip as u32,
         delivery.saved_rip,
-    )?
-        == PushOutcome::NestedExceptionDelivered
+    )? == PushOutcome::NestedExceptionDelivered
     {
         return Ok(());
     }
@@ -1033,13 +1032,7 @@ fn deliver_long_mode<B: CpuBus>(
     {
         return Ok(());
     }
-    if push64(
-        bus,
-        state,
-        pending,
-        delivery.saved_rip,
-        delivery.saved_rip,
-    )?
+    if push64(bus, state, pending, delivery.saved_rip, delivery.saved_rip)?
         == PushOutcome::NestedExceptionDelivered
     {
         return Ok(());

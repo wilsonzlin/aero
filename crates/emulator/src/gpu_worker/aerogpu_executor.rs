@@ -1699,15 +1699,16 @@ impl AerogpuSubmissionTrace {
             });
         }
 
-        self.writer.write_aerogpu_submission(AerogpuSubmissionCapture {
-            submit_flags: desc.flags,
-            context_id: desc.context_id,
-            engine_id: desc.engine_id,
-            signal_fence: desc.signal_fence,
-            cmd_stream_bytes: &cmd_stream_bytes,
-            alloc_table_bytes: alloc_table_bytes.as_deref(),
-            memory_ranges: &ranges,
-        })?;
+        self.writer
+            .write_aerogpu_submission(AerogpuSubmissionCapture {
+                submit_flags: desc.flags,
+                context_id: desc.context_id,
+                engine_id: desc.engine_id,
+                signal_fence: desc.signal_fence,
+                cmd_stream_bytes: &cmd_stream_bytes,
+                alloc_table_bytes: alloc_table_bytes.as_deref(),
+                memory_ranges: &ranges,
+            })?;
 
         if (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0 {
             self.writer.present(self.frame_index)?;

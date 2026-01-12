@@ -105,8 +105,7 @@ pub fn remix_interleaved(
             // Generic fallbacks:
             if dst_channels == 1 {
                 let inv = 1.0 / (src_channels as f32);
-                for (frame_in, out_sample) in input.chunks_exact(src_channels).zip(out.iter_mut())
-                {
+                for (frame_in, out_sample) in input.chunks_exact(src_channels).zip(out.iter_mut()) {
                     let mut acc = 0.0;
                     for &sample in frame_in {
                         acc += sample;
@@ -119,7 +118,10 @@ pub fn remix_interleaved(
                 }
             } else if dst_channels == 2 {
                 // Heuristic: preserve first two channels and fold the rest in at half gain.
-                for (frame_in, frame_out) in input.chunks_exact(src_channels).zip(out.chunks_exact_mut(2)) {
+                for (frame_in, frame_out) in input
+                    .chunks_exact(src_channels)
+                    .zip(out.chunks_exact_mut(2))
+                {
                     let mut l = frame_in[0];
                     let mut r = frame_in[1];
                     for &sample in &frame_in[2..] {

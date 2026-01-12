@@ -472,11 +472,7 @@ fn decode_compare_op(code: u8) -> CompareOp {
     }
 }
 
-fn push_binop<F>(
-    stack: &mut [Frame],
-    inst: &DecodedInstruction,
-    ctor: F,
-) -> Result<(), BuildError>
+fn push_binop<F>(stack: &mut [Frame], inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, Src, InstModifiers) -> IrOp,
 {
@@ -487,11 +483,7 @@ where
     push_stmt(stack, Stmt::Op(ctor(dst, src0, src1, modifiers)))
 }
 
-fn push_unop<F>(
-    stack: &mut [Frame],
-    inst: &DecodedInstruction,
-    ctor: F,
-) -> Result<(), BuildError>
+fn push_unop<F>(stack: &mut [Frame], inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, InstModifiers) -> IrOp,
 {

@@ -214,8 +214,7 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             }
             0x60 => {
                 // Write command byte (next byte on data port).
-                self.pending_command
-                    .set(Some(PendingCommand::CommandByte));
+                self.pending_command.set(Some(PendingCommand::CommandByte));
             }
             0xA7 => {
                 // Disable mouse port.
@@ -256,8 +255,7 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             }
             0xD1 => {
                 // Write output port (next byte on data port).
-                self.pending_command
-                    .set(Some(PendingCommand::OutputPort));
+                self.pending_command.set(Some(PendingCommand::OutputPort));
             }
             0xD4 => {
                 // Write to mouse (next byte on data port).
