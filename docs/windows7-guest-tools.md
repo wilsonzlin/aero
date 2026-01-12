@@ -14,7 +14,9 @@ If you are building from source / working on a PR, the GitHub Actions workflow
 
 ## Quick start (overview)
 
-1. Install Windows 7 SP1 using **baseline devices**: **AHCI + e1000 + VGA**.
+1. Install Windows 7 SP1 using **baseline devices**: **AHCI (HDD) + IDE/ATAPI (CD-ROM) + e1000 + VGA**.
+   - For the canonical Win7 install topology (AHCI HDD + IDE/ATAPI CD-ROM), see
+     [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
 2. Mount `aero-guest-tools.iso` and run `setup.cmd` as Administrator.
 3. Reboot once (still on baseline devices).
    - If you used `setup.cmd /skipstorage` (GPU-only / partial Guest Tools media), keep the boot disk on **AHCI** and skip step **4.1** (AHCI → virtio-blk). You can still switch other devices.
@@ -116,6 +118,8 @@ Install Windows first using the baseline emulated devices (this avoids needing a
 In Aero, create a new Windows 7 VM/guest and select the **baseline / compatibility** profile:
 
 - **Storage:** SATA **AHCI**
+  - The Windows installer ISO is typically exposed as an **ATAPI CD-ROM** on a **PIIX3 IDE**
+    controller in the canonical Win7 topology; see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
 - **Network:** Intel **e1000**
 - **Graphics:** **VGA**
 - **Input:** PS/2 keyboard + mouse (or Aero’s default input devices)

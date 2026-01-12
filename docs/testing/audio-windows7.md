@@ -48,6 +48,9 @@ Do **not** commit or redistribute Windows media/images.
 
 This section describes what to do in the Aero **web UI** (the exact page/controls may change over time; the intent is what matters).
 
+Note: For the canonical Windows 7 boot/install storage topology (AHCI HDD + IDE/ATAPI CD-ROM), see
+[`docs/05-storage-topology-win7.md`](../05-storage-topology-win7.md).
+
 ### 1.1 Start the web app
 
 From the repo root:
