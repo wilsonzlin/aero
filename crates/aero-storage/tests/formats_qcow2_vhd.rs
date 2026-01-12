@@ -2065,6 +2065,25 @@ fn vhd_dynamic_rejects_bad_dynamic_header_version() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_bad_dynamic_header_data_offset() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    // `data_offset` is at 8..16 in the dynamic header and must be 0xFFFF..FFFF.
+    backend
+        .write_at(dyn_header_offset + 8, &0u64.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header data_offset invalid")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;

@@ -97,6 +97,15 @@ impl VhdDynamicHeader {
             ));
         }
 
+        // This field is reserved for future use and must be 0xFFFF..FFFF for known dynamic disk
+        // formats.
+        let data_offset = be_u64(&raw[8..16]);
+        if data_offset != u64::MAX {
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header data_offset invalid",
+            ));
+        }
+
         let table_offset = be_u64(&raw[16..24]);
         let header_version = be_u32(&raw[24..28]);
         if header_version != VHD_FILE_FORMAT_VERSION {
