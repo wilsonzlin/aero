@@ -646,11 +646,16 @@ impl VgaDevice {
         let line_graphics_enable = (self.attribute[0x10] & (1 << 2)) != 0;
         let blink_enabled = (self.attribute[0x10] & (1 << 3)) != 0;
 
+        // Text start address (CRTC regs 0x0C/0x0D) is specified in units of character cells.
+        // Real VGA hardware uses only the low 14 bits and wraps within the 16KiB text window.
+        let start_addr = (((self.crtc[0x0C] as u16) << 8) | self.crtc[0x0D] as u16) & 0x3FFF;
+
         for row in 0..rows {
             for col in 0..cols {
                 let cell_index = row * cols + col;
-                let ch = self.vram[cell_index];
-                let attr = self.vram[VGA_PLANE_SIZE + cell_index];
+                let mem_index = (usize::from(start_addr) + cell_index) & 0x3FFF;
+                let ch = self.vram[mem_index];
+                let attr = self.vram[VGA_PLANE_SIZE + mem_index];
 
                 let fg = attr & 0x0F;
                 let bg = if blink_enabled {
@@ -685,7 +690,7 @@ impl VgaDevice {
                 }
 
                 // Cursor overlay.
-                if self.cursor_visible_at(cell_index as u16) {
+                if self.cursor_visible_at(mem_index as u16) {
                     let (start, end) = self.cursor_scanlines();
                     if start <= end {
                         for y in start..=end {
@@ -710,8 +715,8 @@ impl VgaDevice {
         if (self.crtc[0x0A] & 0x20) != 0 {
             return false;
         }
-        let cursor_pos = ((self.crtc[0x0E] as u16) << 8) | self.crtc[0x0F] as u16;
-        cursor_pos == cell_index
+        let cursor_pos = (((self.crtc[0x0E] as u16) << 8) | self.crtc[0x0F] as u16) & 0x3FFF;
+        cursor_pos == (cell_index & 0x3FFF)
     }
 
     fn cursor_scanlines(&self) -> (u8, u8) {
