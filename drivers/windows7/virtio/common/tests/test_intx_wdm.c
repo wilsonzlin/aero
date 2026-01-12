@@ -162,6 +162,23 @@ static void test_connect_descriptor_translation(void)
     VirtioIntxDisconnect(&intx);
 }
 
+static void test_disconnect_uninitialized_is_safe(void)
+{
+    VIRTIO_INTX intx;
+    RtlZeroMemory(&intx, sizeof(intx));
+
+    /* Should be safe to call even if VirtioIntxConnect never succeeded/ran. */
+    assert(intx.Initialized == FALSE);
+    VirtioIntxDisconnect(&intx);
+
+    /* Disconnect should leave it zeroed. */
+    assert(intx.Initialized == FALSE);
+    assert(intx.InterruptObject == NULL);
+    assert(intx.IsrStatusRegister == NULL);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.PendingIsrStatus == 0);
+}
+
 static void test_spurious_interrupt(void)
 {
     VIRTIO_INTX intx;
@@ -197,6 +214,33 @@ static void test_spurious_interrupt(void)
     assert(intx.Initialized == FALSE);
     assert(intx.InterruptObject == NULL);
     assert(intx.IsrStatusRegister == NULL);
+}
+
+static void test_null_callbacks_safe(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    /* Interrupt with both bits set should still be ACKed and drained safely. */
+    isr_reg = 0x3;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(isr_reg == 0);
+    assert(intx.PendingIsrStatus == 0x3);
+    assert(intx.DpcInFlight == 1);
+
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.DpcCount == 1);
+
+    VirtioIntxDisconnect(&intx);
 }
 
 static void test_queue_config_dispatch(void)
@@ -405,7 +449,9 @@ int main(void)
 {
     test_connect_validation();
     test_connect_descriptor_translation();
+    test_disconnect_uninitialized_is_safe();
     test_spurious_interrupt();
+    test_null_callbacks_safe();
     test_queue_config_dispatch();
     test_bit_accumulation_single_dpc();
     test_disconnect_cancels_queued_dpc();
