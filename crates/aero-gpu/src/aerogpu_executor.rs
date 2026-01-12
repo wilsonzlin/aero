@@ -2313,7 +2313,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 let sub_end = sub
                     .offset_bytes
                     .checked_add(sub.size_bytes)
-                    .ok_or_else(|| ExecutorError::Validation("subresource range overflow".into()))?;
+                    .ok_or_else(|| {
+                        ExecutorError::Validation("subresource range overflow".into())
+                    })?;
 
                 let inter_start = sub_start.max(offset_bytes);
                 let inter_end = sub_end.min(end);
@@ -2321,12 +2323,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                     continue;
                 }
 
-                let chunk_offset = inter_start
-                    .checked_sub(sub_start)
-                    .ok_or_else(|| ExecutorError::Validation("subresource offset underflow".into()))?;
-                let chunk_size = inter_end
-                    .checked_sub(inter_start)
-                    .ok_or_else(|| ExecutorError::Validation("subresource size underflow".into()))?;
+                let chunk_offset = inter_start.checked_sub(sub_start).ok_or_else(|| {
+                    ExecutorError::Validation("subresource offset underflow".into())
+                })?;
+                let chunk_size = inter_end.checked_sub(inter_start).ok_or_else(|| {
+                    ExecutorError::Validation("subresource size underflow".into())
+                })?;
 
                 let payload_start = usize::try_from(inter_start - offset_bytes).map_err(|_| {
                     ExecutorError::Validation(
@@ -2334,11 +2336,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                     )
                 })?;
                 let payload_len = usize::try_from(chunk_size).map_err(|_| {
-                    ExecutorError::Validation("UPLOAD_RESOURCE texture payload length out of range".into())
+                    ExecutorError::Validation(
+                        "UPLOAD_RESOURCE texture payload length out of range".into(),
+                    )
                 })?;
-                let payload_end = payload_start
-                    .checked_add(payload_len)
-                    .ok_or_else(|| ExecutorError::Validation("UPLOAD_RESOURCE payload slice overflow".into()))?;
+                let payload_end = payload_start.checked_add(payload_len).ok_or_else(|| {
+                    ExecutorError::Validation("UPLOAD_RESOURCE payload slice overflow".into())
+                })?;
                 let chunk_data = data.get(payload_start..payload_end).ok_or_else(|| {
                     ExecutorError::Validation("UPLOAD_RESOURCE payload slice out of bounds".into())
                 })?;
@@ -2388,7 +2392,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 // Direct path uploads the bytes as-is (with row repacking for 256-byte alignment).
                 // BC fallback path decompresses into RGBA8 first.
                 let mut owned_bytes = Vec::<u8>::new();
-                let (bytes, bytes_per_row, rows_per_image, extent_height) = match tex.upload_transform {
+                let (bytes, bytes_per_row, rows_per_image, extent_height) = match tex
+                    .upload_transform
+                {
                     TextureUploadTransform::Direct => {
                         let layout = texture_copy_layout(sub.width, copy_height, tex.format_raw)?;
                         if sub.row_pitch_bytes < layout.unpadded_bytes_per_row {
@@ -2431,9 +2437,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                             (chunk_data, upload_bpr, row_count, copy_height)
                         }
                     }
-                    TextureUploadTransform::B5G6R5ToRgba8 | TextureUploadTransform::B5G5R5A1ToRgba8 => {
+                    TextureUploadTransform::B5G6R5ToRgba8
+                    | TextureUploadTransform::B5G5R5A1ToRgba8 => {
                         // Strip any per-row padding and expand into RGBA8.
-                        let b5_layout = texture_copy_layout(sub.width, copy_height, tex.format_raw)?;
+                        let b5_layout =
+                            texture_copy_layout(sub.width, copy_height, tex.format_raw)?;
                         if sub.row_pitch_bytes < b5_layout.unpadded_bytes_per_row {
                             return Err(ExecutorError::Validation(format!(
                                 "UPLOAD_RESOURCE texture row_pitch_bytes={} smaller than minimum row size {}",
@@ -2478,7 +2486,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                     | TextureUploadTransform::Bc3ToRgba8
                     | TextureUploadTransform::Bc7ToRgba8 => {
                         // Strip any per-row padding and decompress into RGBA8.
-                        let bc_layout = texture_copy_layout(sub.width, copy_height, tex.format_raw)?;
+                        let bc_layout =
+                            texture_copy_layout(sub.width, copy_height, tex.format_raw)?;
                         if sub.row_pitch_bytes < bc_layout.unpadded_bytes_per_row {
                             return Err(ExecutorError::Validation(format!(
                                 "UPLOAD_RESOURCE texture row_pitch_bytes={} smaller than minimum row size {}",
@@ -2488,13 +2497,15 @@ fn fs_main() -> @location(0) vec4<f32> {
 
                         let mut packed_bc = vec![
                             0u8;
-                            bc_layout.unpadded_bytes_per_row as usize * row_count as usize
+                            bc_layout.unpadded_bytes_per_row as usize
+                                * row_count as usize
                         ];
                         for row in 0..row_count as usize {
                             let src_start = row * sub.row_pitch_bytes as usize;
                             let src_end = src_start + bc_layout.unpadded_bytes_per_row as usize;
                             let dst_start = row * bc_layout.unpadded_bytes_per_row as usize;
-                            packed_bc[dst_start..dst_start + bc_layout.unpadded_bytes_per_row as usize]
+                            packed_bc
+                                [dst_start..dst_start + bc_layout.unpadded_bytes_per_row as usize]
                                 .copy_from_slice(&chunk_data[src_start..src_end]);
                         }
 
@@ -2526,7 +2537,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                             owned_bytes.resize(upload_bpr as usize * copy_height as usize, 0);
                             for row in 0..copy_height as usize {
                                 let src_start = row * rgba_layout.unpadded_bytes_per_row as usize;
-                                let src_end = src_start + rgba_layout.unpadded_bytes_per_row as usize;
+                                let src_end =
+                                    src_start + rgba_layout.unpadded_bytes_per_row as usize;
                                 let dst_start = row * upload_bpr as usize;
                                 owned_bytes[dst_start
                                     ..dst_start + rgba_layout.unpadded_bytes_per_row as usize]
@@ -2572,7 +2584,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 );
 
                 bytes_consumed = bytes_consumed.checked_add(chunk_size).ok_or_else(|| {
-                    ExecutorError::Validation("UPLOAD_RESOURCE texture bytes_consumed overflow".into())
+                    ExecutorError::Validation(
+                        "UPLOAD_RESOURCE texture bytes_consumed overflow".into(),
+                    )
                 })?;
             }
 
@@ -4910,8 +4924,7 @@ mod tests {
                 (total_bytes, tail)
             };
 
-            let mut payload =
-                vec![0u8; usize::try_from(total_bytes).expect("payload fits usize")];
+            let mut payload = vec![0u8; usize::try_from(total_bytes).expect("payload fits usize")];
             assert_eq!(tail.width, 1);
             assert_eq!(tail.height, 1);
             assert_eq!(tail.size_bytes, 4);

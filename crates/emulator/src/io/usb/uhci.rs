@@ -321,7 +321,11 @@ mod tests {
         }
 
         let portsc = dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16;
-        assert_eq!(portsc & PORTSC_PR, 0, "port reset should self-clear after 50ms");
+        assert_eq!(
+            portsc & PORTSC_PR,
+            0,
+            "port reset should self-clear after 50ms"
+        );
         assert_ne!(portsc & PORTSC_PED, 0, "port should be enabled after reset");
     }
 
