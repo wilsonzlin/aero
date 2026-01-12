@@ -1524,6 +1524,14 @@ impl E1000Device {
             (state.pci_bar1 & 0xffff_fffc) | 0x1
         };
 
+        // Keep the raw config-space bytes coherent with the BAR fields so that 8/16-bit config
+        // reads observe the same values as 32-bit reads.
+        //
+        // This also fixes up older snapshots that may have stored inconsistent BAR dwords in
+        // `pci_regs`.
+        self.pci.write_u32_raw(0x10, self.pci.bar0);
+        self.pci.write_u32_raw(0x14, self.pci.bar1);
+
         // Restore MMIO-visible register state + internal runtime state.
         self.ctrl = state.ctrl;
         self.status = state.status;

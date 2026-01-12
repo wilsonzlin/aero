@@ -460,6 +460,38 @@ fn snapshot_roundtrip_preserves_pci_bar_probe_flags() {
 }
 
 #[test]
+fn snapshot_restore_normalizes_pci_bar_config_bytes() {
+    // Older snapshots (or corrupted snapshots) may encode inconsistent BAR values between the raw
+    // `pci_regs` array and the decoded BAR fields. The live device model uses decoded BAR fields
+    // for 32-bit reads, but 8/16-bit config reads come from the raw byte array.
+    //
+    // Ensure restore rewrites the BAR dwords in `pci_regs` so sub-dword reads match the decoded
+    // BAR values.
+    const TAG_PCI_REGS: u16 = 1;
+    const TAG_PCI_BAR1: u16 = 4;
+
+    let mut pci_regs = vec![0u8; 256];
+    // Deliberately set BAR1 dword to 0 in raw config space.
+    pci_regs[0x14..0x18].copy_from_slice(&0u32.to_le_bytes());
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PCI_REGS, pci_regs);
+    // But set the decoded BAR1 value to a valid I/O BAR (bit0 set).
+    w.field_u32(TAG_PCI_BAR1, 0x1);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    dev.load_state(&bytes).expect("load_state");
+
+    assert_eq!(dev.pci_config_read(0x14, 4), 0x1);
+    assert_eq!(dev.pci_config_read(0x14, 2), 0x1);
+    assert_eq!(dev.pci_config_read(0x14, 1), 0x1);
+}
+
+#[test]
 fn snapshot_rejects_unaligned_pci_bar0() {
     // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
     const TAG_PCI_BAR0: u16 = 2;
