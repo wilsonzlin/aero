@@ -5,8 +5,8 @@
  * required for Windows 7 to enumerate a basic ACPI PC.
  *
  * NOTE: The shipped `dsdt.aml` is generated from Rust code in
- * `crates/firmware/src/acpi/dsdt.rs`. Keep this ASL in sync with the AML if
- * you make changes.
+ * `crates/firmware/src/bin/gen_dsdt.rs` (which uses `aero-acpi`). Keep this
+ * ASL in sync with the generated AML if you make changes.
  */
 
 DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AERODSDT", 0x00000001)

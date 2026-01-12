@@ -730,7 +730,12 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
             (*b"IMCD", 8), // IMCR data port (0x23)
         ],
     ));
-    // Method (_PIC, 1, NotSerialized) { Store (Arg0, PICM) }
+    // Method (_PIC, 1, NotSerialized)
+    // {
+    //   Store (Arg0, PICM)
+    //   Store (0x70, IMCS)
+    //   And (Arg0, One, IMCD)
+    // }
     out.extend_from_slice(&aml_method_pic());
 
     // Scope (_SB_) { ... }
