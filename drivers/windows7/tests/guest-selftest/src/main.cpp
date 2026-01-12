@@ -31,6 +31,7 @@
 #include <cmath>
 #include <climits>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1471,6 +1472,132 @@ struct PerfTimer {
   }
 };
 
+#ifndef SCSIOP_REPORT_LUNS
+#define SCSIOP_REPORT_LUNS 0xA0
+#endif
+
+struct ScsiPassThroughDirectWithSense {
+  SCSI_PASS_THROUGH_DIRECT sptd{};
+  ULONG filler{};
+  UCHAR sense[32]{};
+};
+
+static bool VirtioBlkReportLuns(Logger& log, DWORD disk_number) {
+  wchar_t phys_path[64]{};
+  swprintf_s(phys_path, L"\\\\.\\PhysicalDrive%lu", static_cast<unsigned long>(disk_number));
+
+  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ, 0};
+
+  HANDLE h = INVALID_HANDLE_VALUE;
+  for (const DWORD access : desired_accesses) {
+    h = CreateFileW(phys_path, access, share, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h != INVALID_HANDLE_VALUE) break;
+  }
+  if (h == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-blk: REPORT_LUNS FAIL unable to open %s err=%lu", WideToUtf8(phys_path).c_str(),
+             GetLastError());
+    return false;
+  }
+
+  // Query the SCSI address for this physical drive so PathId/TargetId/Lun are correct.
+  // Some stacks require these fields to be populated for pass-through IOCTLs.
+  SCSI_ADDRESS addr{};
+  DWORD addr_bytes = 0;
+  if (DeviceIoControl(h, IOCTL_SCSI_GET_ADDRESS, nullptr, 0, &addr, sizeof(addr), &addr_bytes, nullptr)) {
+    log.Logf("virtio-blk: REPORT_LUNS scsi_address port=%u path=%u target=%u lun=%u",
+             static_cast<unsigned>(addr.PortNumber), static_cast<unsigned>(addr.PathId),
+             static_cast<unsigned>(addr.TargetId), static_cast<unsigned>(addr.Lun));
+  } else {
+    // Not fatal; the values default to 0.
+    log.Logf("virtio-blk: REPORT_LUNS warning: IOCTL_SCSI_GET_ADDRESS failed err=%lu (using 0/0/0)",
+             GetLastError());
+    addr.PortNumber = 0;
+    addr.PathId = 0;
+    addr.TargetId = 0;
+    addr.Lun = 0;
+  }
+
+  constexpr uint32_t kAllocLen = 64;
+  std::vector<uint8_t> resp(kAllocLen, 0);
+
+  // SPC REPORT LUNS (0xA0) CDB is 12 bytes. Allocation length is a big-endian u32 at CDB[6..9].
+  uint8_t cdb[12]{};
+  cdb[0] = static_cast<uint8_t>(SCSIOP_REPORT_LUNS);
+  cdb[6] = static_cast<uint8_t>((kAllocLen >> 24) & 0xFF);
+  cdb[7] = static_cast<uint8_t>((kAllocLen >> 16) & 0xFF);
+  cdb[8] = static_cast<uint8_t>((kAllocLen >> 8) & 0xFF);
+  cdb[9] = static_cast<uint8_t>(kAllocLen & 0xFF);
+
+  ScsiPassThroughDirectWithSense pkt{};
+  pkt.sptd.Length = sizeof(pkt.sptd);
+  pkt.sptd.PathId = addr.PathId;
+  pkt.sptd.TargetId = addr.TargetId;
+  pkt.sptd.Lun = addr.Lun;
+  pkt.sptd.CdbLength = sizeof(cdb);
+  pkt.sptd.SenseInfoLength = sizeof(pkt.sense);
+  pkt.sptd.DataIn = SCSI_IOCTL_DATA_IN;
+  pkt.sptd.DataTransferLength = kAllocLen;
+  pkt.sptd.TimeOutValue = 5;
+  pkt.sptd.DataBuffer = resp.data();
+  pkt.sptd.SenseInfoOffset = static_cast<ULONG>(offsetof(ScsiPassThroughDirectWithSense, sense));
+  memcpy(pkt.sptd.Cdb, cdb, sizeof(cdb));
+
+  DWORD returned = 0;
+  const BOOL ok = DeviceIoControl(h, IOCTL_SCSI_PASS_THROUGH_DIRECT, &pkt, sizeof(pkt), &pkt, sizeof(pkt),
+                                  &returned, nullptr);
+  const DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(h);
+
+  if (!ok) {
+    log.Logf("virtio-blk: REPORT_LUNS FAIL DeviceIoControl(IOCTL_SCSI_PASS_THROUGH_DIRECT) err=%lu",
+             static_cast<unsigned long>(err));
+    return false;
+  }
+
+  if (pkt.sptd.ScsiStatus != 0) {
+    const uint8_t sk = (sizeof(pkt.sense) >= 3) ? (pkt.sense[2] & 0x0F) : 0;
+    const uint8_t asc = (sizeof(pkt.sense) >= 13) ? pkt.sense[12] : 0;
+    const uint8_t ascq = (sizeof(pkt.sense) >= 14) ? pkt.sense[13] : 0;
+    log.Logf("virtio-blk: REPORT_LUNS FAIL scsi_status=0x%02x sense_key=0x%02x asc=0x%02x ascq=0x%02x",
+             static_cast<unsigned>(pkt.sptd.ScsiStatus), static_cast<unsigned>(sk),
+             static_cast<unsigned>(asc), static_cast<unsigned>(ascq));
+    return false;
+  }
+
+  auto read_be_u32 = [](const uint8_t* p) -> uint32_t {
+    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+  };
+
+  const uint32_t list_len = read_be_u32(resp.data());
+  const uint32_t reserved = read_be_u32(resp.data() + 4);
+  if (list_len != 8) {
+    log.Logf("virtio-blk: REPORT_LUNS FAIL unexpected list_length=%lu (expected 8)",
+             static_cast<unsigned long>(list_len));
+    return false;
+  }
+  if (reserved != 0) {
+    log.Logf("virtio-blk: REPORT_LUNS FAIL nonzero reserved=0x%08lx", static_cast<unsigned long>(reserved));
+    return false;
+  }
+
+  bool lun0_all_zero = true;
+  for (size_t i = 8; i < 16; i++) {
+    if (resp[i] != 0) lun0_all_zero = false;
+  }
+  if (!lun0_all_zero) {
+    log.Logf("virtio-blk: REPORT_LUNS FAIL LUN0 entry not all zeros: %02x %02x %02x %02x %02x %02x %02x %02x",
+             static_cast<unsigned>(resp[8]), static_cast<unsigned>(resp[9]), static_cast<unsigned>(resp[10]),
+             static_cast<unsigned>(resp[11]), static_cast<unsigned>(resp[12]), static_cast<unsigned>(resp[13]),
+             static_cast<unsigned>(resp[14]), static_cast<unsigned>(resp[15]));
+    return false;
+  }
+
+  log.LogLine("virtio-blk: REPORT_LUNS PASS");
+  return true;
+}
+
 static bool VirtioBlkTest(Logger& log, const Options& opt) {
   const auto disks = DetectVirtioDiskNumbers(log);
   if (disks.empty()) {
@@ -1545,6 +1672,8 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
 
     if (!query_ok) return false;
   }
+
+  if (!VirtioBlkReportLuns(log, *base_disk)) return false;
 
   const std::wstring test_file = JoinPath(base_dir, L"virtio-blk-test.bin");
   log.Logf("virtio-blk: test_file=%s size_mib=%lu chunk_kib=%lu", WideToUtf8(test_file).c_str(),
