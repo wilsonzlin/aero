@@ -1,6 +1,8 @@
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -34,6 +36,15 @@ fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
     let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x24);
     u64::from(bar5 & 0xffff_fff0)
+}
+
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
 const HBA_GHC: u64 = 0x04;
@@ -378,7 +389,6 @@ fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
         PORT_CMD_ST | PORT_CMD_FRE,
     );
 
-    // IDENTIFY DMA.
     write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
     write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
     write_prdt(&mut pc, ctba, 0, identify_buf, SECTOR_SIZE as u32);
@@ -406,4 +416,78 @@ fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
         dirty.contains(&expected_page),
         "dirty pages should include IDENTIFY DMA buffer page (got {dirty:?})"
     );
+}
+
+#[test]
+fn pc_platform_routes_ahci_intx_via_ioapic_in_apic_mode() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    disk.write_sectors(0, &[0u8; SECTOR_SIZE]).unwrap();
+
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for GSI12 (ICH9 AHCI 00:02.0 INTA#) to vector 0x60, level-triggered,
+    // active-low (default PCI INTx wiring).
+    let vector = 0x60u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    program_ioapic_entry(&mut pc, 12, low, 0);
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
+    let bar5_base: u64 = 0xE100_0000;
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+
+    // Enable memory decoding + bus mastering so MMIO works and DMA is permitted.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Program HBA + port 0 registers and issue an IDENTIFY DMA command.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.memory.write_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut pc, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+    pc.process_ahci();
+    pc.poll_pci_intx_lines();
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Acknowledge the interrupt (vector in service).
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Clear the controller IRQ and propagate the deassertion before sending EOI, so we don't
+    // immediately retrigger due to the level-triggered line remaining high.
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+    pc.poll_pci_intx_lines();
+
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
