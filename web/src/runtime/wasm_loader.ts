@@ -782,42 +782,6 @@ export interface WasmApi {
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         serial_output(): Uint8Array;
         /**
-         * Present the current VGA/VBE scanout into an RGBA8888 framebuffer stored in WASM linear memory.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_present?(): void;
-        /**
-         * Width of the RGBA8888 framebuffer produced by {@link vga_present}.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_width?(): number;
-        /**
-         * Height of the RGBA8888 framebuffer produced by {@link vga_present}.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_height?(): number;
-        /**
-         * Bytes per row of the RGBA8888 framebuffer produced by {@link vga_present}.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_stride_bytes?(): number;
-        /**
-         * Pointer to the RGBA8888 framebuffer produced by {@link vga_present}.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_framebuffer_ptr?(): number;
-        /**
-         * Total byte length of the RGBA8888 framebuffer produced by {@link vga_present}.
-         *
-         * Optional for older WASM builds.
-         */
-        vga_framebuffer_len_bytes?(): number;
-        /**
          * Returns the number of bytes currently buffered in the serial output log.
          *
          * Optional for older WASM builds.
