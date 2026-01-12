@@ -382,6 +382,9 @@ Goal: validate that browser keyboard/mouse events are routed through the correct
 From the repo root:
 
 ```bash
+# One-time setup (Node deps for the `web/` workspace + repo-root harness):
+npm ci
+
 # Ensure the Rust→WASM packages exist (virtio-input uses the WASM device model).
 # This builds any missing packages (single + threaded) via the `web/` workspace scripts.
 npm run wasm:ensure
