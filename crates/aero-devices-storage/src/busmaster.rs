@@ -278,3 +278,27 @@ impl Default for BusMasterChannel {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BusMasterChannel;
+
+    #[test]
+    fn reset_preserves_dma_capability_bits() {
+        let mut bm = BusMasterChannel::new();
+        bm.set_drive_dma_capable(0, true);
+        bm.set_drive_dma_capable(1, true);
+
+        // Dirty the guest-visible register state.
+        bm.write(0, 1, 0x09);
+        bm.write(4, 4, 0x1234_5678);
+        bm.finish_error();
+
+        bm.reset();
+
+        assert_eq!(bm.read(0, 1), 0);
+        assert_eq!(bm.read(4, 4), 0);
+        // Capability bits are derived from attached devices and must survive reset.
+        assert_eq!(bm.read(2, 1), 0x60);
+    }
+}
