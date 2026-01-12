@@ -33,6 +33,7 @@ pub use aero_devices_input::Ps2MouseButton;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
+use aero_net_backend::NetworkBackend;
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{DenseMemory, MapError, MemoryBus as _, PhysicalMemoryBus};
@@ -445,6 +446,7 @@ pub struct Machine {
     io: IoPortBus,
     bios: Bios,
     disk: VecBlockDevice,
+    network_backend: Option<Box<dyn NetworkBackend>>,
 
     serial: Option<SharedSerial16550>,
     i8042: Option<SharedI8042Controller>,
@@ -478,6 +480,7 @@ impl Machine {
             io: IoPortBus::new(),
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
+            network_backend: None,
             serial: None,
             i8042: None,
             serial_log: Vec::new(),
@@ -504,6 +507,21 @@ impl Machine {
     pub fn set_disk_image(&mut self, bytes: Vec<u8>) -> Result<(), MachineError> {
         self.disk = VecBlockDevice::new(bytes)?;
         Ok(())
+    }
+
+    /// Install/replace the host-side network backend used by any emulated NICs.
+    ///
+    /// Note: this backend is *external* state (e.g. a live tunnel connection) and is intentionally
+    /// not included in snapshots. Callers should either:
+    /// - re-attach after restoring a snapshot, or
+    /// - call [`Machine::detach_network`] before snapshotting to make the lifecycle explicit.
+    pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
+        self.network_backend = Some(backend);
+    }
+
+    /// Detach (drop) any currently installed network backend.
+    pub fn detach_network(&mut self) {
+        self.network_backend = None;
     }
 
     /// Debug/testing helper: read a single guest physical byte.
@@ -617,6 +635,7 @@ impl Machine {
     ) -> snapshot::Result<()> {
         // Restoring a snapshot is conceptually "rewinding time", so discard any accumulated host
         // output/state from the current execution.
+        self.detach_network();
         self.flush_serial();
         if let Some(uart) = &self.serial {
             let _ = uart.borrow_mut().take_tx();

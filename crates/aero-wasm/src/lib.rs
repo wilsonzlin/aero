@@ -2057,6 +2057,44 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
+    // Network (Option C L2 tunnel via NET_TX / NET_RX AIPC rings)
+    // -------------------------------------------------------------------------
+
+    /// Attach pre-opened NET_TX / NET_RX rings as an L2 tunnel backend for the canonical machine.
+    ///
+    /// The browser runtime is expected to open these rings from its `ioIpcSab` via
+    /// [`open_ring_by_kind`] and pass them in.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_l2_tunnel_rings(
+        &mut self,
+        tx: SharedRingBuffer,
+        rx: SharedRingBuffer,
+    ) -> Result<(), JsValue> {
+        let backend = aero_net_backend::L2TunnelRingBackend::new(tx, rx);
+        self.inner.set_network_backend(Box::new(backend));
+        Ok(())
+    }
+
+    /// Convenience: open `NET_TX`/`NET_RX` rings from an `ioIpcSab` and attach them as an L2 tunnel.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_l2_tunnel_from_io_ipc_sab(
+        &mut self,
+        io_ipc: SharedArrayBuffer,
+    ) -> Result<(), JsValue> {
+        let tx = open_ring_by_kind(io_ipc.clone(), aero_ipc::layout::io_ipc_queue_kind::NET_TX, 0)?;
+        let rx = open_ring_by_kind(io_ipc, aero_ipc::layout::io_ipc_queue_kind::NET_RX, 0)?;
+        self.attach_l2_tunnel_rings(tx, rx)
+    }
+
+    /// Detach (drop) any installed network backend.
+    ///
+    /// This is useful around snapshot/restore boundaries: network backends are external state and
+    /// are intentionally not captured in snapshots.
+    pub fn detach_network(&mut self) {
+        self.inner.detach_network();
+    }
+
+    // -------------------------------------------------------------------------
     // Snapshots (canonical machine)
     // -------------------------------------------------------------------------
 
