@@ -23,7 +23,7 @@ describe("UhciWebUsbPciDevice", () => {
     expect(io_write).toHaveBeenCalledWith(0x08, 4, 0xdead_beef);
   });
 
-  it("ticks the UHCI controller and raises/lowers IRQ level", () => {
+  it("treats PCI INTx as a level-triggered IRQ and only emits transitions on edges", () => {
     let level = false;
     const irq_level = vi.fn(() => level);
     const step_frames = vi.fn(() => {
@@ -52,6 +52,17 @@ describe("UhciWebUsbPciDevice", () => {
     expect(step_frames).toHaveBeenCalledWith(8);
     expect(raiseIrq).toHaveBeenCalledWith(dev.irqLine);
     expect(lowerIrq).not.toHaveBeenCalled();
+
+    // No additional edge while asserted.
+    dev.tick(1016);
+    expect(raiseIrq).toHaveBeenCalledTimes(1);
+    expect(lowerIrq).not.toHaveBeenCalled();
+
+    level = false;
+    // Use a 0ms delta so step_frames() doesn't override our manual level flip.
+    dev.tick(1016);
+    expect(lowerIrq).toHaveBeenCalledTimes(1);
+    expect(lowerIrq).toHaveBeenCalledWith(dev.irqLine);
   });
 });
 
