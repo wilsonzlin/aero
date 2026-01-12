@@ -11,12 +11,6 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
-  // Coordinator is exposed by the repo-root harness (`src/main.ts`).
-  await page.waitForFunction(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return !!(globalThis as any).__aeroWorkerCoordinator;
-  });
-
   // Worker VM snapshots require OPFS SyncAccessHandle. Probe early so unsupported browser variants
   // skip without paying the cost of starting the workers + AudioWorklet graph.
   const snapshotSupport = await page.evaluate(async () => {
@@ -34,9 +28,11 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
         // ignore best-effort
       }
       const handle = await root.getFileHandle("aero-sync-access-handle-probe.tmp", { create: true });
+      const supported = typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function";
       return {
         ok: true,
-        supported: typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function",
+        supported,
+        reason: supported ? undefined : "FileSystemFileHandle.createSyncAccessHandle unavailable",
       };
     } catch (err) {
       return { ok: false, supported: false, reason: err instanceof Error ? err.message : String(err) };
@@ -51,6 +47,12 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
         : `Failed to probe OPFS SyncAccessHandle support (${snapshotSupport.reason ?? "unknown error"}).`,
     );
   }
+
+  // Coordinator is exposed by the repo-root harness (`src/main.ts`).
+  await page.waitForFunction(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return !!(globalThis as any).__aeroWorkerCoordinator;
+  });
 
   await page.click("#init-audio-hda-pci-device");
 
