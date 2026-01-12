@@ -15,7 +15,8 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_STUB", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "0");
-  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "0");
+  // Also enable dump-on-detach; the first dump (stub) should win (dump is one-shot).
+  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "0");
   set_env("AEROGPU_D3D9_TRACE_FILTER", nullptr);
   // On Windows, the trace defaults to OutputDebugStringA; enable stderr echo so
@@ -35,6 +36,9 @@ int main() {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xdef, 0, 0, 0);
     trace.ret(S_OK);
   }
+
+  // Ensure dump-on-detach does not produce a second dump after dump-on-stub already fired.
+  aerogpu::d3d9_trace_on_process_detach();
 
   const std::string output = slurp_file_after_closing_stderr(out_path);
   int dump_count = 0;
