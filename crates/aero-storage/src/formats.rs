@@ -22,12 +22,30 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
     // QCOW2: check the magic and a plausible version field. A QCOW2 header is at least 72 bytes,
     // but we only need the first 8 bytes for conservative detection.
     if len >= 8 {
-        let mut header8 = [0u8; 8];
-        backend.read_at(0, &mut header8)?;
-        if header8[..4] == QCOW2_MAGIC {
-            let version = be_u32(&header8[4..8]);
+        let mut first8 = [0u8; 8];
+        backend.read_at(0, &mut first8)?;
+        if first8[..4] == QCOW2_MAGIC {
+            let version = be_u32(&first8[4..8]);
             if version == 2 || version == 3 {
                 return Ok(DiskFormat::Qcow2);
+            }
+        }
+
+        // AeroSparse: check magic plus a minimally valid header (version/size/table invariants).
+        if first8 == AEROSPAR_MAGIC && len >= 64 {
+            let mut header = [0u8; 64];
+            backend.read_at(0, &mut header)?;
+            if AeroSparseHeader::decode(&header).is_ok() {
+                return Ok(DiskFormat::AeroSparse);
+            }
+        }
+
+        // VHD dynamic disks commonly store a footer copy at offset 0.
+        if first8 == VHD_COOKIE && len >= VHD_FOOTER_SIZE as u64 {
+            let mut footer = [0u8; VHD_FOOTER_SIZE];
+            backend.read_at(0, &mut footer)?;
+            if looks_like_vhd_footer(&footer, len) {
+                return Ok(DiskFormat::Vhd);
             }
         }
     }
@@ -35,28 +53,13 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
     // VHD fixed disks have only a footer at the end; dynamic disks typically have a footer at
     // both the beginning and the end. Check both.
     if len >= VHD_FOOTER_SIZE as u64 {
-        let mut footer = [0u8; VHD_FOOTER_SIZE];
-
-        backend.read_at(len - VHD_FOOTER_SIZE as u64, &mut footer)?;
-        if looks_like_vhd_footer(&footer, len) {
-            return Ok(DiskFormat::Vhd);
-        }
-
-        backend.read_at(0, &mut footer)?;
-        if looks_like_vhd_footer(&footer, len) {
-            return Ok(DiskFormat::Vhd);
-        }
-    }
-
-    // AeroSparse: check magic plus a minimally valid header (version/size/table invariants).
-    if len >= 8 {
-        let mut magic = [0u8; 8];
-        backend.read_at(0, &mut magic)?;
-        if magic == AEROSPAR_MAGIC && len >= 64 {
-            let mut header = [0u8; 64];
-            backend.read_at(0, &mut header)?;
-            if AeroSparseHeader::decode(&header).is_ok() {
-                return Ok(DiskFormat::AeroSparse);
+        let mut cookie = [0u8; 8];
+        backend.read_at(len - VHD_FOOTER_SIZE as u64, &mut cookie)?;
+        if cookie == VHD_COOKIE {
+            let mut footer = [0u8; VHD_FOOTER_SIZE];
+            backend.read_at(len - VHD_FOOTER_SIZE as u64, &mut footer)?;
+            if looks_like_vhd_footer(&footer, len) {
+                return Ok(DiskFormat::Vhd);
             }
         }
     }
