@@ -6,10 +6,32 @@
 
 using aerogpu_test::ComPtr;
 
+struct GammaRampGuard {
+  GammaRampGuard() = default;
+  explicit GammaRampGuard(IDirect3DDevice9Ex* dev) : dev(dev) {
+    if (this->dev) {
+      ZeroMemory(&ramp, sizeof(ramp));
+      // GetGammaRamp is a void method; assume it succeeds.
+      this->dev->GetGammaRamp(0, &ramp);
+      have_ramp = true;
+    }
+  }
+
+  ~GammaRampGuard() {
+    if (dev && have_ramp) {
+      dev->SetGammaRamp(0, 0, &ramp);
+    }
+  }
+
+  IDirect3DDevice9Ex* dev = NULL;
+  D3DGAMMARAMP ramp;
+  bool have_ramp = false;
+};
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
-                                         HWND hwnd,
-                                         D3DPRESENT_PARAMETERS* pp,
-                                         IDirect3DDevice9Ex** out_dev) {
+                                          HWND hwnd,
+                                          D3DPRESENT_PARAMETERS* pp,
+                                          IDirect3DDevice9Ex** out_dev) {
   if (!d3d || !pp || !out_dev) {
     return E_INVALIDARG;
   }
@@ -115,6 +137,10 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
+
+  // Avoid leaving the desktop gamma ramp in a modified state when running on
+  // non-AeroGPU adapters (e.g. when --allow-non-aerogpu is used).
+  GammaRampGuard gamma_guard(dev.get());
 
   D3DADAPTER_IDENTIFIER9 ident;
   ZeroMemory(&ident, sizeof(ident));

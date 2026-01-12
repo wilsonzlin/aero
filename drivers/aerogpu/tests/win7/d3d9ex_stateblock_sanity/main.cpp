@@ -6,6 +6,25 @@
 
 using aerogpu_test::ComPtr;
 
+struct GammaRampGuard {
+  GammaRampGuard() = default;
+  explicit GammaRampGuard(IDirect3DDevice9Ex* dev) : dev(dev) {
+    if (this->dev) {
+      ZeroMemory(&ramp, sizeof(ramp));
+      this->dev->GetGammaRamp(0, &ramp);
+      have_ramp = true;
+    }
+  }
+  ~GammaRampGuard() {
+    if (dev && have_ramp) {
+      dev->SetGammaRamp(0, 0, &ramp);
+    }
+  }
+  IDirect3DDevice9Ex* dev = NULL;
+  D3DGAMMARAMP ramp;
+  bool have_ramp = false;
+};
+
 struct VertexPosTex {
   float x;
   float y;
@@ -391,6 +410,10 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
+
+  // Avoid leaving the desktop gamma ramp in a modified state when running on
+  // non-AeroGPU adapters (e.g. when --allow-non-aerogpu is used).
+  GammaRampGuard gamma_guard(dev.get());
 
   // Create shaders.
   ComPtr<IDirect3DVertexShader9> vs;
