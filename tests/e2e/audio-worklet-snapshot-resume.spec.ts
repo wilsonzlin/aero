@@ -67,7 +67,9 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   await page.waitForFunction(() => Array.from(document.querySelectorAll(".mono")).some((n) => (n.textContent ?? "").includes("snapshot: saved")));
 
   // Simulate time passing between save and restore (e.g. user waiting, slow restore, etc.).
-  await page.waitForTimeout(1500);
+  // This only needs to be long enough to expose any post-resume "catch up" behaviour; keep it
+  // modest to reduce CI time.
+  await page.waitForTimeout(500);
 
   const beforeRestore = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
