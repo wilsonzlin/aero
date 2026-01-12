@@ -45,10 +45,7 @@ impl Drop for PersistentCacheApiGuard {
 }
 
 fn make_flags() -> ShaderTranslationFlags {
-    ShaderTranslationFlags {
-        half_pixel_center: false,
-        caps_hash: None,
-    }
+    ShaderTranslationFlags::default()
 }
 
 fn make_artifact(tag: &str) -> PersistedShaderArtifact {
@@ -241,7 +238,8 @@ async fn persistence_is_disabled_after_key_derivation_error() {
 
     // computeShaderCacheKey throws => should disable persistence without hard failing translation.
     let compute = Closure::wrap(Box::new(move |_dxbc: JsValue, _flags: JsValue| {
-        wasm_bindgen::throw_str("missing api");
+        // Simulate missing API / JS exception via a rejected promise.
+        js_sys::Promise::reject(&JsValue::from_str("missing api")).into()
     }) as Box<dyn FnMut(JsValue, JsValue) -> JsValue>);
     Reflect::set(
         &api,
