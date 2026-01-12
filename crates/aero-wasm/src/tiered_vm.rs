@@ -422,6 +422,8 @@ struct WasmJitBackend {
     jit_ctx_ptr: u32,
     guest_base: u32,
     tlb_salt: u64,
+    js_global: JsValue,
+    js_last_committed_key: JsValue,
 }
 
 impl WasmJitBackend {
@@ -431,6 +433,8 @@ impl WasmJitBackend {
             jit_ctx_ptr,
             guest_base,
             tlb_salt,
+            js_global: js_sys::global().into(),
+            js_last_committed_key: JsValue::from_str("__aero_jit_last_committed"),
         }
     }
 
@@ -502,6 +506,14 @@ impl JitBackend for WasmJitBackend {
     fn execute(&mut self, table_index: u32, cpu: &mut Self::Cpu) -> JitBlockExit {
         self.sync_cpu_to_abi(&cpu.cpu.state);
 
+        // Best-effort: default to "committed" in case the host does not set the
+        // `__aero_jit_last_committed` flag.
+        let _ = Reflect::set(
+            &self.js_global,
+            &self.js_last_committed_key,
+            &JsValue::from_bool(true),
+        );
+
         let commit_flag_ptr = self
             .cpu_ptr
             .checked_add(COMMIT_FLAG_OFFSET)
@@ -514,7 +526,20 @@ impl JitBackend for WasmJitBackend {
         self.sync_cpu_from_abi(&mut cpu.cpu.state);
 
         let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
-        let committed = self.read_u32_at(commit_flag_ptr) != 0;
+        let mut committed = self.read_u32_at(commit_flag_ptr) != 0;
+        if committed {
+            // Support an older/alternate JS ↔ WASM contract where the host reports commit status via
+            // a global flag (`globalThis.__aero_jit_last_committed`) rather than the in-memory
+            // `commit_flag` slot.
+            //
+            // When both exist, treat either signal as authoritative for rolling back retirement
+            // bookkeeping.
+            if let Ok(val) = Reflect::get(&self.js_global, &self.js_last_committed_key) {
+                if val.as_bool() == Some(false) {
+                    committed = false;
+                }
+            }
+        }
         let next_rip = if exit_to_interpreter {
             cpu.cpu.state.rip()
         } else {
