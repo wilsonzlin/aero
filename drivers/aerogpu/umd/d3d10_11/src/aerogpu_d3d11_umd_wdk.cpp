@@ -1783,6 +1783,8 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
     const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
     supports_bc = (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
   }
+  // ABI 1.2 adds explicit sRGB format variants (same gating as BC formats).
+  const bool supports_srgb = supports_bc;
 
 #if defined(AEROGPU_D3D10_11_CAPS_LOG)
   // Emit caps queries unconditionally when AEROGPU_D3D10_11_CAPS_LOG is defined;
@@ -1934,17 +1936,40 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       UINT support = 0;
       switch (static_cast<uint32_t>(format)) {
         case kDxgiFormatB8G8R8A8Unorm:
-        case kDxgiFormatB8G8R8A8UnormSrgb:
         case kDxgiFormatB8G8R8A8Typeless:
+          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
+                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
+          break;
+        case kDxgiFormatB8G8R8A8UnormSrgb:
+          support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
+                                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
+                                 : 0;
+          break;
         case kDxgiFormatB8G8R8X8Unorm:
-        case kDxgiFormatB8G8R8X8UnormSrgb:
         case kDxgiFormatB8G8R8X8Typeless:
+          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
+                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
+          break;
+        case kDxgiFormatB8G8R8X8UnormSrgb:
+          support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
+                                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
+                                 : 0;
+          break;
         case kDxgiFormatR8G8B8A8Unorm:
-        case kDxgiFormatR8G8B8A8UnormSrgb:
         case kDxgiFormatR8G8B8A8Typeless:
           support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
+          break;
+        case kDxgiFormatR8G8B8A8UnormSrgb:
+          support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
+                                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
+                                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
+                                 : 0;
           break;
         case kDxgiFormatBc1Typeless:
         case kDxgiFormatBc1Unorm:
@@ -2025,17 +2050,19 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       bool supported_format = false;
       switch (static_cast<uint32_t>(in.Format)) {
         case kDxgiFormatB8G8R8A8Unorm:
-        case kDxgiFormatB8G8R8A8UnormSrgb:
         case kDxgiFormatB8G8R8A8Typeless:
         case kDxgiFormatB8G8R8X8Unorm:
-        case kDxgiFormatB8G8R8X8UnormSrgb:
         case kDxgiFormatB8G8R8X8Typeless:
         case kDxgiFormatR8G8B8A8Unorm:
-        case kDxgiFormatR8G8B8A8UnormSrgb:
         case kDxgiFormatR8G8B8A8Typeless:
         case kDxgiFormatD24UnormS8Uint:
         case kDxgiFormatD32Float:
           supported_format = true;
+          break;
+        case kDxgiFormatB8G8R8A8UnormSrgb:
+        case kDxgiFormatB8G8R8X8UnormSrgb:
+        case kDxgiFormatR8G8B8A8UnormSrgb:
+          supported_format = supports_srgb;
           break;
         default:
           supported_format = false;

@@ -5659,6 +5659,8 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
     const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
     return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
   }();
+  // ABI 1.2 adds explicit sRGB format variants (same gating as BC formats).
+  const bool supports_srgb = supports_bc;
 
   switch (pCaps->Type) {
     case D3D10DDICAPS_TYPE_D3D10_FEATURE_LEVEL:
@@ -5706,17 +5708,40 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
         UINT support = 0;
         switch (format) {
           case kDxgiFormatB8G8R8A8Unorm:
-          case kDxgiFormatB8G8R8A8UnormSrgb:
           case kDxgiFormatB8G8R8A8Typeless:
+            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
+                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
+                      D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
+            break;
+          case kDxgiFormatB8G8R8A8UnormSrgb:
+            support = supports_srgb ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
+                                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
+                                       D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
+                                   : 0;
+            break;
           case kDxgiFormatB8G8R8X8Unorm:
-          case kDxgiFormatB8G8R8X8UnormSrgb:
           case kDxgiFormatB8G8R8X8Typeless:
+            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
+                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
+                      D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
+            break;
+          case kDxgiFormatB8G8R8X8UnormSrgb:
+            support = supports_srgb ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
+                                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
+                                       D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
+                                   : 0;
+            break;
           case kDxgiFormatR8G8B8A8Unorm:
-          case kDxgiFormatR8G8B8A8UnormSrgb:
           case kDxgiFormatR8G8B8A8Typeless:
             support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
                       D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
+            break;
+          case kDxgiFormatR8G8B8A8UnormSrgb:
+            support = supports_srgb ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
+                                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
+                                       D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
+                                   : 0;
             break;
           case kDxgiFormatBc1Typeless:
           case kDxgiFormatBc1Unorm:
@@ -5766,17 +5791,19 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
         bool supported_format = false;
         switch (static_cast<uint32_t>(msaa_format)) {
           case kDxgiFormatB8G8R8A8Unorm:
-          case kDxgiFormatB8G8R8A8UnormSrgb:
           case kDxgiFormatB8G8R8A8Typeless:
           case kDxgiFormatB8G8R8X8Unorm:
-          case kDxgiFormatB8G8R8X8UnormSrgb:
           case kDxgiFormatB8G8R8X8Typeless:
           case kDxgiFormatR8G8B8A8Unorm:
-          case kDxgiFormatR8G8B8A8UnormSrgb:
           case kDxgiFormatR8G8B8A8Typeless:
           case kDxgiFormatD24UnormS8Uint:
           case kDxgiFormatD32Float:
             supported_format = true;
+            break;
+          case kDxgiFormatB8G8R8A8UnormSrgb:
+          case kDxgiFormatB8G8R8X8UnormSrgb:
+          case kDxgiFormatR8G8B8A8UnormSrgb:
+            supported_format = supports_srgb;
             break;
           default:
             supported_format = false;
