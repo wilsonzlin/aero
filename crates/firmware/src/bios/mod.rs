@@ -82,6 +82,8 @@ pub const INT1A_STUB_OFFSET: u16 = 0xE900;
 pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
 /// IVT vector 0x1E: diskette parameter table pointer.
 pub const DISKETTE_PARAM_TABLE_OFFSET: u16 = 0xE100;
+/// IVT vector 0x41/0x46: legacy fixed disk parameter table pointer(s).
+pub const FIXED_DISK_PARAM_TABLE_OFFSET: u16 = 0xE110;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskError {
@@ -497,6 +499,16 @@ mod tests {
             &rom_image[dpt..dpt + 11],
             &[0xAF, 0x02, 0x25, 0x02, 0x12, 0x1B, 0xFF, 0x6C, 0xF6, 0x0F, 0x08]
         );
+
+        // Fixed Disk Parameter Table (vectors 0x41/0x46).
+        let hdpt = FIXED_DISK_PARAM_TABLE_OFFSET as usize;
+        assert_eq!(
+            &rom_image[hdpt..hdpt + 16],
+            &[
+                0x00, 0x04, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00
+            ]
+        );
     }
 
     #[test]
@@ -521,6 +533,14 @@ mod tests {
         assert_eq!(
             read_vec(&mut mem, 0x1E),
             (DISKETTE_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
+        );
+        assert_eq!(
+            read_vec(&mut mem, 0x41),
+            (FIXED_DISK_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
+        );
+        assert_eq!(
+            read_vec(&mut mem, 0x46),
+            (FIXED_DISK_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
         );
     }
 

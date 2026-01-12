@@ -1,6 +1,6 @@
 use super::{
-    BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, DISKETTE_PARAM_TABLE_OFFSET, INT10_STUB_OFFSET,
-    INT13_STUB_OFFSET, INT15_STUB_OFFSET, INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
+    BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, DISKETTE_PARAM_TABLE_OFFSET, FIXED_DISK_PARAM_TABLE_OFFSET,
+    INT10_STUB_OFFSET, INT13_STUB_OFFSET, INT15_STUB_OFFSET, INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
 };
 
 /// Build the 64KiB BIOS ROM image.
@@ -55,6 +55,34 @@ pub fn build_bios_rom() -> Vec<u8> {
         &mut rom,
         DISKETTE_PARAM_TABLE_OFFSET,
         &diskette_param_table,
+    );
+
+    // Fixed Disk Parameter Table (IVT vectors 0x41/0x46).
+    //
+    // Older software reads these vectors to obtain CHS geometry for BIOS disk services.
+    // We provide a table that matches our "fixed disk" INT 13h geometry (1024/16/63).
+    //
+    // Table format is 16 bytes (IBM PC/AT):
+    // - word: cylinders
+    // - byte: heads
+    // - word: write precomp cylinder
+    // - byte: control
+    // - word: landing zone
+    // - byte: sectors/track
+    // - remaining bytes reserved (0)
+    let fixed_disk_param_table: [u8; 16] = [
+        0x00, 0x04, // cylinders = 1024
+        0x10, // heads = 16
+        0x00, 0x00, // write precomp = 0
+        0x00, // control
+        0x00, 0x00, // landing zone = 0
+        0x3F, // sectors/track = 63
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
+    ];
+    write_stub(
+        &mut rom,
+        FIXED_DISK_PARAM_TABLE_OFFSET,
+        &fixed_disk_param_table,
     );
 
     // Optional ROM signature (harmless and convenient for identification).
