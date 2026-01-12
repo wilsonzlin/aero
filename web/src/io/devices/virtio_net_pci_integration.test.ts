@@ -590,4 +590,270 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       }
     }
   });
+
+  it("TX and RX frames cross NET_TX/NET_RX via virtio-pci transitional legacy I/O transport", async () => {
+    // Allocate a wasm memory large enough to host both the Rust/WASM runtime and
+    // a small guest RAM window for our virtqueue rings + test buffers.
+    const desiredGuestBytes = 0x80_000; // 512 KiB
+    const layout = computeGuestRamLayout(desiredGuestBytes);
+    const memory = new WebAssembly.Memory({ initial: layout.wasm_pages, maximum: layout.wasm_pages });
+
+    let api: Awaited<ReturnType<typeof initWasm>>["api"];
+    try {
+      ({ api } = await initWasm({ variant: "single", memory }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // The wasm-pack output is generated and may be absent in some test
+      // environments; skip rather than failing unrelated suites.
+      if (message.includes("Missing single-thread WASM package")) return;
+      throw err;
+    }
+
+    assertWasmMemoryWiring({ api, memory, context: "virtio_net_pci_integration.test (legacy)" });
+
+    const Bridge = api.VirtioNetPciBridge;
+    if (!Bridge) return;
+
+    const ioIpcSab = createIoIpcSab();
+    const netTxRing = openRingByKind(ioIpcSab, IO_IPC_NET_TX_QUEUE_KIND, 0);
+    const netRxRing = openRingByKind(ioIpcSab, IO_IPC_NET_RX_QUEUE_KIND, 0);
+    netTxRing.reset();
+    netRxRing.reset();
+
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const mgr = new DeviceManager(irqSink);
+
+    // Instantiate a transitional bridge (legacy I/O BAR2 enabled). Older builds may not accept the
+    // 4th arg, or may not implement the legacy IO accessors; skip in those cases.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const AnyCtor = Bridge as any;
+    let bridge: InstanceType<NonNullable<typeof Bridge>>;
+    try {
+      bridge = new AnyCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, true);
+    } catch {
+      bridge = new AnyCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab);
+    }
+    if (typeof (bridge as any).io_read !== "function" || typeof (bridge as any).io_write !== "function") {
+      try {
+        bridge.free();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    // Probe HOST_FEATURES: legacy-disabled bridges return all-ones.
+    try {
+      const probe = (bridge as any).io_read(0, 4) >>> 0;
+      if (probe === 0xffff_ffff) {
+        bridge.free();
+        return;
+      }
+    } catch {
+      try {
+        bridge.free();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const dev = new VirtioNetPciDevice({ bridge, irqSink: mgr.irqSink, mode: "transitional" });
+
+    const dv = new DataView(memory.buffer);
+
+    const guestWriteU16 = (paddr: number, value: number) => dv.setUint16(guestToLinear(layout, paddr), value & 0xffff, true);
+    const guestWriteU32 = (paddr: number, value: number) => dv.setUint32(guestToLinear(layout, paddr), value >>> 0, true);
+    const guestReadU16 = (paddr: number) => dv.getUint16(guestToLinear(layout, paddr), true) >>> 0;
+    const guestReadU32 = (paddr: number) => dv.getUint32(guestToLinear(layout, paddr), true) >>> 0;
+    const guestWriteBytes = (paddr: number, bytes: Uint8Array) => {
+      new Uint8Array(memory.buffer, guestToLinear(layout, paddr), bytes.byteLength).set(bytes);
+    };
+    const guestReadBytes = (paddr: number, len: number): Uint8Array => {
+      return new Uint8Array(memory.buffer, guestToLinear(layout, paddr), len).slice();
+    };
+    const guestWriteDesc = (table: number, index: number, addr: number, len: number, flags: number, next: number) => {
+      const base = table + index * 16;
+      // u64 addr
+      dv.setUint32(guestToLinear(layout, base), addr >>> 0, true);
+      dv.setUint32(guestToLinear(layout, base + 4), 0, true);
+      dv.setUint32(guestToLinear(layout, base + 8), len >>> 0, true);
+      dv.setUint16(guestToLinear(layout, base + 12), flags & 0xffff, true);
+      dv.setUint16(guestToLinear(layout, base + 14), next & 0xffff, true);
+    };
+
+    const cfgReadU16 = (addr: PciAddress, off: number) => {
+      mgr.portWrite(0x0cf8, 4, cfgAddr(addr, off));
+      return mgr.portRead(0x0cfc + (off & 3), 2) & 0xffff;
+    };
+    const cfgReadU32 = (addr: PciAddress, off: number) => {
+      mgr.portWrite(0x0cf8, 4, cfgAddr(addr, off));
+      return mgr.portRead(0x0cfc + (off & 3), 4) >>> 0;
+    };
+    const cfgWriteU32 = (addr: PciAddress, off: number, value: number) => {
+      mgr.portWrite(0x0cf8, 4, cfgAddr(addr, off));
+      mgr.portWrite(0x0cfc + (off & 3), 4, value >>> 0);
+    };
+
+    // Legacy virtio-pci I/O port register layout (see `crates/aero-virtio/src/pci.rs`).
+    const VIRTIO_PCI_LEGACY_HOST_FEATURES = 0x00;
+    const VIRTIO_PCI_LEGACY_GUEST_FEATURES = 0x04;
+    const VIRTIO_PCI_LEGACY_QUEUE_PFN = 0x08;
+    const VIRTIO_PCI_LEGACY_QUEUE_NUM = 0x0c;
+    const VIRTIO_PCI_LEGACY_QUEUE_SEL = 0x0e;
+    const VIRTIO_PCI_LEGACY_QUEUE_NOTIFY = 0x10;
+    const VIRTIO_PCI_LEGACY_STATUS = 0x12;
+    const VIRTIO_PCI_LEGACY_ISR = 0x13;
+
+    let pciAddr: PciAddress | null = null;
+    try {
+      pciAddr = mgr.registerPciDevice(dev);
+
+      const idDword = cfgReadU32(pciAddr, 0x00);
+      expect(idDword & 0xffff).toBe(0x1af4);
+      expect((idDword >>> 16) & 0xffff).toBe(0x1000);
+
+      // Read BAR2 (legacy IO port block).
+      const bar2 = cfgReadU32(pciAddr, 0x18);
+      expect(bar2 & 0x1).toBe(0x1);
+      const ioBase = bar2 & 0xffff_fffc;
+      expect(ioBase).toBeGreaterThan(0);
+
+      // Enable IO + MEM decoding.
+      const cmd = cfgReadU16(pciAddr, 0x04);
+      cfgWriteU32(pciAddr, 0x04, (cmd | 0x0007) >>> 0);
+      const cmdAfter = cfgReadU16(pciAddr, 0x04);
+      expect((cmdAfter & 0x0001) !== 0).toBe(true);
+      expect((cmdAfter & 0x0002) !== 0).toBe(true);
+
+      const ioReadU8 = (off: number) => mgr.portRead(ioBase + off, 1) & 0xff;
+      const ioReadU16 = (off: number) => mgr.portRead(ioBase + off, 2) & 0xffff;
+      const ioReadU32 = (off: number) => mgr.portRead(ioBase + off, 4) >>> 0;
+      const ioWriteU8 = (off: number, value: number) => mgr.portWrite(ioBase + off, 1, value & 0xff);
+      const ioWriteU16 = (off: number, value: number) => mgr.portWrite(ioBase + off, 2, value & 0xffff);
+      const ioWriteU32 = (off: number, value: number) => mgr.portWrite(ioBase + off, 4, value >>> 0);
+
+      // -----------------------------------------------------------------------------------------
+      // Virtio legacy init (feature negotiation + queue PFN setup).
+      // -----------------------------------------------------------------------------------------
+      const hostFeatures = ioReadU32(VIRTIO_PCI_LEGACY_HOST_FEATURES);
+      expect(hostFeatures).not.toBe(0xffff_ffff);
+      ioWriteU32(VIRTIO_PCI_LEGACY_GUEST_FEATURES, hostFeatures);
+
+      // ACKNOWLEDGE | DRIVER.
+      ioWriteU8(VIRTIO_PCI_LEGACY_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+
+      const queue0Base = 0x10000;
+      const queue1Base = 0x14000;
+
+      const setupQueue = (queueIndex: number, base: number): void => {
+        ioWriteU16(VIRTIO_PCI_LEGACY_QUEUE_SEL, queueIndex);
+        const max = ioReadU16(VIRTIO_PCI_LEGACY_QUEUE_NUM);
+        expect(max).toBe(256);
+        ioWriteU32(VIRTIO_PCI_LEGACY_QUEUE_PFN, base >>> 12);
+      };
+      setupQueue(0, queue0Base);
+      setupQueue(1, queue1Base);
+
+      // DRIVER_OK.
+      ioWriteU8(
+        VIRTIO_PCI_LEGACY_STATUS,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
+      );
+
+      // -----------------------------------------------------------------------------------------
+      // TX (queue 1).
+      // -----------------------------------------------------------------------------------------
+      const txDesc = queue1Base;
+      const txAvail = queue1Base + 0x1000;
+      const txUsed = queue1Base + 0x2000;
+
+      const hdrAddr = 0x7000;
+      const payloadAddr = 0x7100;
+      const hdr = new Uint8Array(VIRTIO_NET_HDR_LEN); // all zeros
+      const txFrame = new Uint8Array([0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0x08, 0x00]);
+      guestWriteBytes(hdrAddr, hdr);
+      guestWriteBytes(payloadAddr, txFrame);
+
+      guestWriteDesc(txDesc, 0, hdrAddr, hdr.byteLength, VIRTQ_DESC_F_NEXT, 1);
+      guestWriteDesc(txDesc, 1, payloadAddr, txFrame.byteLength, 0, 0);
+
+      guestWriteU16(txAvail + 0, 0);
+      guestWriteU16(txAvail + 2, 1);
+      guestWriteU16(txAvail + 4, 0);
+      guestWriteU16(txUsed + 0, 0);
+      guestWriteU16(txUsed + 2, 0);
+      guestWriteU32(txUsed + 4, 0);
+      guestWriteU32(txUsed + 8, 0);
+
+      ioWriteU16(VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, 1);
+      dev.tick(0);
+
+      let popped: Uint8Array | null = null;
+      for (let i = 0; i < 16 && !popped; i++) {
+        dev.tick(i);
+        popped = netTxRing.tryPop();
+      }
+      expect(popped).not.toBeNull();
+      expect(Array.from(popped!)).toEqual(Array.from(txFrame));
+      expect(netTxRing.tryPop()).toBeNull();
+
+      expect(guestReadU16(txUsed + 2)).toBe(1);
+      expect(guestReadU32(txUsed + 4)).toBe(0);
+      expect(guestReadU32(txUsed + 8)).toBe(0);
+
+      const isrAfterTx = ioReadU8(VIRTIO_PCI_LEGACY_ISR);
+      expect(isrAfterTx & 0xfc).toBe(0);
+      expect(ioReadU8(VIRTIO_PCI_LEGACY_ISR)).toBe(0);
+
+      // -----------------------------------------------------------------------------------------
+      // RX (queue 0).
+      // -----------------------------------------------------------------------------------------
+      const rxDesc = queue0Base;
+      const rxAvail = queue0Base + 0x1000;
+      const rxUsed = queue0Base + 0x2000;
+
+      const rxFrame = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x08, 0x00]);
+      expect(netRxRing.tryPush(rxFrame)).toBe(true);
+
+      const rxHdrAddr = 0x7200;
+      const rxPayloadAddr = 0x7300;
+      guestWriteBytes(rxHdrAddr, new Uint8Array(VIRTIO_NET_HDR_LEN).fill(0xaa));
+      guestWriteBytes(rxPayloadAddr, new Uint8Array(64).fill(0xbb));
+
+      guestWriteDesc(rxDesc, 0, rxHdrAddr, VIRTIO_NET_HDR_LEN, VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE, 1);
+      guestWriteDesc(rxDesc, 1, rxPayloadAddr, 64, VIRTQ_DESC_F_WRITE, 0);
+
+      guestWriteU16(rxAvail + 0, 0);
+      guestWriteU16(rxAvail + 2, 1);
+      guestWriteU16(rxAvail + 4, 0);
+      guestWriteU16(rxUsed + 0, 0);
+      guestWriteU16(rxUsed + 2, 0);
+      guestWriteU32(rxUsed + 4, 0);
+      guestWriteU32(rxUsed + 8, 0);
+
+      ioWriteU16(VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, 0);
+
+      for (let i = 0; i < 8 && guestReadU16(rxUsed + 2) !== 1; i++) {
+        dev.tick(i);
+      }
+
+      expect(guestReadU16(rxUsed + 2)).toBe(1);
+      expect(guestReadU32(rxUsed + 4)).toBe(0);
+      expect(guestReadU32(rxUsed + 8)).toBe(VIRTIO_NET_HDR_LEN + rxFrame.byteLength);
+
+      expect(Array.from(guestReadBytes(rxHdrAddr, VIRTIO_NET_HDR_LEN))).toEqual(Array.from(new Uint8Array(VIRTIO_NET_HDR_LEN)));
+      expect(Array.from(guestReadBytes(rxPayloadAddr, rxFrame.byteLength))).toEqual(Array.from(rxFrame));
+      expect(netRxRing.tryPop()).toBeNull();
+
+      const isrAfterRx = ioReadU8(VIRTIO_PCI_LEGACY_ISR);
+      expect(isrAfterRx & 0xfc).toBe(0);
+      expect(ioReadU8(VIRTIO_PCI_LEGACY_ISR)).toBe(0);
+    } finally {
+      try {
+        dev.destroy();
+      } catch {
+        // ignore
+      }
+    }
+  });
 });
