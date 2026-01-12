@@ -16,25 +16,36 @@ fn should_skip_dir(path: &Path) -> bool {
 }
 
 fn should_scan(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+    // Skip binary fuzz corpuses (tracked) to avoid accidental false positives.
+    if path.components().any(|c| c.as_os_str() == "fuzz") && path.components().any(|c| c.as_os_str() == "corpus") {
         return false;
+    }
+
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        // Extensionless tracked files in this repo are typically plaintext (Makefile, Dockerfile,
+        // etc). Scanning them helps ensure the legacy net-stack 4CC spelling can't reappear in
+        // build scripts/manifests.
+        return true;
     };
+
     matches!(
         ext,
         // Rust + docs.
         "rs" | "md" | "txt" |
         // Web runtime.
-        "ts" | "tsx" | "mts" | "js" | "jsx" | "mjs" | "cjs" | "html" |
+        "ts" | "tsx" | "mts" | "js" | "jsx" | "mjs" | "cjs" | "html" | "css" |
         // Scripts.
         "py" | "sh" | "ps1" | "psm1" | "cmd" |
         // Go (proxy services).
         "go" |
         // Native/driver sources.
-        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" | "hlsl" |
+        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" | "hlsl" | "wgsl" |
         // Driver/build metadata (plaintext).
-        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" |
+        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" | "reg" |
         // Config/metadata.
-        "toml" | "json" | "yml" | "yaml" | "dict"
+        "toml" | "json" | "yml" | "yaml" | "dict" | "lock" | "xml" | "conf" | "tf" | "hcl" |
+        // Common dotfile config.
+        "gitignore" | "dockerignore" | "gitattributes" | "nvmrc"
     )
 }
 
