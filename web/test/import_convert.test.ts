@@ -276,6 +276,42 @@ function buildFixedVhdFixtureWithFooterCopy(): { file: Uint8Array; logical: Uint
   return { file, logical };
 }
 
+function buildFixedVhdFixtureWithFooterCopyNonIdentical(): { file: Uint8Array; logical: Uint8Array } {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  // Fixed disks use dataOffset = u64::MAX.
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  // Make a valid footer copy that differs from the EOF footer (e.g. timestamp).
+  const footerCopy = footer.slice();
+  writeU32BE(footerCopy, 24, 1234); // timestamp
+  writeU32BE(footerCopy, 64, vhdChecksum(footerCopy, 64));
+
+  const fileSize = footerSize + logicalSize + footerSize;
+  const file = new Uint8Array(fileSize);
+  // Footer copy at offset 0 (non-identical).
+  file.set(footerCopy, 0);
+
+  const sector0 = new Uint8Array(512);
+  for (let i = 0; i < sector0.length; i++) sector0[i] = (0x11 + i) & 0xff;
+  file.set(sector0, footerSize);
+
+  // Footer at end.
+  file.set(footer, fileSize - footerSize);
+
+  const logical = new Uint8Array(logicalSize);
+  logical.set(sector0, 0);
+  return { file, logical };
+}
+
 function buildFixedVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
   const footerSize = 512;
   const logicalSize = 512;
@@ -679,6 +715,20 @@ test("convertToAeroSparse: rejects dynamic VHD with huge block_size", async () =
 
 test("convertToAeroSparse: fixed VHD footer copy at offset 0 is ignored", async () => {
   const { file, logical } = buildFixedVhdFixtureWithFooterCopy();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });
+  assert.equal(manifest.originalFormat, "vhd");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: non-identical fixed VHD footer copy at offset 0 is ignored", async () => {
+  const { file, logical } = buildFixedVhdFixtureWithFooterCopyNonIdentical();
   const src = new MemSource(file);
   const sync = new MemSyncAccessHandle();
   const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });

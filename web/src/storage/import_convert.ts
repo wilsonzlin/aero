@@ -578,14 +578,15 @@ async function convertVhdToSparse(
     // Fixed VHD is raw data followed by footer.
     //
     // Some tools may also write a redundant copy of the footer at offset 0. When present and
-    // identical to the EOF footer, the data region begins immediately after it.
+    // valid (but not necessarily byte-for-byte identical to the EOF footer), the data region
+    // begins immediately after it.
     let baseOffset = 0;
     if (src.size >= 1024) {
       const cookie0 = await src.readAt(0, 8);
       if (ascii(cookie0) === "conectix") {
         try {
           const footer0 = VhdFooter.parse(await src.readAt(0, 512));
-          if (footer0.diskType === VHD_TYPE_FIXED && bytesEqual(footer0.raw, footer.raw)) {
+          if (footer0.diskType === VHD_TYPE_FIXED && footer0.currentSize === footer.currentSize) {
             baseOffset = 512;
           }
         } catch {
