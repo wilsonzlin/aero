@@ -301,17 +301,22 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
       if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
         throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
       }
-      const tableBytesLen = Number(tableBytesLenBig);
-
-      const tableBytes = new Uint8Array(tableBytesLen);
-      const t = sync.read(tableBytes, { at: HEADER_SIZE });
-      if (t !== tableBytesLen) {
-        throw new Error(`short table read: expected=${tableBytesLen} actual=${t}`);
-      }
-      const view = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
       const table = new Float64Array(header.tableEntries);
-      for (let i = 0; i < header.tableEntries; i++) {
-        table[i] = toSafeNumber(view.getBigUint64(i * 8, true), `table[${i}]`);
+      // Read the on-disk table in chunks to avoid allocating a second full-size table buffer in
+      // memory (worst case: 64MiB Uint8Array + 64MiB Float64Array).
+      const chunkEntries = 8192; // 64KiB
+      const buf = new Uint8Array(chunkEntries * 8);
+      const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+      for (let i = 0; i < header.tableEntries; i += chunkEntries) {
+        const count = Math.min(chunkEntries, header.tableEntries - i);
+        const bytes = count * 8;
+        const n = sync.read(buf.subarray(0, bytes), { at: HEADER_SIZE + i * 8 });
+        if (n !== bytes) {
+          throw new Error(`short table read: expected=${bytes} actual=${n}`);
+        }
+        for (let j = 0; j < count; j++) {
+          table[i + j] = toSafeNumber(view.getBigUint64(j * 8, true), `table[${i + j}]`);
+        }
       }
 
       return new OpfsAeroSparseDisk(sync, header, table, opts.maxCachedBlocks ?? 64);
