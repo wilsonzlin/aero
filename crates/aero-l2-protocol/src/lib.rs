@@ -252,7 +252,7 @@ pub fn encode_structured_error_payload(
     }
     let msg_bytes = &msg_bytes[..msg_len];
 
-    let msg_len: u16 = msg_bytes.len().try_into().unwrap_or(u16::MAX);
+    let msg_len: u16 = msg_bytes.len() as u16;
 
     let mut out = Vec::with_capacity(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN + msg_bytes.len());
     out.extend_from_slice(&code.to_be_bytes());
@@ -275,7 +275,7 @@ pub fn decode_structured_error_payload(payload: &[u8]) -> Option<(u16, String)> 
         return None;
     }
     let msg_bytes = payload.get(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN..)?;
-    let msg = String::from_utf8(msg_bytes.to_vec()).ok()?;
+    let msg = core::str::from_utf8(msg_bytes).ok()?.to_owned();
     Some((code, msg))
 }
 
