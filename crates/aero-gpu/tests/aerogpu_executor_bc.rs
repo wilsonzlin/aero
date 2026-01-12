@@ -1468,21 +1468,35 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
             .write(TEX_GPA, &vec![0xAAu8; backing_size_bytes])
             .unwrap();
 
-        let alloc_table = AllocTable::new([(
-            TEX_ALLOC_ID,
-            AllocEntry {
-                flags: 0,
-                gpa: TEX_GPA,
-                size_bytes: backing_size_bytes as u64,
-            },
-        )])
-        .expect("alloc table");
-
         let mip0_block = [0u8; 8];
         let mip1_block = [0x5Au8; 8];
-        let mut src_data = Vec::new();
-        src_data.extend_from_slice(&mip0_block);
-        src_data.extend_from_slice(&mip1_block);
+        let mut src_backing = Vec::new();
+        src_backing.extend_from_slice(&mip0_block);
+        src_backing.extend_from_slice(&mip1_block);
+
+        const SRC_GPA: u64 = 0x2000;
+        const SRC_ALLOC_ID: u32 = 2;
+        guest.write(SRC_GPA, &src_backing).unwrap();
+
+        let alloc_table = AllocTable::new([
+            (
+                TEX_ALLOC_ID,
+                AllocEntry {
+                    flags: 0,
+                    gpa: TEX_GPA,
+                    size_bytes: backing_size_bytes as u64,
+                },
+            ),
+            (
+                SRC_ALLOC_ID,
+                AllocEntry {
+                    flags: 0,
+                    gpa: SRC_GPA,
+                    size_bytes: src_backing.len() as u64,
+                },
+            ),
+        ])
+        .expect("alloc table");
 
         let stream = build_stream(|out| {
             // CREATE_TEXTURE2D dst (handle=1) BC1 4x4 with mip1=2x2, guest-backed.
@@ -1500,7 +1514,7 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
                 push_u64(out, 0); // reserved0
             });
 
-            // CREATE_TEXTURE2D src (handle=2) BC1 4x4 with mip1=2x2, host-owned.
+            // CREATE_TEXTURE2D src (handle=2) BC1 4x4 with mip1=2x2, guest-backed.
             emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
@@ -1509,19 +1523,19 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
                 push_u32(out, 4); // height
                 push_u32(out, 2); // mip_levels
                 push_u32(out, 1); // array_layers
-                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
-                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, mip0_size_bytes as u32); // row_pitch_bytes (mip0 only)
+                push_u32(out, SRC_ALLOC_ID); // backing_alloc_id
                 push_u32(out, 0); // backing_offset_bytes
                 push_u64(out, 0); // reserved0
             });
 
-            // UPLOAD_RESOURCE: BC bytes for src texture 2 (mip0 then mip1).
-            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+            // RESOURCE_DIRTY_RANGE: mark the src mip1 as dirty so it is uploaded from guest memory
+            // before the copy reads it.
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 2); // resource_handle
                 push_u32(out, 0); // reserved0
-                push_u64(out, 0); // offset_bytes
-                push_u64(out, src_data.len() as u64); // size_bytes
-                out.extend_from_slice(&src_data);
+                push_u64(out, mip0_size_bytes as u64); // offset_bytes (mip1 offset)
+                push_u64(out, mip1_size_bytes as u64); // size_bytes
             });
 
             // COPY_TEXTURE2D: copy the full mip1 (2x2 logical) and write it back to guest memory.
