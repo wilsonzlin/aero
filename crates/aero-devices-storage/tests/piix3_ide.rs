@@ -10,6 +10,7 @@ use aero_devices_storage::pci_ide::{
     register_piix3_ide_ports, Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::storage::state::MAX_IDE_DATA_BUFFER_BYTES;
 use aero_platform::io::IoPortBus;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::{Bus, MemoryBus};
@@ -109,6 +110,82 @@ fn ata_boot_sector_read_via_legacy_pio_ports() {
 
     assert_eq!(&buf[0..4], b"BOOT");
     assert_eq!(&buf[510..512], &[0x55, 0xAA]);
+}
+
+#[test]
+fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
+    let sectors = (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) as u32 + 1;
+    assert!(sectors < 65536, "test requires sector count < 65536");
+
+    let capacity = SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select master, LBA mode.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    // Sector count (48-bit): high byte then low byte.
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+
+    // LBA = 0 (48-bit writes: high then low per register).
+    for reg in 3..=5 {
+        io.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+        io.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+    }
+
+    // READ SECTORS EXT.
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x24);
+
+    let status = io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+}
+
+#[test]
+fn ata_lba48_oversized_pio_write_is_rejected_without_allocating_buffer() {
+    let sectors = (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) as u32 + 1;
+    assert!(sectors < 65536, "test requires sector count < 65536");
+
+    let capacity = SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors >> 8) as u32);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, (sectors & 0xFF) as u32);
+
+    for reg in 3..=5 {
+        io.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+        io.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+    }
+
+    // WRITE SECTORS EXT.
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x34);
+
+    let status = io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 }
 
 #[test]
@@ -290,6 +367,64 @@ fn atapi_inquiry_and_read_10_pio() {
         out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(&out[..5], b"WORLD");
+}
+
+#[test]
+fn atapi_read_12_rejects_oversized_transfer_without_allocating_buffer() {
+    let iso = MemIso::new(1);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
+            Box::new(iso),
+        )));
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    let blocks = (MAX_IDE_DATA_BUFFER_BYTES / 2048) as u32 + 1;
+    let mut read12 = [0u8; 12];
+    read12[0] = 0xA8; // READ(12)
+    read12[6..10].copy_from_slice(&blocks.to_be_bytes());
+    send_atapi_packet(
+        &mut ioports,
+        SECONDARY_PORTS.cmd_base,
+        0,
+        &read12,
+        2048,
+    );
+
+    // Error completions should still raise an interrupt.
+    assert!(ide.borrow().controller.secondary_irq_pending());
+    // Interrupt reason: status phase.
+    assert_eq!(
+        ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8,
+        0x03
+    );
+
+    let status = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
 }
 
 #[test]
