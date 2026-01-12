@@ -226,6 +226,9 @@ pub enum TextureManagerError {
 
     #[error("texture upload data length mismatch: expected {expected} bytes, got {actual}")]
     DataLengthMismatch { expected: usize, actual: usize },
+
+    #[error("size overflow while computing {0}")]
+    SizeOverflow(&'static str),
 }
 
 struct TextureEntry {
@@ -464,9 +467,15 @@ impl<'a> TextureManager<'a> {
                 data,
             ),
             TextureUploadTransform::Bc1ToRgba8 => {
-                let blocks_w = region.size.width.div_ceil(4) as usize;
-                let blocks_h = region.size.height.div_ceil(4) as usize;
-                let expected = blocks_w * blocks_h * 8;
+                let blocks_w = region.size.width.div_ceil(4);
+                let blocks_h = region.size.height.div_ceil(4);
+                let expected: usize = u64::from(blocks_w)
+                    .checked_mul(u64::from(blocks_h))
+                    .and_then(|v| v.checked_mul(8))
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or(TextureManagerError::SizeOverflow(
+                        "BC1 upload expected byte count",
+                    ))?;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -483,9 +492,15 @@ impl<'a> TextureManager<'a> {
                 upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
             TextureUploadTransform::Bc2ToRgba8 => {
-                let blocks_w = region.size.width.div_ceil(4) as usize;
-                let blocks_h = region.size.height.div_ceil(4) as usize;
-                let expected = blocks_w * blocks_h * 16;
+                let blocks_w = region.size.width.div_ceil(4);
+                let blocks_h = region.size.height.div_ceil(4);
+                let expected: usize = u64::from(blocks_w)
+                    .checked_mul(u64::from(blocks_h))
+                    .and_then(|v| v.checked_mul(16))
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or(TextureManagerError::SizeOverflow(
+                        "BC2 upload expected byte count",
+                    ))?;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -502,9 +517,15 @@ impl<'a> TextureManager<'a> {
                 upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
             TextureUploadTransform::Bc3ToRgba8 => {
-                let blocks_w = region.size.width.div_ceil(4) as usize;
-                let blocks_h = region.size.height.div_ceil(4) as usize;
-                let expected = blocks_w * blocks_h * 16;
+                let blocks_w = region.size.width.div_ceil(4);
+                let blocks_h = region.size.height.div_ceil(4);
+                let expected: usize = u64::from(blocks_w)
+                    .checked_mul(u64::from(blocks_h))
+                    .and_then(|v| v.checked_mul(16))
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or(TextureManagerError::SizeOverflow(
+                        "BC3 upload expected byte count",
+                    ))?;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -521,9 +542,15 @@ impl<'a> TextureManager<'a> {
                 upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
             TextureUploadTransform::Bc7ToRgba8 => {
-                let blocks_w = region.size.width.div_ceil(4) as usize;
-                let blocks_h = region.size.height.div_ceil(4) as usize;
-                let expected = blocks_w * blocks_h * 16;
+                let blocks_w = region.size.width.div_ceil(4);
+                let blocks_h = region.size.height.div_ceil(4);
+                let expected: usize = u64::from(blocks_w)
+                    .checked_mul(u64::from(blocks_h))
+                    .and_then(|v| v.checked_mul(16))
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or(TextureManagerError::SizeOverflow(
+                        "BC7 upload expected byte count",
+                    ))?;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -657,9 +684,11 @@ fn validate_region(
     Ok(())
 }
 
-fn align_to(value: u32, alignment: u32) -> u32 {
+fn align_to(value: u32, alignment: u32) -> Option<u32> {
     debug_assert!(alignment.is_power_of_two());
-    (value + alignment - 1) & !(alignment - 1)
+    value
+        .checked_add(alignment - 1)
+        .map(|v| v & !(alignment - 1))
 }
 
 fn estimate_texture_size_bytes(
@@ -673,26 +702,34 @@ fn estimate_texture_size_bytes(
     let mut total = 0u64;
     for level in 0..mip_level_count {
         let mip = mip_extent(size, dimension, level);
-        total += estimate_mip_level_size_bytes(format, mip.width, mip.height)
-            * mip.depth_or_array_layers as u64;
+        let level_bytes = estimate_mip_level_size_bytes(format, mip.width, mip.height)
+            .saturating_mul(u64::from(mip.depth_or_array_layers));
+        total = total.saturating_add(level_bytes);
     }
     total
 }
 
 fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height: u32) -> u64 {
     match format {
-        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
-            width as u64 * height as u64 * 4
-        }
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => u64::from(width)
+            .checked_mul(u64::from(height))
+            .and_then(|v| v.checked_mul(4))
+            .unwrap_or(u64::MAX),
         wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
             let blocks_w = width.div_ceil(4);
             let blocks_h = height.div_ceil(4);
-            blocks_w as u64 * blocks_h as u64 * 8
+            u64::from(blocks_w)
+                .checked_mul(u64::from(blocks_h))
+                .and_then(|v| v.checked_mul(8))
+                .unwrap_or(u64::MAX)
         }
         wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
             let blocks_w = width.div_ceil(4);
             let blocks_h = height.div_ceil(4);
-            blocks_w as u64 * blocks_h as u64 * 16
+            u64::from(blocks_w)
+                .checked_mul(u64::from(blocks_h))
+                .and_then(|v| v.checked_mul(16))
+                .unwrap_or(u64::MAX)
         }
         wgpu::TextureFormat::Bc3RgbaUnorm
         | wgpu::TextureFormat::Bc3RgbaUnormSrgb
@@ -700,9 +737,15 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
         | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
             let blocks_w = width.div_ceil(4);
             let blocks_h = height.div_ceil(4);
-            blocks_w as u64 * blocks_h as u64 * 16
+            u64::from(blocks_w)
+                .checked_mul(u64::from(blocks_h))
+                .and_then(|v| v.checked_mul(16))
+                .unwrap_or(u64::MAX)
         }
-        _ => width as u64 * height as u64 * 4,
+        _ => u64::from(width)
+            .checked_mul(u64::from(height))
+            .and_then(|v| v.checked_mul(4))
+            .unwrap_or(u64::MAX),
     }
 }
 
@@ -743,7 +786,13 @@ fn upload_rgba8(
 ) -> Result<(), TextureManagerError> {
     let width = region.size.width;
     let height = region.size.height;
-    let expected = width as usize * height as usize * 4;
+    let expected: usize = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|v| v.checked_mul(4))
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or(TextureManagerError::SizeOverflow(
+            "RGBA8 upload expected byte count",
+        ))?;
     if data.len() != expected {
         return Err(TextureManagerError::DataLengthMismatch {
             expected,
@@ -751,8 +800,14 @@ fn upload_rgba8(
         });
     }
 
-    let unpadded_bpr = width * 4;
-    let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let unpadded_bpr = width
+        .checked_mul(4)
+        .ok_or(TextureManagerError::SizeOverflow(
+            "RGBA8 upload bytes_per_row",
+        ))?;
+    let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT).ok_or(
+        TextureManagerError::SizeOverflow("RGBA8 upload padded bytes_per_row"),
+    )?;
     let layout_rows = height;
 
     upload_with_alignment(
@@ -764,7 +819,7 @@ fn upload_rgba8(
         unpadded_bpr,
         padded_bpr,
         layout_rows,
-    );
+    )?;
     Ok(())
 }
 
@@ -807,8 +862,15 @@ fn upload_bc(
 
     let blocks_w = region.size.width.div_ceil(4);
     let blocks_h = region.size.height.div_ceil(4);
-    let unpadded_bpr = blocks_w * block_bytes;
-    let expected = unpadded_bpr as usize * blocks_h as usize;
+    let unpadded_bpr = blocks_w
+        .checked_mul(block_bytes)
+        .ok_or(TextureManagerError::SizeOverflow("BC upload bytes_per_row"))?;
+    let expected: usize = u64::from(unpadded_bpr)
+        .checked_mul(u64::from(blocks_h))
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or(TextureManagerError::SizeOverflow(
+            "BC upload expected byte count",
+        ))?;
     if data.len() != expected {
         return Err(TextureManagerError::DataLengthMismatch {
             expected,
@@ -819,12 +881,22 @@ fn upload_bc(
     // WebGPU validates BC uploads/copies against the physical (block-rounded) extent. This means
     // small mips such as 2x2 are uploaded as a 4x4 block.
     let copy_size = wgpu::Extent3d {
-        width: blocks_w * 4,
-        height: blocks_h * 4,
+        width: blocks_w
+            .checked_mul(4)
+            .ok_or(TextureManagerError::SizeOverflow(
+                "BC upload copy_size width",
+            ))?,
+        height: blocks_h
+            .checked_mul(4)
+            .ok_or(TextureManagerError::SizeOverflow(
+                "BC upload copy_size height",
+            ))?,
         depth_or_array_layers: region.size.depth_or_array_layers,
     };
 
-    let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT).ok_or(
+        TextureManagerError::SizeOverflow("BC upload padded bytes_per_row"),
+    )?;
     let layout_rows = blocks_h;
 
     upload_with_alignment(
@@ -836,7 +908,7 @@ fn upload_bc(
         unpadded_bpr,
         padded_bpr,
         layout_rows,
-    );
+    )?;
     Ok(())
 }
 
@@ -850,7 +922,7 @@ fn upload_with_alignment(
     unpadded_bpr: u32,
     padded_bpr: u32,
     layout_rows: u32,
-) {
+) -> Result<(), TextureManagerError> {
     let needs_padding = padded_bpr != unpadded_bpr;
     let threshold = 256 * 1024usize;
 
@@ -858,7 +930,12 @@ fn upload_with_alignment(
     let rows_per_image = Some(layout_rows);
 
     let data_to_upload: Cow<'_, [u8]> = if needs_padding {
-        let mut padded = vec![0u8; padded_bpr as usize * layout_rows as usize];
+        let padded_len = (padded_bpr as usize)
+            .checked_mul(layout_rows as usize)
+            .ok_or(TextureManagerError::SizeOverflow(
+                "padded upload buffer size",
+            ))?;
+        let mut padded = vec![0u8; padded_len];
         for row in 0..layout_rows as usize {
             let src_start = row * unpadded_bpr as usize;
             let src_end = src_start + unpadded_bpr as usize;
@@ -888,7 +965,7 @@ fn upload_with_alignment(
             },
             copy_size,
         );
-        return;
+        return Ok(());
     }
 
     ctx.stats.uploads_staging_copy += 1;
@@ -923,6 +1000,7 @@ fn upload_with_alignment(
         copy_size,
     );
     ctx.queue.submit([encoder.finish()]);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1055,5 +1133,34 @@ mod tests {
         let zero = estimate_texture_size_bytes(wgpu::TextureFormat::Rgba8Unorm, size, dimension, 0);
         let one = estimate_texture_size_bytes(wgpu::TextureFormat::Rgba8Unorm, size, dimension, 1);
         assert_eq!(zero, one);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn validate_region_rejects_origin_plus_size_overflow() {
+        let region = TextureRegion {
+            origin: wgpu::Origin3d {
+                x: u32::MAX,
+                y: 0,
+                z: 0,
+            },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level: 0,
+        };
+        let err = validate_region(
+            region,
+            1,
+            wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, TextureManagerError::RegionOutOfBounds { .. }));
     }
 }
