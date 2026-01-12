@@ -487,6 +487,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
         const TAG_SCI_LEVEL: u16 = 7;
         const TAG_PM_TIMER_TICKS: u16 = 8;
+        const TAG_PM_TIMER_REMAINDER: u16 = 9;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -549,14 +550,88 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
             // Pick an elapsed-nanoseconds value that yields the desired 24-bit PM_TMR tick count under:
             //   ticks = elapsed_ns * FREQ / 1e9
             // (matching the guest-visible PM_TMR register). This cannot preserve the sub-tick
-            // remainder, but it is sufficient to restore the observed counter value.
-            let desired_ticks = (ticks & PM_TIMER_MASK_24BIT) as u128;
-            let numer = desired_ticks.saturating_mul(NS_PER_SEC);
-            let elapsed_ns = numer
-                .saturating_add(PM_TIMER_FREQUENCY_HZ.saturating_sub(1))
-                / PM_TIMER_FREQUENCY_HZ;
-            let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
-            self.timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
+            // remainder unless `TAG_PM_TIMER_REMAINDER` is also present.
+
+            fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
+                while b != 0 {
+                    let r = a % b;
+                    a = b;
+                    b = r;
+                }
+                a
+            }
+
+            fn egcd(a: i128, b: i128) -> (i128, i128, i128) {
+                if b == 0 {
+                    (a, 1, 0)
+                } else {
+                    let (g, x, y) = egcd(b, a % b);
+                    (g, y, x - (a / b) * y)
+                }
+            }
+
+            fn modinv(a: i128, m: i128) -> Option<i128> {
+                let (g, x, _) = egcd(a, m);
+                if g != 1 {
+                    return None;
+                }
+                Some(x.rem_euclid(m))
+            }
+
+            let ticks_mod = (ticks & PM_TIMER_MASK_24BIT) as u128;
+            if let Some(rem) = r.u32(TAG_PM_TIMER_REMAINDER)? {
+                // The remainder is the numerator remainder in:
+                //   ticks = (elapsed_ns * FREQ) / 1e9
+                //   remainder = (elapsed_ns * FREQ) % 1e9
+                //
+                // Restore `elapsed_ns` from `(ticks_mod, remainder)` by selecting a wrap count `k`
+                // such that:
+                //   (ticks_mod + k*2^24) * 1e9 + remainder
+                // is divisible by `FREQ`.
+                let remainder = rem as u128;
+                let mod_ticks = (u128::from(PM_TIMER_MASK_24BIT) + 1) as u128;
+                let freq = PM_TIMER_FREQUENCY_HZ;
+
+                let a = mod_ticks.saturating_mul(NS_PER_SEC);
+                let b = ticks_mod.saturating_mul(NS_PER_SEC).saturating_add(remainder);
+                let g = gcd_u128(a, freq);
+
+                if b % g == 0 {
+                    let m = freq / g;
+                    let a_mod = ((a / g) % m) as i128;
+                    let b_mod = ((b / g) % m) as i128;
+                    if let Some(inv) = modinv(a_mod, m as i128) {
+                        let rhs = (m as i128 - b_mod).rem_euclid(m as i128);
+                        let k = (rhs * inv).rem_euclid(m as i128) as u128;
+                        let ticks_total = ticks_mod.saturating_add(k.saturating_mul(mod_ticks));
+                        let numer = ticks_total.saturating_mul(NS_PER_SEC).saturating_add(remainder);
+                        let elapsed_ns = numer / freq;
+                        self.timer_base_ns = now.wrapping_sub(elapsed_ns as u64);
+                    } else {
+                        // Fall back to restoring the visible tick counter only.
+                        let numer = ticks_mod.saturating_mul(NS_PER_SEC);
+                        let elapsed_ns = numer
+                            .saturating_add(freq.saturating_sub(1))
+                            / freq;
+                        self.timer_base_ns = now.wrapping_sub(elapsed_ns as u64);
+                    }
+                } else {
+                    // Fall back to restoring the visible tick counter only.
+                    let numer = ticks_mod.saturating_mul(NS_PER_SEC);
+                    let elapsed_ns = numer
+                        .saturating_add(freq.saturating_sub(1))
+                        / freq;
+                    self.timer_base_ns = now.wrapping_sub(elapsed_ns as u64);
+                }
+            } else {
+                // Restore the visible tick counter only (no fractional remainder).
+                let numer = ticks_mod.saturating_mul(NS_PER_SEC);
+                let elapsed_ns = numer
+                    .saturating_add(PM_TIMER_FREQUENCY_HZ.saturating_sub(1))
+                    / PM_TIMER_FREQUENCY_HZ;
+                let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
+                self.timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
+            }
         }
         self.timer_last_clock_ns = now;
 

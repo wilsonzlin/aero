@@ -268,3 +268,40 @@ fn snapshot_load_samples_clock_once_for_timer_restore() {
         "ticks-only ACPI PM load_state should sample Clock::now_ns once"
     );
 }
+
+#[test]
+fn snapshot_restore_from_ticks_and_remainder_without_elapsed_ns_preserves_phase() {
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const TAG_PM_TIMER_REMAINDER: u16 = 9;
+
+    let cfg = AcpiPmConfig::default();
+
+    // Create a timer state that is just shy of the first tick, so advancing by 1ns crosses the
+    // tick boundary. This makes it easy to detect whether fractional remainder was restored.
+    let mut pm = AcpiPmIo::new(cfg);
+    pm.advance_ns(279); // 279ns < 1 tick, but 279ns * 3.579545MHz is close to 1e9.
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF, 0);
+
+    let snap = pm.save_state();
+    let r = SnapshotReader::parse(&snap, *b"ACPM").unwrap();
+    let ticks = r.u32(TAG_PM_TIMER_TICKS).unwrap().unwrap();
+    let remainder = r.u32(TAG_PM_TIMER_REMAINDER).unwrap().unwrap();
+
+    // Build a snapshot that omits the preferred `elapsed_ns` field, forcing the restore path to
+    // reconstruct the timer from `(ticks, remainder)`.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, ticks);
+    w.field_u32(TAG_PM_TIMER_REMAINDER, remainder);
+    let bytes = w.finish();
+
+    let mut restored = AcpiPmIo::new(cfg);
+    restored.load_state(&bytes).unwrap();
+    assert_eq!(restored.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF, 0);
+
+    restored.advance_ns(1);
+    assert_eq!(
+        restored.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF,
+        1,
+        "restored PM_TMR must preserve sub-tick remainder (1ns should cross the first tick boundary)"
+    );
+}
