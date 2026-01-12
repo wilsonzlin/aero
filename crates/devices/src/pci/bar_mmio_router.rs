@@ -1,6 +1,63 @@
 use crate::pci::{PciBarKind, PciBdf, SharedPciConfigPorts};
 use memory::MmioHandler;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
+
+/// A minimal MMIO handler interface for a single PCI BAR.
+///
+/// This trait intentionally mirrors [`memory::MmioHandler`], but is scoped to PCI BAR routing so
+/// device models can be adapted without being tightly coupled to the platform bus.
+pub trait PciBarMmioHandler {
+    fn read(&mut self, offset: u64, size: usize) -> u64;
+    fn write(&mut self, offset: u64, size: usize, value: u64);
+}
+
+impl<T: MmioHandler> PciBarMmioHandler for T {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        MmioHandler::read(self, offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        MmioHandler::write(self, offset, size, value)
+    }
+}
+
+/// Adapter to register an `Rc<RefCell<T>>` as a BAR MMIO handler.
+///
+/// This avoids coherence issues that would arise from implementing [`PciBarMmioHandler`] directly
+/// for `Rc<RefCell<T>>` alongside a blanket impl for all `T: memory::MmioHandler`.
+pub struct SharedPciBarMmioHandler<T>(pub Rc<RefCell<T>>);
+
+impl<T> SharedPciBarMmioHandler<T> {
+    pub fn new(inner: Rc<RefCell<T>>) -> Self {
+        Self(inner)
+    }
+}
+
+impl<T: PciBarMmioHandler> PciBarMmioHandler for SharedPciBarMmioHandler<T> {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.0.borrow_mut().read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.0.borrow_mut().write(offset, size, value)
+    }
+}
+
+struct PciBarMmioHandlerAdapter<H> {
+    inner: H,
+}
+
+impl<H: PciBarMmioHandler> MmioHandler for PciBarMmioHandlerAdapter<H> {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.inner.read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.inner.write(offset, size, value)
+    }
+}
 
 /// Routes accesses within a fixed PCI MMIO aperture to registered PCI BAR MMIO handlers.
 ///
@@ -28,6 +85,29 @@ impl PciBarMmioRouter {
             pci_cfg,
             bars: BTreeMap::new(),
         }
+    }
+
+    /// Registers a handler for the given PCI BAR.
+    ///
+    /// This is a convenience wrapper around [`PciBarMmioRouter::register_bar`] that accepts any
+    /// [`PciBarMmioHandler`].
+    pub fn register_handler<H>(&mut self, bdf: PciBdf, bar_index: u8, handler: H)
+    where
+        H: PciBarMmioHandler + 'static,
+    {
+        self.register_bar(
+            bdf,
+            bar_index,
+            Box::new(PciBarMmioHandlerAdapter { inner: handler }),
+        );
+    }
+
+    /// Registers a handler for the given PCI BAR backed by an `Rc<RefCell<T>>`.
+    pub fn register_shared_handler<T>(&mut self, bdf: PciBdf, bar_index: u8, handler: Rc<RefCell<T>>)
+    where
+        T: PciBarMmioHandler + 'static,
+    {
+        self.register_handler(bdf, bar_index, SharedPciBarMmioHandler::new(handler));
     }
 
     /// Registers an MMIO handler for the given PCI BAR.
@@ -257,7 +337,7 @@ mod tests {
         let off0 = (bar0_base0 - window_base) + dev_offset;
 
         // Reads float high when MEM decoding disabled.
-        let got = router.read(off0, 4);
+        let got = MmioHandler::read(&mut router, off0, 4);
         assert_eq!(got, all_ones(4));
         assert!(state.lock().unwrap().reads.is_empty());
 
@@ -267,8 +347,8 @@ mod tests {
             cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
         }
 
-        router.write(off0, 4, 0x1122_3344);
-        let got = router.read(off0, 4);
+        MmioHandler::write(&mut router, off0, 4, 0x1122_3344);
+        let got = MmioHandler::read(&mut router, off0, 4);
         assert_eq!(got, 0x1122_3344);
 
         {
@@ -291,10 +371,10 @@ mod tests {
         }
 
         let off1 = (bar0_base1 - window_base) + dev_offset;
-        let got_new = router.read(off1, 4);
+        let got_new = MmioHandler::read(&mut router, off1, 4);
         assert_eq!(got_new, 0x1122_3344);
 
-        let got_old = router.read(off0, 4);
+        let got_old = MmioHandler::read(&mut router, off0, 4);
         assert_eq!(got_old, all_ones(4));
 
         // Programming BAR0 to zero should behave as unmapped.
@@ -302,7 +382,7 @@ mod tests {
             let mut cfg_ports_mut = cfg_ports.borrow_mut();
             cfg_ports_mut.bus_mut().write_config(bdf, 0x10, 4, 0);
         }
-        let got_zero = router.read(off1, 4);
+        let got_zero = MmioHandler::read(&mut router, off1, 4);
         assert_eq!(got_zero, all_ones(4));
     }
 }

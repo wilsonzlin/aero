@@ -42,10 +42,10 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBdf, PciConfigPorts,
-    PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter,
-    PciIntxRouterConfig,
-    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBarMmioHandler,
+    PciBarMmioRouter, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -60,7 +60,7 @@ use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE,
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;
-use aero_pc_platform::{PciBarMmioHandler, PciBarMmioRouter, PciIoBarHandler, PciIoBarRouter};
+use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterrupts,
