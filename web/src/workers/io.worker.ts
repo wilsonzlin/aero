@@ -629,7 +629,9 @@ function maybeInitE1000Device(): void {
 
   let bridge: E1000Bridge;
   try {
-    bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
+    // Pass an explicit `undefined` for the optional MAC argument so we don't rely on
+    // wasm-bindgen constructor arity quirks.
+    bridge = new Bridge(guestBase >>> 0, guestSize >>> 0, undefined);
   } catch (err) {
     console.warn("[io.worker] Failed to initialize E1000 bridge", err);
     return;
