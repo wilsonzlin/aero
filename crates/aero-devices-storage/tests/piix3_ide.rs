@@ -259,6 +259,136 @@ fn ata_bus_master_dma_read_write_roundtrip() {
     assert_eq!(out, pattern);
 }
 
+#[test]
+fn bus_master_status_register_is_rw1c_for_irq_and_error_bits() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[..4].copy_from_slice(b"OKAY");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+
+    // PRD table: one entry, end-of-table, 512 bytes.
+    mem.write_u32(prd_addr, read_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+
+    let bm_base = ide.borrow().bus_master_base();
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Successful READ DMA (LBA 0, 1 sector).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+    ioports.write(bm_base, 1, 0x09); // start + read (device -> memory)
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x04, "interrupt should be set, active/error clear");
+
+    // Clear interrupt (RW1C).
+    ioports.write(bm_base + 2, 1, 0x04);
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x00, "interrupt bit should clear via RW1C");
+
+    // Now trigger an error via missing EOT PRD: 512 bytes but no end-of-table bit.
+    mem.write_u32(prd_addr, read_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x0000); // no EOT
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(
+        st & 0x07,
+        0x06,
+        "error + interrupt should be set on DMA failure"
+    );
+
+    // Clear error (RW1C) should not clear interrupt.
+    ioports.write(bm_base + 2, 1, 0x02);
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x04, "clearing error should preserve interrupt");
+
+    // Clear interrupt as well.
+    ioports.write(bm_base + 2, 1, 0x04);
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x00);
+}
+
+#[test]
+fn prd_byte_count_zero_encodes_64kib_transfer() {
+    // 128 sectors * 512 bytes = 65536 bytes.
+    let sectors: u64 = 128;
+    let capacity = sectors * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut pattern = vec![0u8; capacity as usize];
+    for (i, b) in pattern.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(1);
+    }
+    disk.write_sectors(0, &pattern).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+
+    // One PRD entry: byte_count = 0 => 64KiB, end-of-table.
+    mem.write_u32(prd_addr, read_buf as u32);
+    mem.write_u16(prd_addr + 4, 0);
+    mem.write_u16(prd_addr + 6, 0x8000);
+
+    let bm_base = ide.borrow().bus_master_base();
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // READ DMA for LBA 0, 128 sectors.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, sectors as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let mut out = vec![0u8; capacity as usize];
+    mem.read_physical(read_buf, &mut out);
+    assert_eq!(out, pattern);
+}
+
 #[derive(Debug)]
 struct MemIso {
     sector_count: u32,

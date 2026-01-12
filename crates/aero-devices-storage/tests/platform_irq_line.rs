@@ -26,6 +26,7 @@ fn ide_controller_accepts_platform_irq_lines() {
     let irq14 = PlatformIrqLine::isa(interrupts.clone(), 14);
     let irq15 = PlatformIrqLine::isa(interrupts, 15);
 
+    // Construction should compile and not panic.
     let mut ide = IdeController::new(Box::new(irq14), Box::new(irq15));
 
     // Simple IO reads/writes should compile and run with platform IRQ lines.
