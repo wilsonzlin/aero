@@ -304,7 +304,7 @@ pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
     // - the fixed PCI MMIO aperture start, so PCI BARs never overlap guest RAM.
     let max_guest_pages_by_wasm = guest_layout::MAX_WASM32_PAGES.saturating_sub(base_pages);
     let max_guest_bytes_by_wasm = max_guest_pages_by_wasm * guest_layout::WASM_PAGE_BYTES;
-    let max_guest_bytes = max_guest_bytes_by_wasm.min(guest_layout::PCI_MMIO_BASE);
+    let max_guest_bytes = max_guest_bytes_by_wasm.min(guest_layout::GUEST_PCI_MMIO_BASE);
 
     // `desired_bytes` is u32 so it cannot represent 4GiB; align up safely in u64.
     let desired_bytes_aligned =

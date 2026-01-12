@@ -433,6 +433,7 @@ describe("io/bus/pci", () => {
 
     let ptr = cfg.readU8(0, 0, 0x34);
     // Capability lists live after the standard 0x40-byte type-0 header.
+    // The PCI bus installs capabilities starting at 0x40 with 4-byte aligned pointers.
     expect(ptr).toBe(0x40);
     expect(ptr % 4).toBe(0);
 

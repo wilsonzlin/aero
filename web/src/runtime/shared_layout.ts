@@ -155,6 +155,19 @@ const WASM_PAGE_BYTES = 64 * 1024;
 const MAX_WASM32_PAGES = 65536;
 
 /**
+ * Guest-physical base of the PCI MMIO aperture.
+ *
+ * Guest RAM is clamped to lie strictly below this address so that any access to
+ * `paddr >= GUEST_PCI_MMIO_BASE` is routed to MMIO handlers instead of silently
+ * hitting RAM.
+ *
+ * NOTE: Keep this in sync with:
+ * - `web/src/arch/guest_phys.ts` (`PCI_MMIO_BASE`).
+ * - `crates/aero-wasm/src/guest_layout.rs` (`GUEST_PCI_MMIO_BASE`).
+ */
+export const GUEST_PCI_MMIO_BASE = PCI_MMIO_BASE;
+
+/**
  * Fixed low-address region reserved for the Rust/WASM runtime (stack, heap,
  * static data, wasm-bindgen metadata, etc.).
  *
@@ -299,7 +312,7 @@ export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout
   const basePages = Math.floor(guestBase / WASM_PAGE_BYTES);
   const maxGuestPagesByWasm = Math.max(0, MAX_WASM32_PAGES - basePages);
   const maxGuestBytesByWasm = maxGuestPagesByWasm * WASM_PAGE_BYTES;
-  const maxGuestBytes = Math.min(maxGuestBytesByWasm, PCI_MMIO_BASE);
+  const maxGuestBytes = Math.min(maxGuestBytesByWasm, GUEST_PCI_MMIO_BASE);
 
   const desiredPages = bytesToPages(Math.min(desired, maxGuestBytes));
   const totalPages = basePages + desiredPages;

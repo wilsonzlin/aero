@@ -26,6 +26,11 @@ pub const RUNTIME_RESERVED_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 /// NOTE: Keep this in sync with `web/src/arch/guest_phys.ts` (`PCI_MMIO_BASE`).
 pub const PCI_MMIO_BASE: u64 = 0xE000_0000;
 
+/// Guest-physical base of the PCI MMIO aperture.
+///
+/// NOTE: Keep this in sync with `web/src/runtime/shared_layout.ts` (`GUEST_PCI_MMIO_BASE`).
+pub const GUEST_PCI_MMIO_BASE: u64 = PCI_MMIO_BASE;
+
 pub const fn align_up(value: u64, alignment: u64) -> u64 {
     if alignment == 0 {
         return value;
