@@ -114,6 +114,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         }
 
         let table_entries = div_ceil_u64(cfg.disk_size_bytes, block_size)?;
+        let table_entries_usize: usize = table_entries
+            .try_into()
+            .map_err(|_| DiskError::InvalidConfig("allocation table too large"))?;
         let table_bytes = table_entries
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
@@ -135,7 +138,7 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         Ok(Self {
             backend,
             header,
-            table: vec![0; table_entries as usize],
+            table: vec![0; table_entries_usize],
         })
     }
 
@@ -188,7 +191,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .checked_add(expected_table_bytes)
             .ok_or(DiskError::OffsetOverflow)?;
         if backend_len < table_end {
-            return Err(DiskError::CorruptSparseImage("allocation table out of bounds"));
+            return Err(DiskError::CorruptSparseImage(
+                "allocation table out of bounds",
+            ));
         }
         if backend_len < header.data_offset {
             return Err(DiskError::CorruptSparseImage("data region out of bounds"));
@@ -215,8 +220,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         }
 
         // Read allocation table.
-        let expected_table_bytes_usize: usize =
-            expected_table_bytes.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        let expected_table_bytes_usize: usize = expected_table_bytes
+            .try_into()
+            .map_err(|_| DiskError::OffsetOverflow)?;
         let table_entries_usize: usize = header
             .table_entries
             .try_into()
@@ -226,6 +232,33 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         let mut table = Vec::with_capacity(table_entries_usize);
         for chunk in table_bytes.chunks_exact(8) {
             table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+
+        // Validate allocation table entries; corrupt entries can otherwise trigger huge writes
+        // (e.g. MemBackend attempting to resize to a bogus physical offset).
+        for &phys in &table {
+            if phys == 0 {
+                continue;
+            }
+            if phys < header.data_offset {
+                return Err(DiskError::CorruptSparseImage(
+                    "data block offset before data region",
+                ));
+            }
+            let rel = phys - header.data_offset;
+            if rel % block_size != 0 {
+                return Err(DiskError::CorruptSparseImage(
+                    "misaligned data block offset",
+                ));
+            }
+            let phys_end = phys
+                .checked_add(block_size)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if phys_end > expected_min_len {
+                return Err(DiskError::CorruptSparseImage(
+                    "data block offset out of bounds",
+                ));
+            }
         }
 
         Ok(Self {
@@ -375,8 +408,9 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
         checked_range(offset, buf.len(), self.capacity_bytes())?;
 
         let block_size = self.header.block_size_u64();
-        let block_size_usize: usize =
-            block_size.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        let block_size_usize: usize = block_size
+            .try_into()
+            .map_err(|_| DiskError::OffsetOverflow)?;
         let mut pos = 0usize;
         while pos < buf.len() {
             let abs = offset + pos as u64;
