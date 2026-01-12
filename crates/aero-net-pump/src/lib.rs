@@ -1198,6 +1198,9 @@ mod tests {
         let mut nic = E1000Device::new(guest_mac_bytes);
         // The E1000 model gates all DMA on PCI COMMAND.BME (bit 2).
         nic.pci_config_write(0x04, 2, 0x4);
+        // Enable a basic interrupt mask so we can assert `irq_level()` transitions when ICR is set
+        // and then cleared on read.
+        nic.mmio_write_u32_reg(0x00D0, aero_net_e1000::ICR_TXDW | aero_net_e1000::ICR_RXT0); // IMS
 
         configure_tx_ring(&mut nic, 0x1000, 4);
 
@@ -1271,6 +1274,10 @@ mod tests {
             discover_frame,
             "E1000 TX DMA must not modify the guest TX buffer"
         );
+        assert!(
+            nic.irq_level(),
+            "expected E1000 irq_level asserted when ICR bits are set and IMS enables them"
+        );
         let icr0 = nic.mmio_read_u32(0x00C0);
         assert_ne!(
             icr0 & aero_net_e1000::ICR_TXDW,
@@ -1281,6 +1288,15 @@ mod tests {
             icr0 & aero_net_e1000::ICR_RXT0,
             0,
             "expected RXT0 interrupt cause after DHCP OFFER delivery (icr={icr0:#010x})"
+        );
+        assert!(
+            !nic.irq_level(),
+            "expected E1000 irq_level deasserted after reading ICR (which clears it)"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x00C0),
+            0,
+            "ICR should be cleared after read"
         );
         assert!(
             !backend.stack().is_ip_assigned(),
@@ -1489,6 +1505,10 @@ mod tests {
             request_frame,
             "E1000 TX DMA must not modify the DHCPREQUEST TX buffer"
         );
+        assert!(
+            nic.irq_level(),
+            "expected E1000 irq_level asserted when ICR bits are set and IMS enables them"
+        );
         let icr1 = nic.mmio_read_u32(0x00C0);
         assert_ne!(
             icr1 & aero_net_e1000::ICR_TXDW,
@@ -1499,6 +1519,15 @@ mod tests {
             icr1 & aero_net_e1000::ICR_RXT0,
             0,
             "expected RXT0 interrupt cause after DHCP ACK delivery (icr={icr1:#010x})"
+        );
+        assert!(
+            !nic.irq_level(),
+            "expected E1000 irq_level deasserted after reading ICR (which clears it)"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x00C0),
+            0,
+            "ICR should be cleared after read"
         );
 
         let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
