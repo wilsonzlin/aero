@@ -14,6 +14,11 @@ fn snapshot_round_trip_preserves_pci_config_ports_and_interrupt_controller_state
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
+        // Keep this test focused on PCI + interrupt controller state.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
         ..Default::default()
     };
 
@@ -46,11 +51,13 @@ fn snapshot_round_trip_preserves_pci_config_ports_and_interrupt_controller_state
     restored.restore_snapshot_bytes(&snap).unwrap();
 
     // Confirm the PCI config address register and the modified COMMAND value survived snapshot.
+    assert_eq!(restored.io_read(0xCF8, 4), cfg_addr);
     assert_eq!(restored.io_read(0xCFC, 2) as u16, command);
 
     // Confirm PIC mask survived.
     assert_eq!(restored.io_read(0x21, 1) as u8, pic_mask);
 
     // Confirm IMCR select+data survived (read depends on latched selector).
+    assert_eq!(restored.io_read(0x22, 1) as u8, 0x70);
     assert_eq!(restored.io_read(0x23, 1) as u8, 0x01);
 }
