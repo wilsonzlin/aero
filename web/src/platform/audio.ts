@@ -500,10 +500,29 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     });
   }
 
-  const sampleRate = options.sampleRate ?? 48_000;
+  // Treat all host-provided options as untrusted: validate to avoid propagating NaNs/Infs into
+  // AudioContext construction or ring buffer sizing.
+  const requestedSampleRate = options.sampleRate ?? 48_000;
+  const sampleRate = Number.isFinite(requestedSampleRate) && requestedSampleRate > 0 ? requestedSampleRate : 48_000;
   const latencyHint = options.latencyHint ?? "interactive";
-  const channelCount = options.channelCount ?? 2;
-  const context = new AudioContextCtor({ sampleRate, latencyHint });
+  const requestedChannelCount = options.channelCount ?? 2;
+  const channelCount =
+    Number.isFinite(requestedChannelCount) && requestedChannelCount > 0
+      ? Math.max(1, Math.min(2, Math.floor(requestedChannelCount)))
+      : 2;
+
+  let context: AudioContext;
+  try {
+    context = new AudioContextCtor({ sampleRate, latencyHint });
+  } catch (err) {
+    return createDisabledAudioOutput({
+      message:
+        err instanceof Error
+          ? `Failed to create AudioContext: ${err.message}`
+          : "Failed to create AudioContext.",
+      sampleRate,
+    });
+  }
   const actualSampleRate = context.sampleRate;
 
   // Call resume() immediately (before any await) to satisfy autoplay policies.
@@ -513,14 +532,14 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   // subsequent initialization failure.
   void resumePromise.catch(() => {});
 
-  const ringBufferFrames =
-    options.ringBufferFrames ??
-    (options.ringBuffer
-      ? inferRingBufferFrames(options.ringBuffer, channelCount)
-      : getDefaultRingBufferFrames(actualSampleRate));
-
   let ringBuffer: AudioRingBufferLayout;
+  let ringBufferFrames: number;
   try {
+    ringBufferFrames =
+      options.ringBufferFrames ??
+      (options.ringBuffer
+        ? inferRingBufferFrames(options.ringBuffer, channelCount)
+        : getDefaultRingBufferFrames(actualSampleRate));
     ringBuffer = options.ringBuffer
       ? wrapRingBuffer(options.ringBuffer, channelCount, ringBufferFrames)
       : createRingBuffer(channelCount, ringBufferFrames);
