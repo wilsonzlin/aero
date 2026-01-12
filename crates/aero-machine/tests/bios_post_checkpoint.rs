@@ -19,8 +19,9 @@ fn build_serial_boot_sector(message: &[u8]) -> [u8; 512] {
         i += 1;
     }
 
-    // hlt
-    sector[i] = 0xF4;
+    // cli; hlt (avoid waking due to platform interrupts once timers are enabled)
+    sector[i] = 0xFA;
+    sector[i + 1] = 0xF4;
 
     sector[510] = 0x55;
     sector[511] = 0xAA;

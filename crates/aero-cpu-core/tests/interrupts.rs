@@ -128,6 +128,38 @@ fn hlt_is_cleared_when_an_external_interrupt_is_delivered() -> Result<(), CpuExi
 }
 
 #[test]
+fn real_mode_external_interrupt_records_pending_bios_int_for_hlt_stub_hypercall() -> Result<(), CpuExit>
+{
+    let mut mem = FlatTestBus::new(0x20000);
+
+    // IVT[0x08] -> 0000:1000
+    let vector = 0x08u8;
+    let ivt_addr = (vector as u64) * 4;
+    mem.write_u16(ivt_addr, 0x1000).unwrap();
+    mem.write_u16(ivt_addr + 2, 0x0000).unwrap();
+    // BIOS-style stub `HLT; IRET` at 0000:1000.
+    mem.write_u8(0x1000, 0xF4).unwrap();
+    mem.write_u8(0x1001, 0xCF).unwrap();
+
+    let mut cpu = CpuCore::new(CpuMode::Real);
+    cpu.state.write_reg(Register::CS, 0);
+    cpu.state.write_reg(Register::SS, 0);
+    cpu.state.write_reg(Register::SP, 0x8000);
+    cpu.state.set_rflags(0x0202); // IF=1
+
+    cpu.pending.inject_external_interrupt(vector);
+    cpu.deliver_external_interrupt(&mut mem)?;
+
+    assert!(
+        cpu.state.pending_bios_int_valid,
+        "external interrupts in real mode should record a pending BIOS vector so default ROM stubs (HLT; IRET) do not deadlock"
+    );
+    assert_eq!(cpu.state.pending_bios_int, vector);
+
+    Ok(())
+}
+
+#[test]
 fn int_protected_mode_cpl3_to_cpl0_stack_switch_and_iret_restore() -> Result<(), CpuExit> {
     let mut mem = FlatTestBus::new(0x20000);
 

@@ -346,6 +346,9 @@ fn tier0_cpu_core_runner_delivers_external_interrupt_after_sti_shadow() {
     let cfg = Tier0Config::default();
     let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
 
+    // In real/v8086 mode the emulator records externally delivered vectors as pending BIOS
+    // interrupts so the firmware's default IVT stubs (`HLT; IRET`) can be surfaced as BIOS
+    // hypercalls rather than deadlocking (IF is cleared on interrupt entry).
     assert_eq!(res.exit, BatchExit::BiosInterrupt(0x20));
     assert_eq!(res.executed, 3);
     assert_eq!(cpu.state.rip(), HANDLER_BASE + 1);
