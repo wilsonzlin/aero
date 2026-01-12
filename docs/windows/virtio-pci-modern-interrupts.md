@@ -564,12 +564,12 @@ At PASSIVE_LEVEL (e.g. device reset / D0Exit):
 1. Set an atomic `ResetInProgress = TRUE` flag (DPCs bail out early).
 2. Disable OS interrupt delivery (`WdfInterruptDisable` on each interrupt object).
 3. Disable device-side routing:
-   * program `msix_config = 0xFFFF`
-   * for each queue: `queue_select = q; queue_msix_vector = 0xFFFF`
+   * program `msix_config = VIRTIO_PCI_MSI_NO_VECTOR`
+   * for each queue: `queue_select = q; queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR`
 4. Synchronize with in-flight DPC work:
    * acquire+release each queue lock once (waits for any running DPC to leave its critical section)
 5. Reset / reinitialize device and queues.
-6. Reprogram vectors (after reset) and verify read-back != `0xFFFF`.
+6. Reprogram vectors (after reset) and verify read-back != `VIRTIO_PCI_MSI_NO_VECTOR`.
 7. Re-enable OS interrupt delivery (`WdfInterruptEnable`).
 8. Clear `ResetInProgress` only when queues are fully ready.
 
