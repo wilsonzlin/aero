@@ -258,6 +258,52 @@ describe("RemoteChunkedDisk", () => {
     }
   });
 
+  it("rejects chunk responses with Content-Length larger than the manifest size", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const fetchFn = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("manifest.json")) {
+        return new Response(JSON.stringify(manifest), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/chunks/0.bin")) {
+        return new Response(new Uint8Array(chunkSize), {
+          status: 200,
+          headers: { "content-length": String(chunkSize + 1) },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = fetchFn as unknown as typeof fetch;
+    try {
+      const disk = await RemoteChunkedDisk.open("https://example.invalid/manifest.json", { store: new TestMemoryStore() });
+
+      await expect(disk.readSectors(0, new Uint8Array(chunkSize))).rejects.toHaveProperty("name", "ResponseTooLargeError");
+
+      const chunkCalls = fetchFn.mock.calls.filter(([arg]) => String(arg).includes("/chunks/0.bin")).length;
+      expect(chunkCalls).toBe(1);
+    } finally {
+      (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
   it("rejects excessive prefetchSequentialChunks", async () => {
     await expect(
       RemoteChunkedDisk.open("https://example.invalid/manifest.json", {

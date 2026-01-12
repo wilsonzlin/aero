@@ -11,6 +11,7 @@ import {
 } from "./disk_access_lease";
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
 import { RemoteCacheManager, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } from "./remote_cache_manager";
+import { readResponseBytesWithLimit, ResponseTooLargeError } from "./response_json";
 
 // Keep in sync with the Rust snapshot bounds where sensible.
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -430,6 +431,7 @@ function isRetryableHttpStatus(status: number): boolean {
 
 function isRetryableError(err: unknown): boolean {
   if (err instanceof RemoteValidatorMismatchError) return false;
+  if (err instanceof ResponseTooLargeError) return false;
   if (err instanceof HttpStatusError) return isRetryableHttpStatus(err.status);
   if (isAbortError(err)) return false;
   // Most other errors are treated as retryable because they might be transient (network or CDN hiccup).
@@ -497,7 +499,7 @@ async function probeRemoteImage(
     sizeBytes = parsed.total;
 
     // Ensure the body matches the probed range; avoid trusting the header alone.
-    const body = new Uint8Array(await probe.arrayBuffer());
+    const body = await readResponseBytesWithLimit(probe, { maxBytes: 1, label: "range probe body" });
     if (body.byteLength !== 1) {
       throw new Error(`Range probe returned unexpected body length ${body.byteLength} (expected 1)`);
     }
@@ -1335,7 +1337,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       }
     }
 
-    const body = new Uint8Array(await resp.arrayBuffer());
+    const body = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: `range chunk ${chunkIndex}` });
     if (generation === this.cacheGeneration) {
       this.telemetry.bytesDownloaded += body.byteLength;
     }

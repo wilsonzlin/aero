@@ -4,7 +4,7 @@ import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk }
 import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
 import { RemoteCacheManager, remoteChunkedDeliveryType, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
-import { readJsonResponseWithLimit } from "./response_json";
+import { readJsonResponseWithLimit, readResponseBytesWithLimit, ResponseTooLargeError } from "./response_json";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
   DiskAccessLeaseRefresher,
@@ -1393,6 +1393,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   }
 
   private shouldRetry(err: unknown): boolean {
+    if (err instanceof ResponseTooLargeError) return false;
     if (err instanceof IntegrityError) return true;
     if (err instanceof ChunkFetchError) {
       if (err.status === 429) return true;
@@ -1422,7 +1423,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     if (!resp.ok) {
       throw new ChunkFetchError(`chunk fetch failed: ${resp.status}`, resp.status);
     }
-    const bytes = toArrayBufferUint8(new Uint8Array(await resp.arrayBuffer()));
+    const bytes = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: `chunk ${chunkIndex}` });
     if (bytes.length !== expectedLen) {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.length}`);
     }

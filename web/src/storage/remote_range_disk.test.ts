@@ -393,6 +393,68 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("rejects oversized Range bodies without retrying", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+    let rangeGets = 0;
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+        const expectedLen = endExclusive - start;
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            // Deliberately lie: indicate a larger body than requested. The client must not
+            // attempt to download an arbitrarily large response.
+            "Content-Length": String(expectedLen + 1),
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "oversized-range-body", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      maxRetries: 10,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+      fetchFn,
+    });
+
+    await expect(disk.readSectors(0, new Uint8Array(chunkSize))).rejects.toHaveProperty("name", "ResponseTooLargeError");
+    expect(rangeGets).toBe(1);
+    await disk.close();
+  });
+
   it("rejects chunk sizes larger than 64MiB", async () => {
     const chunkSize = 128 * 1024 * 1024;
     await expect(

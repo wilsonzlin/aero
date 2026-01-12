@@ -10,6 +10,7 @@ import {
   fetchWithDiskAccessLease,
   type DiskAccessLease,
 } from "../storage/disk_access_lease.ts";
+import { readResponseBytesWithLimit } from "../storage/response_json.ts";
 
 export type ByteRange = { start: number; end: number };
 
@@ -1075,7 +1076,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
     }
 
-    const buf = new Uint8Array(await resp.arrayBuffer());
+    const buf = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: "range response body" });
     if (buf.length !== expectedLen) {
       throw new Error(`Unexpected range length: expected ${expectedLen}, got ${buf.length}`);
     }

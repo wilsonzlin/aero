@@ -17,6 +17,28 @@ async function cancelBody(resp: Response): Promise<void> {
   }
 }
 
+export class ResponseTooLargeError extends Error {
+  override name = "ResponseTooLargeError";
+
+  readonly maxBytes: number;
+  readonly contentLength: number | null;
+  readonly actualBytes: number | null;
+
+  constructor(opts: { label: string; maxBytes: number; contentLength?: number | null; actualBytes?: number | null }) {
+    const parts: string[] = [`max=${opts.maxBytes}`];
+    if (opts.contentLength !== undefined && opts.contentLength !== null) {
+      parts.push(`content-length=${opts.contentLength}`);
+    }
+    if (opts.actualBytes !== undefined && opts.actualBytes !== null) {
+      parts.push(`actual=${opts.actualBytes}`);
+    }
+    super(`${opts.label} too large: ${parts.join(" ")}`);
+    this.maxBytes = opts.maxBytes;
+    this.contentLength = opts.contentLength ?? null;
+    this.actualBytes = opts.actualBytes ?? null;
+  }
+}
+
 export async function readResponseBytesWithLimit(
   resp: Response,
   opts: { maxBytes: number; label: string },
@@ -29,14 +51,14 @@ export async function readResponseBytesWithLimit(
   const contentLength = parsePositiveIntHeader(resp.headers.get("content-length"));
   if (contentLength !== null && contentLength > maxBytes) {
     await cancelBody(resp);
-    throw new Error(`${opts.label} too large: max=${maxBytes} content-length=${contentLength}`);
+    throw new ResponseTooLargeError({ label: opts.label, maxBytes, contentLength });
   }
 
   // If `body` is missing, fall back to `arrayBuffer()` (should be rare for JSON responses).
   if (!resp.body) {
     const buf = await resp.arrayBuffer();
     if (buf.byteLength > maxBytes) {
-      throw new Error(`${opts.label} too large: max=${maxBytes} actual=${buf.byteLength}`);
+      throw new ResponseTooLargeError({ label: opts.label, maxBytes, actualBytes: buf.byteLength });
     }
     return new Uint8Array(buf);
   }
@@ -56,7 +78,7 @@ export async function readResponseBytesWithLimit(
         } catch {
           // ignore
         }
-        throw new Error(`${opts.label} too large: max=${maxBytes}`);
+        throw new ResponseTooLargeError({ label: opts.label, maxBytes });
       }
       chunks.push(value);
     }
@@ -87,4 +109,3 @@ export async function readJsonResponseWithLimit(resp: Response, opts: { maxBytes
     throw new Error(`${opts.label} is not valid JSON (${err instanceof Error ? err.message : String(err)})`);
   }
 }
-
