@@ -232,42 +232,52 @@ export async function request_screenshot_info(): Promise<ScreenshotInfo> {
 // Optional diagnostics exports (best-effort; may be missing on older bundles)
 // -----------------------------------------------------------------------------
 
-export function get_gpu_stats(): unknown | undefined {
-  let mod: RawAeroGpuWasmModule;
-  try {
-    mod = requireLoaded();
-  } catch {
-    return undefined;
+function wrapNonThrowing(result: unknown): unknown | undefined {
+  // Some wasm-bindgen exports are async and return a promise. Ensure telemetry
+  // wrappers never throw by converting rejections into `undefined`.
+  if (result && typeof (result as { then?: unknown }).then === "function") {
+    return (result as PromiseLike<unknown>).then(
+      (value) => value,
+      () => undefined,
+    );
   }
+  return result;
+}
 
-  const fn = (mod.get_gpu_stats ?? mod.getGpuStats) as (() => unknown) | undefined;
-  if (typeof fn !== "function") return undefined;
+export function get_gpu_stats(): unknown | undefined {
   try {
-    return fn();
+    const mod = requireLoaded();
+    const fn =
+      typeof mod.get_gpu_stats === "function"
+        ? (mod.get_gpu_stats as () => unknown)
+        : typeof mod.getGpuStats === "function"
+          ? (mod.getGpuStats as () => unknown)
+          : null;
+    if (!fn) return undefined;
+    return wrapNonThrowing(fn());
   } catch {
     return undefined;
   }
 }
 
-export function drain_gpu_events(): unknown {
-  let mod: RawAeroGpuWasmModule;
+export function drain_gpu_events(): unknown | undefined {
   try {
-    mod = requireLoaded();
+    const mod = requireLoaded();
+    const fn =
+      typeof mod.drain_gpu_events === "function"
+        ? (mod.drain_gpu_events as () => unknown)
+        : typeof mod.drain_gpu_error_events === "function"
+          ? (mod.drain_gpu_error_events as () => unknown)
+          : typeof mod.take_gpu_events === "function"
+            ? (mod.take_gpu_events as () => unknown)
+            : typeof mod.take_gpu_error_events === "function"
+              ? (mod.take_gpu_error_events as () => unknown)
+              : typeof mod.drainGpuEvents === "function"
+                ? (mod.drainGpuEvents as () => unknown)
+                : null;
+    if (!fn) return undefined;
+    return wrapNonThrowing(fn());
   } catch {
-    return [];
-  }
-
-  const fn = (
-    mod.drain_gpu_events ??
-    mod.drain_gpu_error_events ??
-    mod.take_gpu_events ??
-    mod.take_gpu_error_events ??
-    mod.drainGpuEvents
-  ) as (() => unknown) | undefined;
-  if (typeof fn !== "function") return [];
-  try {
-    return fn();
-  } catch {
-    return [];
+    return undefined;
   }
 }
