@@ -599,8 +599,11 @@ impl IdeController {
 
     fn decode_bus_master(&self, port: u16) -> Option<(usize, u16)> {
         let base = self.bus_master_base;
-        if port >= base && port < base + 16 {
-            let off = port - base;
+        // Use wrapping arithmetic so pathological base addresses near `u16::MAX` can't trigger an
+        // overflow panic when computing `base + len` under overflow-check builds (e.g. fuzzing),
+        // and so the decode behaves like real 16-bit I/O port arithmetic (wrapping).
+        let off = port.wrapping_sub(base);
+        if off < 16 {
             let chan = (off / 8) as usize;
             let reg_off = off % 8;
             return Some((chan, reg_off));
@@ -610,22 +613,26 @@ impl IdeController {
 
     pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
         // Command blocks.
-        if port >= self.primary.ports.cmd_base && port < self.primary.ports.cmd_base + 8 {
-            let reg = port - self.primary.ports.cmd_base;
+        let off = port.wrapping_sub(self.primary.ports.cmd_base);
+        if off < 8 {
+            let reg = off;
             return Self::read_cmd_reg(&mut self.primary, reg, size);
         }
-        if port >= self.secondary.ports.cmd_base && port < self.secondary.ports.cmd_base + 8 {
-            let reg = port - self.secondary.ports.cmd_base;
+        let off = port.wrapping_sub(self.secondary.ports.cmd_base);
+        if off < 8 {
+            let reg = off;
             return Self::read_cmd_reg(&mut self.secondary, reg, size);
         }
 
         // Control blocks.
-        if port >= self.primary.ports.ctrl_base && port < self.primary.ports.ctrl_base + 2 {
-            let reg = port - self.primary.ports.ctrl_base;
+        let off = port.wrapping_sub(self.primary.ports.ctrl_base);
+        if off < 2 {
+            let reg = off;
             return Self::read_ctrl_reg(&mut self.primary, reg);
         }
-        if port >= self.secondary.ports.ctrl_base && port < self.secondary.ports.ctrl_base + 2 {
-            let reg = port - self.secondary.ports.ctrl_base;
+        let off = port.wrapping_sub(self.secondary.ports.ctrl_base);
+        if off < 2 {
+            let reg = off;
             return Self::read_ctrl_reg(&mut self.secondary, reg);
         }
 
@@ -645,25 +652,29 @@ impl IdeController {
 
     pub fn io_write(&mut self, port: u16, size: u8, val: u32) {
         // Command blocks.
-        if port >= self.primary.ports.cmd_base && port < self.primary.ports.cmd_base + 8 {
-            let reg = port - self.primary.ports.cmd_base;
+        let off = port.wrapping_sub(self.primary.ports.cmd_base);
+        if off < 8 {
+            let reg = off;
             Self::write_cmd_reg(&mut self.primary, reg, size, val);
             return;
         }
-        if port >= self.secondary.ports.cmd_base && port < self.secondary.ports.cmd_base + 8 {
-            let reg = port - self.secondary.ports.cmd_base;
+        let off = port.wrapping_sub(self.secondary.ports.cmd_base);
+        if off < 8 {
+            let reg = off;
             Self::write_cmd_reg(&mut self.secondary, reg, size, val);
             return;
         }
 
         // Control blocks.
-        if port >= self.primary.ports.ctrl_base && port < self.primary.ports.ctrl_base + 2 {
-            let reg = port - self.primary.ports.ctrl_base;
+        let off = port.wrapping_sub(self.primary.ports.ctrl_base);
+        if off < 2 {
+            let reg = off;
             Self::write_ctrl_reg(&mut self.primary, reg, val as u8);
             return;
         }
-        if port >= self.secondary.ports.ctrl_base && port < self.secondary.ports.ctrl_base + 2 {
-            let reg = port - self.secondary.ports.ctrl_base;
+        let off = port.wrapping_sub(self.secondary.ports.ctrl_base);
+        if off < 2 {
+            let reg = off;
             Self::write_ctrl_reg(&mut self.secondary, reg, val as u8);
             return;
         }
