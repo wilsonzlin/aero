@@ -29,6 +29,8 @@ pub fn dispatch_interrupt(
     bus: &mut dyn BiosBus,
     disk: &mut dyn BlockDevice,
 ) {
+    sync_keyboard_bda(bios, bus);
+
     // The CPU has executed `INT` already, and we're now running in a tiny ROM
     // stub that begins with `HLT`. The stack layout is:
     //   [SS:SP+0]  return IP
@@ -63,6 +65,38 @@ pub fn dispatch_interrupt(
     const RETURN_MASK: u16 = (FLAG_CF | FLAG_PF | FLAG_ZF | FLAG_SF | FLAG_DF | FLAG_OF) as u16;
     let new_flags = (saved_flags & !RETURN_MASK) | ((cpu.rflags() as u16) & RETURN_MASK) | 0x0002;
     bus.write_u16(flags_addr, new_flags);
+}
+
+fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
+    // Mirror the BIOS keyboard queue into the conventional BIOS Data Area ring buffer so software
+    // that probes 0x40:0x1A/0x1C (head/tail) can observe pending keys without using INT 16h.
+    //
+    // The canonical source of truth remains `bios.keyboard_queue`; we treat the BDA as a
+    // best-effort compatibility mirror.
+    const BUF_START: u16 = 0x001E;
+    const BUF_END: u16 = 0x003E;
+    const HEAD_OFF: u64 = 0x1A;
+    const TAIL_OFF: u64 = 0x1C;
+
+    // The classic ring buffer uses head==tail to indicate empty, so we leave one entry unused to
+    // avoid ambiguity.
+    let buf_bytes = BUF_END - BUF_START;
+    let max_words = (buf_bytes / 2).saturating_sub(1) as usize;
+    let used = bios.keyboard_queue.len().min(max_words);
+
+    for (i, key) in bios.keyboard_queue.iter().take(used).enumerate() {
+        let addr = BDA_BASE + u64::from(BUF_START) + (i as u64) * 2;
+        bus.write_u16(addr, *key);
+    }
+    // Clear unused slots so stale data is less likely to confuse direct BDA readers.
+    for i in used..max_words {
+        let addr = BDA_BASE + u64::from(BUF_START) + (i as u64) * 2;
+        bus.write_u16(addr, 0);
+    }
+
+    bus.write_u16(BDA_BASE + HEAD_OFF, BUF_START);
+    let tail = BUF_START.wrapping_add((used as u16) * 2);
+    bus.write_u16(BDA_BASE + TAIL_OFF, tail);
 }
 
 fn handle_int11(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
@@ -1972,6 +2006,23 @@ mod tests {
         handle_int17(&mut cpu, &mut mem);
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x90);
+    }
+
+    #[test]
+    fn keyboard_queue_is_mirrored_into_bda_ring_buffer() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        bios.push_key(0x1234);
+        bios.push_key(0x5678);
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+
+        sync_keyboard_bda(&bios, &mut mem);
+
+        assert_eq!(mem.read_u16(BDA_BASE + 0x1A), 0x001E);
+        assert_eq!(mem.read_u16(BDA_BASE + 0x1C), 0x0022);
+        assert_eq!(mem.read_u16(BDA_BASE + 0x001E), 0x1234);
+        assert_eq!(mem.read_u16(BDA_BASE + 0x0020), 0x5678);
     }
 
     #[test]
