@@ -17,9 +17,11 @@
 //! `ImageData`).
 
 mod palette;
+mod snapshot;
 mod text_font;
 
 use palette::{rgb_to_rgba_u32, Rgb};
+pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
 use text_font::FONT8X8_BASIC;
 
 /// Physical base address for the Bochs VBE linear framebuffer (LFB).

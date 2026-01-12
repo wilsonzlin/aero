@@ -48,6 +48,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
+use aero_gpu_vga::{PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
 use aero_net_e1000::E1000Device;
@@ -564,6 +565,53 @@ impl PciDevice for IdePciConfigDevice {
     }
 }
 // -----------------------------------------------------------------------------
+// VGA port/MMIO adapters
+// -----------------------------------------------------------------------------
+
+struct VgaPortIo {
+    dev: Rc<RefCell<VgaDevice>>,
+}
+
+impl aero_platform::io::PortIoDevice for VgaPortIo {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        self.dev.borrow_mut().port_read(port, size as usize)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        self.dev.borrow_mut().port_write(port, size as usize, value);
+    }
+}
+
+struct VgaMmio {
+    base: u64,
+    dev: Rc<RefCell<VgaDevice>>,
+}
+
+impl MmioHandler for VgaMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let addr = self.base.wrapping_add(offset);
+        let mut out = 0u64;
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let paddr = addr.wrapping_add(i as u64) as u32;
+            let byte = dev.mem_read_u8(paddr);
+            out |= (byte as u64) << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let addr = self.base.wrapping_add(offset);
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let paddr = addr.wrapping_add(i as u64) as u32;
+            let byte = ((value >> (i * 8)) & 0xFF) as u8;
+            dev.mem_write_u8(paddr, byte);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
 // -----------------------------------------------------------------------------
 
@@ -754,6 +802,7 @@ pub struct Machine {
     acpi_pm: Option<SharedAcpiPmIo<ManualClock>>,
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
+    vga: Option<Rc<RefCell<VgaDevice>>>,
 
     bios: Bios,
     disk: VecBlockDevice,
@@ -834,6 +883,7 @@ impl Machine {
             acpi_pm: None,
             hpet: None,
             e1000: None,
+            vga: None,
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
@@ -1143,6 +1193,11 @@ impl Machine {
     /// Returns the E1000 NIC device, if present.
     pub fn e1000(&self) -> Option<Rc<RefCell<E1000Device>>> {
         self.e1000.clone()
+    }
+
+    /// Returns the VGA/SVGA device, if present.
+    pub fn vga(&self) -> Option<Rc<RefCell<VgaDevice>>> {
+        self.vga.clone()
     }
 
     /// Advance deterministic platform time and poll any timer devices.
@@ -1586,6 +1641,56 @@ impl Machine {
             };
             register_acpi_pm(&mut self.io, acpi_pm.clone());
 
+            // VGA/SVGA (VBE). Keep the device instance stable across resets so the MMIO mapping
+            // remains valid.
+            let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
+                Some(vga) => {
+                    *vga.borrow_mut() = VgaDevice::new();
+                    vga.clone()
+                }
+                None => {
+                    let vga = Rc::new(RefCell::new(VgaDevice::new()));
+                    self.vga = Some(vga.clone());
+                    vga
+                }
+            };
+
+            // Register legacy VGA + Bochs VBE ports.
+            //
+            // - VGA: 0x3C0..0x3DF
+            // - Bochs VBE: 0x01CE (index), 0x01CF (data)
+            self.io.register_range(
+                0x3C0,
+                0x20,
+                Box::new(VgaPortIo { dev: vga.clone() }),
+            );
+            self.io.register_shared_range(0x01CE, 2, {
+                let vga = vga.clone();
+                move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+            });
+
+            // Map VGA memory windows and the VBE linear framebuffer.
+            self.mem.map_mmio_once(0xA0000, 0x20000, {
+                let vga = vga.clone();
+                move || {
+                    Box::new(VgaMmio {
+                        base: 0xA0000,
+                        dev: vga,
+                    })
+                }
+            });
+            let vga_lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
+            let vga_lfb_len = vga.borrow().vram().len() as u64;
+            self.mem.map_mmio_once(vga_lfb_base, vga_lfb_len, {
+                let vga = vga.clone();
+                move || {
+                    Box::new(VgaMmio {
+                        base: vga_lfb_base,
+                        dev: vga,
+                    })
+                }
+            });
+
             // PCI config ports (config mechanism #1).
             let pci_cfg: SharedPciConfigPorts = match &self.pci_cfg {
                 Some(pci_cfg) => {
@@ -1670,7 +1775,17 @@ impl Machine {
 
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
-            let pci_allocator_cfg = PciResourceAllocatorConfig::default();
+            // Reserve the Bochs VBE linear framebuffer region for VGA.
+            //
+            // `aero_gpu_vga` exposes the LFB at a fixed physical address (`SVGA_LFB_BASE`) by
+            // default. The canonical PCI allocator also uses the same address as the start of the
+            // PCI MMIO window, so we shift the PCI window up to avoid MMIO mapping overlap.
+            let mut pci_allocator_cfg = PciResourceAllocatorConfig::default();
+            if pci_allocator_cfg.mmio_base == vga_lfb_base && pci_allocator_cfg.mmio_size > vga_lfb_len
+            {
+                pci_allocator_cfg.mmio_base = pci_allocator_cfg.mmio_base.saturating_add(vga_lfb_len);
+                pci_allocator_cfg.mmio_size = pci_allocator_cfg.mmio_size.saturating_sub(vga_lfb_len);
+            }
             {
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut allocator = PciResourceAllocator::new(pci_allocator_cfg.clone());
@@ -1765,6 +1880,7 @@ impl Machine {
             self.acpi_pm = None;
             self.hpet = None;
             self.e1000 = None;
+            self.vga = None;
         }
 
         if self.cfg.enable_serial {
@@ -2109,6 +2225,16 @@ impl snapshot::SnapshotSource for Machine {
             data: self.serial_log.clone(),
         });
 
+        // VGA/SVGA (VBE) state (registers + full VRAM).
+        if let Some(vga) = &self.vga {
+            devices.push(snapshot::DeviceState {
+                id: snapshot::DeviceId::VGA,
+                version: aero_gpu_vga::VgaSnapshotV1::VERSION,
+                flags: 0,
+                data: vga.borrow().encode_snapshot_v1(),
+            });
+        }
+
         // Optional PC platform devices.
         //
         // Note: We snapshot the combined PIC + IOAPIC + LAPIC router state via `PlatformInterrupts`.
@@ -2300,6 +2426,50 @@ impl snapshot::SnapshotTarget for Machine {
                     let _ = uart.borrow_mut().take_tx();
                 }
                 self.serial_log = state.data;
+            }
+        }
+
+        // VGA/SVGA (VBE) state.
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::VGA) {
+            if state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
+                if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
+                    // Ensure a VGA device exists before restoring.
+                    let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
+                        Some(vga) => vga.clone(),
+                        None => {
+                            let vga = Rc::new(RefCell::new(VgaDevice::new()));
+                            self.vga = Some(vga.clone());
+
+                            // Port mappings are part of machine wiring, not the snapshot payload,
+                            // so install the default VGA port ranges now.
+                            self.io.register_range(
+                                0x3C0,
+                                0x20,
+                                Box::new(VgaPortIo { dev: vga.clone() }),
+                            );
+                            self.io.register_shared_range(0x01CE, 2, {
+                                let vga = vga.clone();
+                                move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                            });
+
+                            // MMIO mappings persist in the physical bus; install legacy + LFB.
+                            self.mem.map_mmio_once(0xA0000, 0x20000, {
+                                let vga = vga.clone();
+                                move || Box::new(VgaMmio { base: 0xA0000, dev: vga })
+                            });
+                            let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
+                            let lfb_len = vga.borrow().vram().len() as u64;
+                            self.mem.map_mmio_once(lfb_base, lfb_len, {
+                                let vga = vga.clone();
+                                move || Box::new(VgaMmio { base: lfb_base, dev: vga })
+                            });
+
+                            vga
+                        }
+                    };
+
+                    vga.borrow_mut().restore_snapshot_v1(&vga_snap);
+                }
             }
         }
 
