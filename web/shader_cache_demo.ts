@@ -87,7 +87,9 @@ async function main() {
   const webgpu = large ? null : await tryInitWebGpu();
   const device = webgpu?.device ?? null;
   const capsHash = webgpu ? await computeWebGpuCapsHash(webgpu.adapter) : "no-webgpu";
-  const flags = { halfPixelCenter: false, capsHash };
+  // Only include `large` in the cache key when enabled so default behavior/key
+  // shape remains unchanged.
+  const flags = large ? { halfPixelCenter: false, capsHash, large: true } : { halfPixelCenter: false, capsHash };
   const key = await computeShaderCacheKey(dxbc, flags);
 
   const cache = await PersistentGpuCache.open({
