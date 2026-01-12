@@ -208,7 +208,17 @@ This means multiple storage controllers **cannot** be stored as multiple outer `
 
 If both are stored using `aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(DeviceId::DISK_CONTROLLER, ...)`, they would both map to the same outer `(DeviceId::DISK_CONTROLLER = 6, version = 1, flags = 0)` key, which is treated as corrupt.
 
-**Canonical encoding:** store **exactly one** outer `DeviceId::DISK_CONTROLLER` entry whose payload is an `aero-io-snapshot` TLV blob with inner `DEVICE_ID = DSKC` and `SnapshotVersion (1.0)`. That `DSKC` wrapper can then contain *multiple* nested controller `aero-io-snapshot` blobs keyed by PCI BDF (bus/device/function), e.g.:
+**Canonical encoding:** store **exactly one** outer `DeviceId::DISK_CONTROLLER` entry whose payload is an `aero-io-snapshot` TLV blob with inner `DEVICE_ID = DSKC` and `SnapshotVersion (1.0)`.
+
+That `DSKC` wrapper can then contain *multiple* nested controller snapshots keyed by a packed PCI BDF (`u16`) using the standard PCI config-address layout:
+
+```text
+packed_bdf = (bus << 8) | (device << 3) | function
+```
+
+Producers/consumers should prefer `aero_devices::pci::PciBdf::{pack_u16,unpack_u16}` (rather than re-encoding manually) to avoid inconsistencies.
+
+Example nested controller payloads include:
 
 - `AHCP` (AHCI PCI)
 - `VPCI` (virtio-pci based storage controllers, e.g. virtio-blk)
