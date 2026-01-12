@@ -1020,38 +1020,54 @@ function renderMachinePanel(): HTMLElement {
             return;
           }
           let src: Uint8Array | null = null;
+          let transport: "ptr" | "copy" | "none" = "none";
           if (hasVgaPtr && wasmMemory) {
             const ptr = machine.vga_framebuffer_ptr?.() ?? 0;
             const lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
-            if (!Number.isSafeInteger(ptr) || !Number.isSafeInteger(lenBytes) || ptr < 0 || lenBytes < 0) return;
-            // Some builds may report a stride but still expose a tightly-packed framebuffer length.
-            // If the length matches `width*height*4`, treat it as tightly packed to avoid rejecting
-            // the scanout entirely.
-            if (lenBytes < requiredSrcBytes && lenBytes === requiredDstBytes) {
-              strideBytes = width * 4;
-              requiredSrcBytes = requiredDstBytes;
+            if (Number.isSafeInteger(ptr) && Number.isSafeInteger(lenBytes) && ptr > 0 && lenBytes >= 0) {
+              let effectiveStrideBytes = strideBytes;
+              let effectiveRequiredSrcBytes = requiredSrcBytes;
+              // Some builds may report a stride but still expose a tightly-packed framebuffer length.
+              // If the length matches `width*height*4`, treat it as tightly packed to avoid rejecting
+              // the scanout entirely.
+              if (lenBytes < effectiveRequiredSrcBytes && lenBytes === requiredDstBytes) {
+                effectiveStrideBytes = width * 4;
+                effectiveRequiredSrcBytes = requiredDstBytes;
+              }
+              if (lenBytes >= effectiveRequiredSrcBytes) {
+                const buf = wasmMemory.buffer;
+                if (ptr <= buf.byteLength && lenBytes <= buf.byteLength - ptr) {
+                  strideBytes = effectiveStrideBytes;
+                  requiredSrcBytes = effectiveRequiredSrcBytes;
+                  src = new Uint8Array(buf, ptr, requiredSrcBytes);
+                  transport = "ptr";
+                }
+              }
             }
-            if (lenBytes < requiredSrcBytes) return;
-            const buf = wasmMemory.buffer;
-            if (ptr > buf.byteLength || lenBytes > buf.byteLength - ptr) return;
-            src = new Uint8Array(buf, ptr, requiredSrcBytes);
-            testState.transport = "ptr";
-          } else if (hasVgaCopy) {
-            // Fall back to a JS-owned copy if we cannot access WASM linear memory.
+          }
+          if (!src && hasVgaCopy) {
+            // Fall back to a JS-owned copy if we cannot access WASM linear memory (or if the ptr/len
+            // fast path fails validation).
             const copied =
               machine.vga_framebuffer_copy_rgba8888?.() ?? machine.vga_framebuffer_rgba8888_copy?.() ?? null;
-            if (!copied || !copied.byteLength) return;
-            src = copied;
-            testState.transport = "copy";
-            if (src.byteLength < requiredSrcBytes && src.byteLength === width * height * 4) {
-              // Some helpers return tight-packed buffers even if a stride is reported.
-              strideBytes = width * 4;
-              requiredSrcBytes = strideBytes * height;
+            if (copied && copied.byteLength) {
+              let effectiveStrideBytes = strideBytes;
+              let effectiveRequiredSrcBytes = requiredSrcBytes;
+              if (copied.byteLength < effectiveRequiredSrcBytes && copied.byteLength === requiredDstBytes) {
+                // Some helpers return tight-packed buffers even if a stride is reported.
+                effectiveStrideBytes = width * 4;
+                effectiveRequiredSrcBytes = requiredDstBytes;
+              }
+              if (copied.byteLength >= effectiveRequiredSrcBytes) {
+                strideBytes = effectiveStrideBytes;
+                requiredSrcBytes = effectiveRequiredSrcBytes;
+                src = copied;
+                transport = "copy";
+              }
             }
-            if (src.byteLength < requiredSrcBytes) return;
-          } else {
-            return;
           }
+          if (!src) return;
+          testState.transport = transport;
 
           if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
