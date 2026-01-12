@@ -160,6 +160,11 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
       this.#irqSink.lowerIrq(this.irqLine);
       this.#irqLevel = false;
     }
+    try {
+      this.#bridge.free();
+    } catch {
+      // ignore
+    }
   }
 
   #syncIrq(): void {

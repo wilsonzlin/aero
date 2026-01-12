@@ -23,6 +23,24 @@ describe("UhciWebUsbPciDevice", () => {
     expect(io_write).toHaveBeenCalledWith(0x08, 4, 0xdead_beef);
   });
 
+  it("calls bridge.free() on destroy() exactly once and is idempotent", () => {
+    const free = vi.fn();
+    const dev = new UhciWebUsbPciDevice({
+      bridge: {
+        io_read: vi.fn(() => 0),
+        io_write: vi.fn(),
+        step_frames: vi.fn(),
+        irq_level: vi.fn(() => false),
+        free,
+      },
+      irqSink: { raiseIrq: vi.fn(), lowerIrq: vi.fn() },
+    });
+
+    dev.destroy();
+    dev.destroy();
+    expect(free).toHaveBeenCalledTimes(1);
+  });
+
   it("treats PCI INTx as a level-triggered IRQ and only emits transitions on edges", () => {
     let level = false;
     const irq_level = vi.fn(() => level);
@@ -65,6 +83,73 @@ describe("UhciWebUsbPciDevice", () => {
     dev.tick(1016);
     expect(lowerIrq).toHaveBeenCalledTimes(1);
     expect(lowerIrq).toHaveBeenCalledWith(dev.irqLine);
+  });
+
+  it("gates DMA stepping on PCI Bus Master Enable (command bit 2)", () => {
+    const step_frames = vi.fn();
+    const dev = new UhciWebUsbPciDevice({
+      bridge: {
+        io_read: vi.fn(() => 0),
+        io_write: vi.fn(),
+        step_frames,
+        irq_level: vi.fn(() => false),
+        free: vi.fn(),
+      },
+      irqSink: { raiseIrq: vi.fn(), lowerIrq: vi.fn() },
+    });
+
+    dev.tick(0);
+    dev.tick(8);
+    expect(step_frames).not.toHaveBeenCalled();
+
+    // Enable bus mastering; the device should start stepping from "now" without catching up.
+    dev.onPciCommandWrite?.(1 << 2);
+    dev.tick(9);
+    expect(step_frames).toHaveBeenCalledTimes(1);
+    expect(step_frames).toHaveBeenCalledWith(1);
+  });
+
+  it("suppresses INTx assertion when PCI command INTX_DISABLE bit is set", () => {
+    const raiseIrq = vi.fn();
+    const dev = new UhciWebUsbPciDevice({
+      bridge: {
+        io_read: vi.fn(() => 0),
+        io_write: vi.fn(),
+        step_frames: vi.fn(),
+        irq_level: vi.fn(() => true),
+        free: vi.fn(),
+      },
+      irqSink: { raiseIrq, lowerIrq: vi.fn() },
+    });
+
+    // Bus mastering enabled but INTx disabled.
+    dev.onPciCommandWrite?.((1 << 2) | (1 << 10));
+    dev.tick(0);
+    dev.tick(1);
+    expect(raiseIrq).not.toHaveBeenCalled();
+
+    // Re-enable INTx: pending asserted level should become visible.
+    dev.onPciCommandWrite?.(1 << 2);
+    dev.tick(2);
+    expect(raiseIrq).toHaveBeenCalledWith(dev.irqLine);
+  });
+
+  it("mirrors 16-bit PCI command writes into the WASM bridge when set_pci_command is present", () => {
+    const set_pci_command = vi.fn();
+    const dev = new UhciWebUsbPciDevice({
+      bridge: {
+        io_read: vi.fn(() => 0),
+        io_write: vi.fn(),
+        step_frames: vi.fn(),
+        irq_level: vi.fn(() => false),
+        set_pci_command,
+        free: vi.fn(),
+      },
+      irqSink: { raiseIrq: vi.fn(), lowerIrq: vi.fn() },
+    });
+
+    dev.onPciCommandWrite?.(0x1_0000 | (1 << 2));
+    expect(set_pci_command).toHaveBeenCalledWith(1 << 2);
   });
 });
 
