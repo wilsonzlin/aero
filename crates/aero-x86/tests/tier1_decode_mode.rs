@@ -366,3 +366,12 @@ fn decode_one_mode_32bit_opsize_override_push_imm16() {
     // minimal decoder treats them as unsupported to avoid miscompilation.
     assert_eq!(inst.kind, InstKind::Invalid);
 }
+
+#[test]
+fn decode_one_mode_bails_on_address_size_override_prefix() {
+    // 67 8B 07 would be `mov eax, [bx]`-style (16-bit) addressing in 32-bit mode, which Tier-1
+    // does not currently model. Ensure we bail out instead of mis-decoding the address.
+    let inst = decode_one_mode(0x1000, &[0x67, 0x8b, 0x07], 32);
+    assert_eq!(inst.len, 2);
+    assert_eq!(inst.kind, InstKind::Invalid);
+}

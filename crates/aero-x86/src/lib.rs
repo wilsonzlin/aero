@@ -750,6 +750,7 @@ pub mod tier1 {
         let mut offset = 0usize;
         let mut rex = Rex::none();
         let mut operand_override = false;
+        let mut address_override = false;
 
         loop {
             let b = read_u8(bytes, offset)?;
@@ -758,7 +759,15 @@ pub mod tier1 {
                     operand_override = true;
                     offset += 1;
                 }
-                0xf2 | 0xf3 | 0x67 => {
+                0x67 => {
+                    // Address-size override affects ModRM/SIB decoding and effective-address
+                    // masking. Tier-1 translation does not currently model per-instruction address
+                    // size, so we conservatively bail out to the interpreter if this prefix is
+                    // present.
+                    address_override = true;
+                    offset += 1;
+                }
+                0xf2 | 0xf3 => {
                     // Ignored for this subset.
                     offset += 1;
                 }
@@ -772,6 +781,13 @@ pub mod tier1 {
 
         let opcode1 = read_u8(bytes, offset)?;
         offset += 1;
+        if address_override {
+            return Ok(DecodedInst {
+                rip,
+                len: offset as u8,
+                kind: InstKind::Invalid,
+            });
+        }
 
         let width = op_width(bitness, rex, operand_override);
         let stack_width = stack_width(bitness, operand_override);
