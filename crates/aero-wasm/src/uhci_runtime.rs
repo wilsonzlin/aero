@@ -151,7 +151,9 @@ fn parse_webhid_collections(
             ))
         })?
         .as_string()
-        .ok_or_else(|| js_error("Invalid WebHID collection schema (stringify returned non-string)"))?;
+        .ok_or_else(|| {
+            js_error("Invalid WebHID collection schema (stringify returned non-string)")
+        })?;
 
     let mut deserializer = serde_json::Deserializer::from_str(&collections_json_str);
     serde_path_to_error::deserialize(&mut deserializer)
@@ -1274,8 +1276,16 @@ fn webusb_action_to_js(action: UsbHostAction) -> JsValue {
                 &JsValue::from_str("kind"),
                 &JsValue::from_str("controlIn"),
             );
-            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
-            let _ = Reflect::set(&obj, &JsValue::from_str("setup"), &webusb_setup_packet_to_js(setup));
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("id"),
+                &JsValue::from_f64(f64::from(id)),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("setup"),
+                &webusb_setup_packet_to_js(setup),
+            );
         }
         UsbHostAction::ControlOut { id, setup, data } => {
             let _ = Reflect::set(
@@ -1283,18 +1293,34 @@ fn webusb_action_to_js(action: UsbHostAction) -> JsValue {
                 &JsValue::from_str("kind"),
                 &JsValue::from_str("controlOut"),
             );
-            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
-            let _ = Reflect::set(&obj, &JsValue::from_str("setup"), &webusb_setup_packet_to_js(setup));
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("id"),
+                &JsValue::from_f64(f64::from(id)),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("setup"),
+                &webusb_setup_packet_to_js(setup),
+            );
             let data = Uint8Array::from(data.as_slice());
             let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
         }
-        UsbHostAction::BulkIn { id, endpoint, length } => {
+        UsbHostAction::BulkIn {
+            id,
+            endpoint,
+            length,
+        } => {
             let _ = Reflect::set(
                 &obj,
                 &JsValue::from_str("kind"),
                 &JsValue::from_str("bulkIn"),
             );
-            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("id"),
+                &JsValue::from_f64(f64::from(id)),
+            );
             let _ = Reflect::set(
                 &obj,
                 &JsValue::from_str("endpoint"),
@@ -1312,7 +1338,11 @@ fn webusb_action_to_js(action: UsbHostAction) -> JsValue {
                 &JsValue::from_str("kind"),
                 &JsValue::from_str("bulkOut"),
             );
-            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("id"),
+                &JsValue::from_f64(f64::from(id)),
+            );
             let _ = Reflect::set(
                 &obj,
                 &JsValue::from_str("endpoint"),
