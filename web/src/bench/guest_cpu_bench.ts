@@ -375,12 +375,13 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
       // `0ms`, which would otherwise cause `totalSeconds` to never increase and the loop to never
       // terminate.
       const measuredStartMs = nowMs();
-      const measuredStartUnixMs = Date.now();
       const budgetMs = secondsBudget * 1000;
       // Guard against pathological environments where `performance.now()` is unavailable or does
       // not advance (e.g. mocked/tampered timers). In that case the budget condition above may
       // never become false, so fail loudly instead of spinning forever.
       const hardTimeoutMs = Math.max(1000, budgetMs * 10);
+      let lastTimerMs = measuredStartMs;
+      let lastTimerProgressUnixMs = Date.now();
       while (measuredRuns < 1 || nowMs() - measuredStartMs < budgetMs) {
         const { seconds, insts, checksum } = runOnce();
         checkChecksumOrThrow({ variant: opts.variant, mode: opts.mode, expected: expectedChecksum, observed: checksum });
@@ -392,7 +393,13 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
         const safeSeconds = seconds > 0 ? seconds : 1e-9;
         runMips.push((insts / safeSeconds) / 1e6);
 
-        if (Date.now() - measuredStartUnixMs > hardTimeoutMs) {
+        // Only apply the hard timeout when the timer used for the budget condition (`nowMs`) isn't
+        // advancing. Slow-but-correct environments should still be allowed to complete a run.
+        const curTimerMs = nowMs();
+        if (curTimerMs !== lastTimerMs) {
+          lastTimerMs = curTimerMs;
+          lastTimerProgressUnixMs = Date.now();
+        } else if (Date.now() - lastTimerProgressUnixMs > hardTimeoutMs) {
           throw new Error(
             `Guest CPU benchmark exceeded hard timeout (${hardTimeoutMs}ms) while trying to satisfy seconds=${secondsBudget}. This usually means the timer source is not advancing.`,
           );
