@@ -924,6 +924,78 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
   bool gamma_ramp_test = false;
 
+  // A handful of "binding" states that should participate in StateBlocks.
+  RECT scissor_rect_sb;
+  scissor_rect_sb.left = 5;
+  scissor_rect_sb.top = 6;
+  scissor_rect_sb.right = 50;
+  scissor_rect_sb.bottom = 60;
+  RECT scissor_rect_clobber;
+  scissor_rect_clobber.left = 10;
+  scissor_rect_clobber.top = 12;
+  scissor_rect_clobber.right = 70;
+  scissor_rect_clobber.bottom = 80;
+
+  ComPtr<IDirect3DTexture9> tex_sb;
+  hr = dev->CreateTexture(16, 16, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex_sb.put(), NULL);
+  if (FAILED(hr) || !tex_sb) {
+    return reporter.FailHresult("CreateTexture (stateblock tex_sb)", hr);
+  }
+  ComPtr<IDirect3DTexture9> tex_clobber;
+  hr = dev->CreateTexture(16, 16, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex_clobber.put(), NULL);
+  if (FAILED(hr) || !tex_clobber) {
+    return reporter.FailHresult("CreateTexture (stateblock tex_clobber)", hr);
+  }
+
+  ComPtr<IDirect3DVertexBuffer9> vb_sb;
+  hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb_sb.put(), NULL);
+  if (FAILED(hr) || !vb_sb) {
+    return reporter.FailHresult("CreateVertexBuffer (stateblock vb_sb)", hr);
+  }
+  ComPtr<IDirect3DVertexBuffer9> vb_clobber;
+  hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb_clobber.put(), NULL);
+  if (FAILED(hr) || !vb_clobber) {
+    return reporter.FailHresult("CreateVertexBuffer (stateblock vb_clobber)", hr);
+  }
+  const UINT stream_offset_sb = 16;
+  const UINT stream_stride_sb = 32;
+  const UINT stream_offset_clobber = 0;
+  const UINT stream_stride_clobber = 16;
+
+  ComPtr<IDirect3DIndexBuffer9> ib_sb;
+  hr = dev->CreateIndexBuffer(256, 0, D3DFMT_INDEX16, D3DPOOL_DEFAULT, ib_sb.put(), NULL);
+  if (FAILED(hr) || !ib_sb) {
+    return reporter.FailHresult("CreateIndexBuffer (stateblock ib_sb)", hr);
+  }
+  ComPtr<IDirect3DIndexBuffer9> ib_clobber;
+  hr = dev->CreateIndexBuffer(256, 0, D3DFMT_INDEX16, D3DPOOL_DEFAULT, ib_clobber.put(), NULL);
+  if (FAILED(hr) || !ib_clobber) {
+    return reporter.FailHresult("CreateIndexBuffer (stateblock ib_clobber)", hr);
+  }
+
+  const DWORD fvf_sb = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
+  const D3DVERTEXELEMENT9 decl_elems_clobber[] = {
+      {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+      {0, 12, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+      D3DDECL_END(),
+  };
+  ComPtr<IDirect3DVertexDeclaration9> decl_clobber;
+  hr = dev->CreateVertexDeclaration(decl_elems_clobber, decl_clobber.put());
+  if (FAILED(hr) || !decl_clobber) {
+    return reporter.FailHresult("CreateVertexDeclaration (stateblock decl_clobber)", hr);
+  }
+
+  ComPtr<IDirect3DSurface9> rt_sb;
+  hr = dev->CreateRenderTarget(kWidth, kHeight, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, rt_sb.put(), NULL);
+  if (FAILED(hr) || !rt_sb) {
+    return reporter.FailHresult("CreateRenderTarget (stateblock rt_sb)", hr);
+  }
+  ComPtr<IDirect3DSurface9> rt_clobber;
+  hr = dev->CreateRenderTarget(kWidth, kHeight, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, rt_clobber.put(), NULL);
+  if (FAILED(hr) || !rt_clobber) {
+    return reporter.FailHresult("CreateRenderTarget (stateblock rt_clobber)", hr);
+  }
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -959,6 +1031,40 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, colorop_sb);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP) (stateblock)", hr);
+  }
+
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE) (stateblock)", hr);
+  }
+  hr = dev->SetScissorRect(&scissor_rect_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetScissorRect (stateblock)", hr);
+  }
+
+  hr = dev->SetTexture(0, tex_sb.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture(0) (stateblock)", hr);
+  }
+
+  hr = dev->SetRenderTarget(0, rt_sb.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderTarget(0) (stateblock)", hr);
+  }
+
+  hr = dev->SetStreamSource(0, vb_sb.get(), stream_offset_sb, stream_stride_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(0) (stateblock)", hr);
+  }
+
+  hr = dev->SetIndices(ib_sb.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetIndices (stateblock)", hr);
+  }
+
+  hr = dev->SetFVF(fvf_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetFVF (stateblock)", hr);
   }
 
   hr = dev->SetPaletteEntries(palette_idx_sb, palette_entries_sb);
@@ -1123,6 +1229,40 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, (DWORD)D3DTOP_MODULATE2X);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP) (clobber)", hr);
+    }
+
+    hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE) (clobber)", hr);
+    }
+    hr = dev->SetScissorRect(&scissor_rect_clobber);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetScissorRect (clobber)", hr);
+    }
+
+    hr = dev->SetTexture(0, tex_clobber.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTexture(0) (clobber)", hr);
+    }
+
+    hr = dev->SetRenderTarget(0, rt_clobber.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderTarget(0) (clobber)", hr);
+    }
+
+    hr = dev->SetStreamSource(0, vb_clobber.get(), stream_offset_clobber, stream_stride_clobber);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(0) (clobber)", hr);
+    }
+
+    hr = dev->SetIndices(ib_clobber.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetIndices (clobber)", hr);
+    }
+
+    hr = dev->SetVertexDeclaration(decl_clobber.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexDeclaration (clobber)", hr);
     }
 
     if (palette_test) {
@@ -1303,6 +1443,84 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                            (unsigned long)colorop_sb);
     }
 
+    got = 0;
+    hr = dev->GetRenderState(D3DRS_SCISSORTESTENABLE, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetRenderState(D3DRS_SCISSORTESTENABLE) (after Apply)", hr);
+    }
+    if (got != TRUE) {
+      return reporter.Fail("stateblock restore mismatch: SCISSORTESTENABLE got=%lu expected=%lu",
+                           (unsigned long)got,
+                           (unsigned long)TRUE);
+    }
+
+    RECT got_scissor;
+    ZeroMemory(&got_scissor, sizeof(got_scissor));
+    hr = dev->GetScissorRect(&got_scissor);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetScissorRect (after Apply)", hr);
+    }
+    if (got_scissor.left != scissor_rect_sb.left || got_scissor.top != scissor_rect_sb.top ||
+        got_scissor.right != scissor_rect_sb.right || got_scissor.bottom != scissor_rect_sb.bottom) {
+      return reporter.Fail("stateblock restore mismatch: ScissorRect");
+    }
+
+    ComPtr<IDirect3DBaseTexture9> got_tex;
+    hr = dev->GetTexture(0, got_tex.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetTexture(0) (after Apply)", hr);
+    }
+    if (got_tex.get() != tex_sb.get()) {
+      return reporter.Fail("stateblock restore mismatch: Texture(0) got=%p expected=%p", got_tex.get(), tex_sb.get());
+    }
+
+    ComPtr<IDirect3DSurface9> got_rt;
+    hr = dev->GetRenderTarget(0, got_rt.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetRenderTarget(0) (after Apply)", hr);
+    }
+    if (got_rt.get() != rt_sb.get()) {
+      return reporter.Fail("stateblock restore mismatch: RenderTarget(0) got=%p expected=%p", got_rt.get(), rt_sb.get());
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> got_vb;
+    UINT got_offset = 0;
+    UINT got_stride = 0;
+    hr = dev->GetStreamSource(0, got_vb.put(), &got_offset, &got_stride);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetStreamSource(0) (after Apply)", hr);
+    }
+    if (got_vb.get() != vb_sb.get() || got_offset != stream_offset_sb || got_stride != stream_stride_sb) {
+      return reporter.Fail(
+          "stateblock restore mismatch: StreamSource(0) got={vb=%p off=%u stride=%u} expected={vb=%p off=%u stride=%u}",
+          got_vb.get(),
+          (unsigned)got_offset,
+          (unsigned)got_stride,
+          vb_sb.get(),
+          (unsigned)stream_offset_sb,
+          (unsigned)stream_stride_sb);
+    }
+
+    ComPtr<IDirect3DIndexBuffer9> got_ib;
+    hr = dev->GetIndices(got_ib.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetIndices (after Apply)", hr);
+    }
+    if (got_ib.get() != ib_sb.get()) {
+      return reporter.Fail("stateblock restore mismatch: Indices got=%p expected=%p", got_ib.get(), ib_sb.get());
+    }
+
+    got = 0;
+    hr = dev->GetFVF(&got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetFVF (after Apply)", hr);
+    }
+    if (got != fvf_sb) {
+      return reporter.Fail("stateblock restore mismatch: FVF got=0x%08lX expected=0x%08lX",
+                           (unsigned long)got,
+                           (unsigned long)fvf_sb);
+    }
+
     D3DMATRIX got_world;
     ZeroMemory(&got_world, sizeof(got_world));
     hr = dev->GetTransform(D3DTS_WORLD, &got_world);
@@ -1471,6 +1689,46 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   {
     ComPtr<IDirect3DStateBlock9> sb_vertex;
 
+    // Create some simple binding resources so we can validate that
+    // CreateStateBlock/Capture/Apply also round-trips VB/IB/FVF-style state.
+    ComPtr<IDirect3DVertexBuffer9> vb_0;
+    hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb_0.put(), NULL);
+    if (FAILED(hr) || !vb_0) {
+      return reporter.FailHresult("CreateVertexBuffer (CreateStateBlock vertex vb_0)", hr);
+    }
+    ComPtr<IDirect3DVertexBuffer9> vb_1;
+    hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb_1.put(), NULL);
+    if (FAILED(hr) || !vb_1) {
+      return reporter.FailHresult("CreateVertexBuffer (CreateStateBlock vertex vb_1)", hr);
+    }
+    const UINT vb_offset_0 = 16;
+    const UINT vb_stride_0 = 32;
+    const UINT vb_offset_1 = 0;
+    const UINT vb_stride_1 = 16;
+
+    ComPtr<IDirect3DIndexBuffer9> ib_0;
+    hr = dev->CreateIndexBuffer(256, 0, D3DFMT_INDEX16, D3DPOOL_DEFAULT, ib_0.put(), NULL);
+    if (FAILED(hr) || !ib_0) {
+      return reporter.FailHresult("CreateIndexBuffer (CreateStateBlock vertex ib_0)", hr);
+    }
+    ComPtr<IDirect3DIndexBuffer9> ib_1;
+    hr = dev->CreateIndexBuffer(256, 0, D3DFMT_INDEX16, D3DPOOL_DEFAULT, ib_1.put(), NULL);
+    if (FAILED(hr) || !ib_1) {
+      return reporter.FailHresult("CreateIndexBuffer (CreateStateBlock vertex ib_1)", hr);
+    }
+
+    const DWORD fvf_0 = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
+    const D3DVERTEXELEMENT9 decl_elems_1[] = {
+        {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+        {0, 12, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+        D3DDECL_END(),
+    };
+    ComPtr<IDirect3DVertexDeclaration9> decl_1;
+    hr = dev->CreateVertexDeclaration(decl_elems_1, decl_1.put());
+    if (FAILED(hr) || !decl_1) {
+      return reporter.FailHresult("CreateVertexDeclaration (CreateStateBlock vertex decl_1)", hr);
+    }
+
     // Establish a baseline vertex-state config.
     D3DMATRIX world_0 = world_a;
     world_0._11 = 7.0f;
@@ -1500,6 +1758,21 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                                  (unsigned long)hr);
     } else {
       clip_status_ok = true;
+    }
+
+    hr = dev->SetStreamSource(0, vb_0.get(), vb_offset_0, vb_stride_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(0) (pre CreateStateBlock vertex)", hr);
+    }
+
+    hr = dev->SetIndices(ib_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetIndices (pre CreateStateBlock vertex)", hr);
+    }
+
+    hr = dev->SetFVF(fvf_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF (pre CreateStateBlock vertex)", hr);
     }
 
     const UINT freq_0 = 5;
@@ -1587,6 +1860,21 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         }
       }
 
+      hr = dev->SetStreamSource(0, vb_1.get(), vb_offset_1, vb_stride_1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(0) (clobber pre Apply vertex baseline)", hr);
+      }
+
+      hr = dev->SetIndices(ib_1.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetIndices (clobber pre Apply vertex baseline)", hr);
+      }
+
+      hr = dev->SetVertexDeclaration(decl_1.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetVertexDeclaration (clobber pre Apply vertex baseline)", hr);
+      }
+
       hr = sb_vertex->Apply();
       if (FAILED(hr)) {
         return reporter.FailHresult("StateBlock::Apply (vertex baseline)", hr);
@@ -1609,6 +1897,44 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       }
       if (std::memcmp(got_i, vsi_0, sizeof(vsi_0)) != 0) {
         return reporter.Fail("CreateStateBlock baseline mismatch: VertexShaderConstantI");
+      }
+
+      ComPtr<IDirect3DVertexBuffer9> got_vb;
+      UINT got_offset = 0;
+      UINT got_stride = 0;
+      hr = dev->GetStreamSource(0, got_vb.put(), &got_offset, &got_stride);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetStreamSource(0) (after Apply vertex baseline)", hr);
+      }
+      if (got_vb.get() != vb_0.get() || got_offset != vb_offset_0 || got_stride != vb_stride_0) {
+        return reporter.Fail(
+            "CreateStateBlock baseline mismatch: StreamSource(0) got={vb=%p off=%u stride=%u} expected={vb=%p off=%u stride=%u}",
+            got_vb.get(),
+            (unsigned)got_offset,
+            (unsigned)got_stride,
+            vb_0.get(),
+            (unsigned)vb_offset_0,
+            (unsigned)vb_stride_0);
+      }
+
+      ComPtr<IDirect3DIndexBuffer9> got_ib;
+      hr = dev->GetIndices(got_ib.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetIndices (after Apply vertex baseline)", hr);
+      }
+      if (got_ib.get() != ib_0.get()) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: Indices got=%p expected=%p", got_ib.get(), ib_0.get());
+      }
+
+      DWORD got_fvf = 0;
+      hr = dev->GetFVF(&got_fvf);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetFVF (after Apply vertex baseline)", hr);
+      }
+      if (got_fvf != fvf_0) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: FVF got=0x%08lX expected=0x%08lX",
+                             (unsigned long)got_fvf,
+                             (unsigned long)fvf_0);
       }
 
       if (freq_ok) {
@@ -1695,6 +2021,21 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetVertexShaderConstantI (pre Capture)", hr);
     }
 
+    hr = dev->SetStreamSource(0, vb_1.get(), vb_offset_1, vb_stride_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(0) (pre Capture vertex)", hr);
+    }
+
+    hr = dev->SetIndices(ib_1.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetIndices (pre Capture vertex)", hr);
+    }
+
+    hr = dev->SetVertexDeclaration(decl_1.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexDeclaration (pre Capture vertex)", hr);
+    }
+
     hr = sb_vertex->Capture();
     if (FAILED(hr)) {
       return reporter.FailHresult("StateBlock::Capture (vertex)", hr);
@@ -1725,6 +2066,21 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       }
     }
 
+    hr = dev->SetStreamSource(0, vb_0.get(), vb_offset_0, vb_stride_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(0) (pre Apply vertex)", hr);
+    }
+
+    hr = dev->SetIndices(ib_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetIndices (pre Apply vertex)", hr);
+    }
+
+    hr = dev->SetFVF(fvf_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF (pre Apply vertex)", hr);
+    }
+
     hr = sb_vertex->Apply();
     if (FAILED(hr)) {
       return reporter.FailHresult("StateBlock::Apply (vertex)", hr);
@@ -1748,6 +2104,54 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
     if (std::memcmp(got_i, vsi_1, sizeof(vsi_1)) != 0) {
       return reporter.Fail("CreateStateBlock restore mismatch: VertexShaderConstantI");
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> got_vb;
+    UINT got_offset = 0;
+    UINT got_stride = 0;
+    hr = dev->GetStreamSource(0, got_vb.put(), &got_offset, &got_stride);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetStreamSource(0) (after Apply vertex)", hr);
+    }
+    if (got_vb.get() != vb_1.get() || got_offset != vb_offset_1 || got_stride != vb_stride_1) {
+      return reporter.Fail(
+          "CreateStateBlock restore mismatch: StreamSource(0) got={vb=%p off=%u stride=%u} expected={vb=%p off=%u stride=%u}",
+          got_vb.get(),
+          (unsigned)got_offset,
+          (unsigned)got_stride,
+          vb_1.get(),
+          (unsigned)vb_offset_1,
+          (unsigned)vb_stride_1);
+    }
+
+    ComPtr<IDirect3DIndexBuffer9> got_ib;
+    hr = dev->GetIndices(got_ib.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetIndices (after Apply vertex)", hr);
+    }
+    if (got_ib.get() != ib_1.get()) {
+      return reporter.Fail("CreateStateBlock restore mismatch: Indices got=%p expected=%p", got_ib.get(), ib_1.get());
+    }
+
+    DWORD got_fvf = 0xFFFFFFFFu;
+    hr = dev->GetFVF(&got_fvf);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetFVF (after Apply vertex)", hr);
+    }
+    if (got_fvf != 0) {
+      return reporter.Fail("CreateStateBlock restore mismatch: FVF got=0x%08lX expected 0",
+                           (unsigned long)got_fvf);
+    }
+
+    ComPtr<IDirect3DVertexDeclaration9> got_decl;
+    hr = dev->GetVertexDeclaration(got_decl.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexDeclaration (after Apply vertex)", hr);
+    }
+    if (got_decl.get() != decl_1.get()) {
+      return reporter.Fail("CreateStateBlock restore mismatch: VertexDeclaration got=%p expected=%p",
+                           got_decl.get(),
+                           decl_1.get());
     }
 
     if (freq_ok) {
@@ -1799,6 +2203,42 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   {
     ComPtr<IDirect3DStateBlock9> sb_pixel;
 
+    ComPtr<IDirect3DTexture9> tex_0;
+    hr = dev->CreateTexture(16, 16, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex_0.put(), NULL);
+    if (FAILED(hr) || !tex_0) {
+      return reporter.FailHresult("CreateTexture (CreateStateBlock pixel tex_0)", hr);
+    }
+    ComPtr<IDirect3DTexture9> tex_1;
+    hr = dev->CreateTexture(16, 16, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex_1.put(), NULL);
+    if (FAILED(hr) || !tex_1) {
+      return reporter.FailHresult("CreateTexture (CreateStateBlock pixel tex_1)", hr);
+    }
+
+    ComPtr<IDirect3DSurface9> rt_0;
+    hr = dev->CreateRenderTarget(kWidth,
+                                 kHeight,
+                                 D3DFMT_X8R8G8B8,
+                                 D3DMULTISAMPLE_NONE,
+                                 0,
+                                 FALSE,
+                                 rt_0.put(),
+                                 NULL);
+    if (FAILED(hr) || !rt_0) {
+      return reporter.FailHresult("CreateRenderTarget (CreateStateBlock pixel rt_0)", hr);
+    }
+    ComPtr<IDirect3DSurface9> rt_1;
+    hr = dev->CreateRenderTarget(kWidth,
+                                 kHeight,
+                                 D3DFMT_X8R8G8B8,
+                                 D3DMULTISAMPLE_NONE,
+                                 0,
+                                 FALSE,
+                                 rt_1.put(),
+                                 NULL);
+    if (FAILED(hr) || !rt_1) {
+      return reporter.FailHresult("CreateRenderTarget (CreateStateBlock pixel rt_1)", hr);
+    }
+
     // Establish a baseline pixel-state config.
     const DWORD alphablend_0 = TRUE;
     hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, alphablend_0);
@@ -1849,6 +2289,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetScissorRect(&scissor_0);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetScissorRect (pre CreateStateBlock pixel)", hr);
+    }
+
+    hr = dev->SetTexture(0, tex_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTexture(0) (pre CreateStateBlock pixel)", hr);
+    }
+
+    hr = dev->SetRenderTarget(0, rt_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderTarget(0) (pre CreateStateBlock pixel)", hr);
     }
 
     // Palette / gamma ramp are legacy cached-only state. Some runtimes may reject
@@ -1966,6 +2416,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         return reporter.FailHresult("SetScissorRect (clobber pre Apply pixel baseline)", hr);
       }
 
+      hr = dev->SetTexture(0, tex_1.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetTexture(0) (clobber pre Apply pixel baseline)", hr);
+      }
+
+      hr = dev->SetRenderTarget(0, rt_1.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetRenderTarget(0) (clobber pre Apply pixel baseline)", hr);
+      }
+
       if (palette_ok) {
         hr = dev->SetPaletteEntries(palette_idx_0, palette_1);
         if (FAILED(hr)) {
@@ -2070,6 +2530,28 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
         return reporter.Fail("CreateStateBlock baseline mismatch: ScissorRect");
       }
 
+      ComPtr<IDirect3DBaseTexture9> got_tex;
+      hr = dev->GetTexture(0, got_tex.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetTexture(0) (after Apply pixel baseline)", hr);
+      }
+      if (got_tex.get() != tex_0.get()) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: Texture(0) got=%p expected=%p",
+                             got_tex.get(),
+                             tex_0.get());
+      }
+
+      ComPtr<IDirect3DSurface9> got_rt;
+      hr = dev->GetRenderTarget(0, got_rt.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetRenderTarget(0) (after Apply pixel baseline)", hr);
+      }
+      if (got_rt.get() != rt_0.get()) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: RenderTarget(0) got=%p expected=%p",
+                             got_rt.get(),
+                             rt_0.get());
+      }
+
       if (palette_ok) {
         PALETTEENTRY got_pal[256];
         std::memset(got_pal, 0, sizeof(got_pal));
@@ -2150,6 +2632,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetScissorRect (pre Capture pixel)", hr);
     }
 
+    hr = dev->SetTexture(0, tex_1.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTexture(0) (pre Capture pixel)", hr);
+    }
+
+    hr = dev->SetRenderTarget(0, rt_1.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderTarget(0) (pre Capture pixel)", hr);
+    }
+
     if (palette_ok) {
       hr = dev->SetPaletteEntries(palette_idx_0, palette_1);
       if (FAILED(hr)) {
@@ -2218,6 +2710,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetScissorRect(&scissor_2);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetScissorRect (pre Apply pixel)", hr);
+    }
+
+    hr = dev->SetTexture(0, tex_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTexture(0) (pre Apply pixel)", hr);
+    }
+
+    hr = dev->SetRenderTarget(0, rt_0.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderTarget(0) (pre Apply pixel)", hr);
     }
 
     if (palette_ok) {
@@ -2323,6 +2825,28 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (got_scissor.left != scissor_1.left || got_scissor.top != scissor_1.top ||
         got_scissor.right != scissor_1.right || got_scissor.bottom != scissor_1.bottom) {
       return reporter.Fail("CreateStateBlock restore mismatch: ScissorRect");
+    }
+
+    ComPtr<IDirect3DBaseTexture9> got_tex;
+    hr = dev->GetTexture(0, got_tex.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetTexture(0) (after Apply pixel)", hr);
+    }
+    if (got_tex.get() != tex_1.get()) {
+      return reporter.Fail("CreateStateBlock restore mismatch: Texture(0) got=%p expected=%p",
+                           got_tex.get(),
+                           tex_1.get());
+    }
+
+    ComPtr<IDirect3DSurface9> got_rt;
+    hr = dev->GetRenderTarget(0, got_rt.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetRenderTarget(0) (after Apply pixel)", hr);
+    }
+    if (got_rt.get() != rt_1.get()) {
+      return reporter.Fail("CreateStateBlock restore mismatch: RenderTarget(0) got=%p expected=%p",
+                           got_rt.get(),
+                           rt_1.get());
     }
 
     if (palette_ok) {
