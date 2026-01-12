@@ -346,18 +346,30 @@ impl<C: Clock> Hpet<C> {
             // shared GSI line at all; doing so can spuriously deassert lines that are routed from
             // other devices (e.g. PCI INTx on GSI10).
             if !timer.is_level_triggered() || !timer.int_enabled() {
+                if timer.irq_asserted {
+                    let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
+                    sink.lower_gsi(gsi);
+                }
                 timer.irq_asserted = false;
                 continue;
             }
 
             let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
             let should_assert = enabled && pending;
-            if should_assert {
-                sink.raise_gsi(gsi);
-                timer.irq_asserted = true;
-            } else if timer.irq_asserted {
-                sink.lower_gsi(gsi);
-                timer.irq_asserted = false;
+
+            // Keep this coherent with `service_timers`: only change the sink line when the HPET's
+            // internal view transitions. This avoids clobbering shared GSIs that may be asserted by
+            // other devices.
+            match (should_assert, timer.irq_asserted) {
+                (true, false) => {
+                    sink.raise_gsi(gsi);
+                    timer.irq_asserted = true;
+                }
+                (false, true) => {
+                    sink.lower_gsi(gsi);
+                    timer.irq_asserted = false;
+                }
+                _ => {}
             }
         }
     }
