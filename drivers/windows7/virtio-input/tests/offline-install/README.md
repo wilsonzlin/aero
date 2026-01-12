@@ -48,8 +48,8 @@ Notes:
 
 You must inject a driver matching the target Windows 7 architecture:
 
-- **Win7 x86 (32-bit)** → use the x86 package dir (e.g. `out\\packages\\windows\\virtio-input\\x86\\`)
-- **Win7 x64 (64-bit)** → use the x64 package dir (e.g. `out\\packages\\windows\\virtio-input\\x64\\`)
+- **Win7 x86 (32-bit)** → use the x86 package dir (e.g. `out\\packages\\windows7\\virtio-input\\x86\\`)
+- **Win7 x64 (64-bit)** → use the x64 package dir (e.g. `out\\packages\\windows7\\virtio-input\\x64\\`)
 
 In all cases, DISM’s `/Driver:` should ultimately point at a folder (or file) that contains the correct `.inf` for the image you’re servicing.
 
@@ -84,7 +84,7 @@ Assuming this repo is checked out at `C:\\src\\aero` and you already ran the dri
 
 ```bat
 set REPO=C:\\src\\aero
-set VIRTIO_INPUT_PKG=%REPO%\\out\\packages\\windows\\virtio-input\\x64
+set VIRTIO_INPUT_PKG=%REPO%\\out\\packages\\windows7\\virtio-input\\x64
 
 dism /Image:%MOUNT% /Add-Driver /Driver:%VIRTIO_INPUT_PKG% /Recurse
 ```
@@ -169,7 +169,7 @@ Identify the volume letter that contains `\\Windows\\` (example uses `W:`).
 ```bat
 set OFFLINE=W:\\
 set REPO=C:\\src\\aero
-set VIRTIO_INPUT_PKG=%REPO%\\out\\packages\\windows\\virtio-input\\x64
+set VIRTIO_INPUT_PKG=%REPO%\\out\\packages\\windows7\\virtio-input\\x64
 
 dism /Image:%OFFLINE% /Add-Driver /Driver:%VIRTIO_INPUT_PKG% /Recurse
 ```
