@@ -552,6 +552,7 @@ async function convertQcow2ToSparse(
 const VHD_TYPE_FIXED = 2;
 const VHD_TYPE_DYNAMIC = 3;
 const VHD_BAT_FREE = 0xffff_ffff;
+const VHD_MAX_BAT_BYTES = 128 * 1024 * 1024;
 
 async function convertVhdToSparse(
   src: RandomAccessSource,
@@ -972,15 +973,18 @@ class VhdDynamicHeader {
 
 class VhdBat {
   static async read(src: RandomAccessSource, tableOffset: number, entries: number): Promise<VhdBat> {
-    const batBytes = await src.readAt(tableOffset, entries * 4);
-    const out = new Array<number>(entries);
+    const bytes = entries * 4;
+    if (!Number.isSafeInteger(bytes) || bytes > VHD_MAX_BAT_BYTES) throw new Error("VHD BAT too large");
+
+    const batBytes = await src.readAt(tableOffset, bytes);
+    const out = new Uint32Array(entries);
     for (let i = 0; i < entries; i++) out[i] = readU32BE(batBytes, i * 4);
     return new VhdBat(out);
   }
 
-  public readonly entries: number[];
+  public readonly entries: Uint32Array;
 
-  private constructor(entries: number[]) {
+  private constructor(entries: Uint32Array) {
     this.entries = entries;
   }
 }
