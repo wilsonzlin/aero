@@ -28,6 +28,7 @@ describe("io/devices/E1000PciDevice", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+    expect(dev.bdf).toEqual({ bus: 0, device: 5, function: 0 });
     expect(dev.vendorId).toBe(0x8086);
     expect(dev.deviceId).toBe(0x100e);
     expect(dev.classCode).toBe(0x02_00_00);

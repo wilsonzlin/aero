@@ -22,6 +22,7 @@ describe("io/devices/VirtioNetPciDevice", () => {
     };
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
     const dev = new VirtioNetPciDevice({ bridge, irqSink });
+    expect(dev.bdf).toEqual({ bus: 0, device: 8, function: 0 });
 
     const config = new Uint8Array(256);
     dev.initPciConfig(config);

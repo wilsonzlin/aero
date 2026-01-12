@@ -15,6 +15,7 @@ describe("io/devices/UhciPciDevice", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new UhciPciDevice({ bridge, irqSink });
+    expect(dev.bdf).toEqual({ bus: 0, device: 1, function: 0 });
     expect(dev.bars).toEqual([null, null, null, null, { kind: "io", size: 0x20 }, null]);
     expect(dev.classCode).toBe(0x0c0300);
     expect(dev.irqLine).toBe(11);
