@@ -14,11 +14,13 @@ The WASM-facing wrapper exposes input injection methods that map directly to PS/
 - Mouse motion + wheel: `Machine.inject_mouse_motion(dx, dy, wheel)`
   - `dx`/`dy` use browser-style coordinates: +X is right, +Y is down.
   - `wheel` uses PS/2 convention: positive is wheel up.
+  - Optional convenience for PS/2 coordinate conventions: `Machine.inject_ps2_mouse_motion(dx, dy, wheel)` where +Y is up.
 - Mouse buttons:
   - `Machine.inject_mouse_button(button, pressed)` uses DOM `MouseEvent.button` mapping:
     - `0`: left, `1`: middle, `2`: right (other values ignored)
   - `Machine.inject_mouse_buttons_mask(mask)` uses DOM `MouseEvent.buttons` bitmask:
     - bit0 (`0x01`): left, bit1 (`0x02`): right, bit2 (`0x04`): middle (higher bits ignored)
+  - Optional alias: `Machine.inject_ps2_mouse_buttons(mask)` (same bit mapping).
   - Convenience helpers also exist: `inject_mouse_left/right/middle(pressed)`.
   - For ergonomics, `crates/aero-wasm` also exports enums that mirror these DOM mappings:
     - `MouseButton` (`Left=0`, `Middle=1`, `Right=2`)

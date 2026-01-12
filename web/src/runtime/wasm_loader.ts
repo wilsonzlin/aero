@@ -568,6 +568,16 @@ export interface WasmApi {
          */
         inject_mouse_motion?(dx: number, dy: number, wheel: number): void;
         /**
+         * Inject mouse motion using PS/2 coordinate conventions:
+         * - `dx`: positive is right
+         * - `dy`: positive is up (PS/2 convention)
+         * - `wheel`: positive is wheel up
+         *
+         * Optional for older WASM builds; prefer {@link inject_mouse_motion} when your input source
+         * uses browser-style +Y down (e.g. `MouseEvent.movementY`).
+         */
+        inject_ps2_mouse_motion?(dx: number, dy: number, wheel: number): void;
+        /**
          * Inject a mouse button transition using DOM `MouseEvent.button` mapping:
          * - `0`: left
          * - `1`: middle
@@ -586,6 +596,15 @@ export interface WasmApi {
          * Tip: when available, prefer building masks by OR'ing `api.MouseButtons.Left/Right/Middle`.
          */
         inject_mouse_buttons_mask?(mask: number): void;
+        /**
+         * Set mouse button state using PS/2 packet bit conventions (also matches DOM `MouseEvent.buttons`):
+         * - bit0 (`0x01`): left
+         * - bit1 (`0x02`): right
+         * - bit2 (`0x04`): middle
+         *
+         * Optional for older WASM builds; prefer {@link inject_mouse_buttons_mask} (same mapping).
+         */
+        inject_ps2_mouse_buttons?(buttons: number): void;
         inject_mouse_left?(pressed: boolean): void;
         inject_mouse_right?(pressed: boolean): void;
         inject_mouse_middle?(pressed: boolean): void;
