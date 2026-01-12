@@ -8,6 +8,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -214,5 +215,138 @@ fn copy_texture2d_bc_uses_cpu_fallback_on_gl() {
         for (idx, px) in pixels.chunks_exact(4).enumerate() {
             assert_eq!(px, [255u8, 255u8, 255u8, 255u8], "pixel mismatch at {idx}");
         }
+    })
+}
+
+#[test]
+fn copy_texture2d_bc_gl_rejects_stale_guest_backing_source() {
+    pollster::block_on(async {
+        let mut exec = match create_executor_with_bc_features().await {
+            Some(exec) => exec,
+            None => {
+                common::skip_or_panic(module_path!(), "GL+TEXTURE_COMPRESSION_BC not supported");
+                return;
+            }
+        };
+
+        // A single 4x4 BC1 block:
+        // - white (all pixels)
+        let bc1_white: [u8; 8] = [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0];
+        // - black (all pixels)
+        let bc1_black: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0];
+
+        const ALLOC_ID: u32 = 1;
+        const GPA: u64 = 0x1000;
+        let allocs = [AerogpuAllocEntry {
+            alloc_id: ALLOC_ID,
+            flags: 0,
+            gpa: GPA,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        }];
+
+        // Guest memory contains the initial guest-backed texture contents (white).
+        let mut guest_mem = VecGuestMemory::new(0x2000);
+        guest_mem
+            .write(GPA, &bc1_white)
+            .expect("write BC1 block into guest memory");
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // Guest-backed BC1 texture A (handle=1).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC1RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&8u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&ALLOC_ID.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Host-owned BC1 texture B (handle=2) + UPLOAD_RESOURCE to establish `host_shadow`.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::BC1RgbaUnorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // resource_handle
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&(bc1_black.len() as u64).to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&bc1_black);
+        end_cmd(&mut stream, start);
+
+        // Copy B -> A. This updates A on the GPU but does not update its guest backing memory.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // dst_texture (A)
+        stream.extend_from_slice(&2u32.to_le_bytes()); // src_texture (B)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Now attempt to copy A -> B. On wgpu GL+BC we cannot safely source BC blocks from A's
+        // guest memory because it is stale (A was modified by a GPU copy).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&2u32.to_le_bytes()); // dst_texture (B)
+        stream.extend_from_slice(&1u32.to_le_bytes()); // src_texture (A)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let err = exec
+            .execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+            .expect_err("expected stale guest-backed BC copy source to be rejected on GL");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("guest backing is stale") || msg.contains("stale"),
+            "unexpected error message: {msg}"
+        );
     })
 }

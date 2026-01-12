@@ -399,6 +399,13 @@ struct Texture2dResource {
     backing: Option<ResourceBacking>,
     row_pitch_bytes: u32,
     dirty: bool,
+    /// Tracks whether the guest backing memory (if any) still matches the GPU texture contents.
+    ///
+    /// Guest-backed textures are uploaded from guest memory. GPU writes (draw/clear/copy) do not
+    /// automatically write results back into guest memory, so after such writes the guest backing
+    /// becomes stale. This is used by BC COPY_TEXTURE2D CPU fallbacks (notably on the wgpu GL
+    /// backend) to avoid sourcing stale compressed blocks from guest memory.
+    guest_backing_is_current: bool,
     /// CPU shadow for textures updated via `UPLOAD_RESOURCE`.
     ///
     /// The command stream expresses uploads as a linear byte range, but WebGPU uploads are 2D. For
@@ -1846,11 +1853,13 @@ impl AerogpuD3d11Executor {
         for &handle in &render_targets {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
+                tex.guest_backing_is_current = false;
             }
         }
         if let Some(handle) = depth_stencil {
             if let Some(tex) = self.resources.textures.get_mut(&handle) {
                 tex.host_shadow = None;
+                tex.guest_backing_is_current = false;
             }
         }
         let vs_handle = self
@@ -3823,6 +3832,7 @@ impl AerogpuD3d11Executor {
                 backing,
                 row_pitch_bytes,
                 dirty: backing.is_some(),
+                guest_backing_is_current: false,
                 host_shadow: None,
             },
         );
@@ -3975,6 +3985,7 @@ impl AerogpuD3d11Executor {
         } else if let Some(tex) = self.resources.textures.get_mut(&handle) {
             tex.dirty = true;
             tex.host_shadow = None;
+            tex.guest_backing_is_current = false;
         }
         Ok(())
     }
@@ -4242,6 +4253,9 @@ impl AerogpuD3d11Executor {
             }
             tex.host_shadow = Some(data.to_vec());
             tex.dirty = false;
+            // `UPLOAD_RESOURCE` writes are not reflected back into guest memory even for
+            // guest-backed textures.
+            tex.guest_backing_is_current = false;
             return Ok(());
         }
 
@@ -4360,6 +4374,8 @@ impl AerogpuD3d11Executor {
             )?;
         }
         tex.dirty = false;
+        // `UPLOAD_RESOURCE` updates do not update guest memory backing.
+        tex.guest_backing_is_current = false;
         Ok(())
     }
 
@@ -4900,6 +4916,18 @@ impl AerogpuD3d11Executor {
 
             if let Some(src_backing) = src_backing {
                 // Source is guest-backed: pull BC blocks from guest memory.
+                let src_backing_is_current = self
+                    .resources
+                    .textures
+                    .get(&src_texture)
+                    .map(|t| t.guest_backing_is_current)
+                    .unwrap_or(false);
+                if !src_backing_is_current {
+                    bail!(
+                        "COPY_TEXTURE2D: BC copy on GL cannot source blocks from guest memory because src_texture={src_texture} has been modified by GPU operations and its guest backing is stale. Consider setting AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 (CPU decompression fallback) or using a non-GL backend."
+                    );
+                }
+
                 let guest_layout = compute_guest_texture_layout(
                     src_format_u32,
                     src_desc.width,
@@ -5120,6 +5148,8 @@ impl AerogpuD3d11Executor {
             // that would otherwise cause us to overwrite the copy with stale guest-memory contents.
             if let Some(dst_res) = self.resources.textures.get_mut(&dst_texture) {
                 dst_res.dirty = false;
+                // GPU copies do not update guest memory backing.
+                dst_res.guest_backing_is_current = false;
 
                 // For non-guest-backed BC textures, maintain/update the CPU shadow so that later
                 // BC copies on GL can still source blocks without relying on the GPU copy path.
@@ -5334,6 +5364,8 @@ impl AerogpuD3d11Executor {
         if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
             dst.dirty = false;
             dst.host_shadow = None;
+            // GPU copies do not update guest memory backing.
+            dst.guest_backing_is_current = false;
         }
 
         Ok(())
@@ -6201,6 +6233,7 @@ impl AerogpuD3d11Executor {
             for &handle in &render_targets {
                 if let Some(tex) = self.resources.textures.get_mut(&handle) {
                     tex.host_shadow = None;
+                    tex.guest_backing_is_current = false;
                 }
             }
         }
@@ -6208,6 +6241,7 @@ impl AerogpuD3d11Executor {
             if let Some(handle) = depth_stencil {
                 if let Some(tex) = self.resources.textures.get_mut(&handle) {
                     tex.host_shadow = None;
+                    tex.guest_backing_is_current = false;
                 }
             }
         }
@@ -7112,6 +7146,7 @@ impl AerogpuD3d11Executor {
         // shadow copy so later partial uploads don't accidentally clobber the updated contents.
         tex.host_shadow = None;
         tex.dirty = false;
+        tex.guest_backing_is_current = true;
         Ok(())
     }
 
