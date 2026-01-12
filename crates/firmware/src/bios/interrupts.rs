@@ -565,6 +565,25 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             bios.keyboard_queue.push_back(key);
             cpu.rflags &= !FLAG_CF;
         }
+        0x0C => {
+            // Flush keyboard buffer and invoke another keyboard function (AL).
+            //
+            // Enhanced BIOSes support AH=0Ch as a "flush buffer then call" helper. We model the
+            // keyboard buffer as a FIFO queue, so flushing is equivalent to clearing it.
+            let al = (cpu.gpr[gpr::RAX] & 0xFF) as u8;
+            bios.keyboard_queue.clear();
+
+            // Call the requested function by rewriting AH and re-dispatching. This matches the
+            // documented semantics: registers/flags are returned as if the subfunction was invoked
+            // directly.
+            if al == 0x0C {
+                // Prevent infinite recursion if a guest passes the flush opcode itself.
+                cpu.rflags |= FLAG_CF;
+            } else {
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | ((al as u64) << 8);
+                handle_int16(bios, cpu);
+            }
+        }
         0x10 => {
             // Read extended keystroke (blocking in real BIOS; we return 0 if none).
             //
@@ -1114,6 +1133,26 @@ fn build_e820_map(
         handle_int16(&mut bios, &mut cpu);
         assert_eq!(cpu.rflags & FLAG_ZF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x2222);
+    }
+
+    #[test]
+    fn int16_flush_buffer_clears_pending_keystrokes() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        bios.push_key(0x1111);
+        bios.push_key(0x2222);
+
+        // AH=0Ch, AL=01h: flush then check for keystroke.
+        cpu.gpr[gpr::RAX] = 0x0C01;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_ne!(cpu.rflags & FLAG_ZF, 0);
+
+        // The queue should be empty.
+        cpu.gpr[gpr::RAX] = 0x0100;
+        handle_int16(&mut bios, &mut cpu);
+        assert_ne!(cpu.rflags & FLAG_ZF, 0);
     }
 
     #[test]
