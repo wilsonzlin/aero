@@ -310,9 +310,19 @@ impl<C: Clock> Hpet<C> {
             let gsi = apply_legacy_replacement_route(legacy, idx, timer.route());
 
             let pending = self.general_int_status & status_bit != 0;
-            let should_assert =
-                enabled && pending && timer.is_level_triggered() && timer.int_enabled();
 
+            // Only timers configured for level-triggered interrupts actively drive a persistent
+            // line level into the platform interrupt controller.
+            //
+            // Timers that are edge-triggered or not interrupt-enabled should not manipulate the
+            // shared GSI line at all; doing so can spuriously deassert lines that are routed from
+            // other devices (e.g. PCI INTx on GSI10).
+            if !timer.is_level_triggered() || !timer.int_enabled() {
+                timer.irq_asserted = false;
+                continue;
+            }
+
+            let should_assert = enabled && pending;
             if should_assert {
                 sink.raise_gsi(gsi);
                 timer.irq_asserted = true;
