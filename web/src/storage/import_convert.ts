@@ -526,7 +526,7 @@ async function convertRawToSparse(
 const QCOW2_OFFSET_MASK = 0x00ff_ffff_ffff_fe00n;
 const QCOW2_OFLAG_COMPRESSED = 1n << 62n;
 const QCOW2_OFLAG_ZERO = 1n;
-const QCOW2_MAX_L1_BYTES = 128 * 1024 * 1024;
+const QCOW2_MAX_TABLE_BYTES = 128 * 1024 * 1024;
 const QCOW2_MAX_CLUSTER_OFFSETS_BYTES = 128 * 1024 * 1024;
 
 async function convertQcow2ToSparse(
@@ -535,7 +535,7 @@ async function convertQcow2ToSparse(
   blockSize: number,
   options: ImportConvertOptions,
 ): Promise<{ manifest: ImportManifest }> {
-  const qcow = await Qcow2.open(src);
+  const qcow = await Qcow2.open(src, options.signal);
   const outBlockSize = nextPow2(Math.max(blockSize, qcow.clusterSize));
   assertBlockSize(outBlockSize);
 
@@ -953,7 +953,7 @@ function nextPow2(n: number): number {
 }
 
 class Qcow2 {
-  static async open(src: RandomAccessSource): Promise<Qcow2> {
+  static async open(src: RandomAccessSource, signal?: AbortSignal): Promise<Qcow2> {
     const hdr72 = await src.readAt(0, 72);
     if (hdr72[0] !== 0x51 || hdr72[1] !== 0x46 || hdr72[2] !== 0x49 || hdr72[3] !== 0xfb) {
       throw new Error("invalid qcow2 magic");
@@ -984,6 +984,7 @@ class Qcow2 {
     if (clusterBits < 9 || clusterBits > 21) throw new Error(`unsupported qcow2 cluster_bits ${clusterBits}`);
     const logicalSize = Number(readU64BE(hdr, 24));
     if (!Number.isSafeInteger(logicalSize) || logicalSize <= 0) throw new Error("invalid qcow2 virtual size");
+    if (logicalSize % 512 !== 0) throw new Error("qcow2 size not multiple of sector size");
     const cryptMethod = readU32BE(hdr, 32);
     if (cryptMethod !== 0) throw new Error("qcow2 encryption unsupported");
     const l1Size = readU32BE(hdr, 36);
@@ -992,19 +993,28 @@ class Qcow2 {
     if (!Number.isSafeInteger(l1TableOffset) || l1TableOffset <= 0) throw new Error("invalid qcow2 l1_table_offset");
     const refcountTableOffset = Number(readU64BE(hdr, 48));
     if (!Number.isSafeInteger(refcountTableOffset) || refcountTableOffset <= 0) throw new Error("invalid qcow2 refcount_table_offset");
+    const refcountTableClusters = readU32BE(hdr, 56);
+    if (refcountTableClusters === 0) throw new Error("qcow2 refcount_table_clusters is zero");
     if (l1TableOffset < headerLength || refcountTableOffset < headerLength) throw new Error("qcow2 table overlaps header");
     const nbSnapshots = readU32BE(hdr, 60);
-    if (nbSnapshots !== 0) throw new Error("qcow2 snapshots unsupported");
+    const snapshotsOffset = readU64BE(hdr, 64);
+    if (nbSnapshots !== 0 || snapshotsOffset !== 0n) throw new Error("qcow2 snapshots unsupported");
 
     const clusterSize = 1 << clusterBits;
     if (l1TableOffset % clusterSize !== 0) throw new Error("invalid qcow2 l1_table_offset");
+    if (refcountTableOffset % clusterSize !== 0) throw new Error("invalid qcow2 refcount_table_offset");
     const l2Entries = clusterSize / 8;
     const totalClusters = divCeil(logicalSize, clusterSize);
     const requiredL1 = divCeil(totalClusters, l2Entries);
     if (l1Size < requiredL1) throw new Error("qcow2 l1 table too small");
 
+    const refcountTableBytesBig = BigInt(refcountTableClusters) * BigInt(clusterSize);
+    if (refcountTableBytesBig > BigInt(QCOW2_MAX_TABLE_BYTES)) throw new Error("qcow2 refcount table too large");
+    const refcountTableBytes = Number(refcountTableBytesBig);
+    if (!Number.isSafeInteger(refcountTableBytes) || refcountTableBytes <= 0) throw new Error("qcow2 refcount table too large");
+
     const l1Bytes = requiredL1 * 8;
-    if (!Number.isSafeInteger(l1Bytes) || l1Bytes > QCOW2_MAX_L1_BYTES) {
+    if (!Number.isSafeInteger(l1Bytes) || l1Bytes > QCOW2_MAX_TABLE_BYTES) {
       throw new Error("qcow2 l1 table too large");
     }
     const clusterOffsetsBytes = totalClusters * 8;
@@ -1012,11 +1022,29 @@ class Qcow2 {
       throw new Error("qcow2 too many clusters");
     }
 
+    const l1End = l1TableOffset + l1Bytes;
+    if (!Number.isSafeInteger(l1End) || l1End > src.size) throw new Error("qcow2 l1 table truncated");
+    const refcountEnd = refcountTableOffset + refcountTableBytes;
+    if (!Number.isSafeInteger(refcountEnd) || refcountEnd > src.size) throw new Error("qcow2 refcount table truncated");
+    if (rangesOverlap(l1TableOffset, l1End, refcountTableOffset, refcountEnd)) {
+      throw new Error("qcow2 metadata tables overlap");
+    }
+
+    function validateClusterNotOverlappingMetadata(off: number): void {
+      const end = off + clusterSize;
+      if (!Number.isSafeInteger(end) || end <= 0) throw new Error("invalid qcow2 cluster offset");
+      if (off < headerLength) throw new Error("qcow2 cluster overlaps header");
+      if (rangesOverlap(off, end, l1TableOffset, l1End)) throw new Error("qcow2 cluster overlaps l1 table");
+      if (rangesOverlap(off, end, refcountTableOffset, refcountEnd)) throw new Error("qcow2 cluster overlaps refcount table");
+    }
+
     const l1 = await src.readAt(l1TableOffset, l1Bytes);
     const clusterOffsets = new Float64Array(totalClusters);
     const lowMask = (1n << BigInt(clusterBits)) - 1n;
+    const l2Clusters = new Set<number>();
 
     for (let l1Index = 0; l1Index < requiredL1; l1Index++) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const rawL1Entry = readU64BE(l1, l1Index * 8);
       if (rawL1Entry === 0n) continue;
       if ((rawL1Entry & QCOW2_OFLAG_COMPRESSED) !== 0n) throw new Error("qcow2 compressed l1 unsupported");
@@ -1026,6 +1054,12 @@ class Qcow2 {
       const l2Off = Number(l2OffBig);
       if (!Number.isSafeInteger(l2Off) || l2Off <= 0) throw new Error("invalid qcow2 l2 table offset");
       if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
+      validateClusterNotOverlappingMetadata(l2Off);
+      if (l2Clusters.has(l2Off)) throw new Error("qcow2 metadata clusters overlap");
+      l2Clusters.add(l2Off);
+
+      const l2End = l2Off + clusterSize;
+      if (!Number.isSafeInteger(l2End) || l2End > src.size) throw new Error("qcow2 l2 table truncated");
       const l2 = await src.readAt(l2Off, clusterSize);
 
       for (let l2Index = 0; l2Index < l2Entries; l2Index++) {
@@ -1048,6 +1082,8 @@ class Qcow2 {
         const dataOff = Number(dataOffBig);
         if (!Number.isSafeInteger(dataOff) || dataOff <= 0) throw new Error("invalid qcow2 data offset");
         if (dataOff % clusterSize !== 0) throw new Error("invalid qcow2 data offset");
+        validateClusterNotOverlappingMetadata(dataOff);
+        if (l2Clusters.has(dataOff)) throw new Error("qcow2 data cluster overlaps metadata");
         clusterOffsets[clusterIndex] = dataOff;
       }
     }

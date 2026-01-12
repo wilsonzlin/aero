@@ -671,6 +671,73 @@ test("convertToAeroSparse: rejects qcow2 with invalid zero cluster entry", async
   );
 });
 
+test("convertToAeroSparse: rejects qcow2 with snapshots_offset set", async () => {
+  const { file } = buildQcow2Fixture();
+  // snapshots_offset at 64 must be zero when nb_snapshots is zero.
+  writeU64BE(file, 64, 1n);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 snapshots unsupported/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 with refcount_table_clusters is zero", async () => {
+  const { file } = buildQcow2Fixture();
+  writeU32BE(file, 56, 0);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /refcount_table_clusters is zero/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 with overlapping metadata tables", async () => {
+  const { file } = buildQcow2Fixture();
+  const l1Offset = 1024;
+  // Move refcount_table_offset to overlap the L1 table cluster.
+  writeU64BE(file, 48, BigInt(l1Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 metadata tables overlap/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 where L2 table overlaps L1 table", async () => {
+  const { file } = buildQcow2Fixture();
+  const l1Offset = 1024;
+  // Point the single L1 entry at the L1 table cluster itself.
+  writeU64BE(file, l1Offset, BigInt(l1Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 cluster overlaps l1 table/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 where data cluster overlaps metadata", async () => {
+  const { file } = buildQcow2Fixture();
+  const l2Offset = 1536;
+  // Point the first data cluster at the L2 table cluster itself.
+  writeU64BE(file, l2Offset, BigInt(l2Offset));
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 data cluster overlaps metadata/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: rejects qcow2 with too many clusters", async () => {
   // Construct a qcow2 header claiming a huge logical size with tiny clusters (512B).
   // This would require an enormous cluster offset map and should be rejected up front.
@@ -682,6 +749,7 @@ test("convertToAeroSparse: rejects qcow2 with too many clusters", async () => {
   writeU32BE(file, 36, 3_276_800); // l1_size (derived from size/clusterSize and l2 entries)
   writeU64BE(file, 40, 512n); // l1_table_offset (not actually present in file)
   writeU64BE(file, 48, 512n); // refcount_table_offset (not actually present in file)
+  writeU32BE(file, 56, 1); // refcount_table_clusters
 
   const src = new MemSource(file);
   const sync = new MemSyncAccessHandle();
