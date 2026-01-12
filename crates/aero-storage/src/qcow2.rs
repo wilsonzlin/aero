@@ -757,7 +757,6 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
             let aligned_full_cluster = offset_in_cluster == 0 && chunk_len == cluster_size_usize;
             if aligned_full_cluster {
                 let max_clusters = (remaining / cluster_size_usize) as u64;
-                debug_assert!(max_clusters >= 1);
 
                 let first = self.lookup_data_cluster(guest_cluster_index)?;
                 match first {

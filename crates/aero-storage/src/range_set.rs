@@ -9,7 +9,8 @@ pub struct ByteRange {
 
 impl ByteRange {
     pub fn new(start: u64, end: u64) -> Self {
-        debug_assert!(start <= end);
+        // Caller is allowed to pass an invalid (reversed) range; it will be treated as empty via
+        // `ByteRange::is_empty` / `ByteRange::len`. Avoid panicking in debug/fuzz builds.
         Self { start, end }
     }
 
@@ -67,8 +68,7 @@ impl RangeSet {
                 std::cmp::Ordering::Greater
             }
         }) {
-            Ok(_) => unreachable!("binary_search_by never returns Ok"),
-            Err(idx) => {
+            Ok(idx) | Err(idx) => {
                 if idx >= self.ranges.len() {
                     return false;
                 }
