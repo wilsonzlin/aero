@@ -71,13 +71,14 @@ test("canonical Machine worker panel: renders VGA scanout to a canvas", async ({
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canonical machine worker canvas context missing");
 
-    const w = Math.min(16, canvas.width);
-    const h = Math.min(16, canvas.height);
-    const data = ctx.getImageData(0, 0, w, h).data;
+    // The worker presenter may letterbox the source framebuffer depending on the
+    // current aspect ratio, so scan the entire canvas for any non-black pixel
+    // rather than sampling just the top-left corner.
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let nonBlack = 0;
     for (let i = 0; i < data.length; i += 4) {
       if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) {
-        nonBlack += 1;
+        nonBlack = 1;
         break;
       }
     }
