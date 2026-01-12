@@ -353,6 +353,7 @@ pub struct Machine {
 
     cpu: CpuCore,
     assist: AssistContext,
+    mmu: aero_mmu::Mmu,
     mem: SystemMemory,
     io: IoPortBus,
 
@@ -407,6 +408,7 @@ impl Machine {
             reset_latch: ResetLatch::new(),
             cpu: CpuCore::new(CpuMode::Real),
             assist: AssistContext::default(),
+            mmu: aero_mmu::Mmu::new(),
             mem,
             io: IoPortBus::new(),
             platform_clock: None,
@@ -931,6 +933,7 @@ impl Machine {
 
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
+        self.mmu = aero_mmu::Mmu::new();
 
         // Run firmware POST (in Rust) to initialize IVT/BDA, map BIOS stubs, and load the boot
         // sector into RAM.
@@ -992,6 +995,7 @@ impl Machine {
 
             let remaining = max_insts - executed;
             let mut bus = aero_cpu_core::PagingBus::new_with_io(&mut self.mem, &mut self.io);
+            std::mem::swap(bus.mmu_mut(), &mut self.mmu);
 
             let batch = run_batch_cpu_core_with_assists(
                 &cfg,
@@ -1000,6 +1004,7 @@ impl Machine {
                 &mut bus,
                 remaining,
             );
+            std::mem::swap(bus.mmu_mut(), &mut self.mmu);
             executed = executed.saturating_add(batch.executed);
 
             // Deterministically advance platform time based on executed cycles.
@@ -1489,6 +1494,11 @@ impl snapshot::SnapshotTarget for Machine {
                 .set_interrupt_inhibit(cpu_internal.interrupt_inhibit);
             self.cpu.pending.external_interrupts = cpu_internal.pending_external_interrupts.into();
         }
+        // Snapshots restore RAM and paging control registers, but do not capture the MMU's internal
+        // translation cache (TLB). Since `Machine` keeps a persistent MMU to warm the TLB across
+        // batches, reset it here so restored execution never uses stale translations.
+        self.mmu = aero_mmu::Mmu::new();
+        self.cpu.state.sync_mmu(&mut self.mmu);
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.resync_tsc_ns_remainder_from_tsc();
@@ -1499,6 +1509,7 @@ impl snapshot::SnapshotTarget for Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
     use std::sync::{
@@ -1755,6 +1766,94 @@ mod tests {
 
         assert_eq!(restored.cpu.state.msr.tsc, 0x1234);
         assert_eq!(restored.cpu.time.read_tsc(), 0x1234);
+    }
+
+    #[test]
+    fn snapshot_restore_flushes_persistent_mmu_tlb() {
+        // Regression test: snapshots restore RAM + paging control registers, but the machine keeps
+        // a persistent `aero_mmu::Mmu` with an internal TLB cache. If we restore a snapshot without
+        // flushing the MMU, stale translations from "after the snapshot" can be used even when the
+        // paging register values (CR0/CR3/CR4/EFER) match, breaking determinism.
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        };
+        let mut m = Machine::new(cfg).unwrap();
+
+        // Build a simple 32-bit paging setup:
+        //  - PD[0] -> PT
+        //  - PT[0] -> code page (linear 0x0000_0000)
+        //  - PT[1] -> data page (linear 0x0000_1000), patched later
+        let pd_base = 0x1000u64;
+        let pt_base = 0x2000u64;
+        let code_page = 0x3000u64;
+        let page_a = 0x4000u64;
+        let page_b = 0x5000u64;
+
+        const PTE_P: u32 = 1 << 0;
+        const PTE_RW: u32 = 1 << 1;
+        let flags = PTE_P | PTE_RW;
+
+        // Code:
+        //   mov eax, dword ptr [0x0000_1000]   ; populate TLB
+        //   invlpg [0x0000_1000]               ; flush and re-walk after PTE patch
+        //   mov eax, dword ptr [0x0000_1000]   ; populate TLB with new mapping
+        //   hlt
+        let code: [u8; 18] = [
+            0xA1, 0x00, 0x10, 0x00, 0x00, // mov eax, [0x1000]
+            0x0F, 0x01, 0x3D, 0x00, 0x10, 0x00, 0x00, // invlpg [0x1000]
+            0xA1, 0x00, 0x10, 0x00, 0x00, // mov eax, [0x1000]
+            0xF4, // hlt
+        ];
+
+        {
+            let mut phys = m.mem.inner.borrow_mut();
+            phys.write_physical_u32(pd_base, (pt_base as u32) | flags);
+            phys.write_physical_u32(pt_base, (code_page as u32) | flags);
+            phys.write_physical_u32(pt_base + 4, (page_a as u32) | flags);
+
+            phys.write_physical_u32(page_a, 0x1111_1111);
+            phys.write_physical_u32(page_b, 0x2222_2222);
+
+            phys.write_physical(code_page, &code);
+        }
+
+        // Jump directly into 32-bit paging mode without relying on BIOS/boot code.
+        m.cpu = CpuCore::new(CpuMode::Protected);
+        m.cpu.state.control.cr3 = pd_base;
+        m.cpu.state.control.cr0 = CR0_PE | CR0_PG;
+        m.cpu.state.control.cr4 = 0;
+        m.cpu.state.update_mode();
+        m.cpu.state.set_rip(0);
+
+        // Execute the first load to populate the TLB with the page-A mapping.
+        assert_eq!(m.run_slice(1), RunExit::Completed { executed: 1 });
+        assert_eq!(m.cpu.state.read_gpr32(gpr::RAX), 0x1111_1111);
+
+        // Force RIP back to 0 so the post-restore load happens *without* INVLPG.
+        m.cpu.state.set_rip(0);
+        let snap = m.take_snapshot_full().unwrap();
+
+        // Patch the PTE so linear 0x1000 now maps to page B.
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical_u32(pt_base + 4, (page_b as u32) | flags);
+
+        // Run the rest of the code, which executes INVLPG + a second load to populate the TLB with
+        // the page-B mapping.
+        assert!(matches!(m.run_slice(10), RunExit::Halted { .. }));
+        assert_eq!(m.cpu.state.read_gpr32(gpr::RAX), 0x2222_2222);
+
+        // Restoring the snapshot should clear the MMU cache so the next load observes page A.
+        m.restore_snapshot_bytes(&snap).unwrap();
+        m.cpu.state.write_gpr32(gpr::RAX, 0);
+        assert_eq!(m.run_slice(1), RunExit::Completed { executed: 1 });
+        assert_eq!(m.cpu.state.read_gpr32(gpr::RAX), 0x1111_1111);
     }
 
     #[test]
