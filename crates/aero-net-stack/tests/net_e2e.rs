@@ -14,6 +14,7 @@ use aero_net_stack::{
     Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
 };
 use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::{TcpListener, TcpStream, UdpSocket},
@@ -857,7 +858,26 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
     let path = parts.next().unwrap_or_default();
 
     if method == "POST" && path == "/session" {
-        let body = r#"{"session":{"expiresAt":"2099-01-01T00:00:00Z"},"endpoints":{"tcp":"/tcp","tcpMux":"/tcp-mux","dnsQuery":"/dns-query","dnsJson":"/dns-json","l2":"/l2","udpRelayToken":"/udp-relay/token"},"limits":{"tcp":{"maxConnections":64,"maxMessageBytes":1048576,"connectTimeoutMs":10000,"idleTimeoutMs":300000},"dns":{"maxQueryBytes":4096},"l2":{"maxFramePayloadBytes":2048,"maxControlPayloadBytes":256}}}"#.to_string();
+        let body = json!({
+            "session": { "expiresAt": "2099-01-01T00:00:00Z" },
+            "endpoints": {
+                "tcp": "/tcp",
+                "tcpMux": "/tcp-mux",
+                "dnsQuery": "/dns-query",
+                "dnsJson": "/dns-json",
+                "l2": "/l2",
+                "udpRelayToken": "/udp-relay/token"
+            },
+            "limits": {
+                "tcp": { "maxConnections": 64, "maxMessageBytes": 1048576, "connectTimeoutMs": 10000, "idleTimeoutMs": 300000 },
+                "dns": { "maxQueryBytes": 4096 },
+                "l2": {
+                    "maxFramePayloadBytes": aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+                    "maxControlPayloadBytes": aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD
+                }
+            }
+        })
+        .to_string();
         let response = format!(
             "HTTP/1.1 201 Created\r\nSet-Cookie: aero_session={TEST_AERO_SESSION}; Path=/; HttpOnly\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
