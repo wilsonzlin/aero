@@ -131,6 +131,23 @@ set_target_properties(aerogpu_d3d9_trace_filter_unknown_token_tests PROPERTIES
 
 add_test(NAME aerogpu_d3d9_trace_filter_unknown_token_tests COMMAND aerogpu_d3d9_trace_filter_unknown_token_tests)
 
+add_executable(aerogpu_d3d9_trace_filter_commas_only_disables_tests
+    trace_filter_commas_only_disables_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+)
+
+target_include_directories(aerogpu_d3d9_trace_filter_commas_only_disables_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+)
+
+set_target_properties(aerogpu_d3d9_trace_filter_commas_only_disables_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d9_trace_filter_commas_only_disables_tests COMMAND aerogpu_d3d9_trace_filter_commas_only_disables_tests)
+
 add_executable(aerogpu_d3d9_trace_filter_whitespace_only_disables_tests
     trace_filter_whitespace_only_disables_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp

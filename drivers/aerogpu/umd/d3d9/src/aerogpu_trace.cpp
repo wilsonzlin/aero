@@ -671,58 +671,67 @@ void d3d9_trace_init_from_env() {
   if (env_get("AEROGPU_D3D9_TRACE_FILTER", filter, sizeof(filter))) {
     trim_ascii_whitespace_inplace(filter);
     if (*filter) {
-      g_trace_filter_enabled = true;
-      g_trace_filter_count = 0;
-      std::memset(g_trace_filter, 0, sizeof(g_trace_filter));
-
-      // Split on commas. Tokens are matched case-insensitively as substrings of the
-      // `func_name()` string (e.g. `StateBlock` matches all stateblock DDIs).
-      char* p = filter;
-      while (p && *p) {
-        while (*p == ',' || std::isspace(static_cast<unsigned char>(*p))) {
-          ++p;
-        }
-        if (!*p) {
+      bool has_token_chars = false;
+      for (char* c = filter; *c; ++c) {
+        if (*c != ',' && !std::isspace(static_cast<unsigned char>(*c))) {
+          has_token_chars = true;
           break;
         }
+      }
+      if (has_token_chars) {
+        g_trace_filter_enabled = true;
+        g_trace_filter_count = 0;
+        std::memset(g_trace_filter, 0, sizeof(g_trace_filter));
 
-        char* token = p;
-        while (*p && *p != ',') {
-          ++p;
-        }
-        if (*p == ',') {
-          *p = '\0';
-          ++p;
-        }
+        // Split on commas. Tokens are matched case-insensitively as substrings of the
+        // `func_name()` string (e.g. `StateBlock` matches all stateblock DDIs).
+        char* p = filter;
+        while (p && *p) {
+          while (*p == ',' || std::isspace(static_cast<unsigned char>(*p))) {
+            ++p;
+          }
+          if (!*p) {
+            break;
+          }
 
-        // Trim trailing whitespace.
-        char* end = token + std::strlen(token);
-        while (end > token && std::isspace(static_cast<unsigned char>(end[-1]))) {
-          --end;
-        }
-        *end = '\0';
+          char* token = p;
+          while (*p && *p != ',') {
+            ++p;
+          }
+          if (*p == ',') {
+            *p = '\0';
+            ++p;
+          }
 
-        // Lowercase the token in-place for matching.
-        for (char* c = token; *c; ++c) {
-          *c = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
-        }
-        if (!*token) {
-          continue;
-        }
+          // Trim trailing whitespace.
+          char* end = token + std::strlen(token);
+          while (end > token && std::isspace(static_cast<unsigned char>(end[-1]))) {
+            --end;
+          }
+          *end = '\0';
 
-        for (uint32_t id = 0; id < kFuncCount; ++id) {
-          const auto func = static_cast<D3d9TraceFunc>(id);
-          const char* name = func_name(func);
-          if (trace_icontains(name, token)) {
-            const uint32_t word_index = id / 32;
-            const uint32_t bit = 1u << (id % 32);
-            g_trace_filter[word_index] |= bit;
+          // Lowercase the token in-place for matching.
+          for (char* c = token; *c; ++c) {
+            *c = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
+          }
+          if (!*token) {
+            continue;
+          }
+
+          for (uint32_t id = 0; id < kFuncCount; ++id) {
+            const auto func = static_cast<D3d9TraceFunc>(id);
+            const char* name = func_name(func);
+            if (trace_icontains(name, token)) {
+              const uint32_t word_index = id / 32;
+              const uint32_t bit = 1u << (id % 32);
+              g_trace_filter[word_index] |= bit;
+            }
           }
         }
-      }
 
-      for (uint32_t i = 0; i < kSeenWordCount; ++i) {
-        g_trace_filter_count += popcount_u32(g_trace_filter[i]);
+        for (uint32_t i = 0; i < kSeenWordCount; ++i) {
+          g_trace_filter_count += popcount_u32(g_trace_filter[i]);
+        }
       }
     }
   }
