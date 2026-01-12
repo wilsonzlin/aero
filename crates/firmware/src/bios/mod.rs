@@ -178,6 +178,22 @@ impl FirmwareMemoryBus for BiosMemoryBus<'_> {
         self.bus.write_u8(addr, value);
     }
 
+    fn read_u16(&mut self, addr: u64) -> u16 {
+        self.bus.read_u16(addr)
+    }
+
+    fn write_u16(&mut self, addr: u64, value: u16) {
+        self.bus.write_u16(addr, value);
+    }
+
+    fn read_u32(&mut self, addr: u64) -> u32 {
+        self.bus.read_u32(addr)
+    }
+
+    fn write_u32(&mut self, addr: u64, value: u32) {
+        self.bus.write_u32(addr, value);
+    }
+
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         // Forward bulk reads to the canonical guest memory bus so callers like the VBE framebuffer
         // clear path don't devolve into byte-at-a-time MMIO accesses.

@@ -95,6 +95,26 @@ impl MemoryBus for VecMemory {
         self.data[addr as usize] = value;
     }
 
+    fn read_u16(&mut self, addr: u64) -> u16 {
+        let mut buf = [0u8; 2];
+        self.read_physical(addr, &mut buf);
+        u16::from_le_bytes(buf)
+    }
+
+    fn write_u16(&mut self, addr: u64, value: u16) {
+        self.write_physical(addr, &value.to_le_bytes());
+    }
+
+    fn read_u32(&mut self, addr: u64) -> u32 {
+        let mut buf = [0u8; 4];
+        self.read_physical(addr, &mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn write_u32(&mut self, addr: u64, value: u32) {
+        self.write_physical(addr, &value.to_le_bytes());
+    }
+
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         if buf.is_empty() {
             return;
@@ -154,6 +174,22 @@ impl<T: memory::MemoryBus + ?Sized> MemoryBus for T {
 
     fn write_u8(&mut self, addr: u64, value: u8) {
         memory::MemoryBus::write_u8(self, addr, value);
+    }
+
+    fn read_u16(&mut self, addr: u64) -> u16 {
+        memory::MemoryBus::read_u16(self, addr)
+    }
+
+    fn write_u16(&mut self, addr: u64, value: u16) {
+        memory::MemoryBus::write_u16(self, addr, value);
+    }
+
+    fn read_u32(&mut self, addr: u64) -> u32 {
+        memory::MemoryBus::read_u32(self, addr)
+    }
+
+    fn write_u32(&mut self, addr: u64, value: u32) {
+        memory::MemoryBus::write_u32(self, addr, value);
     }
 
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
