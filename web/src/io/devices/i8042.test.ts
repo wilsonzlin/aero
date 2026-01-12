@@ -205,6 +205,48 @@ describe("io/devices/I8042Controller", () => {
     expect(dev.portRead(0x0060, 1)).toBe(0x04); // device id
   });
 
+  it("encodes IntelliMouse Explorer side/extra button bits in the 4th packet byte (device ID 0x04)", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new I8042Controller(irqSink);
+
+    const sendMouseByte = (value: number) => {
+      dev.portWrite(0x0064, 1, 0xd4);
+      dev.portWrite(0x0060, 1, value);
+      expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    };
+
+    // Enable IntelliMouse Explorer mode (200,200,80 sample rate sequence).
+    sendMouseByte(0xf3);
+    sendMouseByte(200);
+    sendMouseByte(0xf3);
+    sendMouseByte(200);
+    sendMouseByte(0xf3);
+    sendMouseByte(80);
+
+    // Verify device ID.
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf2);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    expect(dev.portRead(0x0060, 1)).toBe(0x04);
+
+    // Enable reporting so button updates emit packets.
+    sendMouseByte(0xf4);
+
+    // Side button (bit3) should set bit4 in the fourth packet byte.
+    dev.injectMouseButtons(0x08);
+    expect(dev.portRead(0x0060, 1)).toBe(0x08);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x10);
+
+    // Extra button (bit4) should set bit5 in the fourth packet byte, preserving bit4 while held.
+    dev.injectMouseButtons(0x18);
+    expect(dev.portRead(0x0060, 1)).toBe(0x08);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x30);
+  });
+
   it("clears IntelliMouse mode back to device ID 0x00 when Set Defaults (0xF6) is issued", () => {
     const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const dev = new I8042Controller(irqSink);

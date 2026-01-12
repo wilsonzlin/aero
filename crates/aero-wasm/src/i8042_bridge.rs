@@ -125,7 +125,7 @@ impl I8042Bridge {
     /// Write a single byte to the guest I/O port space.
     pub fn port_write(&mut self, port: u16, value: u8) {
         self.ctrl.write_port(port, value);
-        self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x07;
+        self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x1f;
     }
 
     /// Inject up to 4 Set-2 keyboard scancode bytes.
@@ -177,9 +177,16 @@ impl I8042Bridge {
         self.ctrl.inject_mouse_motion(dx, -dy, wheel);
     }
 
-    /// Set PS/2 mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+    /// Set PS/2 mouse button state as a bitmask matching DOM `MouseEvent.buttons` (low 5 bits).
+    ///
+    /// - bit0 (`0x01`): left
+    /// - bit1 (`0x02`): right
+    /// - bit2 (`0x04`): middle
+    /// - bit3 (`0x08`): back / side (only emitted if the guest enabled the IntelliMouse Explorer
+    ///   extension, i.e. device ID 0x04)
+    /// - bit4 (`0x10`): forward / extra (same note as bit3)
     pub fn inject_mouse_buttons(&mut self, buttons: u8) {
-        let next = buttons & 0x07;
+        let next = buttons & 0x1f;
         let prev = self.mouse_buttons;
         let delta = prev ^ next;
 
@@ -194,6 +201,14 @@ impl I8042Bridge {
         if (delta & 0x04) != 0 {
             self.ctrl
                 .inject_mouse_button(Ps2MouseButton::Middle, (next & 0x04) != 0);
+        }
+        if (delta & 0x08) != 0 {
+            self.ctrl
+                .inject_mouse_button(Ps2MouseButton::Side, (next & 0x08) != 0);
+        }
+        if (delta & 0x10) != 0 {
+            self.ctrl
+                .inject_mouse_button(Ps2MouseButton::Extra, (next & 0x10) != 0);
         }
 
         self.mouse_buttons = next;
@@ -260,7 +275,7 @@ impl I8042Bridge {
             .map_err(|e| js_error(format!("Invalid i8042 snapshot: {e}")))?;
         // The snapshot contains the mouse button image; keep our host-side injection tracker in
         // sync so subsequent absolute button-mask injections compute correct deltas.
-        self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x07;
+        self.mouse_buttons = self.ctrl.mouse_buttons_mask() & 0x1f;
         // Snapshot restore should not deliver IRQs for already-buffered bytes; clear any pending
         // pulses that might have been queued by prior activity.
         self.irq.borrow_mut().pending_mask = 0;

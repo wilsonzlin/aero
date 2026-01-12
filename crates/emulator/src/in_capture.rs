@@ -351,6 +351,8 @@ impl InputPipeline {
             Ps2MouseButton::Left => vio_input::BTN_LEFT,
             Ps2MouseButton::Right => vio_input::BTN_RIGHT,
             Ps2MouseButton::Middle => vio_input::BTN_MIDDLE,
+            Ps2MouseButton::Side => vio_input::BTN_SIDE,
+            Ps2MouseButton::Extra => vio_input::BTN_EXTRA,
         };
         virtio.mouse.inject_button(mem, code, pressed)?;
         Ok(())
@@ -361,6 +363,8 @@ impl InputPipeline {
             Ps2MouseButton::Left => 0x01,
             Ps2MouseButton::Right => 0x02,
             Ps2MouseButton::Middle => 0x04,
+            Ps2MouseButton::Side => 0x08,
+            Ps2MouseButton::Extra => 0x10,
         };
         if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
             dev.mouse_button_event(bit, pressed);

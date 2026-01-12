@@ -2447,6 +2447,8 @@ impl Machine {
             Ps2MouseButton::Left => 0x01,
             Ps2MouseButton::Right => 0x02,
             Ps2MouseButton::Middle => 0x04,
+            Ps2MouseButton::Side => 0x08,
+            Ps2MouseButton::Extra => 0x10,
         };
         if pressed {
             self.ps2_mouse_buttons |= bit;
@@ -2483,17 +2485,19 @@ impl Machine {
     /// - bit 0: left
     /// - bit 1: right
     /// - bit 2: middle
+    /// - bit 3: back/side (only emitted if the guest enabled the IntelliMouse Explorer extension)
+    /// - bit 4: forward/extra (same note as bit 3)
     pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
-        let buttons = buttons & 0x07;
+        let buttons = buttons & 0x1f;
 
         // `ps2_mouse_buttons` is a host-side cache used to compute transitions from an absolute
         // button mask. Prefer the authoritative guest device state when the i8042 controller is
         // present: the guest can reset/reconfigure the mouse independently, making the cached value
         // stale.
         let prev = if let Some(ctrl) = &self.i8042 {
-            ctrl.borrow().mouse_buttons_mask() & 0x07
+            ctrl.borrow().mouse_buttons_mask() & 0x1f
         } else {
-            self.ps2_mouse_buttons & 0x07
+            self.ps2_mouse_buttons & 0x1f
         };
         let changed = prev ^ buttons;
         if changed == 0 {
@@ -2510,6 +2514,12 @@ impl Machine {
         }
         if (changed & 0x04) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Middle, (buttons & 0x04) != 0);
+        }
+        if (changed & 0x08) != 0 {
+            self.inject_mouse_button(Ps2MouseButton::Side, (buttons & 0x08) != 0);
+        }
+        if (changed & 0x10) != 0 {
+            self.inject_mouse_button(Ps2MouseButton::Extra, (buttons & 0x10) != 0);
         }
 
         self.ps2_mouse_buttons = buttons;

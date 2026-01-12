@@ -12,6 +12,10 @@ pub enum Ps2MouseButton {
     Left,
     Right,
     Middle,
+    /// IntelliMouse Explorer "button 4" (typically back/side).
+    Side,
+    /// IntelliMouse Explorer "button 5" (typically forward/extra).
+    Extra,
 }
 
 impl Ps2MouseButton {
@@ -20,6 +24,8 @@ impl Ps2MouseButton {
             Ps2MouseButton::Left => 0x01,
             Ps2MouseButton::Right => 0x02,
             Ps2MouseButton::Middle => 0x04,
+            Ps2MouseButton::Side => 0x08,
+            Ps2MouseButton::Extra => 0x10,
         }
     }
 }
@@ -355,7 +361,20 @@ impl Ps2Mouse {
         if self.device_id >= 0x03 {
             // IntelliMouse: signed 4-bit wheel delta (-8..7).
             let wheel = self.wheel.clamp(-8, 7) as i8;
-            self.push_out((wheel as u8) & 0x0F);
+            let mut b3 = (wheel as u8) & 0x0F;
+            if self.device_id == 0x04 {
+                // IntelliMouse Explorer (5-button) extension:
+                // - bits 0..3: wheel delta (signed 4-bit, two's complement)
+                // - bit 4: button 4 (side/back)
+                // - bit 5: button 5 (extra/forward)
+                if (self.buttons & 0x08) != 0 {
+                    b3 |= 0x10;
+                }
+                if (self.buttons & 0x10) != 0 {
+                    b3 |= 0x20;
+                }
+            }
+            self.push_out(b3);
         }
 
         self.dx = 0;
@@ -619,6 +638,35 @@ mod tests {
         m.receive_byte(0xF2);
         assert_eq!(m.pop_output(), Some(0xFA));
         assert_eq!(m.pop_output(), Some(0x04));
+    }
+
+    #[test]
+    fn intellimouse_explorer_encodes_side_buttons_in_fourth_byte() {
+        let mut m = Ps2Mouse::new();
+
+        // Enable IntelliMouse Explorer (5-button) extension: 200, 200, 80.
+        m.receive_byte(0xF3);
+        m.receive_byte(200);
+        m.receive_byte(0xF3);
+        m.receive_byte(200);
+        m.receive_byte(0xF3);
+        m.receive_byte(80);
+
+        while m.pop_output().is_some() {}
+        assert_eq!(m.device_id(), 0x04);
+
+        m.receive_byte(0xF4); // enable reporting
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        // Side button down should set bit 4 in the 4th byte.
+        m.inject_button(Ps2MouseButton::Side, true);
+        let packet: Vec<u8> = std::iter::from_fn(|| m.pop_output()).take(4).collect();
+        assert_eq!(packet, vec![0x08, 0x00, 0x00, 0x10]);
+
+        // Extra button down should set bit 5 in the 4th byte (and preserve bit 4 while held).
+        m.inject_button(Ps2MouseButton::Extra, true);
+        let packet: Vec<u8> = std::iter::from_fn(|| m.pop_output()).take(4).collect();
+        assert_eq!(packet, vec![0x08, 0x00, 0x00, 0x30]);
     }
 
     #[test]

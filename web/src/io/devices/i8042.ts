@@ -871,7 +871,16 @@ class Ps2Mouse {
     // IntelliMouse wheel / extra buttons.
     if (this.deviceId === 0x03 || this.deviceId === 0x04) {
       const dz = Math.max(-8, Math.min(7, this.dz | 0));
-      this.#queueByte(dz & 0x0f);
+      let b3 = dz & 0x0f;
+      if (this.deviceId === 0x04) {
+        // IntelliMouse Explorer (5-button) extension:
+        // - bits 0..3: wheel delta (signed 4-bit, two's complement)
+        // - bit 4: button 4 (back/side)
+        // - bit 5: button 5 (forward/extra)
+        if ((this.buttons & 0x08) !== 0) b3 |= 0x10;
+        if ((this.buttons & 0x10) !== 0) b3 |= 0x20;
+      }
+      this.#queueByte(b3);
     }
 
     this.dx = 0;
@@ -1080,13 +1089,19 @@ export class I8042Controller implements PortIoHandler {
   /**
    * Host-side injection API: set absolute mouse button state bitmask.
    *
-   * Bits: 0=left, 1=right, 2=middle.
+   * Bits match DOM `MouseEvent.buttons` (low 5 bits):
+   * - bit0 (`0x01`): left
+   * - bit1 (`0x02`): right
+   * - bit2 (`0x04`): middle
+   * - bit3 (`0x08`): back/side (only emitted if the guest enabled device ID 0x04)
+   * - bit4 (`0x10`): forward/extra (same note as bit3)
    */
   injectMouseButtons(buttonMask: number): void {
     const enabled = (this.#commandByte & 0x20) === 0;
+    const mask = buttonMask & 0x1f;
     // If the mouse port is disabled, drop the button-change packet but keep the internal button
     // image up to date so the next motion packet (after re-enable) carries the correct button bits.
-    this.#mouse.setButtons(buttonMask & 0xff, enabled);
+    this.#mouse.setButtons(mask, enabled);
     if (!enabled) return;
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();
