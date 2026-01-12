@@ -652,23 +652,6 @@ fn parse_opcode(
             },
             1,
         ))
-    } else if b0 == 0x8F {
-        // XOP shares its first byte with `POP r/m16/32/64` (`8F /0`). The CPU disambiguates the
-        // XOP prefix by requiring ModRM.reg != 0, which would make the legacy POP encoding invalid.
-        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
-        let is_extended = ((b1 >> 3) & 0x7) != 0;
-        Ok((
-            OpcodeBytes {
-                map: if is_extended {
-                    OpcodeMap::Extended
-                } else {
-                    OpcodeMap::Primary
-                },
-                opcode: b0,
-                opcode_ext: None,
-            },
-            1,
-        ))
     } else {
         Ok((
             OpcodeBytes {

@@ -802,50 +802,8 @@ pub mod tier1 {
                     }
                 }
             }
-            0xc1 => {
-                let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
-                let group = modrm.reg & 0x7;
-                let imm8 = read_u8(bytes, offset)? as u64;
-                offset += 1;
-                let op = match group {
-                    4 => AluOp::Shl,
-                    5 => AluOp::Shr,
-                    7 => AluOp::Sar,
-                    _ => {
-                        return Err(DecodeError {
-                            message: "unsupported 0xC1 shift group",
-                        })
-                    }
-                };
-                InstKind::Alu {
-                    op,
-                    dst,
-                    src: Operand::Imm(imm8),
-                    width,
-                }
-            }
-            0xd1 => {
-                let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
-                let group = modrm.reg & 0x7;
-                let op = match group {
-                    4 => AluOp::Shl,
-                    5 => AluOp::Shr,
-                    7 => AluOp::Sar,
-                    _ => {
-                        return Err(DecodeError {
-                            message: "unsupported 0xD1 shift group",
-                        })
-                    }
-                };
-                InstKind::Alu {
-                    op,
-                    dst,
-                    src: Operand::Imm(1),
-                    width,
-                }
-            }
+            // 0xC1/0xD1 shifts are decoded below as `InstKind::Shift` so Tier1 can keep the shift
+            // count as a `u8` instead of embedding it into an `Operand::Imm`.
             0x05 | 0x25 | 0x0d | 0x35 | 0x2d | 0x3d | 0xa9 => {
                 let (op, is_cmp, is_test, acc) = match opcode1 {
                     0x05 => (AluOp::Add, false, false, Gpr::Rax),
