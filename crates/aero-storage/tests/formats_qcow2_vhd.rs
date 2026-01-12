@@ -838,3 +838,74 @@ fn vhd_rejects_bad_footer_checksum() {
         Err(err) => assert!(matches!(err, DiskError::CorruptImage(_))),
     }
 }
+
+#[test]
+fn vhd_dynamic_rejects_block_overlapping_footer() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Force a bogus BAT entry that points at the current end-of-file footer (but the file has not
+    // been grown to fit a whole block there).
+    let table_offset = (SECTOR_SIZE as u64) + 1024u64;
+    let file_len = backend.len().unwrap();
+    let footer_offset = file_len - SECTOR_SIZE as u64;
+    let bat_entry = (footer_offset / SECTOR_SIZE as u64) as u32;
+    backend.write_at(table_offset, &bat_entry.to_be_bytes()).unwrap();
+
+    let mut disk = VhdDisk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::CorruptImage(_)));
+}
+
+#[test]
+fn vhd_dynamic_rejects_bat_entry_pointing_into_metadata() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Grow the file so a block starting at offset 0 would fit before the footer at EOF.
+    // This ensures the failure is due to "metadata overlap", not "block overlaps footer".
+    let bitmap_size = SECTOR_SIZE as u64; // for 16 KiB blocks (32 sectors) => 512-aligned bitmap
+    let new_len = bitmap_size + block_size as u64 + SECTOR_SIZE as u64;
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    backend.set_len(new_len).unwrap();
+    backend
+        .write_at(new_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    // Point block 0 at the start of the file (overlapping the footer copy / dynamic header / BAT).
+    let table_offset = dyn_header_offset + 1024u64;
+    backend.write_at(table_offset, &0u32.to_be_bytes()).unwrap();
+
+    let mut disk = VhdDisk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::CorruptImage(_)));
+}
+
+#[test]
+fn vhd_dynamic_zero_writes_do_not_hide_corrupt_bat_entries() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let bitmap_size = SECTOR_SIZE as u64;
+    let new_len = bitmap_size + block_size as u64 + SECTOR_SIZE as u64;
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    backend.set_len(new_len).unwrap();
+    backend
+        .write_at(new_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let table_offset = dyn_header_offset + 1024u64;
+    backend.write_at(table_offset, &0u32.to_be_bytes()).unwrap();
+
+    let mut disk = VhdDisk::open(backend).unwrap();
+    let zeros = vec![0u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &zeros).unwrap_err();
+    assert!(matches!(err, DiskError::CorruptImage(_)));
+}

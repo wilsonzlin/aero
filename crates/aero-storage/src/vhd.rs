@@ -293,6 +293,62 @@ impl<B: StorageBackend> VhdDisk<B> {
         Ok(())
     }
 
+    fn data_region_start(&self) -> Result<u64> {
+        let dyn_hdr = self
+            .dynamic
+            .as_ref()
+            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
+
+        let footer_copy_end = SECTOR_SIZE as u64;
+        let dyn_header_end = self
+            .footer
+            .data_offset
+            .checked_add(1024)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        let bat_bytes = (self.bat.len() as u64)
+            .checked_mul(4)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let bat_end = dyn_hdr
+            .table_offset
+            .checked_add(bat_bytes)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let bat_end_aligned = align_up_u64(bat_end, SECTOR_SIZE as u64)?;
+
+        Ok(footer_copy_end.max(dyn_header_end).max(bat_end_aligned))
+    }
+
+    fn validate_block_bounds(&mut self, block_start: u64, bitmap_size: u64) -> Result<()> {
+        let dyn_hdr = self
+            .dynamic
+            .as_ref()
+            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
+
+        // Prevent a corrupt BAT entry from pointing into the file header / BAT region.
+        let data_start = self.data_region_start()?;
+        if block_start < data_start {
+            return Err(DiskError::CorruptImage("vhd block overlaps metadata"));
+        }
+
+        // Prevent allocated blocks from overlapping the required footer at EOF.
+        let file_len = self.backend.len()?;
+        if file_len < SECTOR_SIZE as u64 {
+            return Err(DiskError::CorruptImage("vhd file truncated"));
+        }
+        let footer_offset = file_len - SECTOR_SIZE as u64;
+        let block_total_size = bitmap_size
+            .checked_add(dyn_hdr.block_size as u64)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let block_end = block_start
+            .checked_add(block_total_size)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if block_end > footer_offset {
+            return Err(DiskError::CorruptImage("vhd block overlaps footer"));
+        }
+
+        Ok(())
+    }
+
     fn is_sector_allocated(&mut self, lba: u64) -> Result<bool> {
         let (sectors_per_block, bitmap_size) = self.dyn_params()?;
         let block_index = (lba / sectors_per_block) as usize;
@@ -307,6 +363,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         let block_start = (bat_entry as u64)
             .checked_mul(SECTOR_SIZE as u64)
             .ok_or(DiskError::OffsetOverflow)?;
+        self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
         Self::bitmap_get(&bitmap, sector_in_block)
     }
@@ -330,6 +387,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         let block_start = (bat_entry as u64)
             .checked_mul(SECTOR_SIZE as u64)
             .ok_or(DiskError::OffsetOverflow)?;
+        self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
         if !Self::bitmap_get(&bitmap, sector_in_block)? {
             out.fill(0);
@@ -345,10 +403,12 @@ impl<B: StorageBackend> VhdDisk<B> {
     }
 
     fn write_sector_dyn(&mut self, lba: u64, data: &[u8; SECTOR_SIZE]) -> Result<()> {
-        if !self.is_sector_allocated(lba)? && data.iter().all(|b| *b == 0) {
+        if data.iter().all(|b| *b == 0) {
             // Keep the image sparse: writing zeros to an unallocated sector doesn't need to
             // allocate anything.
-            return Ok(());
+            if !self.is_sector_allocated(lba)? {
+                return Ok(());
+            }
         }
 
         let dyn_hdr = self
@@ -369,6 +429,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         } else {
             (bat_entry as u64) * SECTOR_SIZE as u64
         };
+        self.validate_block_bounds(block_start, bitmap_size)?;
 
         let data_offset = block_start
             .checked_add(bitmap_size)
@@ -401,6 +462,9 @@ impl<B: StorageBackend> VhdDisk<B> {
             return Err(DiskError::CorruptImage("vhd file truncated"));
         }
         let old_footer_offset = file_len - SECTOR_SIZE as u64;
+        if old_footer_offset < self.data_region_start()? {
+            return Err(DiskError::CorruptImage("vhd footer overlaps metadata"));
+        }
 
         let block_total_size = bitmap_size
             .checked_add(dyn_hdr.block_size as u64)
@@ -490,6 +554,7 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
             let block_start = (bat_entry as u64)
                 .checked_mul(SECTOR_SIZE as u64)
                 .ok_or(DiskError::OffsetOverflow)?;
+            self.validate_block_bounds(block_start, bitmap_size)?;
             let bitmap = self.load_bitmap(block_start, bitmap_size)?;
 
             let mut within = within_block;
