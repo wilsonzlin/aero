@@ -104,7 +104,11 @@ impl PciBus {
         allocator.reset();
         self.mapped_bars.clear();
 
-        for addr in self.iter_device_addrs().collect::<Vec<_>>() {
+        // Collect BDFs up front so we can mutably borrow devices inside the loops without
+        // repeatedly allocating temporary vectors.
+        let addrs = self.iter_device_addrs().collect::<Vec<_>>();
+
+        for addr in addrs.iter().copied() {
             let dev = self.devices.get_mut(&addr).expect("device disappeared");
             dev.reset();
         }
@@ -113,7 +117,7 @@ impl PciBus {
         // legacy compatible IDE controllers, or platform-chosen I/O BAR bases). Reserve any
         // non-zero BAR ranges so newly allocated BARs do not overlap them if additional devices
         // are added and POST is re-run.
-        for bdf in self.iter_device_addrs().collect::<Vec<_>>() {
+        for bdf in addrs.iter().copied() {
             let dev = self.devices.get_mut(&bdf).expect("device disappeared");
             for bar_index in 0u8..6u8 {
                 let Some(range) = dev.config().bar_range(bar_index) else {
@@ -127,7 +131,7 @@ impl PciBus {
         }
 
         // Allocate BARs in deterministic order: ascending BDF then BAR index.
-        for bdf in self.iter_device_addrs().collect::<Vec<_>>() {
+        for bdf in addrs.iter().copied() {
             let dev = self.devices.get_mut(&bdf).expect("device disappeared");
             for bar_index in 0u8..6u8 {
                 let def = dev.config().bar_definition(bar_index);
