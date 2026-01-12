@@ -1571,17 +1571,13 @@ impl MmioHandler for NvmePciDevice {
 }
 
 fn all_ones(size: usize) -> u64 {
-    match size {
-        0 => 0,
-        1 => 0xff,
-        2 => 0xffff,
-        3 => 0x00ff_ffff,
-        4 => 0xffff_ffff,
-        5 => 0x0000_ffff_ffff,
-        6 => 0x00ff_ffff_ffff,
-        7 => 0x00ff_ffff_ffff_ffff,
-        _ => u64::MAX,
+    if size == 0 {
+        return 0;
     }
+    if size >= 8 {
+        return u64::MAX;
+    }
+    (1u64 << (size * 8)) - 1
 }
 
 impl IoSnapshot for NvmePciDevice {

@@ -212,17 +212,14 @@ impl MmioHandler for PciBarMmioRouter {
 }
 
 fn all_ones(size: usize) -> u64 {
-    match size {
-        0 => 0,
-        1 => 0xff,
-        2 => 0xffff,
-        3 => 0x00ff_ffff,
-        4 => 0xffff_ffff,
-        5 => 0x0000_ffff_ffff,
-        6 => 0x00ff_ffff_ffff,
-        7 => 0x00ff_ffff_ffff_ffff,
-        _ => u64::MAX,
+    if size == 0 {
+        return 0;
     }
+    if size >= 8 {
+        return u64::MAX;
+    }
+    // Safe because `size < 8` => `size * 8 < 64`.
+    (1u64 << (size * 8)) - 1
 }
 
 #[cfg(test)]
@@ -524,5 +521,21 @@ mod tests {
         assert_eq!(&state.mem[dev_offset as usize..dev_offset as usize + 4], &[0x44, 0x33, 0x22, 0x11]);
         assert_eq!(state.writes.len(), 1);
         assert_eq!(state.reads.len(), 1);
+    }
+
+    #[test]
+    fn unmapped_reads_return_all_ones_for_non_pow2_sizes() {
+        let window_base = 0x8000_0000;
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports);
+
+        // These sizes can occur for string/descriptor-style instructions (e.g. LGDT/LIDT) hitting
+        // an unmapped MMIO window; ensure we return the correct open-bus pattern.
+        let got5 = MmioHandler::read(&mut router, 0x10, 5);
+        assert_eq!(got5, (1u64 << 40) - 1);
+
+        let got6 = MmioHandler::read(&mut router, 0x10, 6);
+        assert_eq!(got6, (1u64 << 48) - 1);
     }
 }
