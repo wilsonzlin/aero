@@ -165,6 +165,41 @@ async fn if_range_http_date_at_or_after_last_modified_allows_range() {
 }
 
 #[tokio::test]
+async fn if_range_http_date_ignores_subsecond_precision() {
+    let last_modified = UNIX_EPOCH + Duration::from_secs(1_000_000) + Duration::from_nanos(456);
+    let if_range = httpdate::fmt_http_date(last_modified);
+
+    let store = Arc::new(FixedImageStore::new(
+        "test.img",
+        b"Hello, world!".to_vec(),
+        ImageMeta {
+            size: 0,
+            etag: None,
+            last_modified: Some(last_modified),
+            content_type: CONTENT_TYPE_DISK_IMAGE,
+        },
+    ));
+    let app = setup_app(store);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img")
+                .header(header::RANGE, "bytes=0-0")
+                .header(header::IF_RANGE, if_range)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"H");
+}
+
+#[tokio::test]
 async fn if_range_http_date_before_last_modified_ignores_range() {
     let last_modified = UNIX_EPOCH + Duration::from_secs(1_000_000);
     let if_range = httpdate::fmt_http_date(last_modified - Duration::from_secs(60));
