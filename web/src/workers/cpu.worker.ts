@@ -1637,6 +1637,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     void startHdaPciDevice(startMsg).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error(err);
+      // If the device was partially programmed before failing, ensure we don't leave
+      // a running stream/CORB/RIRB behind in the long-lived worker runtime.
+      stopHdaPciDevice();
       ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
     });
     return;
