@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use aero_storage::{DiskError as StorageDiskError, Result as StorageResult, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use firmware::bios::{BlockDevice, DiskError as BiosDiskError};
 
-use crate::{MachineError, VecBlockDevice};
+use crate::MachineError;
 
 /// Cloneable handle to a single underlying virtual disk backend.
 ///
@@ -31,7 +31,7 @@ impl SharedDisk {
     /// The image must be a multiple of 512 bytes (BIOS sector size). An empty image is allowed and
     /// is treated as a single all-zero sector so BIOS boot attempts remain deterministic.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, MachineError> {
-        Ok(Self::new(Box::new(VecBlockDevice::new(bytes)?)))
+        Ok(Self::new(Self::virtual_disk_from_bytes(bytes)?))
     }
 
     /// Replace the underlying disk backend for **all** shared handles.
@@ -47,8 +47,24 @@ impl SharedDisk {
     /// This is a convenience wrapper for `Vec<u8>`-backed images used by
     /// [`crate::Machine::set_disk_image`].
     pub fn set_bytes(&self, bytes: Vec<u8>) -> Result<(), MachineError> {
-        self.set_backend(Box::new(VecBlockDevice::new(bytes)?));
+        self.set_backend(Self::virtual_disk_from_bytes(bytes)?);
         Ok(())
+    }
+
+    fn virtual_disk_from_bytes(mut bytes: Vec<u8>) -> Result<Box<dyn VirtualDisk + Send>, MachineError> {
+        if !bytes.len().is_multiple_of(SECTOR_SIZE) {
+            return Err(MachineError::InvalidDiskSize(bytes.len()));
+        }
+        if bytes.is_empty() {
+            bytes.resize(SECTOR_SIZE, 0);
+        }
+
+        let capacity_bytes: u64 = bytes.len().try_into().unwrap_or(u64::MAX);
+        let mut disk = RawDisk::create(MemBackend::new(), capacity_bytes)
+            .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
+        disk.write_at(0, &bytes)
+            .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
+        Ok(Box::new(disk))
     }
 }
 
@@ -60,21 +76,21 @@ impl VirtualDisk for SharedDisk {
             .capacity_bytes()
     }
 
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> StorageResult<()> {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
         self.inner
             .lock()
             .expect("shared disk mutex should not be poisoned")
             .read_at(offset, buf)
     }
 
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> StorageResult<()> {
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
         self.inner
             .lock()
             .expect("shared disk mutex should not be poisoned")
             .write_at(offset, buf)
     }
 
-    fn flush(&mut self) -> StorageResult<()> {
+    fn flush(&mut self) -> aero_storage::Result<()> {
         self.inner
             .lock()
             .expect("shared disk mutex should not be poisoned")
@@ -109,47 +125,5 @@ impl BlockDevice for SharedDisk {
             .expect("shared disk mutex should not be poisoned")
             .capacity_bytes()
             / SECTOR_SIZE as u64
-    }
-}
-
-impl VirtualDisk for VecBlockDevice {
-    fn capacity_bytes(&self) -> u64 {
-        self.data.len() as u64
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> StorageResult<()> {
-        let offset_usize: usize = offset.try_into().map_err(|_| StorageDiskError::OffsetOverflow)?;
-        let end = offset_usize
-            .checked_add(buf.len())
-            .ok_or(StorageDiskError::OffsetOverflow)?;
-        if end > self.data.len() {
-            return Err(StorageDiskError::OutOfBounds {
-                offset,
-                len: buf.len(),
-                capacity: self.data.len() as u64,
-            });
-        }
-        buf.copy_from_slice(&self.data[offset_usize..end]);
-        Ok(())
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> StorageResult<()> {
-        let offset_usize: usize = offset.try_into().map_err(|_| StorageDiskError::OffsetOverflow)?;
-        let end = offset_usize
-            .checked_add(buf.len())
-            .ok_or(StorageDiskError::OffsetOverflow)?;
-        if end > self.data.len() {
-            return Err(StorageDiskError::OutOfBounds {
-                offset,
-                len: buf.len(),
-                capacity: self.data.len() as u64,
-            });
-        }
-        self.data[offset_usize..end].copy_from_slice(buf);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> StorageResult<()> {
-        Ok(())
     }
 }

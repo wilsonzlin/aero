@@ -75,7 +75,7 @@ use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bda::{BDA_CURSOR_POS_PAGE0_ADDR, BDA_CURSOR_SHAPE_ADDR, BDA_SCREEN_COLS_ADDR};
-use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
+use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::{
     DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
     MmioHandler, SparseMemory,
@@ -243,6 +243,7 @@ impl RunExit {
 pub enum MachineError {
     InvalidCpuCount(u8),
     InvalidDiskSize(usize),
+    DiskBackend(String),
     GuestMemoryTooLarge(u64),
     AhciRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -262,6 +263,7 @@ impl fmt::Display for MachineError {
                 f,
                 "disk image length {len} is not a multiple of 512 (BIOS sector size)"
             ),
+            MachineError::DiskBackend(msg) => write!(f, "disk backend error: {msg}"),
             MachineError::GuestMemoryTooLarge(size) => write!(
                 f,
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
@@ -280,46 +282,6 @@ impl fmt::Display for MachineError {
 }
 
 impl std::error::Error for MachineError {}
-
-/// In-memory block device backed by a `Vec<u8>` of 512-byte sectors.
-#[derive(Debug, Clone)]
-pub struct VecBlockDevice {
-    data: Vec<u8>,
-}
-
-impl VecBlockDevice {
-    pub fn new(mut data: Vec<u8>) -> Result<Self, MachineError> {
-        if !data.len().is_multiple_of(512) {
-            return Err(MachineError::InvalidDiskSize(data.len()));
-        }
-        if data.is_empty() {
-            // Ensure at least one sector exists so BIOS boot attempts are deterministic.
-            data.resize(512, 0);
-        }
-        Ok(Self { data })
-    }
-
-    pub fn from_sector0(sector0: [u8; 512]) -> Self {
-        Self {
-            data: sector0.to_vec(),
-        }
-    }
-}
-
-impl BlockDevice for VecBlockDevice {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
-        let idx = usize::try_from(lba).map_err(|_| DiskError::OutOfRange)?;
-        let start = idx.checked_mul(512).ok_or(DiskError::OutOfRange)?;
-        let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
-        let src = self.data.get(start..end).ok_or(DiskError::OutOfRange)?;
-        buf.copy_from_slice(src);
-        Ok(())
-    }
-
-    fn size_in_sectors(&self) -> u64 {
-        (self.data.len() / 512) as u64
-    }
-}
 
 struct SystemMemory {
     a20: A20GateHandle,
