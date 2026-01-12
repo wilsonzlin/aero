@@ -5,14 +5,12 @@ use std::io::Cursor;
 use std::io::{Seek, Write};
 
 use aero_snapshot::{
-    Compression, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState,
-    RamMode, RamWriteOptions, SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
-    SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+    limits, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs,
+    MmuState, RamMode, RamWriteOptions, SaveOptions, SectionId, SnapshotMeta, SnapshotSource,
+    VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
-
-const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
 
 struct DummySource {
     ram: Vec<u8>,
@@ -587,7 +585,7 @@ fn write_sparse_snapshot_with_large_devices_section(original: &[u8], out: &std::
     let header_start = (devices.offset - 16) as usize;
     let old_end = (devices.offset + devices.len) as usize;
 
-    let new_len = MAX_DEVICES_SECTION_LEN + 1;
+    let new_len = limits::MAX_DEVICES_SECTION_LEN + 1;
 
     let mut prefix = original[..old_end].to_vec();
     prefix[header_start + 8..header_start + 16].copy_from_slice(&new_len.to_le_bytes());
@@ -1369,7 +1367,7 @@ fn snapshot_validate_rejects_disks_path_too_long() {
     let snap = tmp.path().join("disks_path_too_long.aerosnap");
     let mut bytes = write_disk_snapshot(&snap);
     // > 64KiB
-    corrupt_disks_base_image_len(&mut bytes, 64 * 1024 + 1);
+    corrupt_disks_base_image_len(&mut bytes, limits::MAX_DISK_PATH_LEN + 1);
     fs::write(&snap, &bytes).unwrap();
 
     Command::new(env!("CARGO_BIN_EXE_xtask"))
@@ -1385,7 +1383,7 @@ fn snapshot_validate_rejects_disks_truncated_string_bytes() {
     let snap = tmp.path().join("disks_truncated_string.aerosnap");
     let mut bytes = write_disk_snapshot(&snap);
     // Max allowed length (64KiB) but larger than the actual remaining bytes in the section.
-    corrupt_disks_base_image_len(&mut bytes, 64 * 1024);
+    corrupt_disks_base_image_len(&mut bytes, limits::MAX_DISK_PATH_LEN);
     fs::write(&snap, &bytes).unwrap();
 
     Command::new(env!("CARGO_BIN_EXE_xtask"))
@@ -1428,13 +1426,14 @@ fn snapshot_validate_rejects_too_many_cpus() {
     bytes.push(0);
     bytes.extend_from_slice(&0u32.to_le_bytes());
 
-    // CPUS section with count=257 (one more than the restore-time MAX_CPU_COUNT=256). Payload is
-    // intentionally only 4 bytes: validation rejects based on the count alone.
+    // CPUS section with count=MAX_CPU_COUNT+1. Payload is intentionally only 4 bytes: validation
+    // rejects based on the count alone.
+    let too_many = limits::MAX_CPU_COUNT + 1;
     bytes.extend_from_slice(&SectionId::CPUS.0.to_le_bytes());
     bytes.extend_from_slice(&2u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&4u64.to_le_bytes());
-    bytes.extend_from_slice(&257u32.to_le_bytes());
+    bytes.extend_from_slice(&too_many.to_le_bytes());
 
     let mut ram_payload = Vec::new();
     ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
