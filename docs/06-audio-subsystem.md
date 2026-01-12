@@ -94,8 +94,8 @@ This section describes the *canonical* browser runtime integration.
      - See `WorkerCoordinator.defaultMicrophoneRingBufferOwner()` + `syncMicrophoneRingBufferAttachments()`.
     - Optional override (use with care): `WorkerCoordinator.setMicrophoneRingBufferOwner("cpu" | "io" | "none" | null)`.
       - Use `null` to clear an override and return to the default policy.
-     - Note: `RingBufferOwner` includes `"both"` for compatibility, but the coordinator intentionally rejects it (throws) because it
-       violates the SPSC contract (multiple consumers would advance `readPos` and effectively double-consume/drop samples).
+      - Note: `RingBufferOwner` includes `"both"` for compatibility, but the coordinator intentionally rejects it (throws) because it
+        violates the SPSC contract (multiple consumers would advance `readPos` and effectively double-consume/drop samples).
    - `ringBuffer`: `SharedArrayBuffer | null`
    - `sampleRate`: the *actual* capture graph sample rate
 3. The consumer worker consumes mic samples via `MicBridge.fromSharedBuffer(...)` (`crates/platform/src/audio/mic_bridge.rs`).
