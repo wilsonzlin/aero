@@ -147,6 +147,29 @@ fn pci_bar_cross_boundary_accesses_are_coherent() {
 }
 
 #[test]
+fn pci_config_oob_accesses_do_not_panic() {
+    // Robustness regression test: malformed / buggy callers should not be able to panic by issuing
+    // out-of-bounds PCI config space accesses.
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    let vendor_id = dev.pci_config_read(0x00, 2);
+
+    // Reads beyond the 256-byte config space should return 0.
+    assert_eq!(dev.pci_config_read(0x100, 1), 0);
+    assert_eq!(dev.pci_config_read(0xFF, 2), 0);
+    assert_eq!(dev.pci_config_read(0xFF, 4), 0);
+    assert_eq!(dev.pci_config_read(0xFD, 4), 0);
+
+    // Writes beyond the config space should be ignored.
+    dev.pci_config_write(0x100, 4, 0xDEAD_BEEF);
+    dev.pci_config_write(0xFF, 2, 0xBEEF);
+    dev.pci_config_write(0xFD, 4, 0x1234_5678);
+    dev.pci_config_write(0x00, 3, 0xBAD0_C0DE); // invalid size
+
+    assert_eq!(dev.pci_config_read(0x00, 2), vendor_id);
+}
+
+#[test]
 fn eeprom_read_returns_mac_words() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);
