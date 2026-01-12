@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
@@ -363,6 +364,11 @@ impl PcMachine {
 
         let delta_ns = self.guest_time.advance_guest_time_for_instructions(cycles);
         if delta_ns != 0 {
+            // Keep BIOS time-of-day / BDA tick count advancing deterministically alongside the
+            // platform timers. This is required for INT 1Ah AH=00h to report a progressing time
+            // source, even though the platform PIT interrupt is modeled separately.
+            self.bios
+                .advance_time(&mut self.bus.platform.memory, Duration::from_nanos(delta_ns));
             self.bus.platform.tick(delta_ns);
         }
     }
