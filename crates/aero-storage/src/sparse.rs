@@ -48,29 +48,77 @@ impl AeroSparseHeader {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < HEADER_SIZE {
-            return Err(DiskError::InvalidSparseHeader("header too small"));
-        }
-        if &bytes[0..8] != MAGIC {
+        let magic = bytes
+            .get(0..8)
+            .ok_or(DiskError::InvalidSparseHeader("header too small"))?;
+        if magic != MAGIC {
             return Err(DiskError::InvalidSparseHeader("bad magic"));
         }
-        let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let version = u32::from_le_bytes(
+            bytes
+                .get(8..12)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
         if version != VERSION {
             return Err(DiskError::InvalidSparseHeader("unsupported version"));
         }
-        let header_size = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        let header_size = u32::from_le_bytes(
+            bytes
+                .get(12..16)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
         if header_size as usize != HEADER_SIZE {
             return Err(DiskError::InvalidSparseHeader("unexpected header size"));
         }
-        let block_size_bytes = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
-        let disk_size_bytes = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
-        let table_offset = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
+        let block_size_bytes = u32::from_le_bytes(
+            bytes
+                .get(16..20)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
+        let disk_size_bytes = u64::from_le_bytes(
+            bytes
+                .get(24..32)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
+        let table_offset = u64::from_le_bytes(
+            bytes
+                .get(32..40)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
         if table_offset != HEADER_SIZE as u64 {
             return Err(DiskError::InvalidSparseHeader("unsupported table offset"));
         }
-        let table_entries = u64::from_le_bytes(bytes[40..48].try_into().unwrap());
-        let data_offset = u64::from_le_bytes(bytes[48..56].try_into().unwrap());
-        let allocated_blocks = u64::from_le_bytes(bytes[56..64].try_into().unwrap());
+        let table_entries = u64::from_le_bytes(
+            bytes
+                .get(40..48)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
+        let data_offset = u64::from_le_bytes(
+            bytes
+                .get(48..56)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
+        let allocated_blocks = u64::from_le_bytes(
+            bytes
+                .get(56..64)
+                .ok_or(DiskError::InvalidSparseHeader("header too small"))?
+                .try_into()
+                .map_err(|_| DiskError::InvalidSparseHeader("header too small"))?,
+        );
 
         // Validate header invariants. This is intentionally strict because the image may be
         // untrusted/corrupt, and later code assumes these values are sane.
@@ -298,7 +346,10 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                     other => other,
                 })?;
             for chunk in buf[..read_len].chunks_exact(8) {
-                table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+                let bytes: [u8; 8] = chunk
+                    .try_into()
+                    .map_err(|_| DiskError::CorruptSparseImage("allocation table chunk size"))?;
+                table.push(u64::from_le_bytes(bytes));
             }
             offset = offset
                 .checked_add(read_len as u64)
