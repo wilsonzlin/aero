@@ -1,6 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage:
+  tools/win7-slipstream/scripts/slipstream-in-container.sh <aero-win7-slipstream args...>
+
+Runs `aero-win7-slipstream` inside a container (Docker/Podman) for a "just run it"
+workflow that doesn't require installing external Linux slipstream dependencies.
+
+The wrapper:
+  - Builds the container image if it doesn't exist yet
+  - Mounts your current working directory to /work inside the container
+  - Forwards all CLI args to `aero-win7-slipstream`
+  - Detects common `patch-iso` flags and bind-mounts those paths, even if they are
+    outside the current working directory
+
+Environment:
+  DOCKER_BIN=...                 Container runtime (default: docker)
+  AERO_WIN7_SLIPSTREAM_IMAGE=... Container image name (default: aero/win7-slipstream)
+
+Example:
+  tools/win7-slipstream/scripts/slipstream-in-container.sh \
+    patch-iso \
+      --input-iso win7.iso \
+      --drivers drivers \
+      --output-iso out/win7-slipstream.iso
+EOF
+}
+
+if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+  usage
+  exit 0
+fi
+
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 IMAGE="${AERO_WIN7_SLIPSTREAM_IMAGE:-aero/win7-slipstream}"
 

@@ -61,6 +61,8 @@ For a “just run it” workflow (including building the image if it doesn’t e
 
 Both wrappers mount your current working directory to `/work` inside the container and pass through all CLI arguments to `aero-win7-slipstream`.
 
+Tip: run `tools/win7-slipstream/scripts/slipstream-in-container.sh --help` for wrapper usage and examples (this does not require Docker to be installed).
+
 The Bash wrapper also detects common `patch-iso` flags (`--input-iso`, `--drivers`, `--output-iso`), bind-mounts those paths even if they’re outside the current working directory, and rewrites them to container paths.
 
 ## Podman notes

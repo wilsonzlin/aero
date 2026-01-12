@@ -165,6 +165,7 @@ echo "Repo policy check: scanning changes in '$BASE_REF...$HEAD_REF'"
 
 forbidden_hits=()
 oversize_hits=()
+execbit_hits=()
 
 matches_any_glob_ci() {
   local value_lc="$1"
@@ -265,7 +266,26 @@ while IFS= read -r -d '' status; do
   fi
 done < <(git diff --name-status -z --diff-filter=ACMR "$BASE_REF...$HEAD_REF")
 
-if (( ${#forbidden_hits[@]} == 0 && ${#oversize_hits[@]} == 0 )); then
+# Additional repo hygiene check: shell wrapper scripts outside `scripts/` are
+# referenced in docs as directly-invokable entrypoints. Ensure they are
+# executable in git (100755) when they have a shebang.
+while IFS= read -r path; do
+  if [[ "$path" == scripts/* ]]; then
+    continue
+  fi
+  if ! git cat-file -e "$HEAD_REF:$path" 2>/dev/null; then
+    continue
+  fi
+  if [[ "$(git cat-file -p "$HEAD_REF:$path" | head -n 1)" != '#!'* ]]; then
+    continue
+  fi
+  mode="$(git ls-tree "$HEAD_REF" "$path" | awk '{print $1}')"
+  if [[ "$mode" != "100755" ]]; then
+    execbit_hits+=("$path|expected executable bit (git mode 100755). Fix with: git update-index --chmod=+x $path")
+  fi
+done < <(git ls-files '*.sh')
+
+if (( ${#forbidden_hits[@]} == 0 && ${#oversize_hits[@]} == 0 && ${#execbit_hits[@]} == 0 )); then
   echo "Repo policy check: OK"
   exit 0
 fi
@@ -295,6 +315,19 @@ if (( ${#oversize_hits[@]} > 0 )); then
     echo "  - $path ($detail)"
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
       echo "::error file=$path::Repository policy violation: file too large ($detail)"
+    fi
+  done
+  echo
+fi
+
+if (( ${#execbit_hits[@]} > 0 )); then
+  echo "Non-executable shell wrapper scripts detected:"
+  for hit in "${execbit_hits[@]}"; do
+    path="${hit%%|*}"
+    detail="${hit#*|}"
+    echo "  - $path ($detail)"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      echo "::error file=$path::Repository policy violation: $detail"
     fi
   done
   echo
