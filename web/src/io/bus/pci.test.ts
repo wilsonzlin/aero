@@ -432,26 +432,26 @@ describe("io/bus/pci", () => {
     expect(status & 0x0010).toBe(0x0010);
 
     let ptr = cfg.readU8(0, 0, 0x34);
-    // Capability lists should start at the canonical 0x40 boundary (immediately
-    // after the standard 0x40-byte type-0 header).
-    expect(ptr).toBe(0x40);
+    // Capability lists live after the standard 0x40-byte type-0 header.
+    // Aero's virtio-pci contract starts capabilities at 0x50.
+    expect(ptr).toBe(0x50);
     expect(ptr % 4).toBe(0);
 
     // Verify the installed list layout is stable and 4-byte aligned:
-    //  - cap0 (0x09 len=16) @ 0x40
-    //  - cap1 (0x09 len=20) @ 0x50
-    //  - cap2 (0x05 len=8)  @ 0x64
-    expect(cfg.readU8(0, 0, 0x40)).toBe(0x09);
-    expect(cfg.readU8(0, 0, 0x41)).toBe(0x50);
-    // Vendor-specific caps: bus must set cap_len to the actual length.
-    expect(cfg.readU8(0, 0, 0x42)).toBe(16);
-
+    //  - cap0 (0x09 len=16) @ 0x50
+    //  - cap1 (0x09 len=20) @ 0x60
+    //  - cap2 (0x05 len=8)  @ 0x74
     expect(cfg.readU8(0, 0, 0x50)).toBe(0x09);
-    expect(cfg.readU8(0, 0, 0x51)).toBe(0x64);
-    expect(cfg.readU8(0, 0, 0x52)).toBe(20);
+    expect(cfg.readU8(0, 0, 0x51)).toBe(0x60);
+    // Vendor-specific caps: bus must set cap_len to the actual length.
+    expect(cfg.readU8(0, 0, 0x52)).toBe(16);
 
-    expect(cfg.readU8(0, 0, 0x64)).toBe(0x05);
-    expect(cfg.readU8(0, 0, 0x65)).toBe(0x00);
+    expect(cfg.readU8(0, 0, 0x60)).toBe(0x09);
+    expect(cfg.readU8(0, 0, 0x61)).toBe(0x74);
+    expect(cfg.readU8(0, 0, 0x62)).toBe(20);
+
+    expect(cfg.readU8(0, 0, 0x74)).toBe(0x05);
+    expect(cfg.readU8(0, 0, 0x75)).toBe(0x00);
 
     const seen = new Set<number>();
     while (ptr !== 0) {

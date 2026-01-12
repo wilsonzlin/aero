@@ -186,6 +186,9 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 44_100 });
     expect(setOutputRate).toHaveBeenCalledWith(44_100);
 
+    // Enable Bus Mastering (PCI command bit 2) so the device is allowed to DMA.
+    dev.onPciCommandWrite(1 << 2);
+
     // First tick initializes the internal clock.
     dev.tick(0);
 
