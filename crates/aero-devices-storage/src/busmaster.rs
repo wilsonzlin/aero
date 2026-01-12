@@ -84,7 +84,11 @@ impl PrdEntry {
     fn effective_len(&self) -> usize {
         // Per Bus Master IDE spec, a byte_count of 0 encodes 64KiB.
         let c = self.byte_count as usize;
-        if c == 0 { 65536 } else { c }
+        if c == 0 {
+            65536
+        } else {
+            c
+        }
     }
 }
 
