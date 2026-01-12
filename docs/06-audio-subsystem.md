@@ -24,6 +24,7 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `crates/platform/src/audio/mic_bridge.rs` — microphone `SharedArrayBuffer` ring layout + consumer-side helper (`MicBridge`).
 - `web/src/audio/mic_ring.js` + `web/src/audio/mic-worklet-processor.js` — microphone ring helpers + AudioWorklet producer.
 - `web/src/runtime/protocol.ts` + `web/src/runtime/coordinator.ts` — ring buffer attachment messages (`SetAudioRingBufferMessage`, `SetMicrophoneRingBufferMessage`).
+- `web/src/workers/io.worker.ts` + `web/src/io/*` — worker runtime PCI/MMIO device registration (IO worker owns the guest device model layer).
 
 The older `crates/emulator` audio stack is retained behind the `emulator/legacy-audio` feature for reference and targeted tests.
 
@@ -44,7 +45,7 @@ This section describes the *canonical* browser runtime integration.
 
 ### Ownership model
 
-- The **IO worker** owns guest-visible audio devices (**HDA** and **virtio-snd**) and runs their MMIO/PIO/virtio handlers.
+- The **IO worker** owns the guest-visible device layer (PCI/MMIO/virtio) and is the intended home for guest audio devices (**HDA** and **virtio-snd**).
 - The **AudioWorkletProcessor** runs on the browser’s audio rendering thread.
 - The **main thread** owns the browser audio graph (`AudioContext` + `AudioWorkletNode`), typically gated by user gesture.
 - The **coordinator** forwards `SharedArrayBuffer` attachments to workers via `postMessage`.
@@ -55,11 +56,14 @@ This section describes the *canonical* browser runtime integration.
    - allocates a playback `SharedArrayBuffer` ring,
    - loads `web/src/platform/audio-worklet-processor.js`,
    - constructs an `AudioWorkletNode` with `processorOptions.ringBuffer = sab`.
-2. The coordinator forwards the ring to the IO worker via `SetAudioRingBufferMessage` (`web/src/runtime/protocol.ts`).
+2. The coordinator forwards the ring to the worker that will act as the **single producer** via `SetAudioRingBufferMessage`
+   (`web/src/runtime/protocol.ts`, dispatch currently in `web/src/runtime/coordinator.ts`).
+   - Production VM path: IO worker receives this and owns the guest device model that produces audio frames.
+   - CI/demo harnesses may attach the same ring in the CPU worker (e.g. `HdaPlaybackDemo`) to validate the device model + ring plumbing.
    - `ringBuffer`: `SharedArrayBuffer | null` (null detaches)
    - `capacityFrames` / `channelCount`: out-of-band layout parameters
    - `dstSampleRate`: the *actual* `AudioContext.sampleRate`
-3. The IO worker attaches the ring as the **single producer**:
+3. The producer worker attaches the ring:
    - WASM: `WorkletBridge.fromSharedBuffer(...)` (Rust: `crates/platform/src/audio/worklet_bridge.rs`; JS bindings: `api.attach_worklet_bridge(...)`).
 
 ### Microphone ring attachment (AudioWorklet capture)
@@ -67,7 +71,7 @@ This section describes the *canonical* browser runtime integration.
 1. UI starts mic capture (`web/src/audio/mic_capture.ts`), which:
    - allocates a mic `SharedArrayBuffer` ring,
    - starts `web/src/audio/mic-worklet-processor.js` as the low-latency producer.
-2. The coordinator forwards the mic ring to the IO worker via `SetMicrophoneRingBufferMessage`.
+2. The coordinator forwards the mic ring via `SetMicrophoneRingBufferMessage`.
    - `ringBuffer`: `SharedArrayBuffer | null`
    - `sampleRate`: the *actual* capture graph sample rate
 3. The IO worker consumes mic samples via `MicBridge.fromSharedBuffer(...)` (`crates/platform/src/audio/mic_bridge.rs`).
@@ -78,6 +82,7 @@ Guest-visible devices are registered on the IO worker PCI bus:
 
 - Bus/device plumbing: `web/src/io/device_manager.ts`, `web/src/io/bus/pci.ts`, `web/src/io/bus/mmio.ts`
 - Worker wiring: `web/src/workers/io.worker.ts` (calls `DeviceManager.registerPciDevice(...)`)
+  - See `web/src/io/devices/uhci.ts` for a concrete example of a WASM-backed PCI device wrapper (PIO + IRQ + tick scheduling).
 
 ### Ring producer/consumer constraints (SPSC)
 
