@@ -1195,4 +1195,26 @@ mod tests {
 
         assert!(!restored.chipset.a20().enabled());
     }
+
+    #[test]
+    fn i8042_injection_apis_are_noops_when_disabled() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_i8042: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Should not panic.
+        m.inject_browser_key("KeyA", true);
+        m.inject_mouse_motion(1, 2, 3);
+        m.inject_mouse_button(Ps2MouseButton::Left, true);
+
+        assert!(m.i8042.is_none());
+        let devices = snapshot::SnapshotSource::device_states(&m);
+        assert!(
+            devices.iter().all(|d| d.id != snapshot::DeviceId::I8042),
+            "i8042 device state should not be emitted when disabled"
+        );
+    }
 }
