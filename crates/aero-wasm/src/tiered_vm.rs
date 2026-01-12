@@ -1390,9 +1390,8 @@ export function installAeroTieredMmioTestShims() {
     globalThis.__aero_io_port_write = function (_port, _size, _value) { };
   }
   if (typeof globalThis.__aero_jit_call !== "function") {
-    // Default Tier-1 JIT hook: force an interpreter exit and mark the call as non-committed.
+    // Default Tier-1 JIT hook: force an interpreter exit.
     globalThis.__aero_jit_call = function (_tableIndex, _cpuPtr, _jitCtxPtr) {
-      try { globalThis.__aero_jit_last_committed = false; } catch { /* ignore */ }
       return -1n;
     };
   }
