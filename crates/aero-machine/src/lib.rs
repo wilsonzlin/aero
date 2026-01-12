@@ -1033,6 +1033,9 @@ impl snapshot::SnapshotSource for Machine {
                 // NOTE: `PciConfigPorts` snapshots cover both the config mechanism #1 address
                 // latch and the per-device config space/BAR state, so this one entry is
                 // sufficient to restore guest-programmed BARs and command bits.
+                //
+                // Older snapshots may have stored this under the legacy `DeviceId::PCI` outer ID;
+                // restore accepts both.
                 snapshot::DeviceId::PCI_CFG,
                 &*pci_cfg.borrow(),
             ));

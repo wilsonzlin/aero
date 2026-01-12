@@ -4,15 +4,18 @@ use aero_io_snapshot::io::state::{
 
 use super::{GsiLevelSink, PciConfigPorts, PciIntxRouter};
 
-/// PCI core snapshot wrapper for `aero_snapshot` integration.
+/// PCI core snapshot wrapper that combines `PciConfigPorts` (`PCPT`) and `PciIntxRouter` (`INTX`)
+/// into a single `aero-io-snapshot` TLV blob (inner `PCIC`).
 ///
-/// `aero_snapshot` forbids duplicate `(device_id, version, flags)` tuples in the `DEVICES` section.
-/// Both [`PciConfigPorts`] (`PCPT`) and [`PciIntxRouter`] (`INTX`) currently use the same
-/// `SnapshotVersion (1.0)`, so they cannot be stored as two separate `DeviceId::PCI` entries.
+/// This exists primarily for compatibility with integrations that want to store "PCI core state"
+/// as a *single* outer snapshot entry. `aero-snapshot` rejects duplicate `(device_id, version,
+/// flags)` tuples in the `DEVICES` section, and both `PCPT` and `INTX` currently snapshot as
+/// `SnapshotVersion (1.0)`, so they cannot both be stored under the same outer `(DeviceId, 1, 0)`
+/// key.
 ///
-/// The intended convention is a *single* outer `DeviceId::PCI` entry whose `data` is one
-/// `aero-io-snapshot` TLV blob. This wrapper is that blob: it nests both `PCPT` and `INTX`
-/// snapshots as inner fields.
+/// New `aero-snapshot` integrations should prefer storing these as **separate** `DEVICES` entries
+/// with distinct outer ids (e.g. `DeviceId::PCI_CFG` for `PCPT` and `DeviceId::PCI_INTX` for
+/// `INTX`).
 ///
 /// Restore note: the INTx router snapshot captures internal assertion refcounts, but it cannot
 /// directly manipulate the platform interrupt sink during `load_state()`. Callers should invoke
@@ -84,4 +87,3 @@ impl IoSnapshot for PciCoreSnapshot<'_> {
         Ok(())
     }
 }
-
