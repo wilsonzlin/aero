@@ -36,11 +36,13 @@ silently diverge:
 
 - `node tools/gen_scancodes/check_generated.mjs` runs the generator and fails if
   `git diff` shows the checked-in generated files are out of date.
-- `web/src/input/scancodes_drift.test.ts` compares `scancodes.json` against the
-  generated TypeScript mapping and checks that the `src/` and `web/` TS outputs
-  are identical.
-- `crates/aero-devices-input/tests/scancodes_json_parity.rs` compares
-  `scancodes.json` against the generated Rust lookup.
+- `web/test/scancodes_generated_sync.test.ts` compares `scancodes.json` against
+  the generated TypeScript mappings in both `web/src/input/scancodes.ts` and
+  `src/input/scancodes.ts`.
+- `crates/aero-devices-input/tests/scancodes_json_sync.rs` compares
+  `scancodes.json` against the generated Rust lookup (`browser_code_to_set2_bytes`).
+- `crates/emulator/tests/scancodes_json_sync.rs` performs the same check for the
+  emulator crate (which re-exports the shared mapping from `aero-devices-input`).
 
 If any of these tests fail, regenerate using the command above and commit the
 updated generated files.
