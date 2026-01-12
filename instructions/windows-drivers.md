@@ -127,6 +127,7 @@ python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
 python3 scripts/ci/check-win7-virtqueue-split-headers.py
 python3 scripts/ci/check-virtqueue-split-driver-builds.py
 python3 scripts/ci/check-win7-virtio-header-collisions.py
+python3 scripts/ci/check-win7-virtio-net-pci-config-access.py
 
 # AeroGPU guardrails (fast, no VM required)
 python3 scripts/ci/check-aerogpu-d3d9-def-stdcall.py
