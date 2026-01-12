@@ -16,15 +16,17 @@ fn pci_intx_delivers_via_ioapic_when_platform_interrupts_in_apic_mode() {
     let mut interrupts = PlatformInterrupts::new();
     interrupts.set_mode(PlatformInterruptMode::Apic);
 
-    // Route GSI10 to vector 0x45.
-    //
+    let bdf = PciBdf::new(0, 0, 0);
+    let pin = PciInterruptPin::IntA;
+    let gsi = router.gsi_for_intx(bdf, pin);
+
+    // Route the routed GSI to vector 0x45.
     // PCI INTx lines are active-low + level-triggered.
     let vector = 0x45u32;
     let low = vector | (1 << 13) | (1 << 15);
-    program_ioapic_entry(&mut interrupts, 10, low, 0);
+    program_ioapic_entry(&mut interrupts, gsi, low, 0);
 
-    // Device 0 INTA# routes to PIRQ A -> GSI 10.
-    router.assert_intx(PciBdf::new(0, 0, 0), PciInterruptPin::IntA, &mut interrupts);
+    router.assert_intx(bdf, pin, &mut interrupts);
     assert_eq!(interrupts.get_pending(), Some(0x45));
 }
 
@@ -35,8 +37,21 @@ fn pci_intx_can_be_delivered_via_pic_in_legacy_mode_through_platform_interrupts(
     interrupts.pic_mut().set_offsets(0x20, 0x28);
     interrupts.set_mode(PlatformInterruptMode::LegacyPic);
 
-    router.assert_intx(PciBdf::new(0, 0, 0), PciInterruptPin::IntA, &mut interrupts);
+    let bdf = PciBdf::new(0, 0, 0);
+    let pin = PciInterruptPin::IntA;
+    let gsi = router.gsi_for_intx(bdf, pin);
+    assert!(
+        gsi < 16,
+        "expected PCI INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let irq = u8::try_from(gsi).unwrap();
+    if irq >= 8 {
+        interrupts.pic_mut().set_masked(2, false); // cascade
+    }
+    interrupts.pic_mut().set_masked(irq, false);
 
-    // IRQ10 is on the slave PIC (IRQ2 on the slave) -> vector 0x28 + 2.
-    assert_eq!(interrupts.get_pending(), Some(0x2A));
+    router.assert_intx(bdf, pin, &mut interrupts);
+
+    let expected = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    assert_eq!(interrupts.get_pending(), Some(expected));
 }

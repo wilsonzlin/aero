@@ -28,8 +28,14 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
     lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
     let mut ioapic = IoApic::new(IoApicId(0), lapic.clone());
 
-    // Configure GSI 10 -> vector 0x45, unmasked, active-low, level-triggered.
-    let gsi = 10u32;
+    // Configure the routed GSI -> vector 0x45, unmasked, active-low, level-triggered.
+    let bdf = PciBdf::new(0, 0, 0);
+    let pin = PciInterruptPin::IntA;
+    let gsi = router.gsi_for_intx(bdf, pin);
+    assert!(
+        gsi < 16,
+        "expected PCI INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
     let vector = 0x45u8;
     let redtbl_low = 0x10u32 + (gsi * 2);
     let redtbl_high = redtbl_low + 1;
@@ -47,10 +53,10 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
 
     let mut sink = IoApicPicMirrorSink::new(&mut ioapic, &mut pic);
 
-    // Device 0 INTA# routes to PIRQ A -> GSI/IRQ 10 in the default mapping.
-    let bdf = PciBdf::new(0, 0, 0);
-    router.assert_intx(bdf, PciInterruptPin::IntA, &mut sink);
+    router.assert_intx(bdf, pin, &mut sink);
 
     assert_eq!(lapic.get_pending_vector(), Some(vector));
-    assert_eq!(pic.get_pending_vector(), Some(0x2A)); // IRQ10 -> slave IRQ2 -> vector 0x28+2
+    let irq = u8::try_from(gsi).unwrap();
+    let expected_pic = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    assert_eq!(pic.get_pending_vector(), Some(expected_pic));
 }

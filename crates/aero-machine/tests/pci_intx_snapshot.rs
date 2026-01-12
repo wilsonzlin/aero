@@ -191,21 +191,14 @@ fn snapshot_restore_redrives_pci_intx_into_legacy_pic_after_ack() {
         .platform_interrupts()
         .expect("pc platform should provide PlatformInterrupts");
 
-    // Configure the PIC for deterministic vectors and unmask cascade + IRQ10.
-    {
-        let mut ints = interrupts.borrow_mut();
-        ints.pic_mut().set_offsets(0x20, 0x28);
-        ints.pic_mut().set_masked(2, false); // cascade
-        ints.pic_mut().set_masked(10, false);
-    }
-
-    // Two distinct sources that swizzle onto the same GSI (10).
+    // Two distinct sources that swizzle onto the same routed GSI under the default INTx router
+    // config.
     let src1_bdf = PciBdf::new(0, 0, 0);
     let src1_pin = PciInterruptPin::IntA; // index 0
     let src2_bdf = PciBdf::new(0, 1, 0);
     let src2_pin = PciInterruptPin::IntD; // index 3; (3 + 1) mod 4 = 0 -> same as (0 + 0)
 
-    let (gsi, vector) = {
+    let (gsi, irq, vector) = {
         let pci_intx = pci_intx.borrow();
         let gsi = pci_intx.gsi_for_intx(src1_bdf, src1_pin);
         assert_eq!(
@@ -213,11 +206,24 @@ fn snapshot_restore_redrives_pci_intx_into_legacy_pic_after_ack() {
             pci_intx.gsi_for_intx(src2_bdf, src2_pin),
             "sanity: chosen sources should map to the same GSI"
         );
-
-        // With slave PIC base 0x28, IRQ10 (10-8=2) is vector 0x2A.
-        let vector = 0x28 + u8::try_from(gsi - 8).expect("GSI10 should fit in u8");
-        (gsi, vector)
+        assert!(
+            gsi < 16,
+            "expected PCI INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+        );
+        let irq = u8::try_from(gsi).unwrap();
+        let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+        (gsi, irq, vector)
     };
+
+    // Configure the PIC for deterministic vectors and unmask the routed IRQ (and cascade).
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        if irq >= 8 {
+            ints.pic_mut().set_masked(2, false); // cascade
+        }
+        ints.pic_mut().set_masked(irq, false);
+    }
 
     // Assert both sources and verify the PIC sees a pending vector.
     {

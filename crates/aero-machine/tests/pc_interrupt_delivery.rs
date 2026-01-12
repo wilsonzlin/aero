@@ -70,6 +70,17 @@ fn setup_real_mode_cpu(pc: &mut PcMachine, entry_ip: u64) {
     pc.cpu.state.halted = false;
 }
 
+fn pic_vector_for_irq(irq: u8) -> u8 {
+    // These tests use the standard remapped PIC base vectors.
+    const MASTER_BASE: u8 = 0x20;
+    const SLAVE_BASE: u8 = 0x28;
+    if irq < 8 {
+        MASTER_BASE.wrapping_add(irq)
+    } else {
+        SLAVE_BASE.wrapping_add(irq.wrapping_sub(8))
+    }
+}
+
 fn program_ioapic_entry(
     ints: &mut aero_platform::interrupts::PlatformInterrupts,
     gsi: u32,
@@ -557,9 +568,18 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
     pc.bus =
         aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
 
-    // E1000 device 00:05.0 INTA# => (pin+device)%4 = (0+5)%4 = 1 => PIRQB => GSI11 (default config).
-    // With PIC offsets 0x20/0x28: IRQ11 => vector 0x2B.
-    let vector = 0x2B_u8;
+    let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+    let gsi = pc
+        .bus
+        .platform
+        .pci_intx
+        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert!(
+        gsi < 16,
+        "expected E1000 INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let irq = u8::try_from(gsi).unwrap();
+    let vector = pic_vector_for_irq(irq);
 
     let handler_addr = 0x1200u64;
     let code_base = 0x2200u64;
@@ -575,18 +595,19 @@ fn pc_machine_delivers_e1000_pci_intx_via_legacy_pic() {
     // Stop in HLT so the interrupt must be delivered to wake the CPU.
     assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
 
-    // Enable IRQ11 delivery through the legacy PIC.
+    // Enable delivery through the legacy PIC.
     {
         let mut ints = pc.bus.platform.interrupts.borrow_mut();
         ints.pic_mut().set_offsets(0x20, 0x28);
-        // Unmask cascade + IRQ11.
-        ints.pic_mut().set_masked(2, false);
-        ints.pic_mut().set_masked(11, false);
+        if irq >= 8 {
+            // Unmask cascade when routing to the slave PIC.
+            ints.pic_mut().set_masked(2, false);
+        }
+        ints.pic_mut().set_masked(irq, false);
     }
 
     // Locate BAR0 for the E1000 MMIO window (assigned during BIOS POST).
     let bar0_base = {
-        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
         let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
@@ -645,9 +666,18 @@ fn pc_machine_delivers_e1000_pci_intx_after_tx_dma_sets_txdw() {
     pc.bus =
         aero_pc_platform::PcCpuBus::new(aero_pc_platform::PcPlatform::new_with_e1000(RAM_SIZE));
 
-    // E1000 device 00:05.0 INTA# => (pin+device)%4 = (0+5)%4 = 1 => PIRQB => GSI11 (default config).
-    // With PIC offsets 0x20/0x28: IRQ11 => vector 0x2B.
-    let vector = 0x2B_u8;
+    let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+    let gsi = pc
+        .bus
+        .platform
+        .pci_intx
+        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert!(
+        gsi < 16,
+        "expected E1000 INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let irq = u8::try_from(gsi).unwrap();
+    let vector = pic_vector_for_irq(irq);
 
     let handler_addr = 0x1300u64;
     let code_base = 0x2300u64;
@@ -663,19 +693,20 @@ fn pc_machine_delivers_e1000_pci_intx_after_tx_dma_sets_txdw() {
     // Stop in HLT so the interrupt must be delivered to wake the CPU.
     assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
 
-    // Enable IRQ11 delivery through the legacy PIC.
+    // Enable delivery through the legacy PIC.
     {
         let mut ints = pc.bus.platform.interrupts.borrow_mut();
         ints.pic_mut().set_offsets(0x20, 0x28);
-        // Unmask cascade + IRQ11.
-        ints.pic_mut().set_masked(2, false);
-        ints.pic_mut().set_masked(11, false);
+        if irq >= 8 {
+            // Unmask cascade when routing to the slave PIC.
+            ints.pic_mut().set_masked(2, false);
+        }
+        ints.pic_mut().set_masked(irq, false);
     }
 
     // Locate BAR0 for the E1000 MMIO window (assigned during BIOS POST) and enable bus mastering
     // so TX DMA can run in `PcPlatform::process_e1000`.
     let bar0_base = {
-        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
         let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
 
@@ -770,9 +801,18 @@ fn pc_machine_delivers_ahci_pci_intx_via_legacy_pic() {
         .attach_ahci_disk_port0(Box::new(disk))
         .unwrap();
 
-    // AHCI device 00:02.0 INTA# => (pin+device)%4 = (0+2)%4 = 2 => PIRQC => GSI12 (default config).
-    // With PIC offsets 0x20/0x28: IRQ12 => vector 0x2C.
-    let vector = 0x2C_u8;
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let gsi = pc
+        .bus
+        .platform
+        .pci_intx
+        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert!(
+        gsi < 16,
+        "expected AHCI INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let irq = u8::try_from(gsi).unwrap();
+    let vector = pic_vector_for_irq(irq);
 
     let handler_addr = 0x1300u64;
     let code_base = 0x2300u64;
@@ -788,16 +828,16 @@ fn pc_machine_delivers_ahci_pci_intx_via_legacy_pic() {
     // Stop in HLT so the interrupt must be delivered to wake the CPU.
     assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
 
-    // Enable IRQ12 delivery through the legacy PIC.
+    // Enable delivery through the legacy PIC.
     {
         let mut ints = pc.bus.platform.interrupts.borrow_mut();
         ints.pic_mut().set_offsets(0x20, 0x28);
-        // Unmask cascade + IRQ12.
-        ints.pic_mut().set_masked(2, false);
-        ints.pic_mut().set_masked(12, false);
+        if irq >= 8 {
+            // Unmask cascade when routing to the slave PIC.
+            ints.pic_mut().set_masked(2, false);
+        }
+        ints.pic_mut().set_masked(irq, false);
     }
-
-    let bdf = SATA_AHCI_ICH9.bdf;
 
     // Locate BAR5 for the AHCI MMIO window (assigned during BIOS POST).
     let bar5_base = {
@@ -884,7 +924,8 @@ fn pc_machine_delivers_ahci_pci_intx_via_legacy_pic() {
             // Validate that DMA wrote the IDENTIFY sector.
             assert_eq!(pc.bus.platform.memory.read_u16(identify_buf), 0x0040);
 
-            // Clear the interrupt so it deasserts (avoid holding IRQ12 asserted indefinitely).
+            // Clear the interrupt so it deasserts (avoid holding the routed INTx line asserted
+            // indefinitely).
             pc.bus
                 .platform
                 .memory

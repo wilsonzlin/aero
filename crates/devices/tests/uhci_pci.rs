@@ -1,4 +1,6 @@
-use aero_devices::pci::{PciBarDefinition, PciDevice};
+use aero_devices::pci::{
+    PciBarDefinition, PciBdf, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+};
 use aero_devices::usb::uhci::{register_uhci_io_ports, regs, SharedUhciPciDevice, UhciPciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::address_filter::AddressFilter;
@@ -34,9 +36,12 @@ fn uhci_pci_config_and_bar_io() {
             })
         );
 
-        // Interrupt pin/line should reflect a typical PIIX3 UHCI wiring (INTA#/IRQ11).
-        assert_eq!(cfg.read(0x3d, 1) as u8, 1);
-        assert_eq!(cfg.read(0x3c, 1) as u8, 11);
+        // Interrupt pin/line should reflect a typical PIIX3 UHCI wiring (00:01.2 INTA#).
+        let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+        let bdf = PciBdf::new(0, 1, 2);
+        let expected_gsi = router.gsi_for_intx(bdf, PciInterruptPin::IntA);
+        assert_eq!(cfg.read(0x3d, 1) as u8, PciInterruptPin::IntA.to_config_u8());
+        assert_eq!(cfg.read(0x3c, 1) as u8, u8::try_from(expected_gsi).unwrap());
 
         // Program BAR4 and enable I/O decoding.
         cfg.set_bar_base(UhciPciDevice::IO_BAR_INDEX, 0x1000);

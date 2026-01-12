@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
-use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -182,11 +182,18 @@ fn pc_machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
         .attach_ahci_disk_port0(Box::new(disk))
         .unwrap();
 
-    // Route IRQ12 into a real-mode handler that writes a flag byte.
-    //
-    // Under the default `PciIntxRouterConfig`, the ICH9 AHCI controller at 00:02.0 routes INTA#
-    // to PIRQ C => GSI12, mirrored to PIC IRQ12 in legacy PIC mode.
-    let vector = 0x2C_u8; // PIC slave base 0x28 + (IRQ12-8)
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let gsi = pc
+        .bus
+        .platform
+        .pci_intx
+        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert!(
+        gsi < 16,
+        "expected AHCI INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+    );
+    let irq = u8::try_from(gsi).unwrap();
+    let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
     let handler_addr = 0x8000u64;
     let code_base = 0x9000u64;
     let flag_addr = 0x0500u16;
@@ -200,17 +207,18 @@ fn pc_machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
     // Halt the CPU first so the interrupt must wake it.
     assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
 
-    // Enable IRQ12 delivery through the legacy PIC.
+    // Enable delivery through the legacy PIC.
     {
         let mut ints = pc.bus.platform.interrupts.borrow_mut();
         ints.pic_mut().set_offsets(0x20, 0x28);
-        // Unmask cascade + IRQ12.
-        ints.pic_mut().set_masked(2, false);
-        ints.pic_mut().set_masked(12, false);
+        if irq >= 8 {
+            // Unmask cascade when routing to the slave PIC.
+            ints.pic_mut().set_masked(2, false);
+        }
+        ints.pic_mut().set_masked(irq, false);
     }
 
     // Program the AHCI controller.
-    let bdf = SATA_AHCI_ICH9.bdf;
     let bar5_base: u64 = 0xE100_0000;
 
     // Reprogram BAR5 within the platform's PCI MMIO window (deterministic address).
