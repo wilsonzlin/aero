@@ -14,8 +14,10 @@ pub mod ata;
 pub mod bus;
 pub mod pci_ahci;
 
-pub use bus::{GuestMemory, GuestMemoryExt};
+pub use aero_devices::irq::IrqLine;
 pub use pci_ahci::AhciPciDevice;
+
+pub use memory::MemoryBus;
 
 /// PCI PIIX3-compatible IDE controller with ATA + ATAPI + Bus Master DMA.
 pub mod pci_ide;

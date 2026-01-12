@@ -1,109 +1,7 @@
 use aero_devices::irq::IrqLine;
-use std::cell::RefCell;
 use std::fmt;
 
 use memory::MemoryBus;
-
-/// Minimal guest physical memory interface used for DMA.
-///
-/// A full system emulator will likely expose richer APIs (paging-aware accesses, MMIO, etc).
-/// Storage devices only need a raw physical read/write view.
-pub trait GuestMemory {
-    fn read(&self, paddr: u64, buf: &mut [u8]);
-    fn write(&mut self, paddr: u64, buf: &[u8]);
-}
-
-pub trait GuestMemoryExt: GuestMemory {
-    fn read_u8(&self, paddr: u64) -> u8 {
-        let mut b = [0u8; 1];
-        self.read(paddr, &mut b);
-        b[0]
-    }
-
-    fn read_u16(&self, paddr: u64) -> u16 {
-        let mut b = [0u8; 2];
-        self.read(paddr, &mut b);
-        u16::from_le_bytes(b)
-    }
-
-    fn read_u32(&self, paddr: u64) -> u32 {
-        let mut b = [0u8; 4];
-        self.read(paddr, &mut b);
-        u32::from_le_bytes(b)
-    }
-
-    fn read_u64(&self, paddr: u64) -> u64 {
-        let mut b = [0u8; 8];
-        self.read(paddr, &mut b);
-        u64::from_le_bytes(b)
-    }
-
-    fn write_u8(&mut self, paddr: u64, val: u8) {
-        self.write(paddr, &[val]);
-    }
-
-    fn write_u16(&mut self, paddr: u64, val: u16) {
-        self.write(paddr, &val.to_le_bytes());
-    }
-
-    fn write_u32(&mut self, paddr: u64, val: u32) {
-        self.write(paddr, &val.to_le_bytes());
-    }
-
-    fn write_u64(&mut self, paddr: u64, val: u64) {
-        self.write(paddr, &val.to_le_bytes());
-    }
-}
-
-impl<T: GuestMemory + ?Sized> GuestMemoryExt for T {}
-
-/// Adapter that lets storage devices DMA through the platform's [`memory::MemoryBus`].
-///
-/// The storage device models in this crate use [`GuestMemory`] as a very small DMA surface.
-/// `MemoryBusGuestMemory` bridges that to the richer PC platform memory bus.
-///
-/// This adapter is intentionally defensive:
-/// - out-of-range / overflowing addresses do not panic
-/// - reads return zeroes
-/// - writes are ignored
-pub struct MemoryBusGuestMemory<'a> {
-    bus: RefCell<&'a mut dyn MemoryBus>,
-}
-
-impl<'a> MemoryBusGuestMemory<'a> {
-    pub fn new(bus: &'a mut dyn MemoryBus) -> Self {
-        Self {
-            bus: RefCell::new(bus),
-        }
-    }
-}
-
-impl GuestMemory for MemoryBusGuestMemory<'_> {
-    fn read(&self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        }
-
-        if paddr.checked_add(buf.len() as u64).is_none() {
-            buf.fill(0);
-            return;
-        }
-
-        self.bus.borrow_mut().read_physical(paddr, buf);
-    }
-
-    fn write(&mut self, paddr: u64, buf: &[u8]) {
-        if buf.is_empty() {
-            return;
-        }
-
-        if paddr.checked_add(buf.len() as u64).is_none() {
-            return;
-        }
-
-        self.bus.borrow_mut().write_physical(paddr, buf);
-    }
-}
 #[derive(Default)]
 struct TestIrqLineState {
     level: bool,
@@ -169,14 +67,14 @@ impl TestMemory {
     }
 }
 
-impl GuestMemory for TestMemory {
-    fn read(&self, paddr: u64, buf: &mut [u8]) {
+impl MemoryBus for TestMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         self.check_range(paddr, buf.len());
         let start = paddr as usize;
         buf.copy_from_slice(&self.data[start..start + buf.len()]);
     }
 
-    fn write(&mut self, paddr: u64, buf: &[u8]) {
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         self.check_range(paddr, buf.len());
         let start = paddr as usize;
         self.data[start..start + buf.len()].copy_from_slice(buf);

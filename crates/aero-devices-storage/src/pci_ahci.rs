@@ -15,7 +15,6 @@ use memory::MmioHandler;
 
 use crate::ahci::AhciController;
 use crate::ata::AtaDrive;
-use crate::bus::MemoryBusGuestMemory;
 
 /// AHCI ABAR (HBA registers) size in bytes.
 pub const AHCI_ABAR_SIZE: u64 = 0x2000;
@@ -186,8 +185,7 @@ impl AhciPciDevice {
             return;
         }
 
-        let mut guest_mem = MemoryBusGuestMemory::new(mem);
-        self.controller.process(&mut guest_mem);
+        self.controller.process(mem);
     }
 }
 

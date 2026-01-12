@@ -16,13 +16,13 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, AhciPortState};
 
 use aero_storage::SECTOR_SIZE;
+use memory::MemoryBus;
 
 use crate::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
     ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA_EXT, ATA_ERROR_ABRT, ATA_STATUS_DRDY, ATA_STATUS_DSC,
     ATA_STATUS_ERR,
 };
-use crate::bus::{GuestMemory, GuestMemoryExt};
 use aero_devices::irq::IrqLine;
 
 const HBA_REG_CAP: u64 = 0x00;
@@ -419,14 +419,14 @@ impl AhciController {
     /// Process any pending command list entries.
     ///
     /// A full emulator should call this when the guest writes to PxCI, or on a periodic tick.
-    pub fn process(&mut self, mem: &mut dyn GuestMemory) {
+    pub fn process(&mut self, mem: &mut dyn MemoryBus) {
         for port_idx in 0..self.ports.len() {
             self.process_port(port_idx, mem);
         }
         self.update_irq();
     }
 
-    fn process_port(&mut self, port_idx: usize, mem: &mut dyn GuestMemory) {
+    fn process_port(&mut self, port_idx: usize, mem: &mut dyn MemoryBus) {
         let Some(port) = self.ports.get_mut(port_idx) else {
             return;
         };
@@ -567,14 +567,14 @@ fn process_command_slot(
     drive: &mut AtaDrive,
     port_regs: &mut PortRegs,
     slot: usize,
-    mem: &mut dyn GuestMemory,
+    mem: &mut dyn MemoryBus,
 ) -> io::Result<()> {
     let header_addr = port_regs.clb + (slot as u64) * 32;
     let header = CommandHeader::read(mem, header_addr);
 
     // Command table always contains the command FIS at offset 0.
     let mut cfis = [0u8; 64];
-    mem.read(header.ctba, &mut cfis);
+    mem.read_physical(header.ctba, &mut cfis);
 
     // Register Host to Device FIS
     if cfis[0] != 0x27 {
@@ -660,7 +660,7 @@ struct CommandHeader {
 }
 
 impl CommandHeader {
-    fn read(mem: &dyn GuestMemory, addr: u64) -> Self {
+    fn read(mem: &mut dyn MemoryBus, addr: u64) -> Self {
         let flags = mem.read_u32(addr);
         let ctba_lo = mem.read_u32(addr + 8) as u64;
         let ctba_hi = mem.read_u32(addr + 12) as u64;
@@ -683,7 +683,7 @@ struct PrdtEntry {
 }
 
 impl PrdtEntry {
-    fn read(mem: &dyn GuestMemory, addr: u64) -> Self {
+    fn read(mem: &mut dyn MemoryBus, addr: u64) -> Self {
         let dba_lo = mem.read_u32(addr) as u64;
         let dba_hi = mem.read_u32(addr + 4) as u64;
         let dba = dba_lo | (dba_hi << 32);
@@ -694,7 +694,7 @@ impl PrdtEntry {
 }
 
 fn dma_write_from_host_buffer(
-    mem: &mut dyn GuestMemory,
+    mem: &mut dyn MemoryBus,
     header: &CommandHeader,
     src: &[u8],
 ) -> io::Result<()> {
@@ -708,7 +708,7 @@ fn dma_write_from_host_buffer(
         let prd = PrdtEntry::read(mem, prd_addr);
         let chunk_len = prd.dbc.min(remaining.len() as u32) as usize;
 
-        mem.write(prd.dba, &remaining[..chunk_len]);
+        mem.write_physical(prd.dba, &remaining[..chunk_len]);
         remaining = &remaining[chunk_len..];
     }
 
@@ -723,7 +723,7 @@ fn dma_write_from_host_buffer(
 }
 
 fn dma_read_into_host_buffer(
-    mem: &dyn GuestMemory,
+    mem: &mut dyn MemoryBus,
     header: &CommandHeader,
     byte_len: usize,
 ) -> io::Result<Vec<u8>> {
@@ -738,7 +738,7 @@ fn dma_read_into_host_buffer(
         let prd = PrdtEntry::read(mem, prd_addr);
         let chunk_len = prd.dbc.min((out.len() - written) as u32) as usize;
 
-        mem.read(prd.dba, &mut out[written..written + chunk_len]);
+        mem.read_physical(prd.dba, &mut out[written..written + chunk_len]);
         written += chunk_len;
     }
 
@@ -753,7 +753,7 @@ fn dma_read_into_host_buffer(
 }
 
 fn complete_command(
-    mem: &mut dyn GuestMemory,
+    mem: &mut dyn MemoryBus,
     port_regs: &mut PortRegs,
     slot: usize,
     bytes_transferred: u32,
@@ -771,14 +771,14 @@ fn complete_command(
     port_regs.is |= PORT_IS_DHRS;
 }
 
-fn write_d2h_fis(mem: &mut dyn GuestMemory, fb: u64, status: u8, error: u8) {
+fn write_d2h_fis(mem: &mut dyn MemoryBus, fb: u64, status: u8, error: u8) {
     // Received FIS layout places the D2H Register FIS at offset 0x40.
     let mut fis = [0u8; 20];
     fis[0] = 0x34; // FIS_TYPE_REG_D2H
     fis[1] = 1 << 6; // I bit (interrupt)
     fis[2] = status;
     fis[3] = error;
-    mem.write(fb + 0x40, &fis);
+    mem.write_physical(fb + 0x40, &fis);
 }
 
 #[cfg(test)]
@@ -841,7 +841,7 @@ mod tests {
         cfis[12] = (count & 0xFF) as u8;
         cfis[13] = (count >> 8) as u8;
 
-        mem.write(ctba, &cfis);
+        mem.write_physical(ctba, &cfis);
     }
 
     #[test]
@@ -878,7 +878,7 @@ mod tests {
         );
 
         let mut out = [0u8; SECTOR_SIZE];
-        mem.read(data_buf, &mut out);
+        mem.read_physical(data_buf, &mut out);
         assert_eq!(out[0], 0x40);
 
         // Clear the interrupt.
@@ -927,14 +927,14 @@ mod tests {
         ctl.process(&mut mem);
 
         let mut out = [0u8; 4];
-        mem.read(data_buf, &mut out);
+        mem.read_physical(data_buf, &mut out);
         assert_eq!(out, [9, 8, 7, 6]);
 
         // WRITE DMA EXT (LBA=5, 1 sector).
         let write_buf = 0x6000;
-        mem.write(write_buf, &[1, 2, 3, 4]);
+        mem.write_physical(write_buf, &[1, 2, 3, 4]);
         // Pad remaining bytes so the disk write path can read a full sector.
-        mem.write(write_buf + 4, &vec![0u8; SECTOR_SIZE - 4]);
+        mem.write_physical(write_buf + 4, &vec![0u8; SECTOR_SIZE - 4]);
 
         write_cmd_header(&mut mem, clb, 0, ctba, 1, true);
         write_cfis(&mut mem, ctba, ATA_CMD_WRITE_DMA_EXT, 5, 1);
@@ -951,7 +951,7 @@ mod tests {
         ctl.process(&mut mem);
 
         let mut verify = [0u8; 4];
-        mem.read(verify_buf, &mut verify);
+        mem.read_physical(verify_buf, &mut verify);
         assert_eq!(verify, [1, 2, 3, 4]);
         assert!(irq.level());
     }
