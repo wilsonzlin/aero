@@ -130,7 +130,7 @@ function isTier1CompileError(err: unknown): boolean {
   // to distinguish genuine compilation failures from ABI mismatches (wrong arg types/count) when
   // running against older wasm-pack outputs.
   const message = err instanceof Error ? err.message : String(err);
-  return message.startsWith('compile_tier1_block:');
+  return /(?:^|\b)compile_tier1_block:/u.test(message);
 }
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {
