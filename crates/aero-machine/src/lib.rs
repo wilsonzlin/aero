@@ -1458,7 +1458,7 @@ impl Machine {
         }
 
         if let Some(acpi_pm) = &self.acpi_pm {
-            acpi_pm.borrow_mut().advance_ns(delta_ns);
+            acpi_pm.borrow_mut().tick(delta_ns);
         }
 
         if let Some(pit) = &self.pit {

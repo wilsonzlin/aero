@@ -213,6 +213,14 @@ impl<C: Clock> AcpiPmIo<C> {
         self.timer_base_ns = self.timer_base_ns.wrapping_sub(remaining);
     }
 
+    /// Alias for [`AcpiPmIo::advance_ns`].
+    ///
+    /// Some platform code uses a `tick(delta_ns)` convention for deterministic time progression.
+    #[inline]
+    pub fn tick(&mut self, delta_ns: u64) {
+        self.advance_ns(delta_ns);
+    }
+
     /// Inject bits into `PM1_STS` and refresh SCI.
     pub fn trigger_pm1_event(&mut self, sts_bits: u16) {
         self.pm1_sts |= sts_bits;
@@ -431,7 +439,11 @@ impl<C: Clock> AcpiPmIo<C> {
     fn reset_state(&mut self) {
         self.pm1_sts = 0;
         self.pm1_en = 0;
-        self.pm1_cnt = if self.cfg.start_enabled { PM1_CNT_SCI_EN } else { 0 };
+        self.pm1_cnt = if self.cfg.start_enabled {
+            PM1_CNT_SCI_EN
+        } else {
+            0
+        };
         for b in &mut self.gpe0_sts {
             *b = 0;
         }
@@ -600,7 +612,9 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                 let freq = PM_TIMER_FREQUENCY_HZ;
 
                 let a = mod_ticks.saturating_mul(NS_PER_SEC);
-                let b = ticks_mod.saturating_mul(NS_PER_SEC).saturating_add(remainder);
+                let b = ticks_mod
+                    .saturating_mul(NS_PER_SEC)
+                    .saturating_add(remainder);
                 let g = gcd_u128(a, freq);
 
                 if b % g == 0 {
@@ -611,34 +625,30 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                         let rhs = (m as i128 - b_mod).rem_euclid(m as i128);
                         let k = (rhs * inv).rem_euclid(m as i128) as u128;
                         let ticks_total = ticks_mod.saturating_add(k.saturating_mul(mod_ticks));
-                        let numer =
-                            ticks_total.saturating_mul(NS_PER_SEC).saturating_add(remainder);
+                        let numer = ticks_total
+                            .saturating_mul(NS_PER_SEC)
+                            .saturating_add(remainder);
                         let elapsed_ns = numer / freq;
                         let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
                         timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
                     } else {
                         // Fall back to restoring the visible tick counter only.
                         let numer = ticks_mod.saturating_mul(NS_PER_SEC);
-                        let elapsed_ns = numer
-                            .saturating_add(freq.saturating_sub(1))
-                            / freq;
+                        let elapsed_ns = numer.saturating_add(freq.saturating_sub(1)) / freq;
                         let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
                         timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
                     }
                 } else {
                     // Fall back to restoring the visible tick counter only.
                     let numer = ticks_mod.saturating_mul(NS_PER_SEC);
-                    let elapsed_ns = numer
-                        .saturating_add(freq.saturating_sub(1))
-                        / freq;
+                    let elapsed_ns = numer.saturating_add(freq.saturating_sub(1)) / freq;
                     let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
                     timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
                 }
             } else {
                 // Restore the visible tick counter only (no fractional remainder).
                 let numer = ticks_mod.saturating_mul(NS_PER_SEC);
-                let elapsed_ns = numer
-                    .saturating_add(PM_TIMER_FREQUENCY_HZ.saturating_sub(1))
+                let elapsed_ns = numer.saturating_add(PM_TIMER_FREQUENCY_HZ.saturating_sub(1))
                     / PM_TIMER_FREQUENCY_HZ;
                 let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
                 timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
