@@ -1234,6 +1234,56 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_maps_channels_for_20bit() {
+        // Mono is duplicated to L/R.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 1,
+        };
+        let input = 262_144i32.to_le_bytes(); // 0.5
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], 0.5, 1e-6);
+
+        // >=2 channels uses the first two channels only.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 4,
+        };
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&262_144i32.to_le_bytes()); // ch0 -> +0.5
+        frame.extend_from_slice(&(-262_144i32).to_le_bytes()); // ch1 -> -0.5
+        frame.extend_from_slice(&12345i32.to_le_bytes()); // ch2 (ignored)
+        frame.extend_from_slice(&(-12345i32).to_le_bytes()); // ch3 (ignored)
+        let out = decode_pcm_to_stereo_f32(&frame, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+    }
+
+    #[test]
+    fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame_for_20bit() {
+        // 20-bit stereo => 8 bytes per frame. Provide 1 full frame + 4 extra bytes.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 2,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&262_144i32.to_le_bytes());
+        input.extend_from_slice(&(-262_144i32).to_le_bytes());
+        input.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes()); // trailing partial frame
+
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+    }
+
+    #[test]
     fn encode_mono_f32_to_pcm_writes_exact_bytes_for_8bit_unsigned() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
