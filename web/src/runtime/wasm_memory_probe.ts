@@ -102,7 +102,9 @@ export function assertWasmMemoryWiring(opts: {
       // Callers can always pass an explicit `linearOffset` to probe a known guest RAM
       // address, but making the default context-sensitive helps keep ad-hoc probes
       // deterministic while reducing flakiness.
-      const spreadWords = 16; // 64 bytes window
+      // IMPORTANT: this must be <= the tail guard reserved by the wasm-side runtime allocator.
+      // See `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`).
+      const spreadWords = 16; // 16 * 4 = 64 bytes window
       const delta = (hashStringFNV1a32(context) % spreadWords) * 4;
       return base >= delta ? base - delta : base;
     })();
