@@ -88,12 +88,12 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
         - `web/src/hid/webhid_broker.ts` (runtime selection + producers)
         - `web/src/workers/io_hid_input_ring.ts` (worker drain helper)
     - WebUSB passthrough supports a SAB ring-buffer fast path for host action/completion proxying,
-      negotiated by `usb.ringAttach`:
+      negotiated by `usb.ringAttach` (and can be disabled via `usb.ringDetach` on ring corruption):
       - **Actions (worker → main):** `UsbHostAction` records.
       - **Completions (main → worker):** `UsbHostCompletion` records.
       - Implementation:
         - `web/src/usb/usb_proxy_ring.ts`
-        - `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`)
+        - `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`, `usb.ringAttachRequest`, `usb.ringDetach`)
         - `web/src/usb/usb_broker.ts`
         - `web/src/usb/webusb_passthrough_runtime.ts`
         - `web/src/usb/usb_proxy_ring_dispatcher.ts` (completion-ring fan-out when multiple runtimes subscribe)

@@ -45,7 +45,7 @@ the `USBDevice`, worker owns the UHCI + device model” split as WebHID:
 - **Worker-side proxy/runtime:** `web/src/usb/webusb_passthrough_runtime.ts` (`WebUsbPassthroughRuntime`)
   - proxies `UsbHostAction`/`UsbHostCompletion` traffic to the main thread broker
   - supports an optional SharedArrayBuffer ring fast path negotiated by `usb.ringAttach` when
-    `crossOriginIsolated`
+    `crossOriginIsolated` (and can be disabled via `usb.ringDetach` on ring corruption)
 - **Main-thread broker/executor:** `web/src/usb/usb_broker.ts` (`UsbBroker`) +
   `web/src/usb/webusb_backend.ts` (`WebUsbBackend`)
 
