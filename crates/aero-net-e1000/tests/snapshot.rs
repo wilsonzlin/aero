@@ -132,8 +132,20 @@ fn snapshot_roundtrip_preserves_key_state() {
     let tx1_part2_addr = 0x3100u64;
     dma.write(tx1_part1_addr, tx1_part1);
 
-    write_tx_desc(&mut dma, tx_ring + 0 * 16, tx0_addr, tx0.len() as u16, TXD_CMD_EOP | TXD_CMD_RS);
-    write_tx_desc(&mut dma, tx_ring + 1 * 16, tx1_part1_addr, tx1_part1.len() as u16, TXD_CMD_RS);
+    write_tx_desc(
+        &mut dma,
+        tx_ring,
+        tx0_addr,
+        tx0.len() as u16,
+        TXD_CMD_EOP | TXD_CMD_RS,
+    );
+    write_tx_desc(
+        &mut dma,
+        tx_ring + 16,
+        tx1_part1_addr,
+        tx1_part1.len() as u16,
+        TXD_CMD_RS,
+    );
 
     dev.mmio_write_u32(REG_TDT, 2);
     dev.poll(&mut dma);
@@ -179,8 +191,8 @@ fn snapshot_roundtrip_preserves_key_state() {
     let rx_buf0 = 0x6000u64;
     let rx_buf1 = 0x7000u64;
     let rx_buf2 = 0x8000u64;
-    write_rx_desc(&mut dma, rx_ring + 0 * 16, rx_buf0);
-    write_rx_desc(&mut dma, rx_ring + 1 * 16, rx_buf1);
+    write_rx_desc(&mut dma, rx_ring, rx_buf0);
+    write_rx_desc(&mut dma, rx_ring + 16, rx_buf1);
     write_rx_desc(&mut dma, rx_ring + 2 * 16, rx_buf2);
 
     restored.mmio_write_u32(REG_RDT, 3);

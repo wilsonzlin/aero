@@ -131,7 +131,7 @@ fn pagingbus_bulk_copy_success() -> Result<(), Exception> {
     bus.sync(&long_state(pml4_base));
 
     assert!(bus.supports_bulk_copy());
-    assert_eq!(bus.bulk_copy(0x1000, 0, src_data.len())?, true);
+    assert!(bus.bulk_copy(0x1000, 0, src_data.len())?);
 
     assert_eq!(bus.inner_mut().slice(page1, src_data.len()), src_data.as_slice());
     Ok(())
@@ -162,7 +162,7 @@ fn pagingbus_bulk_set_success_two_pages() -> Result<(), Exception> {
     bus.sync(&long_state(pml4_base));
 
     assert!(bus.supports_bulk_set());
-    assert_eq!(bus.bulk_set(0, &[0xAB], PAGE_SIZE * 2)?, true);
+    assert!(bus.bulk_set(0, &[0xAB], PAGE_SIZE * 2)?);
 
     assert_eq!(bus.inner_mut().slice(page0, PAGE_SIZE), vec![0xAB; PAGE_SIZE]);
     assert_eq!(bus.inner_mut().slice(page1, PAGE_SIZE), vec![0xAB; PAGE_SIZE]);
@@ -203,7 +203,7 @@ fn pagingbus_bulk_copy_preflight_failure_is_atomic() -> Result<(), Exception> {
     let mut bus = PagingBus::new(phys);
     bus.sync(&long_state(pml4_base));
 
-    assert_eq!(bus.bulk_copy(0, src, len)?, false);
+    assert!(!bus.bulk_copy(0, src, len)?);
 
     // Must not have written any destination bytes.
     assert_eq!(bus.inner_mut().slice(page0, len), vec![0xCC; len]);
@@ -240,7 +240,7 @@ fn pagingbus_bulk_set_preflight_failure_is_atomic() -> Result<(), Exception> {
     let mut bus = PagingBus::new(phys);
     bus.sync(&long_state(pml4_base));
 
-    assert_eq!(bus.bulk_set(dst, &[0xAB], repeat)?, false);
+    assert!(!bus.bulk_set(dst, &[0xAB], repeat)?);
 
     // Must not have written any bytes in the mapped portion.
     assert_eq!(

@@ -49,7 +49,7 @@ impl IoBus for TestIo {
 
 #[test]
 fn paging_bus_forwards_port_io_to_backend() {
-    let phys = TestMem::default();
+    let phys = TestMem;
     let io = TestIo {
         read_value: 0x1122_3344_5566_7788,
         ..TestIo::default()
@@ -62,4 +62,3 @@ fn paging_bus_forwards_port_io_to_backend() {
     assert_eq!(bus.io().reads, vec![(0x3f8, 1)]);
     assert_eq!(bus.io().writes, vec![(0x3f8, 1, 0x41)]);
 }
-

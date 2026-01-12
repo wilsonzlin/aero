@@ -24,7 +24,7 @@ pub struct VirtualDiskIsoBackend {
 impl VirtualDiskIsoBackend {
     pub fn new(disk: Box<dyn VirtualDisk + Send>) -> io::Result<Self> {
         let capacity = disk.capacity_bytes();
-        if capacity % AtapiCdrom::SECTOR_SIZE as u64 != 0 {
+        if !capacity.is_multiple_of(AtapiCdrom::SECTOR_SIZE as u64) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ISO disk capacity is not a multiple of 2048-byte sectors",

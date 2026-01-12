@@ -10,16 +10,11 @@ use crate::headers::append_vary;
 
 const DEFAULT_PREFLIGHT_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24); // 24 hours
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 enum CorsAllowlist {
+    #[default]
     Any,
     Origins(Arc<HashSet<String>>),
-}
-
-impl Default for CorsAllowlist {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 /// CORS configuration for `aero-storage-server`.

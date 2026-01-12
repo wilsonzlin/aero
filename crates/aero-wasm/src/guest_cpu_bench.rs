@@ -338,6 +338,12 @@ pub struct GuestCpuBenchCoreRunner {
     scratch_zero: Vec<u8>,
 }
 
+impl Default for GuestCpuBenchCoreRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GuestCpuBenchCoreRunner {
     /// Create a new runner with a reusable flat bus.
     ///

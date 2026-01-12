@@ -275,7 +275,7 @@ impl TaskFile {
 }
 
 enum IdeDevice {
-    Ata(AtaDrive),
+    Ata(Box<AtaDrive>),
     Atapi(AtapiCdrom),
 }
 
@@ -538,12 +538,12 @@ impl IdeController {
     }
 
     pub fn attach_primary_master_ata(&mut self, drive: AtaDrive) {
-        self.primary.devices[0] = Some(IdeDevice::Ata(drive));
+        self.primary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
         self.bus_master[0].set_drive_dma_capable(0, true);
     }
 
     pub fn attach_secondary_master_ata(&mut self, drive: AtaDrive) {
-        self.secondary.devices[0] = Some(IdeDevice::Ata(drive));
+        self.secondary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
         self.bus_master[1].set_drive_dma_capable(0, true);
     }
 
@@ -682,7 +682,6 @@ impl IdeController {
         // Bus master.
         if let Some((chan, reg_off)) = self.decode_bus_master(port) {
             self.bus_master[chan].write(reg_off, size, val);
-            return;
         }
     }
 

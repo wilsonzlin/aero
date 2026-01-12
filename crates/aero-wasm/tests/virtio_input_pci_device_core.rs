@@ -70,12 +70,12 @@ fn virtio_input_pci_device_core_can_handshake_post_event_and_toggle_irq() {
     );
 
     // Copy all offered features into the driver features bitmap.
-    mmio_write_u32(&mut dev, &mut mem, COMMON + 0x00, 0);
+    mmio_write_u32(&mut dev, &mut mem, COMMON, 0);
     let f0 = mmio_read_u32(&mut dev, COMMON + 0x04);
     mmio_write_u32(&mut dev, &mut mem, COMMON + 0x08, 0);
     mmio_write_u32(&mut dev, &mut mem, COMMON + 0x0c, f0);
 
-    mmio_write_u32(&mut dev, &mut mem, COMMON + 0x00, 1);
+    mmio_write_u32(&mut dev, &mut mem, COMMON, 1);
     let f1 = mmio_read_u32(&mut dev, COMMON + 0x04);
     mmio_write_u32(&mut dev, &mut mem, COMMON + 0x08, 1);
     mmio_write_u32(&mut dev, &mut mem, COMMON + 0x0c, f1);
@@ -129,7 +129,7 @@ fn virtio_input_pci_device_core_can_handshake_post_event_and_toggle_irq() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Kick queue 0. This should make the buffer available but not raise an IRQ yet.
-    mmio_write_u16(&mut dev, &mut mem, NOTIFY + 0, 0);
+    mmio_write_u16(&mut dev, &mut mem, NOTIFY, 0);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
     assert!(!dev.irq_asserted());
 

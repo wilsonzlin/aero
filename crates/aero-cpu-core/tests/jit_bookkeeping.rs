@@ -66,7 +66,7 @@ fn tsc_advances_on_committed_jit_blocks() {
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // Install a compiled handle that retires `insts` guest instructions.
     {
@@ -124,7 +124,7 @@ fn interrupt_shadow_ages_across_committed_jit_blocks() {
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // One instruction is enough to age an active interrupt shadow (interrupt_inhibit = 1).
     {
@@ -192,7 +192,7 @@ fn rollback_jit_exits_do_not_advance_time_or_age_interrupt_shadow() {
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // Install a compiled handle that *would* retire instructions if the block committed.
     {

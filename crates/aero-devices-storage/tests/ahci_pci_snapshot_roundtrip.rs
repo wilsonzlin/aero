@@ -95,7 +95,7 @@ fn ahci_pci_snapshot_roundtrip_preserves_pci_config_mmio_regs_and_irq_level() {
     const PORT_CMD_FRE: u32 = 1 << 4;
     const PORT_IS_DHRS: u32 = 1 << 0;
 
-    dev.mmio_write(PORT_BASE + 0x00, 4, clb); // PxCLB
+    dev.mmio_write(PORT_BASE, 4, clb); // PxCLB
     dev.mmio_write(PORT_BASE + 0x08, 4, fb); // PxFB
     dev.mmio_write(0x04, 4, u64::from(GHC_IE | GHC_AE)); // GHC.IE | GHC.AE
     dev.mmio_write(PORT_BASE + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
@@ -122,7 +122,7 @@ fn ahci_pci_snapshot_roundtrip_preserves_pci_config_mmio_regs_and_irq_level() {
         0x24u64, // CAP2
         0x28u64, // BOHC
         // Port 0
-        0x100 + 0x00, // CLB
+        PORT_BASE, // CLB
         0x100 + 0x04, // CLBU
         0x100 + 0x08, // FB
         0x100 + 0x0c, // FBU

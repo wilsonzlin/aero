@@ -211,7 +211,7 @@ fn machine_run_slice_polls_platform_ioapic_and_delivers_interrupt() {
 
         // Route GSI10 -> vector 0x60, edge-triggered, active-low (PCI INTx wiring).
         let low = u32::from(vector) | (1 << 13); // polarity_low, edge-triggered
-        program_ioapic_entry(&mut *ints, gsi, low, 0);
+        program_ioapic_entry(&mut ints, gsi, low, 0);
 
         ints.raise_irq(InterruptInput::Gsi(gsi));
     }

@@ -617,7 +617,7 @@ fn snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
         let low = 0x51u32 | (1 << 13) | (1 << 15) | (1 << 16);
-        program_ioapic_entry(&mut *ints, 10, low, 0);
+        program_ioapic_entry(&mut ints, 10, low, 0);
     }
 
     // Assert a PCI INTx line that routes to GSI10 (device 0, INTA#).
@@ -645,7 +645,7 @@ fn snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
     {
         let mut ints = interrupts.borrow_mut();
         let low = 0x51u32 | (1 << 13) | (1 << 15);
-        program_ioapic_entry(&mut *ints, 10, low, 0);
+        program_ioapic_entry(&mut ints, 10, low, 0);
     }
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x51));
@@ -744,7 +744,7 @@ fn snapshot_restore_polls_hpet_once_to_reassert_level_lines() {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
         let low = 0x61u32 | (1 << 15) | (1 << 16);
-        program_ioapic_entry(&mut *ints, 2, low, 0);
+        program_ioapic_entry(&mut ints, 2, low, 0);
     }
 
     // Configure HPET timer0 for a level-triggered interrupt and arm it such that it becomes
@@ -785,7 +785,7 @@ fn snapshot_restore_polls_hpet_once_to_reassert_level_lines() {
     {
         let mut ints = interrupts.borrow_mut();
         let low = 0x61u32 | (1 << 15); // unmasked
-        program_ioapic_entry(&mut *ints, 2, low, 0);
+        program_ioapic_entry(&mut ints, 2, low, 0);
     }
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x61));

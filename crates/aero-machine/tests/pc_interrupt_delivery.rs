@@ -217,7 +217,7 @@ fn pc_machine_delivers_ioapic_interrupt_to_real_mode_ivt_handler() {
         let mut ints = pc.bus.platform.interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
         let low = u32::from(vector) | (1 << 13) | (1 << 15); // polarity_low + level-triggered
-        program_ioapic_entry(&mut *ints, gsi, low, 0);
+        program_ioapic_entry(&mut ints, gsi, low, 0);
         ints.raise_irq(InterruptInput::Gsi(gsi));
     }
 

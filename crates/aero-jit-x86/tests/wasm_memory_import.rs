@@ -15,22 +15,19 @@ use wasmparser::{Parser, Payload, TypeRef};
 
 fn imported_memory_type(wasm: &[u8]) -> wasmparser::MemoryType {
     for payload in Parser::new(0).parse_all(wasm) {
-        match payload.expect("parse wasm") {
-            Payload::ImportSection(imports) => {
-                for group in imports {
-                    let group = group.expect("parse import group");
-                    for import in group {
-                        let (_offset, import) = import.expect("parse import");
-                        if import.module == IMPORT_MODULE && import.name == IMPORT_MEMORY {
-                            match import.ty {
-                                TypeRef::Memory(mem) => return mem,
-                                other => panic!("env.memory import was not a memory: {other:?}"),
-                            }
+        if let Payload::ImportSection(imports) = payload.expect("parse wasm") {
+            for group in imports {
+                let group = group.expect("parse import group");
+                for import in group {
+                    let (_offset, import) = import.expect("parse import");
+                    if import.module == IMPORT_MODULE && import.name == IMPORT_MEMORY {
+                        match import.ty {
+                            TypeRef::Memory(mem) => return mem,
+                            other => panic!("env.memory import was not a memory: {other:?}"),
                         }
                     }
                 }
             }
-            _ => {}
         }
     }
     panic!("env.memory import not found");

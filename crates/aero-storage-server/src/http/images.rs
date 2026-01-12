@@ -209,7 +209,7 @@ pub async fn head_image(
 pub async fn options_image(State(state): State<ImagesState>, req_headers: HeaderMap) -> Response {
     let permit = match try_acquire_bytes_permit(&state, &req_headers) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     let mut response = Response::new(Body::empty());
@@ -226,7 +226,7 @@ async fn serve_image(
 ) -> Response {
     let permit = match try_acquire_bytes_permit(&state, &req_headers) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     let response = (async move {
@@ -352,18 +352,18 @@ async fn serve_image(
 fn try_acquire_bytes_permit(
     state: &ImagesState,
     req_headers: &HeaderMap,
-) -> Result<Option<OwnedSemaphorePermit>, Response> {
+) -> Result<Option<OwnedSemaphorePermit>, Box<Response>> {
     let Some(sem) = state.bytes_request_semaphore.as_ref() else {
         return Ok(None);
     };
 
     match sem.clone().try_acquire_owned() {
         Ok(permit) => Ok(Some(permit)),
-        Err(_) => Err(response_with_status(
+        Err(_) => Err(Box::new(response_with_status(
             StatusCode::TOO_MANY_REQUESTS,
             state,
             req_headers,
-        )),
+        ))),
     }
 }
 

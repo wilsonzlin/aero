@@ -2,6 +2,7 @@
 pub mod api;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cors;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod headers;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http;

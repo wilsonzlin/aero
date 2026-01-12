@@ -81,7 +81,7 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
         .add_device(bdf, Box::new(TestPciConfigDevice { cfg }));
 
     // Register an I/O handler for BAR4 so we can observe I/O decode behavior.
-    pc.register_pci_io_bar(bdf, 4, Box::new(TestIoBar::default()));
+    pc.register_pci_io_bar(bdf, 4, Box::new(TestIoBar));
 
     // Re-run BIOS POST so the new device gets BARs assigned and I/O decoding enabled.
     pc.reset_pci();

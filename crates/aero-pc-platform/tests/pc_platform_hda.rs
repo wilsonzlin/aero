@@ -7,6 +7,8 @@ use memory::MemoryBus as _;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+type RecordingWrites = Rc<RefCell<Vec<(u64, Vec<u8>)>>>;
+
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -50,11 +52,11 @@ fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
 
 struct RecordingRam {
     inner: DenseMemory,
-    writes: Rc<RefCell<Vec<(u64, Vec<u8>)>>>,
+    writes: RecordingWrites,
 }
 
 impl RecordingRam {
-    fn new(size: u64) -> (Self, Rc<RefCell<Vec<(u64, Vec<u8>)>>>) {
+    fn new(size: u64) -> (Self, RecordingWrites) {
         let writes = Rc::new(RefCell::new(Vec::new()));
         let inner = DenseMemory::new(size).unwrap();
         (

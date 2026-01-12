@@ -257,7 +257,7 @@ fn w1c_hba_is_byte_write_does_not_clear_other_port_summary_bits() {
     let ctba8 = 0x7000u64;
     let buf8 = 0x8000u64;
 
-    let port0_base = PORT_BASE + 0 * 0x80;
+    let port0_base = PORT_BASE;
     let port8_base = PORT_BASE + 8 * 0x80;
 
     // Enable global interrupts and AHCI mode.

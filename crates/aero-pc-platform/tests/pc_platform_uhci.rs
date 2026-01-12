@@ -42,7 +42,7 @@ fn pc_platform_enumerates_uhci_and_routes_bar4_io() {
     assert_eq!((id >> 16) & 0xffff, u32::from(USB_UHCI_PIIX3.device_id));
 
     let class = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x08);
-    assert_eq!((class >> 8) & 0x00ff_ffff, 0x0c03_00);
+    assert_eq!((class >> 8) & 0x00ff_ffff, 0x000c_0300);
 
     // BIOS POST should enable I/O decoding.
     let command = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04);
@@ -63,4 +63,3 @@ fn pc_platform_enumerates_uhci_and_routes_bar4_io() {
     pc.io.write(io_base + regs::REG_SOFMOD, 1, 12);
     assert_eq!(pc.io.read(io_base + regs::REG_SOFMOD, 1) as u8, 12);
 }
-
