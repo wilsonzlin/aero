@@ -674,7 +674,9 @@ mod tests {
             layout.framebuffer_offset_bytes(1) % SHARED_FRAMEBUFFER_ALIGNMENT,
             0
         );
-        assert!(layout.total_byte_len() % SHARED_FRAMEBUFFER_ALIGNMENT == 0);
+        assert!(layout
+            .total_byte_len()
+            .is_multiple_of(SHARED_FRAMEBUFFER_ALIGNMENT));
 
         // Dirty words should be enough to cover all tiles.
         let tile_count = layout.tile_count();
