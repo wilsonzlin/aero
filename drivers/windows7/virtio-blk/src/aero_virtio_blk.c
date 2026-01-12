@@ -237,6 +237,24 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   return TRUE;
 }
 
+static VOID AerovblkFreeVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  if (devExt == NULL) {
+    return;
+  }
+
+  virtqueue_split_destroy(&devExt->Vq);
+  virtqueue_split_free_ring(&devExt->VirtioOps, &devExt->VirtioOpsCtx, &devExt->RingDma);
+}
+
+static VOID AerovblkFreeResources(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  if (devExt == NULL) {
+    return;
+  }
+
+  AerovblkFreeRequestContexts(devExt);
+  AerovblkFreeVirtqueue(devExt);
+}
+
 static NTSTATUS AerovblkVirtioReadBlkConfig(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Out_ PVIRTIO_BLK_CONFIG cfg) {
   if (cfg == NULL) {
     return STATUS_INVALID_PARAMETER;
@@ -375,40 +393,34 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
   if (allocateResources) {
     if (!AerovblkAllocateVirtqueue(devExt)) {
-      VirtioPciFailDevice(&devExt->Vdev);
-      return FALSE;
+      goto FailDevice;
     }
 
     if (!AerovblkAllocateRequestContexts(devExt)) {
-      VirtioPciFailDevice(&devExt->Vdev);
-      return FALSE;
+      goto FailDevice;
     }
   } else {
     if (devExt->Vq.queue_size == 0 || devExt->RingDma.vaddr == NULL || devExt->RequestContexts == NULL) {
-      VirtioPciFailDevice(&devExt->Vdev);
-      return FALSE;
+      goto FailDevice;
     }
   }
 
   queueSize = VirtioPciGetQueueSize(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX);
   if (queueSize != (USHORT)AEROVBLK_QUEUE_SIZE) {
-    VirtioPciFailDevice(&devExt->Vdev);
-    return FALSE;
+    goto FailDevice;
   }
 
   // Contract v1: notify_off_multiplier=4 and queue_notify_off(q)=q.
   notifyAddr = NULL;
   st = VirtioPciGetQueueNotifyAddress(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, &notifyAddr);
   if (!NT_SUCCESS(st) || notifyAddr == NULL) {
-    VirtioPciFailDevice(&devExt->Vdev);
-    return FALSE;
+    goto FailDevice;
   }
 
   notifyOffset = (ULONGLONG)AEROVBLK_QUEUE_INDEX * (ULONGLONG)devExt->Vdev.NotifyOffMultiplier;
   expectedNotifyAddr = (volatile UINT16*)((volatile UCHAR*)devExt->Vdev.NotifyBase + notifyOffset);
   if (notifyAddr != expectedNotifyAddr) {
-    VirtioPciFailDevice(&devExt->Vdev);
-    return FALSE;
+    goto FailDevice;
   }
   devExt->QueueNotifyAddrCache[0] = notifyAddr;
 
@@ -434,14 +446,28 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
   st = VirtioPciSetupQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, descPa, availPa, usedPa);
   if (!NT_SUCCESS(st)) {
-    VirtioPciFailDevice(&devExt->Vdev);
-    return FALSE;
+    goto FailDevice;
   }
 
   VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER_OK);
 
   StorPortNotification(NextRequest, devExt, NULL);
   return TRUE;
+
+FailDevice:
+  VirtioPciFailDevice(&devExt->Vdev);
+  if (allocateResources) {
+    /*
+     * If bring-up fails after we've allocated DMA-backed resources, ensure the
+     * device is reset before freeing memory it may DMA to (ring + indirect
+     * tables + request context pages).
+     */
+    VirtioPciResetDevice(&devExt->Vdev);
+    AerovblkFreeResources(devExt);
+    /* Leave the device in FAILED for host visibility. */
+    VirtioPciFailDevice(&devExt->Vdev);
+  }
+  return FALSE;
 }
 
 static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ ULONG reqType,
