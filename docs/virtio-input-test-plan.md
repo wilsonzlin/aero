@@ -36,10 +36,19 @@ Equivalent (name-filter based; useful when you don’t remember the test binary 
 
 ```bash
 # Required by this test plan (or equivalent)
+# NOTE: `cargo test -- <pattern>` is a name filter. Depending on how tests are named
+# in your checkout, this may match 0 tests. Always confirm the output says
+# `running N tests` with N > 0.
 cargo test -p aero-virtio --locked -- tests::virtio_input
 
 # Practical equivalent in this repo
 cargo test -p aero-virtio --locked -- virtio_input
+```
+
+Tip: if you see `running 0 tests`, prefer the explicit integration test invocation:
+
+```bash
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
 Primary coverage lives in:
