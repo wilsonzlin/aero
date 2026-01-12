@@ -91,10 +91,12 @@ The trace buffer is only dumped when triggered:
 
 - `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1`  
   Dumps once on the first traced entrypoint that returns a failing HRESULT (`FAILED(hr)`). The dump reason string is the failing entrypoint name.
+  Note: when `AEROGPU_D3D9_TRACE_MODE=unique`, the failing call is force-recorded so the dump still includes the call that caused the trigger (unless it is filtered out by `AEROGPU_D3D9_TRACE_FILTER`).
 
 - `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`  
-  Dumps once on the first traced entrypoint whose trace name is marked as a stub (contains the substring `(stub)`). This is useful for quickly identifying when the Win7 D3D9 runtime (or `dwm.exe`) exercises an unimplemented DDI.
-  Note: some DDIs are intentionally treated as benign bring-up **no-ops** and are **not** marked as stubs in trace output, so they do not trigger this dump (see `drivers/aerogpu/umd/d3d9/README.md`).
+  Dumps once on the first traced entrypoint whose trace name is marked as a stub (contains the substring `(stub)`). This is useful for quickly identifying when the Win7 D3D9 runtime (or `dwm.exe`) exercises an unimplemented DDI, even if that stub returns `S_OK`.
+  Note: some stubbed DDIs are intentionally treated as benign no-ops during bring-up (for example the cursor DDIs); this trigger is about *identifying what got called*, not necessarily indicating a fatal error.
+  Note: when `AEROGPU_D3D9_TRACE_MODE=unique`, the triggering stub call is force-recorded so the dump still includes the call that caused the trigger (unless it is filtered out by `AEROGPU_D3D9_TRACE_FILTER`).
 
 For `dwm.exe`, prefer `AEROGPU_D3D9_TRACE_DUMP_PRESENT` so you get logs *while DWM is running*, rather than only at shutdown.
 For small repro apps that don't call `Present`/`PresentEx` (for example `d3d9_validate_device_sanity` and `d3d9ex_stateblock_sanity`), prefer `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1` so the trace dumps when the process exits.
