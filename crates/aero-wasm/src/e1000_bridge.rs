@@ -13,7 +13,10 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
 
-use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
+use aero_io_snapshot::io::state::IoSnapshot;
+use aero_net_e1000::{
+    E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN,
+};
 use memory::MemoryBus;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -247,5 +250,27 @@ impl E1000Bridge {
     pub fn mac_addr(&self) -> Uint8Array {
         let mac = self.dev.mac_addr();
         Uint8Array::from(mac.as_ref())
+    }
+
+    /// Serialize the full E1000 device model state into deterministic snapshot bytes.
+    pub fn save_state(&self) -> Vec<u8> {
+        self.dev.save_state()
+    }
+
+    /// Restore E1000 device state from snapshot bytes produced by [`save_state`].
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.dev
+            .load_state(bytes)
+            .map_err(|e| js_error(format!("Invalid E1000 snapshot: {e}")))
+    }
+
+    /// Snapshot the E1000 device state as a `Uint8Array` (JS-friendly wrapper around [`save_state`]).
+    pub fn snapshot_state(&self) -> Uint8Array {
+        Uint8Array::from(self.save_state().as_slice())
+    }
+
+    /// Restore E1000 device state from snapshot bytes (alias for [`load_state`]).
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.load_state(bytes)
     }
 }

@@ -8,12 +8,6 @@ export type E1000BridgeLike = {
   mmio_write(offset: number, size: number, value: number): void;
   io_read(offset: number, size: number): number;
   io_write(offset: number, size: number, value: number): void;
-  /**
-   * Update the underlying device model's PCI command register (0x04, low 16 bits).
-   *
-   * Optional for older WASM builds.
-   */
-  set_pci_command?: (command: number) => void;
   poll(): void;
   receive_frame(frame: Uint8Array): void;
   // wasm-bindgen represents `Option<Uint8Array>` as `undefined` in most builds,
@@ -21,6 +15,23 @@ export type E1000BridgeLike = {
   pop_tx_frame(): Uint8Array | null | undefined;
   irq_level(): boolean;
   mac_addr?: () => Uint8Array;
+  /**
+   * Optional PCI command register mirror (offset 0x04, 16-bit).
+   *
+   * Newer E1000 device models gate DMA on Bus Master Enable, so the JS PCI bus must forward
+   * command register writes into the WASM device model.
+   */
+  set_pci_command?: (command: number) => void;
+
+  /**
+   * Deterministic snapshot/restore helpers (aero-io-snapshot TLV bytes).
+   *
+   * Optional for older WASM builds.
+   */
+  save_state?: () => Uint8Array;
+  load_state?: (bytes: Uint8Array) => void;
+  snapshot_state?: () => Uint8Array;
+  restore_state?: (bytes: Uint8Array) => void;
   free(): void;
 };
 
@@ -80,6 +91,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   // If the NET_TX ring is full, hold exactly one pending frame so we don't drop it.
   #pendingTxFrame: Uint8Array | null = null;
   #irqLevel = false;
+  #pciCommand = 0;
   #destroyed = false;
 
   constructor(opts: { bridge: E1000BridgeLike; irqSink: IrqSink; netTxRing: RingBuffer; netRxRing: RingBuffer }) {
@@ -161,16 +173,6 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     this.#syncIrq();
   }
 
-  onPciCommandWrite(command: number): void {
-    if (this.#destroyed) return;
-    const cmd = command & 0xffff;
-    try {
-      this.#bridge.set_pci_command?.(cmd);
-    } catch {
-      // ignore device errors during guest PCI config writes
-    }
-  }
-
   tick(_nowMs: number): void {
     if (this.#destroyed) return;
 
@@ -201,6 +203,27 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     } catch {
       // ignore
     }
+  }
+
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+
+    const cmd = command & 0xffff;
+    this.#pciCommand = cmd;
+
+    // Mirror into the WASM device model so DMA gating (Bus Master Enable) is coherent with the
+    // JS PCI config space.
+    const setCmd = this.#bridge.set_pci_command;
+    if (typeof setCmd === "function") {
+      try {
+        setCmd.call(this.#bridge, cmd >>> 0);
+      } catch {
+        // ignore device errors during PCI config writes
+      }
+    }
+
+    // INTx disable bit can immediately drop the line; keep the sink coherent.
+    this.#syncIrq();
   }
 
   #pumpRxRing(): void {
@@ -255,6 +278,12 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     try {
       asserted = Boolean(this.#bridge.irq_level());
     } catch {
+      asserted = false;
+    }
+
+    // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must not
+    // assert INTx.
+    if ((this.#pciCommand & (1 << 10)) !== 0) {
       asserted = false;
     }
 

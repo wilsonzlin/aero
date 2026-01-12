@@ -147,6 +147,7 @@ import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
+  VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
@@ -606,6 +607,36 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
   if (typeof load !== "function") return;
   load.call(bridge, bytes);
+}
+
+function snapshotE1000DeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const bridge = e1000Bridge;
+  if (!bridge) return null;
+
+  const save =
+    (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+  if (typeof save !== "function") return null;
+  try {
+    const bytes = save.call(bridge) as unknown;
+    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_E1000_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] E1000 save_state failed:", err);
+  }
+  return null;
+}
+
+function restoreE1000DeviceState(bytes: Uint8Array): void {
+  const bridge = e1000Bridge;
+  if (!bridge) return;
+
+  const load =
+    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+  if (typeof load !== "function") return;
+  try {
+    load.call(bridge, bytes);
+  } catch (err) {
+    console.warn("[io.worker] E1000 load_state failed:", err);
+  }
 }
 
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
@@ -2109,6 +2140,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     const usb = snapshotUsbDeviceState();
     const ps2 = snapshotI8042DeviceState();
     const hda = snapshotAudioHdaDeviceState();
+    const e1000 = snapshotE1000DeviceState();
 
     // Merge in any previously restored device blobs so unknown/unhandled device state survives a
     // restore → save cycle (forward compatibility).
@@ -2116,6 +2148,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     if (usb) freshDevices.push(usb);
     if (ps2) freshDevices.push(ps2);
     if (hda) freshDevices.push(hda);
+    if (e1000) freshDevices.push(e1000);
 
     const freshKinds = new Set(freshDevices.map((d) => d.kind));
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
@@ -2249,6 +2282,16 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         restoreI8042DeviceState(i8042Blob.bytes);
       }
 
+      const e1000Blob = devicesRaw.find(
+        (entry): entry is { kind: string; bytes: Uint8Array } =>
+          !!entry &&
+          typeof (entry as { kind?: unknown }).kind === "string" &&
+          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_E1000_KIND &&
+          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
+      );
+      if (e1000Blob) {
+        restoreE1000DeviceState(e1000Blob.bytes);
+      }
       snapshotRestoredDeviceBlobs = cachedDevices;
 
       return {
@@ -2273,6 +2316,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
+      let e1000Bytes: Uint8Array | null = null;
       for (const entry of rec.devices) {
         if (!entry || typeof entry !== "object") {
           throw new Error(
@@ -2303,6 +2347,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
           hdaBytes = e.data;
         }
+        if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) {
+          e1000Bytes = e.data;
+        }
         cachedDevices.push({ kind, bytes: e.data });
         devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
       }
@@ -2315,6 +2362,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
       if (hdaBytes) {
         restoreAudioHdaDeviceState(hdaBytes);
+      }
+      if (e1000Bytes) {
+        restoreE1000DeviceState(e1000Bytes);
       }
 
       snapshotRestoredDeviceBlobs = cachedDevices;

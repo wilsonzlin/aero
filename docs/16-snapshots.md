@@ -133,7 +133,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
 - `DeviceId::HPET` (`17`) — HPET timer state
 - `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state
-- `DeviceId::E1000` (`19`) — Intel E1000 NIC model state
+- `DeviceId::E1000` (`19`) — Intel E1000 NIC (`aero-net-e1000`, inner `E1K0`)
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer

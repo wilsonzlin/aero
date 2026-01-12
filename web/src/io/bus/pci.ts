@@ -489,11 +489,16 @@ export class PciBus implements PortIoHandler {
       const cur = readU32LE(fn.config, alignedOff);
       const newValue = ((cur & 0xffff_0000) | (value & 0x0000_ffff)) >>> 0;
       writeU32LE(fn.config, alignedOff, newValue);
-      const oldCommand = cur & 0xffff;
+      const curCommand = cur & 0xffff;
       const newCommand = newValue & 0xffff;
-      if (oldCommand !== newCommand) {
+      if (curCommand !== newCommand) {
         this.#refreshDeviceDecoding(fn);
-        fn.device.onPciCommandWrite?.(newCommand);
+        try {
+          fn.device.onPciCommandWrite?.(newCommand >>> 0);
+        } catch {
+          // Ignore device hook failures; PCI config space writes should remain resilient to
+          // device implementation bugs.
+        }
       }
       return;
     }

@@ -221,6 +221,15 @@ export interface WasmApi {
         pop_tx_frame(): Uint8Array | null | undefined;
         irq_level(): boolean;
         mac_addr?(): Uint8Array;
+        /**
+         * Deterministic snapshot/restore helpers (aero-io-snapshot TLV bytes).
+         *
+         * Optional for older WASM builds.
+         */
+        save_state?(): Uint8Array;
+        load_state?(bytes: Uint8Array): void;
+        snapshot_state?: () => Uint8Array;
+        restore_state?: (bytes: Uint8Array) => void;
         free(): void;
     };
 
