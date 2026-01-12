@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use aero_devices::hpet::HPET_MMIO_BASE;
+use aero_devices::ioapic::IoApic;
 use aero_devices::pci::{
     GsiLevelSink, PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
@@ -394,4 +395,93 @@ fn aero_snapshot_restore_syncs_pci_intx_levels_into_interrupt_controller() {
     d.finish().unwrap();
 
     assert_eq!(levels[expected_gsi as usize], 1);
+}
+
+#[test]
+fn aero_snapshot_restore_syncs_hpet_level_irqs_into_interrupt_controller() {
+    // Snapshot restore must re-drive pending HPET level-triggered lines into the interrupt
+    // controller. This matters when a snapshot is taken from a VM that was itself restored
+    // without calling `Hpet::poll()` yet (i.e. `general_int_status` is pending but the platform
+    // sink line is low).
+    const HPET_REG_GENERAL_CONFIG: u64 = 0x010;
+    const HPET_REG_GENERAL_INT_STATUS: u64 = 0x020;
+    const HPET_REG_TIMER0_BASE: u64 = 0x100;
+    const HPET_REG_TIMER_CONFIG: u64 = 0x00;
+    const HPET_REG_TIMER_COMPARATOR: u64 = 0x08;
+
+    const HPET_GEN_CONF_ENABLE: u64 = 1 << 0;
+    const HPET_TIMER_CFG_INT_LEVEL: u64 = 1 << 1;
+    const HPET_TIMER_CFG_INT_ENABLE: u64 = 1 << 2;
+
+    const EXPECTED_GSI: u32 = 2; // timer0 default route
+
+    let mut src = PcPlatformSnapshotHarness::new(RAM_SIZE);
+
+    // Program HPET timer0 to fire a level-triggered interrupt, but deliver it into a dummy sink
+    // rather than the platform interrupt controller. This leaves the platform GSI line low while
+    // the HPET has a pending `general_int_status` bit set.
+    {
+        let clock = src.platform.clock();
+        let hpet = src.platform.hpet();
+        let mut hpet = hpet.borrow_mut();
+        let mut dummy_sink = IoApic::default();
+
+        hpet.mmio_write(
+            HPET_REG_GENERAL_CONFIG,
+            8,
+            HPET_GEN_CONF_ENABLE,
+            &mut dummy_sink,
+        );
+
+        let timer0_cfg = hpet.mmio_read(
+            HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+            8,
+            &mut dummy_sink,
+        );
+        hpet.mmio_write(
+            HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+            8,
+            timer0_cfg | HPET_TIMER_CFG_INT_ENABLE | HPET_TIMER_CFG_INT_LEVEL,
+            &mut dummy_sink,
+        );
+        hpet.mmio_write(
+            HPET_REG_TIMER0_BASE + HPET_REG_TIMER_COMPARATOR,
+            8,
+            1,
+            &mut dummy_sink,
+        );
+
+        clock.advance_ns(100);
+        hpet.poll(&mut dummy_sink);
+
+        assert_ne!(
+            hpet.mmio_read(HPET_REG_GENERAL_INT_STATUS, 8, &mut dummy_sink) & 1,
+            0,
+            "HPET timer0 status bit should be pending before snapshot"
+        );
+    }
+
+    // Sanity: platform interrupt controller still sees the line deasserted at save time.
+    let intr_bytes = src.platform.interrupts.borrow().save_state();
+    let reader = SnapshotReader::parse(&intr_bytes, *b"INTR").unwrap();
+    let levels_buf = reader.bytes(8).expect("TAG_GSI_LEVEL missing");
+    let mut d = Decoder::new(levels_buf);
+    let levels = d.vec_u8().unwrap();
+    d.finish().unwrap();
+    assert_eq!(levels[EXPECTED_GSI as usize], 0);
+
+    let snap = save_snapshot_bytes(&mut src);
+
+    let mut restored = PcPlatformSnapshotHarness::new(RAM_SIZE);
+    restore_snapshot(&mut Cursor::new(&snap), &mut restored).unwrap();
+
+    // After restore, the adapter must call `Hpet::sync_levels_to_sink()` so the interrupt
+    // controller sees the asserted routed GSI.
+    let intr_bytes = restored.platform.interrupts.borrow().save_state();
+    let reader = SnapshotReader::parse(&intr_bytes, *b"INTR").unwrap();
+    let levels_buf = reader.bytes(8).expect("TAG_GSI_LEVEL missing");
+    let mut d = Decoder::new(levels_buf);
+    let levels = d.vec_u8().unwrap();
+    d.finish().unwrap();
+    assert_eq!(levels[EXPECTED_GSI as usize], 1);
 }
