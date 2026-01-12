@@ -10,6 +10,8 @@
 // NOTE: This worker also participates in the WorkerCoordinator control-plane protocol
 // (`kind: "init"`, READY/ERROR messages) so it can be managed like other runtime workers.
 
+import "../../gpu-cache/persistent_cache.ts";
+
 import { perf } from '../perf/perf';
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from '../perf/shared.js';
 import { installWorkerPerfHandlers } from '../perf/worker';

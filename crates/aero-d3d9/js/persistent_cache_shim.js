@@ -27,28 +27,63 @@ export async function computeShaderCacheKey(dxbc, flags) {
   return api.computeShaderCacheKey(dxbc, flags);
 }
 
-class MissingPersistentGpuCache {
-  static async open() {
-    throw missingApiError();
+/**
+ * Order-independent wrapper class used by wasm-bindgen bindings.
+ *
+ * Previously this module would snapshot `globalThis.AeroPersistentGpuCache.PersistentGpuCache`
+ * at module evaluation time, which made import order significant. This wrapper resolves the
+ * real implementation at call time and returns a stable JS class identity so Rust
+ * `dyn_into::<JsPersistentGpuCache>()` continues to work regardless of host import order.
+ */
+export class PersistentGpuCache {
+  /**
+   * @param {any} inner
+   */
+  constructor(inner) {
+    this._inner = inner;
   }
 
-  async getShader() {
-    throw missingApiError();
+  static async open(...args) {
+    const api = globalThis.AeroPersistentGpuCache;
+    const impl = api?.PersistentGpuCache;
+    if (!impl?.open) {
+      throw missingApiError();
+    }
+    const inner = await impl.open(...args);
+    return new PersistentGpuCache(inner);
   }
 
-  async putShader() {
-    throw missingApiError();
+  /**
+   * @param {string} key
+   * @returns {Promise<any>}
+   */
+  async getShader(key) {
+    if (!this._inner?.getShader) {
+      throw missingApiError();
+    }
+    return this._inner.getShader(key);
   }
 
-  async deleteShader() {
-    throw missingApiError();
+  /**
+   * @param {string} key
+   * @param {any} value
+   * @returns {Promise<void>}
+   */
+  async putShader(key, value) {
+    if (!this._inner?.putShader) {
+      throw missingApiError();
+    }
+    return this._inner.putShader(key, value);
   }
-}
 
-// Export a concrete class in all cases so the WASM module can instantiate even when
-// the cache isn't available. When the host installs AeroPersistentGpuCache, replace
-// this with the real implementation.
-export let PersistentGpuCache = MissingPersistentGpuCache;
-if (globalThis.AeroPersistentGpuCache?.PersistentGpuCache) {
-  PersistentGpuCache = globalThis.AeroPersistentGpuCache.PersistentGpuCache;
+  /**
+   * @param {string} key
+   * @returns {Promise<void>}
+   */
+  async deleteShader(key) {
+    if (!this._inner?.deleteShader) {
+      throw missingApiError();
+    }
+    return this._inner.deleteShader(key);
+  }
 }

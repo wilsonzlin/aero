@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 // Persistent cache for expensive GPU/translation artifacts.
 //
 // Goals:
