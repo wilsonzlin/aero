@@ -16,6 +16,27 @@ describe("io/devices/I8042Controller (PS/2 mouse)", () => {
     expect(i8042.portRead(0x60, 1)).toBe(0x00); // device id
   });
 
+  it("drops injected motion while reporting is disabled (avoids buffering host deltas)", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const i8042 = new I8042Controller(irqSink);
+
+    // Motion before enabling data reporting should be dropped (no output bytes queued).
+    i8042.injectMouseMove(10, 20);
+    expect(i8042.portRead(0x64, 1) & 0x01).toBe(0x00); // STATUS_OBF
+
+    // Enable data reporting.
+    i8042.portWrite(0x64, 1, 0xd4);
+    i8042.portWrite(0x60, 1, 0xf4);
+    expect(i8042.portRead(0x60, 1)).toBe(0xfa); // ACK
+
+    i8042.injectMouseMove(10, 20);
+
+    // Now a PS/2 movement packet should be present.
+    expect(i8042.portRead(0x60, 1)).toBe(0x08);
+    expect(i8042.portRead(0x60, 1)).toBe(10);
+    expect(i8042.portRead(0x60, 1)).toBe(20);
+  });
+
   it("encodes injected mouse movement into 3-byte PS/2 packets with correct sign bits", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
     const i8042 = new I8042Controller(irqSink);
