@@ -2476,6 +2476,9 @@ impl Machine {
             // topology (PIC/PIT/RTC/PCI/ACPI) and a guest-visible NIC.
             enable_pc_platform: true,
             enable_e1000: true,
+            // USB is part of the canonical PC platform topology; enable UHCI so the guest can
+            // enumerate a basic USB 1.1 controller by default.
+            enable_uhci: true,
             enable_vga: true,
             ..Default::default()
         };
