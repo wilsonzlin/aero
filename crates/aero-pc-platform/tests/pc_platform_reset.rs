@@ -525,17 +525,23 @@ fn pc_platform_reset_preserves_ahci_attached_disk() {
 
     pc.memory
         .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CLB, clb as u32);
-    pc.memory
-        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory.write_u32(
+        bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CLBU,
+        (clb >> 32) as u32,
+    );
     pc.memory
         .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_FB, fb as u32);
-    pc.memory
-        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_FBU, (fb >> 32) as u32);
+    pc.memory.write_u32(
+        bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_FBU,
+        (fb >> 32) as u32,
+    );
 
     pc.memory
         .write_u32(bar5_base + AHCI_HBA_GHC, AHCI_GHC_AE | AHCI_GHC_IE);
-    pc.memory
-        .write_u32(bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_IE, AHCI_PORT_IS_DHRS);
+    pc.memory.write_u32(
+        bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_IE,
+        AHCI_PORT_IS_DHRS,
+    );
     pc.memory.write_u32(
         bar5_base + AHCI_PORT_BASE + AHCI_PORT_REG_CMD,
         AHCI_PORT_CMD_ST | AHCI_PORT_CMD_FRE,

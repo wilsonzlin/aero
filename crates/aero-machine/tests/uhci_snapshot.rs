@@ -37,9 +37,7 @@ fn snapshot_restore_roundtrips_uhci_state_and_redrives_intx_level() {
     // This config is snapshotted and should be restored before we re-drive INTx.
     let (gsi, expected_vector) = {
         let bdf = profile::USB_UHCI_PIIX3.bdf;
-        let gsi = pci_intx
-            .borrow()
-            .gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
         let gsi_u8 = u8::try_from(gsi).expect("gsi must fit in ISA IRQ range for legacy PIC");
         assert!(
             gsi_u8 < 16,
@@ -67,21 +65,23 @@ fn snapshot_restore_roundtrips_uhci_state_and_redrives_intx_level() {
             .expect("UHCI PCI function should exist");
         cfg.bar_range(4).map(|range| range.base).unwrap_or(0)
     };
-    assert_ne!(bar4_base, 0, "UHCI BAR4 base should be assigned by BIOS POST");
+    assert_ne!(
+        bar4_base, 0,
+        "UHCI BAR4 base should be assigned by BIOS POST"
+    );
     let io_base = u16::try_from(bar4_base).expect("UHCI BAR4 base should fit in u16");
 
     // Enable IOC interrupts in the UHCI controller, then force a pending USBINT status bit so the
     // device asserts legacy INTx.
-    vm.io_write(
-        io_base + regs::REG_USBINTR,
-        2,
-        u32::from(regs::USBINTR_IOC),
-    );
+    vm.io_write(io_base + regs::REG_USBINTR, 2, u32::from(regs::USBINTR_IOC));
     {
         let mut dev = uhci.borrow_mut();
         dev.controller_mut().set_usbsts_bits(regs::USBSTS_USBINT);
     }
-    assert!(uhci.borrow().irq_level(), "UHCI IRQ level should be asserted");
+    assert!(
+        uhci.borrow().irq_level(),
+        "UHCI IRQ level should be asserted"
+    );
 
     // Intentionally do *not* sync UHCI's INTx into the platform interrupt controller before
     // snapshot. This leaves the interrupt sink desynchronized, which restore must fix up by
@@ -131,4 +131,3 @@ fn snapshot_restore_roundtrips_uhci_state_and_redrives_intx_level() {
         "expected PCI INTx (GSI {gsi}) to deliver vector 0x{expected_vector:02x} after restore"
     );
 }
-

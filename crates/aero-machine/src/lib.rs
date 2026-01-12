@@ -3599,7 +3599,7 @@ impl Machine {
             let (command, bar0_base, bar1_base) = self
                 .pci_cfg
                 .as_ref()
-                .and_then(|pci_cfg| {
+                .map(|pci_cfg| {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
@@ -3611,7 +3611,7 @@ impl Machine {
                         .and_then(|cfg| cfg.bar_range(1))
                         .map(|range| range.base)
                         .unwrap_or(0);
-                    Some((command, bar0_base, bar1_base))
+                    (command, bar0_base, bar1_base)
                 })
                 .unwrap_or((0, 0, 0));
 

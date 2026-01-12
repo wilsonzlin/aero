@@ -406,7 +406,9 @@ impl<B: NetBackend> VirtioNet<B> {
 mod tests {
     use super::*;
     use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
-    use crate::queue::{PoppedDescriptorChain, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+    use crate::queue::{
+        PoppedDescriptorChain, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    };
 
     fn write_desc(
         mem: &mut GuestRam,
@@ -758,15 +760,7 @@ mod tests {
         // One write-only descriptor per head index, large enough for hdr+payload.
         for i in 0..qsize {
             let buf_addr = 0x4000 + u64::from(i) * 0x100;
-            write_desc(
-                &mut mem,
-                desc_table,
-                i,
-                buf_addr,
-                64,
-                VIRTQ_DESC_F_WRITE,
-                0,
-            );
+            write_desc(&mut mem, desc_table, i, buf_addr, 64, VIRTQ_DESC_F_WRITE, 0);
         }
 
         // Malicious: claim there are 1000 available entries, but only provide `qsize` ring slots.

@@ -181,7 +181,7 @@ fn machine_snapshot_roundtrip_preserves_ide_inflight_dma_write_and_allows_resume
     // Program BMIDE and start the engine (direction=from-memory for ATA writes).
     src.io_write(bm_base + 4, 4, prd_addr as u32);
     src.io_write(bm_base + 2, 1, 0x06); // clear error/irq bits (defensive)
-    src.io_write(bm_base + 0, 1, 0x01); // start
+    src.io_write(bm_base, 1, 0x01); // start
 
     // Issue ATA WRITE DMA (0xCA) for LBA 1, count 1, primary master.
     src.io_write(0x1F2, 1, 1);
@@ -214,7 +214,10 @@ fn machine_snapshot_roundtrip_preserves_ide_inflight_dma_write_and_allows_resume
         .unwrap();
 
     let bm_base2 = (read_cfg_u32(&mut restored, bdf, 0x20) & 0xFFFF_FFFC) as u16;
-    assert_eq!(bm_base2, bm_base, "BMIDE BAR4 base should survive snapshot/restore");
+    assert_eq!(
+        bm_base2, bm_base,
+        "BMIDE BAR4 base should survive snapshot/restore"
+    );
 
     // Resume IDE processing and verify the DMA executes + commits.
     restored.process_ide();
