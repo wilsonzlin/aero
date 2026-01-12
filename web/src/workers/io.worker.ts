@@ -391,10 +391,25 @@ let snapshotOpInFlight = false;
 // devices are ticked against this virtual time.
 let ioTickHostLastNowMs: number | null = null;
 let ioTickVirtualNowMs: number | null = null;
+// While the IO worker is snapshot-paused we must not allow any asynchronous host-side completions
+// (e.g. WebUSB) to call into WASM and mutate guest RAM/device state; otherwise snapshot save would
+// race with those writes and become nondeterministic. Queue completion messages and replay them
+// after resume.
+const MAX_QUEUED_USB_COMPLETION_MESSAGES = 4096;
+const queuedUsbCompletionMessages: UsbCompletionMessage[] = [];
 
 const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
 let queuedInputBatchBytes = 0;
 const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
+
+function flushQueuedUsbCompletionMessages(): void {
+  if (queuedUsbCompletionMessages.length === 0) return;
+  const queued = queuedUsbCompletionMessages.splice(0, queuedUsbCompletionMessages.length);
+  for (const msg of queued) {
+    // Replay the completion message to any listeners that were blocked during the snapshot pause.
+    ctx.dispatchEvent(new MessageEvent("message", { data: msg }));
+  }
+}
 
 function flushQueuedInputBatches(): void {
   if (queuedInputBatches.length === 0) return;
@@ -415,6 +430,25 @@ function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   out.set(bytes);
   return out.buffer;
 }
+
+// Intercept USB completion messages while snapshot-paused so `WebUsbPassthroughRuntime` (and other
+// listeners) cannot apply them and mutate guest RAM/device state mid-snapshot.
+//
+// Use a capturing listener so we run before any runtime-added `addEventListener("message", ...)`
+// handlers (which would otherwise process the completion immediately).
+ctx.addEventListener(
+  "message",
+  (ev) => {
+    if (!snapshotPaused) return;
+    const data = (ev as MessageEvent<unknown>).data;
+    if (!isUsbCompletionMessage(data)) return;
+    ev.stopImmediatePropagation();
+    if (queuedUsbCompletionMessages.length < MAX_QUEUED_USB_COMPLETION_MESSAGES) {
+      queuedUsbCompletionMessages.push(data);
+    }
+  },
+  { capture: true },
+);
 
 function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
   const runtime = uhciRuntime;
@@ -2555,6 +2589,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         }
         case "vm.snapshot.resume": {
           snapshotPaused = false;
+          flushQueuedUsbCompletionMessages();
           flushQueuedInputBatches();
           // Ensure the next device tick doesn't interpret wall-clock time spent in
           // snapshot save/restore as elapsed VM time.
