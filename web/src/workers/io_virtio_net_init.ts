@@ -21,51 +21,70 @@ export function tryInitVirtioNetDevice(opts: {
   if (!Bridge) return null;
 
   const mode: VirtioNetPciMode = opts.mode ?? "modern";
-  const transitional = mode === "transitional";
 
   let bridge: InstanceType<NonNullable<WasmApi["VirtioNetPciBridge"]>>;
   try {
     // Some wasm-bindgen builds enforce constructor arity. Prefer the 4-arg
-    // signature (`transitional`) when available, but gracefully fall back.
+    // Some wasm-bindgen builds enforce constructor arity. Prefer the 4-arg
+    // signature (transport selector) when available, but gracefully fall back to
+    // the legacy 3-arg constructor.
     //
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const AnyCtor = Bridge as any;
-    try {
-      bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc, transitional);
-    } catch {
+    if (mode === "modern") {
       bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc);
-    }
-    if (transitional) {
-      const ioRead = (bridge as any).io_read;
-      if (typeof ioRead !== "function") {
-        // Transitional requested but legacy I/O accessors are not present.
-        try {
-          bridge.free();
-        } catch {
-          // ignore
-        }
-        return null;
-      }
-      // Some builds may expose `io_read` even when the underlying transport is modern-only.
-      // Detect whether legacy I/O is actually enabled via a basic HOST_FEATURES probe.
+    } else {
+      const arg = mode === "transitional" ? true : mode;
       try {
-        const probe = (ioRead.call(bridge, 0, 4) as number) >>> 0;
-        if (probe === 0xffff_ffff) {
-          bridge.free();
-          return null;
-        }
+        bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc, arg);
       } catch {
-        try {
-          bridge.free();
-        } catch {
-          // ignore
-        }
-        return null;
+        bridge = new AnyCtor(opts.guestBase >>> 0, opts.guestSize >>> 0, opts.ioIpc);
       }
     }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize virtio-net PCI bridge", err);
     return null;
+  }
+
+  if (mode !== "modern") {
+    const bridgeAny = bridge as any;
+    const read =
+      typeof bridgeAny.legacy_io_read === "function"
+        ? bridgeAny.legacy_io_read
+        : typeof bridgeAny.io_read === "function"
+          ? bridgeAny.io_read
+          : null;
+    const write =
+      typeof bridgeAny.legacy_io_write === "function"
+        ? bridgeAny.legacy_io_write
+        : typeof bridgeAny.io_write === "function"
+          ? bridgeAny.io_write
+          : null;
+    if (!read || !write) {
+      try {
+        bridge.free();
+      } catch {
+        // ignore
+      }
+      return null;
+    }
+
+    // Some builds may expose legacy IO methods even when the underlying transport is modern-only.
+    // Detect whether legacy I/O is actually enabled via a basic HOST_FEATURES probe.
+    try {
+      const probe = (read.call(bridge, 0, 4) as number) >>> 0;
+      if (probe === 0xffff_ffff) {
+        bridge.free();
+        return null;
+      }
+    } catch {
+      try {
+        bridge.free();
+      } catch {
+        // ignore
+      }
+      return null;
+    }
   }
 
   try {

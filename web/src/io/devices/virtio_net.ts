@@ -6,10 +6,13 @@ export type VirtioNetPciBridgeLike = {
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
   /**
-   * Optional legacy virtio-pci I/O port register block accessors.
+   * Legacy virtio-pci (0.9) I/O port register block accessors (BAR2).
    *
-   * Present when the WASM bridge supports PCI transitional devices (legacy + modern).
+   * Newer WASM builds expose these as `legacy_io_read`/`legacy_io_write`. Older builds used
+   * `io_read`/`io_write` and those names are retained for back-compat.
    */
+  legacy_io_read?(offset: number, size: number): number;
+  legacy_io_write?(offset: number, size: number, value: number): void;
   io_read?(offset: number, size: number): number;
   io_write?(offset: number, size: number, value: number): void;
   /**
@@ -25,7 +28,7 @@ export type VirtioNetPciBridgeLike = {
   free(): void;
 };
 
-export type VirtioNetPciMode = "modern" | "transitional";
+export type VirtioNetPciMode = "modern" | "transitional" | "legacy";
 
 const VIRTIO_VENDOR_ID = 0x1af4;
 // Modern virtio-pci device ID space is 0x1040 + <virtio device type>.
@@ -101,11 +104,11 @@ function writeVirtioPciCap(
 }
 
 /**
- * Virtio-net PCI function (virtio-pci modern or transitional transport) backed by the WASM `VirtioNetPciBridge`.
+ * Virtio-net PCI function (virtio-pci modern/transitional/legacy transport) backed by the WASM `VirtioNetPciBridge`.
  *
  * Exposes:
  * - BAR0: 64-bit MMIO BAR, size 0x4000 (Aero Windows 7 virtio contract v1 modern layout).
- * - BAR2 (transitional mode only): legacy I/O port register block, size 0x100.
+ * - BAR2 (transitional/legacy modes): legacy I/O port register block, size 0x100.
  */
 export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly name = "virtio_net";
@@ -132,17 +135,23 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     this.#irqSink = opts.irqSink;
     this.#mode = opts.mode ?? "modern";
 
-    this.deviceId = this.#mode === "transitional" ? VIRTIO_NET_TRANSITIONAL_DEVICE_ID : VIRTIO_NET_MODERN_DEVICE_ID;
+    this.deviceId = this.#mode === "modern" ? VIRTIO_NET_MODERN_DEVICE_ID : VIRTIO_NET_TRANSITIONAL_DEVICE_ID;
     this.bars =
-      this.#mode === "transitional"
-        ? [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, { kind: "io", size: VIRTIO_LEGACY_IO_BAR2_SIZE }, null, null, null]
-        : [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null];
+      this.#mode === "modern"
+        ? [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null]
+        : [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, { kind: "io", size: VIRTIO_LEGACY_IO_BAR2_SIZE }, null, null, null];
   }
 
   initPciConfig(config: Uint8Array): void {
     // Subsystem IDs (Aero Windows 7 virtio contract v1).
     writeU16LE(config, 0x2c, VIRTIO_VENDOR_ID);
     writeU16LE(config, 0x2e, VIRTIO_NET_SUBSYSTEM_DEVICE_ID);
+
+    // Legacy-only mode intentionally disables modern virtio-pci capabilities so guests take the
+    // virtio 0.9 I/O-port transport path.
+    if (this.#mode === "legacy") {
+      return;
+    }
 
     // PCI status register: Capabilities List bit (bit 4) at offset 0x06.
     config[0x06] = (config[0x06]! | 0x10) & 0xff;
@@ -251,18 +260,20 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return defaultReadValue(size);
     if (barIndex !== 2) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
-    if (this.#mode !== "transitional") return defaultReadValue(size);
+    if (this.#mode === "modern") return defaultReadValue(size);
 
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
 
-    const bridge = this.#bridge;
-    const fn = bridge.io_read;
+    const bridge = this.#bridge as unknown as { legacy_io_read?: unknown; io_read?: unknown };
+    const fn = (typeof bridge.legacy_io_read === "function" ? bridge.legacy_io_read : bridge.io_read) as
+      | ((offset: number, size: number) => number)
+      | undefined;
     if (typeof fn !== "function") return defaultReadValue(size);
 
     let value: number;
     try {
-      value = fn.call(bridge, off, size) >>> 0;
+      value = fn.call(this.#bridge, off, size) >>> 0;
     } catch {
       value = defaultReadValue(size);
     }
@@ -274,16 +285,18 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     if (barIndex !== 2) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
-    if (this.#mode !== "transitional") return;
+    if (this.#mode === "modern") return;
 
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
 
-    const bridge = this.#bridge;
-    const fn = bridge.io_write;
+    const bridge = this.#bridge as unknown as { legacy_io_write?: unknown; io_write?: unknown };
+    const fn = (typeof bridge.legacy_io_write === "function" ? bridge.legacy_io_write : bridge.io_write) as
+      | ((offset: number, size: number, value: number) => void)
+      | undefined;
     if (typeof fn === "function") {
       try {
-        fn.call(bridge, off, size, maskToSize(value >>> 0, size));
+        fn.call(this.#bridge, off, size, maskToSize(value >>> 0, size));
       } catch {
         // ignore device errors during guest IO
       }
@@ -347,3 +360,5 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
+
+export type VirtioNetPciTransport = "modern" | "transitional" | "legacy";

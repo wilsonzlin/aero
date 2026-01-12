@@ -54,10 +54,14 @@ export type VirtioNetPciBridgeHandle = {
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
     /**
-     * Optional legacy virtio-pci I/O port register block accessors.
+     * Legacy virtio-pci (0.9) I/O port register accessors (BAR2).
      *
-     * Present when the WASM bridge supports PCI transitional devices (legacy + modern).
+     * Optional for older WASM builds and for modern-only devices. Some builds expose these as
+     * `io_read`/`io_write` (retained for back-compat); newer builds also expose the preferred
+     * `legacy_io_read`/`legacy_io_write` names.
      */
+    legacy_io_read?(offset: number, size: number): number;
+    legacy_io_write?(offset: number, size: number, value: number): void;
     io_read?(offset: number, size: number): number;
     io_write?(offset: number, size: number, value: number): void;
     poll?(): void;
@@ -295,7 +299,7 @@ export interface WasmApi {
         guestBase: number,
         guestSize: number,
         ioIpcSab: SharedArrayBuffer,
-        transitional?: boolean,
+        transportMode?: unknown,
     ) => VirtioNetPciBridgeHandle;
 
     /**

@@ -5,9 +5,13 @@
 //! in guest RAM inside the WASM linear memory; guest physical address 0 maps to `guest_base`
 //! (see `guest_ram_layout`).
 //!
-//! This bridge can optionally enable the virtio-pci *transitional* transport (legacy I/O register
-//! block + modern PCI capabilities). When enabled, the JS PCI wrapper exposes an additional I/O BAR
-//! (BAR2) and forwards legacy port reads/writes into [`VirtioNetPciBridge::io_read`] /
+//! This bridge can optionally enable the virtio-pci legacy I/O port register block (BAR2), either:
+//! - as a *transitional* device (legacy + modern), or
+//! - as a legacy-only device (legacy BAR2 with modern capabilities disabled).
+//!
+//! When legacy I/O is enabled, the JS PCI wrapper exposes an additional I/O BAR (BAR2) and forwards
+//! port reads/writes into [`VirtioNetPciBridge::legacy_io_read`] / [`VirtioNetPciBridge::legacy_io_write`].
+//! Older JS call sites may use the retained aliases [`VirtioNetPciBridge::io_read`] /
 //! [`VirtioNetPciBridge::io_write`].
 //!
 //! Host networking is bridged through the existing Aero IPC (AIPC) rings:
@@ -26,7 +30,7 @@ use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
 use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
 use aero_virtio::devices::net::{NetBackend, VirtioNet};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice};
+use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY};
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -157,6 +161,61 @@ pub struct VirtioNetPciBridge {
     legacy_io_size: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VirtioNetPciTransportMode {
+    ModernOnly,
+    Transitional,
+    LegacyOnly,
+}
+
+impl VirtioNetPciTransportMode {
+    fn parse_js(value: Option<JsValue>) -> Result<Self, JsValue> {
+        let Some(value) = value else {
+            return Ok(Self::ModernOnly);
+        };
+
+        // Be permissive: accept both numeric and string modes so JS callers can use enums
+        // without needing a specific exported type.
+        if value.is_null() || value.is_undefined() {
+            return Ok(Self::ModernOnly);
+        }
+
+        if let Some(b) = value.as_bool() {
+            return Ok(if b {
+                Self::Transitional
+            } else {
+                Self::ModernOnly
+            });
+        }
+
+        if let Some(n) = value.as_f64() {
+            let n = n as i32;
+            return match n {
+                0 => Ok(Self::ModernOnly),
+                1 => Ok(Self::Transitional),
+                2 => Ok(Self::LegacyOnly),
+                _ => Err(js_error(format!("invalid virtio-net pci transport mode: {n}"))),
+            };
+        }
+
+        if let Some(s) = value.as_string() {
+            let s = s.trim().to_ascii_lowercase();
+            return match s.as_str() {
+                "" | "modern" | "modern-only" | "modern_only" => Ok(Self::ModernOnly),
+                "transitional" => Ok(Self::Transitional),
+                "legacy" | "legacy-only" | "legacy_only" => Ok(Self::LegacyOnly),
+                _ => Err(js_error(format!(
+                    "invalid virtio-net pci transport mode: {s}"
+                ))),
+            };
+        }
+
+        Err(js_error(
+            "invalid virtio-net pci transport mode: expected string or number",
+        ))
+    }
+}
+
 #[wasm_bindgen]
 impl VirtioNetPciBridge {
     /// Create a new virtio-net (virtio-pci, modern) bridge bound to the provided guest RAM mapping.
@@ -167,12 +226,16 @@ impl VirtioNetPciBridge {
     ///   memory" as guest RAM (mirrors `UhciControllerBridge`).
     /// - `io_ipc_sab` is the browser runtime's `ioIpcSab` `SharedArrayBuffer` containing `NET_TX`
     ///   and `NET_RX` ring buffers.
+    /// - `transport_mode` optionally selects the virtio-pci transport to expose:
+    ///   - `"modern"` / `0` (default): modern-only (Aero Win7 virtio contract v1)
+    ///   - `"transitional"` / `1`: modern + legacy I/O port BAR
+    ///   - `"legacy"` / `2`: legacy I/O port BAR only (modern caps disabled)
     #[wasm_bindgen(constructor)]
     pub fn new(
         guest_base: u32,
         guest_size: u32,
         io_ipc_sab: SharedArrayBuffer,
-        transitional: Option<bool>,
+        transport_mode: Option<JsValue>,
     ) -> Result<Self, JsValue> {
         if guest_base == 0 {
             return Err(js_error("guest_base must be non-zero"));
@@ -209,10 +272,18 @@ impl VirtioNetPciBridge {
             asserted: asserted.clone(),
         };
 
-        let dev = if transitional.unwrap_or(false) {
-            VirtioPciDevice::new_transitional(Box::new(net), Box::new(irq))
-        } else {
-            VirtioPciDevice::new(Box::new(net), Box::new(irq))
+        let transport_mode = VirtioNetPciTransportMode::parse_js(transport_mode)?;
+
+        let dev = match transport_mode {
+            VirtioNetPciTransportMode::ModernOnly => {
+                VirtioPciDevice::new(Box::new(net), Box::new(irq))
+            }
+            VirtioNetPciTransportMode::Transitional => {
+                VirtioPciDevice::new_transitional(Box::new(net), Box::new(irq))
+            }
+            VirtioNetPciTransportMode::LegacyOnly => {
+                VirtioPciDevice::new_legacy_only(Box::new(net), Box::new(irq))
+            }
         };
         let legacy_io_size = dev.legacy_io_size().min(u64::from(u32::MAX)) as u32;
 
@@ -248,37 +319,54 @@ impl VirtioNetPciBridge {
         self.dev.bar0_write(offset as u64, &bytes[..size]);
     }
 
-    /// Read from the legacy virtio-pci I/O port register block (transitional devices only).
-    pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+    pub fn legacy_io_read(&mut self, offset: u32, size: u8) -> u32 {
         let size = match size {
             1 | 2 | 4 => size as usize,
-            _ => return 0xffff_ffff,
+            _ => return 0,
         };
-
         let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return 0xffff_ffff;
         }
-
         let mut buf = [0u8; 4];
         self.dev.legacy_io_read(offset as u64, &mut buf[..size]);
         u32::from_le_bytes(buf)
     }
 
-    /// Write to the legacy virtio-pci I/O port register block (transitional devices only).
-    pub fn io_write(&mut self, offset: u32, size: u8, value: u32) {
+    pub fn legacy_io_write(&mut self, offset: u32, size: u8, value: u32) {
         let size = match size {
             1 | 2 | 4 => size as usize,
             _ => return,
         };
-
         let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return;
         }
-
         let bytes = value.to_le_bytes();
         self.dev.legacy_io_write(offset as u64, &bytes[..size]);
+        // Legacy queue notifications are expected to be "immediate" from the guest's
+        // perspective (in real hardware, the kick causes the device to begin DMA). In the
+        // browser runtime we have access to guest RAM in the WASM linear memory, so we can
+        // service the notified virtqueue synchronously instead of requiring periodic polling.
+        if offset as u64 == VIRTIO_PCI_LEGACY_QUEUE_NOTIFY {
+            self.dev.process_notified_queues(&mut self.mem);
+        }
+    }
+
+    /// Back-compat alias for `legacy_io_read` used by older JS runtimes.
+    pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+        if !matches!(size, 1 | 2 | 4) {
+            return 0xffff_ffff;
+        }
+        self.legacy_io_read(offset, size)
+    }
+
+    /// Back-compat alias for `legacy_io_write` used by older JS runtimes.
+    pub fn io_write(&mut self, offset: u32, size: u8, value: u32) {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
+        self.legacy_io_write(offset, size, value);
     }
 
     /// Process any pending queue work and host-driven events (e.g. `NET_RX` packets).
