@@ -12,6 +12,7 @@ aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-mmu = { path = "../aero-mmu" }
 aero-net-backend = { path = "../aero-net-backend" }
+aero-net-pump = { path = "../aero-net-pump" }
 aero-pc-platform = { path = "../aero-pc-platform" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }

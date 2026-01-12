@@ -50,6 +50,7 @@ pub use aero_devices_input::Ps2MouseButton;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
+use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PciBarMmioRouter, PciIoBarHandler, PciIoBarRouter};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
@@ -1531,47 +1532,32 @@ impl Machine {
         //
         // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
         // while the machine maintains a separate canonical config space for enumeration.
-        e1000
-            .borrow_mut()
-            .pci_config_write(0x04, 2, u32::from(command));
-
-        let bus_master_enabled = (command & (1 << 2)) != 0;
-        if bus_master_enabled {
-            e1000.borrow_mut().poll(&mut self.mem);
-        }
-
-        // Drain guest->host frames.
-        const MAX_TX_FRAMES_PER_POLL: usize = 256;
-        let mut tx_budget = MAX_TX_FRAMES_PER_POLL;
-        while tx_budget != 0 {
-            let Some(frame) = e1000.borrow_mut().pop_tx_frame() else {
-                break;
-            };
-            tx_budget -= 1;
-
-            if let Some(backend) = self.network_backend.as_mut() {
-                backend.transmit(frame);
-            }
-        }
-
-        // Drain host->guest frames.
         //
-        // Only poll the backend when E1000 exists; otherwise we'd drop frames on the floor.
-        if let Some(backend) = self.network_backend.as_mut() {
-            const MAX_RX_FRAMES_PER_POLL: usize = 256;
-            let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
-            while rx_budget != 0 {
-                let Some(frame) = backend.poll_receive() else {
-                    break;
-                };
-                rx_budget -= 1;
-                e1000.borrow_mut().enqueue_rx_frame(frame);
-            }
-        }
+        // The shared `aero-net-pump` helper assumes the NIC's internal PCI command state is already
+        // up to date.
+        let mut nic = e1000.borrow_mut();
+        nic.pci_config_write(0x04, 2, u32::from(command));
 
-        // Flush RX delivery for newly enqueued frames.
-        if bus_master_enabled {
-            e1000.borrow_mut().poll(&mut self.mem);
+        const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
+        if let Some(backend) = self.network_backend.as_mut() {
+            tick_e1000(
+                &mut *nic,
+                &mut self.mem,
+                backend,
+                MAX_FRAMES_PER_POLL,
+                MAX_FRAMES_PER_POLL,
+            );
+        } else {
+            // Keep the device model making forward progress even when no host network backend is
+            // attached (e.g. for deterministic guest tests). Any guest TX frames are dropped.
+            let mut no_backend = ();
+            tick_e1000(
+                &mut *nic,
+                &mut self.mem,
+                &mut no_backend,
+                MAX_FRAMES_PER_POLL,
+                MAX_FRAMES_PER_POLL,
+            );
         }
     }
 
