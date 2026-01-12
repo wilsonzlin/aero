@@ -820,7 +820,7 @@ fn validate_driver_dir(
             arch,
             driver_dir.display()
         );
-        for (_key, (display, infs)) in &missing {
+        for (display, infs) in missing.values() {
             let inf_list = infs.iter().cloned().collect::<Vec<_>>().join(", ");
             msg.push_str(&format!("\n- {display} (referenced by: {inf_list})"));
         }

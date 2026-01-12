@@ -70,10 +70,10 @@ fn zip_datetime_from_epoch(epoch: i64) -> zip::DateTime {
         .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     let mut year = dt.year();
     let mut month = dt.month() as u8;
-    let mut day = dt.day() as u8;
-    let mut hour = dt.hour() as u8;
-    let mut minute = dt.minute() as u8;
-    let mut second = dt.second() as u8;
+    let mut day = dt.day();
+    let mut hour = dt.hour();
+    let mut minute = dt.minute();
+    let mut second = dt.second();
 
     // DOS timestamp range is 1980-2107. Clamp so the produced zip is valid even
     // when SOURCE_DATE_EPOCH is 0 (1970).

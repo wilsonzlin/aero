@@ -120,28 +120,28 @@ pub fn write_iso9660_joliet(
         iso_timestamp_7(source_date_epoch),
     );
 
-    let pvd = build_volume_descriptor(
-        1,
-        &normalized_volume_id,
+    let pvd = build_volume_descriptor(VolumeDescriptorArgs {
+        vd_type: 1,
+        volume_id: &normalized_volume_id,
         volume_space_size,
-        iso_path_table_len,
-        iso_path_table_le_sector,
-        iso_path_table_be_sector,
-        &iso_root_record,
+        path_table_size: iso_path_table_len,
+        path_table_le_sector: iso_path_table_le_sector,
+        path_table_be_sector: iso_path_table_be_sector,
+        root_dir_record: &iso_root_record,
         source_date_epoch,
-        None,
-    );
-    let svd = build_volume_descriptor(
-        2,
-        &normalized_volume_id,
+        joliet: None,
+    });
+    let svd = build_volume_descriptor(VolumeDescriptorArgs {
+        vd_type: 2,
+        volume_id: &normalized_volume_id,
         volume_space_size,
-        joliet_path_table_len,
-        joliet_path_table_le_sector,
-        joliet_path_table_be_sector,
-        &joliet_root_record,
+        path_table_size: joliet_path_table_len,
+        path_table_le_sector: joliet_path_table_le_sector,
+        path_table_be_sector: joliet_path_table_be_sector,
+        root_dir_record: &joliet_root_record,
         source_date_epoch,
-        Some(JolietLevel::Level3),
-    );
+        joliet: Some(JolietLevel::Level3),
+    });
     let vdst = build_terminator_descriptor();
 
     let iso_path_table_le = build_path_table(
@@ -173,32 +173,32 @@ pub fn write_iso9660_joliet(
         &joliet_dir_sector,
     );
 
+    let iso_dir_args = DirectoryExtentArgs {
+        tree: &tree,
+        ids: &iso_ids,
+        kind: TreeKind::Iso9660,
+        dir_sectors: &iso_dir_sector,
+        dir_sizes: &iso_dir_sizes,
+        file_sectors: &file_sector,
+        source_date_epoch,
+    };
     let mut iso_dirs_data = Vec::with_capacity(tree.dirs.len());
     for dir_idx in 0..tree.dirs.len() {
-        iso_dirs_data.push(build_directory_extent(
-            dir_idx,
-            &tree,
-            &iso_ids,
-            TreeKind::Iso9660,
-            &iso_dir_sector,
-            &iso_dir_sizes,
-            &file_sector,
-            source_date_epoch,
-        )?);
+        iso_dirs_data.push(build_directory_extent(dir_idx, &iso_dir_args)?);
     }
 
+    let joliet_dir_args = DirectoryExtentArgs {
+        tree: &tree,
+        ids: &joliet_ids,
+        kind: TreeKind::Joliet,
+        dir_sectors: &joliet_dir_sector,
+        dir_sizes: &joliet_dir_sizes,
+        file_sectors: &file_sector,
+        source_date_epoch,
+    };
     let mut joliet_dirs_data = Vec::with_capacity(tree.dirs.len());
     for dir_idx in 0..tree.dirs.len() {
-        joliet_dirs_data.push(build_directory_extent(
-            dir_idx,
-            &tree,
-            &joliet_ids,
-            TreeKind::Joliet,
-            &joliet_dir_sector,
-            &joliet_dir_sizes,
-            &file_sector,
-            source_date_epoch,
-        )?);
+        joliet_dirs_data.push(build_directory_extent(dir_idx, &joliet_dir_args)?);
     }
 
     let mut out =
@@ -538,9 +538,11 @@ struct Identifiers {
 
 impl Identifiers {
     fn assign_joliet_names(tree: &Tree) -> Result<Self> {
-        let mut ids = Identifiers::default();
-        ids.joliet_dir_id = vec![Vec::new(); tree.dirs.len()];
-        ids.joliet_file_id = vec![Vec::new(); tree.files.len()];
+        let mut ids = Identifiers {
+            joliet_dir_id: vec![Vec::new(); tree.dirs.len()],
+            joliet_file_id: vec![Vec::new(); tree.files.len()],
+            ..Default::default()
+        };
 
         ids.joliet_dir_id[0] = vec![0u8];
         for (idx, dir) in tree.dirs.iter().enumerate().skip(1) {
@@ -580,14 +582,14 @@ impl Identifiers {
         Ok(())
     }
 
-    fn dir_id<'a>(&'a self, kind: TreeKind, idx: usize) -> &'a [u8] {
+    fn dir_id(&self, kind: TreeKind, idx: usize) -> &[u8] {
         match kind {
             TreeKind::Iso9660 => &self.iso_dir_id[idx],
             TreeKind::Joliet => &self.joliet_dir_id[idx],
         }
     }
 
-    fn file_id<'a>(&'a self, kind: TreeKind, idx: usize) -> &'a [u8] {
+    fn file_id(&self, kind: TreeKind, idx: usize) -> &[u8] {
         match kind {
             TreeKind::Iso9660 => &self.iso_file_id[idx],
             TreeKind::Joliet => &self.joliet_file_id[idx],
@@ -671,7 +673,7 @@ fn compute_path_table_len(tree: &Tree, ids: &Identifiers, kind: TreeKind) -> u32
     for dir_idx in 0..tree.dirs.len() {
         let id_len = ids.dir_id(kind, dir_idx).len() as u32;
         // 8 + id + padding (if id_len odd)
-        len += 8 + id_len + if id_len % 2 == 1 { 1 } else { 0 };
+        len += 8 + id_len + if !id_len.is_multiple_of(2) { 1 } else { 0 };
     }
     len
 }
@@ -695,7 +697,7 @@ fn compute_directory_size(dir_idx: usize, tree: &Tree, ids: &Identifiers, kind: 
 fn dir_record_len(id_len: u32) -> u32 {
     // Directory record length = 33 + id_len + padding. Padding is present when
     // id_len is even (the fixed portion is 33 bytes, i.e. odd).
-    33 + id_len + if id_len % 2 == 0 { 1 } else { 0 }
+    33 + id_len + if id_len.is_multiple_of(2) { 1 } else { 0 }
 }
 
 fn pack_records_len(record_lens: &[u32]) -> u32 {
@@ -708,7 +710,7 @@ fn pack_records_len(record_lens: &[u32]) -> u32 {
         pos += len;
     }
     // Directory files are written with full-sector padding.
-    ((pos + (SECTOR_SIZE as u32 - 1)) / SECTOR_SIZE as u32) * SECTOR_SIZE as u32
+    pos.div_ceil(SECTOR_SIZE as u32) * SECTOR_SIZE as u32
 }
 
 fn build_path_table(
@@ -719,12 +721,11 @@ fn build_path_table(
     dir_sectors: &[u32],
 ) -> Vec<u8> {
     let mut out = Vec::new();
-    for dir_idx in 0..tree.dirs.len() {
+    for (dir_idx, (dir, &extent)) in tree.dirs.iter().zip(dir_sectors.iter()).enumerate() {
         let id = ids.dir_id(kind, dir_idx);
         out.push(id.len() as u8);
         out.push(0u8); // ext attr record length
 
-        let extent = dir_sectors[dir_idx];
         match endian {
             Endian::Little => out.extend_from_slice(&extent.to_le_bytes()),
             Endian::Big => out.extend_from_slice(&extent.to_be_bytes()),
@@ -733,7 +734,7 @@ fn build_path_table(
         let parent_num: u16 = if dir_idx == 0 {
             1
         } else {
-            tree.dirs[dir_idx].parent.unwrap() as u16 + 1
+            dir.parent.unwrap() as u16 + 1
         };
         match endian {
             Endian::Little => out.extend_from_slice(&parent_num.to_le_bytes()),
@@ -741,31 +742,35 @@ fn build_path_table(
         }
 
         out.extend_from_slice(id);
-        if id.len() % 2 == 1 {
+        if !id.len().is_multiple_of(2) {
             out.push(0u8);
         }
     }
     out
 }
 
+struct DirectoryExtentArgs<'a> {
+    tree: &'a Tree,
+    ids: &'a Identifiers,
+    kind: TreeKind,
+    dir_sectors: &'a [u32],
+    dir_sizes: &'a [u32],
+    file_sectors: &'a [u32],
+    source_date_epoch: i64,
+}
+
 fn build_directory_extent(
     dir_idx: usize,
-    tree: &Tree,
-    ids: &Identifiers,
-    kind: TreeKind,
-    dir_sectors: &[u32],
-    dir_sizes: &[u32],
-    file_sectors: &[u32],
-    source_date_epoch: i64,
+    args: &DirectoryExtentArgs<'_>,
 ) -> Result<Vec<u8>> {
     let mut records = Vec::new();
-    let ts = iso_timestamp_7(source_date_epoch);
+    let ts = iso_timestamp_7(args.source_date_epoch);
 
-    let self_sector = dir_sectors[dir_idx];
-    let self_size = dir_sizes[dir_idx];
-    let parent_idx = tree.dirs[dir_idx].parent.unwrap_or(0);
-    let parent_sector = dir_sectors[parent_idx];
-    let parent_size = dir_sizes[parent_idx];
+    let self_sector = args.dir_sectors[dir_idx];
+    let self_size = args.dir_sizes[dir_idx];
+    let parent_idx = args.tree.dirs[dir_idx].parent.unwrap_or(0);
+    let parent_sector = args.dir_sectors[parent_idx];
+    let parent_size = args.dir_sizes[parent_idx];
 
     // '.' entry
     records.push(build_directory_record(
@@ -784,23 +789,23 @@ fn build_directory_extent(
         ts,
     ));
 
-    for child_dir in tree.dirs[dir_idx].children_dirs.iter().copied() {
+    for child_dir in args.tree.dirs[dir_idx].children_dirs.iter().copied() {
         records.push(build_directory_record(
-            dir_sectors[child_dir],
-            dir_sizes[child_dir],
+            args.dir_sectors[child_dir],
+            args.dir_sizes[child_dir],
             true,
-            ids.dir_id(kind, child_dir),
+            args.ids.dir_id(args.kind, child_dir),
             ts,
         ));
     }
 
-    for child_file in tree.dirs[dir_idx].children_files.iter().copied() {
-        let file = &tree.files[child_file];
+    for child_file in args.tree.dirs[dir_idx].children_files.iter().copied() {
+        let file = &args.tree.files[child_file];
         records.push(build_directory_record(
-            file_sectors[child_file],
+            args.file_sectors[child_file],
             file.bytes.len() as u32,
             false,
-            ids.file_id(kind, child_file),
+            args.ids.file_id(args.kind, child_file),
             ts,
         ));
     }
@@ -834,7 +839,7 @@ fn build_directory_record(
     timestamp: [u8; 7],
 ) -> Vec<u8> {
     let id_len = identifier.len();
-    let padding = if id_len % 2 == 0 { 1 } else { 0 };
+    let padding = if id_len.is_multiple_of(2) { 1 } else { 0 };
     let record_len = 33 + id_len + padding;
 
     let mut out = vec![0u8; record_len];
@@ -856,31 +861,35 @@ fn build_directory_record(
     out
 }
 
-fn build_volume_descriptor(
+struct VolumeDescriptorArgs<'a> {
     vd_type: u8,
-    volume_id: &str,
+    volume_id: &'a str,
     volume_space_size: u32,
     path_table_size: u32,
     path_table_le_sector: u32,
     path_table_be_sector: u32,
-    root_dir_record: &[u8],
+    root_dir_record: &'a [u8],
     source_date_epoch: i64,
     joliet: Option<JolietLevel>,
+}
+
+fn build_volume_descriptor(
+    args: VolumeDescriptorArgs<'_>,
 ) -> [u8; SECTOR_SIZE] {
     let mut out = [0u8; SECTOR_SIZE];
-    out[0] = vd_type;
+    out[0] = args.vd_type;
     out[1..6].copy_from_slice(b"CD001");
     out[6] = 1u8;
     // out[7] unused
 
     write_padded_ascii(&mut out[8..40], "AERO");
-    write_padded_ascii(&mut out[40..72], volume_id);
+    write_padded_ascii(&mut out[40..72], args.volume_id);
 
     // volume space size (both-endian u32)
-    out[80..84].copy_from_slice(&volume_space_size.to_le_bytes());
-    out[84..88].copy_from_slice(&volume_space_size.to_be_bytes());
+    out[80..84].copy_from_slice(&args.volume_space_size.to_le_bytes());
+    out[84..88].copy_from_slice(&args.volume_space_size.to_be_bytes());
 
-    if let Some(level) = joliet {
+    if let Some(level) = args.joliet {
         let esc = match level {
             JolietLevel::Level3 => [0x25, 0x2F, 0x45],
         };
@@ -893,19 +902,19 @@ fn build_volume_descriptor(
     write_both_endian_u16(&mut out[128..132], SECTOR_SIZE as u16);
 
     // path table size (both-endian u32)
-    out[132..136].copy_from_slice(&path_table_size.to_le_bytes());
-    out[136..140].copy_from_slice(&path_table_size.to_be_bytes());
+    out[132..136].copy_from_slice(&args.path_table_size.to_le_bytes());
+    out[136..140].copy_from_slice(&args.path_table_size.to_be_bytes());
 
     // path table locations
-    out[140..144].copy_from_slice(&path_table_le_sector.to_le_bytes());
+    out[140..144].copy_from_slice(&args.path_table_le_sector.to_le_bytes());
     // optional L path table: leave 0
-    out[148..152].copy_from_slice(&path_table_be_sector.to_be_bytes());
+    out[148..152].copy_from_slice(&args.path_table_be_sector.to_be_bytes());
     // optional M path table: leave 0
 
     // root directory record (34 bytes)
-    out[156..190].copy_from_slice(&root_dir_record[..34]);
+    out[156..190].copy_from_slice(&args.root_dir_record[..34]);
 
-    let dt17 = iso_datetime_17(source_date_epoch);
+    let dt17 = iso_datetime_17(args.source_date_epoch);
     out[813..830].copy_from_slice(&dt17);
     out[830..847].copy_from_slice(&dt17);
     // Expiration/effective: keep as zeros except effective == creation for determinism.
@@ -953,11 +962,7 @@ fn normalize_volume_id(volume_id: &str) -> String {
 }
 
 fn sectors_for_len(len: u32) -> u32 {
-    if len == 0 {
-        0
-    } else {
-        (len + SECTOR_SIZE as u32 - 1) / SECTOR_SIZE as u32
-    }
+    len.div_ceil(SECTOR_SIZE as u32)
 }
 
 fn pad_to_sector(len: usize) -> usize {
@@ -995,10 +1000,10 @@ fn iso_timestamp_7(epoch: i64) -> [u8; 7] {
     [
         (dt.year() - 1900) as u8,
         dt.month() as u8,
-        dt.day() as u8,
-        dt.hour() as u8,
-        dt.minute() as u8,
-        dt.second() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
         0u8, // GMT offset (15 min intervals)
     ]
 }

@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 #[command(name = "aero_packager")]
@@ -101,7 +101,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn resolve_windows_device_contract_path(
-    guest_tools_dir: &PathBuf,
+    guest_tools_dir: &Path,
     explicit: Option<PathBuf>,
 ) -> PathBuf {
     if let Some(p) = explicit {
@@ -113,7 +113,7 @@ fn resolve_windows_device_contract_path(
     // - repo_root/out/_staging_guest_tools/guest-tools (CI staging)
     //
     // Search upward for the canonical device contract, rather than assuming a fixed relative path.
-    let mut cur: Option<&std::path::Path> = Some(guest_tools_dir.as_path());
+    let mut cur: Option<&Path> = Some(guest_tools_dir);
     for _ in 0..16 {
         let Some(p) = cur else { break };
         let candidate = p.join("docs").join("windows-device-contract.json");
@@ -126,7 +126,7 @@ fn resolve_windows_device_contract_path(
     // Fallback to the previous behavior for error messages / debugging.
     guest_tools_dir
         .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
+        .unwrap_or_else(|| Path::new("."))
         .join("docs")
         .join("windows-device-contract.json")
 }

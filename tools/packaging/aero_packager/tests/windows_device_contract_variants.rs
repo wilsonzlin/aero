@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str;
 
 fn parse_devices_cmd_vars(text: &str) -> HashMap<String, String> {
@@ -59,7 +59,7 @@ fn parse_devices_cmd_vars(text: &str) -> HashMap<String, String> {
     vars
 }
 
-fn load_contract_json(path: &PathBuf) -> serde_json::Value {
+fn load_contract_json(path: &Path) -> serde_json::Value {
     let text = fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     serde_json::from_str(&text)
@@ -67,7 +67,7 @@ fn load_contract_json(path: &PathBuf) -> serde_json::Value {
 }
 
 fn contract_device<'a>(
-    contract_path: &PathBuf,
+    contract_path: &Path,
     contract: &'a serde_json::Value,
     name: &str,
 ) -> &'a serde_json::Value {
@@ -86,7 +86,7 @@ fn contract_device<'a>(
         .unwrap_or_else(|| panic!("{}: missing device entry {name:?}", contract_path.display()))
 }
 
-fn json_str<'a>(contract_path: &PathBuf, v: &'a serde_json::Value, field: &str) -> &'a str {
+fn json_str<'a>(contract_path: &Path, v: &'a serde_json::Value, field: &str) -> &'a str {
     v.get(field).and_then(|x| x.as_str()).unwrap_or_else(|| {
         panic!(
             "{}: missing/invalid string field {field}",
@@ -95,7 +95,7 @@ fn json_str<'a>(contract_path: &PathBuf, v: &'a serde_json::Value, field: &str) 
     })
 }
 
-fn json_array_strings(contract_path: &PathBuf, v: &serde_json::Value, field: &str) -> Vec<String> {
+fn json_array_strings(contract_path: &Path, v: &serde_json::Value, field: &str) -> Vec<String> {
     v.get(field)
         .and_then(|x| x.as_array())
         .unwrap_or_else(|| {
@@ -118,7 +118,7 @@ fn json_array_strings(contract_path: &PathBuf, v: &serde_json::Value, field: &st
         .collect()
 }
 
-fn json_u64(contract_path: &PathBuf, v: &serde_json::Value, field: &str) -> Option<u64> {
+fn json_u64(contract_path: &Path, v: &serde_json::Value, field: &str) -> Option<u64> {
     v.get(field).and_then(|x| x.as_u64()).or_else(|| {
         if v.get(field).is_some() {
             panic!(
@@ -130,10 +130,8 @@ fn json_u64(contract_path: &PathBuf, v: &serde_json::Value, field: &str) -> Opti
     })
 }
 
-fn json_opt_str(contract_path: &PathBuf, v: &serde_json::Value, field: &str) -> Option<String> {
-    let Some(raw) = v.get(field) else {
-        return None;
-    };
+fn json_opt_str(contract_path: &Path, v: &serde_json::Value, field: &str) -> Option<String> {
+    let raw = v.get(field)?;
     Some(
         raw.as_str()
             .unwrap_or_else(|| {

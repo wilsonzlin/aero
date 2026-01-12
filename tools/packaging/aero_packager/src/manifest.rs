@@ -1,11 +1,12 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SigningPolicy {
     /// Test-signed drivers. Requires shipping a certificate and (typically) enabling Test Signing
     /// on Windows 7 x64.
+    #[default]
     #[value(name = "test", alias = "testsigning", alias = "test-signing")]
     Test,
     /// Production/WHQL-signed drivers. No custom certificate is expected.
@@ -23,12 +24,6 @@ pub enum SigningPolicy {
 impl SigningPolicy {
     pub fn certs_required(self) -> bool {
         matches!(self, SigningPolicy::Test)
-    }
-}
-
-impl Default for SigningPolicy {
-    fn default() -> Self {
-        SigningPolicy::Test
     }
 }
 
