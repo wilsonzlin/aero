@@ -65,3 +65,9 @@ name = "fuzz_http_range"
 path = "fuzz_targets/fuzz_http_range.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_atapi"
+path = "fuzz_targets/fuzz_atapi.rs"
+test = false
+doc = false

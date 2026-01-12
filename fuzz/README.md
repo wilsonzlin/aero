@@ -25,6 +25,7 @@ cargo +"$nightly" fuzz run fuzz_bus_rw
 cargo +"$nightly" fuzz run fuzz_ahci
 cargo +"$nightly" fuzz run fuzz_ide
 cargo +"$nightly" fuzz run fuzz_http_range
+cargo +"$nightly" fuzz run fuzz_atapi
 ```
 
 To run time-bounded:
@@ -61,4 +62,7 @@ cd fuzz && cargo fuzz run fuzz_ide -- -runs=10000
 
 # HTTP Range parsing/resolution (hostile headers near caps)
 cd fuzz && cargo fuzz run fuzz_http_range -- -runs=10000
+
+# ATAPI packet parsing (SCSI CDBs)
+cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
 ```
