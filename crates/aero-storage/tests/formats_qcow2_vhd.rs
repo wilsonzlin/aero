@@ -1399,6 +1399,59 @@ fn vhd_fixed_rejects_data_offset_not_max() {
 }
 
 #[test]
+fn vhd_rejects_unsupported_disk_type() {
+    let virtual_size = 64 * 1024u64;
+
+    // Differencing disks (disk_type=4) are currently unsupported.
+    let footer = make_vhd_footer(virtual_size, 4, 0);
+    let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
+    backend.write_at(0, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported("vhd disk type")));
+}
+
+#[test]
+fn vhd_rejects_file_too_small_to_contain_footer() {
+    let backend = MemBackend::default();
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("vhd file too small")));
+}
+
+#[test]
+fn vhd_fixed_rejects_truncated_disk_missing_data_region() {
+    // Footer claims a 1KiB fixed disk but the file only contains the footer sector.
+    let virtual_size = 2 * SECTOR_SIZE as u64;
+    let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+    let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
+    backend.write_at(0, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd fixed disk truncated")
+    ));
+}
+
+#[test]
+fn vhd_fixed_rejects_current_size_overflow() {
+    // Construct a footer where the advertised disk size causes `current_size + footer_len` to
+    // overflow u64 during open-time validation.
+    let virtual_size = u64::MAX - (SECTOR_SIZE as u64) + 1; // 2^64 - 512, sector aligned
+    assert!(virtual_size.is_multiple_of(SECTOR_SIZE as u64));
+
+    let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+    let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
+    backend.write_at(0, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd current_size overflow")
+    ));
+}
+
+#[test]
 fn vhd_rejects_footer_cookie_mismatch() {
     let virtual_size = 64 * 1024u64;
     let mut backend = make_vhd_fixed_with_pattern();
@@ -1445,6 +1498,26 @@ fn vhd_dynamic_rejects_invalid_dynamic_header_offset_in_footer() {
     assert!(matches!(
         err,
         DiskError::CorruptImage("vhd dynamic header offset invalid")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_truncated_dynamic_header() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Point the dynamic header at the EOF footer so the required 1024-byte header extends past EOF.
+    let file_len = backend.len().unwrap();
+    let footer_offset = file_len - SECTOR_SIZE as u64;
+    let footer = make_vhd_footer(virtual_size, 3, footer_offset);
+    backend.write_at(0, &footer).unwrap();
+    backend.write_at(footer_offset, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header truncated")
     ));
 }
 
