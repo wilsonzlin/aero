@@ -146,6 +146,23 @@ impl<B: StorageBackend> VhdDisk<B> {
                 })
             }
             VHD_DISK_TYPE_DYNAMIC => {
+                // Dynamic VHDs must contain a copy of the footer at both offset 0 and EOF.
+                //
+                // We validate the footer copy up front so we don't silently treat a corrupted image
+                // as valid and later overwrite whatever lives at offset 0 when allocating blocks.
+                let mut raw_footer_copy = [0u8; SECTOR_SIZE];
+                match backend.read_at(0, &mut raw_footer_copy) {
+                    Ok(()) => {}
+                    Err(DiskError::OutOfBounds { .. }) => {
+                        return Err(DiskError::CorruptImage("vhd footer copy truncated"));
+                    }
+                    Err(e) => return Err(e),
+                }
+                let footer_copy = VhdFooter::parse(raw_footer_copy)?;
+                if footer_copy.raw != footer.raw {
+                    return Err(DiskError::CorruptImage("vhd footer copy mismatch"));
+                }
+
                 if footer.data_offset == u64::MAX {
                     return Err(DiskError::CorruptImage("vhd dynamic header offset invalid"));
                 }

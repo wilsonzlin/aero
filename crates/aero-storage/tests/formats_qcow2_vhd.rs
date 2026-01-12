@@ -1559,6 +1559,7 @@ fn vhd_rejects_absurd_bat_size() {
     let mut backend = MemBackend::with_len(file_len).unwrap();
 
     let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    backend.write_at(0, &footer).unwrap();
     backend
         .write_at(file_len - SECTOR_SIZE as u64, &footer)
         .unwrap();
@@ -1592,6 +1593,23 @@ fn vhd_rejects_bad_footer_checksum() {
         Ok(_) => panic!("expected vhd open to fail"),
         Err(err) => assert!(matches!(err, DiskError::CorruptImage(_))),
     }
+}
+
+#[test]
+fn vhd_dynamic_rejects_footer_copy_mismatch() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Corrupt the required footer copy at offset 0 while leaving the footer at EOF intact.
+    let bad_footer = make_vhd_footer(virtual_size, 3, (SECTOR_SIZE as u64) * 2);
+    backend.write_at(0, &bad_footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd footer copy mismatch")
+    ));
 }
 
 #[test]
