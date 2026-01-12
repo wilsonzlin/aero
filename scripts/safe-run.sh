@@ -10,6 +10,12 @@
 # Default limits (override via environment):
 #   AERO_TIMEOUT=600      (10 minutes)
 #   AERO_MEM_LIMIT=12G    (12 GB virtual address space)
+#   AERO_NODE_TEST_MEM_LIMIT=32G  (fallback RLIMIT_AS for `node --test` when AERO_MEM_LIMIT is unset)
+#
+# Note: `node --test` can require a much higher RLIMIT_AS than other commands because Node+WASM may
+# reserve large amounts of *virtual* address space up-front (even when resident memory usage is
+# small). `safe-run.sh` automatically bumps the default for `node --test` unless `AERO_MEM_LIMIT` is
+# explicitly set.
 #
 # Override example:
 #   AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
