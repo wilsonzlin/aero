@@ -56,6 +56,7 @@ fn write_tx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cmd: u8)
 }
 
 /// Minimal advanced TX context descriptor (16 bytes).
+#[allow(clippy::too_many_arguments)]
 fn write_tx_ctx_desc(
     dma: &mut TestDma,
     addr: u64,
@@ -192,7 +193,7 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
     dev0.mmio_write_u32_reg(0x5404, u32::from_le_bytes([0x50, 0x60, 0x00, 0x00])); // AV=0
 
     // Seed EERD/EEPROM state.
-    dev0.mmio_write_u32_reg(0x0014, 1 | (0 << 8)); // START + word 0
+    dev0.mmio_write_u32_reg(0x0014, 1); // START + word 0
 
     // Seed PHY state via MDIC write.
     dev0.mmio_write_u32_reg(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0400_0000 | 0xBEEF);

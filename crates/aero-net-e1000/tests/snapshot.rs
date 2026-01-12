@@ -89,6 +89,7 @@ fn write_rx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64) {
     dma.write(addr + 14, &0u16.to_le_bytes()); // special
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_adv_context_desc(
     dma: &mut TestDma,
     addr: u64,
@@ -102,7 +103,7 @@ fn write_adv_context_desc(
     hdr_len: u8,
     cmd: u8,
 ) {
-    dma.write(addr + 0, &[ipcss]);
+    dma.write(addr, &[ipcss]);
     dma.write(addr + 1, &[ipcso]);
     dma.write(addr + 2, &ipcse.to_le_bytes());
     dma.write(addr + 4, &[tucss]);
