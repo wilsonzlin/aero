@@ -737,7 +737,6 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
   load.call(bridge, bytes);
   pendingAudioHdaSnapshotBytes = null;
 }
-
 type NetStackSnapshotBridgeLike = {
   save_state?: () => Uint8Array;
   snapshot_state?: () => Uint8Array;
