@@ -9,6 +9,9 @@ pub enum SnapshotError {
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 
+    #[error("out of memory allocating {len} bytes")]
+    OutOfMemory { len: usize },
+
     #[error("invalid snapshot magic")]
     InvalidMagic,
 

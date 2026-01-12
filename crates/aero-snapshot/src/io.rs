@@ -82,12 +82,19 @@ pub trait ReadLeExt: Read {
     }
 
     fn read_exact_vec(&mut self, len: usize) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; len];
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(len)
+            .map_err(|_| SnapshotError::OutOfMemory { len })?;
+        buf.resize(len, 0);
         self.read_exact(&mut buf)?;
         Ok(buf)
     }
 
     fn read_exact_into_vec(&mut self, buf: &mut Vec<u8>, len: usize) -> Result<()> {
+        if len > buf.len() {
+            buf.try_reserve_exact(len - buf.len())
+                .map_err(|_| SnapshotError::OutOfMemory { len })?;
+        }
         buf.resize(len, 0);
         self.read_exact(buf)?;
         Ok(())
@@ -95,3 +102,24 @@ pub trait ReadLeExt: Read {
 }
 
 impl<T: Read + ?Sized> ReadLeExt for T {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn read_exact_vec_allocation_failure_returns_error() {
+        let mut cursor = Cursor::new(Vec::new());
+        let err = cursor.read_exact_vec(usize::MAX).unwrap_err();
+        assert!(matches!(err, SnapshotError::OutOfMemory { .. }));
+    }
+
+    #[test]
+    fn read_exact_into_vec_allocation_failure_returns_error() {
+        let mut cursor = Cursor::new(Vec::new());
+        let mut buf = Vec::new();
+        let err = cursor.read_exact_into_vec(&mut buf, usize::MAX).unwrap_err();
+        assert!(matches!(err, SnapshotError::OutOfMemory { .. }));
+    }
+}

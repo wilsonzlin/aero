@@ -100,10 +100,18 @@ fn encode_full<W: Write>(
 
     let chunk_size = opts.chunk_size as u64;
     let mut offset = 0u64;
-    let mut buf = vec![0u8; opts.chunk_size as usize];
+    let mut buf = Vec::new();
+    let chunk_size_usize = opts.chunk_size as usize;
+    buf.try_reserve_exact(chunk_size_usize)
+        .map_err(|_| SnapshotError::OutOfMemory { len: chunk_size_usize })?;
+    buf.resize(chunk_size_usize, 0);
     let mut compressed = Vec::new();
     if opts.compression == Compression::Lz4 {
-        compressed.resize(max_lz4_compressed_len(opts.chunk_size) as usize, 0);
+        let max = max_lz4_compressed_len(opts.chunk_size) as usize;
+        compressed
+            .try_reserve_exact(max)
+            .map_err(|_| SnapshotError::OutOfMemory { len: max })?;
+        compressed.resize(max, 0);
     }
     while offset < total_len {
         let remaining = total_len - offset;
@@ -158,10 +166,18 @@ fn encode_dirty<W: Write>(
             .map_err(|_| SnapshotError::Corrupt("too many dirty pages"))?,
     )?;
     let page_size = opts.page_size as u64;
-    let mut buf = vec![0u8; opts.page_size as usize];
+    let mut buf = Vec::new();
+    let page_size_usize = opts.page_size as usize;
+    buf.try_reserve_exact(page_size_usize)
+        .map_err(|_| SnapshotError::OutOfMemory { len: page_size_usize })?;
+    buf.resize(page_size_usize, 0);
     let mut compressed = Vec::new();
     if opts.compression == Compression::Lz4 {
-        compressed.resize(max_lz4_compressed_len(opts.page_size) as usize, 0);
+        let max = max_lz4_compressed_len(opts.page_size) as usize;
+        compressed
+            .try_reserve_exact(max)
+            .map_err(|_| SnapshotError::OutOfMemory { len: max })?;
+        compressed.resize(max, 0);
     }
     for page_idx in dirty_pages {
         let offset = page_idx
@@ -255,7 +271,11 @@ fn decode_full<R: Read>(
     let mut compressed = Vec::new();
     let mut decompressed = Vec::new();
     if compression == Compression::Lz4 {
-        decompressed.resize(chunk_size as usize, 0);
+        let chunk_size = chunk_size as usize;
+        decompressed
+            .try_reserve_exact(chunk_size)
+            .map_err(|_| SnapshotError::OutOfMemory { len: chunk_size })?;
+        decompressed.resize(chunk_size, 0);
     }
     while offset < total_len {
         let expected_uncompressed = (total_len - offset).min(chunk_size_u64) as u32;
@@ -301,7 +321,11 @@ fn decode_dirty<R: Read>(
     let mut compressed = Vec::new();
     let mut decompressed = Vec::new();
     if compression == Compression::Lz4 {
-        decompressed.resize(page_size as usize, 0);
+        let page_size = page_size as usize;
+        decompressed
+            .try_reserve_exact(page_size)
+            .map_err(|_| SnapshotError::OutOfMemory { len: page_size })?;
+        decompressed.resize(page_size, 0);
     }
     let mut prev_page_idx: Option<u64> = None;
     for _ in 0..count {
