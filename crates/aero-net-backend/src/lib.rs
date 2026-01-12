@@ -102,6 +102,26 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for std::rc::Rc<std::cell::RefCe
     }
 }
 
+impl<T: NetworkBackend + ?Sized> NetworkBackend for std::sync::Arc<std::sync::Mutex<T>> {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .transmit(frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .poll_receive()
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .l2_ring_stats()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{L2TunnelRingBackendStats, NetworkBackend};
@@ -109,6 +129,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn network_backend_is_implemented_for_rc_refcell() {
@@ -152,5 +173,49 @@ mod tests {
         assert_eq!(backend.poll_receive(), None);
 
         assert_eq!(inner.borrow().tx, vec![vec![1, 2, 3]]);
+    }
+
+    #[test]
+    fn network_backend_is_implemented_for_arc_mutex() {
+        #[derive(Default)]
+        struct Backend {
+            tx: Vec<Vec<u8>>,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetworkBackend for Backend {
+            fn transmit(&mut self, frame: Vec<u8>) {
+                self.tx.push(frame);
+            }
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.rx.pop_front()
+            }
+
+            fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+                Some(L2TunnelRingBackendStats {
+                    rx_popped_frames: 1,
+                    ..Default::default()
+                })
+            }
+        }
+
+        let inner = Arc::new(Mutex::new(Backend::default()));
+        inner.lock().unwrap().rx.push_back(vec![9, 9, 9]);
+
+        let mut backend = inner.clone();
+        backend.transmit(vec![1, 2, 3]);
+
+        assert_eq!(
+            backend.l2_ring_stats(),
+            Some(L2TunnelRingBackendStats {
+                rx_popped_frames: 1,
+                ..Default::default()
+            })
+        );
+        assert_eq!(backend.poll_receive(), Some(vec![9, 9, 9]));
+        assert_eq!(backend.poll_receive(), None);
+
+        assert_eq!(inner.lock().unwrap().tx, vec![vec![1, 2, 3]]);
     }
 }
