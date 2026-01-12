@@ -748,10 +748,16 @@ impl<C: Clock, S: GsiSink> HpetMmio<C, S> {
 
 impl<C: Clock, S: GsiSink> memory::MmioHandler for HpetMmio<C, S> {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return 0;
+        }
         self.hpet.mmio_read(offset, size, &mut self.sink)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return;
+        }
         self.hpet.mmio_write(offset, size, value, &mut self.sink);
     }
 }
@@ -761,6 +767,18 @@ mod tests {
     use super::*;
     use crate::clock::ManualClock;
     use crate::ioapic::{GsiEvent, GsiSink, IoApic};
+    use memory::MmioHandler;
+
+    #[test]
+    fn mmio_adapter_size0_is_noop() {
+        let clock = ManualClock::new();
+        let hpet = Hpet::new_default(clock.clone());
+        let ioapic = IoApic::default();
+        let mut mmio = HpetMmio::new(hpet, ioapic);
+
+        assert_eq!(mmio.read(0, 0), 0);
+        mmio.write(0, 0, 0);
+    }
 
     #[test]
     fn enable_bit_gates_counter_increment() {

@@ -565,6 +565,7 @@ struct StrictIoPortBus<'a> {
 impl aero_cpu_core::paging_bus::IoBus for StrictIoPortBus<'_> {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
         match size {
+            0 => Ok(0),
             1 | 2 | 4 => Ok(u64::from(self.io.read(port, size as u8))),
             _ => Err(Exception::InvalidOpcode),
         }
@@ -572,6 +573,7 @@ impl aero_cpu_core::paging_bus::IoBus for StrictIoPortBus<'_> {
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
         match size {
+            0 => Ok(()),
             1 | 2 | 4 => {
                 self.io.write(port, size as u8, val as u32);
                 Ok(())
@@ -1507,6 +1509,7 @@ struct PciIoBarWindow {
 impl PciIoBarWindow {
     fn read_all_ones(size: u8) -> u32 {
         match size {
+            0 => 0,
             1 => 0xFF,
             2 => 0xFFFF,
             4 => 0xFFFF_FFFF,

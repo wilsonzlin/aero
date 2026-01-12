@@ -503,6 +503,7 @@ struct E1000PciIoBar {
 impl E1000PciIoBar {
     fn read_all_ones(size: u8) -> u32 {
         match size {
+            0 => 0,
             1 => 0xFF,
             2 => 0xFFFF,
             4 => 0xFFFF_FFFF,
@@ -604,6 +605,7 @@ impl PciIoWindowPort {
 
     fn read_all_ones(size: u8) -> u32 {
         match size {
+            0 => 0,
             1 => 0xFF,
             2 => 0xFFFF,
             4 => 0xFFFF_FFFF,
@@ -859,12 +861,18 @@ struct HpetMmio {
 
 impl MmioHandler for HpetMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return 0;
+        }
         let mut hpet = self.hpet.borrow_mut();
         let mut interrupts = self.interrupts.borrow_mut();
         hpet.mmio_read(offset, size, &mut *interrupts)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return;
+        }
         let mut hpet = self.hpet.borrow_mut();
         let mut interrupts = self.interrupts.borrow_mut();
         hpet.mmio_write(offset, size, value, &mut *interrupts);
@@ -2491,6 +2499,21 @@ mod tests {
         let lo = cmos_read_u8(pc, index_lo);
         let hi = cmos_read_u8(pc, index_hi);
         u16::from(lo) | (u16::from(hi) << 8)
+    }
+
+    #[test]
+    fn hpet_mmio_size0_is_noop() {
+        let clock = ManualClock::new();
+        let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock)));
+        let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+
+        let mut mmio = HpetMmio {
+            hpet: hpet.clone(),
+            interrupts: interrupts.clone(),
+        };
+
+        assert_eq!(memory::MmioHandler::read(&mut mmio, 0, 0), 0);
+        memory::MmioHandler::write(&mut mmio, 0, 0, 0);
     }
 
     #[test]

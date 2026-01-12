@@ -280,6 +280,7 @@ struct JsIoBus;
 impl aero_cpu_core::paging_bus::IoBus for JsIoBus {
     fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
         match size {
+            0 => Ok(0),
             1 | 2 | 4 => Ok(js_io_port_read(u32::from(port), size) as u64),
             _ => Err(Exception::Unimplemented("io_read size")),
         }
@@ -287,6 +288,7 @@ impl aero_cpu_core::paging_bus::IoBus for JsIoBus {
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
         match size {
+            0 => Ok(()),
             1 | 2 | 4 => {
                 js_io_port_write(u32::from(port), size, val as u32);
                 Ok(())

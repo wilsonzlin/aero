@@ -552,6 +552,7 @@ fn write_u32_part(old: u32, port: u16, size: u8, value: u32, base_port: u16) -> 
 
 fn all_ones(size: u8) -> u32 {
     match size {
+        0 => 0,
         1 => 0xFF,
         2 => 0xFFFF,
         4 => 0xFFFF_FFFF,
@@ -637,6 +638,15 @@ mod tests {
         // Disabled enable bit should also float high.
         cfg.io_write(&mut bus, 0xCF8, 4, 0);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 1), 0xFF);
+    }
+
+    #[test]
+    fn config_mechanism1_size0_is_noop() {
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigMechanism1::new();
+
+        assert_eq!(cfg.io_read(&mut bus, 0xCF8, 0), 0);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 0), 0);
     }
 
     #[test]
