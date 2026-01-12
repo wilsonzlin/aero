@@ -97,6 +97,7 @@ pub struct VhdDisk<S> {
     dynamic: Option<VhdDynamicHeader>,
     bat: Vec<u32>,
     bitmap_cache: HashMap<u64, Vec<u8>>,
+    fixed_data_offset: u64,
 }
 
 impl<S: ByteStorage> VhdDisk<S> {
@@ -113,9 +114,26 @@ impl<S: ByteStorage> VhdDisk<S> {
 
         match footer.disk_type {
             VHD_DISK_TYPE_FIXED => {
+                // Some tools store an extra copy of the footer at offset 0 even for fixed disks.
+                // When present and identical to the EOF footer, treat the data region as starting
+                // immediately after this footer copy.
+                let mut fixed_data_offset = 0u64;
+                if len >= 1024 {
+                    let mut raw_footer_copy = [0u8; 512];
+                    storage.read_at(0, &mut raw_footer_copy)?;
+                    if raw_footer_copy[..8] == VHD_FOOTER_COOKIE {
+                        if let Ok(copy) = VhdFooter::parse(raw_footer_copy) {
+                            if copy.raw == footer.raw && copy.disk_type == VHD_DISK_TYPE_FIXED {
+                                fixed_data_offset = 512;
+                            }
+                        }
+                    }
+                }
+
                 let required_len = footer
                     .current_size
-                    .checked_add(512)
+                    .checked_add(fixed_data_offset)
+                    .and_then(|v| v.checked_add(512))
                     .ok_or(DiskError::CorruptImage("vhd current_size overflow"))?;
                 if len < required_len {
                     return Err(DiskError::CorruptImage("vhd fixed disk truncated"));
@@ -126,6 +144,7 @@ impl<S: ByteStorage> VhdDisk<S> {
                     dynamic: None,
                     bat: Vec::new(),
                     bitmap_cache: HashMap::new(),
+                    fixed_data_offset,
                 })
             }
             VHD_DISK_TYPE_DYNAMIC => {
@@ -160,6 +179,7 @@ impl<S: ByteStorage> VhdDisk<S> {
                     dynamic: Some(dynamic),
                     bat,
                     bitmap_cache: HashMap::new(),
+                    fixed_data_offset: 0,
                 })
             }
             _ => Err(DiskError::Unsupported("vhd disk type")),
@@ -322,6 +342,9 @@ impl<S: ByteStorage> DiskBackend for VhdDisk<S> {
             let offset = lba
                 .checked_mul(SECTOR_SIZE as u64)
                 .ok_or(DiskError::OutOfBounds)?;
+            let offset = offset
+                .checked_add(self.fixed_data_offset)
+                .ok_or(DiskError::OutOfBounds)?;
             self.storage.read_at(offset, buf)?;
             return Ok(());
         }
@@ -379,6 +402,9 @@ impl<S: ByteStorage> DiskBackend for VhdDisk<S> {
         if self.dynamic.is_none() {
             let offset = lba
                 .checked_mul(SECTOR_SIZE as u64)
+                .ok_or(DiskError::OutOfBounds)?;
+            let offset = offset
+                .checked_add(self.fixed_data_offset)
                 .ok_or(DiskError::OutOfBounds)?;
             self.storage.write_at(offset, buf)?;
             return Ok(());

@@ -178,6 +178,20 @@ fn make_vhd_fixed_with_pattern() -> MemStorage {
     storage
 }
 
+fn make_vhd_fixed_with_footer_copy() -> MemStorage {
+    let virtual_size = 1024 * 1024u64;
+    let mut data = vec![0u8; virtual_size as usize];
+    data[0..10].copy_from_slice(b"hello vhd!");
+
+    let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
+
+    let mut storage = MemStorage::default();
+    storage.write_at(0, &footer).unwrap();
+    storage.write_at(512, &data).unwrap();
+    storage.write_at(512 + virtual_size, &footer).unwrap();
+    storage
+}
+
 fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemStorage {
     assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
     assert_eq!(block_size as usize % SECTOR_SIZE, 0);
@@ -274,7 +288,10 @@ fn raw_disk_create_rejects_size_overflow() {
     // u64::MAX * 512 would overflow; `RawDisk::create` should reject instead of saturating.
     let storage = MemStorage::default();
     let res = emulator::io::storage::formats::RawDisk::create(storage, 512, u64::MAX);
-    assert!(matches!(res, Err(DiskError::Unsupported("disk size overflow"))));
+    assert!(matches!(
+        res,
+        Err(DiskError::Unsupported("disk size overflow"))
+    ));
 }
 
 #[test]
@@ -331,6 +348,28 @@ fn vhd_fixed_fixture_read() {
     let mut sector = [0u8; SECTOR_SIZE];
     drive.read_sectors(0, &mut sector).unwrap();
     assert_eq!(&sector[..10], b"hello vhd!");
+}
+
+#[test]
+fn vhd_fixed_footer_copy_is_supported() {
+    let storage = make_vhd_fixed_with_footer_copy();
+    let mut drive = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough).unwrap();
+    assert_eq!(drive.format(), DiskFormat::Vhd);
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    drive.read_sectors(0, &mut sector).unwrap();
+    assert_eq!(&sector[..10], b"hello vhd!");
+
+    let data = vec![0xCCu8; SECTOR_SIZE];
+    drive.write_sectors(1, &data).unwrap();
+    drive.flush().unwrap();
+
+    let backend = drive.into_backend();
+    let mut reopened =
+        VirtualDrive::new(DiskFormat::Vhd, backend, WriteCachePolicy::WriteThrough).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(1, &mut back).unwrap();
+    assert_eq!(back, data);
 }
 
 #[test]
