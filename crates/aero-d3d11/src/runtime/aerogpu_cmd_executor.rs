@@ -4870,7 +4870,8 @@ impl AerogpuD3d11Executor {
         //
         // Note: the texture dirty flag is coarse (we don't track per-mip/per-layer dirtiness), so
         // uploading here refreshes all subresources from guest memory.
-        let dst_has_other_subresources = dst_desc.mip_level_count != 1 || dst_desc.array_layers != 1;
+        let dst_has_other_subresources =
+            dst_desc.mip_level_count != 1 || dst_desc.array_layers != 1;
         let copy_overwrites_entire_subresource =
             dst_x == 0 && dst_y == 0 && width == dst_w && height == dst_h;
         let needs_dst_upload = dst_backing.is_some()
@@ -9443,11 +9444,9 @@ mod tests {
             let mut guest_mem = VecGuestMemory::new(0x10_000);
 
             let mip0_offset = layout.mip_offsets[0] as usize;
-            let mip0_size =
-                (layout.mip_row_pitches[0] as usize) * (layout.mip_rows[0] as usize);
+            let mip0_size = (layout.mip_row_pitches[0] as usize) * (layout.mip_rows[0] as usize);
             let mip1_offset = layout.mip_offsets[1] as usize;
-            let mip1_size =
-                (layout.mip_row_pitches[1] as usize) * (layout.mip_rows[1] as usize);
+            let mip1_size = (layout.mip_row_pitches[1] as usize) * (layout.mip_rows[1] as usize);
 
             // Source: mip1 pattern 0xAA.
             let mut src_bytes = vec![0u8; layout.total_size as usize];
