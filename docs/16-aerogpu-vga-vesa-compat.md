@@ -10,6 +10,21 @@ Windows 7 must be able to **show a working boot display before the AeroGPU WDDM 
 
 This document specifies the emulator-side behavior required for the **AeroGPU virtual PCI device** to be VGA/VESA-compatible enough for early boot, while still supporting a clean transition to the WDDM path.
 
+## Current status (canonical machine)
+
+This document describes the **desired** end state for the AeroGPU device model (A3A0:0001) to own
+both the legacy VGA/VBE boot display path and the modern WDDM/MMIO/ring protocol.
+
+Today, the canonical `aero_machine::Machine` does **not** yet expose the full AeroGPU PCI function.
+Instead it uses the standalone `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a
+minimal Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) solely so the fixed VBE
+linear framebuffer can be routed through the PCI MMIO router.
+
+See:
+
+- [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) (canonical AeroGPU VID/DID)
+- [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) (BDF allocation + transitional stub)
+
 ---
 
 ## High-level model

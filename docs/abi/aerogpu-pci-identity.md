@@ -5,6 +5,23 @@ For AeroGPU, the PCI **Vendor ID / Device ID pair is part of the ABI contract**:
 a Windows driver should only bind to a device model that implements the matching
 MMIO + ring protocol.
 
+## Current status in `aero_machine::Machine`
+
+The canonical full-system machine (`crates/aero-machine`, `aero_machine::Machine`) reserves
+`00:07.0` for the **AeroGPU** PCI identity (`VID:DID = A3A0:0001`).
+
+Today, `aero_machine::Machine` does **not** yet wire up the full AeroGPU WDDM device model. Boot
+display is provided by the separate `aero_gpu_vga` VGA/VBE implementation, plus a minimal
+Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only to route the fixed VBE
+linear framebuffer through the PCI MMIO window.
+
+See also:
+
+- [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) (future desired
+  VGA/VBE-compat behavior of AeroGPU itself)
+- [`docs/pci-device-compatibility.md`](../pci-device-compatibility.md) (canonical BDF/ID table,
+  including the transitional VGA stub)
+
 This repo currently has **two AeroGPU ABI generations**:
 
 - the **versioned ABI** (canonical / current), and
