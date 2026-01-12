@@ -377,11 +377,24 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   const dv = new DataView(memory.buffer);
-  onGuestWrite = (paddr: bigint, len: number) => {
-    const notify = (vm as unknown as { on_guest_write?: (paddr: bigint, len: number) => void }).on_guest_write;
-    if (typeof notify !== 'function') return;
-    notify.call(vm, asU64(paddr), len >>> 0);
-  };
+  {
+    const vmAny = vm as unknown as {
+      on_guest_write?: unknown;
+      jit_on_guest_write?: unknown;
+    };
+    const notify = vmAny.on_guest_write ?? vmAny.jit_on_guest_write;
+    if (typeof notify === 'function') {
+      onGuestWrite = (paddr: bigint, len: number) => {
+        try {
+          (notify as (paddr: bigint, len: number) => void).call(vm, asU64(paddr), len >>> 0);
+        } catch {
+          // ignore
+        }
+      };
+    } else {
+      onGuestWrite = null;
+    }
+  }
 
   const logWrite = (linearAddr: number, size: number) => {
     const log = activeWriteLog;
@@ -859,7 +872,9 @@ async function runTieredVm(iterations: number, threshold: number) {
       const patched = new Uint8Array([0x66, 0x83, 0xc0, 0x02, 0xeb, 0xfa]);
       new Uint8Array(memory.buffer).set(patched, guest_base + ENTRY_RIP);
       if (!onGuestWrite) {
-        throw new Error('WasmTieredVm.on_guest_write is unavailable; cannot test self-modifying code invalidation');
+        throw new Error(
+          'WasmTieredVm.on_guest_write/jit_on_guest_write is unavailable; cannot test self-modifying code invalidation',
+        );
       }
       onGuestWrite(BigInt(ENTRY_RIP), patched.byteLength);
 
