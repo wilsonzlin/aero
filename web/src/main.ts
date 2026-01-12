@@ -956,10 +956,12 @@ function renderMachinePanel(): HTMLElement {
           testState.width = width;
           testState.height = height;
           testState.strideBytes = strideBytes;
+          const pointerLock = typeof document !== "undefined" && document.pointerLockElement === canvas ? "yes" : "no";
           vgaInfo.textContent =
             `vga: ${width}x${height} stride=${strideBytes} ` +
             `frames=${testState.framesPresented} transport=${testState.transport}` +
-            (testState.sharedFramesPublished ? ` shared=${testState.sharedFramesPublished}` : "");
+            (testState.sharedFramesPublished ? ` shared=${testState.sharedFramesPublished}` : "") +
+            ` pointerLock=${pointerLock}`;
         } catch (err) {
           vgaFailed = true;
           const message = err instanceof Error ? err.message : String(err);
