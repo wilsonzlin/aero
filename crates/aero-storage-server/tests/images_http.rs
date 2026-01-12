@@ -70,6 +70,30 @@ async fn get_without_range_returns_full_body() {
 }
 
 #[tokio::test]
+async fn overly_long_image_id_is_rejected_with_404() {
+    let (app, dir) = setup_app(1024).await;
+
+    // 129 chars (> 128 max) should be rejected by the store validator even if a file exists.
+    let long_id = "a".repeat(129);
+    tokio::fs::write(dir.path().join(&long_id), b"x")
+        .await
+        .expect("write long id file");
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/images/{long_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn request_with_cookie_is_not_publicly_cacheable() {
     let (app, _dir) = setup_app(1024).await;
 

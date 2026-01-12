@@ -286,6 +286,12 @@ mod tests {
             );
         }
 
+        let too_long = "a".repeat(crate::store::MAX_IMAGE_ID_LEN + 1);
+        assert!(
+            validate_image_id(&too_long).is_err(),
+            "expected invalid image_id: {too_long:?}"
+        );
+
         let valid = ["a", "test.img", "ABC_123-foo.bar", "a..b"];
         for image_id in valid {
             assert!(

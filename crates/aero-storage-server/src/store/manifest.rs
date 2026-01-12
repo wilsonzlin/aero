@@ -73,7 +73,7 @@ impl Manifest {
 }
 
 fn validate_id(id: &str) -> Result<(), ManifestError> {
-    if id.is_empty() || id.len() > 128 || id == "." || id == ".." {
+    if id.is_empty() || id.len() > super::MAX_IMAGE_ID_LEN || id == "." || id == ".." {
         return Err(ManifestError::InvalidId(id.to_string()));
     }
 

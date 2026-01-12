@@ -108,3 +108,26 @@ async fn get_image_meta_has_correct_size() {
 
     handle.abort();
 }
+
+#[tokio::test]
+async fn overly_long_image_id_meta_is_rejected_with_400() {
+    let tmp = TempDir::new().unwrap();
+
+    // 129 chars (> 128 max) should be rejected by the store validator even if a file exists.
+    let long_id = "a".repeat(129);
+    tokio::fs::write(tmp.path().join(&long_id), vec![0u8; 1])
+        .await
+        .unwrap();
+
+    let (addr, handle) = spawn_server(tmp.path()).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("http://{addr}/v1/images/{long_id}/meta"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    handle.abort();
+}
