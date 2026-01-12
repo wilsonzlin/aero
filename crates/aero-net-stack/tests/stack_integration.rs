@@ -1,5 +1,8 @@
 use aero_net_stack::packet::*;
-use aero_net_stack::{Action, DnsResolved, IpCidr, NetworkStack, StackConfig, TcpProxyEvent};
+use aero_net_stack::{
+    Action, DnsCacheEntrySnapshot, DnsResolved, IpCidr, NetworkStack, NetworkStackSnapshotState,
+    StackConfig, TcpProxyEvent, TcpRestorePolicy,
+};
 use core::net::Ipv4Addr;
 
 #[test]
@@ -196,6 +199,57 @@ fn dns_aaaa_query_returns_notimp() {
 
     let resp_frame = extract_single_frame(&actions);
     assert_dns_response_has_rcode(&resp_frame, 0x2222, DnsResponseCode::NotImplemented);
+}
+
+#[test]
+fn dns_cache_ttl_is_clamped_to_u32_max() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    let mut stack = NetworkStack::new(cfg);
+
+    // Snapshots can contain arbitrary `expires_at_ms` values. Ensure the synthesized DNS TTL does
+    // not truncate when the remaining lifetime exceeds the u32 TTL field.
+    let snapshot = NetworkStackSnapshotState {
+        guest_mac: None,
+        ip_assigned: true,
+        next_tcp_id: 1,
+        next_dns_id: 1,
+        ipv4_ident: 1,
+        last_now_ms: 0,
+        dns_cache: vec![DnsCacheEntrySnapshot {
+            name: "example.com".to_string(),
+            addr: Ipv4Addr::new(93, 184, 216, 34),
+            expires_at_ms: u64::MAX,
+        }],
+        tcp_connections: Vec::new(),
+    };
+    let _ = stack.import_snapshot_state(snapshot, TcpRestorePolicy::Drop);
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let query = build_dns_query(0x5555, "example.com", DnsType::A as u16);
+    let frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack.config().our_mac,
+        stack.config().guest_ip,
+        stack.config().dns_ip,
+        53005,
+        53,
+        &query,
+    );
+    let actions = stack.process_outbound_ethernet(&frame, 0);
+    let resp_frame = extract_single_frame(&actions);
+
+    let udp = parse_udp_from_frame(&resp_frame);
+    let dns_payload = udp.payload();
+    let question = dns::parse_single_question(dns_payload).expect("parse_single_question");
+    let question_len = 12 + question.qname.len() + 4;
+    let ttl_off = question_len + 2 + 2 + 2;
+    let ttl = u32::from_be_bytes(
+        dns_payload[ttl_off..ttl_off + 4]
+            .try_into()
+            .expect("ttl bytes"),
+    );
+    assert_eq!(ttl, u32::MAX);
 }
 
 #[test]

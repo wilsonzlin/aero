@@ -726,19 +726,21 @@ impl NetworkStack {
                     None => return Vec::new(),
                 };
 
-                let Ok(dns_payload) = DnsResponseBuilder {
-                    id: query.id,
-                    rd,
-                    rcode: DnsResponseCode::NoError,
-                    qname,
-                    qtype,
-                    qclass,
-                    answer_a: Some(entry.addr),
-                    ttl: ((entry.expires_at_ms - now_ms) / 1000) as u32,
-                }
-                .build_vec() else {
-                    return Vec::new();
-                };
+                 let Ok(dns_payload) = DnsResponseBuilder {
+                     id: query.id,
+                     rd,
+                     rcode: DnsResponseCode::NoError,
+                     qname,
+                     qtype,
+                     qclass,
+                     answer_a: Some(entry.addr),
+                    // TTL is encoded as a u32 in DNS responses. Snapshots may contain
+                    // untrusted `expires_at_ms` values, so clamp rather than truncate.
+                    ttl: ((entry.expires_at_ms - now_ms) / 1000).min(u32::MAX as u64) as u32,
+                 }
+                 .build_vec() else {
+                     return Vec::new();
+                 };
 
                 let Ok(udp_out) = UdpPacketBuilder {
                     src_port: 53,
