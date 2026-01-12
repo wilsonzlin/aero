@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::http::HeaderValue;
 use thiserror::Error;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -20,6 +22,17 @@ pub struct ManifestImage {
     pub recommended_chunk_size_bytes: Option<u64>,
     #[serde(default = "default_public")]
     pub public: bool,
+    /// Optional cache validator override.
+    ///
+    /// Must be a valid HTTP header value (and should be a quoted entity-tag, e.g. `"abc"`).
+    #[serde(default)]
+    pub etag: Option<String>,
+    /// Optional last-modified override, provided as an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`).
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    /// Parsed `last_modified` value, validated during [`Manifest::parse_str`].
+    #[serde(skip)]
+    pub last_modified_time: Option<SystemTime>,
 }
 
 fn default_public() -> bool {
@@ -38,6 +51,18 @@ pub enum ManifestError {
     InvalidFilePath { id: String, file: String },
     #[error("manifest.json is required but missing at {path}")]
     Missing { path: String },
+    #[error("invalid etag for image {id}: {etag:?}: {reason}")]
+    InvalidEtag {
+        id: String,
+        etag: String,
+        reason: String,
+    },
+    #[error("invalid last_modified for image {id}: {last_modified:?}: {reason}")]
+    InvalidLastModified {
+        id: String,
+        last_modified: String,
+        reason: String,
+    },
     #[error("manifest must include at least one image")]
     Empty,
 }
@@ -52,7 +77,7 @@ enum ManifestFormat {
 impl Manifest {
     pub fn parse_str(json: &str) -> Result<Self, ManifestError> {
         let parsed: ManifestFormat = serde_json::from_str(json)?;
-        let images = match parsed {
+        let mut images = match parsed {
             ManifestFormat::V1 { images } => images,
             ManifestFormat::V0(images) => images,
         };
@@ -61,11 +86,19 @@ impl Manifest {
             return Err(ManifestError::Empty);
         }
 
-        let mut ids = HashMap::<&str, ()>::new();
-        for image in &images {
+        let mut ids = HashMap::<String, ()>::new();
+        for image in &mut images {
             validate_id(&image.id)?;
             validate_file_path(&image.id, &image.file)?;
-            if ids.insert(image.id.as_str(), ()).is_some() {
+            if let Some(etag) = &image.etag {
+                validate_etag(&image.id, etag)?;
+            }
+            if let Some(last_modified) = &image.last_modified {
+                let parsed = parse_last_modified_rfc3339(&image.id, last_modified)?;
+                image.last_modified_time = Some(parsed);
+            }
+
+            if ids.insert(image.id.clone(), ()).is_some() {
                 return Err(ManifestError::DuplicateId(image.id.clone()));
             }
         }
@@ -112,6 +145,73 @@ fn validate_file_path(id: &str, file: &str) -> Result<(), ManifestError> {
         }
     }
     Ok(())
+}
+
+fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
+    if etag.is_empty() {
+        return Err(ManifestError::InvalidEtag {
+            id: id.to_string(),
+            etag: etag.to_string(),
+            reason: "etag must not be empty".to_string(),
+        });
+    }
+
+    HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
+        id: id.to_string(),
+        etag: etag.to_string(),
+        reason: err.to_string(),
+    })?;
+    Ok(())
+}
+
+fn parse_last_modified_rfc3339(id: &str, last_modified: &str) -> Result<SystemTime, ManifestError> {
+    let dt = time::OffsetDateTime::parse(
+        last_modified,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .map_err(|err| ManifestError::InvalidLastModified {
+        id: id.to_string(),
+        last_modified: last_modified.to_string(),
+        reason: err.to_string(),
+    })?;
+
+    system_time_from_unix_timestamp_nanos(dt.unix_timestamp_nanos()).map_err(|reason| {
+        ManifestError::InvalidLastModified {
+            id: id.to_string(),
+            last_modified: last_modified.to_string(),
+            reason,
+        }
+    })
+}
+
+fn system_time_from_unix_timestamp_nanos(nanos: i128) -> Result<SystemTime, String> {
+    const NANOS_PER_SEC: u128 = 1_000_000_000;
+
+    if nanos >= 0 {
+        let nanos = nanos as u128;
+        let secs = nanos / NANOS_PER_SEC;
+        let sub_nanos = (nanos % NANOS_PER_SEC) as u32;
+        let secs: u64 = secs
+            .try_into()
+            .map_err(|_| "timestamp out of range".to_string())?;
+        let dur = std::time::Duration::new(secs, sub_nanos);
+        UNIX_EPOCH
+            .checked_add(dur)
+            .ok_or_else(|| "timestamp out of range".to_string())
+    } else {
+        let nanos_abs = nanos
+            .checked_abs()
+            .ok_or_else(|| "timestamp out of range".to_string())? as u128;
+        let secs = nanos_abs / NANOS_PER_SEC;
+        let sub_nanos = (nanos_abs % NANOS_PER_SEC) as u32;
+        let secs: u64 = secs
+            .try_into()
+            .map_err(|_| "timestamp out of range".to_string())?;
+        let dur = std::time::Duration::new(secs, sub_nanos);
+        UNIX_EPOCH
+            .checked_sub(dur)
+            .ok_or_else(|| "timestamp out of range".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -175,5 +275,19 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, ManifestError::InvalidFilePath { .. }));
+    }
+
+    #[test]
+    fn rejects_invalid_etag_header_value() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "bad\netag", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
     }
 }

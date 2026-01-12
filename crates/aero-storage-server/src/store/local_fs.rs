@@ -114,6 +114,8 @@ impl LocalFsImageStore {
                 description: image.description,
                 recommended_chunk_size_bytes: image.recommended_chunk_size_bytes,
                 public: image.public,
+                etag: image.etag,
+                last_modified: image.last_modified_time,
                 path,
             });
         }
@@ -127,15 +129,25 @@ impl LocalFsImageStore {
             description: None,
             recommended_chunk_size_bytes: None,
             public: true,
+            etag: None,
+            last_modified: None,
             path,
         })
     }
 
-    async fn meta_from_path(&self, path: &Path) -> Result<ImageMeta, StoreError> {
+    async fn meta_from_path(
+        &self,
+        path: &Path,
+        etag_override: Option<&str>,
+        last_modified_override: Option<SystemTime>,
+    ) -> Result<ImageMeta, StoreError> {
         let path = self.ensure_within_root(path).await?;
         let meta = fs::metadata(&path).await.map_err(map_not_found)?;
-        let last_modified = meta.modified().ok();
-        let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
+        let last_modified = last_modified_override.or_else(|| meta.modified().ok());
+        let etag = Some(match etag_override {
+            Some(etag) => etag.to_string(),
+            None => etag_from_size_and_mtime(meta.len(), last_modified),
+        });
 
         Ok(ImageMeta {
             size: meta.len(),
@@ -153,6 +165,8 @@ struct ResolvedImage {
     description: Option<String>,
     recommended_chunk_size_bytes: Option<u64>,
     public: bool,
+    etag: Option<String>,
+    last_modified: Option<SystemTime>,
     path: PathBuf,
 }
 
@@ -192,10 +206,18 @@ impl ImageStore for LocalFsImageStore {
                     description: image.description.clone(),
                     recommended_chunk_size_bytes: image.recommended_chunk_size_bytes,
                     public: image.public,
+                    etag: image.etag.clone(),
+                    last_modified: image.last_modified_time,
                     path: self.root.join(Path::new(&image.file)),
                 };
 
-                let meta = self.meta_from_path(&resolved.path).await?;
+                let meta = self
+                    .meta_from_path(
+                        &resolved.path,
+                        resolved.etag.as_deref(),
+                        resolved.last_modified,
+                    )
+                    .await?;
 
                 out.push(ImageCatalogEntry {
                     id: resolved.id,
@@ -236,7 +258,13 @@ impl ImageStore for LocalFsImageStore {
 
     async fn get_image(&self, image_id: &str) -> Result<ImageCatalogEntry, StoreError> {
         let resolved = self.resolve_image(image_id).await?;
-        let meta = self.meta_from_path(&resolved.path).await?;
+        let meta = self
+            .meta_from_path(
+                &resolved.path,
+                resolved.etag.as_deref(),
+                resolved.last_modified,
+            )
+            .await?;
 
         Ok(ImageCatalogEntry {
             id: resolved.id,
@@ -250,7 +278,12 @@ impl ImageStore for LocalFsImageStore {
 
     async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError> {
         let resolved = self.resolve_image(image_id).await?;
-        self.meta_from_path(&resolved.path).await
+        self.meta_from_path(
+            &resolved.path,
+            resolved.etag.as_deref(),
+            resolved.last_modified,
+        )
+        .await
     }
 
     async fn open_range(

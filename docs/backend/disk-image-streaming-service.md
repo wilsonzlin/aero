@@ -316,12 +316,18 @@ Example:
       "name": "Windows 7 SP1",
       "description": "Clean install",
       "public": true,
+      "etag": "\"win7-sp1-x64-v1\"",
+      "last_modified": "2026-01-10T00:00:00Z",
       "recommended_chunk_size_bytes": 1048576,
       "content_type": "application/octet-stream"
     }
   ]
 }
 ```
+
+`etag` and `last_modified` are optional. When provided, they override the server’s default
+filesystem-derived validators, allowing stable caching for immutable/versioned images even if file
+mtimes change during copy/restore.
 
 If no manifest is present, the server may fall back to a stable directory listing (development
 only).
