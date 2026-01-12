@@ -222,6 +222,12 @@ static VOID AerovblkFreeResources(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   ringDma = devExt->RingDma;
   RtlZeroMemory(&devExt->RingDma, sizeof(devExt->RingDma));
 
+  /*
+   * Clear cached queue notify addresses so any late-path code in the VirtioPci
+   * layer cannot use stale cached pointers after teardown.
+   */
+  devExt->QueueNotifyAddrCache[0] = NULL;
+
   StorPortReleaseSpinLock(devExt, &lock);
 
   AerovblkFreeRequestContextsArray(devExt, requestContexts, requestContextCount);
@@ -232,13 +238,6 @@ static VOID AerovblkFreeResources(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
    */
   virtqueue_split_destroy(&vq);
   virtqueue_split_free_ring(&devExt->VirtioOps, &devExt->VirtioOpsCtx, &ringDma);
-
-  /*
-   * Defensive: clear queue mapping bookkeeping used by VirtioPciGetQueueNotifyAddress.
-   * It is safe to leave these intact, but clearing helps catch accidental reuse
-   * after removal.
-   */
-  devExt->QueueNotifyAddrCache[0] = NULL;
 }
 
 static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -308,24 +307,6 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   }
 
   return TRUE;
-}
-
-static VOID AerovblkFreeVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
-  if (devExt == NULL) {
-    return;
-  }
-
-  virtqueue_split_destroy(&devExt->Vq);
-  virtqueue_split_free_ring(&devExt->VirtioOps, &devExt->VirtioOpsCtx, &devExt->RingDma);
-}
-
-static VOID AerovblkFreeResources(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
-  if (devExt == NULL) {
-    return;
-  }
-
-  AerovblkFreeRequestContexts(devExt);
-  AerovblkFreeVirtqueue(devExt);
 }
 
 static NTSTATUS AerovblkVirtioReadBlkConfig(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Out_ PVIRTIO_BLK_CONFIG cfg) {
