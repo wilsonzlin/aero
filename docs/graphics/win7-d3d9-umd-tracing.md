@@ -196,6 +196,23 @@ This trace is meant to be lightweight, so most values are logged as raw integers
     - `a2 = pack_u32_u32(start_register, count)`
     - `a3 = data pointer`
 
+- Legacy cached state (not emitted to the AeroGPU command stream):
+  - `Device::SetPaletteEntries` / `Device::GetPaletteEntries`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = palette index`
+    - `a2 = entries pointer`
+  - `Device::SetCurrentTexturePalette` / `Device::GetCurrentTexturePalette`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = palette index` (Set) or `pPalette` pointer (Get)
+  - `Device::SetClipStatus` / `Device::GetClipStatus`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = clip status pointer`
+  - `Device::SetGammaRamp` / `Device::GetGammaRamp`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = arg1` (runtime-specific)
+    - `a2 = arg2` (runtime-specific)
+    - `a3 = gamma ramp pointer`
+
 The exact packing per entrypoint is defined where the DDI is instrumented:
 `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp` (search for `D3d9TraceCall`).
 
