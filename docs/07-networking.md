@@ -1223,8 +1223,8 @@ Some builds may additionally expose:
 
 - `clear(): void | Promise<void>` (drop buffered frames)
 - `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops; some builds may expose `stats()` instead)
-  - In the current web runtime, `getStats()` typically returns:
-    `{ enabled, records, bytes, droppedRecords, droppedBytes }`.
+  - When implemented in the web runtime, it typically returns:
+    `{ enabled, records, bytes, droppedRecords, droppedBytes }` (same shape as `NetTracer.stats()` in `web/src/net/net_tracer.ts`).
 
 Worker-runtime note: in the worker-based runtime, these operations are implemented by sending
 `net.trace.*` `postMessage()` commands to the net worker and receiving the `net.trace.pcapng`
