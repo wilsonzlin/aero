@@ -58,6 +58,35 @@ function toOwnedArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   return new Uint8Array(bytes) as Uint8Array<ArrayBuffer>;
 }
 
+function normalizeTier1Compilation(result: unknown, fallbackCodeByteLen: number): Tier1BlockCompilation {
+  // The Tier-1 wasm-bindgen ABI is still evolving. Older builds returned raw `Uint8Array` bytes,
+  // while newer ones return a small object with `{ wasm_bytes, code_byte_len, ... }`.
+  if (result instanceof Uint8Array) {
+    return {
+      wasm_bytes: result,
+      code_byte_len: fallbackCodeByteLen,
+      exit_to_interpreter: false,
+    };
+  }
+
+  if (result && typeof result === 'object') {
+    const wasmBytes = (result as Partial<Tier1BlockCompilation>).wasm_bytes;
+    if (!(wasmBytes instanceof Uint8Array)) {
+      throw new Error('JIT compiler returned unexpected result (missing wasm_bytes Uint8Array)');
+    }
+    const codeByteLen =
+      typeof (result as Partial<Tier1BlockCompilation>).code_byte_len === 'number'
+        ? (result as Partial<Tier1BlockCompilation>).code_byte_len!
+        : fallbackCodeByteLen;
+    const exitToInterp =
+      typeof (result as Partial<Tier1BlockCompilation>).exit_to_interpreter === 'boolean'
+        ? (result as Partial<Tier1BlockCompilation>).exit_to_interpreter!
+        : false;
+    return { wasm_bytes: wasmBytes, code_byte_len: codeByteLen, exit_to_interpreter: exitToInterp };
+  }
+
+  throw new Error('JIT compiler returned unexpected result (expected Uint8Array or { wasm_bytes: Uint8Array, ... })');
+}
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {
     postMessageToCpu({
@@ -87,14 +116,25 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
   try {
     const api = await loadJitWasmApi();
     const codeWindow = sliceCodeWindow(entryRip, maxBytes);
-    compilation = api.compile_tier1_block(
-      BigInt(entryRip),
-      codeWindow,
-      maxInsts,
-      maxBytes,
-      true, // inline_tlb (Tier-1 ABI uses jit_ctx_ptr + fast-path TLB)
-      true, // memory_shared (compiled blocks must import the shared guest memory)
-    ) as Tier1BlockCompilation;
+    let result: unknown;
+    try {
+      result = api.compile_tier1_block(
+        BigInt(entryRip),
+        codeWindow,
+        maxInsts,
+        maxBytes,
+        true, // inline_tlb (Tier-1 ABI uses jit_ctx_ptr + fast-path TLB)
+        true, // memory_shared (compiled blocks must import the shared guest memory)
+      ) as unknown;
+    } catch {
+      // Backwards-compat: older JIT wasm builds used simpler argument lists.
+      try {
+        result = api.compile_tier1_block(entryRip, maxBytes) as unknown;
+      } catch {
+        result = api.compile_tier1_block(codeWindow, entryRip, maxBytes) as unknown;
+      }
+    }
+    compilation = normalizeTier1Compilation(result, maxBytes);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     postMessageToCpu({ type: 'CompileError', id: req.id, entry_rip: req.entry_rip, reason: message });
