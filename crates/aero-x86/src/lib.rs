@@ -239,6 +239,7 @@ pub mod tier1 {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum InstKind {
+        Nop,
         Mov {
             dst: Operand,
             src: Operand,
@@ -797,6 +798,17 @@ pub mod tier1 {
         let stack_width = stack_width(bitness, operand_override);
 
         let kind = match opcode1 {
+            0x90 => {
+                // 0x90 is `xchg (e)ax, (e)ax` which is a NOP. In 64-bit mode, REX.B can extend the
+                // register operand (eg. `0x49 0x90` => `xchg eax, r8d`), which is not a NOP.
+                //
+                // Tier-1 does not currently model XCHG, so we only accept the canonical NOP form.
+                if bitness == 64 && rex.b {
+                    InstKind::Invalid
+                } else {
+                    InstKind::Nop
+                }
+            }
             0x40..=0x47 if bitness != 64 => {
                 let reg_code = opcode1 - 0x40;
                 let w = op_width(bitness, Rex::none(), operand_override);

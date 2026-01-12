@@ -168,6 +168,7 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
 
     for inst in &block.insts {
         match &inst.kind {
+            InstKind::Nop => {}
             InstKind::Mov { dst, src, width } => {
                 let v = emit_read_operand(&mut b, inst, src, *width, addr_mask);
                 emit_write_operand(&mut b, inst, dst, *width, v, addr_mask);

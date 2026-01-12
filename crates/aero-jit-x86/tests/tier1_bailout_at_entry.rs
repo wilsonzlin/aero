@@ -55,7 +55,7 @@ impl Tier1WasmRegistry for PanicRegistry {
 }
 
 /// Tiny interpreter that supports:
-/// - 0x90: NOP (unsupported by the Tier-1 decoder)
+/// - 0xF5: CMC (unsupported by the Tier-1 decoder; treated as a no-op here)
 /// - 0xEB imm8: JMP rel8
 struct MiniInterpreter {
     bus: SimpleBus,
@@ -67,8 +67,8 @@ impl Interpreter<TestCpu> for MiniInterpreter {
         let mut instructions_retired = 0u64;
         loop {
             match self.bus.read_u8(rip) {
-                0x90 => {
-                    // NOP
+                0xf5 => {
+                    // CMC (treated as a no-op for this mini interpreter)
                     rip = rip.wrapping_add(1);
                     instructions_retired += 1;
                 }
@@ -96,14 +96,14 @@ fn tier1_zero_progress_block_is_not_installed() {
     let entry = 0x1000u64;
 
     // A tight loop:
-    //   nop
+    //   cmc
     //   jmp <entry>
     //
-    // The Tier-1 decoder doesn't support 0x90 (NOP), so Tier-1 compilation will
+    // The Tier-1 decoder doesn't support 0xF5 (CMC), so Tier-1 compilation will
     // produce an `ExitToInterpreter { next_rip: entry }` terminator with no
     // side-effecting IR instructions. This should be treated as "non-compilable"
     // to avoid JIT thrash.
-    let code = [0x90, 0xeb, 0xfd]; // NOP; JMP -3
+    let code = [0xf5, 0xeb, 0xfd]; // CMC; JMP -3
 
     let mut bus = SimpleBus::new(0x2000);
     bus.load(entry, &code);

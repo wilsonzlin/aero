@@ -162,6 +162,9 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
     for inst in insts {
         let next = inst.next_rip();
         match &inst.kind {
+            InstKind::Nop => {
+                cpu.rip = next;
+            }
             InstKind::Mov { dst, src, width } => {
                 let v = read_op(inst, cpu, bus, src, *width);
                 write_op(inst, cpu, bus, dst, *width, v);
