@@ -6,6 +6,35 @@
 //! 2. Drain guest TX frames to a host [`NetworkBackend`], with a bounded budget.
 //! 3. Poll backend RX frames and enqueue into the NIC, with a bounded budget.
 //! 4. Run NIC DMA again to flush newly enqueued RX frames into guest buffers.
+//!
+//! ## Usage (borrowed tick-style pump)
+//!
+//! ```no_run
+//! use aero_net_backend::NetworkBackend;
+//! use aero_net_e1000::E1000Device;
+//! use aero_net_pump::E1000TickPump;
+//! use memory::MemoryBus;
+//!
+//! struct DummyMem;
+//! impl MemoryBus for DummyMem {
+//!     fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {}
+//!     fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+//! }
+//!
+//! struct DummyBackend;
+//! impl NetworkBackend for DummyBackend {
+//!     fn transmit(&mut self, _frame: Vec<u8>) {}
+//! }
+//!
+//! let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+//! // The E1000 model gates all DMA on PCI COMMAND.BME (bit 2).
+//! nic.pci_config_write(0x04, 2, 0x4);
+//!
+//! let mut mem = DummyMem;
+//! let mut backend = DummyBackend;
+//! let pump = E1000TickPump::new(64, 64);
+//! pump.tick(&mut nic, &mut mem, &mut backend);
+//! ```
 #![forbid(unsafe_code)]
 
 use aero_net_backend::NetworkBackend;
