@@ -8,7 +8,7 @@ This crate contains clean-room firmware components used by the Aero emulator.
 
 - `build_bios_rom()` → a 64KiB BIOS ROM image containing interrupt stubs.
 - A host-side [`Bios`] implementation for POST and a minimal INT service surface
-  (INT 10h/11h/12h/13h/15h/16h/19h/1Ah, plus ACPI + SMBIOS publication).
+  (INT 10h/11h/12h/13h/15h/16h/18h/19h/1Ah, plus ACPI + SMBIOS publication).
 
 ### Dispatch contract (HLT-in-ROM-stub hypercall)
 
