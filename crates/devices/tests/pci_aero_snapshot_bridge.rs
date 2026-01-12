@@ -1,8 +1,9 @@
 use std::io::Cursor;
+use std::cell::RefCell;
 
 use aero_devices::pci::{
     GsiLevelSink, MsiCapability, PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace,
-    PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciCoreSnapshot, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
 use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
@@ -11,9 +12,6 @@ use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
-
-const DEVICE_ID_PCI_CFG: DeviceId = DeviceId::PCI_CFG;
-const DEVICE_ID_PCI_INTX: DeviceId = DeviceId::PCI_INTX;
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
@@ -83,8 +81,8 @@ impl GsiLevelSink for MockSink {
 
 struct TestSource {
     meta: SnapshotMeta,
-    pci_cfg: PciConfigPorts,
-    pci_intx: PciIntxRouter,
+    pci_cfg: RefCell<PciConfigPorts>,
+    pci_intx: RefCell<PciIntxRouter>,
     ram: Vec<u8>,
 }
 
@@ -103,10 +101,10 @@ impl SnapshotSource for TestSource {
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
-        vec![
-            device_state_from_io_snapshot(DEVICE_ID_PCI_CFG, &self.pci_cfg),
-            device_state_from_io_snapshot(DEVICE_ID_PCI_INTX, &self.pci_intx),
-        ]
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let mut pci_intx = self.pci_intx.borrow_mut();
+        let core = PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+        vec![device_state_from_io_snapshot(DeviceId::PCI, &core)]
     }
 
     fn disk_overlays(&self) -> DiskOverlayRefs {
@@ -143,10 +141,9 @@ impl SnapshotTarget for TestTarget {
 
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
         for state in states {
-            if state.id == DEVICE_ID_PCI_CFG {
-                apply_io_snapshot_to_device(&state, &mut self.pci_cfg).unwrap();
-            } else if state.id == DEVICE_ID_PCI_INTX {
-                apply_io_snapshot_to_device(&state, &mut self.pci_intx).unwrap();
+            if state.id == DeviceId::PCI {
+                let mut core = PciCoreSnapshot::new(&mut self.pci_cfg, &mut self.pci_intx);
+                apply_io_snapshot_to_device(&state, &mut core).unwrap();
             }
         }
     }
@@ -213,8 +210,8 @@ fn pci_io_snapshot_roundtrips_through_aero_snapshot_file() {
             created_unix_ms: 0,
             label: None,
         },
-        pci_cfg,
-        pci_intx,
+        pci_cfg: RefCell::new(pci_cfg),
+        pci_intx: RefCell::new(pci_intx),
         ram: vec![0u8; 4096],
     };
 
