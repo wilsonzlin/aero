@@ -1,8 +1,8 @@
-import { initWasm, type WasmApi, type WasmInitOptions, type WasmVariant } from "./wasm_loader";
+import { initWasm, type WasmApi, type WasmInitOptions, type WasmInitResult, type WasmVariant } from "./wasm_loader";
 
 export type { WasmApi, WasmVariant };
 
-type InitResult = { api: WasmApi; variant: WasmVariant };
+type InitResult = WasmInitResult;
 
 let initPromise: Promise<InitResult> | undefined;
 const initPromiseByMemory = new WeakMap<WebAssembly.Memory, Promise<InitResult>>();
@@ -19,25 +19,21 @@ export async function initWasmForContext(options: WasmInitOptions = {}): Promise
     const cached = initPromiseByMemory.get(memory);
     if (cached) return cached;
 
-    const promise = initWasm(options)
-      .then(({ api, variant }) => ({ api, variant }))
-      .catch((err) => {
-        // Allow retries if initialization fails (e.g. missing assets during dev).
-        initPromiseByMemory.delete(memory);
-        throw err;
-      });
+    const promise = initWasm(options).catch((err) => {
+      // Allow retries if initialization fails (e.g. missing assets during dev).
+      initPromiseByMemory.delete(memory);
+      throw err;
+    });
     initPromiseByMemory.set(memory, promise);
     return promise;
   }
 
   if (!initPromise) {
-    initPromise = initWasm(options)
-      .then(({ api, variant }) => ({ api, variant }))
-      .catch((err) => {
-        // Allow retries if initialization fails (e.g. missing assets during dev).
-        initPromise = undefined;
-        throw err;
-      });
+    initPromise = initWasm(options).catch((err) => {
+      // Allow retries if initialization fails (e.g. missing assets during dev).
+      initPromise = undefined;
+      throw err;
+    });
   }
 
   return initPromise;
