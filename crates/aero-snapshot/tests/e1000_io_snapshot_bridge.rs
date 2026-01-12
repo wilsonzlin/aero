@@ -1,6 +1,6 @@
 #![cfg(all(feature = "io-snapshot", not(target_arch = "wasm32")))]
 
-use aero_net_e1000::{E1000Device, E1000_IO_SIZE};
+use aero_net_e1000::{E1000Device, E1000_IO_SIZE, E1000_MMIO_SIZE};
 use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
 };
@@ -41,7 +41,8 @@ fn e1000_io_snapshot_roundtrips_through_bridge() {
     apply_io_snapshot_to_device(&state, &mut restored).unwrap();
 
     // BAR0 should be aligned on restore.
-    assert_eq!(restored.pci_read_u32(0x10), 0xDEAD_BEE0);
+    let expected_bar0 = 0xDEAD_BEEF & (!(E1000_MMIO_SIZE - 1) & 0xFFFF_FFF0);
+    assert_eq!(restored.pci_read_u32(0x10), expected_bar0);
     // BAR1 probe reads return the size mask.
     let expected_bar1 = (!(E1000_IO_SIZE - 1) & 0xFFFF_FFFC) | 0x1;
     assert_eq!(restored.pci_read_u32(0x14), expected_bar1);
