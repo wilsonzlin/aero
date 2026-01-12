@@ -173,41 +173,69 @@ fi
 # threads when linking, which can also hit per-user thread limits on shared hosts. Limit lld's
 # parallelism to match our overall build parallelism.
 #
-# ⚠️ WASM NOTE:
-# When linking wasm32 targets, rustc typically invokes `rust-lld -flavor wasm` *directly*
-# (not via `cc -Wl,...`). The `-Wl,` prefix is treated as a literal argument and causes:
+# ⚠️ RUSTFLAGS / WASM NOTE:
+# `RUSTFLAGS` applies to *all* targets. Passing the native-style `-Wl,--threads=...` globally
+# breaks wasm builds because rustc invokes `rust-lld -flavor wasm` directly and `rust-lld`
+# does not understand `-Wl,`:
 #   rust-lld: error: unknown argument: -Wl,--threads=...
-# Prefer passing lld's flag directly for wasm targets (`--threads=N`).
+#
+# Instead of mutating `RUSTFLAGS`, set Cargo's **per-target** rustflags environment variables:
+#   CARGO_TARGET_<TRIPLE>_RUSTFLAGS
+#
+# This keeps native builds capped while allowing `cargo --target wasm32-...` to work in the
+# same shell after sourcing this script.
 if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
-  aero_target="${CARGO_BUILD_TARGET:-}"
+  # Append a linker threads cap to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` if one is not already present.
+  _aero_add_lld_threads_rustflags() {
+    local target="${1}"
+    local threads="${CARGO_BUILD_JOBS:-1}"
+    local var="CARGO_TARGET_${target^^}_RUSTFLAGS"
+    var="${var//-/_}"
+    var="${var//./_}"
 
-  # If we already have the native-style `-Wl,--threads=...` in the environment but are building
-  # wasm32 (via CARGO_BUILD_TARGET), rewrite it to the wasm-compatible form.
-  if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
-    # Handle both `-C link-arg=...` and `-Clink-arg=...` spellings.
-    export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
-    export RUSTFLAGS="${RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
-    export RUSTFLAGS="${RUSTFLAGS# }"
-  fi
+    local current="${!var:-}"
 
-  if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
-    if [[ "${aero_target}" == wasm32-* ]]; then
-      export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--threads=${CARGO_BUILD_JOBS:-1}"
-    else
-      export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+    # If something injected the native-style `-Wl,--threads=...` into this wasm target's rustflags,
+    # rewrite it into the wasm-compatible form.
+    if [[ "${target}" == wasm32-* ]] && [[ "${current}" == *"-Wl,--threads="* ]]; then
+      current="${current//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+      current="${current//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
     fi
-    export RUSTFLAGS="${RUSTFLAGS# }"
+
+    # Only add if we don't already have a threads flag (either form).
+    if [[ "${current}" != *"--threads="* ]] && [[ "${current}" != *"-Wl,--threads="* ]]; then
+      if [[ "${target}" == wasm32-* ]]; then
+        current="${current} -C link-arg=--threads=${threads}"
+      else
+        current="${current} -C link-arg=-Wl,--threads=${threads}"
+      fi
+      current="${current# }"
+    fi
+
+    export "${var}=${current}"
+  }
+
+  # Cap the linker thread count for the host target (covers plain `cargo build` / `cargo test`).
+  aero_host_target=""
+  if command -v rustc >/dev/null 2>&1; then
+    aero_host_target="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n1)"
+  fi
+  if [[ -n "${aero_host_target}" ]]; then
+    _aero_add_lld_threads_rustflags "${aero_host_target}"
   fi
 
-  # WASM builds use rust-lld directly (no `cc` wrapper), so the `-Wl,` indirection used for native
-  # linkers does not apply. Provide the same thread cap via per-target rustflags so `cargo ... --target
-  # wasm32-unknown-unknown` does not fail with lld thread-spawn errors under tight process limits.
-  if [[ "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}" != *"--threads="* ]]; then
-    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-} -C link-arg=--threads=${CARGO_BUILD_JOBS:-1}"
-    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS# }"
+  # Cap the linker thread count for wasm32-unknown-unknown. This applies both to direct
+  # `cargo --target wasm32-unknown-unknown` invocations and to tools like wasm-pack that spawn Cargo.
+  _aero_add_lld_threads_rustflags "wasm32-unknown-unknown"
+
+  # If the user configured a default Cargo build target, cap linker threads for that target too.
+  # (This is safe even when it matches the host/wasm targets above.)
+  if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
+    _aero_add_lld_threads_rustflags "${CARGO_BUILD_TARGET}"
   fi
 
-  unset aero_target 2>/dev/null || true
+  unset aero_host_target 2>/dev/null || true
+  unset -f _aero_add_lld_threads_rustflags 2>/dev/null || true
 fi
 
 # Node.js - cap V8 heap to avoid runaway memory.
