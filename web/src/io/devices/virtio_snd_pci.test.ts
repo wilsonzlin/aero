@@ -187,3 +187,69 @@ describe("io/devices/virtio_snd BAR0 MMIO", () => {
   });
 });
 
+describe("io/devices/virtio_snd PCI command semantics", () => {
+  it("gates device polling on PCI Bus Master Enable (command bit 2)", () => {
+    const poll = vi.fn();
+    const bridge: VirtioSndPciBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      poll,
+      driver_ok: vi.fn(() => false),
+      irq_asserted: vi.fn(() => false),
+      set_audio_ring_buffer: vi.fn(),
+      set_host_sample_rate_hz: vi.fn(),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioSndPciDevice({ bridge, irqSink });
+
+    // Not bus-master enabled by default; tick should not poll the device.
+    dev.tick(0);
+    expect(poll).not.toHaveBeenCalled();
+
+    // Enable BME (bit 2).
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(1);
+    expect(poll).toHaveBeenCalledTimes(1);
+  });
+
+  it("respects PCI command Interrupt Disable bit (bit 10) when syncing INTx level", () => {
+    let irq = false;
+    const bridge: VirtioSndPciBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      poll: vi.fn(),
+      driver_ok: vi.fn(() => false),
+      irq_asserted: vi.fn(() => irq),
+      set_audio_ring_buffer: vi.fn(),
+      set_host_sample_rate_hz: vi.fn(),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioSndPciDevice({ bridge, irqSink });
+
+    // Start deasserted.
+    dev.tick(0);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalled();
+
+    // Assert line.
+    irq = true;
+    dev.tick(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(9);
+
+    // Disable INTx in PCI command register: should drop the line.
+    dev.onPciCommandWrite(1 << 10);
+    expect(irqSink.lowerIrq).toHaveBeenCalledTimes(1);
+    expect(irqSink.lowerIrq).toHaveBeenCalledWith(9);
+
+    // Re-enable INTx: should reassert because the device-level condition is still true.
+    dev.onPciCommandWrite(0);
+    expect(irqSink.raiseIrq).toHaveBeenCalledTimes(2);
+    expect(irqSink.raiseIrq).toHaveBeenLastCalledWith(9);
+  });
+});

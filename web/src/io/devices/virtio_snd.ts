@@ -6,6 +6,12 @@ export type VirtioSndPciBridgeLike = {
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
   poll(): void;
+  /**
+   * Optional hook for mirroring PCI command register writes into the underlying device model.
+   *
+   * When present, this can be used by WASM bridges to enforce DMA gating based on Bus Master Enable.
+   */
+  set_pci_command?(command: number): void;
   driver_ok(): boolean;
   irq_asserted(): boolean;
   set_audio_ring_buffer(ringSab: SharedArrayBuffer | null | undefined, capacityFrames: number, channelCount: number): void;
@@ -120,6 +126,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   readonly #bridge: VirtioSndPciBridgeLike;
   readonly #irqSink: IrqSink;
 
+  #pciCommand = 0;
   #irqLevel = false;
   #destroyed = false;
   #driverOkLogged = false;
@@ -184,12 +191,40 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     this.#syncIrq();
   }
 
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+    const cmd = command & 0xffff;
+    this.#pciCommand = cmd;
+
+    // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
+    const setCmd = this.#bridge.set_pci_command;
+    if (typeof setCmd === "function") {
+      try {
+        setCmd.call(this.#bridge, cmd >>> 0);
+      } catch {
+        // ignore device errors during PCI config writes
+      }
+    }
+
+    // Interrupt Disable bit can immediately drop INTx level.
+    this.#syncIrq();
+  }
+
   tick(_nowMs: number): void {
     if (this.#destroyed) return;
-    try {
-      this.#bridge.poll();
-    } catch {
-      // ignore device errors during tick
+    // PCI Bus Master Enable (command bit 2) gates whether the device is allowed to DMA into guest
+    // memory (virtqueue descriptor reads / used-ring writes / audio buffer fills).
+    //
+    // Mirror/gating note:
+    // - Newer WASM builds can also enforce this via `set_pci_command`, but keep a wrapper-side gate
+    //   so older builds remain correct and we avoid invoking poll unnecessarily.
+    const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+    if (busMasterEnabled) {
+      try {
+        this.#bridge.poll();
+      } catch {
+        // ignore device errors during tick
+      }
     }
     this.#syncIrq();
   }
@@ -278,10 +313,15 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     } catch {
       asserted = false;
     }
+
+    // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must not
+    // assert INTx.
+    if ((this.#pciCommand & (1 << 10)) !== 0) {
+      asserted = false;
+    }
     if (asserted === this.#irqLevel) return;
     this.#irqLevel = asserted;
     if (asserted) this.#irqSink.raiseIrq(this.irqLine);
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-

@@ -81,6 +81,12 @@ export type VirtioSndPciBridgeHandle = {
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
     poll(): void;
+    /**
+     * Update the device model's PCI command register (offset 0x04, low 16 bits).
+     *
+     * Optional for older WASM builds.
+     */
+    set_pci_command?(command: number): void;
     driver_ok(): boolean;
     irq_asserted(): boolean;
     /**

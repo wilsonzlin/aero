@@ -243,6 +243,7 @@ pub struct VirtioSndPciBridge {
     mem: WasmGuestMemory,
     dev: VirtioPciDevice,
     irq_asserted: Rc<Cell<bool>>,
+    pci_command: u16,
 }
 
 #[wasm_bindgen]
@@ -271,13 +272,29 @@ impl VirtioSndPciBridge {
             mem,
             dev,
             irq_asserted: asserted,
+            pci_command: 0,
         })
+    }
+
+    #[inline]
+    fn bus_master_enabled(&self) -> bool {
+        (self.pci_command & (1 << 2)) != 0
     }
 
     fn snd_mut(&mut self) -> &mut SndDevice {
         self.dev
             .device_mut::<SndDevice>()
             .expect("VirtioPciDevice should contain a VirtioSnd device")
+    }
+
+    /// Mirror the guest-written PCI command register (0x04, low 16 bits) into the WASM device
+    /// wrapper.
+    ///
+    /// This is used to enforce PCI Bus Master Enable gating for DMA. In a JS runtime, the PCI
+    /// configuration space lives in TypeScript (`PciBus`), so the WASM bridge must be updated via
+    /// this explicit hook.
+    pub fn set_pci_command(&mut self, command: u32) {
+        self.pci_command = (command & 0xffff) as u16;
     }
 
     /// Read from the virtio-pci BAR0 MMIO region.
@@ -304,11 +321,19 @@ impl VirtioSndPciBridge {
             .bar0_write(u64::from(offset), &bytes[..size]);
         // BAR0 writes are side-effect-free w.r.t guest RAM; execute any notified queues
         // synchronously now that we have access to guest memory.
-        self.dev.process_notified_queues(&mut self.mem);
+        //
+        // Only DMA when PCI Bus Master Enable is set (command bit 2).
+        if self.bus_master_enabled() {
+            self.dev.process_notified_queues(&mut self.mem);
+        }
     }
 
     /// Process pending virtqueue work and deliver interrupts.
     pub fn poll(&mut self) {
+        // Only DMA when PCI Bus Master Enable is set (command bit 2).
+        if !self.bus_master_enabled() {
+            return;
+        }
         self.dev.poll(&mut self.mem);
     }
 
