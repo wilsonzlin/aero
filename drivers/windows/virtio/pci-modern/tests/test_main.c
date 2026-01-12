@@ -59,15 +59,28 @@ typedef struct _FAKE_DEV {
 	UINT16 MbForcedMsixConfigMismatch;
 	BOOLEAN MbForceQueueMsixVectorMismatch;
 	UINT16 MbForcedQueueMsixVectorMismatch;
+
 	BOOLEAN MbPoisonNotifyOnNextMb;
 	UINT32 MbPoisonNotifyBar0Off;
 	UINT16 MbPoisonNotifyValue;
+
+	/* OsMb() instrumentation used by host tests. */
+	UINT32 MbCallCount;
+	BOOLEAN MbRecordDoorbell;
+	UINT32 MbRecordDoorbellOffset;
+	UINT32 MbDoorbellSampleCount;
+	UINT16 MbDoorbellSamples[4];
 } FAKE_DEV;
 
 static void WriteLe16(UINT8 *p, UINT16 v)
 {
 	p[0] = (UINT8)(v & 0xffu);
 	p[1] = (UINT8)((v >> 8) & 0xffu);
+}
+
+static UINT16 ReadLe16(const UINT8 *p)
+{
+	return (UINT16)p[0] | ((UINT16)p[1] << 8);
 }
 
 static void WriteLe32(UINT8 *p, UINT32 v)
@@ -176,6 +189,17 @@ static void FakeDevInitCompatRelocated(FAKE_DEV *dev)
 	common->device_feature = 1;
 }
 
+static void FakeDevResetMbInstrumentation(FAKE_DEV *dev)
+{
+	UINT32 i;
+
+	dev->MbCallCount = 0;
+	dev->MbDoorbellSampleCount = 0;
+	for (i = 0; i < (UINT32)(sizeof(dev->MbDoorbellSamples) / sizeof(dev->MbDoorbellSamples[0])); ++i) {
+		dev->MbDoorbellSamples[i] = 0;
+	}
+}
+
 static UINT8 OsPciRead8(void *ctx, UINT16 off)
 {
 	FAKE_DEV *dev = (FAKE_DEV *)ctx;
@@ -228,6 +252,12 @@ static void OsMb(void *ctx)
 	UINT16 q;
 	UINT64 feat;
 	UINT32 i;
+
+	dev->MbCallCount++;
+	if (dev->MbRecordDoorbell && dev->MbDoorbellSampleCount < (UINT32)(sizeof(dev->MbDoorbellSamples) / sizeof(dev->MbDoorbellSamples[0]))) {
+		assert(dev->MbRecordDoorbellOffset + sizeof(UINT16) <= BAR0_LEN);
+		dev->MbDoorbellSamples[dev->MbDoorbellSampleCount++] = ReadLe16(dev->Bar0 + dev->MbRecordDoorbellOffset);
+	}
 
 	common = (volatile virtio_pci_common_cfg *)(dev->Bar0 + 0x0000);
 
@@ -1068,6 +1098,67 @@ static void TestQueueSetupAndNotify(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestStrictNotifyHasPreAndPostMemoryBarrier(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	WriteLe16(dev.Bar0 + 0x1000, 0xFFFFu);
+	dev.MbRecordDoorbell = TRUE;
+	dev.MbRecordDoorbellOffset = 0x1000;
+	FakeDevResetMbInstrumentation(&dev);
+
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_SUCCESS);
+	assert(ReadLe16(dev.Bar0 + 0x1000) == 0);
+
+	assert(dev.MbCallCount == 2);
+	assert(dev.MbDoorbellSampleCount == 2);
+	assert(dev.MbDoorbellSamples[0] == 0xFFFFu);
+	assert(dev.MbDoorbellSamples[1] == 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestCompatNotifyHasSelectorAndPreAndPostMemoryBarrier(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	WriteLe16(dev.Bar0 + 0x1000, 0xFFFFu);
+	dev.MbRecordDoorbell = TRUE;
+	dev.MbRecordDoorbellOffset = 0x1000;
+	FakeDevResetMbInstrumentation(&dev);
+
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_SUCCESS);
+	assert(ReadLe16(dev.Bar0 + 0x1000) == 0);
+
+	/* COMPAT notify touches the selector window + pre- and post-notify barriers. */
+	assert(dev.MbCallCount == 3);
+	assert(dev.MbDoorbellSampleCount == 3);
+	assert(dev.MbDoorbellSamples[1] == 0xFFFFu);
+	assert(dev.MbDoorbellSamples[2] == 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestMsixConfigVectorRefusedFails(void)
 {
 	FAKE_DEV dev;
@@ -1655,6 +1746,8 @@ int main(void)
 	TestNegotiateFeaturesRejectsRequiredPackedRing();
 	TestQueueSetupAndNotify();
 	TestNotifyHasPreBarrier();
+	TestStrictNotifyHasPreAndPostMemoryBarrier();
+	TestCompatNotifyHasSelectorAndPreAndPostMemoryBarrier();
 	TestMsixConfigVectorRefusedFails();
 	TestQueueMsixVectorRefusedFails();
 	TestMsixConfigVectorMismatchFails();
