@@ -26,6 +26,8 @@ From the repo root:
 ```bash
 npm run gen:scancodes
 # or:
+just gen-scancodes
+# or:
 node tools/gen_scancodes/gen_scancodes.mjs
 ```
 
@@ -37,6 +39,7 @@ silently diverge:
 - `node tools/gen_scancodes/check_generated.mjs` runs the generator and fails if
   `git diff` shows the checked-in generated files are out of date.
   - Convenience alias: `npm run check:scancodes`
+  - Convenience alias: `just check-scancodes`
 - `web/test/scancodes_generated_sync.test.ts` compares `scancodes.json` against
   the generated TypeScript mappings in both `web/src/input/scancodes.ts` and
   `src/input/scancodes.ts`.

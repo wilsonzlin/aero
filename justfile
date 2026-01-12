@@ -417,6 +417,24 @@ test:
 test-all:
   cargo xtask test-all
 
+gen-scancodes:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _warn_deprecated_env
+  just _check_node_version
+
+  node tools/gen_scancodes/gen_scancodes.mjs
+
+check-scancodes:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _warn_deprecated_env
+  just _check_node_version
+
+  node tools/gen_scancodes/check_generated.mjs
+
 fmt:
   #!/usr/bin/env bash
   set -euo pipefail
