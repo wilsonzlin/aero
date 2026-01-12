@@ -28,7 +28,7 @@ use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
 use aero_net_e1000::E1000Device;
 use aero_storage::VirtualDisk;
-use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult, MmioHandler};
+use memory::MmioHandler;
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -367,7 +367,6 @@ struct PciMmioWindow {
     ahci_bdf: PciBdf,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     e1000_bdf: PciBdf,
-    e1000_dma: SharedRam,
 }
 
 impl PciMmioWindow {
@@ -492,94 +491,16 @@ impl MmioHandler for PciMmioWindow {
         if let Some((e1000, dev_offset)) = self.map_e1000(paddr, size) {
             let mut e1000 = e1000.borrow_mut();
             match size {
-                1 | 2 | 4 => {
-                    e1000.mmio_write(&mut self.e1000_dma, dev_offset, size, value as u32)
-                }
+                1 | 2 | 4 => e1000.mmio_write_reg(dev_offset, size, value as u32),
                 8 => {
                     let lo = (value & 0xffff_ffff) as u32;
                     let hi = (value >> 32) as u32;
-                    e1000.mmio_write(&mut self.e1000_dma, dev_offset, 4, lo);
-                    e1000.mmio_write(&mut self.e1000_dma, dev_offset + 4, 4, hi);
+                    e1000.mmio_write_reg(dev_offset, 4, lo);
+                    e1000.mmio_write_reg(dev_offset + 4, 4, hi);
                 }
                 _ => {}
             }
         }
-    }
-}
-
-/// Shareable guest RAM backend used when device models need direct physical memory access (DMA)
-/// from within an MMIO handler.
-///
-/// `aero_platform::memory::MemoryBus` routes MMIO by calling `MmioHandler::read/write` without
-/// providing a `MemoryBus` handle. Most devices avoid DMA from within those callbacks, but the
-/// E1000 model performs DMA directly in response to certain MMIO register writes (e.g. TDT/RDT).
-///
-/// To keep the PC platform's memory bus purely safe and avoid re-entrant borrowing problems, we
-/// back guest RAM with a reference-counted buffer that can be accessed independently by device
-/// models.
-#[derive(Clone, Default)]
-struct SharedRam {
-    bytes: Rc<RefCell<Vec<u8>>>,
-}
-
-impl SharedRam {
-    fn new(size: usize) -> Self {
-        Self {
-            bytes: Rc::new(RefCell::new(vec![0u8; size])),
-        }
-    }
-
-    fn range(&self, paddr: u64, len: usize) -> GuestMemoryResult<std::ops::Range<usize>> {
-        let size = self.size();
-        let end = paddr
-            .checked_add(len as u64)
-            .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
-        if end > size {
-            return Err(GuestMemoryError::OutOfRange { paddr, len, size });
-        }
-
-        let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
-            paddr,
-            len,
-            size,
-        })?;
-        let end = start.checked_add(len).ok_or(GuestMemoryError::OutOfRange {
-            paddr,
-            len,
-            size,
-        })?;
-
-        Ok(start..end)
-    }
-}
-
-impl GuestMemory for SharedRam {
-    fn size(&self) -> u64 {
-        self.bytes.borrow().len() as u64
-    }
-
-    fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
-        let range = self.range(paddr, dst.len())?;
-        dst.copy_from_slice(&self.bytes.borrow()[range]);
-        Ok(())
-    }
-
-    fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
-        let range = self.range(paddr, src.len())?;
-        self.bytes.borrow_mut()[range].copy_from_slice(src);
-        Ok(())
-    }
-}
-
-impl memory::MemoryBus for SharedRam {
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if self.read_into(paddr, buf).is_err() {
-            buf.fill(0xFF);
-        }
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        let _ = self.write_from(paddr, buf);
     }
 }
 
@@ -877,15 +798,7 @@ impl PcPlatform {
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
-        // The E1000 device model performs DMA from within MMIO handlers. The platform MMIO handler
-        // interface doesn't provide a reference back to `MemoryBus`, so when E1000 is enabled we
-        // back guest RAM with a small shareable implementation (`SharedRam`) that can be accessed
-        // by the device model directly.
-        let shared_ram = config.enable_e1000.then(|| SharedRam::new(ram_size));
-        let mut memory = match shared_ram.as_ref() {
-            Some(ram) => MemoryBus::with_ram(filter, Box::new(ram.clone())),
-            None => MemoryBus::new(filter, ram_size),
-        };
+        let mut memory = MemoryBus::new(filter, ram_size);
 
         let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
 
@@ -1227,7 +1140,6 @@ impl PcPlatform {
                     ahci_bdf: aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
                     e1000: e1000.clone(),
                     e1000_bdf: aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
-                    e1000_dma: shared_ram.unwrap_or_default(),
                 }),
             )
             .unwrap();
@@ -1483,6 +1395,30 @@ impl PcPlatform {
             return;
         };
         ahci.borrow_mut().detach_drive(port);
+    }
+
+    pub fn process_e1000(&mut self) {
+        let Some(e1000) = self.e1000.as_ref() else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let command = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+        if !bus_master_enabled {
+            return;
+        }
+
+        e1000.borrow_mut().poll(&mut self.memory);
     }
 
     pub fn poll_pci_intx_lines(&mut self) {

@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::NIC_E1000_82540EM;
-use aero_net_e1000::ICR_TXDW;
+use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
 use aero_pc_platform::PcPlatform;
 use memory::MemoryBus as _;
 
@@ -39,6 +39,30 @@ fn read_e1000_bar1_base(pc: &mut PcPlatform) -> u32 {
     let bdf = NIC_E1000_82540EM.bdf;
     let bar1 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x14);
     bar1 & 0xffff_fffc
+}
+
+fn write_u64_le(pc: &mut PcPlatform, addr: u64, v: u64) {
+    pc.memory.write_physical(addr, &v.to_le_bytes());
+}
+
+/// Minimal legacy TX descriptor layout (16 bytes).
+fn write_tx_desc(pc: &mut PcPlatform, addr: u64, buf_addr: u64, len: u16, cmd: u8, status: u8) {
+    write_u64_le(pc, addr, buf_addr);
+    pc.memory.write_physical(addr + 8, &len.to_le_bytes());
+    pc.memory.write_physical(addr + 10, &[0u8]); // cso
+    pc.memory.write_physical(addr + 11, &[cmd]);
+    pc.memory.write_physical(addr + 12, &[status]);
+    pc.memory.write_physical(addr + 13, &[0u8]); // css
+    pc.memory.write_physical(addr + 14, &0u16.to_le_bytes()); // special
+}
+
+fn build_test_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(aero_net_e1000::MIN_L2_FRAME_LEN + payload.len());
+    frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    frame.extend_from_slice(&0x0800u16.to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
 }
 
 #[test]
@@ -198,4 +222,60 @@ fn pc_platform_routes_e1000_io_bar() {
     // IODATA (offset 0x04) reads from the selected MMIO register (STATUS).
     let io_status = pc.io.read(io_base + 0x04, 4);
     assert_eq!(io_status, mmio_status);
+}
+
+#[test]
+fn pc_platform_defers_e1000_dma_until_process_e1000() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // Enable IO + MEM decoding and Bus Mastering.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0007);
+
+    // Configure TX ring: 4 descriptors at 0x1000.
+    pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
+    pc.memory.write_u32(bar0_base + 0x3800, 0x1000); // TDBAL
+    pc.memory.write_u32(bar0_base + 0x3804, 0); // TDBAH
+    pc.memory.write_u32(bar0_base + 0x3808, 4 * 16); // TDLEN
+    pc.memory.write_u32(bar0_base + 0x3810, 0); // TDH
+    pc.memory.write_u32(bar0_base + 0x3818, 0); // TDT
+    pc.memory.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
+
+    // Guest TX: descriptor 0 points at packet buffer 0x2000.
+    let pkt_out = build_test_frame(b"guest->host");
+    assert_eq!(pkt_out.len(), MIN_L2_FRAME_LEN + b"guest->host".len());
+    pc.memory.write_physical(0x2000, &pkt_out);
+    write_tx_desc(
+        &mut pc,
+        0x1000,
+        0x2000,
+        pkt_out.len() as u16,
+        0b0000_1001, // EOP|RS
+        0,
+    );
+
+    // Update tail via MMIO. The platform MMIO handler does not provide a memory reference, so the
+    // device must defer DMA until `process_e1000()` is called.
+    pc.memory.write_u32(bar0_base + 0x3818, 1); // TDT = 1
+
+    {
+        let mut dev = pc.e1000.as_ref().unwrap().borrow_mut();
+        assert!(dev.pop_tx_frame().is_none());
+    }
+
+    let mut status = [0u8; 1];
+    pc.memory.read_physical(0x1000 + 12, &mut status);
+    assert_eq!(status[0] & 0x01, 0, "DD should not be set before process_e1000()");
+
+    pc.process_e1000();
+
+    {
+        let mut dev = pc.e1000.as_ref().unwrap().borrow_mut();
+        assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
+        assert!(dev.irq_level());
+    }
+
+    pc.memory.read_physical(0x1000 + 12, &mut status);
+    assert_ne!(status[0] & 0x01, 0, "DD should be set after process_e1000()");
 }
