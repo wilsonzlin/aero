@@ -3,9 +3,13 @@
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_WRITE_DMA_EXT;
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use firmware::bios::BlockDevice as _;
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -215,7 +219,7 @@ fn machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 
@@ -307,7 +311,7 @@ fn machine_ahci_writes_are_visible_to_bios_disk_reads() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 
@@ -391,7 +395,11 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
     assert_eq!(irq_line, 12);
 
     // BAR5 should be assigned by firmware POST and routed through the PCI MMIO window.
-    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x24));
+    m.io_write(
+        0xCF8,
+        4,
+        cfg_addr(bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET),
+    );
     let bar5_reg = m.io_read(0xCFC, 4) as u64;
     let bar5_base = bar5_reg & !0xFu64;
     assert!(bar5_base != 0, "expected AHCI BAR5 to be assigned");

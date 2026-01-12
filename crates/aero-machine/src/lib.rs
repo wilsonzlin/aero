@@ -853,7 +853,9 @@ impl MachineAhciMmioBar {
             let cfg = pci_cfg.bus_mut().device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar5_base = cfg
-                .and_then(|cfg| cfg.bar_range(5))
+                .and_then(|cfg| {
+                    cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                })
                 .map(|range| range.base)
                 .unwrap_or(0);
             (command, bar5_base)
@@ -862,7 +864,9 @@ impl MachineAhciMmioBar {
         let mut ahci = self.ahci.borrow_mut();
         ahci.config_mut().set_command(command);
         if bar5_base != 0 {
-            ahci.config_mut().set_bar_base(5, bar5_base);
+            ahci
+                .config_mut()
+                .set_bar_base(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX, bar5_base);
         }
     }
 }
@@ -1890,7 +1894,9 @@ impl Machine {
                         let cfg = pci_cfg.bus_mut().device_config(bdf);
                         let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                         let bar5_base = cfg
-                            .and_then(|cfg| cfg.bar_range(5))
+                            .and_then(|cfg| {
+                                cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                            })
                             .map(|range| range.base)
                             .unwrap_or(0);
                         (command, bar5_base)
@@ -1900,7 +1906,10 @@ impl Machine {
                 let mut ahci_dev = ahci.borrow_mut();
                 ahci_dev.config_mut().set_command(command);
                 if bar5_base != 0 {
-                    ahci_dev.config_mut().set_bar_base(5, bar5_base);
+                    ahci_dev.config_mut().set_bar_base(
+                        aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                        bar5_base,
+                    );
                 }
 
                 let mut level = ahci_dev.intx_level();
@@ -2769,7 +2778,7 @@ impl Machine {
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar5_base = cfg
-                .and_then(|cfg| cfg.bar_range(5))
+                .and_then(|cfg| cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX))
                 .map(|range| range.base)
                 .unwrap_or(0);
             (command, bar5_base)
@@ -2780,7 +2789,10 @@ impl Machine {
         let mut dev = ahci.borrow_mut();
         dev.config_mut().set_command(command);
         if bar5_base != 0 {
-            dev.config_mut().set_bar_base(5, bar5_base);
+            dev.config_mut().set_bar_base(
+                aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                bar5_base,
+            );
         }
 
         if bus_master_enabled {
@@ -3324,7 +3336,9 @@ impl snapshot::SnapshotSource for Machine {
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar5_base = cfg
-                        .and_then(|cfg| cfg.bar_range(5))
+                        .and_then(|cfg| {
+                            cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                        })
                         .map(|range| range.base)
                         .unwrap_or(0);
                     (command, bar5_base)
@@ -3332,7 +3346,10 @@ impl snapshot::SnapshotSource for Machine {
                 let mut ahci = ahci.borrow_mut();
                 ahci.config_mut().set_command(command);
                 if bar5_base != 0 {
-                    ahci.config_mut().set_bar_base(5, bar5_base);
+                    ahci.config_mut().set_bar_base(
+                        aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                        bar5_base,
+                    );
                 }
             }
             disk_controllers.insert(bdf.pack_u16(), ahci.borrow().save_state());
