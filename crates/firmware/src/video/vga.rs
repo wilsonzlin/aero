@@ -158,26 +158,34 @@ impl VgaDevice {
             lines
         };
 
-        for row in 0..window_rows {
-            let src_row = row + scroll_lines;
-            for col in 0..=(bottom_col - top_col) {
-                let dst_r = top_row + row;
-                let dst_c = top_col + col;
+        let window_cols = bottom_col - top_col + 1;
+        let row_bytes = (window_cols as usize).saturating_mul(2);
+        if row_bytes == 0 {
+            return;
+        }
 
-                if src_row < window_rows {
-                    let src_r = top_row + src_row;
-                    let src_c = top_col + col;
-                    let src_off = self.text_offset(cols, src_r, src_c);
-                    let ch = mem.read_u8(base + src_off);
-                    let at = mem.read_u8(base + src_off + 1);
-                    let dst_off = self.text_offset(cols, dst_r, dst_c);
-                    mem.write_u8(base + dst_off, ch);
-                    mem.write_u8(base + dst_off + 1, at);
-                } else {
-                    let dst_off = self.text_offset(cols, dst_r, dst_c);
-                    mem.write_u8(base + dst_off, b' ');
-                    mem.write_u8(base + dst_off + 1, attr);
+        let mut buf = vec![0u8; row_bytes];
+        let mut blank_ready = false;
+        for row in 0..window_rows {
+            let dst_r = top_row + row;
+            let dst_off = self.text_offset(cols, dst_r, top_col);
+            let dst_addr = base + dst_off;
+
+            let src_r = dst_r + scroll_lines;
+            if src_r <= bottom_row {
+                let src_off = self.text_offset(cols, src_r, top_col);
+                let src_addr = base + src_off;
+                mem.read_physical(src_addr, &mut buf);
+                mem.write_physical(dst_addr, &buf);
+            } else {
+                if !blank_ready {
+                    for pair in buf.chunks_exact_mut(2) {
+                        pair[0] = b' ';
+                        pair[1] = attr;
+                    }
+                    blank_ready = true;
                 }
+                mem.write_physical(dst_addr, &buf);
             }
         }
     }
@@ -211,25 +219,36 @@ impl VgaDevice {
             lines
         };
 
+        let window_cols = bottom_col - top_col + 1;
+        let row_bytes = (window_cols as usize).saturating_mul(2);
+        if row_bytes == 0 {
+            return;
+        }
+
+        let mut buf = vec![0u8; row_bytes];
+        let mut blank_ready = false;
+
         // Iterate bottom-up so we don't overwrite the source rows before copying.
         for row in (0..window_rows).rev() {
             let dst_r = top_row + row;
-            for col in 0..=(bottom_col - top_col) {
-                let dst_c = top_col + col;
-                if row >= scroll_lines {
-                    let src_r = top_row + row - scroll_lines;
-                    let src_c = top_col + col;
-                    let src_off = self.text_offset(cols, src_r, src_c);
-                    let ch = mem.read_u8(base + src_off);
-                    let at = mem.read_u8(base + src_off + 1);
-                    let dst_off = self.text_offset(cols, dst_r, dst_c);
-                    mem.write_u8(base + dst_off, ch);
-                    mem.write_u8(base + dst_off + 1, at);
-                } else {
-                    let dst_off = self.text_offset(cols, dst_r, dst_c);
-                    mem.write_u8(base + dst_off, b' ');
-                    mem.write_u8(base + dst_off + 1, attr);
+            let dst_off = self.text_offset(cols, dst_r, top_col);
+            let dst_addr = base + dst_off;
+
+            if row >= scroll_lines {
+                let src_r = top_row + row - scroll_lines;
+                let src_off = self.text_offset(cols, src_r, top_col);
+                let src_addr = base + src_off;
+                mem.read_physical(src_addr, &mut buf);
+                mem.write_physical(dst_addr, &buf);
+            } else {
+                if !blank_ready {
+                    for pair in buf.chunks_exact_mut(2) {
+                        pair[0] = b' ';
+                        pair[1] = attr;
+                    }
+                    blank_ready = true;
                 }
+                mem.write_physical(dst_addr, &buf);
             }
         }
     }
