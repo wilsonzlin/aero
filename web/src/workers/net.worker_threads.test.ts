@@ -25,11 +25,11 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 function parsePcapng(bytes: Uint8Array): {
-  interfaces: Array<{ name: string | null }>;
+  interfaces: Array<{ name: string | null; linkType: number }>;
   packets: Array<{ payload: Uint8Array; interfaceId: number; epbFlags: number | null }>;
 } {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const interfaces: Array<{ name: string | null }> = [];
+  const interfaces: Array<{ name: string | null; linkType: number }> = [];
   const packets: Array<{ payload: Uint8Array; interfaceId: number; epbFlags: number | null }> = [];
   const textDecoder = new TextDecoder();
 
@@ -48,6 +48,7 @@ function parsePcapng(bytes: Uint8Array): {
     // Interface Description Block.
     if (blockType === 0x00000001) {
       // IDB fixed body is 8 bytes: linktype(u16), reserved(u16), snaplen(u32).
+      const linkType = view.getUint16(bodyStart, true);
       let optOff = bodyStart + 8;
       let name: string | null = null;
       while (optOff + 4 <= bodyEnd) {
@@ -62,7 +63,7 @@ function parsePcapng(bytes: Uint8Array): {
         }
         optOff = valueStart + ((len + 3) & ~3);
       }
-      interfaces.push({ name });
+      interfaces.push({ name, linkType });
       off += blockLen;
       continue;
     }
@@ -455,7 +456,8 @@ describe("workers/net.worker (worker_threads)", () => {
 
       const parsed = parsePcapng(new Uint8Array(pcapngMsg.bytes));
       const guestEthId = parsed.interfaces.findIndex((iface) => iface.name === "guest-eth0");
-      expect(guestEthId).toBeGreaterThanOrEqual(0);
+      expect(guestEthId).toBe(0);
+      expect(parsed.interfaces[guestEthId]?.linkType).toBe(1); // LINKTYPE_ETHERNET
 
       const tx = parsed.packets.find((p) => arraysEqual(p.payload, txFrame));
       const rx = parsed.packets.find((p) => arraysEqual(p.payload, rxFrame));
