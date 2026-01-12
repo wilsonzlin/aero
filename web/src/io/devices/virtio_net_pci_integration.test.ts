@@ -349,14 +349,27 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
 
       const configureQueue = (queueIndex: number, desc: number, avail: number, used: number): number => {
         mmioWriteU16(commonBase + 0x16n, queueIndex);
+        expect(mmioReadU16(commonBase + 0x16n)).toBe(queueIndex);
+
         const max = mmioReadU16(commonBase + 0x18n);
         expect(max).toBeGreaterThanOrEqual(256);
         // Driver-selected queue size.
         mmioWriteU16(commonBase + 0x18n, 256);
         expect(mmioReadU16(commonBase + 0x18n)).toBe(256);
+
         mmioWriteU64(commonBase + 0x20n, BigInt(desc));
         mmioWriteU64(commonBase + 0x28n, BigInt(avail));
         mmioWriteU64(commonBase + 0x30n, BigInt(used));
+
+        const readCommonU64 = (off: bigint): bigint => {
+          const lo = BigInt(mmioReadU32(commonBase + off));
+          const hi = BigInt(mmioReadU32(commonBase + off + 4n));
+          return (hi << 32n) | lo;
+        };
+        expect(readCommonU64(0x20n)).toBe(BigInt(desc));
+        expect(readCommonU64(0x28n)).toBe(BigInt(avail));
+        expect(readCommonU64(0x30n)).toBe(BigInt(used));
+
         const notifyOff = mmioReadU16(commonBase + 0x1en);
         expect(notifyOff).toBe(queueIndex);
         mmioWriteU16(commonBase + 0x1cn, 1);
