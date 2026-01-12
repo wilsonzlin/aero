@@ -397,7 +397,20 @@ components:
       properties:
         baseUrl:
           type: string
-          description: Base URL for the UDP relay service.
+          description: |
+            Base URL for the UDP relay service.
+
+            May be an `http(s)://` or `ws(s)://` URL (the gateway accepts
+            `http:`, `https:`, `ws:`, `wss:`).
+
+            Clients must normalize schemes depending on the endpoint transport:
+
+            - HTTP endpoints (`/webrtc/ice`, `/webrtc/offer`) require `http(s)://`
+              (`ws://` → `http://`, `wss://` → `https://`).
+            - WebSocket endpoints (`/webrtc/signal`, `/udp`) require `ws(s)://`
+              (`http://` → `ws://`, `https://` → `wss://`).
+
+            Note: browser `fetch()` does not support `ws://` or `wss://` URLs.
           example: https://relay.example.com
         authMode:
           type: string
