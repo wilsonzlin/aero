@@ -826,4 +826,165 @@ mod tests {
             &frame_data[last_row_src..last_row_src + full_row_bytes]
         );
     }
+
+    #[test]
+    fn direct_upload_path_full_width_rect_with_y_offset_uses_correct_slice() {
+        let (width, height, bpp) = (64u32, 4u32, 4usize);
+        let stride = 256usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let rect = Rect::new(0, 1, width, 2);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(std::slice::from_ref(&rect)))
+            .unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, rect);
+        assert_eq!(call.bytes_per_row, stride);
+
+        let expected_len = required_data_len(stride, full_row_bytes, rect.h as usize);
+        let expected_off = rect.y as usize * stride;
+
+        assert_eq!(call.data.len(), expected_len);
+        assert_eq!(
+            call.data,
+            frame_data[expected_off..(expected_off + expected_len)].to_vec()
+        );
+
+        assert_eq!(telemetry.rects_requested, 1);
+        assert_eq!(telemetry.rects_uploaded, 1);
+        assert_eq!(telemetry.bytes_uploaded, expected_len);
+    }
+
+    #[test]
+    fn direct_upload_path_height1_does_not_require_256_alignment() {
+        let (width, height, bpp) = (3u32, 1u32, 4usize);
+        let stride = 12usize; // not 256-aligned, but height=1 allows direct upload.
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, None).unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, Rect::new(0, 0, width, height));
+        assert_eq!(call.bytes_per_row, full_row_bytes);
+        assert_eq!(call.data, frame_data);
+
+        assert_eq!(telemetry.bytes_uploaded, full_row_bytes);
+    }
+
+    #[test]
+    fn scratch_upload_path_when_stride_has_padding_even_for_full_frame() {
+        let (width, height, bpp) = (64u32, 4u32, 4usize);
+        let row_bytes = width as usize * bpp; // 256
+        let stride = row_bytes + 4; // padded rows
+
+        let frame_len = min_frame_len(stride, height as usize, row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, None).unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, Rect::new(0, 0, width, height));
+        assert_eq!(call.bytes_per_row, row_bytes);
+
+        let expected_len = required_data_len(row_bytes, row_bytes, height as usize);
+        assert_eq!(call.data.len(), expected_len);
+        assert_eq!(telemetry.bytes_uploaded, expected_len);
+
+        for row in 0..height as usize {
+            let src_off = row * stride;
+            let dst_off = row * row_bytes;
+            assert_eq!(
+                &call.data[dst_off..dst_off + row_bytes],
+                &frame_data[src_off..src_off + row_bytes]
+            );
+        }
+    }
+
+    #[test]
+    fn present_with_empty_dirty_rects_uploads_nothing_and_merge_rate_is_zero() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, Some(&[])).unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 0);
+        assert_eq!(
+            telemetry,
+            PresentTelemetry {
+                rects_requested: 0,
+                rects_after_merge: 0,
+                rects_uploaded: 0,
+                bytes_uploaded: 0,
+            }
+        );
+        assert_eq!(telemetry.merge_rate(), 0.0);
+        assert_eq!(presenter.last_telemetry(), telemetry);
+    }
+
+    #[test]
+    fn present_clamps_out_of_bounds_dirty_rect_before_uploading() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let requested = Rect::new(8, 8, 10, 10);
+        let clamped = Rect::new(8, 8, 2, 2);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(std::slice::from_ref(&requested)))
+            .unwrap();
+
+        assert_eq!(telemetry.rects_requested, 1);
+        assert_eq!(telemetry.rects_uploaded, 1);
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, clamped);
+        assert_eq!(call.bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
+
+        let row_bytes = clamped.w as usize * bpp;
+        let expected_len =
+            required_data_len(COPY_BYTES_PER_ROW_ALIGNMENT, row_bytes, clamped.h as usize);
+        assert_eq!(call.data.len(), expected_len);
+        assert_eq!(telemetry.bytes_uploaded, expected_len);
+
+        let row0_src = clamped.y as usize * stride + clamped.x as usize * bpp;
+        let row1_src = (clamped.y as usize + 1) * stride + clamped.x as usize * bpp;
+
+        assert_eq!(
+            &call.data[0..row_bytes],
+            &frame_data[row0_src..row0_src + row_bytes]
+        );
+        assert_eq!(
+            &call.data[COPY_BYTES_PER_ROW_ALIGNMENT..COPY_BYTES_PER_ROW_ALIGNMENT + row_bytes],
+            &frame_data[row1_src..row1_src + row_bytes]
+        );
+    }
 }
