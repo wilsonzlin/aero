@@ -1060,6 +1060,20 @@ export class I8042Controller implements PortIoHandler {
   }
 
   /**
+   * Inject relative mouse movement (PS/2 convention: positive Y = up).
+   */
+  injectMouseMove(dx: number, dy: number): void {
+    this.injectMouseMotion(dx, dy, 0);
+  }
+
+  /**
+   * Inject mouse wheel movement.
+   */
+  injectMouseWheel(dz: number): void {
+    this.injectMouseMotion(0, 0, dz);
+  }
+
+  /**
    * Host-side injection API: set absolute mouse button state bitmask.
    *
    * Bits: 0=left, 1=right, 2=middle.
@@ -1077,7 +1091,6 @@ export class I8042Controller implements PortIoHandler {
     else st &= ~STATUS_A2;
     return st & 0xff;
   }
-
   #writeCommand(cmd: number): void {
     this.#lastWriteWasCommand = true;
     this.#status |= STATUS_IBF;

@@ -82,6 +82,104 @@ describe("io/devices/I8042Controller", () => {
     expect(dev.portRead(0x0060, 1)).toBe(0x00);
   });
 
+  it("injects PS/2 mouse movement into the controller output buffer", () => {
+    const irqEvents: string[] = [];
+    const irqSink: IrqSink = {
+      raiseIrq: vi.fn((irq: number) => irqEvents.push(`raise:${irq}`)),
+      lowerIrq: vi.fn((irq: number) => irqEvents.push(`lower:${irq}`)),
+    };
+
+    const dev = new I8042Controller(irqSink);
+
+    // Enable mouse IRQ (IRQ12) in the command byte (bit 1).
+    dev.portWrite(0x0064, 1, 0x60);
+    dev.portWrite(0x0060, 1, 0x02);
+
+    // Enable mouse reporting via the real command path (controller command 0xD4 routes
+    // the next data byte to the mouse).
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf4);
+
+    // Drain the ACK emitted by the mouse.
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa);
+    expect(dev.portRead(0x0064, 1) & 0x01).toBe(0x00);
+
+    // Ignore the IRQ pulse for the ACK; we want to observe the injection path.
+    irqEvents.length = 0;
+
+    dev.injectMouseMove(10, 20);
+
+    // The output buffer should contain a mouse packet, and the MOBF bit should be set while
+    // the head byte is from the mouse.
+    expect(dev.portRead(0x0064, 1) & 0x21).toBe(0x21); // STATUS_OBF | STATUS_MOBF
+    expect(irqEvents).toEqual(["raise:12", "lower:12"]);
+
+    // 3-byte packet: status, dx, dy.
+    expect(dev.portRead(0x0060, 1)).toBe(0x08);
+    expect(dev.portRead(0x0060, 1)).toBe(10);
+    expect(dev.portRead(0x0060, 1)).toBe(20);
+
+    // Packet drained: output buffer empty.
+    expect(dev.portRead(0x0064, 1) & 0x01).toBe(0x00);
+  });
+
+  it("injects PS/2 mouse button state into the controller output buffer", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new I8042Controller(irqSink);
+
+    // Enable mouse reporting via the real command path.
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf4);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+
+    dev.injectMouseButtons(0x01); // left button
+
+    expect(dev.portRead(0x0064, 1) & 0x21).toBe(0x21); // STATUS_OBF | STATUS_MOBF
+
+    // 3-byte packet: status (with left button pressed), dx=0, dy=0.
+    expect(dev.portRead(0x0060, 1)).toBe(0x09);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+  });
+
+  it("injects PS/2 mouse wheel packets when IntelliMouse mode is enabled", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const dev = new I8042Controller(irqSink);
+
+    const sendMouseByte = (value: number) => {
+      dev.portWrite(0x0064, 1, 0xd4);
+      dev.portWrite(0x0060, 1, value);
+      expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    };
+
+    // Enable mouse reporting.
+    sendMouseByte(0xf4);
+
+    // Enable IntelliMouse wheel mode (200,100,80 sample rate sequence).
+    sendMouseByte(0xf3);
+    sendMouseByte(200);
+    sendMouseByte(0xf3);
+    sendMouseByte(100);
+    sendMouseByte(0xf3);
+    sendMouseByte(80);
+
+    // Confirm device ID is the wheel mouse (0x03).
+    dev.portWrite(0x0064, 1, 0xd4);
+    dev.portWrite(0x0060, 1, 0xf2);
+    expect(dev.portRead(0x0060, 1)).toBe(0xfa); // ACK
+    expect(dev.portRead(0x0060, 1)).toBe(0x03); // device id
+
+    dev.injectMouseWheel(1);
+
+    expect(dev.portRead(0x0064, 1) & 0x21).toBe(0x21); // STATUS_OBF | STATUS_MOBF
+
+    // 4-byte packet: status, dx=0, dy=0, wheel=+1.
+    expect(dev.portRead(0x0060, 1)).toBe(0x08);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x00);
+    expect(dev.portRead(0x0060, 1)).toBe(0x01);
+  });
+
   it("does not emit spurious IRQ pulses during snapshot restore", () => {
     const srcIrqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const src = new I8042Controller(srcIrqSink);

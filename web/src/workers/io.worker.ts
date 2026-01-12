@@ -3660,7 +3660,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           if (i8042Wasm) {
             i8042Wasm.injectMouseMove(dx, dyPs2);
           } else if (i8042Ts) {
-            i8042Ts.injectMouseMotion(dx, dyPs2, 0);
+            i8042Ts.injectMouseMove(dx, dyPs2);
           }
         } else {
           // PS/2 convention: positive is up. HID convention: positive is down.
@@ -3696,7 +3696,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           if (i8042Wasm) {
             i8042Wasm.injectMouseWheel(dz);
           } else if (i8042Ts) {
-            i8042Ts.injectMouseMotion(0, 0, dz);
+            i8042Ts.injectMouseWheel(dz);
           }
         } else {
           usbHid?.mouse_wheel(dz);
