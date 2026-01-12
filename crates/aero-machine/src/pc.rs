@@ -22,7 +22,7 @@ use aero_platform::reset::ResetKind;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::MapError;
 
-use crate::{MachineError, RunExit, VecBlockDevice};
+use crate::{MachineError, RunExit, SharedPciConfigPortsBiosAdapter, VecBlockDevice};
 
 /// Configuration for [`PcMachine`].
 #[derive(Debug, Clone)]
@@ -44,41 +44,6 @@ impl Default for PcMachineConfig {
             enable_hda: false,
             enable_e1000: true,
         }
-    }
-}
-
-struct PciCfgAdapter {
-    pci_cfg: aero_devices::pci::SharedPciConfigPorts,
-}
-
-impl PciCfgAdapter {
-    fn new(pci_cfg: aero_devices::pci::SharedPciConfigPorts) -> Self {
-        Self { pci_cfg }
-    }
-}
-
-impl firmware::bios::PciConfigSpace for PciCfgAdapter {
-    fn read_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-        let bdf = aero_devices::pci::PciBdf::new(bus, device, function);
-        self.pci_cfg
-            .borrow_mut()
-            .bus_mut()
-            .read_config(bdf, offset.into(), 4)
-    }
-
-    fn write_config_dword(
-        &mut self,
-        bus: u8,
-        device: u8,
-        function: u8,
-        offset: u8,
-        value: u32,
-    ) {
-        let bdf = aero_devices::pci::PciBdf::new(bus, device, function);
-        self.pci_cfg
-            .borrow_mut()
-            .bus_mut()
-            .write_config(bdf, offset.into(), 4, value);
     }
 }
 
@@ -268,7 +233,7 @@ impl PcMachine {
             ..Default::default()
         });
 
-        let mut pci_adapter = PciCfgAdapter::new(self.bus.platform.pci_cfg.clone());
+        let mut pci_adapter = SharedPciConfigPortsBiosAdapter::new(self.bus.platform.pci_cfg.clone());
         let mut bus = PlatformBiosBus {
             platform: &mut self.bus.platform,
             mapped_roms: HashMap::new(),

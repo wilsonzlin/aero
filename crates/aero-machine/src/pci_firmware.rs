@@ -56,6 +56,11 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     // PCI Configuration Mechanism #1 address (0xCF8).
     //
     // Bits 7:2 encode the DWORD-aligned register number; bits 1:0 are reserved and read as 0.
+    assert_eq!(
+        offset & 0x3,
+        0,
+        "PCI config dword offset must be 4-byte aligned"
+    );
     0x8000_0000
         | (u32::from(bus) << 16)
         | (u32::from(device) << 11)
@@ -70,10 +75,6 @@ fn read_config_dword_via_ports(
     function: u8,
     offset: u8,
 ) -> u32 {
-    // The firmware trait promises `offset` is DWORD aligned.
-    //
-    // Be defensive anyway and rely on config-mech1 semantics: bits 1:0 are ignored (DWORD aligned),
-    // so masking in `cfg_addr` yields the same result as real hardware.
     ports.io_write(
         PCI_CFG_ADDR_PORT,
         4,
@@ -90,7 +91,6 @@ fn write_config_dword_via_ports(
     offset: u8,
     value: u32,
 ) {
-    // See read_config_dword_via_ports for alignment notes.
     ports.io_write(
         PCI_CFG_ADDR_PORT,
         4,
@@ -124,12 +124,22 @@ impl firmware::bios::PciConfigSpace for SharedPciConfigPortsBiosAdapter {
 impl firmware::bios::PciConfigSpace for PciBusBiosAdapter<'_> {
     fn read_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
         let bdf = PciBdf::new(bus, device, function);
+        assert_eq!(
+            offset & 0x3,
+            0,
+            "PCI config dword offset must be 4-byte aligned"
+        );
         let offset = u16::from(offset & 0xFC);
         self.bus.read_config(bdf, offset, 4)
     }
 
     fn write_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
         let bdf = PciBdf::new(bus, device, function);
+        assert_eq!(
+            offset & 0x3,
+            0,
+            "PCI config dword offset must be 4-byte aligned"
+        );
         let offset = u16::from(offset & 0xFC);
         self.bus.write_config(bdf, offset, 4, value);
     }

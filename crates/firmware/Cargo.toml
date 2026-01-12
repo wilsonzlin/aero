@@ -9,8 +9,8 @@ aero-acpi = { path = "../aero-acpi" }
 aero-edid = { path = "../aero-edid" }
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-pc-constants = { path = "../aero-pc-constants" }
-aero-devices = { path = "../devices" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
+aero-devices = { path = "../devices" }
 aero-platform = { path = "../platform" }

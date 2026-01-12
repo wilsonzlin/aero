@@ -22,7 +22,6 @@ mod int1a;
 mod interrupts;
 mod ivt;
 mod pci;
-mod pci_config_ports;
 mod post;
 mod rom;
 mod snapshot;
@@ -43,7 +42,6 @@ pub use acpi::{AcpiBuilder, AcpiInfo};
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 pub use interrupts::E820Entry;
 pub use pci::{PciConfigSpace, PciDevice};
-pub use pci_config_ports::PciConfigPortsAdapter;
 pub use rom::build_bios_rom;
 pub use snapshot::BiosSnapshot;
 

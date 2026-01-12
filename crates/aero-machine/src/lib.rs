@@ -825,7 +825,13 @@ impl Machine {
             ..Default::default()
         });
         let bus: &mut dyn BiosBus = &mut self.mem;
-        self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
+        if let Some(pci_cfg) = &self.pci_cfg {
+            let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
+            self.bios
+                .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
+        } else {
+            self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
+        }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.mem.clear_dirty();
     }
