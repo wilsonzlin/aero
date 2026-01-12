@@ -15,6 +15,12 @@ metrics and basic health endpoints.
 - `GET|HEAD /v1/images/:image_id` (or `/v1/images/:image_id/data`) – stream image bytes
   (supports `Range` requests)
 
+Notes:
+
+- `image_id` is treated as an opaque identifier and must match **`[A-Za-z0-9._-]{1,128}`**.
+  Requests with invalid/overlong IDs are rejected early (and the server avoids recording unbounded
+  ID values in logs/metrics).
+
 ## Configuration (canonical)
 
 Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
