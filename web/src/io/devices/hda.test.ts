@@ -351,6 +351,29 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
 });
 
 describe("io/devices/HdaPciDevice microphone ring attachment", () => {
+  it("mirrors capture sample rate into the WASM bridge even when unchanged", () => {
+    const setCaptureRate = vi.fn();
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: setCaptureRate,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    dev.setCaptureSampleRateHz(48_000);
+    expect(setCaptureRate).toHaveBeenCalledWith(48_000);
+
+    setCaptureRate.mockClear();
+    dev.setCaptureSampleRateHz(48_000);
+    expect(setCaptureRate).toHaveBeenCalledTimes(1);
+    expect(setCaptureRate).toHaveBeenCalledWith(48_000);
+  });
+
   it("prefers attach_mic_ring/detach_mic_ring when the WASM bridge exports them", () => {
     const attachMic = vi.fn();
     const detachMic = vi.fn();
