@@ -465,6 +465,256 @@ fn ide_snapshot_rejects_invalid_drive_kind_enum() {
 }
 
 #[test]
+fn ide_snapshot_rejects_invalid_pio_write_presence_byte() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // The `pio_write` optional field is encoded as a presence byte (0 or 1).
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len (empty buffer)
+        .u32(0)
+        .u32(0)
+        // invalid pio_write present byte (=2)
+        .u8(2)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid pio_write presence byte");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide pio_write present")
+    );
+}
+
+#[test]
+fn ide_snapshot_rejects_invalid_pending_dma_presence_byte() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // The `pending_dma` optional field is encoded as a presence byte (0 or 1).
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len (empty buffer)
+        .u32(0)
+        .u32(0)
+        // pio_write absent
+        .u8(0)
+        // invalid pending_dma present byte (=2)
+        .u8(2)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid pending_dma presence byte");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide pending_dma present")
+    );
+}
+
+#[test]
+fn ide_snapshot_rejects_invalid_dma_direction_enum() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // DMA direction is encoded as a u8; only 0..=1 are valid.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len (empty buffer)
+        .u32(0)
+        .u32(0)
+        // pio_write absent
+        .u8(0)
+        // pending_dma present
+        .u8(1)
+        // invalid dma direction (=2)
+        .u8(2)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid dma direction");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide dma direction")
+    );
+}
+
+#[test]
+fn ide_snapshot_rejects_invalid_dma_commit_kind() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // DMA commit kind is encoded as a u8; only 0..=1 are valid.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len (empty buffer)
+        .u32(0)
+        .u32(0)
+        // pio_write absent
+        .u8(0)
+        // pending_dma present
+        .u8(1)
+        // dma direction (valid)
+        .u8(0)
+        // dma buffer length (0)
+        .u32(0)
+        // invalid commit kind (=2)
+        .u8(2)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid dma commit kind");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide dma commit kind")
+    );
+}
+
+#[test]
 fn ide_snapshot_rejects_oversized_dma_buffer() {
     let max_ide_buf = u32::try_from(MAX_IDE_DATA_BUFFER_BYTES).expect("max IDE buffer too large");
 
