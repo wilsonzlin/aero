@@ -132,6 +132,9 @@ jobs:
       - name: Check safe-run rustc retry detection
         shell: bash
         run: bash scripts/tests/safe-run-retry-detection.sh
+      - name: Check safe-run Cargo home isolation
+        shell: bash
+        run: bash scripts/tests/safe-run-cargo-home.sh
 
       - name: Check AeroGPU WDK guard macros
         run: python3 scripts/ci/check-aerogpu-wdk-guards.py
