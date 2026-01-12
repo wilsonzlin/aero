@@ -729,9 +729,9 @@ impl AhciPciConfigDevice {
     fn new() -> Self {
         let mut cfg = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
         cfg.set_bar_definition(
-            aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+            aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
             PciBarDefinition::Mmio32 {
-                size: aero_devices_storage::pci_ahci::AHCI_ABAR_SIZE_U32,
+                size: aero_devices::pci::profile::AHCI_ABAR_SIZE_U32,
                 prefetchable: false,
             },
         );
@@ -2740,7 +2740,7 @@ impl Machine {
                         let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                         let bar5_base = cfg
                             .and_then(|cfg| {
-                                cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                                cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                             })
                             .map(|range| range.base)
                             .unwrap_or(0);
@@ -2752,7 +2752,7 @@ impl Machine {
                 ahci_dev.config_mut().set_command(command);
                 if bar5_base != 0 {
                     ahci_dev.config_mut().set_bar_base(
-                        aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
                         bar5_base,
                     );
                 }
@@ -3692,7 +3692,7 @@ impl Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar5_base = cfg
                         .and_then(|cfg| {
-                            cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                            cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                         })
                         .map(|range| range.base)
                         .unwrap_or(0);
@@ -3703,7 +3703,7 @@ impl Machine {
                 ahci.config_mut().set_command(command);
                 if bar5_base != 0 {
                     ahci.config_mut().set_bar_base(
-                        aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
                         bar5_base,
                     );
                 }
@@ -3781,12 +3781,12 @@ impl Machine {
                         let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
                         router.register_handler(
                             bdf,
-                            aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                            aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
                             PciConfigSyncedMmioBar::new(
                                 pci_cfg.clone(),
                                 ahci,
                                 bdf,
-                                aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                                aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
                             ),
                         );
                     }
@@ -4076,7 +4076,7 @@ impl Machine {
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar5_base = cfg
-                .and_then(|cfg| cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX))
+                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX))
                 .map(|range| range.base)
                 .unwrap_or(0);
             (command, bar5_base)
@@ -4088,7 +4088,7 @@ impl Machine {
         dev.config_mut().set_command(command);
         if bar5_base != 0 {
             dev.config_mut().set_bar_base(
-                aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
                 bar5_base,
             );
         }
@@ -4953,7 +4953,7 @@ impl snapshot::SnapshotSource for Machine {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar5_base = cfg
                         .and_then(|cfg| {
-                            cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX)
+                            cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                         })
                         .map(|range| range.base)
                         .unwrap_or(0);
@@ -4963,7 +4963,7 @@ impl snapshot::SnapshotSource for Machine {
                 ahci.config_mut().set_command(command);
                 if bar5_base != 0 {
                     ahci.config_mut().set_bar_base(
-                        aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
                         bar5_base,
                     );
                 }
