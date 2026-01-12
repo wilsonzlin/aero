@@ -1406,18 +1406,18 @@ function renderMachineWorkerPanel(): HTMLElement {
           if (sharedPollTimer === null) {
             sharedPollTimer = window.setInterval(() => {
               if (!shared) return;
-              const w = Atomics.load(shared.header, HEADER_INDEX_WIDTH);
-              const h = Atomics.load(shared.header, HEADER_INDEX_HEIGHT);
-              const stride = Atomics.load(shared.header, HEADER_INDEX_STRIDE_BYTES);
-              const frame = Atomics.load(shared.header, HEADER_INDEX_FRAME_COUNTER);
-              vgaInfo.textContent = `vga: ${w}x${h} stride=${stride} frame=${frame}`;
-              const frameCount = Math.max(0, frame | 0);
-              testState.framesPresented = Math.max(testState.framesPresented, frameCount);
-              testState.width = Math.max(0, w | 0);
-              testState.height = Math.max(0, h | 0);
-              testState.strideBytes = Math.max(0, stride | 0);
-              presenter?.presentLatestFrame();
-            }, 50);
+            const w = Atomics.load(shared.header, HEADER_INDEX_WIDTH);
+            const h = Atomics.load(shared.header, HEADER_INDEX_HEIGHT);
+            const stride = Atomics.load(shared.header, HEADER_INDEX_STRIDE_BYTES);
+            const frame = Atomics.load(shared.header, HEADER_INDEX_FRAME_COUNTER);
+            vgaInfo.textContent = `vga: ${w}x${h} stride=${stride} frame=${frame}`;
+            const frameCount = frame >>> 0;
+            testState.framesPresented = frameCount;
+            testState.width = Math.max(0, w | 0);
+            testState.height = Math.max(0, h | 0);
+            testState.strideBytes = Math.max(0, stride | 0);
+            presenter?.presentLatestFrame();
+          }, 50);
             (sharedPollTimer as unknown as { unref?: () => void }).unref?.();
           }
           return;
@@ -1463,7 +1463,7 @@ function renderMachineWorkerPanel(): HTMLElement {
         presenter.pushCopyFrame(copyFrameFromMessageV1(msg));
         presenter.presentLatestFrame();
         vgaInfo.textContent = `vga: ${msg.width}x${msg.height} stride=${msg.strideBytes} frame=${msg.frameCounter}`;
-        testState.framesPresented += 1;
+        testState.framesPresented = Math.max(testState.framesPresented, msg.frameCounter >>> 0);
         testState.width = msg.width | 0;
         testState.height = msg.height | 0;
         testState.strideBytes = msg.strideBytes | 0;

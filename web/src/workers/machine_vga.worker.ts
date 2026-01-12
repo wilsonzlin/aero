@@ -112,6 +112,7 @@ let sharedFb: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let sharedWidth = 0;
 let sharedHeight = 0;
 let sharedStrideBytes = 0;
+let sharedFrameCounter = 0;
 
 let tickTimer: number | null = null;
 let copyFrameCounter = 0;
@@ -152,6 +153,7 @@ function stop(): void {
   sharedWidth = 0;
   sharedHeight = 0;
   sharedStrideBytes = 0;
+  sharedFrameCounter = 0;
   copyFrameCounter = 0;
   lastExitDetail = null;
 }
@@ -244,6 +246,7 @@ function ensureSharedFramebuffer(): ReturnType<typeof wrapSharedFramebuffer> | n
   sharedWidth = 1;
   sharedHeight = 1;
   sharedStrideBytes = 4;
+  sharedFrameCounter = 0;
   return fb;
 }
 
@@ -289,6 +292,9 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
       strideBytes,
       format: FRAMEBUFFER_FORMAT_RGBA8888,
     });
+    // Preserve the published frame counter across buffer swaps so consumers/tests can treat it as
+    // a monotonic "frames published" counter.
+    storeHeaderI32(next.header, HEADER_INDEX_FRAME_COUNTER, sharedFrameCounter);
     sharedSab = sab;
     sharedFb = next;
     fb = next;
@@ -311,7 +317,8 @@ function publishSharedFrame(width: number, height: number, strideBytes: number, 
   }
 
   fb.pixelsU8.set(pixels.subarray(0, requiredBytes), 0);
-  addHeaderI32(fb.header, HEADER_INDEX_FRAME_COUNTER, 1);
+  sharedFrameCounter = (sharedFrameCounter + 1) >>> 0;
+  storeHeaderI32(fb.header, HEADER_INDEX_FRAME_COUNTER, sharedFrameCounter);
   return true;
 }
 
