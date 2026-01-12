@@ -1642,6 +1642,57 @@ export function installAeroTieredMmioTestShims() {
     }
 
     #[wasm_bindgen_test]
+    fn wasm_tiered_bus_routes_ecam_hole_to_mmio_when_ram_exceeds_ecam_base() {
+        installAeroTieredMmioTestShims();
+
+        // Allocate a tiny backing buffer; we will only dereference low RAM addresses (0..len).
+        //
+        // Regression target: the Tiered VM must not treat the Q35 ECAM/PCI/MMIO hole
+        // ([PCIE_ECAM_BASE..4GiB)) as RAM when the *RAM byte size* exceeds PCIE_ECAM_BASE.
+        let mut guest = vec![0u8; 0x100];
+        let guest_base = guest.as_mut_ptr() as u32;
+
+        // Simulate a machine with low RAM up to PCIE_ECAM_BASE and 8KiB of remapped high RAM above
+        // 4GiB. This does not require allocating multi-gigabyte buffers because we only touch low
+        // RAM and hole addresses in the test.
+        let guest_size = crate::guest_phys::PCIE_ECAM_BASE + 0x2000;
+        let mut bus = WasmBus::new(guest_base, guest_size);
+
+        // Low RAM should still be directly accessible.
+        bus.write_u32(0, 0x1122_3344).expect("write_u32");
+        assert_eq!(bus.read_u32(0).expect("read_u32"), 0x1122_3344);
+
+        // ECAM hole accesses must route to MMIO (and must not attempt a direct RAM dereference).
+        let hole = crate::guest_phys::PCIE_ECAM_BASE;
+        assert_eq!(
+            bus.read_u32(hole).expect("mmio read_u32"),
+            hole as u32
+        );
+        bus.write_u16(hole + 0x10, 0x1234).expect("mmio write_u16");
+
+        // High-RAM physical addresses >=4GiB should map back into RAM offsets starting at
+        // PCIE_ECAM_BASE (without being routed to MMIO).
+        assert_eq!(
+            bus.ram_offset(crate::guest_phys::HIGH_RAM_BASE, 4),
+            Some(crate::guest_phys::PCIE_ECAM_BASE)
+        );
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 2);
+
+        let c0 = calls.get(0);
+        assert_eq!(call_prop_str(&c0, "kind"), "read");
+        assert_eq!(call_prop_u32(&c0, "addr"), hole as u32);
+        assert_eq!(call_prop_u32(&c0, "size"), 4);
+
+        let c1 = calls.get(1);
+        assert_eq!(call_prop_str(&c1, "kind"), "write");
+        assert_eq!(call_prop_u32(&c1, "addr"), (hole + 0x10) as u32);
+        assert_eq!(call_prop_u32(&c1, "size"), 2);
+        assert_eq!(call_prop_u32(&c1, "value"), 0x1234);
+    }
+
+    #[wasm_bindgen_test]
     fn wasm_tiered_bus_straddling_ram_and_mmio_reads_and_writes_bytewise() {
         installAeroTieredMmioTestShims();
 
