@@ -38,6 +38,7 @@ _EXPORT_RE = re.compile(
 )
 _MSC_VER_RE = re.compile(r"^_MSC_VER\s*=\s*(?P<value>\d+)\s*$", re.MULTILINE)
 _UMD_IFACE_VER_RE = re.compile(r"^D3D_UMD_INTERFACE_VERSION\s*=\s*(?P<value>\d+)\s*$", re.MULTILINE)
+_MACRO_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -113,13 +114,43 @@ def _get_export_bytes(data: ProbeData, which: str) -> int:
         raise SystemExit(f"Missing x86 export decoration for OpenAdapter{which} in probe output")
 
 
-def _emit_header(x86: ProbeData, x64: ProbeData, *, allow_na: bool) -> str:
+def _emit_header(x86: ProbeData, x64: ProbeData, *, allow_na: bool, emit_all: bool) -> str:
     # Use a timezone-aware UTC timestamp; `utcnow()` is deprecated in newer
     # Python versions.
     now = _dt.datetime.now(tz=_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     def emit_arch_block(data: ProbeData, *, include_exports: bool) -> list[str]:
         out: list[str] = []
+
+        if emit_all:
+            if include_exports:
+                out.extend(
+                    [
+                        "  // Exported entrypoints (x86 stdcall decoration).",
+                        f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_STDCALL_BYTES {_get_export_bytes(data, '10')}",
+                        f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES {_get_export_bytes(data, '10_2')}",
+                        f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES {_get_export_bytes(data, '11')}",
+                        "",
+                    ]
+                )
+
+            out.append("  // sizeof(...)")
+            for type_name, value in sorted(data.sizeof.items()):
+                # Probe output includes `sizeof(void*)`; skip any names that are
+                # not valid preprocessor identifiers.
+                if not _MACRO_IDENT_RE.match(type_name):
+                    continue
+                out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_{type_name} {value}")
+            out.append("")
+
+            out.append("  // offsetof(...)")
+            for (type_name, member), value in sorted(data.offsetof.items()):
+                if not _MACRO_IDENT_RE.match(type_name) or not _MACRO_IDENT_RE.match(member):
+                    continue
+                out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_{type_name}_{member} {value}")
+            out.append("")
+
+            return out
 
         if include_exports:
             out.extend(
@@ -334,6 +365,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Allow optional offsetof(...) entries to be <n/a> in probe output (emits no macro for that field).",
     )
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="Emit all parsed sizeof/offsetof values from the probe output (not just curated anchors).",
+    )
     args = ap.parse_args(argv)
 
     x86_text = args.x86.read_text(encoding="utf-8", errors="replace")
@@ -342,7 +378,7 @@ def main(argv: list[str]) -> int:
     x86 = _parse_probe_output(x86_text)
     x64 = _parse_probe_output(x64_text)
 
-    header = _emit_header(x86, x64, allow_na=args.allow_na)
+    header = _emit_header(x86, x64, allow_na=args.allow_na, emit_all=args.all)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(header, encoding="utf-8", newline="\n")
 
