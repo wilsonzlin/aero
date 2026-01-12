@@ -3239,6 +3239,11 @@ mod proptests {
 
         #[test]
         fn parse_synthesize_roundtrip(collections in collections_strategy()) {
+            // The generator produces structurally-valid metadata, but does not attempt to enforce
+            // all HID-over-USB constraints (e.g. max full-speed interrupt packet size). Reject
+            // cases that fail validation so this property test focuses on roundtrippable inputs.
+            prop_assume!(validate_collections(&collections).is_ok());
+
             let bytes = synthesize_report_descriptor(&collections)
                 .expect("synthesized report descriptor must succeed for generated metadata");
             let parsed = parse_report_descriptor(&bytes)

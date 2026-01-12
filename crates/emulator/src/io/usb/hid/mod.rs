@@ -76,11 +76,24 @@ fn clamp_response(mut data: Vec<u8>, setup_w_length: u16) -> Vec<u8> {
 }
 
 fn build_string_descriptor_utf16le(s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + s.len() * 2);
-    out.push(0); // bLength filled in later
+    // USB string descriptors encode `bLength` as a u8, and strings are UTF-16LE. This caps the
+    // total descriptor size to 254 bytes (2-byte header + up to 126 UTF-16 code units) and avoids
+    // truncating surrogate pairs mid-character.
+    const MAX_LEN: usize = 254;
+
+    let mut out = Vec::with_capacity(MAX_LEN);
+    out.push(0); // bLength placeholder
     out.push(USB_DESCRIPTOR_TYPE_STRING);
-    for ch in s.encode_utf16() {
-        out.extend_from_slice(&ch.to_le_bytes());
+    for ch in s.chars() {
+        let mut buf = [0u16; 2];
+        let units = ch.encode_utf16(&mut buf);
+        let needed = units.len() * 2;
+        if out.len() + needed > MAX_LEN {
+            break;
+        }
+        for unit in units {
+            out.extend_from_slice(&unit.to_le_bytes());
+        }
     }
     out[0] = out.len() as u8;
     out
@@ -92,4 +105,26 @@ fn build_string_descriptor_utf16le(s: &str) -> Vec<u8> {
 /// reports for [`keyboard::UsbHidKeyboard`].
 pub fn hid_usage_from_js_code(code: &str) -> Option<u8> {
     usage::keyboard_code_to_usage(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn string_descriptors_are_capped_to_u8_length_and_remain_valid_utf16() {
+        let long = "😀".repeat(1000);
+        let desc = build_string_descriptor_utf16le(&long);
+        assert_eq!(desc.len(), 254);
+        assert_eq!(desc[0] as usize, desc.len());
+        assert_eq!(desc[1], USB_DESCRIPTOR_TYPE_STRING);
+
+        let payload = &desc[2..];
+        assert_eq!(payload.len() % 2, 0);
+        let units: Vec<u16> = payload
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        String::from_utf16(&units).expect("payload must be valid UTF-16");
+    }
 }
