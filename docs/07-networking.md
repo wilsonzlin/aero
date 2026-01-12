@@ -69,6 +69,8 @@ prefix, e.g.:
   the coordinator's nonfatal event stream.
 - Tunnel transport errors are emitted at `ERROR` (`l2: error: ...`).
 
+For packet-level debugging (Wireshark), see **Network Tracing (PCAP/PCAPNG Export)** below.
+
 See:
 - `web/src/net/l2TunnelForwarder.ts` (counters + log formatting helper)
 - `web/src/workers/net.worker.ts` (periodic + transition log emission)
