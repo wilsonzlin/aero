@@ -1,6 +1,20 @@
 #include "virtio_pci_interrupts.h"
 
+/*
+ * Pool tags are traditionally specified as multi-character constants (e.g. 'tInV')
+ * in WDK codebases. Host-side unit tests build this file with GCC/Clang, which
+ * warn on multi-character character constants.
+ *
+ * Define the tag via a portable shift-based encoding for non-MSVC builds to
+ * avoid -Wmultichar noise in CI.
+ */
+#if defined(_MSC_VER)
 #define VIRTIO_PCI_INTERRUPTS_POOL_TAG 'tInV'
+#else
+#define VIRTIO_PCI_MAKE_POOL_TAG(a, b, c, d) \
+	((ULONG)(((ULONG)(a) << 24) | ((ULONG)(b) << 16) | ((ULONG)(c) << 8) | ((ULONG)(d))))
+#define VIRTIO_PCI_INTERRUPTS_POOL_TAG VIRTIO_PCI_MAKE_POOL_TAG('t', 'I', 'n', 'V')
+#endif
 
 typedef struct _VIRTIO_PCI_INTERRUPT_CONTEXT {
     PVIRTIO_PCI_INTERRUPTS Interrupts;
