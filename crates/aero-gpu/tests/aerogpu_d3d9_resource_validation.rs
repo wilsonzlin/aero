@@ -672,6 +672,152 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
 }
 
 #[test]
+fn d3d9_create_texture2d_guest_backing_bounds_bc1() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // BC1 4x4 is exactly 1 block => 8 bytes.
+    let mut guest_memory = VecGuestMemory::new(0x1000);
+
+    let ok_alloc = AllocTable::new([(
+        1,
+        AllocEntry {
+            flags: 0,
+            gpa: 0x1000,
+            size_bytes: 8,
+        },
+    )])
+    .expect("alloc table");
+
+    let mut writer_ok = AerogpuCmdWriter::new();
+    writer_ok.create_texture2d(
+        1,                                 // texture_handle
+        0,                                 // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        4,                                 // width
+        4,                                 // height
+        1,                                 // mip_levels
+        1,                                 // array_layers
+        8,                                 // row_pitch_bytes (1 block row)
+        1,                                 // backing_alloc_id
+        0,                                 // backing_offset_bytes
+    );
+    let stream_ok = writer_ok.finish();
+    exec.execute_cmd_stream_with_guest_memory(&stream_ok, &mut guest_memory, Some(&ok_alloc))
+        .expect("BC1 create_texture2d should succeed with exact backing size");
+
+    let small_alloc = AllocTable::new([(
+        1,
+        AllocEntry {
+            flags: 0,
+            gpa: 0x1000,
+            size_bytes: 7,
+        },
+    )])
+    .expect("alloc table");
+
+    let mut writer_fail = AerogpuCmdWriter::new();
+    writer_fail.create_texture2d(
+        2,                                 // texture_handle
+        0,                                 // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        4,                                 // width
+        4,                                 // height
+        1,                                 // mip_levels
+        1,                                 // array_layers
+        8,                                 // row_pitch_bytes (1 block row)
+        1,                                 // backing_alloc_id
+        0,                                 // backing_offset_bytes
+    );
+    let stream_fail = writer_fail.finish();
+    match exec.execute_cmd_stream_with_guest_memory(&stream_fail, &mut guest_memory, Some(&small_alloc))
+    {
+        Ok(_) => panic!("expected BC1 CREATE_TEXTURE2D to be rejected when alloc is too small"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("out of bounds")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_texture2d_guest_backing_bounds_bc3() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // BC3 4x4 is exactly 1 block => 16 bytes.
+    let mut guest_memory = VecGuestMemory::new(0x1000);
+
+    let ok_alloc = AllocTable::new([(
+        1,
+        AllocEntry {
+            flags: 0,
+            gpa: 0x1000,
+            size_bytes: 16,
+        },
+    )])
+    .expect("alloc table");
+
+    let mut writer_ok = AerogpuCmdWriter::new();
+    writer_ok.create_texture2d(
+        1,                                 // texture_handle
+        0,                                 // usage_flags
+        AerogpuFormat::BC3RgbaUnorm as u32, // format
+        4,                                 // width
+        4,                                 // height
+        1,                                 // mip_levels
+        1,                                 // array_layers
+        16,                                // row_pitch_bytes (1 block row)
+        1,                                 // backing_alloc_id
+        0,                                 // backing_offset_bytes
+    );
+    let stream_ok = writer_ok.finish();
+    exec.execute_cmd_stream_with_guest_memory(&stream_ok, &mut guest_memory, Some(&ok_alloc))
+        .expect("BC3 create_texture2d should succeed with exact backing size");
+
+    let small_alloc = AllocTable::new([(
+        1,
+        AllocEntry {
+            flags: 0,
+            gpa: 0x1000,
+            size_bytes: 15,
+        },
+    )])
+    .expect("alloc table");
+
+    let mut writer_fail = AerogpuCmdWriter::new();
+    writer_fail.create_texture2d(
+        2,                                 // texture_handle
+        0,                                 // usage_flags
+        AerogpuFormat::BC3RgbaUnorm as u32, // format
+        4,                                 // width
+        4,                                 // height
+        1,                                 // mip_levels
+        1,                                 // array_layers
+        16,                                // row_pitch_bytes (1 block row)
+        1,                                 // backing_alloc_id
+        0,                                 // backing_offset_bytes
+    );
+    let stream_fail = writer_fail.finish();
+    match exec.execute_cmd_stream_with_guest_memory(&stream_fail, &mut guest_memory, Some(&small_alloc))
+    {
+        Ok(_) => panic!("expected BC3 CREATE_TEXTURE2D to be rejected when alloc is too small"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("out of bounds")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_create_buffer_rejects_unaligned_size() {
     use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdCreateBuffer, AerogpuCmdStreamHeader};
 

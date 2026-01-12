@@ -138,6 +138,7 @@ pub enum AerogpuFormat {
     B5G6R5Unorm = 5,
     B5G5R5A1Unorm = 6,
 
+    // ABI 1.2+: explicit sRGB format variants.
     B8G8R8A8UnormSrgb = 7,
     B8G8R8X8UnormSrgb = 8,
     R8G8B8A8UnormSrgb = 9,
