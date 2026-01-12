@@ -2347,17 +2347,6 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       if (e1000Blob) {
         restoreE1000DeviceState(e1000Blob.bytes);
       }
-
-      const e1000Blob = devicesRaw.find(
-        (entry): entry is { kind: string; bytes: Uint8Array } =>
-          !!entry &&
-          typeof (entry as { kind?: unknown }).kind === "string" &&
-          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_E1000_KIND &&
-          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-      );
-      if (e1000Blob) {
-        restoreE1000DeviceState(e1000Blob.bytes);
-      }
       snapshotRestoredDeviceBlobs = cachedDevices;
 
       return {
