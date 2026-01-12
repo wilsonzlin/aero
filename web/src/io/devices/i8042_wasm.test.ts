@@ -22,7 +22,7 @@ describe("I8042Bridge (wasm)", () => {
       const message = err instanceof Error ? err.message : String(err);
       // `npm test` does not build the WASM packages by default. Skip this test when the
       // `wasm-pack` output is absent (fresh checkout / CI without `npm run wasm:build`).
-      if (message.includes("Missing single-thread WASM package")) {
+      if (message.includes("Missing single") && message.includes("WASM package")) {
         return;
       }
       throw err;

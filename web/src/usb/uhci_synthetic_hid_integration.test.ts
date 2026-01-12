@@ -243,7 +243,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       ({ api } = await initWasm({ variant: "single", memory }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("Missing single-thread WASM package")) return;
+      if (message.includes("Missing single") && message.includes("WASM package")) return;
       throw err;
     }
 
@@ -408,7 +408,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       ({ api } = await initWasm({ variant: "single", memory }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("Missing single-thread WASM package")) return;
+      if (message.includes("Missing single") && message.includes("WASM package")) return;
       throw err;
     }
 
@@ -575,7 +575,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       ({ api } = await initWasm({ variant: "single", memory }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("Missing single-thread WASM package")) return;
+      if (message.includes("Missing single") && message.includes("WASM package")) return;
       throw err;
     }
 
@@ -734,7 +734,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       ({ api } = await initWasm({ variant: "single", memory }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("Missing single-thread WASM package")) return;
+      if (message.includes("Missing single") && message.includes("WASM package")) return;
       throw err;
     }
 

@@ -19,7 +19,7 @@ async function getWasmApi(): Promise<WasmApi | null> {
     const message = err instanceof Error ? err.message : String(err);
     // The wasm-pack output is generated and may be absent in some test environments;
     // skip rather than failing unrelated suites.
-    if (message.includes("Missing single-thread WASM package")) {
+    if (message.includes("Missing single") && message.includes("WASM package")) {
       cachedApi = null;
       return null;
     }

@@ -46,7 +46,7 @@ describe("runtime/wasm_loader (memory injection)", () => {
         const message = err instanceof Error ? err.message : String(err);
         // The wasm-pack output is generated and may be absent in some test
         // environments; skip rather than failing unrelated suites.
-        if (message.includes("Missing threaded WASM package")) return;
+        if (message.includes("Missing threaded") && message.includes("WASM package")) return;
         throw err;
       }
     } finally {
