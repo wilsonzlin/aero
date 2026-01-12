@@ -510,6 +510,35 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "unsupported bits per sample")]
+    fn bytes_per_sample_panics_for_unsupported_bits() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 12,
+            channels: 2,
+        };
+        let _ = fmt.bytes_per_sample();
+    }
+
+    #[test]
+    fn decode_encode_are_noops_for_zero_channel_format() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 16,
+            channels: 0,
+        };
+        assert_eq!(fmt.bytes_per_frame(), 0);
+
+        let mut out_frames = vec![[1.0, 2.0]];
+        decode_pcm_to_stereo_f32_into(&[0u8; 16], fmt, &mut out_frames);
+        assert!(out_frames.is_empty(), "out must be cleared on early return");
+
+        let mut out_bytes = vec![1u8, 2, 3];
+        encode_mono_f32_to_pcm_into(&[0.25, -0.25], fmt, &mut out_bytes);
+        assert!(out_bytes.is_empty(), "out must be cleared on early return");
+    }
+
+    #[test]
     fn pcm_decode_8bit_unsigned_bias() {
         assert_f32_approx_eq(decode_one_sample(&[0], 8), -1.0, 1e-6);
         assert_f32_approx_eq(decode_one_sample(&[128], 8), 0.0, 1e-6);
