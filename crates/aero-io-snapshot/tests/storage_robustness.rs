@@ -1,6 +1,7 @@
+use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_io_snapshot::io::storage::state::{
-    DiskBackendState, DiskLayerState, LocalDiskBackendKind, LocalDiskBackendState,
+    DiskBackendState, DiskLayerState, IdeControllerState, LocalDiskBackendKind, LocalDiskBackendState,
     NvmeControllerState,
 };
 
@@ -159,5 +160,66 @@ fn disk_layer_snapshot_rejects_unaligned_disk_size() {
     assert_eq!(
         err,
         SnapshotError::InvalidFieldEncoding("disk_size not multiple of sector_size")
+    );
+}
+
+#[test]
+fn ide_snapshot_rejects_oversized_pio_data_buffer() {
+    // Keep in sync with `MAX_IDE_DATA_BUFFER_BYTES` in `aero-io-snapshot`.
+    const MAX_IDE_PIO: u32 = 16 * 1024 * 1024;
+
+    const TAG_PRIMARY: u16 = 2;
+
+    // Build a minimally-valid primary-channel payload that declares a huge PIO buffer length.
+    // The decoder should reject it without attempting to allocate or read the bytes.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len
+        .u32(0)
+        .u32(MAX_IDE_PIO + 1)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject oversized PIO buffer");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("ide pio buffer too large")
     );
 }

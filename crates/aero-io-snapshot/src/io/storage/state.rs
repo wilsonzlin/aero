@@ -519,92 +519,548 @@ impl IoSnapshot for DiskLayerState {
 }
 
 // ----------------------------------------
-// IDE controller (placeholder state)
+// PCI IDE / ATA / ATAPI controller state
 // ----------------------------------------
 
+// Snapshots may be loaded from untrusted sources. The IDE controller can expose
+// multi-sector PIO and ATAPI transfers; cap any inlined data buffers to avoid
+// pathological allocations.
+const MAX_IDE_DATA_BUFFER_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdeInFlightCommandState {
-    pub lba: u32,
-    pub sector_count: u16,
-    pub is_write: bool,
+pub struct PciConfigSpaceState {
+    pub regs: [u8; 256],
+
+    // BAR decode/probe state used by config reads.
+    pub bar0: u32,
+    pub bar1: u32,
+    pub bar2: u32,
+    pub bar3: u32,
+    pub bar4: u32,
+    pub bar0_probe: bool,
+    pub bar1_probe: bool,
+    pub bar2_probe: bool,
+    pub bar3_probe: bool,
+    pub bar4_probe: bool,
+
+    // Latched I/O decode bases (may differ from BARs during size probes).
+    pub bus_master_base: u16,
+}
+
+impl Default for PciConfigSpaceState {
+    fn default() -> Self {
+        Self {
+            regs: [0u8; 256],
+            bar0: 0,
+            bar1: 0,
+            bar2: 0,
+            bar3: 0,
+            bar4: 0,
+            bar0_probe: false,
+            bar1_probe: false,
+            bar2_probe: false,
+            bar3_probe: false,
+            bar4_probe: false,
+            bus_master_base: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IdePortMapState {
+    pub cmd_base: u16,
+    pub ctrl_base: u16,
+    pub irq: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IdeTaskFileState {
+    pub features: u8,
+    pub sector_count: u8,
+    pub lba0: u8,
+    pub lba1: u8,
+    pub lba2: u8,
+    pub device: u8,
+
+    pub hob_features: u8,
+    pub hob_sector_count: u8,
+    pub hob_lba0: u8,
+    pub hob_lba1: u8,
+    pub hob_lba2: u8,
+
+    pub pending_features_high: bool,
+    pub pending_sector_count_high: bool,
+    pub pending_lba0_high: bool,
+    pub pending_lba1_high: bool,
+    pub pending_lba2_high: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdeDataMode {
+    None = 0,
+    PioIn = 1,
+    PioOut = 2,
+}
+
+impl Default for IdeDataMode {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdeTransferKind {
+    AtaPioRead = 1,
+    AtaPioWrite = 2,
+    Identify = 3,
+    AtapiPacket = 4,
+    AtapiPioIn = 5,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdeDmaDirection {
+    ToMemory = 0,
+    FromMemory = 1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdeDmaCommitState {
+    AtaWrite { lba: u64, sectors: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdeDmaRequestState {
+    pub direction: IdeDmaDirection,
+    pub buffer: Vec<u8>,
+    pub commit: Option<IdeDmaCommitState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdeBusMasterChannelState {
+    pub cmd: u8,
+    pub status: u8,
+    pub prd_addr: u32,
+}
+
+impl Default for IdeBusMasterChannelState {
+    fn default() -> Self {
+        Self {
+            cmd: 0,
+            status: 0,
+            prd_addr: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdeAtaDeviceState {
+    pub udma_mode: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdeAtapiDeviceState {
+    pub tray_open: bool,
+    pub media_changed: bool,
+    pub media_present: bool,
+    pub sense_key: u8,
+    pub asc: u8,
+    pub ascq: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdeDriveState {
+    None,
+    Ata(IdeAtaDeviceState),
+    Atapi(IdeAtapiDeviceState),
+}
+
+impl Default for IdeDriveState {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IdePioWriteState {
+    pub lba: u64,
+    pub sectors: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IdeChannelState {
+    pub ports: IdePortMapState,
+
+    pub tf: IdeTaskFileState,
+    pub status: u8,
+    pub error: u8,
+    pub control: u8,
+
+    pub irq_pending: bool,
+
+    pub data_mode: IdeDataMode,
+    pub transfer_kind: Option<IdeTransferKind>,
+    pub data: Vec<u8>,
+    pub data_index: u32,
+
+    pub pending_dma: Option<IdeDmaRequestState>,
+    pub pio_write: Option<IdePioWriteState>,
+
+    pub bus_master: IdeBusMasterChannelState,
+
+    pub drives: [IdeDriveState; 2],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IdeControllerState {
-    pub command: u8,
-    pub status: u8,
-    pub error: u8,
-    pub sector_count: u16,
-    pub lba: u32,
-    pub dma_active: bool,
-    pub in_flight: Option<IdeInFlightCommandState>,
+    pub pci: PciConfigSpaceState,
+    pub primary: IdeChannelState,
+    pub secondary: IdeChannelState,
+}
+
+impl PciConfigSpaceState {
+    fn encode(&self) -> Vec<u8> {
+        Encoder::new()
+            .bytes(&self.regs)
+            .u32(self.bar0)
+            .u32(self.bar1)
+            .u32(self.bar2)
+            .u32(self.bar3)
+            .u32(self.bar4)
+            .bool(self.bar0_probe)
+            .bool(self.bar1_probe)
+            .bool(self.bar2_probe)
+            .bool(self.bar3_probe)
+            .bool(self.bar4_probe)
+            .u16(self.bus_master_base)
+            .finish()
+    }
+
+    fn decode(bytes: &[u8]) -> SnapshotResult<Self> {
+        let mut d = Decoder::new(bytes);
+        let regs_bytes = d.bytes(256)?;
+        let mut regs = [0u8; 256];
+        regs.copy_from_slice(regs_bytes);
+        let bar0 = d.u32()?;
+        let bar1 = d.u32()?;
+        let bar2 = d.u32()?;
+        let bar3 = d.u32()?;
+        let bar4 = d.u32()?;
+        let bar0_probe = d.bool()?;
+        let bar1_probe = d.bool()?;
+        let bar2_probe = d.bool()?;
+        let bar3_probe = d.bool()?;
+        let bar4_probe = d.bool()?;
+        let bus_master_base = d.u16()?;
+        d.finish()?;
+        Ok(Self {
+            regs,
+            bar0,
+            bar1,
+            bar2,
+            bar3,
+            bar4,
+            bar0_probe,
+            bar1_probe,
+            bar2_probe,
+            bar3_probe,
+            bar4_probe,
+            bus_master_base,
+        })
+    }
+}
+
+impl IdeTaskFileState {
+    fn encode(&self, mut e: Encoder) -> Encoder {
+        e = e
+            .u8(self.features)
+            .u8(self.sector_count)
+            .u8(self.lba0)
+            .u8(self.lba1)
+            .u8(self.lba2)
+            .u8(self.device)
+            .u8(self.hob_features)
+            .u8(self.hob_sector_count)
+            .u8(self.hob_lba0)
+            .u8(self.hob_lba1)
+            .u8(self.hob_lba2)
+            .bool(self.pending_features_high)
+            .bool(self.pending_sector_count_high)
+            .bool(self.pending_lba0_high)
+            .bool(self.pending_lba1_high)
+            .bool(self.pending_lba2_high);
+        e
+    }
+
+    fn decode(d: &mut Decoder<'_>) -> SnapshotResult<Self> {
+        Ok(Self {
+            features: d.u8()?,
+            sector_count: d.u8()?,
+            lba0: d.u8()?,
+            lba1: d.u8()?,
+            lba2: d.u8()?,
+            device: d.u8()?,
+            hob_features: d.u8()?,
+            hob_sector_count: d.u8()?,
+            hob_lba0: d.u8()?,
+            hob_lba1: d.u8()?,
+            hob_lba2: d.u8()?,
+            pending_features_high: d.bool()?,
+            pending_sector_count_high: d.bool()?,
+            pending_lba0_high: d.bool()?,
+            pending_lba1_high: d.bool()?,
+            pending_lba2_high: d.bool()?,
+        })
+    }
+}
+
+impl IdeChannelState {
+    fn encode(&self) -> Vec<u8> {
+        let mut e = Encoder::new()
+            .u16(self.ports.cmd_base)
+            .u16(self.ports.ctrl_base)
+            .u8(self.ports.irq);
+
+        e = self.tf.encode(e);
+
+        e = e
+            .u8(self.status)
+            .u8(self.error)
+            .u8(self.control)
+            .bool(self.irq_pending);
+
+        let data_mode = self.data_mode as u8;
+        let transfer_kind = self
+            .transfer_kind
+            .map(|k| k as u8)
+            .unwrap_or(0);
+
+        e = e
+            .u8(data_mode)
+            .u8(transfer_kind)
+            .u32(self.data_index)
+            .u32(self.data.len() as u32)
+            .bytes(&self.data);
+
+        match &self.pio_write {
+            None => {
+                e = e.u8(0);
+            }
+            Some(pw) => {
+                e = e.u8(1).u64(pw.lba).u64(pw.sectors);
+            }
+        }
+
+        match &self.pending_dma {
+            None => {
+                e = e.u8(0);
+            }
+            Some(req) => {
+                e = e.u8(1);
+                let dir = req.direction as u8;
+                e = e.u8(dir).u32(req.buffer.len() as u32).bytes(&req.buffer);
+                match &req.commit {
+                    None => {
+                        e = e.u8(0);
+                    }
+                    Some(IdeDmaCommitState::AtaWrite { lba, sectors }) => {
+                        e = e.u8(1).u64(*lba).u64(*sectors);
+                    }
+                }
+            }
+        }
+
+        e = e
+            .u8(self.bus_master.cmd)
+            .u8(self.bus_master.status)
+            .u32(self.bus_master.prd_addr);
+
+        for drive in &self.drives {
+            match drive {
+                IdeDriveState::None => {
+                    e = e.u8(0);
+                }
+                IdeDriveState::Ata(ata) => {
+                    e = e.u8(1).u8(ata.udma_mode);
+                }
+                IdeDriveState::Atapi(atapi) => {
+                    e = e
+                        .u8(2)
+                        .bool(atapi.tray_open)
+                        .bool(atapi.media_changed)
+                        .bool(atapi.media_present)
+                        .u8(atapi.sense_key)
+                        .u8(atapi.asc)
+                        .u8(atapi.ascq);
+                }
+            }
+        }
+
+        e.finish()
+    }
+
+    fn decode(bytes: &[u8]) -> SnapshotResult<Self> {
+        let mut d = Decoder::new(bytes);
+
+        let ports = IdePortMapState {
+            cmd_base: d.u16()?,
+            ctrl_base: d.u16()?,
+            irq: d.u8()?,
+        };
+
+        let tf = IdeTaskFileState::decode(&mut d)?;
+
+        let status = d.u8()?;
+        let error = d.u8()?;
+        let control = d.u8()?;
+        let irq_pending = d.bool()?;
+
+        let data_mode_raw = d.u8()?;
+        let data_mode = match data_mode_raw {
+            0 => IdeDataMode::None,
+            1 => IdeDataMode::PioIn,
+            2 => IdeDataMode::PioOut,
+            _ => return Err(SnapshotError::InvalidFieldEncoding("ide data_mode")),
+        };
+
+        let transfer_raw = d.u8()?;
+        let transfer_kind = match transfer_raw {
+            0 => None,
+            1 => Some(IdeTransferKind::AtaPioRead),
+            2 => Some(IdeTransferKind::AtaPioWrite),
+            3 => Some(IdeTransferKind::Identify),
+            4 => Some(IdeTransferKind::AtapiPacket),
+            5 => Some(IdeTransferKind::AtapiPioIn),
+            _ => return Err(SnapshotError::InvalidFieldEncoding("ide transfer_kind")),
+        };
+
+        let data_index = d.u32()?;
+        let data_len = d.u32()? as usize;
+        if data_len > MAX_IDE_DATA_BUFFER_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding("ide pio buffer too large"));
+        }
+        if data_index as usize > data_len {
+            return Err(SnapshotError::InvalidFieldEncoding("ide pio data_index"));
+        }
+        let data = d.bytes(data_len)?.to_vec();
+
+        let pio_write = match d.u8()? {
+            0 => None,
+            1 => Some(IdePioWriteState {
+                lba: d.u64()?,
+                sectors: d.u64()?,
+            }),
+            _ => return Err(SnapshotError::InvalidFieldEncoding("ide pio_write present")),
+        };
+
+        let pending_dma = match d.u8()? {
+            0 => None,
+            1 => {
+                let dir_raw = d.u8()?;
+                let direction = match dir_raw {
+                    0 => IdeDmaDirection::ToMemory,
+                    1 => IdeDmaDirection::FromMemory,
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("ide dma direction")),
+                };
+                let len = d.u32()? as usize;
+                if len > MAX_IDE_DATA_BUFFER_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("ide dma buffer too large"));
+                }
+                let buffer = d.bytes(len)?.to_vec();
+                let commit = match d.u8()? {
+                    0 => None,
+                    1 => Some(IdeDmaCommitState::AtaWrite {
+                        lba: d.u64()?,
+                        sectors: d.u64()?,
+                    }),
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("ide dma commit kind")),
+                };
+                Some(IdeDmaRequestState {
+                    direction,
+                    buffer,
+                    commit,
+                })
+            }
+            _ => return Err(SnapshotError::InvalidFieldEncoding("ide pending_dma present")),
+        };
+
+        let bus_master = IdeBusMasterChannelState {
+            cmd: d.u8()?,
+            status: d.u8()?,
+            prd_addr: d.u32()?,
+        };
+
+        let mut drives: [IdeDriveState; 2] = core::array::from_fn(|_| IdeDriveState::None);
+        for slot in drives.iter_mut() {
+            let kind = d.u8()?;
+            *slot = match kind {
+                0 => IdeDriveState::None,
+                1 => IdeDriveState::Ata(IdeAtaDeviceState { udma_mode: d.u8()? }),
+                2 => IdeDriveState::Atapi(IdeAtapiDeviceState {
+                    tray_open: d.bool()?,
+                    media_changed: d.bool()?,
+                    media_present: d.bool()?,
+                    sense_key: d.u8()?,
+                    asc: d.u8()?,
+                    ascq: d.u8()?,
+                }),
+                _ => return Err(SnapshotError::InvalidFieldEncoding("ide drive kind")),
+            };
+        }
+
+        d.finish()?;
+
+        Ok(Self {
+            ports,
+            tf,
+            status,
+            error,
+            control,
+            irq_pending,
+            data_mode,
+            transfer_kind,
+            data,
+            data_index,
+            pending_dma,
+            pio_write,
+            bus_master,
+            drives,
+        })
+    }
 }
 
 impl IoSnapshot for IdeControllerState {
     const DEVICE_ID: [u8; 4] = *b"IDE0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 0);
 
     fn save_state(&self) -> Vec<u8> {
-        const TAG_COMMAND: u16 = 1;
-        const TAG_STATUS: u16 = 2;
-        const TAG_ERROR: u16 = 3;
-        const TAG_SECTOR_COUNT: u16 = 4;
-        const TAG_LBA: u16 = 5;
-        const TAG_DMA_ACTIVE: u16 = 6;
-        const TAG_IN_FLIGHT: u16 = 7;
+        const TAG_PCI: u16 = 1;
+        const TAG_PRIMARY: u16 = 2;
+        const TAG_SECONDARY: u16 = 3;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-        w.field_u8(TAG_COMMAND, self.command);
-        w.field_u8(TAG_STATUS, self.status);
-        w.field_u8(TAG_ERROR, self.error);
-        w.field_u16(TAG_SECTOR_COUNT, self.sector_count);
-        w.field_u32(TAG_LBA, self.lba);
-        w.field_bool(TAG_DMA_ACTIVE, self.dma_active);
-
-        if let Some(cmd) = &self.in_flight {
-            let bytes = Encoder::new()
-                .u32(cmd.lba)
-                .u16(cmd.sector_count)
-                .bool(cmd.is_write)
-                .finish();
-            w.field_bytes(TAG_IN_FLIGHT, bytes);
-        }
+        w.field_bytes(TAG_PCI, self.pci.encode());
+        w.field_bytes(TAG_PRIMARY, self.primary.encode());
+        w.field_bytes(TAG_SECONDARY, self.secondary.encode());
         w.finish()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        const TAG_COMMAND: u16 = 1;
-        const TAG_STATUS: u16 = 2;
-        const TAG_ERROR: u16 = 3;
-        const TAG_SECTOR_COUNT: u16 = 4;
-        const TAG_LBA: u16 = 5;
-        const TAG_DMA_ACTIVE: u16 = 6;
-        const TAG_IN_FLIGHT: u16 = 7;
+        const TAG_PCI: u16 = 1;
+        const TAG_PRIMARY: u16 = 2;
+        const TAG_SECONDARY: u16 = 3;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        self.command = r.u8(TAG_COMMAND)?.unwrap_or(0);
-        self.status = r.u8(TAG_STATUS)?.unwrap_or(0);
-        self.error = r.u8(TAG_ERROR)?.unwrap_or(0);
-        self.sector_count = r.u16(TAG_SECTOR_COUNT)?.unwrap_or(0);
-        self.lba = r.u32(TAG_LBA)?.unwrap_or(0);
-        self.dma_active = r.bool(TAG_DMA_ACTIVE)?.unwrap_or(false);
-
-        self.in_flight = if let Some(buf) = r.bytes(TAG_IN_FLIGHT) {
-            let mut d = Decoder::new(buf);
-            let lba = d.u32()?;
-            let sector_count = d.u16()?;
-            let is_write = d.bool()?;
-            d.finish()?;
-            Some(IdeInFlightCommandState {
-                lba,
-                sector_count,
-                is_write,
-            })
-        } else {
-            None
-        };
+        if let Some(buf) = r.bytes(TAG_PCI) {
+            self.pci = PciConfigSpaceState::decode(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_PRIMARY) {
+            self.primary = IdeChannelState::decode(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_SECONDARY) {
+            self.secondary = IdeChannelState::decode(buf)?;
+        }
         Ok(())
     }
 }

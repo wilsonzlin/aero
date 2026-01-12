@@ -7,9 +7,12 @@ use aero_io_snapshot::io::network::state::{
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::{
-    DiskBackendState, DiskCacheState, DiskLayerState, DiskOverlayState, IdeControllerState,
-    IdeInFlightCommandState, LocalDiskBackendKind, LocalDiskBackendState, NvmeCompletionQueueState,
-    NvmeControllerState, NvmeInFlightCommandState, NvmeSubmissionQueueState,
+    DiskBackendState, DiskCacheState, DiskLayerState, DiskOverlayState, IdeAtaDeviceState,
+    IdeAtapiDeviceState, IdeBusMasterChannelState, IdeChannelState, IdeControllerState, IdeDataMode,
+    IdeDmaDirection, IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState,
+    IdeTaskFileState, IdeTransferKind, LocalDiskBackendKind, LocalDiskBackendState,
+    NvmeCompletionQueueState, NvmeControllerState, NvmeInFlightCommandState, NvmeSubmissionQueueState,
+    PciConfigSpaceState,
     RemoteDiskBackendState, RemoteDiskBaseState, RemoteDiskValidator,
 };
 
@@ -83,18 +86,102 @@ fn disk_layer_state_roundtrip_remote() {
 
 #[test]
 fn ide_state_roundtrip() {
+    let mut regs = [0u8; 256];
+    regs[0..4].copy_from_slice(&0x7010_8086u32.to_le_bytes());
+
     let ide = IdeControllerState {
-        command: 0xec,
-        status: 0x50,
-        error: 0x01,
-        sector_count: 8,
-        lba: 0x1234_5678,
-        dma_active: true,
-        in_flight: Some(IdeInFlightCommandState {
-            lba: 0xdead_beef,
-            sector_count: 16,
-            is_write: true,
-        }),
+        pci: PciConfigSpaceState {
+            regs,
+            bar0: 0x1f1,
+            bar1: 0x3f5,
+            bar2: 0x171,
+            bar3: 0x375,
+            bar4: 0xc001,
+            bar0_probe: false,
+            bar1_probe: true,
+            bar2_probe: false,
+            bar3_probe: false,
+            bar4_probe: false,
+            bus_master_base: 0xc000,
+        },
+        primary: IdeChannelState {
+            ports: IdePortMapState {
+                cmd_base: 0x1f0,
+                ctrl_base: 0x3f6,
+                irq: 14,
+            },
+            tf: IdeTaskFileState {
+                features: 1,
+                sector_count: 2,
+                lba0: 3,
+                lba1: 4,
+                lba2: 5,
+                device: 0xe0,
+                hob_features: 6,
+                hob_sector_count: 7,
+                hob_lba0: 8,
+                hob_lba1: 9,
+                hob_lba2: 10,
+                pending_features_high: true,
+                pending_sector_count_high: false,
+                pending_lba0_high: true,
+                pending_lba1_high: false,
+                pending_lba2_high: true,
+            },
+            status: 0x50,
+            error: 0x01,
+            control: 0x02,
+            irq_pending: true,
+            data_mode: IdeDataMode::PioIn,
+            transfer_kind: Some(IdeTransferKind::AtaPioRead),
+            data: vec![1, 2, 3, 4, 5],
+            data_index: 2,
+            pending_dma: Some(IdeDmaRequestState {
+                direction: IdeDmaDirection::ToMemory,
+                buffer: vec![9, 8, 7],
+                commit: None,
+            }),
+            pio_write: Some(IdePioWriteState {
+                lba: 0x1234,
+                sectors: 2,
+            }),
+            bus_master: IdeBusMasterChannelState {
+                cmd: 0x09,
+                status: 0x04,
+                prd_addr: 0x1000,
+            },
+            drives: [
+                IdeDriveState::Ata(IdeAtaDeviceState { udma_mode: 2 }),
+                IdeDriveState::Atapi(IdeAtapiDeviceState {
+                    tray_open: false,
+                    media_changed: true,
+                    media_present: true,
+                    sense_key: 0x06,
+                    asc: 0x28,
+                    ascq: 0,
+                }),
+            ],
+        },
+        secondary: IdeChannelState {
+            ports: IdePortMapState {
+                cmd_base: 0x170,
+                ctrl_base: 0x376,
+                irq: 15,
+            },
+            data_mode: IdeDataMode::None,
+            transfer_kind: None,
+            data: Vec::new(),
+            data_index: 0,
+            pending_dma: None,
+            pio_write: None,
+            bus_master: IdeBusMasterChannelState {
+                cmd: 0,
+                status: 0,
+                prd_addr: 0,
+            },
+            drives: [IdeDriveState::None, IdeDriveState::None],
+            ..Default::default()
+        },
     };
 
     let snap = ide.save_state();

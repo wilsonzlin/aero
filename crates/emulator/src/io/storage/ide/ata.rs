@@ -3,6 +3,8 @@ use crate::io::storage::{
     SECTOR_SIZE,
 };
 
+use aero_io_snapshot::io::storage::state::IdeAtaDeviceState;
+
 pub struct AtaDevice {
     backend: Box<dyn DiskBackend>,
     model: String,
@@ -145,6 +147,16 @@ impl AtaDevice {
             }
             _ => {}
         }
+    }
+
+    pub fn snapshot_state(&self) -> IdeAtaDeviceState {
+        IdeAtaDeviceState {
+            udma_mode: self.udma_mode,
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &IdeAtaDeviceState) {
+        self.udma_mode = state.udma_mode;
     }
 }
 
