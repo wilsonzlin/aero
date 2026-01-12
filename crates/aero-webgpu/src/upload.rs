@@ -46,7 +46,11 @@ impl Rgba8TextureUploader {
         rgba: &[u8],
         stride_bytes: u32,
     ) {
-        debug_assert!(width > 0 && height > 0);
+        // Treat empty uploads as a no-op. WebGPU validation rejects zero-sized copy extents, and
+        // callers may produce degenerate frame sizes during resize/minimize transitions.
+        if width == 0 || height == 0 {
+            return;
+        }
 
         let unpadded_bpr = width * 4;
         debug_assert!(stride_bytes >= unpadded_bpr);
