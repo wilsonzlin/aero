@@ -248,6 +248,42 @@ fn qcow2_rejects_corrupt_magic() {
 }
 
 #[test]
+fn qcow2_zero_writes_do_not_allocate_clusters() {
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let initial_len = backend.len().unwrap();
+    let cluster_size = 1u64 << 12;
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    let zeros = vec![0u8; SECTOR_SIZE];
+    disk.write_sectors(0, &zeros).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+    assert_eq!(final_len, initial_len);
+    assert!(final_len.is_multiple_of(cluster_size));
+}
+
+#[test]
+fn qcow2_nonzero_write_allocates_cluster_and_grows_file() {
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let initial_len = backend.len().unwrap();
+    let cluster_size = 1u64 << 12;
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    let data = vec![0xA5u8; SECTOR_SIZE];
+    disk.write_sectors(0, &data).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+    assert!(final_len > initial_len);
+    assert!(final_len.is_multiple_of(cluster_size));
+}
+
+#[test]
 fn vhd_fixed_fixture_read() {
     let backend = make_vhd_fixed_with_pattern();
     let mut disk = VhdDisk::open(backend).unwrap();
@@ -255,6 +291,24 @@ fn vhd_fixed_fixture_read() {
     let mut sector = [0u8; SECTOR_SIZE];
     disk.read_sectors(0, &mut sector).unwrap();
     assert_eq!(&sector[..10], b"hello vhd!");
+}
+
+#[test]
+fn vhd_fixed_write_last_sector_persists_and_footer_remains_valid() {
+    let virtual_size = 64 * 1024u64;
+    let backend = make_vhd_fixed_with_pattern();
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    let last_lba = (virtual_size / SECTOR_SIZE as u64) - 1;
+    let data = vec![0xDDu8; SECTOR_SIZE];
+    disk.write_sectors(last_lba, &data).unwrap();
+    disk.flush().unwrap();
+
+    let backend = disk.into_backend();
+    let mut reopened = VhdDisk::open(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(last_lba, &mut back).unwrap();
+    assert_eq!(back, data);
 }
 
 #[test]
@@ -271,6 +325,36 @@ fn vhd_dynamic_unallocated_reads_zero_and_writes_allocate() {
     let mut back = vec![0u8; SECTOR_SIZE * 2];
     disk.read_sectors(1, &mut back).unwrap();
     assert_eq!(back, data);
+}
+
+#[test]
+fn vhd_dynamic_zero_writes_do_not_allocate_blocks() {
+    let mut backend = make_vhd_dynamic_empty(64 * 1024, 16 * 1024);
+    let initial_len = backend.len().unwrap();
+
+    let mut disk = VhdDisk::open(backend).unwrap();
+    let zeros = vec![0u8; SECTOR_SIZE];
+    disk.write_sectors(0, &zeros).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+    assert_eq!(final_len, initial_len);
+}
+
+#[test]
+fn vhd_dynamic_nonzero_write_allocates_block_and_grows_file() {
+    let mut backend = make_vhd_dynamic_empty(64 * 1024, 16 * 1024);
+    let initial_len = backend.len().unwrap();
+
+    let mut disk = VhdDisk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    disk.write_sectors(0, &data).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+    assert!(final_len > initial_len);
 }
 
 #[test]
