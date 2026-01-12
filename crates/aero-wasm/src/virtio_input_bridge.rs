@@ -119,7 +119,7 @@ impl VirtioInputPciDeviceCore {
         offset: u64,
         size: u8,
         value: u32,
-        _mem: &mut dyn GuestMemory,
+        mem: &mut dyn GuestMemory,
     ) {
         let size = validate_mmio_size(size);
         if size == 0 {
@@ -127,6 +127,11 @@ impl VirtioInputPciDeviceCore {
         }
         let bytes = value.to_le_bytes();
         self.pci.bar0_write(offset, &bytes[..size]);
+        // The virtio-pci notify region is write-only and records pending queue notifications.
+        // In the browser/WASM integration we have direct access to guest RAM, so process notified
+        // queues immediately (so buffers posted during driver init are consumed even if the host
+        // does not call `poll()` until later).
+        self.pci.process_notified_queues(mem);
     }
 
     pub fn poll(&mut self, mem: &mut dyn GuestMemory) {
