@@ -584,6 +584,65 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("webrtc mode maps ws:// UDP relay base URLs to http:// fetch endpoints", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalFetch = globalThis.fetch;
+    const originalPc = g.RTCPeerConnection;
+
+    g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
+
+    const fetchUrls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      fetchUrls.push(url.toString());
+
+      if (url.pathname.endsWith("/session")) {
+        return new Response(
+          JSON.stringify({
+            udpRelay: { baseUrl: "ws://relay.example.com/base", token: "sekrit" },
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname.endsWith("/webrtc/ice")) {
+        return new Response(JSON.stringify({ iceServers: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url.pathname.endsWith("/webrtc/offer")) {
+        return new Response(JSON.stringify({ sdp: { type: "answer", sdp: "fake-answer" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      throw new Error(`unexpected fetch url: ${url.toString()}`);
+    }) as unknown as typeof fetch;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("https://gateway.example.com", {
+      mode: "webrtc",
+      sink: (ev) => events.push(ev),
+      relaySignalingMode: "http-offer",
+      tunnelOptions: { keepaliveMinMs: 0, keepaliveMaxMs: 0 },
+    });
+
+    try {
+      expect(fetchUrls).toContain("https://gateway.example.com/session");
+      expect(fetchUrls).toContain("http://relay.example.com/base/webrtc/ice");
+      expect(fetchUrls).toContain("http://relay.example.com/base/webrtc/offer");
+      expect(fetchUrls.some((u) => u.startsWith("ws:") || u.startsWith("wss:"))).toBe(false);
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalPc === undefined) delete g.RTCPeerConnection;
+      else g.RTCPeerConnection = originalPc;
+    }
+  });
+
   it("does not spam error events (respects L2 tunnel throttling)", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
