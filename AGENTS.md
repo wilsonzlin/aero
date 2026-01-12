@@ -184,6 +184,8 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 41. [Driver Packaging, Catalogs, and WDK Redistributables](./docs/16-driver-packaging-and-signing.md)
 42. [Architecture Decision Records (ADRs)](./docs/adr/README.md)
 43. [Agent Resource Limits & Concurrency](./docs/agent-resource-limits.md)
+44. [IndexedDB storage story (async vs sync)](./docs/19-indexeddb-storage-story.md)
+45. [Storage trait consolidation (disk/backing-store traits)](./docs/20-storage-trait-consolidation.md)
 
 ---
 
@@ -490,6 +492,8 @@ pub trait DisplayAdapter {
 | [03-memory-management.md](./docs/03-memory-management.md)                                             | Virtual memory, paging, TLB                                                                                             | Core                 |
 | [04-graphics-subsystem.md](./docs/04-graphics-subsystem.md)                                           | DirectX → WebGPU translation                                                                                            | Graphics             |
 | [05-storage-subsystem.md](./docs/05-storage-subsystem.md)                                             | Disk emulation, AHCI, virtio                                                                                            | I/O                  |
+| [19-indexeddb-storage-story.md](./docs/19-indexeddb-storage-story.md)                                 | IndexedDB async-only constraints and integration options (Option A vs Option C)                                         | I/O / Infra          |
+| [20-storage-trait-consolidation.md](./docs/20-storage-trait-consolidation.md)                         | Canonical disk/backend traits + consolidation plan (Rust + TypeScript)                                                  | I/O / Infra          |
 | [06-audio-subsystem.md](./docs/06-audio-subsystem.md)                                                 | HD Audio, Web Audio API                                                                                                 | I/O                  |
 | [07-networking.md](./docs/07-networking.md)                                                           | Network stack emulation                                                                                                 | I/O                  |
 | [08-input-devices.md](./docs/08-input-devices.md)                                                     | Keyboard, mouse, USB HID                                                                                                | I/O                  |
