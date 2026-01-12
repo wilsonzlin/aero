@@ -322,6 +322,12 @@ To connect them, the worker maintains per-device queues:
   - if a report is queued: return it as the transfer payload
   - if the queue is empty: NAK (guest will poll again)
 
+Note: Aero models passthrough HID devices as **USB 1.1 full-speed** interfaces. Interrupt
+endpoints therefore have a maximum packet size of **64 bytes**. We currently do not support
+splitting a single HID report across multiple interrupt transactions, so oversized input/output
+reports are rejected at attach/descriptor-synthesis time. (Feature reports use control transfers and
+can be larger.)
+
 #### Output/feature reports (guest → device)
 
 - When the guest sends a `SET_REPORT` (control transfer) or an interrupt OUT
