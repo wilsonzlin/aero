@@ -136,6 +136,49 @@ fn worklet_bridge_restore_tolerates_capacity_mismatch_and_clamps_indices() {
 }
 
 #[wasm_bindgen_test]
+fn worklet_bridge_restore_clamps_wrapping_indices_when_write_ahead_of_capacity() {
+    let capacity_frames = 8;
+    let channel_count = 2;
+    let bridge = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+
+    let sab = bridge.shared_buffer();
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+    let samples = Float32Array::new_with_byte_offset_and_length(
+        &sab,
+        HEADER_BYTES as u32,
+        capacity_frames * channel_count,
+    );
+
+    // Use a snapshot state where indices have wrapped around u32::MAX and the implied buffered
+    // level exceeds the ring capacity.
+    let read = u32::MAX - 2;
+    let write = read.wrapping_add(20);
+    let mut state = bridge.snapshot_state();
+    state.read_pos = read;
+    state.write_pos = write;
+
+    // Seed samples with non-zero values to ensure restore clears them.
+    let _ = samples.fill(123.0, 0, samples.length());
+
+    bridge.restore_state(&state);
+
+    let expected_read = write.wrapping_sub(capacity_frames);
+    assert_eq!(
+        atomics_load_u32(&header, READ_FRAME_INDEX as u32),
+        expected_read
+    );
+    assert_eq!(
+        atomics_load_u32(&header, WRITE_FRAME_INDEX as u32),
+        write
+    );
+    assert_eq!(bridge.buffer_level_frames(), capacity_frames);
+
+    for i in 0..samples.length() {
+        assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
+    }
+}
+
+#[wasm_bindgen_test]
 fn hda_controller_save_load_restores_worklet_ring_and_clears_samples() {
     let capacity_frames = 8;
     let channel_count = 2;
