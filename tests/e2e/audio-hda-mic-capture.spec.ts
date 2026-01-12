@@ -101,7 +101,17 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
   await page.waitForFunction(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
-    return coord?.getWorkerStatuses?.().io?.state === "ready";
+    const statuses = coord?.getWorkerStatuses?.();
+    // Wait for *all* workers to reach READY so the coordinator won't later re-send
+    // microphone ring-buffer attachments during late READY handling (it re-syncs
+    // ring attachments on every READY event).
+    return (
+      statuses?.cpu?.state === "ready" &&
+      statuses?.io?.state === "ready" &&
+      statuses?.gpu?.state === "ready" &&
+      statuses?.jit?.state === "ready" &&
+      statuses?.net?.state === "ready"
+    );
   });
 
   await page.waitForFunction(() => {
