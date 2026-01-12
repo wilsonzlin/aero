@@ -547,6 +547,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_hda_format_multiplier_and_divisor_tables() {
+        // Base 48kHz, 16-bit, mono.
+        //
+        // These are intentionally somewhat redundant with other parsing tests, but they
+        // provide full coverage over all multiplier/divisor selector values that the
+        // implementation explicitly handles.
+        for (mult_code, mult) in [(0u16, 1u32), (1, 2), (2, 3), (3, 4)] {
+            let fmt = (mult_code << 11) | (0 << 8) | (1 << 4) | 0;
+            let parsed = StreamFormat::from_hda_format(fmt);
+            assert_eq!(parsed.sample_rate_hz, 48_000 * mult);
+        }
+
+        // Divisor codes map to 1..=8.
+        let expected_divs: &[(u16, u32)] = &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 8),
+        ];
+        for &(div_code, div) in expected_divs {
+            let fmt = (0 << 11) | (div_code << 8) | (1 << 4) | 0;
+            let parsed = StreamFormat::from_hda_format(fmt);
+            assert_eq!(parsed.sample_rate_hz, 48_000 / div);
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "unsupported bits per sample")]
     fn bytes_per_sample_panics_for_unsupported_bits() {
         let fmt = StreamFormat {
