@@ -312,6 +312,18 @@ impl AeroGpuSoftwareExecutor {
         handle
     }
 
+    fn retire_shared_surface_tokens_for_resource(&mut self, resource_handle: u32) {
+        let tokens: Vec<u64> = self
+            .shared_surfaces
+            .iter()
+            .filter_map(|(token, handle)| (*handle == resource_handle).then_some(*token))
+            .collect();
+        for token in tokens {
+            self.shared_surfaces.remove(&token);
+            self.retired_shared_surface_tokens.insert(token);
+        }
+    }
+
     fn parse_alloc_table(
         &self,
         regs: &mut AeroGpuRegs,
@@ -2386,34 +2398,12 @@ impl AeroGpuSoftwareExecutor {
                         destroyed_underlying = true;
                         self.texture_refcounts.remove(&resolved);
                         self.textures.remove(&resolved);
-                        let mut retired_tokens = Vec::new();
-                        self.shared_surfaces.retain(|token, v| {
-                            if *v == resolved {
-                                retired_tokens.push(*token);
-                                false
-                            } else {
-                                true
-                            }
-                        });
-                        self.retired_shared_surface_tokens.extend(retired_tokens);
+                        self.retire_shared_surface_tokens_for_resource(resolved);
                         self.resource_aliases.retain(|_, v| *v != resolved);
                     }
                 } else {
                     destroyed_underlying = self.textures.remove(&resolved).is_some();
-                    if destroyed_underlying {
-                        let mut retired_tokens = Vec::new();
-                        self.shared_surfaces.retain(|token, v| {
-                            if *v == resolved {
-                                retired_tokens.push(*token);
-                                false
-                            } else {
-                                true
-                            }
-                        });
-                        self.retired_shared_surface_tokens.extend(retired_tokens);
-                    } else {
-                        self.shared_surfaces.retain(|_, v| *v != resolved);
-                    }
+                    self.retire_shared_surface_tokens_for_resource(resolved);
                     self.resource_aliases.retain(|_, v| *v != resolved);
                 }
                 self.state.render_targets.iter_mut().for_each(|rt| {
@@ -3478,6 +3468,10 @@ impl AeroGpuSoftwareExecutor {
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let token = u64::from_le(packet_cmd.share_token);
                 if handle == 0 || token == 0 {
+                    Self::record_error(regs);
+                    return true;
+                }
+                if self.retired_shared_surface_tokens.contains(&token) {
                     Self::record_error(regs);
                     return true;
                 }

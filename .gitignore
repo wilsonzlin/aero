@@ -71,6 +71,8 @@ pkg/
 .cache/
 *.tsbuildinfo
 *.proptest-regressions
+proptest-regressions/
+**/proptest-regressions/
 *.wasm
 *.wat
 .cargo-home/

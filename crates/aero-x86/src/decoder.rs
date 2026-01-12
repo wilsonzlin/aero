@@ -68,6 +68,41 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         }
     }
 
+    // Intel TSX defines XABORT (C6 F8 ib) and XBEGIN (C7 F8 iw/id). Some upstream decoders treat
+    // these encodings as Group 11 MOV instructions. Route to the iced-powered decoder so our
+    // operand kinds match iced-x86 (including the relative operand for XBEGIN).
+    if opcode.map == OpcodeMap::Primary
+        && matches!(opcode.opcode, 0xC6 | 0xC7)
+        && opcode.opcode_ext == Some(7)
+    {
+        let (mut operands, inst_len) =
+            decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?;
+
+        if inst_len > MAX_INST_LEN {
+            return Err(DecodeError::TooLong);
+        }
+
+        fixup_implicit_operands(
+            opcode,
+            mode,
+            prefixes,
+            operand_size,
+            address_size,
+            &mut operands,
+        );
+        let flags = classify_inst(opcode, &operands);
+
+        return Ok(DecodedInst {
+            length: inst_len as u8,
+            opcode,
+            prefixes,
+            operand_size,
+            address_size,
+            operands,
+            flags,
+        });
+    }
+
     if opcode.map == OpcodeMap::Extended {
         let (mut operands, inst_len) =
             decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?;
@@ -581,6 +616,24 @@ fn parse_opcode(
                 2,
             ))
         }
+    } else if b0 == 0x8F {
+        // XOP shares its first byte with `POP r/m16/32/64` (`0x8F /0`). Disambiguate by checking
+        // the `m-mmmm` field in byte 2: for a legacy ModRM with `reg=0`, the low 5 bits can only
+        // be 0..=7, while XOP uses values 8..=10.
+        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
+        let is_extended = (b1 & 0x1F) >= 8;
+        Ok((
+            OpcodeBytes {
+                map: if is_extended {
+                    OpcodeMap::Extended
+                } else {
+                    OpcodeMap::Primary
+                },
+                opcode: b0,
+                opcode_ext: None,
+            },
+            1,
+        ))
     } else if matches!(b0, 0xC4 | 0xC5 | 0x62) {
         // VEX/EVEX prefixes share their first byte with legacy opcodes (LES/LDS/BOUND). In 16/32-bit
         // modes, the CPU disambiguates them by requiring the following byte to have ModRM.mod=3,

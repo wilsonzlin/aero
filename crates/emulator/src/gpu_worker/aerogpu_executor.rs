@@ -935,6 +935,27 @@ fn decode_alloc_table(
         return (None, Vec::new());
     }
 
+    if desc.alloc_table_size_bytes < AeroGpuAllocTableHeader::SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::SizeTooSmall,
+        ));
+        return (None, Vec::new());
+    }
+    if desc
+        .alloc_table_gpa
+        .checked_add(u64::from(AeroGpuAllocTableHeader::SIZE_BYTES))
+        .is_none()
+        || desc
+            .alloc_table_gpa
+            .checked_add(u64::from(desc.alloc_table_size_bytes))
+            .is_none()
+    {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::AddressOverflow,
+        ));
+        return (None, Vec::new());
+    }
+
     let header = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
 
     if header.magic != AEROGPU_ALLOC_TABLE_MAGIC {

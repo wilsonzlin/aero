@@ -909,6 +909,7 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     }
                 }
             }
+
             let has_inputs = !inputs_by_reg.is_empty();
             let mut color_outputs = BTreeSet::<u16>::new();
             for &reg in &ir.used_outputs {
