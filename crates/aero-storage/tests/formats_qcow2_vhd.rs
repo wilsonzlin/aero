@@ -1994,6 +1994,31 @@ fn vhd_dynamic_rejects_bad_dynamic_header_version() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // The dynamic header checksum is at offset 36 in the 1024-byte header. Corrupt it without
+    // changing any other fields so parsing reaches the checksum validation path.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let mut checksum = [0u8; 4];
+    backend
+        .read_at(dyn_header_offset + 36, &mut checksum)
+        .unwrap();
+    let bad = u32::from_be_bytes(checksum) ^ 1;
+    backend
+        .write_at(dyn_header_offset + 36, &bad.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header checksum mismatch")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_invalid_block_size() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;
