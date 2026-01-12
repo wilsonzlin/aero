@@ -25,17 +25,31 @@ This document specifies the register layout and the behavioral rules needed to i
 
 ---
 
-## Web runtime selection (virtio-net)
+## Web runtime selection (web runtime)
 
-The Aero web runtime defaults to **modern-only** virtio-net (Aero contract v1). To enable compatibility modes for upstream virtio-win bundles, select the transport explicitly:
+The Aero web runtime defaults to **modern-only** virtio devices (Aero contract v1). To enable compatibility modes for upstream virtio-win bundles, select the transport explicitly per device:
+
+### virtio-net
 
 - **Settings UI:** "Virtio-net mode"
 - **Config:** `virtioNetMode: "modern" | "transitional" | "legacy"`
 - **URL query override:** `?virtioNetMode=modern|transitional|legacy`
 
+### virtio-input (keyboard/mouse)
+
+- **Settings UI:** "Virtio-input mode"
+- **Config:** `virtioInputMode: "modern" | "transitional" | "legacy"`
+- **URL query override:** `?virtioInputMode=modern|transitional|legacy`
+
+### virtio-snd (audio)
+
+- **Settings UI:** "Virtio-snd mode"
+- **Config:** `virtioSndMode: "modern" | "transitional" | "legacy"`
+- **URL query override:** `?virtioSndMode=modern|transitional|legacy`
+
 Notes:
 
-- Changing `virtioNetMode` changes the guest-visible PCI device ID / BAR layout and requires a VM restart to take effect.
+- Changing any of these `virtio*Mode` values changes the guest-visible PCI device ID / BAR layout and requires a VM restart to take effect.
 - `"legacy"` disables modern virtio-pci capabilities and exposes only the legacy I/O port register block.
 
 ---
