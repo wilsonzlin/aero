@@ -26,6 +26,8 @@ fn should_scan(path: &Path) -> bool {
         "ts" | "tsx" | "mts" | "js" | "jsx" | "mjs" | "cjs" | "html" |
         // Scripts.
         "py" | "sh" | "ps1" | "psm1" | "cmd" |
+        // Go (proxy services).
+        "go" |
         // Native/driver sources.
         "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" |
         // Config/metadata.
@@ -94,6 +96,7 @@ fn no_lingering_legacy_net_stack_4cc_references_in_repo() {
         repo_root.join("drivers"),
         repo_root.join("emulator"),
         repo_root.join("instructions"),
+        repo_root.join("proxy"),
         repo_root.join("scripts"),
         repo_root.join("src"),
         repo_root.join("tests"),
