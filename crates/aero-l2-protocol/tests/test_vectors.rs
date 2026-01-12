@@ -115,10 +115,19 @@ fn l2_tunnel_vectors_roundtrip() {
                 usize::MAX,
             );
             assert_eq!(expected_payload, payload, "{}", vector.name);
+
             let decoded = aero_l2_protocol::decode_structured_error_payload(&payload)
                 .expect("expected structured error payload");
             assert_eq!(decoded.0, structured.code, "{}", vector.name);
             assert_eq!(decoded.1, structured.message, "{}", vector.name);
+
+            // Round-trip the structured payload encoding with an exact max size.
+            let reencoded = aero_l2_protocol::encode_structured_error_payload(
+                structured.code,
+                &structured.message,
+                payload.len(),
+            );
+            assert_eq!(reencoded, payload, "{}", vector.name);
         }
 
         let decoded = decode_message(&wire).unwrap_or_else(|err| {

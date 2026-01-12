@@ -22,6 +22,7 @@ pub const L2_TUNNEL_TYPE_ERROR: u8 = 0x7F;
 
 pub const L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD: usize = 2048;
 pub const L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD: usize = 256;
+pub const L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN: usize = 4;
 
 // Structured `ERROR` payload codes (see `docs/l2-tunnel-protocol.md`).
 pub const L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR: u16 = 1;
@@ -163,6 +164,21 @@ pub fn encode_error(payload: Option<&[u8]>) -> Result<Vec<u8>, EncodeError> {
     )
 }
 
+/// Encode an `ERROR` payload using the structured binary form.
+///
+/// This is a compatibility alias for [`encode_structured_error_payload`]. Prefer calling that
+/// function directly in new code.
+pub fn encode_error_payload(code: u16, message: &str, max_payload_bytes: usize) -> Vec<u8> {
+    encode_structured_error_payload(code, message, max_payload_bytes)
+}
+
+/// Attempt to decode a structured `ERROR` payload.
+///
+/// This is a compatibility alias for [`decode_structured_error_payload`].
+pub fn decode_error_payload(payload: &[u8]) -> Option<(u16, String)> {
+    decode_structured_error_payload(payload)
+}
+
 pub fn decode_with_limits<'a>(
     buf: &'a [u8],
     limits: &Limits,
@@ -221,11 +237,13 @@ pub fn encode_structured_error_payload(
     // return an empty payload so callers can still emit an ERROR control message within their
     // configured limits (the peer will still see an ERROR type, even if it cannot decode a
     // structured code/message).
-    if max_payload_bytes < 4 {
+    if max_payload_bytes < L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN {
         return Vec::new();
     }
     // Need space for the 4-byte header (code + msg_len).
-    let max_msg_len = max_payload_bytes.saturating_sub(4).min(u16::MAX as usize);
+    let max_msg_len = max_payload_bytes
+        .saturating_sub(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN)
+        .min(u16::MAX as usize);
 
     let msg_bytes = message.as_bytes();
     let mut msg_len = msg_bytes.len().min(max_msg_len);
@@ -236,7 +254,7 @@ pub fn encode_structured_error_payload(
 
     let msg_len: u16 = msg_bytes.len().try_into().unwrap_or(u16::MAX);
 
-    let mut out = Vec::with_capacity(4 + msg_bytes.len());
+    let mut out = Vec::with_capacity(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN + msg_bytes.len());
     out.extend_from_slice(&code.to_be_bytes());
     out.extend_from_slice(&msg_len.to_be_bytes());
     out.extend_from_slice(msg_bytes);
@@ -247,13 +265,16 @@ pub fn encode_structured_error_payload(
 ///
 /// Returns `(code, message)` only if the payload matches the exact structured encoding.
 pub fn decode_structured_error_payload(payload: &[u8]) -> Option<(u16, String)> {
-    let header: [u8; 4] = payload.get(..4)?.try_into().ok()?;
+    let header: [u8; L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN] = payload
+        .get(..L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN)?
+        .try_into()
+        .ok()?;
     let code = u16::from_be_bytes([header[0], header[1]]);
     let msg_len = u16::from_be_bytes([header[2], header[3]]) as usize;
-    if payload.len() != 4usize.checked_add(msg_len)? {
+    if payload.len() != L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN.checked_add(msg_len)? {
         return None;
     }
-    let msg_bytes = payload.get(4..)?;
+    let msg_bytes = payload.get(L2_TUNNEL_ERROR_STRUCTURED_HEADER_LEN..)?;
     let msg = String::from_utf8(msg_bytes.to_vec()).ok()?;
     Some((code, msg))
 }
@@ -355,5 +376,11 @@ mod tests {
         let decoded = decode_structured_error_payload(&roundtrip).expect("decode");
         assert_eq!(decoded.0, 42);
         assert_eq!(decoded.1, "bad frame");
+
+        // Wrong length prefix should reject.
+        let mut wrong_len = roundtrip.clone();
+        wrong_len[2] = 0;
+        wrong_len[3] = 1;
+        assert_eq!(decode_structured_error_payload(&wrong_len), None);
     }
 }
