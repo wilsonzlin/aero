@@ -285,6 +285,7 @@ jobs:
           snd_duplex_marker=""
           wav_marker=""
           failure_token=""
+          failure_line=""
           if [[ -f "${serial_log}" ]]; then
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -298,6 +299,8 @@ jobs:
             # Extract the last structured failure token from the harness output, if present.
             # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
+            # Fallback: the full last failure line (useful when no structured token is present).
+            failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
           fi
 
           {
@@ -307,6 +310,9 @@ jobs:
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
             if [[ -n "${failure_token}" ]]; then
               echo "- Harness failure token: ${failure_token}"
+            fi
+            if [[ -z "${failure_token}" && -n "${failure_line}" ]]; then
+              echo "- Harness failure: ${failure_line}"
             fi
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: ${result_marker}"
