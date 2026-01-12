@@ -74,13 +74,15 @@ when the **final** wrapper for a shared surface is released (tolerant of Win7’
 
 ## Validation: cross-process Win7 test
 
-Use the cross-process shared-surface test app *(Task 613)*:
+Use one of the cross-process shared-surface IPC tests:
 
 - `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc/main.cpp`
+- `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/main.cpp`
+- `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/main.cpp`
 
 It should:
 
-1. Create a shareable D3D9Ex render target in a parent process.
+1. Create a shareable render target/texture in a parent process.
 2. Duplicate the D3D shared `HANDLE` into a child process.
 3. Child opens the resource and validates content via readback.
 
