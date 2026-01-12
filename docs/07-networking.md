@@ -1164,6 +1164,9 @@ so you don't miss the initial traffic.
 Disabling tracing stops recording new frames but does **not** automatically clear any frames already
 buffered in memory (use **Clear capture** or download/export to reset).
 
+Captures are kept **in-memory** until you export/save them. Reloading the page (or the net worker
+crashing/restarting) will discard any buffered frames.
+
 If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
 is missing), the UI will surface an error when you try to enable/export. If the net worker isn't
 running yet, captures may not record anything until it starts, and operations like download/stats
