@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use aero_gpu::bindings::bind_group_cache::{BindGroupCache, BufferId, TextureViewId};
@@ -172,7 +172,11 @@ impl AerogpuCmdRuntime {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&dummy_uniform, 0, &vec![0u8; DUMMY_UNIFORM_SIZE_BYTES as usize]);
+        queue.write_buffer(
+            &dummy_uniform,
+            0,
+            &vec![0u8; DUMMY_UNIFORM_SIZE_BYTES as usize],
+        );
 
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d11 aerogpu dummy texture"),
@@ -567,7 +571,11 @@ impl AerogpuCmdRuntime {
     pub fn set_vs_constant_buffer(&mut self, slot: u32, buffer: Option<AerogpuHandle>) {
         let slot = slot as usize;
         if self.state.bindings.vs.constant_buffers.len() <= slot {
-            self.state.bindings.vs.constant_buffers.resize(slot + 1, None);
+            self.state
+                .bindings
+                .vs
+                .constant_buffers
+                .resize(slot + 1, None);
         }
         self.state.bindings.vs.constant_buffers[slot] = buffer;
     }
@@ -575,7 +583,11 @@ impl AerogpuCmdRuntime {
     pub fn set_ps_constant_buffer(&mut self, slot: u32, buffer: Option<AerogpuHandle>) {
         let slot = slot as usize;
         if self.state.bindings.ps.constant_buffers.len() <= slot {
-            self.state.bindings.ps.constant_buffers.resize(slot + 1, None);
+            self.state
+                .bindings
+                .ps
+                .constant_buffers
+                .resize(slot + 1, None);
         }
         self.state.bindings.ps.constant_buffers[slot] = buffer;
     }
@@ -673,22 +685,53 @@ impl AerogpuCmdRuntime {
 
         // WebGPU requires that the vertex output interface exactly matches the fragment input
         // interface. D3D shaders, however, frequently export varyings that a given pixel shader does
-        // not consume (because the same VS can be reused with multiple PS variants).
+        // not consume (because the same VS can be reused with multiple PS variants), and pixel
+        // shaders may declare inputs they never read.
         //
-        // To preserve the D3D behavior, we trim the generated WGSL vertex output struct down to the
-        // subset of `@location` values actually consumed by the pixel shader for this pipeline.
-        let ps_input_locations = super::wgsl_link::locations_in_struct(&ps.wgsl, "PsIn")?;
+        // To preserve D3D behavior, we trim the stage interface at pipeline-creation time:
+        // - Drop unused pixel shader inputs when the bound VS does not output them.
+        // - Drop unused vertex shader outputs that the pixel shader does not declare.
+        let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl, "PsIn")?;
         let vs_output_locations = super::wgsl_link::locations_in_struct(&vs.wgsl, "VsOut")?;
-        for loc in &ps_input_locations {
-            if !vs_output_locations.contains(loc) {
-                bail!("pixel shader expects @location({loc}), but VS does not output it");
+
+        let mut ps_link_locations = ps_declared_inputs.clone();
+        let mut linked_ps_hash = ps.hash;
+        let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
+            .difference(&vs_output_locations)
+            .copied()
+            .collect();
+        if !ps_missing_locations.is_empty() {
+            let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl);
+            let used_missing: Vec<u32> = ps_missing_locations
+                .intersection(&ps_used_locations)
+                .copied()
+                .collect();
+            if let Some(&loc) = used_missing.first() {
+                bail!("pixel shader reads @location({loc}), but VS does not output it");
+            }
+
+            ps_link_locations = ps_declared_inputs
+                .intersection(&vs_output_locations)
+                .copied()
+                .collect();
+            if ps_link_locations != ps_declared_inputs {
+                let linked_ps_wgsl =
+                    super::wgsl_link::trim_ps_inputs_to_locations(&ps.wgsl, &ps_link_locations);
+                let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                    &self.device,
+                    ShaderStage::Fragment,
+                    &linked_ps_wgsl,
+                    Some("aero-d3d11 aerogpu linked fragment shader"),
+                );
+                linked_ps_hash = hash;
             }
         }
-        let linked_vs_hash = if vs_output_locations == ps_input_locations {
+
+        let linked_vs_hash = if vs_output_locations == ps_link_locations {
             vs.hash
         } else {
             let linked_vs_wgsl =
-                super::wgsl_link::trim_vs_outputs_to_locations(&vs.wgsl, &ps_input_locations);
+                super::wgsl_link::trim_vs_outputs_to_locations(&vs.wgsl, &ps_link_locations);
             let (hash, _module) = self.pipelines.get_or_create_shader_module(
                 &self.device,
                 ShaderStage::Vertex,
@@ -733,21 +776,21 @@ impl AerogpuCmdRuntime {
             let device = &self.device;
             let cache = &mut self.pipeline_layout_cache;
             cache.get_or_create_with(&layout_key, || {
-                let layout_refs: Vec<&wgpu::BindGroupLayout> = group_layouts
-                    .iter()
-                    .map(|l| l.layout.as_ref())
-                    .collect();
-                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aero-d3d11 aerogpu pipeline layout"),
-                    bind_group_layouts: &layout_refs,
-                    push_constant_ranges: &[],
-                }))
+                let layout_refs: Vec<&wgpu::BindGroupLayout> =
+                    group_layouts.iter().map(|l| l.layout.as_ref()).collect();
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu pipeline layout"),
+                        bind_group_layouts: &layout_refs,
+                        push_constant_ranges: &[],
+                    }),
+                )
             })
         };
 
         let key = RenderPipelineKey {
             vertex_shader: linked_vs_hash,
-            fragment_shader: ps.hash,
+            fragment_shader: linked_ps_hash,
             color_targets: color_target_keys,
             depth_stencil: depth_target_key,
             primitive_topology,
@@ -817,12 +860,9 @@ impl AerogpuCmdRuntime {
             },
         )?;
 
-        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> =
-            Vec::with_capacity(group_layouts.len());
-        for (group_index, (layout, bindings)) in group_layouts
-            .iter()
-            .zip(group_bindings.iter())
-            .enumerate()
+        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> = Vec::with_capacity(group_layouts.len());
+        for (group_index, (layout, bindings)) in
+            group_layouts.iter().zip(group_bindings.iter()).enumerate()
         {
             let stage_state = match group_index as u32 {
                 0 => Some(&self.state.bindings.vs),
@@ -1424,5 +1464,6 @@ fn try_translate_sm4_signature_driven(
     signatures: &crate::ShaderSignatures,
 ) -> Result<ShaderTranslation> {
     let module = program.decode().context("decode SM4/5 token stream")?;
-    translate_sm4_module_to_wgsl(dxbc, &module, signatures).context("signature-driven SM4/5 translation")
+    translate_sm4_module_to_wgsl(dxbc, &module, signatures)
+        .context("signature-driven SM4/5 translation")
 }

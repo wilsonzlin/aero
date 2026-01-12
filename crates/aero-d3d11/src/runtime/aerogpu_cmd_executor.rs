@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -4626,29 +4626,28 @@ impl AerogpuD3d11Executor {
             dst_backing,
             dst_row_pitch_bytes,
             dst_dirty,
-        ) = {
-            let src = self
-                .resources
-                .textures
-                .get(&src_texture)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown src texture {src_texture}"))?;
-            let dst = self
-                .resources
-                .textures
-                .get(&dst_texture)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
-            (
-                src.desc,
-                src.format_u32,
-                src.backing,
-                src.row_pitch_bytes,
-                dst.desc,
-                dst.format_u32,
-                dst.backing,
-                dst.row_pitch_bytes,
-                dst.dirty,
-            )
-        };
+        ) =
+            {
+                let src =
+                    self.resources.textures.get(&src_texture).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: unknown src texture {src_texture}")
+                    })?;
+                let dst =
+                    self.resources.textures.get(&dst_texture).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}")
+                    })?;
+                (
+                    src.desc,
+                    src.format_u32,
+                    src.backing,
+                    src.row_pitch_bytes,
+                    dst.desc,
+                    dst.format_u32,
+                    dst.backing,
+                    dst.row_pitch_bytes,
+                    dst.dirty,
+                )
+            };
 
         if src_mip_level >= src_desc.mip_level_count {
             bail!(
@@ -4937,9 +4936,10 @@ impl AerogpuD3d11Executor {
                 let src_row_pitch_usize: usize = src_row_pitch
                     .try_into()
                     .map_err(|_| anyhow!("COPY_TEXTURE2D: BC src row pitch out of range"))?;
-                let src_x_bytes: usize = (src_block_x as usize)
-                    .checked_mul(block_bytes as usize)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
+                let src_x_bytes: usize =
+                    (src_block_x as usize)
+                        .checked_mul(block_bytes as usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
                 if src_x_bytes
                     .checked_add(row_bytes_usize)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row range overflow"))?
@@ -5013,9 +5013,10 @@ impl AerogpuD3d11Executor {
                 let src_bpr_usize: usize = src_bytes_per_row
                     .try_into()
                     .map_err(|_| anyhow!("COPY_TEXTURE2D: BC shadow bytes_per_row out of range"))?;
-                let src_x_bytes: usize = (src_block_x as usize)
-                    .checked_mul(block_bytes as usize)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
+                let src_x_bytes: usize =
+                    (src_block_x as usize)
+                        .checked_mul(block_bytes as usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
                 if src_x_bytes
                     .checked_add(row_bytes_usize)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row range overflow"))?
@@ -5047,11 +5048,9 @@ impl AerogpuD3d11Executor {
                     let src_end = src_start
                         .checked_add(row_bytes_usize)
                         .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow src end overflow"))?;
-                    dst_slice.copy_from_slice(
-                        src_shadow.get(src_start..src_end).ok_or_else(|| {
-                            anyhow!("COPY_TEXTURE2D: BC shadow too small for copy region")
-                        })?,
-                    );
+                    dst_slice.copy_from_slice(src_shadow.get(src_start..src_end).ok_or_else(
+                        || anyhow!("COPY_TEXTURE2D: BC shadow too small for copy region"),
+                    )?);
                 }
             }
 
@@ -5063,11 +5062,10 @@ impl AerogpuD3d11Executor {
             );
 
             {
-                let dst = self
-                    .resources
-                    .textures
-                    .get(&dst_texture)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
+                let dst =
+                    self.resources.textures.get(&dst_texture).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}")
+                    })?;
 
                 // WebGPU requires BC uploads to use the physical (block-rounded) extents. This is
                 // observable for small mips (e.g. a 2x2 mip still occupies a full 4x4 BC block).
@@ -5137,15 +5135,16 @@ impl AerogpuD3d11Executor {
                             .context("COPY_TEXTURE2D: compute dst bytes_per_row")?
                     };
                     let dst_rows_u32 = format_layout.rows(dst_desc.height);
-                    let dst_bpr_usize: usize = dst_bytes_per_row.try_into().map_err(|_| {
-                        anyhow!("COPY_TEXTURE2D: dst bytes_per_row out of range")
-                    })?;
+                    let dst_bpr_usize: usize = dst_bytes_per_row
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: dst bytes_per_row out of range"))?;
                     let dst_rows_usize: usize = dst_rows_u32
                         .try_into()
                         .map_err(|_| anyhow!("COPY_TEXTURE2D: dst rows out of range"))?;
-                    let dst_shadow_len = dst_bpr_usize
-                        .checked_mul(dst_rows_usize)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow size overflows usize"))?;
+                    let dst_shadow_len =
+                        dst_bpr_usize.checked_mul(dst_rows_usize).ok_or_else(|| {
+                            anyhow!("COPY_TEXTURE2D: dst shadow size overflows usize")
+                        })?;
 
                     let full_copy = dst_x == 0
                         && dst_y == 0
@@ -5167,12 +5166,9 @@ impl AerogpuD3d11Executor {
                                 .ok_or_else(|| {
                                     anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow")
                                 })?;
-                            if dst_x_bytes
-                                .checked_add(row_bytes_usize)
-                                .ok_or_else(|| {
-                                    anyhow!("COPY_TEXTURE2D: dst shadow row range overflow")
-                                })?
-                                > dst_bpr_usize
+                            if dst_x_bytes.checked_add(row_bytes_usize).ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: dst shadow row range overflow")
+                            })? > dst_bpr_usize
                             {
                                 dst_res.host_shadow = None;
                             } else {
@@ -7350,74 +7346,114 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let (vertex_shader, ps_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature, fs_entry_point) =
-        {
-            let vs = resources
-                .shaders
-                .get(&vs_handle)
-                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
-            if vs.stage != ShaderStage::Vertex {
-                bail!("shader {vs_handle} is not a vertex shader");
+    let (
+        vertex_shader,
+        ps_wgsl_hash,
+        vs_dxbc_hash_fnv1a64,
+        vs_entry_point,
+        vs_input_signature,
+        fs_entry_point,
+    ) = {
+        let vs = resources
+            .shaders
+            .get(&vs_handle)
+            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
+        if vs.stage != ShaderStage::Vertex {
+            bail!("shader {vs_handle} is not a vertex shader");
+        }
+
+        let ps = resources
+            .shaders
+            .get(&ps_handle)
+            .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+        if ps.stage != ShaderStage::Pixel {
+            bail!("shader {ps_handle} is not a pixel shader");
+        }
+
+        // WebGPU requires the vertex output interface to exactly match the fragment input
+        // interface. D3D shaders often export extra varyings (so a single VS can be reused with
+        // multiple PS variants), and pixel shaders may declare inputs they never read.
+        //
+        // To preserve D3D behavior, we trim the stage interface at pipeline-creation time:
+        // - Drop unused PS inputs when the bound VS does not output them.
+        // - Drop unused VS outputs that the PS does not declare.
+        let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
+        let vs_outputs = super::wgsl_link::locations_in_struct(&vs.wgsl_source, "VsOut")?;
+        let mut ps_link_locations = ps_declared_inputs.clone();
+        let mut fragment_shader = ps.wgsl_hash;
+
+        let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
+            .difference(&vs_outputs)
+            .copied()
+            .collect();
+        if !ps_missing_locations.is_empty() {
+            let ps_used_locations =
+                super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
+            let used_missing: Vec<u32> = ps_missing_locations
+                .intersection(&ps_used_locations)
+                .copied()
+                .collect();
+            if let Some(&loc) = used_missing.first() {
+                bail!("pixel shader reads @location({loc}), but VS does not output it");
             }
 
-            let ps = resources
-                .shaders
-                .get(&ps_handle)
-                .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
-            if ps.stage != ShaderStage::Pixel {
-                bail!("shader {ps_handle} is not a pixel shader");
-            }
-
-            // WebGPU requires the vertex output interface to exactly match the fragment input
-            // interface. D3D shaders often export extra varyings (so a single VS can be reused with
-            // multiple PS variants), so trim the VS outputs down to the subset required by the
-            // current PS.
-            let ps_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
-            let vs_outputs = super::wgsl_link::locations_in_struct(&vs.wgsl_source, "VsOut")?;
-            for loc in &ps_inputs {
-                if !vs_outputs.contains(loc) {
-                    bail!("pixel shader expects @location({loc}), but VS does not output it");
-                }
-            }
-
-            let needs_trim = vs_outputs != ps_inputs;
-
-            let selected_vs_hash = if state.depth_clip_enabled {
-                vs.wgsl_hash
-            } else {
-                vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
-            };
-
-            let vertex_shader = if !needs_trim {
-                selected_vs_hash
-            } else {
-                let base_vs_wgsl = if state.depth_clip_enabled {
-                    std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
-                } else {
-                    std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
-                };
-                let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
-                    base_vs_wgsl.as_ref(),
-                    &ps_inputs,
+            ps_link_locations = ps_declared_inputs
+                .intersection(&vs_outputs)
+                .copied()
+                .collect();
+            if ps_link_locations != ps_declared_inputs {
+                let trimmed_ps_wgsl = super::wgsl_link::trim_ps_inputs_to_locations(
+                    &ps.wgsl_source,
+                    &ps_link_locations,
                 );
                 let (hash, _module) = pipeline_cache.get_or_create_shader_module(
                     device,
-                    map_pipeline_cache_stage(ShaderStage::Vertex),
-                    &trimmed_vs_wgsl,
-                    Some("aerogpu_cmd linked vertex shader"),
+                    map_pipeline_cache_stage(ShaderStage::Pixel),
+                    &trimmed_ps_wgsl,
+                    Some("aerogpu_cmd linked pixel shader"),
                 );
-                hash
-            };
+                fragment_shader = hash;
+            }
+        }
 
-            (
-                vertex_shader,
-                ps.wgsl_hash,
-                vs.dxbc_hash_fnv1a64,
-                vs.entry_point,
-                vs.vs_input_signature.clone(),
-                ps.entry_point,
-            )
+        let needs_trim = vs_outputs != ps_link_locations;
+
+        let selected_vs_hash = if state.depth_clip_enabled {
+            vs.wgsl_hash
+        } else {
+            vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
         };
+
+        let vertex_shader = if !needs_trim {
+            selected_vs_hash
+        } else {
+            let base_vs_wgsl = if state.depth_clip_enabled {
+                std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
+            } else {
+                std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
+            };
+            let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
+                base_vs_wgsl.as_ref(),
+                &ps_link_locations,
+            );
+            let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+                device,
+                map_pipeline_cache_stage(ShaderStage::Vertex),
+                &trimmed_vs_wgsl,
+                Some("aerogpu_cmd linked vertex shader"),
+            );
+            hash
+        };
+
+        (
+            vertex_shader,
+            fragment_shader,
+            vs.dxbc_hash_fnv1a64,
+            vs.entry_point,
+            vs.vs_input_signature.clone(),
+            ps.entry_point,
+        )
+    };
 
     let BuiltVertexState {
         vertex_buffers,

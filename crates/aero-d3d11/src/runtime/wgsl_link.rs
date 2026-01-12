@@ -44,6 +44,36 @@ pub(crate) fn locations_in_struct(wgsl: &str, struct_name: &str) -> Result<BTree
     Ok(out)
 }
 
+pub(crate) fn referenced_ps_input_locations(wgsl: &str) -> BTreeSet<u32> {
+    let bytes = wgsl.as_bytes();
+    let mut out = BTreeSet::new();
+    let mut i = 0usize;
+    while i + 7 <= bytes.len() {
+        if &bytes[i..i + 7] != b"input.v" {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 7;
+        let mut value: u32 = 0;
+        let mut has_digit = false;
+        while j < bytes.len() {
+            let b = bytes[j];
+            if (b'0'..=b'9').contains(&b) {
+                has_digit = true;
+                value = value.saturating_mul(10).saturating_add((b - b'0') as u32);
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if has_digit {
+            out.insert(value);
+        }
+        i = j;
+    }
+    out
+}
+
 pub(crate) fn trim_vs_outputs_to_locations(
     vs_wgsl: &str,
     keep_locations: &BTreeSet<u32>,
@@ -90,6 +120,45 @@ pub(crate) fn trim_vs_outputs_to_locations(
                     }
                 }
             }
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    out
+}
+
+pub(crate) fn trim_ps_inputs_to_locations(ps_wgsl: &str, keep_locations: &BTreeSet<u32>) -> String {
+    let mut out = String::with_capacity(ps_wgsl.len());
+    let mut in_ps_in = false;
+
+    for line in ps_wgsl.lines() {
+        let trimmed = line.trim();
+        if !in_ps_in && trimmed == "struct PsIn {" {
+            in_ps_in = true;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        if in_ps_in {
+            if trimmed == "};" {
+                in_ps_in = false;
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+
+            if let Some(loc) = parse_location_attr(line) {
+                if !keep_locations.contains(&loc) {
+                    continue;
+                }
+            }
+
+            out.push_str(line);
+            out.push('\n');
+            continue;
         }
 
         out.push_str(line);
@@ -151,5 +220,34 @@ mod tests {
         "#;
         let locs = locations_in_struct(wgsl, "PsIn").unwrap();
         assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn finds_referenced_ps_locations() {
+        let wgsl = r#"
+            @fragment
+            fn fs_main(input: PsIn) -> @location(0) vec4<f32> {
+                let a = input.v1;
+                let b = input.v10;
+                return a + b;
+            }
+        "#;
+        let refs = referenced_ps_input_locations(wgsl);
+        assert_eq!(refs.iter().copied().collect::<Vec<_>>(), vec![1, 10]);
+    }
+
+    #[test]
+    fn trims_ps_inputs() {
+        let wgsl = r#"
+            struct PsIn {
+                @builtin(position) pos: vec4<f32>,
+                @location(1) v1: vec4<f32>,
+                @location(2) v2: vec4<f32>,
+            };
+        "#;
+        let keep = BTreeSet::from([2u32]);
+        let trimmed = trim_ps_inputs_to_locations(wgsl, &keep);
+        assert!(!trimmed.contains("@location(1)"));
+        assert!(trimmed.contains("@location(2)"));
     }
 }
