@@ -115,12 +115,12 @@ For Windows 7 and Linux to bind drivers predictably:
 3. **Header type** must be `0x00` (type-0 endpoint), except when a device intentionally exposes
     multiple functions on the same slot:
    - PIIX3 (function 0 at `00:01.0`) must set `header_type = 0x80` so guests enumerate the IDE
-     and UHCI functions at `00:01.1` and `00:01.2`.
+      and UHCI functions at `00:01.1` and `00:01.2`.
    - `virtio-input` keyboard (function 0) must set `header_type = 0x80` (multi-function bit) so
-     guests enumerate the paired mouse function (function 1).
+      guests enumerate the paired mouse function (function 1).
 4. **BAR types and sizes** must be correct:
    - Example: AHCI’s ABAR must be MMIO and large enough for the implemented port set (Aero uses 8KiB
-     via `aero_devices::pci::profile::AHCI_ABAR_SIZE` = `0x2000`).
+     via `aero_devices::pci::profile::AHCI_ABAR_SIZE`).
    - Example: HDA MMIO must be 16KiB (`0x4000`) per spec.
 5. **Virtio PCI capabilities** must be present and internally consistent for modern drivers:
    - Virtio vendor-specific capabilities for Common/ISR/Device/Notify regions
