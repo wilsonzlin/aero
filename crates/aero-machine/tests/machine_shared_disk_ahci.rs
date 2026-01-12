@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::SECTOR_SIZE;
@@ -18,13 +19,13 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    m.io_write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    m.io_write(0xCFC, 2, u32::from(value));
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    m.io_write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    m.io_write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    m.io_write(0xCFC, 4, value);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    m.io_write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 const HBA_GHC: u64 = 0x04;

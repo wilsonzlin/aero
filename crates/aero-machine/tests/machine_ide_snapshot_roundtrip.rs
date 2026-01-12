@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::IDE_PIIX3;
-use aero_devices::pci::PciBdf;
+use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig, SharedDisk};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use pretty_assertions::{assert_eq, assert_ne};
@@ -15,13 +15,13 @@ fn cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(m: &mut Machine, bdf: PciBdf, offset: u8, value: u16) {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_write(0xCFC, 2, u32::from(value));
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn read_cfg_u32(m: &mut Machine, bdf: PciBdf, offset: u8) -> u32 {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_read(0xCFC, 4)
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_read(PCI_CFG_DATA_PORT, 4)
 }
 
 #[test]

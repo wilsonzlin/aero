@@ -395,8 +395,12 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
     let bdf = SATA_AHCI_ICH9.bdf;
 
     // Read vendor/device ID via PCI config ports (guest-visible).
-    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x00));
-    let id = m.io_read(0xCFC, 4);
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bdf.bus, bdf.device, bdf.function, 0x00),
+    );
+    let id = m.io_read(PCI_CFG_DATA_PORT, 4);
     assert_eq!(id, 0x2922_8086);
 
     // Interrupt Line should match the active PCI INTx router configuration.
@@ -405,17 +409,21 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
         let gsi = router.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
         gsi
     };
-    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3C));
-    let irq_line = m.io_read(0xCFC, 1) as u8;
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3C),
+    );
+    let irq_line = m.io_read(PCI_CFG_DATA_PORT, 1) as u8;
     assert_eq!(irq_line, u8::try_from(expected_gsi).unwrap());
 
     // BAR5 should be assigned by firmware POST and routed through the PCI MMIO window.
     m.io_write(
-        0xCF8,
+        PCI_CFG_ADDR_PORT,
         4,
         cfg_addr(bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET),
     );
-    let bar5_reg = m.io_read(0xCFC, 4) as u64;
+    let bar5_reg = m.io_read(PCI_CFG_DATA_PORT, 4) as u64;
     let bar5_base = bar5_reg & !0xFu64;
     assert!(bar5_base != 0, "expected AHCI BAR5 to be assigned");
 
