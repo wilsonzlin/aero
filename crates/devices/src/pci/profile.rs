@@ -230,7 +230,20 @@ pub const IDE_BARS: [PciBarProfile; 5] = [
 
 pub const UHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::io(4, 32)];
 
-pub const AHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(5, 0x2000, false)];
+/// PCI BAR index used for the AHCI ABAR MMIO window on the Intel ICH9 profile.
+pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
+
+/// Size in bytes of the AHCI ABAR MMIO window (as a `u32`, for `PciBarDefinition::Mmio32`).
+pub const AHCI_ABAR_SIZE_U32: u32 = 0x2000;
+
+/// Size in bytes of the AHCI ABAR MMIO window.
+pub const AHCI_ABAR_SIZE: u64 = AHCI_ABAR_SIZE_U32 as u64;
+
+pub const AHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(
+    AHCI_ABAR_BAR_INDEX,
+    AHCI_ABAR_SIZE,
+    false,
+)];
 
 pub const NVME_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 

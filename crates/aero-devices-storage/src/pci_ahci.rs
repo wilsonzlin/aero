@@ -16,14 +16,17 @@ use memory::MmioHandler;
 use crate::ahci::AhciController;
 use crate::ata::AtaDrive;
 
+/// PCI BAR index used for AHCI ABAR on Intel ICH9.
+///
+/// This is sourced from the canonical PCI device profile in `aero-devices` so the storage device
+/// model and the guest-facing PCI identity cannot drift.
+pub const AHCI_ABAR_BAR_INDEX: u8 = aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX;
+
 /// AHCI ABAR (HBA registers) size in bytes as a `u32` (for `PciBarDefinition::Mmio32`).
-pub const AHCI_ABAR_SIZE_U32: u32 = 0x2000;
+pub const AHCI_ABAR_SIZE_U32: u32 = aero_devices::pci::profile::AHCI_ABAR_SIZE_U32;
 
 /// AHCI ABAR (HBA registers) size in bytes.
-pub const AHCI_ABAR_SIZE: u64 = AHCI_ABAR_SIZE_U32 as u64;
-
-/// PCI BAR index used for AHCI ABAR on Intel ICH9.
-pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
+pub const AHCI_ABAR_SIZE: u64 = aero_devices::pci::profile::AHCI_ABAR_SIZE;
 
 const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 
