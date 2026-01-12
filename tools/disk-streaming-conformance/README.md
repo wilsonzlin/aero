@@ -12,7 +12,9 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
   - `GET Range` with `If-Range: "mismatch"` returns `200` (preferred) or `412`
 - Conditional caching works when validators are present:
   - `GET` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
+  - `HEAD` with `If-None-Match: <etag>` returns `304 Not Modified` (skipped if ETag is missing)
   - (Optional) `GET` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
+- (Optional) `HEAD` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
 - CORS preflight (`OPTIONS`) allows `Range`, `If-Range`, and conditional headers (`If-None-Match`, `If-Modified-Since`) (and `Authorization` when testing private images)
 - CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
@@ -72,6 +74,8 @@ Disk streaming conformance
   AUTH:     (none)
 
 PASS HEAD: Accept-Ranges=bytes and Content-Length is present - size=2147483648 (2.00 GiB)
+PASS HEAD: If-None-Match returns 304 Not Modified - status=304
+PASS HEAD: If-Modified-Since returns 304 Not Modified - status=304
 PASS HEAD: Cross-Origin-Resource-Policy is set - value='same-site'
 PASS GET: Cross-Origin-Resource-Policy is set - value='same-site'
 PASS GET: valid Range (first byte) returns 206 with correct Content-Range and body length - Content-Range='bytes 0-0/2147483648'
@@ -84,7 +88,7 @@ PASS GET: If-None-Match returns 304 Not Modified - status=304
 PASS GET: If-Modified-Since returns 304 Not Modified - status=304
 PASS OPTIONS: CORS preflight allows Range + If-Range + conditional headers - status=204
 
-Summary: 11 passed, 0 failed, 0 warned, 1 skipped
+Summary: 13 passed, 0 failed, 0 warned, 1 skipped
 ```
 
 ## Strict mode

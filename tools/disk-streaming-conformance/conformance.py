@@ -495,14 +495,29 @@ def _test_options_preflight(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
+    etag: str | None,
+    last_modified: str | None,
 ) -> TestResult:
-    required_headers = {"range", "if-range", "if-none-match", "if-modified-since"}
-    req_header_value = "range,if-range,if-none-match,if-modified-since"
-    name = "OPTIONS: CORS preflight allows Range + If-Range + conditional headers"
+    required_headers = {"range", "if-range"}
+    req_headers: list[str] = ["range", "if-range"]
+    if etag is not None:
+        required_headers.add("if-none-match")
+        req_headers.append("if-none-match")
+    if last_modified is not None:
+        required_headers.add("if-modified-since")
+        req_headers.append("if-modified-since")
+
+    req_header_value = ",".join(req_headers)
+
+    name = "OPTIONS: CORS preflight allows Range + If-Range headers"
+    if etag is not None:
+        name += " + If-None-Match"
+    if last_modified is not None:
+        name += " + If-Modified-Since"
     if authorization is not None:
         required_headers.add("authorization")
         req_header_value += ",authorization"
-        name = "OPTIONS: CORS preflight allows Range + If-Range + conditional + Authorization headers"
+        name += " + Authorization"
     if origin is None:
         return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
     try:
@@ -531,7 +546,12 @@ def _test_options_preflight(
 
         allow_methods = _header(resp, "Access-Control-Allow-Methods")
         _require(allow_methods is not None, "missing Access-Control-Allow-Methods")
-        _require("get" in _csv_tokens(allow_methods) or "*" in _csv_tokens(allow_methods), f"GET not allowed: {allow_methods!r}")
+        allow_method_tokens = _csv_tokens(allow_methods)
+        required_methods = {"get", "head"}
+        _require(
+            "*" in allow_method_tokens or required_methods.issubset(allow_method_tokens),
+            f"expected Allow-Methods to include {sorted(required_methods)} (or '*'); got {allow_methods!r}",
+        )
 
         allow_headers = _header(resp, "Access-Control-Allow-Headers")
         _require(allow_headers is not None, "missing Access-Control-Allow-Headers")
@@ -757,6 +777,42 @@ def _test_conditional_if_none_match(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+def _test_head_conditional_if_none_match(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    etag: str | None,
+) -> TestResult:
+    name = "HEAD: If-None-Match returns 304 Not Modified"
+    if etag is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag from HEAD)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "If-None-Match": etag,
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="HEAD",
+            headers=headers,
+            timeout_s=timeout_s,
+        )
+        _require_cors(resp, origin)
+        _require(resp.status == 304, f"expected 304, got {resp.status}")
+        _require(len(resp.body) == 0, f"expected empty body on 304, got {len(resp.body)} bytes")
+        return TestResult(name=name, status="PASS", details="status=304")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
 def _test_conditional_if_modified_since(
     *,
     base_url: str,
@@ -791,6 +847,48 @@ def _test_conditional_if_modified_since(
 
         if resp.status == 304:
             _require(len(resp.body) == 0, f"expected empty body on 304, got {len(resp.body)} bytes")
+            return TestResult(name=name, status="PASS", details="status=304")
+
+        message = f"expected 304, got {resp.status}"
+        if strict:
+            return TestResult(name=name, status="FAIL", details=message)
+        return TestResult(name=name, status="WARN", details=message)
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_head_conditional_if_modified_since(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    last_modified: str | None,
+    strict: bool,
+) -> TestResult:
+    name = "HEAD: If-Modified-Since returns 304 Not Modified"
+    if last_modified is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no Last-Modified from HEAD)")
+
+    try:
+        headers: dict[str, str] = {
+            "Accept-Encoding": "identity",
+            "If-Modified-Since": last_modified,
+        }
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=base_url,
+            method="HEAD",
+            headers=headers,
+            timeout_s=timeout_s,
+        )
+        _require_cors(resp, origin)
+
+        if resp.status == 304:
             return TestResult(name=name, status="PASS", details="status=304")
 
         message = f"expected 304, got {resp.status}"
@@ -957,6 +1055,26 @@ def main(argv: Sequence[str]) -> int:
     last_modified = head_info.last_modified if head_info is not None else None
 
     results.append(
+        _test_head_conditional_if_none_match(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            etag=etag,
+        )
+    )
+    results.append(
+        _test_head_conditional_if_modified_since(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
+            last_modified=last_modified,
+            strict=strict,
+        )
+    )
+
+    results.append(
         _test_corp_header(
             name="HEAD: Cross-Origin-Resource-Policy is set",
             resp=head_info.resp if head_info is not None else None,
@@ -1057,6 +1175,8 @@ def main(argv: Sequence[str]) -> int:
             origin=origin,
             authorization=authorization,
             timeout_s=timeout_s,
+            etag=etag,
+            last_modified=last_modified,
         )
     )
 
