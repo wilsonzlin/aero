@@ -173,6 +173,28 @@ case "${cmd0}" in
     ;;
 esac
 
+# Some build drivers (notably `wasm-pack` and JS/TS orchestration scripts) may spawn `cargo` internally
+# to build the wasm32 target, without passing `--target wasm32-...` through the top-level command
+# line we see here. When linking wasm32, rustc invokes `rust-lld -flavor wasm` directly, so the
+# native `-Wl,--threads=` indirection does not apply.
+#
+# Provide a conservative wasm32 lld thread cap via Cargo's per-target rustflags env var so even
+# indirect builds (e.g. `safe-run.sh npm ...`) don't hit lld EAGAIN thread-spawn failures.
+if [[ "${is_retryable_cmd}" == "true" ]] && [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
+    # If an environment has already injected the native-style `-Wl,--threads=...` into this wasm32
+    # per-target variable, rewrite it into the wasm-compatible form.
+    if [[ "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+        export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+        export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
+        export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS# }"
+    fi
+
+    if [[ "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}" != *"--threads="* ]]; then
+        export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-} -C link-arg=--threads=${CARGO_BUILD_JOBS:-1}"
+        export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS# }"
+    fi
+fi
+
 if [[ "${is_cargo_cmd}" == "true" ]]; then
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
