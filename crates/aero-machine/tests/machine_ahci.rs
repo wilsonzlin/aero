@@ -1,8 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices_storage::ata::ATA_CMD_WRITE_DMA_EXT;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use firmware::bios::BlockDevice as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -268,4 +270,91 @@ fn machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
         "AHCI INTx interrupt handler did not run (flag=0x{:02x})",
         m.read_physical_u8(u64::from(flag_addr))
     );
+}
+
+#[test]
+fn machine_ahci_writes_are_visible_to_bios_disk_reads() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        // Keep this test focused on disk sharing between BIOS and AHCI.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Enable A20 before touching high MMIO addresses.
+    m.io_write(0x92, 1, 0x02);
+
+    // Ensure the disk is large enough for LBA 1 writes. `set_disk_image` updates the shared backend
+    // and re-attaches it to AHCI so ATA IDENTIFY geometry stays coherent.
+    m.set_disk_image(vec![0u8; 4 * SECTOR_SIZE]).unwrap();
+
+    // Program the AHCI controller.
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5_base: u64 = 0xE100_0000;
+
+    // Reprogram BAR5 within the machine's PCI MMIO window (deterministic address).
+    write_cfg_u32(
+        &mut m,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        bar5_base as u32,
+    );
+
+    // Enable memory decoding + bus mastering (required for DMA processing).
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Basic port programming.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let write_buf = 0x4000u64;
+
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    m.write_physical_u32(bar5_base + HBA_GHC, GHC_AE);
+    m.write_physical_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // Guest buffer -> disk write payload.
+    let mut pattern = vec![0u8; SECTOR_SIZE];
+    pattern[0..8].copy_from_slice(b"AHCI-BIO");
+    for (i, b) in pattern.iter_mut().enumerate().skip(8) {
+        *b = (i as u8).wrapping_mul(7).wrapping_add(0x3D);
+    }
+    m.write_physical(write_buf, &pattern);
+
+    // WRITE DMA EXT to LBA 1.
+    write_cmd_header(&mut m, clb, 0, ctba, 1, true);
+    write_cfis(&mut m, ctba, ATA_CMD_WRITE_DMA_EXT, 1, 1);
+    write_prdt(&mut m, ctba, 0, write_buf, SECTOR_SIZE as u32);
+    m.write_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+
+    // Run the controller until the command completes.
+    for _ in 0..16 {
+        m.process_ahci();
+        if m.read_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI) == 0 {
+            break;
+        }
+    }
+    assert_eq!(m.read_physical_u32(bar5_base + PORT_BASE + PORT_REG_CI), 0);
+
+    // Read back via the BIOS `BlockDevice` view of the disk.
+    let mut bios_disk = m.shared_disk();
+    let mut sector = [0u8; 512];
+    bios_disk.read_sector(1, &mut sector).unwrap();
+    assert_eq!(&sector[..], &pattern[..]);
 }

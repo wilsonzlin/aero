@@ -1149,7 +1149,28 @@ impl Machine {
     /// Replace the attached disk image.
     pub fn set_disk_image(&mut self, bytes: Vec<u8>) -> Result<(), MachineError> {
         self.disk.set_bytes(bytes)?;
+        // Keep storage controllers that are backed by the shared disk (e.g. AHCI) in sync with the
+        // new disk geometry. In particular, the ATA IDENTIFY sector is derived from disk capacity,
+        // so swapping in a new-sized image requires rebuilding the attached drive.
+        self.attach_shared_disk_to_storage_controllers();
         Ok(())
+    }
+
+    /// Returns a cloneable handle to the machine's canonical disk backend.
+    ///
+    /// This is the same disk used by BIOS INT13 services, and (when enabled) is also attached as
+    /// the backend for emulated storage controllers such as AHCI.
+    pub fn shared_disk(&self) -> SharedDisk {
+        self.disk.clone()
+    }
+
+    fn attach_shared_disk_to_storage_controllers(&mut self) {
+        // Canonical AHCI port 0.
+        if let Some(ahci) = self.ahci.as_ref() {
+            let drive = AtaDrive::new(Box::new(self.disk.clone()))
+                .expect("machine disk should be 512-byte aligned");
+            ahci.borrow_mut().attach_drive(0, drive);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -2200,6 +2221,11 @@ impl Machine {
             self.hpet = Some(hpet);
             self.e1000 = e1000;
             self.ahci = ahci;
+
+            // Attach the machine's canonical disk backend to any enabled storage controllers so
+            // BIOS INT13 reads and controller-driven access (AHCI/NVMe/virtio-blk) see consistent
+            // bytes.
+            self.attach_shared_disk_to_storage_controllers();
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
