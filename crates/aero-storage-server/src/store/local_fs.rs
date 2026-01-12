@@ -143,7 +143,12 @@ impl LocalFsImageStore {
     ) -> Result<ImageMeta, StoreError> {
         let path = self.ensure_within_root(path).await?;
         let meta = fs::metadata(&path).await.map_err(map_not_found)?;
-        let last_modified = last_modified_override.or_else(|| meta.modified().ok());
+        // `SystemTime` can represent times before the Unix epoch, but HTTP `Last-Modified`
+        // formatting (via `httpdate`) cannot. Normalize pre-epoch mtimes to `None` so we avoid
+        // emitting misleading JSON timestamps and ensure derived validators behave consistently.
+        let last_modified = last_modified_override
+            .or_else(|| meta.modified().ok())
+            .filter(|t| t.duration_since(UNIX_EPOCH).is_ok());
         let etag = Some(match etag_override {
             Some(etag) => etag.to_string(),
             None => etag_from_size_and_mtime(meta.len(), last_modified),
