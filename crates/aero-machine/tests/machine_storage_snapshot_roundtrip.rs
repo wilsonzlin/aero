@@ -1005,3 +1005,105 @@ fn machine_restore_applies_only_present_controllers_from_dskc_wrapper() {
     next4[2..4].copy_from_slice(&w3.to_le_bytes());
     assert_eq!(&next4, b"REST");
 }
+
+#[test]
+fn machine_restore_applies_only_present_controllers_from_dskc_wrapper_ahci_only() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    // Source machine has both controllers enabled so the snapshot contains both entries in DSKC.
+    let src_cfg = MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        enable_ide: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    // Destination machine intentionally omits IDE; it should still restore AHCI state cleanly.
+    let dst_cfg = MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        enable_ide: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let ahci_disk = SharedDisk::new(64);
+    let mut ahci_seed = vec![0u8; SECTOR_SIZE];
+    ahci_seed[0..4].copy_from_slice(&[9, 8, 7, 6]);
+    ahci_disk.clone().write_sectors(4, &ahci_seed).unwrap();
+
+    let mut src = Machine::new(src_cfg).unwrap();
+    src.attach_ahci_drive_port0(AtaDrive::new(Box::new(ahci_disk.clone())).unwrap());
+
+    // Enable memory decoding + bus mastering for AHCI (required for MMIO + DMA).
+    {
+        let bdf = profile::SATA_AHCI_ICH9.bdf;
+        write_cfg_u16(&mut src, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    }
+
+    let ahci_abar = {
+        let bdf = profile::SATA_AHCI_ICH9.bdf;
+        u64::from(read_cfg_u32(
+            &mut src,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            0x24,
+        ) & 0xFFFF_FFF0)
+    };
+    assert!(ahci_abar != 0, "AHCI BAR5 must be programmed");
+
+    // Issue a READ DMA EXT and leave an interrupt pending so AHCI is in a non-default state at
+    // snapshot time.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let data_buf = 0x4000u64;
+
+    src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_CLB, clb as u32);
+    src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_FB, fb as u32);
+    src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+    src.write_physical_u32(ahci_abar + HBA_GHC, GHC_IE | GHC_AE);
+    src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    src.write_physical_u32(
+        ahci_abar + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    write_cmd_header(&mut src, clb, 0, ctba, 1, false);
+    write_cfis(&mut src, ctba, ATA_CMD_READ_DMA_EXT, 4, 1);
+    write_prdt(&mut src, ctba, 0, data_buf, SECTOR_SIZE as u32);
+    src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_CI, 1);
+
+    src.process_ahci();
+    src.poll_pci_intx_lines();
+
+    assert!(src.ahci().unwrap().borrow().intx_level());
+    assert_eq!(&src.read_physical_bytes(data_buf, 4), &[9, 8, 7, 6]);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(dst_cfg).unwrap();
+    assert!(
+        restored.ide().is_none(),
+        "destination machine should not have an IDE controller"
+    );
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    // Host contract: reattach the backend after restore.
+    restored.attach_ahci_drive_port0(AtaDrive::new(Box::new(ahci_disk)).unwrap());
+
+    // AHCI state should have been restored despite the snapshot containing an IDE entry.
+    assert!(restored.ahci().unwrap().borrow().intx_level());
+    assert_eq!(&restored.read_physical_bytes(data_buf, 4), &[9, 8, 7, 6]);
+}
