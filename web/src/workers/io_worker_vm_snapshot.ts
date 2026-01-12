@@ -1,6 +1,7 @@
 import type { WasmApi } from "../runtime/wasm_loader";
 import type { VmSnapshotDeviceBlob } from "../runtime/snapshot_protocol";
 import {
+  VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
@@ -17,6 +18,7 @@ export type IoWorkerSnapshotDeviceState = { kind: string; bytes: Uint8Array };
 export type IoWorkerSnapshotRuntimes = Readonly<{
   usbUhciRuntime: unknown | null;
   usbUhciControllerBridge: unknown | null;
+  audioHda?: unknown | null;
   netE1000: unknown | null;
   netStack: unknown | null;
 }>;
@@ -99,6 +101,17 @@ export function snapshotNetE1000DeviceState(netE1000: unknown | null): IoWorkerS
   return null;
 }
 
+export function snapshotAudioHdaDeviceState(audioHda: unknown | null): IoWorkerSnapshotDeviceState | null {
+  if (!audioHda) return null;
+  try {
+    const bytes = trySaveState(audioHda);
+    if (bytes) return { kind: VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] audio.hda save_state failed:", err);
+  }
+  return null;
+}
+
 export function snapshotNetStackDeviceState(netStack: unknown | null): IoWorkerSnapshotDeviceState | null {
   if (!netStack) return null;
   try {
@@ -115,6 +128,9 @@ export function collectIoWorkerSnapshotDeviceStates(runtimes: IoWorkerSnapshotRu
 
   const usb = snapshotUsbDeviceState(runtimes);
   if (usb) devices.push(usb);
+
+  const hda = snapshotAudioHdaDeviceState(runtimes.audioHda ?? null);
+  if (hda) devices.push(hda);
 
   const e1000 = snapshotNetE1000DeviceState(runtimes.netE1000);
   if (e1000) devices.push(e1000);
@@ -156,6 +172,20 @@ export function restoreNetE1000DeviceState(netE1000: unknown | null, bytes: Uint
     }
   } catch (err) {
     console.warn("[io.worker] net.e1000 load_state failed:", err);
+  }
+}
+
+export function restoreAudioHdaDeviceState(audioHda: unknown | null, bytes: Uint8Array): void {
+  if (!audioHda) {
+    console.warn("[io.worker] Snapshot contains audio.hda state but audio runtime is unavailable; ignoring blob.");
+    return;
+  }
+  try {
+    if (!tryLoadState(audioHda, bytes)) {
+      console.warn("[io.worker] Snapshot contains audio.hda state but audio runtime has no load_state/restore_state hook; ignoring blob.");
+    }
+  } catch (err) {
+    console.warn("[io.worker] audio.hda load_state failed:", err);
   }
 }
 
@@ -280,6 +310,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
     const devices: VmSnapshotDeviceBlob[] = [];
     let usbBytes: Uint8Array | null = null;
+    let hdaBytes: Uint8Array | null = null;
     let e1000Bytes: Uint8Array | null = null;
     let stackBytes: Uint8Array | null = null;
     for (const entry of devicesRaw) {
@@ -292,12 +323,14 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
 
       if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.bytes;
     }
 
     // Apply device state locally (IO worker owns USB + networking).
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
+    if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
 
@@ -318,6 +351,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     const devices: VmSnapshotDeviceBlob[] = [];
     let usbBytes: Uint8Array | null = null;
+    let hdaBytes: Uint8Array | null = null;
     let e1000Bytes: Uint8Array | null = null;
     let stackBytes: Uint8Array | null = null;
     for (const entry of rec.devices) {
@@ -333,6 +367,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       if (!kind) continue;
 
       if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.data;
+      if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.data;
       if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.data;
       if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.data;
 
@@ -340,6 +375,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     }
 
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
+    if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
 
