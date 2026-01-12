@@ -1233,7 +1233,7 @@ impl Machine {
 
             let remaining = max_insts - executed;
             let mut bus = aero_cpu_core::PagingBus::new_with_io(&mut self.mem, &mut self.io);
-            std::mem::swap(bus.mmu_mut(), &mut self.mmu);
+            std::mem::swap(&mut self.mmu, bus.mmu_mut());
 
             let batch = run_batch_cpu_core_with_assists(
                 &cfg,
@@ -1242,7 +1242,7 @@ impl Machine {
                 &mut bus,
                 remaining,
             );
-            std::mem::swap(bus.mmu_mut(), &mut self.mmu);
+            std::mem::swap(&mut self.mmu, bus.mmu_mut());
             executed = executed.saturating_add(batch.executed);
 
             // Deterministically advance platform time based on executed cycles.
@@ -1787,6 +1787,7 @@ impl snapshot::SnapshotTarget for Machine {
         self.ps2_mouse_buttons = 0;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
+        self.mmu = aero_mmu::Mmu::new();
         // Reset non-architectural interrupt bookkeeping to a deterministic baseline. If the
         // snapshot contains a CPU_INTERNAL device entry, apply its fields back on top.
         let cpu_internal = self.restored_cpu_internal.take();
@@ -2040,8 +2041,20 @@ mod tests {
         m.set_disk_image(boot.to_vec()).unwrap();
         m.reset();
 
+        // Run at least two slices with paging enabled so the machine-level bus/MMU can be reused
+        // across `run_slice` calls.
+        match m.run_slice(15) {
+            RunExit::Completed { .. } => {}
+            other => panic!("unexpected exit: {other:?}"),
+        }
+        assert_ne!(
+            m.cpu().control.cr0 & aero_cpu_core::state::CR0_PG,
+            0,
+            "expected paging to be enabled after first slice"
+        );
+
         for _ in 0..200 {
-            match m.run_slice(10_000) {
+            match m.run_slice(15) {
                 RunExit::Halted { .. } => break,
                 RunExit::Completed { .. } => continue,
                 other => panic!("unexpected exit: {other:?}"),
