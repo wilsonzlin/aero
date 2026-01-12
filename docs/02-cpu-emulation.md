@@ -132,8 +132,9 @@ WASM modules **inside a worker**:
   - Uses its **own private linear memory** (does not import the emulator's shared memory) to avoid
     undefined behaviour from multiple Rust runtimes aliasing one `WebAssembly.Memory`.
 - **JS glue (web runtime):**
-  - CPU worker: `web/src/workers/cpu.worker.ts` drives `WasmVm` / `WasmTieredVm` and forwards Tier-1 compile requests.
-  - JIT worker: `web/src/workers/jit.worker.ts` compiles Tier-1 WASM bytes into a `WebAssembly.Module` (and caches by
+  - CPU worker: `web/src/workers/cpu.worker.ts` drives the `WasmVm` / `WasmTieredVm` exports and wires up the JS shims
+    used by the runtime (`globalThis.__aero_io_port_*`, `globalThis.__aero_mmio_*`, and Tier-1 `globalThis.__aero_jit_call`).
+  - JIT worker: `web/src/workers/jit.worker.ts` compiles provided WASM bytes into a `WebAssembly.Module` (cached by
     content hash). If `WebAssembly.Module` is not structured-cloneable, it reports an `unsupported` error instead.
   - Loader: `web/src/runtime/jit_wasm_loader.ts` loads `aero-jit-wasm` and currently prefers the
     single-threaded package to avoid wasm-bindgen allocating huge `SharedArrayBuffer`s during
