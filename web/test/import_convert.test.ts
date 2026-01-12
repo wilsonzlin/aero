@@ -105,9 +105,10 @@ function buildQcow2Fixture(): { file: Uint8Array; logical: Uint8Array } {
   const clusterSize = 512;
   const logicalSize = 1024;
 
-  const l1Offset = 512;
-  const l2Offset = 1024;
-  const data0Offset = 1536;
+  const refcountTableOffset = 512;
+  const l1Offset = 1024;
+  const l2Offset = 1536;
+  const data0Offset = 2048;
   const fileSize = data0Offset + clusterSize;
 
   const file = new Uint8Array(fileSize);
@@ -121,6 +122,8 @@ function buildQcow2Fixture(): { file: Uint8Array; logical: Uint8Array } {
   writeU32BE(file, 32, 0); // crypt method
   writeU32BE(file, 36, 1); // l1 size
   writeU64BE(file, 40, BigInt(l1Offset));
+  writeU64BE(file, 48, BigInt(refcountTableOffset));
+  writeU32BE(file, 56, 1); // refcount_table_clusters
   // nb_snapshots at 60 is 0 by default.
 
   // L1 table (1 entry)
@@ -486,12 +489,35 @@ test("convertToAeroSparse: rejects qcow2 with too many clusters", async () => {
   writeU64BE(file, 24, 100n * 1024n * 1024n * 1024n); // virtual size = 100 GiB
   writeU32BE(file, 36, 3_276_800); // l1_size (derived from size/clusterSize and l2 entries)
   writeU64BE(file, 40, 512n); // l1_table_offset (not actually present in file)
+  writeU64BE(file, 48, 512n); // refcount_table_offset (not actually present in file)
 
   const src = new MemSource(file);
   const sync = new MemSyncAccessHandle();
   await assert.rejects(
     convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
     (err: any) => err instanceof Error && /qcow2 too many clusters/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects qcow2 v3 where header_length overlaps tables", async () => {
+  const headerLength = 1024;
+  const file = new Uint8Array(headerLength);
+  file.set([0x51, 0x46, 0x49, 0xfb], 0); // magic
+  writeU32BE(file, 4, 3); // version
+  writeU32BE(file, 20, 9); // cluster_bits = 9 => 512B clusters
+  writeU64BE(file, 24, 512n); // virtual size
+  writeU32BE(file, 36, 1); // l1_size
+  writeU64BE(file, 40, 512n); // l1_table_offset (cluster-aligned, but within header_length)
+  writeU64BE(file, 48, 1024n); // refcount_table_offset
+  writeU32BE(file, 56, 1); // refcount_table_clusters
+  writeU32BE(file, 96, 4); // refcount_order
+  writeU32BE(file, 100, headerLength); // header_length
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 table overlaps header/i.test(err.message),
   );
 });
 

@@ -852,6 +852,11 @@ class Qcow2 {
       hdr.set(await src.readAt(72, 32), 72);
     }
 
+    const headerLength = version === 3 ? readU32BE(hdr, 100) : 72;
+    if (!Number.isSafeInteger(headerLength) || headerLength <= 0) throw new Error("invalid qcow2 header_length");
+    if (version === 3 && headerLength < 104) throw new Error("invalid qcow2 header_length");
+    if (src.size < headerLength) throw new Error("qcow2 header truncated");
+
     const backingFileOffset = readU64BE(hdr, 8);
     const backingFileSize = readU32BE(hdr, 16);
     if (backingFileOffset !== 0n || backingFileSize !== 0) throw new Error("qcow2 backing files unsupported");
@@ -865,6 +870,9 @@ class Qcow2 {
     if (l1Size === 0) throw new Error("qcow2 l1_size is zero");
     const l1TableOffset = Number(readU64BE(hdr, 40));
     if (!Number.isSafeInteger(l1TableOffset) || l1TableOffset <= 0) throw new Error("invalid qcow2 l1_table_offset");
+    const refcountTableOffset = Number(readU64BE(hdr, 48));
+    if (!Number.isSafeInteger(refcountTableOffset) || refcountTableOffset <= 0) throw new Error("invalid qcow2 refcount_table_offset");
+    if (l1TableOffset < headerLength || refcountTableOffset < headerLength) throw new Error("qcow2 table overlaps header");
     const nbSnapshots = readU32BE(hdr, 60);
     if (nbSnapshots !== 0) throw new Error("qcow2 snapshots unsupported");
 
