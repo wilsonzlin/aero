@@ -1,3 +1,4 @@
+@rem SPDX-License-Identifier: MIT OR Apache-2.0
 @echo off
 setlocal EnableExtensions
 
