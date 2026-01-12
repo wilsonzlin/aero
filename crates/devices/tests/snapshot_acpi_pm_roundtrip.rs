@@ -137,6 +137,43 @@ fn snapshot_restore_in_place_does_not_glitch_sci_level() {
 }
 
 #[test]
+fn snapshot_restore_in_place_deasserts_sci_when_snapshot_state_has_no_pending_events() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+
+    let irq = IrqLog::default();
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(
+        cfg,
+        AcpiPmCallbacks {
+            sci_irq: Box::new(irq.clone()),
+            request_power_off: None,
+        },
+        clock.clone(),
+    );
+
+    // Assert SCI in the live device.
+    pm.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    pm.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    pm.trigger_power_button();
+    assert!(pm.sci_level());
+
+    // Clear the initial assertion edge so we can observe what `load_state` does.
+    irq.0.borrow_mut().clear();
+
+    // Restore a minimal/empty snapshot (no fields) which corresponds to the baseline (no pending
+    // events, SCI_EN=0).
+    let snapshot = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0)).finish();
+    pm.load_state(&snapshot).unwrap();
+
+    assert_eq!(
+        irq.events(),
+        vec![false],
+        "restoring a snapshot with no pending SCI should deassert the line exactly once"
+    );
+    assert!(!pm.sci_level());
+}
+
+#[test]
 fn snapshot_load_ignores_unknown_tags() {
     let cfg = AcpiPmConfig::default();
     let clock0 = ManualClock::new();
