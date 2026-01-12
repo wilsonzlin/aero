@@ -21,6 +21,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Array, BigInt, Object, Reflect};
 
 use aero_cpu_core::exec::{ExecDispatcher, ExecutedTier, StepOutcome, Tier0Interpreter, Vcpu};
+use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
 };
@@ -30,6 +31,7 @@ use aero_cpu_core::state::{
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
 use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
+use aero_jit_x86::{BlockLimits, Tier1Bus, discover_block};
 
 use crate::RunExitKind;
 
@@ -242,6 +244,16 @@ impl CpuBus for WasmBus {
             }
             _ => Err(Exception::Unimplemented("io_write size")),
         }
+    }
+}
+
+impl Tier1Bus for WasmBus {
+    fn read_u8(&self, addr: u64) -> u8 {
+        self.read_scalar::<1>(addr).map(|b| b[0]).unwrap_or(0)
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        let _ = self.write_scalar::<1>(addr, [value]);
     }
 }
 
@@ -554,6 +566,18 @@ impl WasmTieredVm {
         self.guest_size.min(u64::from(u32::MAX)) as u32
     }
 
+    /// Total number of interpreted basic blocks executed since the last reset.
+    #[wasm_bindgen(getter)]
+    pub fn interp_blocks_total(&self) -> u64 {
+        self.total_interp_blocks
+    }
+
+    /// Total number of JIT basic blocks executed since the last reset.
+    #[wasm_bindgen(getter)]
+    pub fn jit_blocks_total(&self) -> u64 {
+        self.total_jit_blocks
+    }
+
     /// Reset CPU state to 16-bit real mode and set `CS:IP = 0x0000:entry_ip`.
     pub fn reset_real_mode(&mut self, entry_ip: u32) {
         self.vcpu.cpu = CpuCore::new(CpuMode::Real);
@@ -602,10 +626,38 @@ impl WasmTieredVm {
         code_paddr: u64,
         byte_len: u32,
     ) -> Array {
-        let evicted =
-            self.dispatcher
-                .jit_mut()
-                .install_block(entry_rip, table_index, code_paddr, byte_len);
+        // `JitRuntime::install_block` uses `snapshot_meta` which does not know how many guest
+        // instructions the block will retire. The tiered dispatcher uses that instruction count to
+        // advance time/TSC and maintain interrupt bookkeeping after a committed JIT exit.
+        //
+        // Compute a conservative instruction count from the current guest bytes.
+        let instruction_count = {
+            let max_bytes = usize::try_from(byte_len).unwrap_or(usize::MAX).max(1);
+            let limits = BlockLimits {
+                max_insts: 64,
+                max_bytes,
+            };
+            let block = discover_block(&self.vcpu.bus, entry_rip, limits);
+            let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
+            if matches!(
+                block.end_kind,
+                aero_jit_x86::BlockEndKind::ExitToInterpreter { .. }
+            ) {
+                count = count.saturating_sub(1);
+            }
+            count
+        };
+
+        let jit = self.dispatcher.jit_mut();
+        let mut meta = jit.snapshot_meta(code_paddr, byte_len);
+        meta.instruction_count = instruction_count;
+        meta.inhibit_interrupts_after_block = false;
+
+        let evicted = jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index,
+            meta,
+        });
         let arr = Array::new();
         for rip in evicted {
             arr.push(&BigInt::from(rip).into());

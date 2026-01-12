@@ -1246,6 +1246,13 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           perfIoWaitMs += performance.now() - t0;
         }
       };
+
+      // Tier-1 JIT execution hook used by `WasmTieredVm`.
+      //
+      // The tiered VM calls out to JS so the CPU worker can execute JIT blocks that were
+      // compiled/instantiated out-of-band. Until the worker installs a real dispatch table, keep a
+      // safe default that forces an interpreter fallback.
+      (globalThis as any).__aero_jit_call = (_tableIndex: number, _cpuPtr: number, _jitCtxPtr: number) => -1n;
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
       if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
