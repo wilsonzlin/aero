@@ -1610,11 +1610,22 @@ fn fs_main() -> @location(0) vec4<f32> {
     fn map_format(
         &self,
         format: u32,
+        width: u32,
+        height: u32,
     ) -> Result<(wgpu::TextureFormat, TextureUploadTransform), ExecutorError> {
         let bc_enabled = self
             .device
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        // WebGPU validation requires block-compressed (BC) textures to have base dimensions that
+        // are multiples of the 4x4 block size. If the guest requests an unaligned size (e.g. 9x9),
+        // fall back to an RGBA8 texture + CPU decompression so `create_texture` stays robust even
+        // when BC is enabled on the device.
+        //
+        // Note: the stable executor only supports mip_level_count=1 today, so base dimensions are
+        // the only ones we need to validate here.
+        let bc_dims_compatible = width.is_multiple_of(4) && height.is_multiple_of(4);
+        let bc_native_ok = bc_enabled && bc_dims_compatible;
 
         match format {
             v if v == pci::AerogpuFormat::B8G8R8A8Unorm as u32
@@ -1662,7 +1673,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             // BC formats: sample/upload directly when BC compression is enabled on the device,
             // otherwise CPU-decompress into RGBA8 (to avoid requiring BC sampling support).
             v if v == pci::AerogpuFormat::BC1RgbaUnorm as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc1RgbaUnorm,
                         TextureUploadTransform::Direct,
@@ -1675,7 +1686,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             }
             v if v == pci::AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc1RgbaUnormSrgb,
                         TextureUploadTransform::Direct,
@@ -1689,7 +1700,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
 
             v if v == pci::AerogpuFormat::BC2RgbaUnorm as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc2RgbaUnorm,
                         TextureUploadTransform::Direct,
@@ -1702,7 +1713,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             }
             v if v == pci::AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc2RgbaUnormSrgb,
                         TextureUploadTransform::Direct,
@@ -1716,7 +1727,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
 
             v if v == pci::AerogpuFormat::BC3RgbaUnorm as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc3RgbaUnorm,
                         TextureUploadTransform::Direct,
@@ -1729,7 +1740,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             }
             v if v == pci::AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc3RgbaUnormSrgb,
                         TextureUploadTransform::Direct,
@@ -1743,7 +1754,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
 
             v if v == pci::AerogpuFormat::BC7RgbaUnorm as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc7RgbaUnorm,
                         TextureUploadTransform::Direct,
@@ -1756,7 +1767,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             }
             v if v == pci::AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
-                if bc_enabled {
+                if bc_native_ok {
                     Ok((
                         wgpu::TextureFormat::Bc7RgbaUnormSrgb,
                         TextureUploadTransform::Direct,
@@ -1811,7 +1822,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             )));
         }
 
-        let (wgpu_format, upload_transform) = self.map_format(format)?;
+        let (wgpu_format, upload_transform) = self.map_format(format, width, height)?;
         let layout = texture_copy_layout(width, height, format)?;
 
         if row_pitch_bytes != 0 && row_pitch_bytes < layout.unpadded_bytes_per_row {

@@ -915,3 +915,54 @@ fn executor_rejects_misaligned_bc_copy_region() {
         );
     });
 }
+
+#[test]
+fn executor_falls_back_for_unaligned_bc_texture_dimensions_even_when_bc_is_enabled() {
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_falls_back_for_unaligned_bc_texture_dimensions_even_when_bc_is_enabled"
+    );
+
+    pollster::block_on(async {
+        if env_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION") {
+            common::skip_or_panic(
+                TEST_NAME,
+                "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set; skipping BC-enabled test",
+            );
+            return;
+        }
+
+        let (device, queue) = match create_device_queue_bc().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(TEST_NAME, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x1000);
+
+        // Regression: wgpu/WebGPU rejects BC textures unless the base dimensions are multiples of
+        // the 4x4 block size. Creating a 9x9 BC1 texture must not panic; the executor should
+        // transparently fall back to an RGBA8 texture + CPU decompression.
+        let stream = build_stream(|out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
+                push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32); // format
+                push_u32(out, 9); // width (not block-aligned)
+                push_u32(out, 9); // height (not block-aligned)
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        });
+
+        let report = exec.process_cmd_stream(&stream, &mut guest, None);
+        assert!(report.is_ok(), "report had errors: {:#?}", report.events);
+    });
+}
