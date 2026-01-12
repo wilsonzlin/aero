@@ -11,8 +11,14 @@
  * - appends an endpoint path segment (e.g. "/udp") without introducing double slashes
  */
 export function buildWebSocketUrl(baseUrl: string, endpointPath: string): URL {
-  const baseHref = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
-  const url = baseHref && typeof baseHref === "string" ? new URL(baseUrl, baseHref) : new URL(baseUrl);
+  // `proxyUrl` supports same-origin absolute paths (e.g. "/base"). `new URL("/base")`
+  // throws unless a base is provided, so resolve against `location.href` when
+  // available (browser environments), and fall back to `new URL(baseUrl)` for
+  // Node/vitest environments where `location` is typically undefined.
+  const url =
+    typeof location !== "undefined" && typeof location.href === "string"
+      ? new URL(baseUrl, location.href)
+      : new URL(baseUrl);
   if (url.protocol === "http:") url.protocol = "ws:";
   if (url.protocol === "https:") url.protocol = "wss:";
 
@@ -26,4 +32,3 @@ export function buildWebSocketUrl(baseUrl: string, endpointPath: string): URL {
 
   return url;
 }
-
