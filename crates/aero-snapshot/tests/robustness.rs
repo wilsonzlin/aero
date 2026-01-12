@@ -3,10 +3,10 @@
 use std::io::{Cursor, ErrorKind};
 
 use aero_snapshot::{
-    inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuInternalState, CpuState,
-    DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions,
-    Result, SaveOptions, SectionId, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
-    VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+    inspect_snapshot, limits, restore_snapshot, save_snapshot, Compression, CpuInternalState,
+    CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, RamMode,
+    RamWriteOptions, Result, SaveOptions, SectionId, SnapshotError, SnapshotMeta, SnapshotSource,
+    SnapshotTarget, VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 
 #[derive(Default)]
@@ -312,9 +312,9 @@ impl SnapshotSource for TooManyCpuSource {
     }
 
     fn cpu_states(&self) -> Vec<VcpuSnapshot> {
-        // One more than the current `aero-snapshot` restore-time MAX_CPU_COUNT (256).
-        let mut out = Vec::with_capacity(257);
-        for apic_id in 0..257u32 {
+        let count = limits::MAX_CPU_COUNT + 1;
+        let mut out = Vec::with_capacity(count as usize);
+        for apic_id in 0..count {
             out.push(VcpuSnapshot {
                 apic_id,
                 cpu: CpuState::default(),
@@ -367,9 +367,9 @@ impl SnapshotSource for TooManyDeviceSource {
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
-        // One more than the current restore-time MAX_DEVICE_COUNT (4096).
-        let mut out = Vec::with_capacity(4097);
-        for id in 0..4097u32 {
+        let count = limits::MAX_DEVICE_COUNT + 1;
+        let mut out = Vec::with_capacity(count as usize);
+        for id in 0..count {
             out.push(DeviceState {
                 id: DeviceId(id),
                 version: 1,
@@ -419,8 +419,9 @@ impl SnapshotSource for TooManyDiskSource {
     }
 
     fn disk_overlays(&self) -> DiskOverlayRefs {
-        let mut disks = Vec::with_capacity(257);
-        for disk_id in 0..257u32 {
+        let count = limits::MAX_DISK_REFS + 1;
+        let mut disks = Vec::with_capacity(count as usize);
+        for disk_id in 0..count {
             disks.push(DiskOverlayRef {
                 disk_id,
                 base_image: "base.img".to_string(),
@@ -468,7 +469,7 @@ impl SnapshotSource for LongDiskPathSource {
         DiskOverlayRefs {
             disks: vec![DiskOverlayRef {
                 disk_id: 0,
-                base_image: "x".repeat(64 * 1024 + 1),
+                base_image: "x".repeat((limits::MAX_DISK_PATH_LEN + 1) as usize),
                 overlay_image: "overlay.img".to_string(),
             }],
         }
@@ -514,7 +515,7 @@ fn minimal_snapshot_with_ram_payload(ram_payload: &[u8]) -> Vec<u8> {
 fn cpu_internal_state_encode_rejects_too_many_pending_interrupts() {
     let state = CpuInternalState {
         interrupt_inhibit: 0,
-        pending_external_interrupts: vec![0u8; 1024 * 1024 + 1],
+        pending_external_interrupts: vec![0u8; (limits::MAX_PENDING_INTERRUPTS + 1) as usize],
     };
     let err = state.to_device_state().unwrap_err();
     assert!(matches!(
@@ -862,7 +863,7 @@ fn restore_snapshot_rejects_meta_label_too_long() {
     meta_payload.push(0); // parent_present
     meta_payload.extend_from_slice(&0u64.to_le_bytes()); // created_unix_ms
     meta_payload.push(1); // label_present
-    meta_payload.extend_from_slice(&(4u32 * 1024 + 1).to_le_bytes()); // label len
+    meta_payload.extend_from_slice(&(limits::MAX_LABEL_LEN + 1).to_le_bytes()); // label len
     push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
 
     let mut target = DummyTarget::new(0);
@@ -936,7 +937,7 @@ fn restore_snapshot_rejects_disks_base_image_too_long() {
     let mut disks_payload = Vec::new();
     disks_payload.extend_from_slice(&1u32.to_le_bytes()); // count
     disks_payload.extend_from_slice(&0u32.to_le_bytes()); // disk_id
-    disks_payload.extend_from_slice(&(64u32 * 1024 + 1).to_le_bytes()); // base_image len
+    disks_payload.extend_from_slice(&(limits::MAX_DISK_PATH_LEN + 1).to_le_bytes()); // base_image len
     push_section(&mut bytes, SectionId::DISKS, 1, 0, &disks_payload);
 
     let mut target = DummyTarget::new(0);
@@ -1499,11 +1500,11 @@ fn restore_snapshot_rejects_dirty_ram_page_list_not_strictly_increasing() {
 #[test]
 fn inspect_and_restore_reject_invalid_ram_page_size() {
     // `ram::MAX_PAGE_SIZE` is 2 MiB; keep the test payload minimal by setting total_len=0.
-    let invalid_page_size = 2 * 1024 * 1024 + 1;
+    let invalid_page_size = limits::MAX_RAM_PAGE_SIZE + 1;
 
     let mut ram_payload = Vec::new();
     ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
-    ram_payload.extend_from_slice(&(invalid_page_size as u32).to_le_bytes());
+    ram_payload.extend_from_slice(&invalid_page_size.to_le_bytes());
     ram_payload.push(RamMode::Full as u8);
     ram_payload.push(Compression::None as u8);
     ram_payload.extend_from_slice(&0u16.to_le_bytes());
@@ -1522,7 +1523,7 @@ fn inspect_and_restore_reject_invalid_ram_page_size() {
 #[test]
 fn inspect_and_restore_reject_invalid_ram_chunk_size() {
     // `ram::MAX_CHUNK_SIZE` is 64 MiB; keep the test payload minimal by setting total_len=0.
-    let invalid_chunk_size = 64 * 1024 * 1024 + 1;
+    let invalid_chunk_size = limits::MAX_RAM_CHUNK_SIZE + 1;
 
     let mut ram_payload = Vec::new();
     ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
@@ -1530,7 +1531,7 @@ fn inspect_and_restore_reject_invalid_ram_chunk_size() {
     ram_payload.push(RamMode::Full as u8);
     ram_payload.push(Compression::None as u8);
     ram_payload.extend_from_slice(&0u16.to_le_bytes());
-    ram_payload.extend_from_slice(&(invalid_chunk_size as u32).to_le_bytes());
+    ram_payload.extend_from_slice(&invalid_chunk_size.to_le_bytes());
 
     let bytes = minimal_snapshot_with_ram_payload(&ram_payload);
 
