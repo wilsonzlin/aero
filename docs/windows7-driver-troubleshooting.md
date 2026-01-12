@@ -5,6 +5,8 @@ This document covers common Windows 7 issues after installing **Aero Guest Tools
 If you have not installed Guest Tools yet, start here:
 
 - [`docs/windows7-guest-tools.md`](./windows7-guest-tools.md)
+- For the canonical Windows 7 boot/install storage topology (AHCI HDD + IDE/ATAPI CD-ROM), see
+  [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
 
 ## Before you start: quick triage checklist
 

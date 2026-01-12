@@ -11,6 +11,12 @@ This document describes an **auditable, reproducible** process for preparing a W
 - Configures **driver signature policy** (prefer test-signing; fallback to disabling integrity checks).
 - Installs the **Aero test root certificate** into WinPE and the installed OS so test-signed drivers are trusted.
 
+Note: If you are using Aero’s **baseline** Windows 7 install topology (AHCI HDD + IDE/ATAPI CD-ROM),
+Windows Setup should be able to see the disk using Windows 7’s in-box AHCI driver. This document is
+primarily needed when you want to install/boot using **paravirtual** or otherwise non-inbox storage
+devices (e.g. virtio-blk). For the baseline topology details (canonical PCI BDFs, attachment mapping,
+and interrupt routing), see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
+
 This is written to be executable manually today, and to serve as a reference for future automation (see `tools/win7-slipstream/templates/`).
 
 Related references in this repo:
