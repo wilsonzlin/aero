@@ -166,6 +166,9 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
         return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
       }
 
+      const sleepSab = new SharedArrayBuffer(4);
+      const sleepI32 = new Int32Array(sleepSab);
+
       let io = null;
       let guestBase = 0;
       let guestSab = null;
@@ -366,7 +369,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
                 throw new Error("Timed out waiting for virtio used.idx >= " + target + " (still " + cur + ")");
               }
               // Sleep briefly without burning CPU.
-              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+              Atomics.wait(sleepI32, 0, 0, 10);
             }
           }
 
@@ -407,13 +410,12 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
     const callCpu = (cmd: string, payload: Record<string, unknown> = {}, timeoutMs = 2000): Promise<unknown> => {
       const reqId = nextReqId++;
       return new Promise((resolve, reject) => {
-        pending.set(reqId, { resolve, reject });
-        cpuWorker.postMessage({ reqId, cmd, ...payload });
         const timer = setTimeout(() => {
           pending.delete(reqId);
           reject(new Error(`Timed out waiting for CPU worker response to ${cmd} after ${timeoutMs}ms.`));
         }, timeoutMs);
         (timer as unknown as { unref?: () => void }).unref?.();
+
         const wrappedResolve = (value: unknown) => {
           clearTimeout(timer);
           resolve(value);
@@ -422,7 +424,9 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
           clearTimeout(timer);
           reject(err);
         };
+
         pending.set(reqId, { resolve: wrappedResolve, reject: wrappedReject });
+        cpuWorker.postMessage({ reqId, cmd, ...payload });
       });
     };
 
