@@ -2340,6 +2340,17 @@ fn vhd_dynamic_rejects_invalid_block_size() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_block_size_too_large() {
+    let virtual_size = 64 * 1024u64;
+    // 64MiB is the maximum supported dynamic VHD block size; request something larger.
+    let block_size = 64 * 1024 * 1024 + 512;
+    let backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported("vhd block_size too large")));
+}
+
+#[test]
 fn vhd_dynamic_rejects_dynamic_header_overlapping_footer_copy() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;

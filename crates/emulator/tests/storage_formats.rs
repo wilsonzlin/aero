@@ -867,6 +867,19 @@ fn vhd_dynamic_rejects_bad_dynamic_header_data_offset() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_block_size_too_large() {
+    let virtual_size = 1024 * 1024u64;
+    let block_size = 64 * 1024 * 1024 + 512; // > 64MiB cap, still sector-aligned
+    let storage = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let res = emulator::io::storage::formats::VhdDisk::open(storage);
+    assert!(matches!(
+        res,
+        Err(DiskError::Unsupported("vhd block_size too large"))
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_oversized_bat() {
     const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024;
 

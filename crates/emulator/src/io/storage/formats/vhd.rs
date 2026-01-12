@@ -17,6 +17,14 @@ const SECTOR_SIZE: u32 = 512;
 // Hard caps to avoid absurd allocations from untrusted images.
 const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
+// DoS guard: keep dynamic VHD allocation units bounded. Extremely large block sizes can cause
+// pathological file growth on the first guest write to a new block (the image must be extended by
+// `block_size` bytes).
+//
+// This cap intentionally matches the Aero sparse disk block-size cap in `aero-storage` so
+// untrusted VHDs can't request significantly more work per allocation unit than our native sparse
+// format.
+const MAX_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 
 // Bound bitmap caching when reading large fully-allocated dynamic VHDs.
 const VHD_BITMAP_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
@@ -133,6 +141,9 @@ impl VhdDynamicHeader {
         }
         if block_size == 0 || !(block_size as u64).is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd block_size invalid"));
+        }
+        if block_size > MAX_BLOCK_SIZE_BYTES {
+            return Err(DiskError::Unsupported("vhd block_size too large"));
         }
 
         let actual_checksum = vhd_checksum_dynamic_header(raw);
