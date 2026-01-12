@@ -35,10 +35,18 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
     let mut requested = wgpu::Features::empty();
 
-    if !wgpu_texture_compression_disabled()
-        && available.contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-    {
-        requested |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    if !wgpu_texture_compression_disabled() {
+        // Texture compression is optional but beneficial (guest textures, DDS, etc).
+        // Request only features the adapter advertises, otherwise `request_device` will fail.
+        for feature in [
+            wgpu::Features::TEXTURE_COMPRESSION_BC,
+            wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+            wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR,
+        ] {
+            if available.contains(feature) {
+                requested |= feature;
+            }
+        }
     }
 
     requested
