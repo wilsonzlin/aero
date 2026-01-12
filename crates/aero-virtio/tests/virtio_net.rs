@@ -18,8 +18,8 @@ use std::rc::Rc;
 struct SharedNet(Rc<RefCell<LoopbackNet>>);
 
 impl NetBackend for SharedNet {
-    fn transmit(&mut self, packet: &[u8]) {
-        self.0.borrow_mut().tx_packets.push(packet.to_vec());
+    fn transmit(&mut self, packet: Vec<u8>) {
+        self.0.borrow_mut().tx_packets.push(packet);
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {

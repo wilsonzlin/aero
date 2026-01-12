@@ -3,6 +3,7 @@ use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
+pub use aero_net_backend::NetworkBackend as NetBackend;
 use std::collections::VecDeque;
 
 pub const VIRTIO_DEVICE_TYPE_NET: u16 = 1;
@@ -17,11 +18,6 @@ pub const VIRTIO_NET_F_STATUS: u64 = 1 << 16;
 
 pub const VIRTIO_NET_S_LINK_UP: u16 = 1;
 
-pub trait NetBackend {
-    fn transmit(&mut self, packet: &[u8]);
-    fn poll_receive(&mut self) -> Option<Vec<u8>>;
-}
-
 #[derive(Default, Debug)]
 pub struct LoopbackNet {
     pub tx_packets: Vec<Vec<u8>>,
@@ -29,8 +25,8 @@ pub struct LoopbackNet {
 }
 
 impl NetBackend for LoopbackNet {
-    fn transmit(&mut self, packet: &[u8]) {
-        self.tx_packets.push(packet.to_vec());
+    fn transmit(&mut self, packet: Vec<u8>) {
+        self.tx_packets.push(packet);
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
@@ -257,12 +253,12 @@ impl<B: NetBackend> VirtioNet<B> {
                     if let Ok(tx_packets) = net_offload::process_tx_packet(hdr, &packet) {
                         for pkt in tx_packets {
                             if pkt.len() >= 14 && pkt.len() <= 1514 {
-                                self.backend.transmit(&pkt);
+                                self.backend.transmit(pkt);
                             }
                         }
                     }
                 } else if packet.len() >= 14 && packet.len() <= 1514 {
-                    self.backend.transmit(&packet);
+                    self.backend.transmit(packet);
                 }
             }
         }
