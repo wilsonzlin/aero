@@ -387,3 +387,8 @@ BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc);
 
 /* Test-only hooks for injecting stub failures. */
 VOID WdkTestSetIoConnectInterruptStatus(_In_ NTSTATUS Status);
+
+/* Test-only hooks for controlling IRQL and observing debug output. */
+VOID WdkTestSetCurrentIrql(_In_ KIRQL Irql);
+ULONG WdkTestGetDbgPrintExCount(VOID);
+VOID WdkTestResetDbgPrintExCount(VOID);

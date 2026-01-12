@@ -10,6 +10,7 @@ static WDK_MMIO_READ_HANDLER g_mmio_read_handler = NULL;
 static WDK_MMIO_WRITE_HANDLER g_mmio_write_handler = NULL;
 
 static NTSTATUS g_IoConnectInterruptStatus = STATUS_SUCCESS;
+static KIRQL g_current_irql = PASSIVE_LEVEL;
 /*
  * Deterministic monotonic "interrupt time" for host tests.
  *
@@ -17,6 +18,7 @@ static NTSTATUS g_IoConnectInterruptStatus = STATUS_SUCCESS;
  * wait/sleep so loops that poll based on KeQueryInterruptTime() remain finite.
  */
 static ULONGLONG g_interrupt_time_100ns = 0;
+static ULONG g_dbg_print_ex_count = 0;
 
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
@@ -152,7 +154,22 @@ BOOLEAN KeRemoveQueueDpc(_Inout_ PKDPC Dpc)
 
 KIRQL KeGetCurrentIrql(VOID)
 {
-    return PASSIVE_LEVEL;
+    return g_current_irql;
+}
+
+VOID WdkTestSetCurrentIrql(_In_ KIRQL Irql)
+{
+    g_current_irql = Irql;
+}
+
+ULONG WdkTestGetDbgPrintExCount(VOID)
+{
+    return g_dbg_print_ex_count;
+}
+
+VOID WdkTestResetDbgPrintExCount(VOID)
+{
+    g_dbg_print_ex_count = 0;
 }
 
 NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Alertable, _In_opt_ PLARGE_INTEGER Interval)
@@ -195,6 +212,7 @@ ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Form
     }
 
     /* Keep output available when running tests with --output-on-failure. */
+    g_dbg_print_ex_count++;
     va_start(ap, Format);
     (void)vfprintf(stderr, Format, ap);
     va_end(ap);

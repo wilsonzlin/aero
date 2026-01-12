@@ -1038,6 +1038,79 @@ static void test_notify_queue_does_not_write_when_queue_missing(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_reset_device_times_out_passive_level(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /* Device never reports status==0 even after the driver writes 0. */
+    sim.device_status_read_override = 1;
+    sim.device_status_read_override_value = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    WdkTestResetDbgPrintExCount();
+    WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+
+    VirtioPciResetDevice(&dev);
+
+    assert(sim.status_write_count == 1);
+    assert(sim.status_writes[0] == 0);
+    assert(WdkTestGetDbgPrintExCount() == 1);
+
+    WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_reset_device_times_out_dispatch_level(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.device_status_read_override = 1;
+    sim.device_status_read_override_value = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    WdkTestResetDbgPrintExCount();
+    WdkTestSetCurrentIrql(DISPATCH_LEVEL);
+
+    VirtioPciResetDevice(&dev);
+
+    assert(sim.status_write_count == 1);
+    assert(sim.status_writes[0] == 0);
+    assert(WdkTestGetDbgPrintExCount() == 1);
+
+    WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+    VirtioPciModernMmioSimUninstall();
+}
+
 int main(void)
 {
     test_init_ok();
@@ -1070,6 +1143,8 @@ int main(void)
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
     test_notify_queue_does_not_write_when_queue_missing();
+    test_reset_device_times_out_passive_level();
+    test_reset_device_times_out_dispatch_level();
 
     printf("virtio_pci_modern_miniport_tests: PASS\n");
     return 0;
