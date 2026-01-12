@@ -11,7 +11,9 @@ fn should_scan(path: &Path) -> bool {
         // Rust + docs.
         "rs" | "md" |
         // Web runtime.
-        "ts" | "tsx" | "js" | "jsx" | "html" |
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "html" |
+        // Native/driver sources.
+        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" |
         // Config/metadata.
         "toml" | "json" | "yml" | "yaml"
     )
@@ -57,7 +59,7 @@ fn scan_dir(dir: &Path, legacy: &[u8], hits: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn no_lingering_legacy_net_stack_4cc_references_in_docs_and_sources() {
+fn no_lingering_legacy_net_stack_4cc_references_in_repo() {
     // Older snapshots used an accidental 4CC for the user-space network stack snapshot blob.
     // The canonical 4CC is `NETS`, and we intentionally avoid mentioning the legacy spelling in
     // docs/tests to prevent confusion.
@@ -67,9 +69,12 @@ fn no_lingering_legacy_net_stack_4cc_references_in_docs_and_sources() {
     let roots = [
         repo_root.join("docs"),
         repo_root.join("crates"),
+        repo_root.join("src"),
         repo_root.join("web"),
+        repo_root.join("backend"),
         repo_root.join("tests"),
         repo_root.join("instructions"),
+        repo_root.join("drivers"),
     ];
 
     let mut hits = Vec::new();
