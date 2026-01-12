@@ -187,7 +187,7 @@ describe("io/devices/E1000PciDevice", () => {
     // `E1000PciDevice` drains TX by popping until `null`/`undefined`. Depending on implementation
     // details, it may probe for an additional frame after flushing. Avoid depending on an exact
     // call count; assert it advanced beyond the initial "pending" pop.
-    expect(bridge.pop_tx_frame.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(vi.mocked(bridge.pop_tx_frame).mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(Array.from(netTx.tryPop()!)).toEqual([0x02]);
   });
 
