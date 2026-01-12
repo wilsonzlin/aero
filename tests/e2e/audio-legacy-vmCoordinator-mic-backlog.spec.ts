@@ -17,6 +17,7 @@ test("Legacy VmCoordinator discards buffered mic samples on attach/resume/step (
   page.setDefaultTimeout(90_000);
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
+  await page.waitForSelector("#vm-safety-panel");
 
   // Start the legacy single-worker VM coordinator (src/emulator/vmCoordinator.js) via the harness UI.
   await page.click("#vm-start-coop");
@@ -126,4 +127,3 @@ test("Legacy VmCoordinator discards buffered mic samples on attach/resume/step (
   expect(result.step.readBeforeStep).toBeLessThan(result.step.writeBeforeStep);
   expect(result.step.readAfterStep).toBe(result.step.writeAfterStep);
 });
-
