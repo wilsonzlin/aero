@@ -315,7 +315,7 @@ fn snapshot_restore_rejects_oversized_usb_device_snapshots() {
         .bool(false)
         .finish();
 
-    let ports = Encoder::new().vec_bytes(&vec![port0, port1]).finish();
+    let ports = Encoder::new().vec_bytes(&[port0, port1]).finish();
 
     let mut w = SnapshotWriter::new(*b"UHCI", SnapshotVersion::new(1, 0));
     w.field_bytes(TAG_ROOT_HUB_PORTS, ports);

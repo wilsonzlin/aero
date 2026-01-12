@@ -1432,7 +1432,7 @@ mod tests {
             SetupPacket {
                 bm_request_type: 0x80,
                 b_request: USB_REQUEST_GET_DESCRIPTOR,
-                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_value: (USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8,
                 w_index: 0,
                 w_length: 255,
             },

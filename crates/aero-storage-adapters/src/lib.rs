@@ -124,7 +124,7 @@ impl AeroVirtualDiskAsDeviceBackend {
         let len_u64 = u64::try_from(len).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "length does not fit in u64")
         })?;
-        if offset % Self::SECTOR_SIZE != 0 {
+        if !offset.is_multiple_of(Self::SECTOR_SIZE) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -133,7 +133,7 @@ impl AeroVirtualDiskAsDeviceBackend {
                 ),
             ));
         }
-        if len_u64 % Self::SECTOR_SIZE != 0 {
+        if !len_u64.is_multiple_of(Self::SECTOR_SIZE) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -199,9 +199,9 @@ fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
         }
         aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
         aero_storage::DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
-        aero_storage::DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::Other, err),
+        aero_storage::DiskError::InvalidState(_) => io::Error::other(err),
         aero_storage::DiskError::BackendUnavailable => io::Error::new(io::ErrorKind::NotConnected, err),
-        aero_storage::DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err),
+        aero_storage::DiskError::Io(_) => io::Error::other(err),
     }
 }
 

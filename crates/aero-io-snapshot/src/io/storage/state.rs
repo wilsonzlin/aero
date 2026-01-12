@@ -488,7 +488,10 @@ impl IoSnapshot for DiskLayerState {
         if self.size_bytes == 0 {
             return Err(SnapshotError::InvalidFieldEncoding("disk_size"));
         }
-        if self.size_bytes % (self.sector_size as u64) != 0 {
+        if !self
+            .size_bytes
+            .is_multiple_of(self.sector_size as u64)
+        {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "disk_size not multiple of sector_size",
             ));
@@ -595,17 +598,12 @@ pub struct IdeTaskFileState {
     pub pending_lba2_high: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IdeDataMode {
+    #[default]
     None = 0,
     PioIn = 1,
     PioOut = 2,
-}
-
-impl Default for IdeDataMode {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -635,21 +633,11 @@ pub struct IdeDmaRequestState {
     pub commit: Option<IdeDmaCommitState>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IdeBusMasterChannelState {
     pub cmd: u8,
     pub status: u8,
     pub prd_addr: u32,
-}
-
-impl Default for IdeBusMasterChannelState {
-    fn default() -> Self {
-        Self {
-            cmd: 0,
-            status: 0,
-            prd_addr: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -667,17 +655,12 @@ pub struct IdeAtapiDeviceState {
     pub ascq: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IdeDriveState {
+    #[default]
     None,
     Ata(IdeAtaDeviceState),
     Atapi(IdeAtapiDeviceState),
-}
-
-impl Default for IdeDriveState {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1481,7 +1464,7 @@ impl IoSnapshot for NvmeControllerState {
 // ----------------------------------------
 
 /// AHCI HBA (global) register state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AhciHbaState {
     pub cap: u32,
     pub ghc: u32,
@@ -1490,20 +1473,8 @@ pub struct AhciHbaState {
     pub vs: u32,
 }
 
-impl Default for AhciHbaState {
-    fn default() -> Self {
-        Self {
-            cap: 0,
-            ghc: 0,
-            cap2: 0,
-            bohc: 0,
-            vs: 0,
-        }
-    }
-}
-
 /// AHCI per-port register state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AhciPortState {
     pub clb: u64,
     pub fb: u64,
@@ -1517,25 +1488,6 @@ pub struct AhciPortState {
     pub serr: u32,
     pub sact: u32,
     pub ci: u32,
-}
-
-impl Default for AhciPortState {
-    fn default() -> Self {
-        Self {
-            clb: 0,
-            fb: 0,
-            is: 0,
-            ie: 0,
-            cmd: 0,
-            tfd: 0,
-            sig: 0,
-            ssts: 0,
-            sctl: 0,
-            serr: 0,
-            sact: 0,
-            ci: 0,
-        }
-    }
 }
 
 /// Serializable AHCI controller state.

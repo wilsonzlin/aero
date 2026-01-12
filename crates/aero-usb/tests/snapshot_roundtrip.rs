@@ -13,7 +13,6 @@ use aero_usb::uhci::regs::{REG_FRNUM, REG_SOFMOD, USBCMD_CF, USBCMD_MAXP};
 use aero_usb::uhci::UhciController;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
-#[allow(dead_code)]
 mod util;
 
 use util::{TestMemory, LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC1, REG_USBCMD, USBCMD_RUN};
@@ -379,7 +378,7 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
     // Attach something so the port reports a connection.
     hub_rc
         .borrow_mut()
-        .attach(1, Box::new(DummyUsbDevice::default()));
+        .attach(1, Box::new(DummyUsbDevice));
 
     let mut hub = AttachedUsbDevice::new(Box::new(hub_handle.clone()));
 
@@ -550,7 +549,7 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
 fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
     let mut ctrl = UhciController::new();
     ctrl.hub_mut()
-        .attach(0, Box::new(DummyUsbDevice::default()));
+        .attach(0, Box::new(DummyUsbDevice));
 
     let mut mem = TestMemory::new(0x4000);
 

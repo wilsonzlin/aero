@@ -1040,6 +1040,10 @@ mod native {
             Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
         }
 
+        pub fn is_empty(&mut self) -> DiskResult<bool> {
+            Ok(self.len()? == 0)
+        }
+
         pub fn set_len(&mut self, _len: u64) -> DiskResult<()> {
             Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
         }

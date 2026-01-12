@@ -3372,7 +3372,7 @@ impl AerogpuD3d11Executor {
             .map(|buf| (buf.size, buf.gpu_size))
         {
             let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-            if offset % alignment != 0 {
+            if !offset.is_multiple_of(alignment) {
                 bail!(
                     "UPLOAD_RESOURCE: buffer offset {offset} does not respect COPY_BUFFER_ALIGNMENT"
                 );
@@ -3385,7 +3385,7 @@ impl AerogpuD3d11Executor {
             // `COPY_BUFFER_ALIGNMENT` (4). The AeroGPU command stream is byte-granular (e.g. index
             // buffers can be 3x u16 = 6 bytes), so we pad writes that reach the end of the buffer.
             let mut padded_tmp = Vec::new();
-            let write_data: &[u8] = if size % alignment != 0 {
+            let write_data: &[u8] = if !size.is_multiple_of(alignment) {
                 if offset.saturating_add(size) != buffer_size {
                     bail!(
                         "UPLOAD_RESOURCE: unaligned buffer upload is only supported when writing to the end of the buffer"
