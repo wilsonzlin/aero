@@ -159,7 +159,7 @@ impl MemoryBus for memory::PhysicalMemoryBus {
 
 /// Enable use of a trait object `dyn memory::MemoryBus` as the MMU page-walk backend.
 #[cfg(feature = "memory-bus")]
-impl MemoryBus for dyn memory::MemoryBus {
+impl<'a> MemoryBus for dyn memory::MemoryBus + 'a {
     #[inline]
     fn read_u8(&mut self, paddr: u64) -> u8 {
         memory::MemoryBus::read_u8(self, paddr)
