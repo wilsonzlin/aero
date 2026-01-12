@@ -6,10 +6,20 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
 
   const support = await page.evaluate(() => {
     let wasm = false;
+    let wasmThreads = false;
     try {
       wasm = typeof WebAssembly !== "undefined" && typeof WebAssembly.Memory === "function";
     } catch {
       wasm = false;
+    }
+    if (wasm) {
+      try {
+        // eslint-disable-next-line no-new
+        new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+        wasmThreads = true;
+      } catch {
+        wasmThreads = false;
+      }
     }
     return {
       crossOriginIsolated: globalThis.crossOriginIsolated === true,
@@ -17,6 +27,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
       atomics: typeof Atomics !== "undefined",
       worker: typeof Worker !== "undefined",
       wasm,
+      wasmThreads,
     };
   });
 
@@ -24,6 +35,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
   test.skip(!support.atomics, "Atomics is unavailable in this browser configuration.");
   test.skip(!support.worker, "Web Workers are unavailable in this environment.");
   test.skip(!support.wasm, "WebAssembly.Memory is unavailable in this environment.");
+  test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
 
   const result = await page.evaluate(async () => {
     const { CONTROL_BYTES, STATUS_INTS, StatusIndex, ringRegionsForWorker, createIoIpcSab, RUNTIME_RESERVED_BYTES } = await import(
@@ -38,7 +50,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     const guestSize = WASM_PAGE_BYTES; // minimal non-zero guest region
     const pages = Math.ceil((guestBase + guestSize) / WASM_PAGE_BYTES);
 
-    const guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages });
+    const guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
 
     const controlSab = new SharedArrayBuffer(CONTROL_BYTES);
     const status = new Int32Array(controlSab, 0, STATUS_INTS);
