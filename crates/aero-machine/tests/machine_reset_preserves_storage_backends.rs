@@ -37,6 +37,45 @@ impl VirtualDisk for DropDetectDisk {
 }
 
 #[test]
+fn machine_reset_does_not_drop_shared_disk_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: false,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    m.set_disk_backend(Box::new(disk)).unwrap();
+
+    m.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the shared disk backend"
+    );
+
+    // Dropping the machine should drop the backend (sanity check that it was attached).
+    drop(m);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "dropping the machine should drop the shared disk backend"
+    );
+}
+
+#[test]
 fn machine_reset_does_not_detach_ahci_disk_backend() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
