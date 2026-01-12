@@ -57,4 +57,11 @@ fn pc_machine_reset_does_not_detach_ahci_disk_backend() {
         !dropped.load(Ordering::SeqCst),
         "machine reset dropped the attached disk backend"
     );
+
+    // Detaching the drive should drop the backend (sanity check that we were actually attached).
+    m.bus.platform.detach_ahci_drive(0);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "detaching the drive should drop the disk backend"
+    );
 }
