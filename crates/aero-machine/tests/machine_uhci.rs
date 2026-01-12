@@ -1,8 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
-use aero_devices::usb::uhci::regs;
+use aero_devices::usb::uhci::{regs, UhciPciDevice};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
+use aero_snapshot as snapshot;
 use aero_usb::hid::UsbHidKeyboardHandle;
 
 #[test]
@@ -190,6 +192,155 @@ fn uhci_tick_remainder_roundtrips_through_snapshot_restore() {
     restored.tick_platform(500_000);
     let after_tick = restored.io_read(base_restored + regs::REG_FRNUM, 2) as u16;
     assert_eq!(after_tick, (before.wrapping_add(1)) & 0x07ff);
+}
+
+struct LegacyUsbSnapshotSource {
+    machine: Machine,
+}
+
+impl snapshot::SnapshotSource for LegacyUsbSnapshotSource {
+    fn snapshot_meta(&mut self) -> snapshot::SnapshotMeta {
+        snapshot::SnapshotSource::snapshot_meta(&mut self.machine)
+    }
+
+    fn cpu_state(&self) -> snapshot::CpuState {
+        snapshot::SnapshotSource::cpu_state(&self.machine)
+    }
+
+    fn mmu_state(&self) -> snapshot::MmuState {
+        snapshot::SnapshotSource::mmu_state(&self.machine)
+    }
+
+    fn device_states(&self) -> Vec<snapshot::DeviceState> {
+        let mut devices = snapshot::SnapshotSource::device_states(&self.machine);
+        let Some(pos) = devices
+            .iter()
+            .position(|device| device.id == snapshot::DeviceId::USB)
+        else {
+            return devices;
+        };
+        let Some(uhci) = self.machine.uhci() else {
+            return devices;
+        };
+
+        let version = <UhciPciDevice as IoSnapshot>::DEVICE_VERSION;
+        devices[pos] = snapshot::DeviceState {
+            id: snapshot::DeviceId::USB,
+            version: version.major,
+            flags: version.minor,
+            data: uhci.borrow().save_state(),
+        };
+        devices
+    }
+
+    fn disk_overlays(&self) -> snapshot::DiskOverlayRefs {
+        snapshot::SnapshotSource::disk_overlays(&self.machine)
+    }
+
+    fn ram_len(&self) -> usize {
+        snapshot::SnapshotSource::ram_len(&self.machine)
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> snapshot::Result<()> {
+        snapshot::SnapshotSource::read_ram(&self.machine, offset, buf)
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        snapshot::SnapshotSource::take_dirty_pages(&mut self.machine)
+    }
+}
+
+#[test]
+fn uhci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep the machine minimal/deterministic for this IO/timer test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut src = LegacyUsbSnapshotSource {
+        machine: Machine::new(cfg.clone()).unwrap(),
+    };
+
+    let bar4_base = {
+        let pci_cfg = src
+            .machine
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(USB_UHCI_PIIX3.bdf)
+            .expect("UHCI PCI function should exist");
+        cfg.bar_range(4).map(|range| range.base).unwrap_or(0)
+    };
+    assert_ne!(
+        bar4_base, 0,
+        "UHCI BAR4 base should be assigned by BIOS POST"
+    );
+    let base = u16::try_from(bar4_base).expect("UHCI BAR4 base should fit in u16");
+
+    // Start the controller (USBCMD.RS).
+    src.machine
+        .io_write(base + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+
+    let before = src.machine.io_read(base + regs::REG_FRNUM, 2) as u16;
+    // Advance by half a frame so the machine has a sub-ms UHCI remainder at snapshot time.
+    src.machine.tick_platform(500_000);
+
+    // Ensure our snapshot source really emitted the legacy payload (UHCP), not the canonical `USBC`
+    // wrapper.
+    let usb_state = snapshot::SnapshotSource::device_states(&src)
+        .into_iter()
+        .find(|d| d.id == snapshot::DeviceId::USB)
+        .expect("USB device state should exist");
+    assert_eq!(
+        usb_state.data.get(8..12),
+        Some(b"UHCP".as_slice()),
+        "legacy snapshot should store UHCI PCI snapshot directly under DeviceId::USB"
+    );
+
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    snapshot::save_snapshot(&mut bytes, &mut src, snapshot::SaveOptions::default()).unwrap();
+    let bytes = bytes.into_inner();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&bytes).unwrap();
+
+    let bar4_base_restored = {
+        let pci_cfg = restored
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(USB_UHCI_PIIX3.bdf)
+            .expect("UHCI PCI function should exist");
+        cfg.bar_range(4).map(|range| range.base).unwrap_or(0)
+    };
+    let base_restored =
+        u16::try_from(bar4_base_restored).expect("UHCI BAR4 base should fit in u16");
+
+    let after_restore = restored.io_read(base_restored + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(after_restore, before);
+
+    // Legacy snapshots did not include the machine's sub-ms tick remainder; we should start from a
+    // deterministic default of 0 on restore.
+    restored.tick_platform(500_000);
+    let after_half_ms = restored.io_read(base_restored + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(after_half_ms, before);
+
+    restored.tick_platform(500_000);
+    let after_full_ms = restored.io_read(base_restored + regs::REG_FRNUM, 2) as u16;
+    assert_eq!(after_full_ms, (before.wrapping_add(1)) & 0x07ff);
 }
 
 #[test]
