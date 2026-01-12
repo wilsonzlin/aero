@@ -523,6 +523,9 @@ impl<'a> TextureManager<'a> {
 
                 upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
+            TextureUploadTransform::B5G6R5ToRgba8 | TextureUploadTransform::B5G5R5A1ToRgba8 => {
+                unreachable!("TextureManager does not produce B5 upload transforms")
+            }
         }
     }
 

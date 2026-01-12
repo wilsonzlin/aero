@@ -1182,7 +1182,7 @@ fn upload_texture_from_linear_bytes(
                     TextureUploadTransform::Bc7ToRgba8 => {
                         decompress_bc7_rgba8(linear.width, linear.height, bc_tight.as_ref())
                     }
-                    TextureUploadTransform::Direct => unreachable!(),
+                    _ => unreachable!(),
                 };
 
                 if desc.texture_format != wgpu::TextureFormat::Rgba8Unorm

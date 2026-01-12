@@ -3120,3 +3120,482 @@ fn draw_to_bgra_render_target_is_supported() {
         assert_eq!(&rgba[idx..idx + 4], &[0, 0, 255, 255]);
     });
 }
+
+#[test]
+fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x40_000);
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        // Init: create the shared vertex buffer and RGBA8 render target.
+        let init_stream = build_stream(|out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: RGBA8
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_bytes.len() as u64); // size_bytes
+                out.extend_from_slice(&vb_bytes);
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest
+            .write(cmd_gpa, &init_stream)
+            .expect("write init stream");
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_gpa,
+            init_stream.len() as u32,
+            0,
+            0,
+        );
+        assert!(report.is_ok(), "init stream failed: {:#?}", report.events);
+
+        let formats: [(&str, u32, [u8; 2]); 2] = [
+            (
+                "B5G6R5Unorm",
+                AerogpuFormat::B5G6R5Unorm as u32,
+                0xF800u16.to_le_bytes(),
+            ),
+            (
+                "B5G5R5A1Unorm",
+                AerogpuFormat::B5G5R5A1Unorm as u32,
+                0xFC00u16.to_le_bytes(),
+            ),
+        ];
+
+        for (idx, (name, format_raw, pixel)) in formats.into_iter().enumerate() {
+            let host_tex = 10 + idx as u32;
+            let guest_tex = 20 + idx as u32;
+
+            // 4x4 packed texture (all texels identical).
+            let mut packed = Vec::with_capacity(4 * 4 * 2);
+            for _ in 0..(4 * 4) {
+                packed.extend_from_slice(&pixel);
+            }
+            assert_eq!(packed.len(), 32);
+
+            // Host-owned upload path.
+            let stream = build_stream(|out| {
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, host_tex); // texture_handle
+                    push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                    push_u32(out, format_raw);
+                    push_u32(out, 4); // width
+                    push_u32(out, 4); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 8); // row_pitch_bytes (4 * 2 bytes)
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                    push_u32(out, host_tex);
+                    push_u32(out, 0); // reserved0
+                    push_u64(out, 0); // offset_bytes
+                    push_u64(out, packed.len() as u64); // size_bytes
+                    out.extend_from_slice(&packed);
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                    push_u32(out, 1); // color_count
+                    push_u32(out, 0); // depth_stencil
+                    push_u32(out, 2); // colors[0]
+                    for _ in 1..8 {
+                        push_u32(out, 0);
+                    }
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                    push_u32(out, 1); // flags: CLEAR_COLOR
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 1.0);
+                    push_f32_bits(out, 1.0); // depth (unused)
+                    push_u32(out, 0); // stencil
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
+                    push_u32(out, 1); // shader_stage: PIXEL
+                    push_u32(out, 0); // slot
+                    push_u32(out, host_tex);
+                    push_u32(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+                    push_u32(out, 0); // start_slot
+                    push_u32(out, 1); // buffer_count
+                    push_u32(out, 1); // binding[0].buffer
+                    push_u32(out, 8); // binding[0].stride_bytes
+                    push_u32(out, 0); // binding[0].offset_bytes
+                    push_u32(out, 0); // binding[0].reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+                    push_u32(out, 3); // vertex_count
+                    push_u32(out, 1); // instance_count
+                    push_u32(out, 0); // first_vertex
+                    push_u32(out, 0); // first_instance
+                });
+            });
+
+            guest.write(cmd_gpa, &stream).expect("write cmd stream");
+            let report = exec.process_submission_from_guest_memory(
+                &mut guest,
+                cmd_gpa,
+                stream.len() as u32,
+                0,
+                0,
+            );
+            assert!(
+                report.is_ok(),
+                "host-owned {name} stream failed: {:#?}",
+                report.events
+            );
+
+            let rt_tex = exec.texture(2).expect("render target");
+            let rgba = readback_rgba8(
+                exec.device(),
+                exec.queue(),
+                rt_tex,
+                TextureRegion {
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    size: wgpu::Extent3d {
+                        width: 4,
+                        height: 4,
+                        depth_or_array_layers: 1,
+                    },
+                },
+            )
+            .await;
+            let idx_bytes = ((2 * 4 + 2) * 4) as usize;
+            assert_eq!(
+                &rgba[idx_bytes..idx_bytes + 4],
+                &[255, 0, 0, 255],
+                "host-owned {name} sampled color mismatch"
+            );
+
+            // Guest-backed dirty-range flush path.
+            const ALLOC_TEX: u32 = 1;
+            let tex_gpa = 0x1000u64;
+            let alloc_table_gpa = 0x8000u64;
+            guest.write(tex_gpa, &packed).expect("write packed tex");
+
+            let alloc_table_bytes = {
+                let mut out = Vec::new();
+
+                push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+                push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+                push_u32(&mut out, 0); // size_bytes (patch later)
+                push_u32(&mut out, 1); // entry_count
+                push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+                push_u32(&mut out, 0); // reserved0
+
+                push_u32(&mut out, ALLOC_TEX);
+                push_u32(&mut out, 0); // flags
+                push_u64(&mut out, tex_gpa);
+                push_u64(&mut out, 0x1000); // size_bytes
+                push_u64(&mut out, 0); // reserved0
+
+                let size_bytes = out.len() as u32;
+                out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                    .copy_from_slice(&size_bytes.to_le_bytes());
+                out
+            };
+            guest
+                .write(alloc_table_gpa, &alloc_table_bytes)
+                .expect("write alloc table");
+
+            let stream = build_stream(|out| {
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, guest_tex); // texture_handle
+                    push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                    push_u32(out, format_raw);
+                    push_u32(out, 4); // width
+                    push_u32(out, 4); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 8); // row_pitch_bytes
+                    push_u32(out, ALLOC_TEX); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
+                    push_u32(out, guest_tex); // resource_handle
+                    push_u32(out, 0); // reserved0
+                    push_u64(out, 0); // offset_bytes
+                    push_u64(out, packed.len() as u64); // size_bytes
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                    push_u32(out, 1); // color_count
+                    push_u32(out, 0); // depth_stencil
+                    push_u32(out, 2); // colors[0]
+                    for _ in 1..8 {
+                        push_u32(out, 0);
+                    }
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                    push_u32(out, 1); // flags: CLEAR_COLOR
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 1.0);
+                    push_f32_bits(out, 1.0); // depth (unused)
+                    push_u32(out, 0); // stencil
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
+                    push_u32(out, 1); // shader_stage: PIXEL
+                    push_u32(out, 0); // slot
+                    push_u32(out, guest_tex);
+                    push_u32(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+                    push_u32(out, 0); // start_slot
+                    push_u32(out, 1); // buffer_count
+                    push_u32(out, 1); // binding[0].buffer
+                    push_u32(out, 8); // binding[0].stride_bytes
+                    push_u32(out, 0); // binding[0].offset_bytes
+                    push_u32(out, 0); // binding[0].reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+                    push_u32(out, 3); // vertex_count
+                    push_u32(out, 1); // instance_count
+                    push_u32(out, 0); // first_vertex
+                    push_u32(out, 0); // first_instance
+                });
+            });
+
+            guest.write(cmd_gpa, &stream).expect("write cmd stream");
+            let report = exec.process_submission_from_guest_memory(
+                &mut guest,
+                cmd_gpa,
+                stream.len() as u32,
+                alloc_table_gpa,
+                alloc_table_bytes.len() as u32,
+            );
+            assert!(
+                report.is_ok(),
+                "guest-backed {name} stream failed: {:#?}",
+                report.events
+            );
+
+            let rt_tex = exec.texture(2).expect("render target");
+            let rgba = readback_rgba8(
+                exec.device(),
+                exec.queue(),
+                rt_tex,
+                TextureRegion {
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    size: wgpu::Extent3d {
+                        width: 4,
+                        height: 4,
+                        depth_or_array_layers: 1,
+                    },
+                },
+            )
+            .await;
+            let idx_bytes = ((2 * 4 + 2) * 4) as usize;
+            assert_eq!(
+                &rgba[idx_bytes..idx_bytes + 4],
+                &[255, 0, 0, 255],
+                "guest-backed {name} sampled color mismatch"
+            );
+        }
+    });
+}
+
+#[test]
+fn copy_texture2d_writeback_packs_16bit_formats_b5g6r5_and_b5g5r5a1() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x40_000);
+
+        const ALLOC_DST: u32 = 1;
+        let dst_gpa = 0x1000u64;
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            push_u32(&mut out, ALLOC_DST);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, dst_gpa);
+            push_u64(&mut out, 0x1000); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        let formats: [(&str, u32, [u8; 2]); 2] = [
+            (
+                "B5G6R5Unorm",
+                AerogpuFormat::B5G6R5Unorm as u32,
+                0xF800u16.to_le_bytes(),
+            ),
+            (
+                "B5G5R5A1Unorm",
+                AerogpuFormat::B5G5R5A1Unorm as u32,
+                0xFC00u16.to_le_bytes(),
+            ),
+        ];
+
+        let cmd_gpa = 0x9000u64;
+        for (idx, (name, format_raw, pixel)) in formats.into_iter().enumerate() {
+            let src_tex = 10 + idx as u32;
+            let dst_tex = 20 + idx as u32;
+
+            let mut packed = Vec::with_capacity(4 * 4 * 2);
+            for _ in 0..(4 * 4) {
+                packed.extend_from_slice(&pixel);
+            }
+            assert_eq!(packed.len(), 32);
+
+            // Clear the backing before each iteration so it's obvious the writeback ran.
+            guest
+                .write(dst_gpa, &vec![0u8; packed.len()])
+                .expect("clear backing");
+
+            let stream = build_stream(|out| {
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, src_tex); // texture_handle
+                    push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                    push_u32(out, format_raw);
+                    push_u32(out, 4); // width
+                    push_u32(out, 4); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 8); // row_pitch_bytes
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, dst_tex); // texture_handle
+                    push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                    push_u32(out, format_raw);
+                    push_u32(out, 4); // width
+                    push_u32(out, 4); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 8); // row_pitch_bytes
+                    push_u32(out, ALLOC_DST); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                    push_u32(out, src_tex);
+                    push_u32(out, 0); // reserved0
+                    push_u64(out, 0); // offset_bytes
+                    push_u64(out, packed.len() as u64); // size_bytes
+                    out.extend_from_slice(&packed);
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                    push_u32(out, dst_tex);
+                    push_u32(out, src_tex);
+                    push_u32(out, 0); // dst_mip_level
+                    push_u32(out, 0); // dst_array_layer
+                    push_u32(out, 0); // src_mip_level
+                    push_u32(out, 0); // src_array_layer
+                    push_u32(out, 0); // dst_x
+                    push_u32(out, 0); // dst_y
+                    push_u32(out, 0); // src_x
+                    push_u32(out, 0); // src_y
+                    push_u32(out, 4); // width
+                    push_u32(out, 4); // height
+                    push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                    push_u32(out, 0); // reserved0
+                });
+            });
+
+            guest.write(cmd_gpa, &stream).expect("write cmd stream");
+            let report = exec.process_submission_from_guest_memory(
+                &mut guest,
+                cmd_gpa,
+                stream.len() as u32,
+                alloc_table_gpa,
+                alloc_table_bytes.len() as u32,
+            );
+            assert!(
+                report.is_ok(),
+                "copy+writeback {name} stream failed: {:#?}",
+                report.events
+            );
+
+            let mut out = vec![0u8; packed.len()];
+            guest.read(dst_gpa, &mut out).expect("read back bytes");
+            assert_eq!(out, packed, "COPY_TEXTURE2D writeback mismatch for {name}");
+        }
+    });
+}

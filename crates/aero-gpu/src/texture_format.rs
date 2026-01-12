@@ -105,6 +105,8 @@ pub enum TextureUploadTransform {
     Bc2ToRgba8,
     Bc3ToRgba8,
     Bc7ToRgba8,
+    B5G6R5ToRgba8,
+    B5G5R5A1ToRgba8,
 }
 
 impl TextureUploadTransform {
