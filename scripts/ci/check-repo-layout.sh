@@ -32,26 +32,12 @@ if (( ${#tracked_agent_notes[@]} > 0 )); then
   die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
 fi
 
-# QEMU boot test docs guardrail:
-# These integration tests live under the workspace root `tests/` directory but are registered as
-# `[[test]]` targets in `crates/emulator/Cargo.toml` (paths like `../../tests/boot_sector.rs`).
+# QEMU boot integration tests are sourced from the workspace root `tests/` directory.
+# Some are registered as `[[test]]` targets under `crates/emulator/Cargo.toml`, while others are
+# standard integration tests of the workspace root package (`aero`).
 #
-# We want documentation to consistently use:
-#   cargo test -p emulator --test <...> --locked
-#
-# Historically, docs have drifted to suggesting `-p aero`. That is not the preferred invocation:
-# - the `aero` root crate intentionally does not include all dev-dependencies needed by these tests
-#   (notably `boot_basic` uses `firmware`/`memory`), and
-# - `-p aero` pulls in heavy GPU dev-dependencies which slows compilation in CI/agent sandboxes.
-#
-# Fail CI if any tracked markdown contains `cargo test -p aero --test boot_sector|freedos_boot|
-# windows7_boot|boot_basic` (in either flag order).
-qemu_boot_test_aero_re='cargo test.*(-p aero.*--test (boot_sector|freedos_boot|windows7_boot|boot_basic)|--test (boot_sector|freedos_boot|windows7_boot|boot_basic).*-p aero)'
-if git grep -n -E "${qemu_boot_test_aero_re}" -- '*.md' >/dev/null; then
-  echo "error: docs must run QEMU boot integration tests via -p emulator (registered via crates/emulator/Cargo.toml [[test]]), not -p aero" >&2
-  git grep -n -E "${qemu_boot_test_aero_re}" -- '*.md' >&2
-  exit 1
-fi
+# Documentation may therefore reference either `cargo test -p aero --test ...` or
+# `cargo test -p emulator --test ...` depending on context; do not enforce one here.
 
 # Doc-referenced scripts should always exist in-tree.
 #
