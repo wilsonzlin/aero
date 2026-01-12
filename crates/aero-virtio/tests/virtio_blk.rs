@@ -695,3 +695,22 @@ fn virtio_blk_accepts_aero_storage_virtual_disk_backend() {
     assert_eq!(got, payload.as_slice());
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 }
+
+#[test]
+fn virtio_blk_virtual_disk_backend_maps_errors() {
+    let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
+    let mut backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
+
+    let mut buf = [0u8; 1];
+    let err = BlockBackend::read_at(&mut backend, 4096, &mut buf).unwrap_err();
+    assert_eq!(err, BlockBackendError::OutOfBounds);
+
+    let err = BlockBackend::read_at(&mut backend, u64::MAX, &mut buf).unwrap_err();
+    assert_eq!(err, BlockBackendError::IoError);
+
+    let err = BlockBackend::write_at(&mut backend, 4096, &[0u8; 1]).unwrap_err();
+    assert_eq!(err, BlockBackendError::OutOfBounds);
+
+    let err = BlockBackend::write_at(&mut backend, u64::MAX, &[0u8; 1]).unwrap_err();
+    assert_eq!(err, BlockBackendError::IoError);
+}
