@@ -1044,6 +1044,12 @@ impl ShaderCache {
 
 In practice, an in-memory `HashMap` is not enough: the DXBC → WGSL translation and reflection can dominate startup time on repeat runs. Persisting translation artifacts across sessions (IndexedDB, with optional OPFS indirection for large blobs) avoids multi-second stalls while remaining safe.
 
+Note: this is a host-layer cache; IndexedDB is async-only and does not back the synchronous Rust
+disk/controller path. See:
+
+- [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md)
+- [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md)
+
 We persist *derived artifacts* across browser sessions:
 
 - **DXBC → WGSL output** (string)
