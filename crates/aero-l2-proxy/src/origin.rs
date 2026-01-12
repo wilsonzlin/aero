@@ -60,7 +60,9 @@ fn serialize_ipv6(addr: &std::net::Ipv6Addr) -> String {
         best_len = cur_len;
     }
 
-    let mut out = String::new();
+    // An IPv6 address renders to at most 39 characters (8 hextets × 4 digits + 7 separators), and
+    // our output uses the lowercase, RFC 5952-style shortest form. Preallocate to avoid growth.
+    let mut out = String::with_capacity(39);
     let mut need_sep = false;
     let mut i = 0;
     while i < segments.len() {
@@ -77,7 +79,9 @@ fn serialize_ipv6(addr: &std::net::Ipv6Addr) -> String {
         if need_sep {
             out.push(':');
         }
-        out.push_str(&format!("{:x}", segments[i]));
+        // Avoid allocating a temporary string for each hextet.
+        use core::fmt::Write as _;
+        let _ = write!(&mut out, "{:x}", segments[i]);
         need_sep = true;
         i += 1;
     }
