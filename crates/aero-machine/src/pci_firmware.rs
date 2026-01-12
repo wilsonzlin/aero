@@ -12,10 +12,12 @@ use aero_devices::pci::{
 
 /// Firmware BIOS [`firmware::bios::PciConfigSpace`] adapter for an owned [`PciConfigPorts`]
 /// instance.
-pub struct PciConfigPortsBiosAdapter<'a> {
+#[allow(dead_code)]
+pub(crate) struct PciConfigPortsBiosAdapter<'a> {
     ports: &'a mut PciConfigPorts,
 }
 
+#[allow(dead_code)]
 impl<'a> PciConfigPortsBiosAdapter<'a> {
     pub fn new(ports: &'a mut PciConfigPorts) -> Self {
         Self { ports }
@@ -28,7 +30,7 @@ impl<'a> PciConfigPortsBiosAdapter<'a> {
 /// This is the common representation used by platform code that needs to share access between the
 /// guest's port I/O bus and firmware.
 #[derive(Clone)]
-pub struct SharedPciConfigPortsBiosAdapter {
+pub(crate) struct SharedPciConfigPortsBiosAdapter {
     ports: SharedPciConfigPorts,
 }
 
@@ -42,10 +44,12 @@ impl SharedPciConfigPortsBiosAdapter {
 ///
 /// This is useful when a caller already has a configured PCI bus but is not modelling the legacy
 /// 0xCF8/0xCFC config ports.
-pub struct PciBusBiosAdapter<'a> {
+#[allow(dead_code)]
+pub(crate) struct PciBusBiosAdapter<'a> {
     bus: &'a mut PciBus,
 }
 
+#[allow(dead_code)]
 impl<'a> PciBusBiosAdapter<'a> {
     pub fn new(bus: &'a mut PciBus) -> Self {
         Self { bus }

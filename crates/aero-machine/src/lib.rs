@@ -54,9 +54,7 @@ use memory::{
 };
 
 mod pci_firmware;
-pub use pci_firmware::{
-    PciBusBiosAdapter, PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter,
-};
+use pci_firmware::SharedPciConfigPortsBiosAdapter;
 
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;

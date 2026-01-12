@@ -22,7 +22,8 @@ use aero_platform::reset::ResetKind;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::MapError;
 
-use crate::{MachineError, RunExit, SharedPciConfigPortsBiosAdapter, VecBlockDevice};
+use crate::pci_firmware::SharedPciConfigPortsBiosAdapter;
+use crate::{MachineError, RunExit, VecBlockDevice};
 
 /// Configuration for [`PcMachine`].
 #[derive(Debug, Clone)]
