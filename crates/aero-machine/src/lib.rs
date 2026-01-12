@@ -4374,6 +4374,11 @@ impl Machine {
                     self.process_ahci();
                     self.process_nvme();
                     self.process_virtio_blk();
+                    // Like storage controllers, the guest may have kicked a NIC queue immediately
+                    // before executing `HLT` (e.g. E1000 TX descriptor doorbell). Poll the network
+                    // bridge again here so the device can complete DMA and raise INTx to wake the
+                    // halted CPU within the same `run_slice` call.
+                    self.poll_network();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
@@ -4384,6 +4389,7 @@ impl Machine {
                     self.process_ahci();
                     self.process_nvme();
                     self.process_virtio_blk();
+                    self.poll_network();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
@@ -7954,6 +7960,146 @@ mod tests {
         // One slice should be sufficient: the guest asserts INTx, executes HLT, and the machine
         // should sync + deliver the interrupt within the same `run_slice` call, running the ISR.
         let _ = m.run_slice(100);
+        assert_eq!(m.read_physical_u8(0x2000), 0xAA);
+    }
+
+    #[test]
+    fn pc_e1000_tx_dma_completion_wakes_hlt_in_same_slice() {
+        // Regression test: if the guest kicks E1000 DMA (e.g. TDT doorbell) and then immediately
+        // executes `HLT`, the machine must still poll the NIC and deliver the resulting interrupt
+        // within the same `run_slice` call. Otherwise the host would need to call `run_slice` again
+        // to observe the interrupt, which is inconsistent with how we treat other DMA devices
+        // (e.g. AHCI) in the halted path.
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let expected_vector = if gsi < 8 {
+            0x20u8.wrapping_add(gsi as u8)
+        } else {
+            0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+        };
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+            ints.pic_mut().set_masked(2, false);
+            if let Ok(irq) = u8::try_from(gsi) {
+                if irq < 16 {
+                    ints.pic_mut().set_masked(irq, false);
+                }
+            }
+        }
+
+        // Resolve BAR0 MMIO and BAR1 I/O bases assigned by BIOS POST.
+        let (bar0_base, bar1_base) = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .expect("E1000 device missing from PCI bus");
+            let bar0_base = cfg.bar_range(0).expect("missing E1000 BAR0").base;
+            let bar1_base = cfg.bar_range(1).expect("missing E1000 BAR1").base;
+            (bar0_base, bar1_base)
+        };
+        let ioaddr_port = u16::try_from(bar1_base).expect("E1000 BAR1 should fit in u16 I/O space");
+        let iodata_port = ioaddr_port.wrapping_add(4);
+
+        // Enable PCI decoding + bus mastering (required for E1000 DMA).
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("E1000 device missing from PCI bus");
+            cfg.set_command(0x7); // IO + MEM + BME
+        }
+
+        // Guest memory layout for TX descriptor ring + packet bytes.
+        let tx_ring_base = 0x3000u64;
+        let pkt_base = 0x4000u64;
+        const MIN_L2_FRAME_LEN: usize = 14;
+        let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+
+        // Write packet bytes + legacy TX descriptor 0 (EOP|RS).
+        m.mem.write_physical(pkt_base, &frame);
+        let mut desc = [0u8; 16];
+        desc[0..8].copy_from_slice(&pkt_base.to_le_bytes());
+        desc[8..10].copy_from_slice(&(frame.len() as u16).to_le_bytes());
+        desc[11] = (1 << 0) | (1 << 3); // EOP|RS
+        m.mem.write_physical(tx_ring_base, &desc);
+
+        // Program E1000 TX ring over MMIO (BAR0) and enable TXDW interrupts.
+        m.mem.write_u32(bar0_base + 0x3800, tx_ring_base as u32); // TDBAL
+        m.mem.write_u32(bar0_base + 0x3804, 0); // TDBAH
+        m.mem.write_u32(bar0_base + 0x3808, 16 * 4); // TDLEN (4 descriptors)
+        m.mem.write_u32(bar0_base + 0x3810, 0); // TDH
+        m.mem.write_u32(bar0_base + 0x3818, 0); // TDT
+        m.mem.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
+        m.mem
+            .write_u32(bar0_base + 0x00D0, aero_net_e1000::ICR_TXDW); // IMS = TXDW
+
+        // Install a real-mode ISR for the routed vector that records its execution and clears the
+        // E1000 interrupt by reading ICR via BAR1.
+        const HANDLER_IP: u16 = 0x1100;
+        let mut handler = Vec::new();
+        handler.extend_from_slice(&[0xC6, 0x06, 0x00, 0x20, 0xAA]); // mov byte ptr [0x2000], 0xAA
+        handler.extend_from_slice(&[0xBA, ioaddr_port as u8, (ioaddr_port >> 8) as u8]); // mov dx, ioaddr_port
+        handler.extend_from_slice(&[0x66, 0xB8]);
+        handler.extend_from_slice(&0x00C0u32.to_le_bytes()); // mov eax, ICR
+        handler.extend_from_slice(&[0x66, 0xEF]); // out dx, eax
+        handler.extend_from_slice(&[0xBA, iodata_port as u8, (iodata_port >> 8) as u8]); // mov dx, iodata_port
+        handler.extend_from_slice(&[0x66, 0xED]); // in eax, dx
+        handler.push(0xCF); // iret
+        m.mem.write_physical(u64::from(HANDLER_IP), &handler);
+        write_ivt_entry(&mut m, expected_vector, HANDLER_IP, 0x0000);
+
+        // Guest program:
+        //   ; write TDT=1 via BAR1 I/O then HLT (wait for TXDW interrupt)
+        //   mov dx, ioaddr_port
+        //   mov eax, 0x3818 (TDT)
+        //   out dx, eax
+        //   mov dx, iodata_port
+        //   mov eax, 1
+        //   out dx, eax
+        //   hlt
+        //   hlt
+        const ENTRY_IP: u16 = 0x1000;
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0xBA, ioaddr_port as u8, (ioaddr_port >> 8) as u8]); // mov dx, ioaddr_port
+        code.extend_from_slice(&[0x66, 0xB8]);
+        code.extend_from_slice(&0x3818u32.to_le_bytes()); // mov eax, TDT
+        code.extend_from_slice(&[0x66, 0xEF]); // out dx, eax
+        code.extend_from_slice(&[0xBA, iodata_port as u8, (iodata_port >> 8) as u8]); // mov dx, iodata_port
+        code.extend_from_slice(&[0x66, 0xB8]);
+        code.extend_from_slice(&1u32.to_le_bytes()); // mov eax, 1
+        code.extend_from_slice(&[0x66, 0xEF]); // out dx, eax
+        code.extend_from_slice(&[0xF4, 0xF4]); // hlt; hlt
+        m.mem.write_physical(u64::from(ENTRY_IP), &code);
+        m.mem.write_physical(0x2000, &[0x00]);
+
+        init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+
+        // One slice should be sufficient: guest kicks TX, halts, machine polls E1000 DMA in the
+        // halted path, delivers INTx, runs ISR, and then re-halts.
+        let _ = m.run_slice(200);
         assert_eq!(m.read_physical_u8(0x2000), 0xAA);
     }
 
