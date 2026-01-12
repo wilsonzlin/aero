@@ -40,6 +40,14 @@ add_executable(virtiosnd_control_proto_tests
 target_link_libraries(virtiosnd_control_proto_tests PRIVATE virtiosnd_host_shim)
 add_test(NAME virtiosnd_control_proto_tests COMMAND virtiosnd_control_proto_tests)
 
+add_executable(virtiosnd_contract_tests
+    test_contract.c
+    ${VIRTIOSND_SRC}/virtiosnd_contract.c
+)
+
+target_link_libraries(virtiosnd_contract_tests PRIVATE virtiosnd_host_shim)
+add_test(NAME virtiosnd_contract_tests COMMAND virtiosnd_contract_tests)
+
 add_executable(virtiosnd_tx_tests
     test_tx_engine.c
     ${VIRTIOSND_SRC}/virtiosnd_tx.c

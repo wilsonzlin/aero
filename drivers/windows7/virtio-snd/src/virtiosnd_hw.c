@@ -5,6 +5,7 @@
 #include "trace.h"
 #include "pci_interface.h"
 #include "virtiosnd.h"
+#include "virtiosnd_contract.h"
 #include "virtiosnd_intx.h"
 
 /* Bounded reset poll (virtio status reset handshake). */
@@ -323,6 +324,57 @@ static VOID VirtIoSndDestroyQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     }
 }
 
+static __forceinline ULONG VirtIoSndReadLe32(_In_reads_bytes_(4) const UCHAR *p)
+{
+    if (p == NULL) {
+        return 0;
+    }
+    return (ULONG)p[0] | ((ULONG)p[1] << 8) | ((ULONG)p[2] << 16) | ((ULONG)p[3] << 24);
+}
+
+static NTSTATUS VirtIoSndValidateDeviceCfg(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    NTSTATUS status;
+    UCHAR cfg[0x0Cu];
+    ULONG jacks;
+    ULONG streams;
+    ULONG chmaps;
+
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Dx->Transport.DeviceCfg == NULL || Dx->Transport.DeviceCfgLength < 0x0Cu) {
+        VIRTIOSND_TRACE_ERROR(
+            "virtio-snd DEVICE_CFG unavailable/too small: DeviceCfg=%p len=0x%lx (need >= 0x0C)\n",
+            Dx->Transport.DeviceCfg,
+            (ULONG)Dx->Transport.DeviceCfgLength);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    RtlZeroMemory(cfg, sizeof(cfg));
+    status = VirtioPciModernTransportReadDeviceConfig(&Dx->Transport, /*Offset=*/0, cfg, (UINT32)sizeof(cfg));
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("failed to read virtio-snd DEVICE_CFG: 0x%08X\n", (UINT)status);
+        return status;
+    }
+
+    jacks = VirtIoSndReadLe32(cfg + 0x00u);
+    streams = VirtIoSndReadLe32(cfg + 0x04u);
+    chmaps = VirtIoSndReadLe32(cfg + 0x08u);
+
+    if (!VirtIoSndValidateDeviceCfgValues(jacks, streams, chmaps)) {
+        VIRTIOSND_TRACE_ERROR(
+            "virtio-snd DEVICE_CFG violates contract v1: jacks=%lu streams=%lu chmaps=%lu (expected 0/2/0)\n",
+            jacks,
+            streams,
+            chmaps);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS status;
@@ -348,6 +400,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
+        USHORT expectedSize;
         USHORT notifyOff;
         volatile UINT16* notifyAddr;
         UINT64 descPa, availPa, usedPa;
@@ -358,9 +411,31 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         availPa = 0;
         usedPa = 0;
 
+        expectedSize = VirtIoSndExpectedQueueSize((USHORT)q);
+        if (expectedSize == 0) {
+            VIRTIOSND_TRACE_ERROR("queue %lu has no contract-v1 expected size mapping\n", q);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         status = VirtioPciModernTransportGetQueueSize(&Dx->Transport, (USHORT)q, &size);
         if (!NT_SUCCESS(status)) {
+            if (status == STATUS_NOT_FOUND || size == 0) {
+                VIRTIOSND_TRACE_ERROR(
+                    "queue %lu reports size=0 but contract v1 requires size=%u\n",
+                    q,
+                    (UINT)expectedSize);
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
             return status;
+        }
+
+        if (size != expectedSize) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu reports size=%u but contract v1 requires size=%u\n",
+                q,
+                (UINT)size,
+                (UINT)expectedSize);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
         if ((size & (size - 1u)) != 0) {
@@ -631,6 +706,13 @@ NTSTATUS VirtIoSndStartHardware(
     (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, 0xFFFFu);
 
     VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
+
+    status = VirtIoSndValidateDeviceCfg(Dx);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("virtio-snd DEVICE_CFG validation failed: 0x%08X\n", (UINT)status);
+        goto fail;
+    }
+
     status = VirtIoSndDmaInit(Dx->Pdo, &Dx->DmaCtx);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("VirtIoSndDmaInit failed: 0x%08X\n", (UINT)status);

@@ -36,6 +36,7 @@ SOURCES= \
     virtio_snd_proto.c \
     virtiosnd_control.c \
     virtiosnd_control_proto.c \
+    virtiosnd_contract.c \
     virtiosnd_dma.c \
     virtiosnd_queue_split.c \
     virtiosnd_tx.c \
