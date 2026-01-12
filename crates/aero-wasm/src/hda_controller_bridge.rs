@@ -522,7 +522,7 @@ mod tests {
         let guest_base = guest.as_mut_ptr() as u32;
         let guest_size = guest.len() as u32;
 
-        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
 
         // Bring controller out of reset.
         bridge.hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
