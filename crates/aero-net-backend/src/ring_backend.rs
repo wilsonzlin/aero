@@ -415,7 +415,9 @@ mod tests {
     #[test]
     fn poll_receive_marks_rx_broken_on_corrupt_and_stops_polling_ring() {
         let tx = Arc::new(RingBuffer::new(64));
-        let rx = Arc::new(CorruptOnceRing::new());
+        // `CorruptOnceRing` uses interior mutability via `Cell` and is not `Sync`, so use `Rc`
+        // instead of `Arc` to avoid implying cross-thread usage in this unit test.
+        let rx = Rc::new(CorruptOnceRing::new());
         let mut backend = L2TunnelRingBackend::new(tx, rx.clone());
 
         assert_eq!(backend.poll_receive(), None);
