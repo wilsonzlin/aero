@@ -111,11 +111,12 @@ fn st010_machine_ahci_read_dma_ext_and_irq12_routing() {
     let bdf = profile::SATA_AHCI_ICH9.bdf;
 
     // BAR5 assignment (ABAR).
-    let bar5 = cfg_read(&mut m, bdf, 0x24, 4);
+    let abar_cfg_off = u16::from(profile::AHCI_ABAR_CFG_OFFSET);
+    let bar5 = cfg_read(&mut m, bdf, abar_cfg_off, 4);
     assert_eq!(bar5 & 0x1, 0, "BAR5 must be MMIO");
     let bar5_base = u64::from(bar5 & 0xFFFF_FFF0);
     assert_ne!(bar5_base, 0);
-    assert_eq!(bar5_base % 0x2000, 0);
+    assert_eq!(bar5_base % profile::AHCI_ABAR_SIZE, 0);
 
     // Enable MMIO decoding and bus mastering (DMA).
     let mut cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
