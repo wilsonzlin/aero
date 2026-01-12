@@ -6865,10 +6865,24 @@ static HRESULT device_open_resource_impl(
     return E_INVALIDARG;
   }
 
-  try {
-    res->storage.resize(res->size_bytes);
-  } catch (...) {
-    return E_OUTOFMEMORY;
+  bool want_cpu_shadow = true;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // In real WDDM builds, shared/OpenResource allocations are backed by a WDDM
+  // system-memory allocation and are CPU-accessible via LockCb. Avoid allocating
+  // an additional full-size CPU shadow buffer for these resources: DWM can open
+  // many redirected surfaces, and double-buffering them in user mode wastes
+  // significant memory.
+  if (dev->wddm_device != 0 && res->wddm_hAllocation != 0 && res->backing_alloc_id != 0) {
+    want_cpu_shadow = false;
+  }
+#endif
+
+  if (want_cpu_shadow) {
+    try {
+      res->storage.resize(res->size_bytes);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
   }
 
   if (!emit_import_shared_surface_locked(dev, res.get())) {
