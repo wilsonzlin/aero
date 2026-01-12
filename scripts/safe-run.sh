@@ -172,12 +172,48 @@ if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
     # can hit per-user thread limits (EAGAIN/"Resource temporarily unavailable"). Limit lld's
     # internal parallelism to match our overall Cargo build parallelism.
     #
+    # ⚠️ WASM NOTE:
+    # When linking wasm32 targets, rustc typically invokes `rust-lld -flavor wasm` *directly*
+    # (not via `cc -Wl,...`). The `-Wl,` prefix is treated as a literal argument and causes:
+    #   rust-lld: error: unknown argument: -Wl,--threads=...
+    # Prefer passing lld's flag directly for wasm targets (`--threads=N`).
+    #
     # Restrict this to Linux: other platforms may use different linkers that don't accept
     # `--threads=`.
     if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
         if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
-            export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${CARGO_BUILD_JOBS:-1}"
+            aero_lld_threads="${CARGO_BUILD_JOBS:-1}"
+
+            aero_target="${CARGO_BUILD_TARGET:-}"
+            if [[ -z "${aero_target}" ]]; then
+                # Parse `cargo --target <triple>` / `cargo --target=<triple>` (best-effort).
+                prev=""
+                for arg in "${@:2}"; do
+                    if [[ "${prev}" == "--target" ]]; then
+                        aero_target="${arg}"
+                        break
+                    fi
+                    prev=""
+                    case "${arg}" in
+                        --target)
+                            prev="--target"
+                            continue
+                            ;;
+                        --target=*)
+                            aero_target="${arg#--target=}"
+                            break
+                            ;;
+                    esac
+                done
+            fi
+
+            if [[ "${aero_target}" == wasm32-* ]]; then
+                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--threads=${aero_lld_threads}"
+            else
+                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,--threads=${aero_lld_threads}"
+            fi
             export RUSTFLAGS="${RUSTFLAGS# }"
+            unset aero_lld_threads aero_target prev 2>/dev/null || true
         fi
     fi
 fi
