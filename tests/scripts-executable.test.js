@@ -346,6 +346,34 @@ test("safe-run.sh can isolate CARGO_HOME to avoid registry lock contention (Linu
   assert.equal(stdout, path.join(repoRoot, ".cargo-home"));
 });
 
+test("safe-run.sh: AERO_ISOLATE_CARGO_HOME accepts a custom path value (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-custom-cargo-home-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$CARGO_HOME"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_HOME;
+    env.AERO_ISOLATE_CARGO_HOME = "my-cargo-home";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, path.join(repoRoot, "my-cargo-home"));
+    assert.ok(fs.existsSync(stdout), `expected custom cargo home directory to exist: ${stdout}`);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh clears sccache wrappers by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-sccache-wrapper-"));
   try {
