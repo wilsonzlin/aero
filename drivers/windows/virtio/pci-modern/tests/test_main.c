@@ -1186,6 +1186,53 @@ static void TestNotifyHasPreBarrier(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestMsixVectorProgrammingSucceeds(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	volatile virtio_pci_common_cfg *common;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	common = (volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000);
+
+	st = VirtioPciModernTransportSetConfigMsixVector(&t, 3);
+	assert(st == STATUS_SUCCESS);
+	assert(common->msix_config == 3);
+
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, 4);
+	assert(st == STATUS_SUCCESS);
+	assert(common->queue_msix_vector == 4);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestQueueMsixVectorRejectInvalidQueue(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	/* Queue index 1 does not exist in FakeDevInitValid (queue_size==0). */
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 1, VIRTIO_PCI_MSI_NO_VECTOR);
+	assert(st == STATUS_NOT_FOUND);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestCompatInitAcceptsRelocatedCaps(void)
 {
 	FAKE_DEV dev;
@@ -1570,6 +1617,8 @@ int main(void)
 	TestQueueMsixVectorRefusedFails();
 	TestMsixConfigVectorMismatchFails();
 	TestQueueMsixVectorMismatchFails();
+	TestMsixVectorProgrammingSucceeds();
+	TestQueueMsixVectorRejectInvalidQueue();
 	TestCompatInitAcceptsRelocatedCaps();
 	TestCompatInitAccepts32BitBar0Mmio();
 	TestQueueSetupRejectUnalignedOrInvalidQueue();
