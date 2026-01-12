@@ -70,9 +70,9 @@ mod wasm {
                 capacity,
             },
             StIdbError::Corrupt(msg) => DiskError::Io(format!("indexeddb corrupt: {msg}")),
-            StIdbError::UnsupportedFormat(version) => DiskError::NotSupported(format!(
-                "unsupported indexeddb format version {version}"
-            )),
+            StIdbError::UnsupportedFormat(version) => {
+                DiskError::NotSupported(format!("unsupported indexeddb format version {version}"))
+            }
             StIdbError::Js(err) => opfs_platform::disk_error_from_js(err),
         }
     }
@@ -160,10 +160,16 @@ mod wasm {
         fn read_exact(&mut self, mut offset: u64, mut buf: &mut [u8]) -> DiskResult<()> {
             while !buf.is_empty() {
                 set_at(&self.rw_opts, &self.at_key, offset)?;
+                let cap = buf.len();
                 let read =
                     self.handle
                         .read(buf, self.rw_opts.as_ref())
                         .map_err(opfs_platform::disk_error_from_js)? as usize;
+                if read > cap {
+                    return Err(DiskError::Io(format!(
+                        "OPFS SyncAccessHandle.read returned {read} bytes for buffer len {cap}"
+                    )));
+                }
                 if read == 0 {
                     return Err(DiskError::Io("short read (0 bytes)".to_string()));
                 }
@@ -176,10 +182,16 @@ mod wasm {
         fn write_all(&mut self, mut offset: u64, mut buf: &[u8]) -> DiskResult<()> {
             while !buf.is_empty() {
                 set_at(&self.rw_opts, &self.at_key, offset)?;
+                let cap = buf.len();
                 let wrote =
                     self.handle
                         .write(buf, self.rw_opts.as_ref())
                         .map_err(opfs_platform::disk_error_from_js)? as usize;
+                if wrote > cap {
+                    return Err(DiskError::Io(format!(
+                        "OPFS SyncAccessHandle.write returned {wrote} bytes for buffer len {cap}"
+                    )));
+                }
                 if wrote == 0 {
                     return Err(DiskError::Io("short write (0 bytes)".to_string()));
                 }
@@ -487,10 +499,16 @@ mod wasm {
         fn read_exact(&mut self, mut offset: u64, mut buf: &mut [u8]) -> DiskResult<()> {
             while !buf.is_empty() {
                 set_at(&self.rw_opts, &self.at_key, offset)?;
+                let cap = buf.len();
                 let read =
                     self.handle
                         .read(buf, self.rw_opts.as_ref())
                         .map_err(opfs_platform::disk_error_from_js)? as usize;
+                if read > cap {
+                    return Err(DiskError::Io(format!(
+                        "OPFS SyncAccessHandle.read returned {read} bytes for buffer len {cap}"
+                    )));
+                }
                 if read == 0 {
                     return Err(DiskError::Io("short read (0 bytes)".to_string()));
                 }
@@ -503,10 +521,16 @@ mod wasm {
         fn write_all(&mut self, mut offset: u64, mut buf: &[u8]) -> DiskResult<()> {
             while !buf.is_empty() {
                 set_at(&self.rw_opts, &self.at_key, offset)?;
+                let cap = buf.len();
                 let wrote =
                     self.handle
                         .write(buf, self.rw_opts.as_ref())
                         .map_err(opfs_platform::disk_error_from_js)? as usize;
+                if wrote > cap {
+                    return Err(DiskError::Io(format!(
+                        "OPFS SyncAccessHandle.write returned {wrote} bytes for buffer len {cap}"
+                    )));
+                }
                 if wrote == 0 {
                     return Err(DiskError::Io("short write (0 bytes)".to_string()));
                 }
@@ -962,8 +986,11 @@ mod wasm {
                         Ok(backend) => Ok(Self::Async(backend)),
                         Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => {
                             Ok(Self::IndexedDb(
-                                OpfsIndexedDbBackend::open(&format!("aero-opfs:{path}"), size_bytes)
-                                    .await?,
+                                OpfsIndexedDbBackend::open(
+                                    &format!("aero-opfs:{path}"),
+                                    size_bytes,
+                                )
+                                .await?,
                             ))
                         }
                         Err(e) => Err(e),

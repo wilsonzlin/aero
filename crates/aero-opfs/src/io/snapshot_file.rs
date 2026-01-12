@@ -80,27 +80,17 @@ mod platform_handle {
             DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
                 io::Error::new(io::ErrorKind::Unsupported, err)
             }
-            DiskError::BackendUnavailable => {
-                io::Error::new(io::ErrorKind::NotConnected, err)
-            }
+            DiskError::BackendUnavailable => io::Error::new(io::ErrorKind::NotConnected, err),
             DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
             DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
-            DiskError::InvalidState(_) => {
-                io::Error::new(io::ErrorKind::BrokenPipe, err)
-            }
+            DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::BrokenPipe, err),
             DiskError::UnalignedLength { .. }
             | DiskError::OutOfBounds { .. }
-            | DiskError::OffsetOverflow => {
-                io::Error::new(io::ErrorKind::InvalidInput, err)
-            }
+            | DiskError::OffsetOverflow => io::Error::new(io::ErrorKind::InvalidInput, err),
             DiskError::CorruptImage(_)
             | DiskError::InvalidSparseHeader(_)
-            | DiskError::CorruptSparseImage(_) => {
-                io::Error::new(io::ErrorKind::InvalidData, err)
-            }
-            DiskError::InvalidConfig(_) => {
-                io::Error::new(io::ErrorKind::InvalidInput, err)
-            }
+            | DiskError::CorruptSparseImage(_) => io::Error::new(io::ErrorKind::InvalidData, err),
+            DiskError::InvalidConfig(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
             DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err),
         }
     }
@@ -145,19 +135,37 @@ mod platform_handle {
     impl OpfsSyncFileHandle for WasmSyncHandle {
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
             set_at(&self.rw_opts, &self.at_key, offset)?;
+            let cap = buf.len();
             let read = self
                 .handle
                 .read(buf, self.rw_opts.as_ref())
                 .map_err(js_error_to_io)? as usize;
+            if read > cap {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "OPFS SyncAccessHandle.read returned {read} bytes for buffer len {cap}"
+                    ),
+                ));
+            }
             Ok(read)
         }
 
         fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<usize> {
             set_at(&self.rw_opts, &self.at_key, offset)?;
+            let cap = buf.len();
             let wrote = self
                 .handle
                 .write(buf, self.rw_opts.as_ref())
                 .map_err(js_error_to_io)? as usize;
+            if wrote > cap {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "OPFS SyncAccessHandle.write returned {wrote} bytes for buffer len {cap}"
+                    ),
+                ));
+            }
             Ok(wrote)
         }
 
