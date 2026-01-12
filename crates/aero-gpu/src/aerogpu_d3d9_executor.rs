@@ -346,9 +346,12 @@ struct TextureWritebackPlan {
     dst_x: u32,
     dst_y: u32,
     height: u32,
+    format_raw: u32,
     is_x8: bool,
-    bytes_per_pixel: u32,
-    unpadded_bytes_per_row: u32,
+    guest_bytes_per_pixel: u32,
+    host_bytes_per_pixel: u32,
+    guest_unpadded_bytes_per_row: u32,
+    host_unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
 }
 
@@ -1076,10 +1079,10 @@ impl AerogpuD3d9Executor {
                 }
                 PendingWriteback::Texture2d { staging, plan } => {
                     let mut bytes = self.readback_buffer_bytes(&staging)?;
-                    if plan.is_x8 && plan.bytes_per_pixel == 4 {
+                    if plan.is_x8 && plan.host_bytes_per_pixel == 4 {
                         for row in 0..plan.height as usize {
                             let start = row * plan.padded_bytes_per_row as usize;
-                            let end = start + plan.unpadded_bytes_per_row as usize;
+                            let end = start + plan.host_unpadded_bytes_per_row as usize;
                             let row_bytes = bytes.get_mut(start..end).ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "texture writeback staging out of bounds".into(),
@@ -1090,18 +1093,39 @@ impl AerogpuD3d9Executor {
                     }
                     let row_pitch = plan.backing.row_pitch_bytes as u64;
                     let dst_x_bytes = (plan.dst_x as u64)
-                        .checked_mul(plan.bytes_per_pixel as u64)
+                        .checked_mul(plan.guest_bytes_per_pixel as u64)
                         .ok_or_else(|| {
                             AerogpuD3d9Error::Validation("texture writeback dst_x overflow".into())
                         })?;
                     for row in 0..plan.height {
                         let src_start = row as usize * plan.padded_bytes_per_row as usize;
-                        let src_end = src_start + plan.unpadded_bytes_per_row as usize;
+                        let src_end = src_start + plan.host_unpadded_bytes_per_row as usize;
                         let row_bytes = bytes.get(src_start..src_end).ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "texture writeback staging out of bounds".into(),
                             )
                         })?;
+                        let mut packed: Vec<u8> = Vec::new();
+                        let row_bytes = match plan.format_raw {
+                            x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
+                                packed.resize(plan.guest_unpadded_bytes_per_row as usize, 0);
+                                pack_rgba8_to_b5g6r5_unorm(row_bytes, &mut packed);
+                                packed.as_slice()
+                            }
+                            x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                                packed.resize(plan.guest_unpadded_bytes_per_row as usize, 0);
+                                pack_rgba8_to_b5g5r5a1_unorm(row_bytes, &mut packed);
+                                packed.as_slice()
+                            }
+                            _ => {
+                                if row_bytes.len() != plan.guest_unpadded_bytes_per_row as usize {
+                                    return Err(AerogpuD3d9Error::Validation(
+                                        "texture writeback row size mismatch".into(),
+                                    ));
+                                }
+                                row_bytes
+                            }
+                        };
                         let row_index = plan.dst_y.checked_add(row).ok_or_else(|| {
                             AerogpuD3d9Error::Validation("texture writeback dst_y overflow".into())
                         })?;
@@ -1167,10 +1191,10 @@ impl AerogpuD3d9Executor {
                 }
                 PendingWriteback::Texture2d { staging, plan } => {
                     let mut bytes = self.readback_buffer_bytes_async(&staging).await?;
-                    if plan.is_x8 && plan.bytes_per_pixel == 4 {
+                    if plan.is_x8 && plan.host_bytes_per_pixel == 4 {
                         for row in 0..plan.height as usize {
                             let start = row * plan.padded_bytes_per_row as usize;
-                            let end = start + plan.unpadded_bytes_per_row as usize;
+                            let end = start + plan.host_unpadded_bytes_per_row as usize;
                             let row_bytes = bytes.get_mut(start..end).ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "texture writeback staging out of bounds".into(),
@@ -1181,18 +1205,39 @@ impl AerogpuD3d9Executor {
                     }
                     let row_pitch = plan.backing.row_pitch_bytes as u64;
                     let dst_x_bytes = (plan.dst_x as u64)
-                        .checked_mul(plan.bytes_per_pixel as u64)
+                        .checked_mul(plan.guest_bytes_per_pixel as u64)
                         .ok_or_else(|| {
                             AerogpuD3d9Error::Validation("texture writeback dst_x overflow".into())
                         })?;
                     for row in 0..plan.height {
                         let src_start = row as usize * plan.padded_bytes_per_row as usize;
-                        let src_end = src_start + plan.unpadded_bytes_per_row as usize;
+                        let src_end = src_start + plan.host_unpadded_bytes_per_row as usize;
                         let row_bytes = bytes.get(src_start..src_end).ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "texture writeback staging out of bounds".into(),
                             )
                         })?;
+                        let mut packed: Vec<u8> = Vec::new();
+                        let row_bytes = match plan.format_raw {
+                            x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
+                                packed.resize(plan.guest_unpadded_bytes_per_row as usize, 0);
+                                pack_rgba8_to_b5g6r5_unorm(row_bytes, &mut packed);
+                                packed.as_slice()
+                            }
+                            x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                                packed.resize(plan.guest_unpadded_bytes_per_row as usize, 0);
+                                pack_rgba8_to_b5g5r5a1_unorm(row_bytes, &mut packed);
+                                packed.as_slice()
+                            }
+                            _ => {
+                                if row_bytes.len() != plan.guest_unpadded_bytes_per_row as usize {
+                                    return Err(AerogpuD3d9Error::Validation(
+                                        "texture writeback row size mismatch".into(),
+                                    ));
+                                }
+                                row_bytes
+                            }
+                        };
                         let row_index = plan.dst_y.checked_add(row).ok_or_else(|| {
                             AerogpuD3d9Error::Validation("texture writeback dst_y overflow".into())
                         })?;
@@ -2925,16 +2970,24 @@ impl AerogpuD3d9Executor {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_texture));
                         }
 
-                        let bpp = bytes_per_pixel(dst_format);
-                        let unpadded_bpr = width.checked_mul(bpp).ok_or_else(|| {
+                        let guest_bpp = bytes_per_pixel_aerogpu_format(dst_format_raw)?;
+                        let host_bpp = bytes_per_pixel(dst_format);
+                        let guest_unpadded_bpr =
+                            width.checked_mul(guest_bpp).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_TEXTURE2D: bytes_per_row overflow".into(),
+                                )
+                            })?;
+                        let host_unpadded_bpr = width.checked_mul(host_bpp).ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
                                 "COPY_TEXTURE2D: bytes_per_row overflow".into(),
                             )
                         })?;
-                        let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                        let padded_bpr =
+                            align_to(host_unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
                         let dst_x_bytes =
-                            (dst_x as u64).checked_mul(bpp as u64).ok_or_else(|| {
+                            (dst_x as u64).checked_mul(guest_bpp as u64).ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst_x byte offset overflow".into(),
                                 )
@@ -2946,7 +2999,7 @@ impl AerogpuD3d9Executor {
                             ));
                         }
                         if dst_x_bytes
-                            .checked_add(unpadded_bpr as u64)
+                            .checked_add(guest_unpadded_bpr as u64)
                             .ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst row byte range overflow".into(),
@@ -3004,9 +3057,12 @@ impl AerogpuD3d9Executor {
                             dst_x,
                             dst_y,
                             height,
+                            format_raw: dst_format_raw,
                             is_x8: is_x8_format(dst_format_raw),
-                            bytes_per_pixel: bpp,
-                            unpadded_bytes_per_row: unpadded_bpr,
+                            guest_bytes_per_pixel: guest_bpp,
+                            host_bytes_per_pixel: host_bpp,
+                            guest_unpadded_bytes_per_row: guest_unpadded_bpr,
+                            host_unpadded_bytes_per_row: host_unpadded_bpr,
                             padded_bytes_per_row: padded_bpr,
                         })
                     } else {
@@ -6393,6 +6449,42 @@ fn expand_b5g5r5a1_unorm_to_rgba8(src: &[u8], dst: &mut [u8]) {
         dst_px[1] = g8;
         dst_px[2] = b8;
         dst_px[3] = if a1 != 0 { 0xFF } else { 0x00 };
+    }
+}
+
+fn pack_rgba8_to_b5g6r5_unorm(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len() % 4, 0);
+    debug_assert_eq!(dst.len(), (src.len() / 4) * 2);
+    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(2)) {
+        let r8 = src_px[0];
+        let g8 = src_px[1];
+        let b8 = src_px[2];
+        let r5 = (r8 >> 3) as u16;
+        let g6 = (g8 >> 2) as u16;
+        let b5 = (b8 >> 3) as u16;
+        let v: u16 = b5 | (g6 << 5) | (r5 << 11);
+        let out = v.to_le_bytes();
+        dst_px[0] = out[0];
+        dst_px[1] = out[1];
+    }
+}
+
+fn pack_rgba8_to_b5g5r5a1_unorm(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len() % 4, 0);
+    debug_assert_eq!(dst.len(), (src.len() / 4) * 2);
+    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(2)) {
+        let r8 = src_px[0];
+        let g8 = src_px[1];
+        let b8 = src_px[2];
+        let a8 = src_px[3];
+        let r5 = (r8 >> 3) as u16;
+        let g5 = (g8 >> 3) as u16;
+        let b5 = (b8 >> 3) as u16;
+        let a1 = if a8 >= 0x80 { 1u16 } else { 0u16 };
+        let v: u16 = b5 | (g5 << 5) | (r5 << 10) | (a1 << 15);
+        let out = v.to_le_bytes();
+        dst_px[0] = out[0];
+        dst_px[1] = out[1];
     }
 }
 
