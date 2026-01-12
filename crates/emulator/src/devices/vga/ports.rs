@@ -11,7 +11,8 @@ use super::vbe::{VbeControllerInfo, VbeModeInfo, VbeState, VBE_LFB_SIZE};
 use super::VgaMemory;
 use super::{modeset, LegacyBdaInfo};
 
-// VGA I/O port block 0x3C0..=0x3DF.
+// Legacy VGA I/O ports span both the mono (0x3Bx) and colour (0x3Dx) decode ranges.
+// This device implements the common registers across the full 0x3B0..=0x3DF window.
 const PORT_MISC_OUTPUT_WRITE: u16 = 0x3C2;
 const PORT_MISC_OUTPUT_READ: u16 = 0x3CC;
 const PORT_VIDEO_SUBSYSTEM_ENABLE: u16 = 0x3C3;
@@ -34,7 +35,7 @@ const PORT_CRTC_DATA_COLOR: u16 = 0x3D5;
 const PORT_CRTC_INDEX_MONO: u16 = 0x3B4;
 const PORT_CRTC_DATA_MONO: u16 = 0x3B5;
 
-/// Value returned from unimplemented reads in the 0x3C0..=0x3DF range.
+/// Value returned from unimplemented reads in the legacy VGA register range (0x3B0..=0x3DF).
 ///
 /// Chosen to emulate a floating/pulled-up ISA bus (common behaviour for
 /// unmapped ports).
