@@ -29,6 +29,7 @@ use aero_io_snapshot::io::state::{
 use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
+use aero_storage::DiskError as StorageDiskError;
 /// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
 /// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
 ///
@@ -102,10 +103,9 @@ impl DiskBackend for AeroStorageDiskAdapter {
             });
         }
 
-        // Any disk-layer error is surfaced as a generic I/O failure at the NVMe level.
         self.disk_mut()
             .read_sectors(lba, buffer)
-            .map_err(|_| DiskError::Io)
+            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
     }
 
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
@@ -133,11 +133,34 @@ impl DiskBackend for AeroStorageDiskAdapter {
 
         self.disk_mut()
             .write_sectors(lba, buffer)
-            .map_err(|_| DiskError::Io)
+            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
     }
 
     fn flush(&mut self) -> DiskResult<()> {
         self.disk_mut().flush().map_err(|_| DiskError::Io)
+    }
+}
+
+fn map_storage_disk_error(
+    err: StorageDiskError,
+    lba: u64,
+    sectors: u64,
+    capacity_sectors: u64,
+) -> DiskError {
+    match err {
+        // If the underlying disk reports an alignment failure, preserve it.
+        StorageDiskError::UnalignedLength { len, .. } => DiskError::UnalignedBuffer {
+            len,
+            sector_size: AeroStorageDiskAdapter::SECTOR_SIZE,
+        },
+        // If the underlying disk reports out-of-bounds, surface it as an LBA-range error.
+        StorageDiskError::OutOfBounds { .. } | StorageDiskError::OffsetOverflow => DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        },
+        // Other disk-layer errors are surfaced as generic I/O failures at the NVMe level.
+        _ => DiskError::Io,
     }
 }
 
