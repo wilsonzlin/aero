@@ -2,7 +2,7 @@
 
 import type { CompileBlockResponse, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
 import { asI64, asU64, u64ToNumber } from './bigint';
-import { JIT_BIGINT_ABI_WASM_BYTES } from './wasm-bytes';
+import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from './wasm-bytes';
 import { initWasmForContext, type WasmApi } from '../../web/src/runtime/wasm_context';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -654,11 +654,6 @@ async function runTieredVm(iterations: number, threshold: number) {
 
   const runBigIntImportsTest = async (): Promise<boolean> => {
     try {
-      const module = await WebAssembly.compile(JIT_BIGINT_ABI_WASM_BYTES);
-      const instance = await WebAssembly.instantiate(module, { env });
-      const block = (instance.exports as { block?: unknown }).block;
-      if (typeof block !== 'function') return false;
-
       // Pick deterministic addresses in guest RAM that are not touched by the hot-loop code at 0x1000.
       // We use guest RAM as a scratch region for the Tier-1 ABI buffer (CpuState + jit_ctx + tier2_ctx + commit flag).
       const cpuPtr = (guest_base + 0xa000) >>> 0;
@@ -669,17 +664,27 @@ async function runTieredVm(iterations: number, threshold: number) {
       dv.setBigUint64(jitCtxPtr + 0, BigInt(guest_base), true); // ram_base
       dv.setBigUint64(jitCtxPtr + 8, 0n, true); // tlb_salt
 
-      const tableIndex = nextTableIndex++;
-      jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
+      const run = async (bytes: Uint8Array<ArrayBuffer>): Promise<boolean> => {
+        const module = await WebAssembly.compile(bytes);
+        const instance = await WebAssembly.instantiate(module, { env });
+        const block = (instance.exports as { block?: unknown }).block;
+        if (typeof block !== 'function') return false;
+
+        const tableIndex = nextTableIndex++;
+        jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
+        const ret = (
+          globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
+        ).__aero_jit_call(tableIndex, cpuPtr, jitCtxPtr);
+        return typeof ret === 'bigint';
+      };
 
       // Avoid notifying the tiered runtime of these synthetic guest writes; this is purely an ABI smoke check.
       const savedOnGuestWrite = onGuestWrite;
       onGuestWrite = null;
       try {
-        const ret = (
-          globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
-        ).__aero_jit_call(tableIndex, cpuPtr, jitCtxPtr);
-        return typeof ret === 'bigint';
+        if (!(await run(JIT_BIGINT_ABI_WASM_BYTES))) return false;
+        if (!(await run(JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES))) return false;
+        return true;
       } finally {
         onGuestWrite = savedOnGuestWrite;
       }
