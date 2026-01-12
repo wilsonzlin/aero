@@ -13,7 +13,6 @@ use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
     MmuState, Result, SaveOptions, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
-use memory::MemoryBus;
 
 const RAM_LEN: usize = 4096;
 
@@ -21,29 +20,6 @@ const RAM_LEN: usize = 4096;
 const REG_RCTL: u32 = 0x0100;
 const REG_TCTL: u32 = 0x0400;
 const REG_IMS: u32 = 0x00D0;
-
-#[derive(Default)]
-struct TestMem {
-    mem: Vec<u8>,
-}
-
-impl TestMem {
-    fn new(size: usize) -> Self {
-        Self { mem: vec![0; size] }
-    }
-}
-
-impl MemoryBus for TestMem {
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        let start = paddr as usize;
-        buf.copy_from_slice(&self.mem[start..start + buf.len()]);
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        let start = paddr as usize;
-        self.mem[start..start + buf.len()].copy_from_slice(buf);
-    }
-}
 
 struct TestSource {
     e1000: E1000Device,
@@ -159,14 +135,18 @@ fn snapshot_bytes<S: SnapshotSource>(source: &mut S, opts: SaveOptions) -> Vec<u
 #[test]
 fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     // Build an E1000 with some non-default state.
-    let mut mem = TestMem::new(0x2000);
     let mut e1000 = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-    e1000.mmio_write_u32(&mut mem, REG_IMS, 0x1234_5678);
-    e1000.mmio_write_u32(&mut mem, REG_RCTL, 0xA5A5_A5A5);
+    e1000.mmio_write_u32(REG_IMS, 0x1234_5678);
+    e1000.mmio_write_u32(REG_RCTL, 0xA5A5_A5A5);
     // Keep TCTL_EN clear to avoid starting TX processing (we just want a non-default register
     // value that should survive snapshotting).
-    e1000.mmio_write_u32(&mut mem, REG_TCTL, 0x5A5A_5A58);
+    e1000.mmio_write_u32(REG_TCTL, 0x5A5A_5A58);
     e1000.enqueue_rx_frame(vec![0x11u8; MIN_L2_FRAME_LEN]);
+
+    let expected_e1000_mac = e1000.mac_addr();
+    let expected_e1000_ims = e1000.mmio_read_u32(REG_IMS);
+    let expected_e1000_rctl = e1000.mmio_read_u32(REG_RCTL);
+    let expected_e1000_tctl = e1000.mmio_read_u32(REG_TCTL);
 
     // Build a network stack snapshot state with enough complexity to exercise encoding.
     let mut net_stack = aero_io_snapshot::io::network::state::NetworkStackState::default();
@@ -242,8 +222,8 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     // Verify the outer aero-snapshot container preserved the blobs exactly.
     assert_eq!(target.restored_states.len(), 2);
     let mut restored: HashMap<DeviceId, DeviceState> = HashMap::new();
-    for st in target.restored_states {
-        restored.insert(st.id, st);
+    for st in &target.restored_states {
+        restored.insert(st.id, st.clone());
     }
     assert!(restored.contains_key(&DeviceId::E1000));
     assert!(restored.contains_key(&DeviceId::NET_STACK));
@@ -254,6 +234,10 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
 
     // Preferred: ensure the blobs can be applied back to fresh devices and reproduce the same TLV.
     assert_eq!(target.net_stack, net_stack);
+    assert_eq!(target.e1000.mac_addr(), expected_e1000_mac);
+    assert_eq!(target.e1000.mmio_read_u32(REG_IMS), expected_e1000_ims);
+    assert_eq!(target.e1000.mmio_read_u32(REG_RCTL), expected_e1000_rctl);
+    assert_eq!(target.e1000.mmio_read_u32(REG_TCTL), expected_e1000_tctl);
 
     let e1000_resaved = device_state_from_io_snapshot(DeviceId::E1000, &target.e1000);
     assert_eq!(e1000_resaved.data, expected_e1000_state.data);

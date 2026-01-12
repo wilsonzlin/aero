@@ -15,7 +15,6 @@ thiserror = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 aero-devices-input = { path = "../aero-devices-input" }
-aero-net-e1000 = { path = "../aero-net-e1000" }
-memory = { path = "../memory" }
+aero-net-e1000 = { path = "../aero-net-e1000", features = ["io-snapshot"] }
 proptest = "1.5"
 rand = "0.8"
