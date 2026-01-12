@@ -368,6 +368,26 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  // Validate that the fixed header offsets exposed by `jit_abi_constants()` are usable with the
+  // resolved JitContext header size. This helps catch Rust/JS ABI drift early.
+  if (
+    jitCtxHeaderBytes < 16 ||
+    jitCtxRamBaseOffset + 8 > jitCtxHeaderBytes ||
+    jitCtxTlbSaltOffset + 8 > jitCtxHeaderBytes ||
+    (jitCtxRamBaseOffset & 7) !== 0 ||
+    (jitCtxTlbSaltOffset & 7) !== 0
+  ) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid JitContext header offsets: ${JSON.stringify({
+        jitCtxHeaderBytes,
+        jitCtxRamBaseOffset,
+        jitCtxTlbSaltOffset,
+      })}`,
+    });
+    return;
+  }
+
   // Sanity checks: ensure the returned values are internally consistent (detect Rust/JS ABI drift).
   const derivedJitCtxTotalBytes = (jitCtxHeaderBytes + jitTlbEntries * jitTlbEntryBytes) >>> 0;
   const exportedJitCtxTotalBytes = readMaybeU32(jitAbi, 'jit_ctx_total_bytes') ?? 0;
