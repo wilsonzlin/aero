@@ -51,6 +51,11 @@ const DEFAULT_PREVENT_DEFAULT_CODES = new Set<string>([
   "End",
   "Tab",
   "Backspace",
+  // Modifier keys that may otherwise trigger browser UI affordances (e.g. Alt menu focus).
+  "AltLeft",
+  "AltRight",
+  // "Application"/context-menu key.
+  "ContextMenu",
   // Function keys are commonly bound to browser actions (help, refresh, fullscreen).
   // Prevent them while the VM capture is active so they can be delivered to the guest.
   "F1",

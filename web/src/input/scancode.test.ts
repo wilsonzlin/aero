@@ -25,6 +25,9 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
       "End",
       "Tab",
       "Backspace",
+      "AltLeft",
+      "AltRight",
+      "ContextMenu",
       "F1",
       "F2",
       "F3",
@@ -51,4 +54,3 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
     expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code: "Enter" }))).toBe(false);
   });
 });
-
