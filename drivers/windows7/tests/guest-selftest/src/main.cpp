@@ -23,6 +23,7 @@
 #include <iphlpapi.h>
 #include <ntddstor.h>
 #include <winioctl.h>
+#include <ntddscsi.h>
 #include <winhttp.h>
 #include <ws2tcpip.h>
 
@@ -342,6 +343,25 @@ struct StorageIdStrings {
   std::wstring revision;
 };
 
+// Userspace mirror of `drivers/windows7/virtio-blk/include/aero_virtio_blk.h` IOCTL contract.
+static constexpr const char kAerovblkSrbIoSig[8] = {'A', 'E', 'R', 'O', 'V', 'B', 'L', 'K'};
+static constexpr ULONG kAerovblkIoctlQuery = 0x8000A001u;
+
+struct AEROVBLK_QUERY_INFO {
+  ULONGLONG NegotiatedFeatures;
+  USHORT QueueSize;
+  USHORT NumFree;
+  USHORT AvailIdx;
+  USHORT UsedIdx;
+};
+
+static std::string VirtioFeaturesToString(ULONGLONG f) {
+  char buf[64];
+  // Windows 7 MSVCRT lacks `%llx` in some configurations; use I64 explicitly.
+  snprintf(buf, sizeof(buf), "0x%I64x", static_cast<unsigned long long>(f));
+  return std::string(buf);
+}
+
 static std::optional<StorageIdStrings> QueryStorageIdStrings(HANDLE h) {
   if (h == INVALID_HANDLE_VALUE) return std::nullopt;
 
@@ -385,6 +405,91 @@ static bool LooksLikeVirtioStorageId(const StorageIdStrings& id) {
     return true;
   }
   return false;
+}
+
+static HANDLE OpenPhysicalDriveForIoctl(Logger& log, DWORD disk_number) {
+  wchar_t path[64];
+  swprintf_s(path, L"\\\\.\\PhysicalDrive%lu", static_cast<unsigned long>(disk_number));
+
+  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  const DWORD flags = FILE_ATTRIBUTE_NORMAL;
+  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ, 0};
+  for (const DWORD access : desired_accesses) {
+    HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+      return h;
+    }
+  }
+  log.Logf("virtio-blk: CreateFile(PhysicalDrive%lu) failed err=%lu", static_cast<unsigned long>(disk_number),
+           GetLastError());
+  return INVALID_HANDLE_VALUE;
+}
+
+static std::optional<AEROVBLK_QUERY_INFO> QueryAerovblkMiniportInfo(Logger& log, HANDLE hPhysicalDrive) {
+  if (hPhysicalDrive == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO));
+  auto* ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
+  ctrl->HeaderLength = sizeof(SRB_IO_CONTROL);
+  memcpy(ctrl->Signature, kAerovblkSrbIoSig, sizeof(ctrl->Signature));
+  ctrl->Timeout = 10;
+  ctrl->ControlCode = kAerovblkIoctlQuery;
+  ctrl->ReturnCode = 0;
+  ctrl->Length = sizeof(AEROVBLK_QUERY_INFO);
+
+  DWORD bytes = 0;
+  if (!DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_MINIPORT, buf.data(), static_cast<DWORD>(buf.size()),
+                       buf.data(), static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_QUERY) failed err=%lu", GetLastError());
+    return std::nullopt;
+  }
+  if (bytes < sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO)) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned too few bytes=%lu", bytes);
+    return std::nullopt;
+  }
+
+  ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
+  if (ctrl->ReturnCode != 0) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned ReturnCode=0x%08lx", ctrl->ReturnCode);
+    return std::nullopt;
+  }
+  if (ctrl->Length < sizeof(AEROVBLK_QUERY_INFO)) {
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned Length=%lu (expected >=%zu)", ctrl->Length,
+             sizeof(AEROVBLK_QUERY_INFO));
+    return std::nullopt;
+  }
+
+  const auto* info = reinterpret_cast<const AEROVBLK_QUERY_INFO*>(buf.data() + sizeof(SRB_IO_CONTROL));
+  return *info;
+}
+
+static bool ValidateAerovblkMiniportInfo(Logger& log, const AEROVBLK_QUERY_INFO& info) {
+  const ULONGLONG required_features =
+      (1ull << 32) | // VIRTIO_F_VERSION_1
+      (1ull << 28) | // VIRTIO_F_RING_INDIRECT_DESC
+      (1ull << 2) |  // VIRTIO_BLK_F_SEG_MAX
+      (1ull << 6) |  // VIRTIO_BLK_F_BLK_SIZE
+      (1ull << 9);   // VIRTIO_BLK_F_FLUSH
+
+  if (info.QueueSize != 128) {
+    log.Logf("virtio-blk: miniport query FAIL QueueSize=%u (expected 128)", info.QueueSize);
+    return false;
+  }
+  if ((info.NegotiatedFeatures & required_features) != required_features) {
+    const ULONGLONG missing = required_features & ~info.NegotiatedFeatures;
+    log.Logf("virtio-blk: miniport query FAIL NegotiatedFeatures=%s missing=%s",
+             VirtioFeaturesToString(info.NegotiatedFeatures).c_str(), VirtioFeaturesToString(missing).c_str());
+    return false;
+  }
+  if (info.NumFree > info.QueueSize) {
+    log.Logf("virtio-blk: miniport query FAIL NumFree=%u > QueueSize=%u", info.NumFree, info.QueueSize);
+    return false;
+  }
+
+  log.Logf("virtio-blk: miniport query PASS queue_size=%u num_free=%u avail_idx=%u used_idx=%u features=%s",
+           info.QueueSize, info.NumFree, info.AvailIdx, info.UsedIdx,
+           VirtioFeaturesToString(info.NegotiatedFeatures).c_str());
+  return true;
 }
 
 static std::vector<std::wstring> GetDevicePropertyMultiSz(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
@@ -1407,6 +1512,35 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
     log.Logf("virtio-blk: test dir is on disk %lu (not detected as virtio)", *base_disk);
     log.LogLine("virtio-blk: ensure a virtio disk is formatted/mounted with a drive letter, or pass --blk-root");
     return false;
+  }
+
+  // Exercise aero_virtio_blk.sys miniport IOCTL_SCSI_MINIPORT query contract via \\.\PhysicalDrive<N>.
+  {
+    HANDLE pd = OpenPhysicalDriveForIoctl(log, *base_disk);
+    if (pd == INVALID_HANDLE_VALUE) {
+      log.LogLine("virtio-blk: miniport query FAIL (unable to open PhysicalDrive)");
+      return false;
+    }
+
+    const auto info = QueryAerovblkMiniportInfo(log, pd);
+    bool query_ok = false;
+    if (!info.has_value()) {
+      log.LogLine("virtio-blk: miniport query FAIL (IOCTL_SCSI_MINIPORT query failed)");
+    } else {
+      query_ok = ValidateAerovblkMiniportInfo(log, *info);
+    }
+
+    // Optional: cover flush path explicitly, but don't fail overall test if the flush ioctl is blocked.
+    DWORD bytes = 0;
+    if (DeviceIoControl(pd, IOCTL_DISK_FLUSH_CACHE, nullptr, 0, nullptr, 0, &bytes, nullptr)) {
+      log.LogLine("virtio-blk: IOCTL_DISK_FLUSH_CACHE ok");
+    } else {
+      log.Logf("virtio-blk: IOCTL_DISK_FLUSH_CACHE failed err=%lu", GetLastError());
+    }
+
+    CloseHandle(pd);
+
+    if (!query_ok) return false;
   }
 
   const std::wstring test_file = JoinPath(base_dir, L"virtio-blk-test.bin");
