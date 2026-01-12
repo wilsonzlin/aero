@@ -437,16 +437,21 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             return;
         }
 
-        // Parse `aero-io-snapshot` / legacy `AERO` device header for debugging.
-        let mut detail: Option<String> = None;
-        let inner = if len >= 4 {
-            let header_len = usize::try_from(len.min(16)).unwrap_or(16);
-            let mut header = [0u8; 16];
+        // Read a small prefix of the device payload (up to 16 bytes). This lets `inspect` infer the
+        // inner `aero-io-snapshot` 4CC when present and show small debug summaries for a handful of
+        // common wrapper formats.
+        let header_len = usize::try_from(len.min(16)).unwrap_or(16);
+        let mut header = [0u8; 16];
+        if header_len != 0 {
             if let Err(e) = file.read_exact(&mut header[..header_len]) {
                 println!("  <failed to read device payload header: {e}>");
                 return;
             }
+        }
 
+        // Parse `aero-io-snapshot` / legacy `AERO` device header for debugging.
+        let mut detail: Option<String> = None;
+        let inner = if header_len >= 4 {
             let inner = parse_device_inner_header(&header[..header_len]);
 
             // Best-effort nested decoding for known wrapper payloads. This intentionally does not
@@ -816,6 +821,12 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
         } else {
             None
         };
+
+        // Machine memory/chipset glue state (`DeviceId::MEMORY`).
+        if id == DeviceId::MEMORY.0 && version == 1 && flags == 0 && header_len >= 1 {
+            let a20_enabled = header[0] != 0;
+            detail = Some(format!(" a20_enabled={a20_enabled}"));
+        }
 
         entries.push(DeviceSummaryEntry {
             id,

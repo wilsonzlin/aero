@@ -942,3 +942,68 @@ fn snapshot_inspect_decodes_cpu_internal_device_state_header() {
             "pending_preview=[0x20, 0x21, 0x28]",
         ));
 }
+
+struct MemoryDeviceSource;
+
+impl SnapshotSource for MemoryDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 10,
+            parent_snapshot_id: Some(9),
+            created_unix_ms: 0,
+            label: Some("inspect-memory-device".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        vec![DeviceState {
+            id: DeviceId::MEMORY,
+            version: 1,
+            flags: 0,
+            data: vec![1],
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_inspect_decodes_memory_device_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("memory_device.aerosnap");
+
+    let mut source = MemoryDeviceSource;
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("MEMORY(11)"))
+        .stdout(predicate::str::contains("a20_enabled=true"));
+}
