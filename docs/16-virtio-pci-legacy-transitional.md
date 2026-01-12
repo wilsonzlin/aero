@@ -4,7 +4,9 @@
 
 Windows 7-era virtio drivers (notably older **virtio-win** builds) often expect the **virtio 0.9 “legacy” PCI transport** (I/O port BAR registers) or a **transitional device** that exposes *both* the legacy interface and the virtio 1.0+ PCI capability-based interface.
 
-To maximize guest driver compatibility (especially Windows 7), Aero’s virtio devices should support:
+This document describes an **optional compatibility mode** for targeting upstream virtio-win driver bundles. It is **not** the default Aero Windows 7 virtio transport: `AERO-W7-VIRTIO` v1 is modern-only (PCI capabilities + BAR0 MMIO) and explicitly does not require legacy/transitional I/O port transport.
+
+To maximize compatibility with upstream driver bundles (especially older Windows 7-era virtio-win builds), Aero’s virtio devices may support:
 
 - **Legacy virtio PCI transport** (virtio 0.9 register layout via an I/O port BAR), and/or
 - **Transitional virtio PCI devices** that expose **both**:
@@ -37,7 +39,7 @@ Virtio PCI functions are typically identified by:
 > - modern: `0x1040 + device_type`
 
 For Windows 7 compatibility with **upstream virtio-win** driver packages, presenting **transitional**
-IDs is often the safest default.
+IDs is often the safest default when your goal is “work with as many virtio-win versions as possible”.
 
 However, Aero’s own Windows 7 virtio contract v1 uses the **modern** virtio-pci ID space by default
 (see `docs/windows7-virtio-driver-contract.md` and `docs/windows-device-contract.md`). Aero may still
