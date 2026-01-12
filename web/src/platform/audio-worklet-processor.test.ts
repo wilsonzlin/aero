@@ -140,4 +140,21 @@ describe("audio-worklet-processor underrun counter", () => {
 
     expect(outputs[0][0]).toEqual(Float32Array.from([0.5]));
   });
+
+  it("treats non-u32 capacityFrames as invalid (does not wrap via >>>0)", () => {
+    const { sab, views } = makeRingBuffer(4, 1);
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 1);
+    views.samples[0] = 0.5;
+
+    // A value larger than 2^32 would wrap to 1 if we used `>>> 0`. The processor should treat it
+    // as invalid and fall back to the SAB-derived capacity instead.
+    const proc = new AeroAudioProcessor({
+      processorOptions: { ringBuffer: sab, channelCount: 1, capacityFrames: 2 ** 32 + 1 },
+    });
+
+    const outputs: Float32Array[][] = [[new Float32Array(1)]];
+    proc.process([], outputs);
+    expect(outputs[0][0]).toEqual(Float32Array.from([0.5]));
+  });
 });

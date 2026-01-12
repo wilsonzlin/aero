@@ -77,15 +77,21 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     const framesNeeded = output[0]?.length ?? 0;
     if (framesNeeded === 0) return true;
 
+    function parsePositiveSafeU32(value) {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffff_ffff) return null;
+      return value >>> 0;
+    }
+
     // Defensive validation: callers can pass bogus values for `channelCount`/`capacityFrames` via
     // `processorOptions`, and the AudioWorklet must never index out of bounds into the shared ring.
     //
     // Clamp channelCount to the actual output channel count and derive an upper bound on the ring
     // capacity from the SharedArrayBuffer length.
-    let channelCount = this._channelCount;
-    if (!Number.isFinite(channelCount) || channelCount <= 0) channelCount = output.length;
-    channelCount = Math.floor(channelCount);
-    channelCount = Math.min(Math.max(channelCount, 1), output.length);
+    // Note: avoid `>>> 0` on non-safe integers; it wraps modulo 2^32, which can turn absurd values
+    // into small-but-wrong capacities.
+    let channelCount = parsePositiveSafeU32(this._channelCount);
+    if (!channelCount) channelCount = output.length;
+    channelCount = Math.min(channelCount, output.length);
 
     const maxCapacityFromBuffer = Math.floor(this._samples.length / channelCount);
     if (!Number.isFinite(maxCapacityFromBuffer) || maxCapacityFromBuffer <= 0) {
@@ -96,13 +102,8 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     // inputs cannot make the worklet do multi-second per-callback work.
     const MAX_CAPACITY_FRAMES = 1_048_576; // 2^20 frames (~21s @ 48kHz)
 
-    let capacityFrames = this._capacityFrames;
-    if (Number.isFinite(capacityFrames) && capacityFrames > 0) {
-      capacityFrames = Math.floor(capacityFrames) >>> 0;
-      capacityFrames = Math.min(capacityFrames, maxCapacityFromBuffer);
-    } else {
-      capacityFrames = maxCapacityFromBuffer;
-    }
+    let capacityFrames = parsePositiveSafeU32(this._capacityFrames);
+    capacityFrames = capacityFrames ? Math.min(capacityFrames, maxCapacityFromBuffer) : maxCapacityFromBuffer;
     capacityFrames = Math.min(capacityFrames, MAX_CAPACITY_FRAMES);
     if (capacityFrames <= 0) return true;
 
