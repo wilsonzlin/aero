@@ -1375,6 +1375,7 @@ function renderMachineWorkerPanel(): HTMLElement {
             testState.width = Math.max(0, w | 0);
             testState.height = Math.max(0, h | 0);
             testState.strideBytes = Math.max(0, stride | 0);
+            presenter?.presentLatestFrame();
           }, 50);
           (sharedPollTimer as unknown as { unref?: () => void }).unref?.();
           return;
@@ -1413,6 +1414,7 @@ function renderMachineWorkerPanel(): HTMLElement {
       if (isFramebufferCopyMessageV1(msg)) {
         if (!presenter) return;
         presenter.pushCopyFrame(copyFrameFromMessageV1(msg));
+        presenter.presentLatestFrame();
         vgaInfo.textContent = `vga: ${msg.width}x${msg.height} stride=${msg.strideBytes} frame=${msg.frameCounter}`;
         testState.framesPresented += 1;
         testState.width = msg.width | 0;
