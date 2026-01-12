@@ -1831,12 +1831,18 @@ fn bios_post_preserves_piix3_legacy_bar_bases() {
         cfg.bar_range(0).unwrap().base,
         u64::from(PRIMARY_PORTS.cmd_base)
     );
-    assert_eq!(cfg.bar_range(1).unwrap().base, 0x3F4);
+    assert_eq!(
+        cfg.bar_range(1).unwrap().base,
+        u64::from(PRIMARY_PORTS.ctrl_base - 2)
+    );
     assert_eq!(
         cfg.bar_range(2).unwrap().base,
         u64::from(SECONDARY_PORTS.cmd_base)
     );
-    assert_eq!(cfg.bar_range(3).unwrap().base, 0x374);
+    assert_eq!(
+        cfg.bar_range(3).unwrap().base,
+        u64::from(SECONDARY_PORTS.ctrl_base - 2)
+    );
     assert_eq!(
         cfg.bar_range(4).unwrap().base,
         u64::from(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE)

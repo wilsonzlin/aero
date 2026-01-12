@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use aero_devices::pci::{profile, PciBdf, PciInterruptPin};
+use aero_devices::pci::{profile, PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
 use aero_virtio::devices::net_offload::VirtioNetHdr;
@@ -33,13 +33,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn cfg_read(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8) -> u32 {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_read(0xCFC + (offset & 3), size)
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_read(PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
-    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    m.io_write(0xCFC + (offset & 3), size, value);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    m.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 fn read_config_space_256(m: &mut Machine, bdf: PciBdf) -> [u8; 256] {
