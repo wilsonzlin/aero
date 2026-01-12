@@ -57,6 +57,18 @@ repo_root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"]
 tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
 md_files = [p for p in tracked if p.endswith(".md")]
 
+# Cache the git tree mode for all files once. This avoids spawning one `git ls-tree`
+# subprocess per referenced script, which can add up as the docs grow.
+tree_modes = {}
+for raw in subprocess.check_output(["git", "ls-tree", "-r", "HEAD"], text=True).splitlines():
+    if "\t" not in raw:
+        continue
+    meta, path = raw.split("\t", 1)
+    parts = meta.split()
+    if not parts:
+        continue
+    tree_modes[path] = parts[0]
+
 # Match:
 # - Explicit invocations: `./foo.sh`, `./some/path/foo.sh` (POSIX)
 # - Explicit invocations: `.\foo.ps1`, `.\some\path\foo.cmd` (Windows)
@@ -75,11 +87,7 @@ pattern = re.compile(
 
 
 def git_mode(path):
-    # Use `ls-tree` against HEAD so we validate the committed file mode.
-    out = subprocess.check_output(["git", "ls-tree", "HEAD", path], text=True).strip()
-    if not out:
-        return None
-    return out.split()[0]
+    return tree_modes.get(path)
 
 
 import posixpath
