@@ -70,10 +70,15 @@ function tcpProxyPseudoPacket(connectionId: number, direction: ProxyDirection, d
   buf[6] = 0;
   buf[7] = 0;
 
-  const id = BigInt(connectionId);
+  // Match the Rust tracer: `connection_id` is logically a u32, but encoded as
+  // a little-endian u64 (low 32 bits = id, high 32 bits = 0).
+  //
+  // Avoid `BigInt(connectionId)` so bogus inputs (NaN/float) don't break
+  // capture export; also keeps output deterministic under Node strip-types.
+  const id = connectionId >>> 0;
   const view = new DataView(buf.buffer);
-  view.setUint32(8, Number(id & 0xffff_ffffn), true);
-  view.setUint32(12, Number((id >> 32n) & 0xffff_ffffn), true);
+  view.setUint32(8, id, true);
+  view.setUint32(12, 0, true);
 
   buf.set(data, PROXY_PSEUDO_HEADER_LEN);
   return buf;
@@ -182,7 +187,7 @@ export class NetTracer {
     }
 
     const copied = new Uint8Array(data) as Uint8Array<ArrayBuffer>;
-    this.records.push({ type: "tcp_proxy", direction, connectionId, data: copied, timestampNs });
+    this.records.push({ type: "tcp_proxy", direction, connectionId: connectionId >>> 0, data: copied, timestampNs });
     this.bytes += len;
   }
 
@@ -208,13 +213,19 @@ export class NetTracer {
     }
 
     const copied = new Uint8Array(data) as Uint8Array<ArrayBuffer>;
+    const ip: [number, number, number, number] = [
+      remoteIpV4[0] & 0xff,
+      remoteIpV4[1] & 0xff,
+      remoteIpV4[2] & 0xff,
+      remoteIpV4[3] & 0xff,
+    ];
     this.records.push({
       type: "udp_proxy",
       direction,
       transport,
-      remoteIpV4,
-      srcPort,
-      dstPort,
+      remoteIpV4: ip,
+      srcPort: srcPort & 0xffff,
+      dstPort: dstPort & 0xffff,
       data: copied,
       timestampNs,
     });
