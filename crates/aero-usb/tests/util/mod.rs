@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use aero_usb::uhci::regs;
 use aero_usb::MemoryBus;
 

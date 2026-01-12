@@ -21,10 +21,6 @@ const ROOT_PORT_WEBUSB: usize = 1;
 // Must match `web/src/platform/webhid_passthrough.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
 const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 
-fn js_error(message: impl core::fmt::Display) -> JsValue {
-    js_sys::Error::new(&message.to_string()).into()
-}
-
 /// Guest memory accessor backed by the module's wasm linear memory.
 ///
 /// Guest physical address 0 maps to `guest_base` inside the linear memory (see `guest_ram_layout()`
