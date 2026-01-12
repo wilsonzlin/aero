@@ -161,7 +161,8 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
-  const requestedMaxBytes = req.max_bytes > 0 ? req.max_bytes : DEFAULT_MAX_BYTES;
+  let requestedMaxBytes = clampU32(req.max_bytes);
+  if (requestedMaxBytes === 0) requestedMaxBytes = DEFAULT_MAX_BYTES;
   // Clamp to keep the decode window (maxBytes + slack) within the compiler's input cap.
   const maxBytes = Math.min(requestedMaxBytes, MAX_COMPILER_CODE_BYTES - DECODE_WINDOW_SLACK_BYTES);
   const maxInsts = 64;
