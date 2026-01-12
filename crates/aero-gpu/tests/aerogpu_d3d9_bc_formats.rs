@@ -307,6 +307,23 @@ fn d3d9_cmd_stream_bc1_texture_cpu_fallback_upload_and_sample() {
 }
 
 #[test]
+fn d3d9_cmd_stream_bc1_texture_cpu_fallback_guest_backed_upload_and_sample() {
+    // BC1 4x4 block encoding a solid red color (0xF800 in RGB565).
+    let bc1_block = [
+        0x00, 0xF8, // color0
+        0x00, 0xF8, // color1
+        0x00, 0x00, 0x00, 0x00, // indices
+    ];
+
+    run_bc_texture_cpu_fallback_guest_backed_upload_and_sample(
+        AEROGPU_FORMAT_BC1_RGBA_UNORM,
+        8, // row_pitch_bytes (1 BC1 block row)
+        &bc1_block,
+        [255, 0, 0, 255],
+    );
+}
+
+#[test]
 fn d3d9_cmd_stream_bc2_texture_cpu_fallback_upload_and_sample() {
     // BC2/DXT3 4x4 block encoding solid red with alpha=255.
     //
@@ -446,6 +463,30 @@ fn d3d9_cmd_stream_bc3_texture_cpu_fallback_upload_and_sample() {
     ];
 
     run_bc_texture_cpu_fallback_upload_and_sample(
+        AEROGPU_FORMAT_BC3_RGBA_UNORM,
+        16, // row_pitch_bytes (1 BC3 block row)
+        &bc3_block,
+        [255, 0, 0, 255],
+    );
+}
+
+#[test]
+fn d3d9_cmd_stream_bc3_texture_cpu_fallback_guest_backed_upload_and_sample() {
+    // BC3/DXT5 4x4 block encoding solid red with alpha=255.
+    //
+    // Layout:
+    // - alpha0, alpha1
+    // - 48-bit alpha indices
+    // - BC1 color block
+    let bc3_block = [
+        0xFF, 0xFF, // alpha0, alpha1
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // alpha indices (all 0 -> alpha0)
+        0x00, 0xF8, // color0 (red)
+        0x00, 0xF8, // color1 (red)
+        0x00, 0x00, 0x00, 0x00, // color indices (all 0)
+    ];
+
+    run_bc_texture_cpu_fallback_guest_backed_upload_and_sample(
         AEROGPU_FORMAT_BC3_RGBA_UNORM,
         16, // row_pitch_bytes (1 BC3 block row)
         &bc3_block,
@@ -623,6 +664,48 @@ fn run_bc_texture_direct_guest_backed_upload_and_sample(
         }
     };
 
+    run_bc_texture_guest_backed_upload_and_sample(
+        &mut exec,
+        sample_format,
+        sample_row_pitch_bytes,
+        sample_block_bytes,
+        expected_rgba,
+        false,
+    );
+}
+
+fn run_bc_texture_cpu_fallback_guest_backed_upload_and_sample(
+    sample_format: u32,
+    sample_row_pitch_bytes: u32,
+    sample_block_bytes: &[u8],
+    expected_rgba: [u8; 4],
+) {
+    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
+        Some(exec) => exec,
+        None => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+    };
+
+    run_bc_texture_guest_backed_upload_and_sample(
+        &mut exec,
+        sample_format,
+        sample_row_pitch_bytes,
+        sample_block_bytes,
+        expected_rgba,
+        true,
+    );
+}
+
+fn run_bc_texture_guest_backed_upload_and_sample(
+    exec: &mut AerogpuD3d9Executor,
+    sample_format: u32,
+    sample_row_pitch_bytes: u32,
+    sample_block_bytes: &[u8],
+    expected_rgba: [u8; 4],
+    expect_sample_texture_readback_ok: bool,
+) {
     // Guest memory backing.
     const TEX_ALLOC_ID: u32 = 1;
     const TEX_GPA: u64 = 0x1000;
@@ -777,13 +860,22 @@ fn run_bc_texture_direct_guest_backed_upload_and_sample(
         "inside probe should be the sampled BC texture color"
     );
 
-    // The guest-backed texture should remain BC-compressed in the native path, so RGBA8 readback
-    // must be rejected.
-    match pollster::block_on(exec.readback_texture_rgba8(SAMPLE_TEX_HANDLE)) {
-        Err(AerogpuD3d9Error::ReadbackUnsupported(handle)) => assert_eq!(handle, SAMPLE_TEX_HANDLE),
-        Err(other) => panic!("expected ReadbackUnsupported, got {other:?}"),
-        Ok((w, h, _)) => {
-            panic!("expected ReadbackUnsupported for BC texture, got Ok({w}x{h}) instead")
+    let sample_readback = pollster::block_on(exec.readback_texture_rgba8(SAMPLE_TEX_HANDLE));
+    if expect_sample_texture_readback_ok {
+        let (w, h, bytes) = sample_readback.expect("sample texture readback should succeed");
+        assert_eq!((w, h), (4, 4));
+        for px in bytes.chunks_exact(4) {
+            assert_eq!(px, expected_rgba);
+        }
+    } else {
+        // The guest-backed texture should remain BC-compressed in the native path, so RGBA8
+        // readback must be rejected.
+        match sample_readback {
+            Err(AerogpuD3d9Error::ReadbackUnsupported(handle)) => assert_eq!(handle, SAMPLE_TEX_HANDLE),
+            Err(other) => panic!("expected ReadbackUnsupported, got {other:?}"),
+            Ok((w, h, _)) => panic!(
+                "expected ReadbackUnsupported for BC texture, got Ok({w}x{h}) instead"
+            ),
         }
     }
 }
