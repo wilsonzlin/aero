@@ -448,4 +448,18 @@ mod tests {
 
         assert!(matches!(err, ManifestError::InvalidLastModified { .. }));
     }
+
+    #[test]
+    fn rejects_invalid_last_modified_format() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "last_modified": "not-a-date", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidLastModified { .. }));
+    }
 }
