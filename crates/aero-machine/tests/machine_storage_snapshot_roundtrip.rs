@@ -238,18 +238,13 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
     const AHCI_VECTOR: u8 = 0x70;
 
-    let cfg = MachineConfig {
-        ram_size_bytes: RAM_SIZE,
-        enable_pc_platform: true,
-        enable_ahci: true,
-        enable_ide: true,
-        // Keep the machine minimal and deterministic for snapshot tests.
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        ..Default::default()
-    };
+    let mut cfg = MachineConfig::win7_storage(RAM_SIZE);
+    // Keep the machine minimal and deterministic for snapshot tests.
+    cfg.enable_vga = false;
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
 
     let ahci_disk = SharedDisk::new(64);
     let ide_disk = SharedDisk::new(16);

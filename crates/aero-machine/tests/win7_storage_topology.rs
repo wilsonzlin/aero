@@ -11,20 +11,15 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
-    let m = Machine::new(MachineConfig {
-        ram_size_bytes: 2 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_ahci: true,
-        enable_ide: true,
-        // Keep this test focused on PCI topology and avoid unrelated devices.
-        enable_vga: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        ..Default::default()
-    })
-    .unwrap();
+    let mut cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    // Keep this test focused on PCI topology and avoid unrelated devices.
+    cfg.enable_vga = false;
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
+
+    let m = Machine::new(cfg).unwrap();
 
     let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
     let mut pci_cfg = pci_cfg.borrow_mut();
