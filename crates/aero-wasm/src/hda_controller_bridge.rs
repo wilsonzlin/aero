@@ -322,4 +322,24 @@ mod tests {
         // The call should complete without panicking even though the DMA address is invalid.
         bridge.step_frames(128);
     }
+
+    #[wasm_bindgen_test]
+    fn linear_guest_memory_zero_fills_on_addr_len_overflow() {
+        let mut guest = vec![0u8; 16];
+        let guest_base = guest.as_mut_ptr() as u32;
+
+        // Construct the memory adapter directly so we can exercise the `addr+len` overflow path:
+        // `guest_size == u32::MAX` allows `addr` to be near the end of the address space while still
+        // being considered "in range" for the initial `addr < guest_size` check.
+        let mem = LinearGuestMemory {
+            guest_base,
+            guest_size: u32::MAX,
+        };
+
+        // `addr + len` overflows u32, so the adapter must treat it as out-of-bounds and
+        // return a zero-filled read without panicking.
+        let mut buf = [0xAAu8; 8];
+        mem.read_physical(u64::from(u32::MAX - 1), &mut buf);
+        assert_eq!(buf, [0u8; 8]);
+    }
 }
