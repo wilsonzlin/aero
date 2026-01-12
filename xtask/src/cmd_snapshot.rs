@@ -905,6 +905,11 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
     struct CpuSummaryEntry {
         apic_id: u32,
         entry_len: u64,
+        rip: Option<u64>,
+        mode: Option<String>,
+        halted: Option<bool>,
+        internal_len: Option<u64>,
+        decode_error: Option<String>,
     }
 
     let mut entries = Vec::with_capacity(count as usize);
@@ -955,14 +960,57 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
             return;
         }
 
-        let apic_id = match read_u32_le_lossy(file) {
-            Ok(v) => v,
-            Err(e) => {
-                println!("  <failed to read CPU apic_id: {e}>");
-                return;
+        let mut apic_id: u32 = 0;
+        let mut rip: Option<u64> = None;
+        let mut mode: Option<String> = None;
+        let mut halted: Option<bool> = None;
+        let mut internal_len: Option<u64> = None;
+        let mut decode_error: Option<String> = None;
+
+        {
+            let mut entry_reader = file.take(entry_len);
+            match read_u32_le_lossy(&mut entry_reader) {
+                Ok(v) => apic_id = v,
+                Err(e) => decode_error = Some(format!("apic_id: {e}")),
             }
-        };
-        entries.push(CpuSummaryEntry { apic_id, entry_len });
+
+            let cpu = if section.version == 1 {
+                CpuState::decode_v1(&mut entry_reader)
+            } else {
+                CpuState::decode_v2(&mut entry_reader)
+            };
+            match cpu {
+                Ok(cpu) => {
+                    rip = Some(cpu.rip);
+                    if section.version >= 2 {
+                        mode = Some(format!("{:?}", cpu.mode));
+                        halted = Some(cpu.halted);
+                    }
+                }
+                Err(e) => {
+                    decode_error = Some(format!("cpu: {e}"));
+                }
+            }
+
+            match read_u64_le_lossy(&mut entry_reader) {
+                Ok(v) => internal_len = Some(v),
+                Err(e) => {
+                    if decode_error.is_none() {
+                        decode_error = Some(format!("internal_len: {e}"));
+                    }
+                }
+            }
+        }
+
+        entries.push(CpuSummaryEntry {
+            apic_id,
+            entry_len,
+            rip,
+            mode,
+            halted,
+            internal_len,
+            decode_error,
+        });
 
         if let Err(e) = file.seek(SeekFrom::Start(entry_end)) {
             println!("  <failed to skip CPU entry: {e}>");
@@ -981,9 +1029,25 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
 
     println!("  count: {}", entries.len());
     for (idx, entry) in entries.iter().take(MAX_LISTED).enumerate() {
+        let mut suffix = String::new();
+        if let Some(rip) = entry.rip {
+            suffix.push_str(&format!(" rip=0x{rip:x}"));
+        }
+        if let Some(mode) = entry.mode.as_deref() {
+            suffix.push_str(&format!(" mode={mode}"));
+        }
+        if let Some(halted) = entry.halted {
+            suffix.push_str(&format!(" halted={halted}"));
+        }
+        if let Some(internal_len) = entry.internal_len {
+            suffix.push_str(&format!(" internal_len={internal_len}"));
+        }
+        if let Some(err) = entry.decode_error.as_deref() {
+            suffix.push_str(&format!(" <{err}>"));
+        }
         println!(
-            "  - {}: apic_id={} entry_len={}",
-            idx, entry.apic_id, entry.entry_len
+            "  - {}: apic_id={} entry_len={}{}",
+            idx, entry.apic_id, entry.entry_len, suffix
         );
     }
     if entries.len() > MAX_LISTED {
