@@ -257,8 +257,12 @@ describe("net/pcapng.writePcapng", () => {
 
 describe("net/pcapng.PcapngWriter", () => {
   it("writes SHB, IDB, and EPB blocks with expected fields and options", () => {
-    const w = new PcapngWriter("aero-test");
-    const iface = w.addInterface(LinkType.Ethernet, "guest-eth0");
+    const userAppl = "aero-test";
+    const ifaceName = "guest-eth0";
+    const textDecoder = new TextDecoder();
+
+    const w = new PcapngWriter(userAppl);
+    const iface = w.addInterface(LinkType.Ethernet, ifaceName);
 
     const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01]);
     w.writePacket(iface, 123_456_789n, payload, PacketDirection.Inbound);
@@ -277,6 +281,29 @@ describe("net/pcapng.PcapngWriter", () => {
     const bom = view.getUint32(offset + 8, true);
     expect(bom).toBe(0x1a2b3c4d);
 
+    // Ensure shb_userappl (option 4) is present.
+    {
+      const optsStart = offset + 8 + 16;
+      const optsEnd = offset + shbLen - 4;
+      let optOff = optsStart;
+      let found = false;
+      while (optOff + 4 <= optsEnd) {
+        const code = view.getUint16(optOff, true);
+        const len = view.getUint16(optOff + 2, true);
+        optOff += 4;
+        if (code === 0) break;
+        const valueStart = optOff;
+        const valueEnd = valueStart + len;
+        expect(valueEnd).toBeLessThanOrEqual(optsEnd);
+        if (code === 4) {
+          expect(textDecoder.decode(bytes.subarray(valueStart, valueEnd))).toBe(userAppl);
+          found = true;
+        }
+        optOff = alignUp4(valueEnd);
+      }
+      expect(found).toBe(true);
+    }
+
     offset += shbLen;
 
     // --- IDB ---
@@ -288,16 +315,21 @@ describe("net/pcapng.PcapngWriter", () => {
     const linkType = view.getUint16(offset + 8, true);
     expect(linkType).toBe(LinkType.Ethernet);
 
-    // Ensure if_tsresol (option 9) exists and is 10^-9 (9).
+    // Ensure if_name (option 2) and if_tsresol (option 9) exist.
     const idbOptsStart = offset + 16;
     const idbOptsEnd = offset + idbLen - 4;
     let optOff = idbOptsStart;
     let foundTsresol = false;
+    let foundName = false;
     while (optOff + 4 <= idbOptsEnd) {
       const code = view.getUint16(optOff, true);
       const len = view.getUint16(optOff + 2, true);
       optOff += 4;
       if (code === 0) break;
+      if (code === 2) {
+        expect(textDecoder.decode(bytes.subarray(optOff, optOff + len))).toBe(ifaceName);
+        foundName = true;
+      }
       if (code === 9) {
         expect(len).toBe(1);
         expect(bytes[optOff]).toBe(9);
@@ -306,6 +338,7 @@ describe("net/pcapng.PcapngWriter", () => {
       optOff += len;
       optOff = alignUp4(optOff);
     }
+    expect(foundName).toBe(true);
     expect(foundTsresol).toBe(true);
 
     offset += idbLen;
