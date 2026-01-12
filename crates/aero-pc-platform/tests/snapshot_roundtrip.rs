@@ -1,4 +1,4 @@
-use aero_devices::acpi_pm::PM1_STS_PWRBTN;
+use aero_devices::acpi_pm::{PM1_STS_PWRBTN, DEFAULT_PM_TMR_BLK};
 use aero_devices::pci::PciCoreSnapshot;
 use aero_devices::pci::{PciBdf, PciInterruptPin};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
@@ -479,4 +479,51 @@ fn pc_platform_snapshot_roundtrip_preserves_rtc_irq8_and_requires_status_c_clear
     // Now another second edge should deliver again.
     pc2.tick(1_000_000_000);
     assert_eq!(pc2.interrupts.borrow().get_pending(), Some(RTC_VECTOR));
+}
+
+#[test]
+fn pc_platform_snapshot_roundtrip_preserves_acpi_pm_timer_progression() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    // The ACPI PM timer is a 24-bit free-running counter at 3.579545MHz.
+    const PM_TIMER_FREQUENCY_HZ: u128 = 3_579_545;
+    const NS_PER_SEC: u128 = 1_000_000_000;
+    const PM_TIMER_MASK_24BIT: u32 = 0x00FF_FFFF;
+
+    let mut pc = PcPlatform::new(RAM_SIZE);
+
+    // At time 0, the timer should read as 0 and be stable without ticking.
+    let t0 = (pc.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let t0b = (pc.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    assert_eq!(t0, t0b);
+
+    // Advance deterministic time and ensure the timer increments as expected.
+    let delta1_ns: u64 = 1_000_000; // 1ms
+    pc.tick(delta1_ns);
+    let t1 = (pc.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let expected_t1 = (((delta1_ns as u128) * PM_TIMER_FREQUENCY_HZ) / NS_PER_SEC) as u32;
+    assert_eq!(t1, expected_t1 & PM_TIMER_MASK_24BIT);
+
+    // Snapshot deterministically and restore into a fresh platform.
+    let acpi_pm_state = {
+        let pm = pc.acpi_pm.borrow();
+        deterministic_snapshot(&*pm, "ACPI PM")
+    };
+
+    let mut pc2 = PcPlatform::new(RAM_SIZE);
+    pc2.acpi_pm.borrow_mut().load_state(&acpi_pm_state).unwrap();
+
+    // The timer value at the snapshot moment should survive restore even though the new clock
+    // starts at 0; the device models this by restoring the timer base offset.
+    let t1_restore = (pc2.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    assert_eq!(t1_restore, t1);
+
+    // Further ticking should advance from the restored point. Use absolute expected values to
+    // avoid off-by-one issues due to integer division at fractional tick boundaries.
+    let delta2_ns: u64 = 500_000; // 0.5ms
+    pc2.tick(delta2_ns);
+    let t2 = (pc2.io.read(DEFAULT_PM_TMR_BLK, 4) as u32) & PM_TIMER_MASK_24BIT;
+    let total_ns = (delta1_ns as u128) + (delta2_ns as u128);
+    let expected_t2 = ((total_ns * PM_TIMER_FREQUENCY_HZ) / NS_PER_SEC) as u32;
+    assert_eq!(t2, expected_t2 & PM_TIMER_MASK_24BIT);
 }
