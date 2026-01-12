@@ -883,29 +883,27 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     // clock consistent.
     const dev = hdaDevice;
     const ctrl = hdaControllerBridge as unknown as { output_sample_rate_hz?: unknown } | null;
-    if (dev && ctrl) {
-      // If a host AudioContext is active, it owns the output sample rate.
-      // Otherwise (no ring attached), use the restored WASM-side output rate so the wrapper's
-      // tick clock stays consistent with the device model.
-      let desiredDstSampleRateHz = audioOutDstSampleRate >>> 0;
-      if (desiredDstSampleRateHz === 0) {
-        const restoredRate = ctrl.output_sample_rate_hz;
-        if (typeof restoredRate === "number" && Number.isFinite(restoredRate) && restoredRate > 0) {
-          desiredDstSampleRateHz = restoredRate >>> 0;
-        }
+    // If a host AudioContext is active, it owns the output sample rate.
+    // Otherwise (no ring attached), use the restored WASM-side output rate so the wrapper's
+    // tick clock stays consistent with the device model.
+    let desiredDstSampleRateHz = audioOutDstSampleRate >>> 0;
+    if (desiredDstSampleRateHz === 0 && ctrl) {
+      const restoredRate = ctrl.output_sample_rate_hz;
+      if (typeof restoredRate === "number" && Number.isFinite(restoredRate) && restoredRate > 0) {
+        desiredDstSampleRateHz = restoredRate >>> 0;
       }
+    }
 
-      if (desiredDstSampleRateHz > 0) {
-        try {
-          dev.setAudioRingBuffer({
-            ringBuffer: audioOutRingBuffer,
-            capacityFrames: audioOutCapacityFrames,
-            channelCount: audioOutChannelCount,
-            dstSampleRateHz: desiredDstSampleRateHz,
-          });
-        } catch (err) {
-          console.warn("[io.worker] Failed to reapply audio output settings after HDA snapshot restore", err);
-        }
+    if (dev && desiredDstSampleRateHz > 0) {
+      try {
+        dev.setAudioRingBuffer({
+          ringBuffer: audioOutRingBuffer,
+          capacityFrames: audioOutCapacityFrames,
+          channelCount: audioOutChannelCount,
+          dstSampleRateHz: desiredDstSampleRateHz,
+        });
+      } catch (err) {
+        console.warn("[io.worker] Failed to reapply audio output settings after HDA snapshot restore", err);
       }
     }
 
@@ -919,11 +917,7 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     const hda = hdaDevice;
     if (hda) {
       try {
-        // If the mic ring is detached but we still know the host capture rate, keep the device
-        // model in sync so silent capture resampling stays consistent.
-        if (!micRingBuffer && micSampleRate > 0) {
-          hda.setCaptureSampleRateHz(micSampleRate);
-        }
+        if (micSampleRate > 0) hda.setCaptureSampleRateHz(micSampleRate);
         hda.setMicRingBuffer(micRingBuffer);
       } catch (err) {
         console.warn("[io.worker] Failed to reapply microphone settings after HDA snapshot restore", err);
@@ -933,6 +927,19 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     if (hda && virtioSndDevice) {
       try {
         virtioSndDevice.setMicRingBuffer(null);
+      } catch {
+        // ignore
+      }
+    }
+    // Ensure virtio-snd is never a concurrent audio-ring producer when HDA is present.
+    if (hda && virtioSndDevice) {
+      try {
+        virtioSndDevice.setAudioRingBuffer({
+          ringBuffer: null,
+          capacityFrames: audioOutCapacityFrames,
+          channelCount: audioOutChannelCount,
+          dstSampleRateHz: desiredDstSampleRateHz,
+        });
       } catch {
         // ignore
       }
