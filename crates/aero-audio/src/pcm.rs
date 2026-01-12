@@ -1046,6 +1046,44 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame_for_20bit_multichannel() {
+        // 20-bit PCM uses a 4-byte container. With 4 channels, that's 16 bytes per frame.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 20,
+            channels: 4,
+        };
+        let mut input = Vec::new();
+        // One full frame: ch0=0.5, ch1=-0.5, ch2/ch3 ignored.
+        input.extend_from_slice(&262_144i32.to_le_bytes());
+        input.extend_from_slice(&(-262_144i32).to_le_bytes());
+        input.extend_from_slice(&524_287i32.to_le_bytes());
+        input.extend_from_slice(&(-524_288i32).to_le_bytes());
+        // Trailing partial frame (incomplete).
+        input.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], -0.5, 1e-6);
+    }
+
+    #[test]
+    fn decode_pcm_to_stereo_f32_into_clears_output_on_short_input() {
+        // Input shorter than a single frame should produce zero output frames, and the caller's
+        // output buffer must still be cleared.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 24,
+            channels: 2,
+        };
+
+        let mut out = vec![[1.0, 2.0]];
+        decode_pcm_to_stereo_f32_into(&[0xAA, 0xBB, 0xCC], fmt, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
     fn decode_pcm_to_stereo_f32_mono_duplicates_for_8bit_and_20bit() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
@@ -1103,6 +1141,18 @@ mod tests {
         assert_f32_approx_eq(out[0][1], 0.5, 1e-6);
         assert_f32_approx_eq(out[1][0], -0.5, 1e-6);
         assert_f32_approx_eq(out[1][1], -0.5, 1e-6);
+    }
+
+    #[test]
+    fn encode_mono_f32_to_pcm_into_empty_input_clears_output() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 32,
+            channels: 2,
+        };
+        let mut out = vec![0xAA, 0xBB, 0xCC];
+        encode_mono_f32_to_pcm_into(&[], fmt, &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
