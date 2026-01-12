@@ -289,7 +289,7 @@ jobs:
           fi
           if [[ -f "${harness_log}" ]]; then
             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
-            input_inject_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_INPUT_EVENTS_INJECT\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
+            input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
           fi
 
           {
@@ -307,7 +307,7 @@ jobs:
               echo "- Guest virtio-input-events marker: ${input_events_marker}"
             fi
             if [[ -n "${input_inject_marker}" ]]; then
-              echo "- Host virtio-input injection marker: ${input_inject_marker}"
+              echo "- Host virtio-input injection marker: \`${input_inject_marker}\`"
             fi
             if [[ -n "${snd_capture_marker}" ]]; then
               echo "- Guest virtio-snd-capture marker: ${snd_capture_marker}"

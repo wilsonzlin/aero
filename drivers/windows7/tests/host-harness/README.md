@@ -272,6 +272,9 @@ On the self-hosted runner you need:
 > `concurrency.group: win7-virtio-harness` to prevent concurrent runs from fighting over ports/images.
 > If `18080` is already in use on your runner, override it via the workflow input `http_port`.
 
+The workflow can also optionally exercise the end-to-end virtio-input event delivery path (QMP `input-send-event` + guest
+HID report verification) by setting the workflow input `with_virtio_input_events=true`.
+
 ### Invoking the workflow
 
 1. Place your prepared Windows 7 image somewhere on the runner (example: `/var/lib/aero/win7/win7-aero-tests.qcow2`).
