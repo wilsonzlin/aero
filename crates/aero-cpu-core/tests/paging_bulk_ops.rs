@@ -138,7 +138,7 @@ fn pagingbus_bulk_copy_success() -> Result<(), Exception> {
 }
 
 #[test]
-fn pagingbus_bulk_copy_overlap_memmove_backward() -> Result<(), Exception> {
+fn pagingbus_bulk_copy_overlap_memmove_backward_two_pages() -> Result<(), Exception> {
     let mut phys = TestMemory::new(0x20000);
 
     let pml4_base = 0x1000u64;
@@ -189,7 +189,7 @@ fn pagingbus_bulk_copy_overlap_memmove_backward() -> Result<(), Exception> {
 }
 
 #[test]
-fn pagingbus_bulk_copy_overlap_memmove_forward() -> Result<(), Exception> {
+fn pagingbus_bulk_copy_overlap_memmove_forward_two_pages() -> Result<(), Exception> {
     let mut phys = TestMemory::new(0x20000);
 
     let pml4_base = 0x1000u64;
@@ -391,7 +391,7 @@ fn pagingbus_bulk_set_preflight_failure_is_atomic() -> Result<(), Exception> {
 }
 
 #[test]
-fn pagingbus_bulk_copy_overlap_memmove_backward_small() -> Result<(), Exception> {
+fn pagingbus_bulk_copy_overlap_memmove_backward_single_page_32b() -> Result<(), Exception> {
     // Exercise PagingBus's bulk_copy memmove semantics for overlapping ranges where dst > src.
     // This must copy backward so it behaves like memmove rather than memcpy.
     let mut phys = TestMemory::new(0x20000);
@@ -432,7 +432,7 @@ fn pagingbus_bulk_copy_overlap_memmove_backward_small() -> Result<(), Exception>
 }
 
 #[test]
-fn pagingbus_bulk_copy_overlap_memmove_forward_small() -> Result<(), Exception> {
+fn pagingbus_bulk_copy_overlap_memmove_forward_single_page_32b() -> Result<(), Exception> {
     // Exercise PagingBus's bulk_copy memmove semantics for overlapping ranges where dst < src.
     // This must copy forward.
     let mut phys = TestMemory::new(0x20000);
