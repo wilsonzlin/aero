@@ -472,6 +472,20 @@ describe("workers/net.worker (worker_threads)", () => {
       // - 2 = outbound
       expect((tx!.epbFlags ?? 0) & 0x3).toBe(2);
       expect((rx!.epbFlags ?? 0) & 0x3).toBe(1);
+
+      // `net.trace.take_pcapng` drains the capture so subsequent stats report 0 records/bytes.
+      const statusAfterPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.status" &&
+          (msg as { requestId?: unknown }).requestId === 100,
+        10000,
+      ) as Promise<{ enabled?: boolean; records?: number; bytes?: number }>;
+      worker.postMessage({ kind: "net.trace.status", requestId: 100 });
+      const statusAfter = await statusAfterPromise;
+      expect(statusAfter.enabled).toBe(true);
+      expect(statusAfter.records).toBe(0);
+      expect(statusAfter.bytes).toBe(0);
     } finally {
       await worker.terminate();
     }
