@@ -120,6 +120,10 @@ name = "aero-mmu"
 version = "0.1.0"
 
 [[package]]
+name = "aero-pc-constants"
+version = "0.1.0"
+
+[[package]]
 name = "aero-perf"
 version = "0.1.0"
 
@@ -131,6 +135,7 @@ dependencies = [
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-mmu",
+ "aero-pc-constants",
  "js-sys",
  "memory",
  "wasm-bindgen",

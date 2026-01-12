@@ -952,6 +952,44 @@ fuzz_target!(|data: &[u8]| {
         1,
     );
 
+    // CommandProcessor edge-case: exporting the same share token for a different underlying handle
+    // should error deterministically (`ShareTokenAlreadyExported`).
+    let tex2_handle = 4u32;
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    w.create_texture2d(
+        tex2_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    w.export_shared_surface(tex_handle, share_token);
+    w.export_shared_surface(tex2_handle, share_token);
+    let cmd_proc_token_retarget = w.finish();
+    let mut proc_token_retarget = AeroGpuCommandProcessor::new();
+    let _ = proc_token_retarget.process_submission_with_allocations(
+        &cmd_proc_token_retarget,
+        Some(&allocs),
+        1,
+    );
+
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
     if alloc_patched.len() < ring::AerogpuAllocTableHeader::SIZE_BYTES {
