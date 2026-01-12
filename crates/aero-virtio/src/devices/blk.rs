@@ -113,7 +113,7 @@ fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
 ///
 /// This means platform code can do:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 /// use aero_virtio::devices::blk::VirtioBlk;
 ///
