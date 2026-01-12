@@ -20,6 +20,53 @@ use super::abi::{
 /// A compiled basic block is exported as a function named `block`.
 pub const EXPORT_BLOCK_FN: &str = "block";
 
+#[derive(Debug, Clone, Copy)]
+pub struct LegacyWasmOptions {
+    /// Whether the imported `env.memory` is expected to be a shared memory (i.e. created with
+    /// `WebAssembly.Memory({ shared: true, ... })`).
+    ///
+    /// Note: shared memories require a declared maximum page count.
+    pub memory_shared: bool,
+
+    /// Minimum size (in 64KiB pages) of the imported `env.memory`.
+    pub memory_min_pages: u32,
+
+    /// Maximum size (in 64KiB pages) of the imported `env.memory`.
+    ///
+    /// When [`Self::memory_shared`] is `true` and this is unset, the code generator defaults to
+    /// 65536 pages (4GiB) so the module can accept any smaller shared memory.
+    pub memory_max_pages: Option<u32>,
+}
+
+impl Default for LegacyWasmOptions {
+    fn default() -> Self {
+        Self {
+            memory_shared: false,
+            memory_min_pages: 1,
+            memory_max_pages: None,
+        }
+    }
+}
+
+impl LegacyWasmOptions {
+    fn validate_memory_import(self) {
+        let effective_max_pages = if self.memory_shared {
+            Some(self.memory_max_pages.unwrap_or(65_536))
+        } else {
+            self.memory_max_pages
+        };
+
+        if let Some(max) = effective_max_pages {
+            assert!(
+                self.memory_min_pages <= max,
+                "invalid env.memory import type: min_pages ({}) > max_pages ({})",
+                self.memory_min_pages,
+                max
+            );
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ImportedFuncs {
     mem_read_u8: u32,
@@ -51,6 +98,14 @@ impl WasmCodegen {
     /// - import `env.memory`
     /// - import helpers described by the `IMPORT_*` constants
     pub fn compile_block(&self, block: &IrBlock) -> Vec<u8> {
+        self.compile_block_with_options(block, LegacyWasmOptions::default())
+    }
+
+    pub fn compile_block_with_options(
+        &self,
+        block: &IrBlock,
+        options: LegacyWasmOptions,
+    ) -> Vec<u8> {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
@@ -115,15 +170,23 @@ impl WasmCodegen {
 
         module.section(&types);
 
+        options.validate_memory_import();
         let mut imports = ImportSection::new();
+        let memory_max_pages: Option<u64> = if options.memory_shared {
+            // Shared memories require an explicit maximum. Default to 4GiB (the maximum size of a
+            // wasm32 memory) so we can link against any smaller shared memory.
+            Some(u64::from(options.memory_max_pages.unwrap_or(65_536)))
+        } else {
+            options.memory_max_pages.map(u64::from)
+        };
         imports.import(
             IMPORT_MODULE,
             IMPORT_MEMORY,
             MemoryType {
-                minimum: 1,
-                maximum: None,
+                minimum: u64::from(options.memory_min_pages),
+                maximum: memory_max_pages,
                 memory64: false,
-                shared: false,
+                shared: options.memory_shared,
                 page_size_log2: None,
             },
         );

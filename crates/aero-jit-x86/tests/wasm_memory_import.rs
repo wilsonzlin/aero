@@ -4,6 +4,13 @@ use aero_jit_x86::tier2::ir::{Instr, TraceIr, TraceKind};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::{Tier2WasmCodegen, Tier2WasmOptions};
 use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MODULE};
+#[cfg(feature = "legacy-baseline")]
+use aero_jit_x86::{
+    legacy::{
+        ir::{IrBlock as LegacyIrBlock, IrOp as LegacyIrOp, Operand as LegacyOperand},
+        wasm::{LegacyWasmOptions, WasmCodegen as LegacyWasmCodegen},
+    },
+};
 use wasmparser::{Parser, Payload, TypeRef};
 
 fn imported_memory_type(wasm: &[u8]) -> wasmparser::MemoryType {
@@ -44,6 +51,13 @@ fn trivial_tier2_trace() -> TraceIr {
         body: vec![Instr::SideExit { exit_rip: 0x1000 }],
         kind: TraceKind::Linear,
     }
+}
+
+#[cfg(feature = "legacy-baseline")]
+fn trivial_legacy_block() -> LegacyIrBlock {
+    LegacyIrBlock::new(vec![LegacyIrOp::Exit {
+        next_rip: LegacyOperand::Imm(0),
+    }])
 }
 
 #[test]
@@ -123,6 +137,27 @@ fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum() {
         &trace,
         &plan,
         Tier2WasmOptions {
+            memory_shared: true,
+            ..Default::default()
+        },
+    );
+    let mem = imported_memory_type(&wasm);
+    assert!(!mem.memory64);
+    assert!(mem.shared);
+    assert_eq!(mem.initial, 1);
+    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.page_size_log2, None);
+}
+
+#[cfg(feature = "legacy-baseline")]
+#[test]
+fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum() {
+    // The legacy baseline codegen is feature-gated. This test ensures it can also generate modules
+    // that import shared memories (SharedArrayBuffer) in browser workers.
+    let block = trivial_legacy_block();
+    let wasm = LegacyWasmCodegen::new().compile_block_with_options(
+        &block,
+        LegacyWasmOptions {
             memory_shared: true,
             ..Default::default()
         },
