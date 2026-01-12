@@ -5,6 +5,7 @@ type ShaderCacheCounters = {
   translateCalls: number;
   persistentHits: number;
   persistentMisses: number;
+  cacheDisabled?: boolean;
 };
 
 // Debug-only: keep in sync with `crates/aero-d3d9/src/runtime/shader_cache.rs`.
@@ -57,9 +58,31 @@ function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
+function tryParseBool(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  if (isFiniteNumber(v)) return v !== 0;
+  return undefined;
+}
+
 function tryParseCounters(value: unknown): ShaderCacheCounters | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
+
+  const cacheDisabled = tryParseBool(record.d3d9_shader_cache_disabled);
+
+  const d3d9 = {
+    translateCalls: record.d3d9_shader_translate_calls,
+    persistentHits: record.d3d9_shader_cache_persistent_hits,
+    persistentMisses: record.d3d9_shader_cache_persistent_misses,
+  };
+  if (isFiniteNumber(d3d9.translateCalls) && isFiniteNumber(d3d9.persistentHits) && isFiniteNumber(d3d9.persistentMisses)) {
+    return {
+      translateCalls: d3d9.translateCalls,
+      persistentHits: d3d9.persistentHits,
+      persistentMisses: d3d9.persistentMisses,
+      cacheDisabled,
+    };
+  }
 
   const snake = {
     translateCalls: record.translate_calls,
@@ -71,6 +94,7 @@ function tryParseCounters(value: unknown): ShaderCacheCounters | null {
       translateCalls: snake.translateCalls,
       persistentHits: snake.persistentHits,
       persistentMisses: snake.persistentMisses,
+      cacheDisabled,
     };
   }
 
@@ -84,6 +108,7 @@ function tryParseCounters(value: unknown): ShaderCacheCounters | null {
       translateCalls: camel.translateCalls,
       persistentHits: camel.persistentHits,
       persistentMisses: camel.persistentMisses,
+      cacheDisabled,
     };
   }
 
@@ -124,6 +149,7 @@ function subtractCounters(after: ShaderCacheCounters, before: ShaderCacheCounter
     translateCalls: Math.max(0, after.translateCalls - before.translateCalls),
     persistentHits: Math.max(0, after.persistentHits - before.persistentHits),
     persistentMisses: Math.max(0, after.persistentMisses - before.persistentMisses),
+    cacheDisabled: after.cacheDisabled,
   };
 }
 
@@ -230,7 +256,8 @@ async function main(): Promise<void> {
       `d3d9TranslatorCacheVersion=${D3D9_TRANSLATOR_CACHE_VERSION}\n` +
       `translateCalls=${delta.translateCalls}\n` +
       `persistentHits=${delta.persistentHits}\n` +
-      `persistentMisses=${delta.persistentMisses}\n`;
+      `persistentMisses=${delta.persistentMisses}\n` +
+      (delta.cacheDisabled === undefined ? "" : `cacheDisabled=${delta.cacheDisabled}\n`);
   }
 }
 

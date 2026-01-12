@@ -14,6 +14,7 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
     translateCalls: number;
     persistentHits: number;
     persistentMisses: number;
+    cacheDisabled: boolean;
     backend: string;
     logs: string[];
   }> {
@@ -43,6 +44,7 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
       translateCalls: Number(result.translateCalls),
       persistentHits: Number(result.persistentHits),
       persistentMisses: Number(result.persistentMisses),
+      cacheDisabled: Boolean(result.cacheDisabled),
       backend: String(result.backend),
       logs,
     };
@@ -50,9 +52,18 @@ test("D3D9 shader translation is persisted and skipped on next run", async ({}, 
 
   const first = await runOnce();
   expect(first.backend).toBe("webgl2_wgpu");
-  expect(first.translateCalls > 0 || first.persistentMisses > 0).toBe(true);
+  if (first.cacheDisabled) {
+    test.skip(
+      true,
+      `persistent D3D9 shader cache is disabled/unavailable in this Chromium configuration\nlogs:\n${first.logs.join("\n")}`,
+    );
+  }
+  expect(first.translateCalls).toBeGreaterThan(0);
+  expect(first.persistentMisses).toBeGreaterThan(0);
 
   const second = await runOnce();
   expect(second.backend).toBe("webgl2_wgpu");
-  expect(second.translateCalls === 0 || second.persistentHits > 0).toBe(true);
+  expect(second.translateCalls).toBe(0);
+  expect(second.persistentHits).toBeGreaterThan(0);
+  expect(second.persistentMisses).toBe(0);
 });
