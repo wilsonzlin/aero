@@ -280,10 +280,15 @@ assign any other device to `00:02.0`.
 
 ### Note on VGA / display today
 
-The canonical `aero_machine::Machine` currently exposes VGA/SVGA (Bochs VBE) as a **legacy-only**
-device (fixed ports `0x3C0..0x3DF`, VBE ports `0x01CE/0x01CF`, legacy VRAM window
-`0xA0000..0xBFFFF`, and a fixed LFB at `0xE000_0000`). It is **not** currently exposed as a PCI
-function.
+The canonical `aero_machine::Machine` currently provides its boot display via the legacy VGA/VBE
+(`aero_gpu_vga`) device model:
+
+- fixed ports `0x3C0..0x3DF`
+- Bochs VBE ports `0x01CE/0x01CF`
+- legacy VRAM window `0xA0000..0xBFFFF`
+
+The Bochs VBE linear framebuffer base is `0xE000_0000` (within the reserved below-4 GiB PCI/MMIO
+hole).
 
 ---
 

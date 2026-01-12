@@ -3,7 +3,7 @@
  *
  * The web runtime treats guest RAM as a single contiguous region starting at
  * physical address 0. PCI MMIO BARs are auto-assigned into a fixed high-memory
- * aperture so they never overlap guest RAM.
+ * window so they never overlap guest RAM.
  *
  * NOTE: Keep these constants in sync with the Rust-side guest layout contract:
  * `crates/aero-wasm/src/guest_layout.rs`.

@@ -4,7 +4,7 @@
 //! portion of RAM above 4GiB, leaving a hole between ECAM and 4GiB:
 //!
 //! - Low RAM:  [0x0000_0000 .. 0xB000_0000)
-//! - Hole:     [0xB000_0000 .. 0x1_0000_0000)  (ECAM + PCI MMIO aperture)
+//! - Hole:     [0xB000_0000 .. 0x1_0000_0000)  (ECAM + PCI/MMIO hole)
 //! - High RAM: [0x1_0000_0000 .. 0x1_0000_0000 + (ram_bytes - 0xB000_0000))
 //!
 //! The wasm runtime stores guest RAM as a contiguous `[0..ram_bytes)` region in linear memory, so
