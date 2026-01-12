@@ -178,7 +178,16 @@ impl HdaControllerBridge {
 
         // Apply a deferred ring restore if `load_state` was called before the host reattached the
         // AudioWorklet ring.
-        if let Some(state) = self.pending_audio_ring_state.take() {
+        if let Some(mut state) = self.pending_audio_ring_state.take() {
+            // Snapshot state stores the ring capacity for determinism/debugging, but restores must be
+            // best-effort. If the host allocates a different capacity than what was captured in the
+            // snapshot, clear the field so `WorkletBridge::restore_state` bypasses its debug-only
+            // capacity assertion.
+            if state.capacity_frames != 0
+                && state.capacity_frames != bridge.capacity_frames()
+            {
+                state.capacity_frames = 0;
+            }
             bridge.restore_state(&state);
         }
         self.audio_ring = Some(bridge);
@@ -380,8 +389,13 @@ impl HdaControllerBridge {
 
         self.hda.restore_state(&state);
 
-        let ring_state = state.worklet_ring;
+        let mut ring_state = state.worklet_ring;
         if let Some(ring) = self.audio_ring.as_ref() {
+            if ring_state.capacity_frames != 0
+                && ring_state.capacity_frames != ring.capacity_frames()
+            {
+                ring_state.capacity_frames = 0;
+            }
             ring.restore_state(&ring_state);
             self.pending_audio_ring_state = None;
         } else {
