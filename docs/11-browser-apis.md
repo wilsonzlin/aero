@@ -977,6 +977,10 @@ To maintain broad browser coverage, the GPU presenter should support a **main-th
 > Note: The snippet below is illustrative. The current wasm-bindgen entrypoint is `aero_wasm.js`
 > (built from `crates/aero-wasm`). The canonical CPU worker implementation lives in
 > `web/src/workers/cpu.worker.ts` and uses helpers in `web/src/runtime/`.
+>
+> The real runtime may use `WasmTieredVm` (tiered/Tier-1 JIT) in addition to `WasmVm` (Tier-0). For the canonical
+> mapping of `aero-wasm` exports to runtime paths, see [`docs/vm-crate-map.md`](./vm-crate-map.md) and
+> [ADR 0014](./adr/0014-canonical-machine-stack.md).
 
 ```javascript
 // cpu.worker.js (illustrative)
@@ -993,12 +997,13 @@ import {
 
 // `WasmApi` exported by `crates/aero-wasm` (see `web/src/runtime/wasm_loader.ts`).
 let wasm = null;
-
+ 
 // Minimal Tier-0 VM loop (wired to injected shared guest RAM).
 //
 // Note: `crates/aero-wasm` also exports `Machine` (the canonical full-system VM,
-// `aero_machine::Machine`), but the current CPU worker harness uses `WasmVm`
-// to execute directly against the shared guest RAM mapping.
+// `aero_machine::Machine`). The CPU worker runtime uses the legacy CPU-only
+// exports (`WasmVm` / `WasmTieredVm`) to execute against the shared guest RAM
+// mapping and forward port I/O + MMIO back to JS.
 let vm = null;
 
 // Optional lightweight demo harness for the CPU worker (threaded build only).

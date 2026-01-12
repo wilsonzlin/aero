@@ -118,7 +118,7 @@ To make the above unambiguous and hard to regress, the tiered runtime uses expli
 
 ---
 
-## Browser Tier-1 JIT compilation pipeline (repo-root harness)
+## Browser Tier-1 JIT compilation pipeline (browser workers)
 
 The project includes a browser-only Tier-1 JIT integration that compiles x86 basic blocks into standalone
 WASM modules **inside a worker**:
@@ -131,14 +131,20 @@ WASM modules **inside a worker**:
   - Built as a separate wasm-bindgen package (`web/src/wasm/pkg-jit-*`).
   - Uses its **own private linear memory** (does not import the emulator's shared memory) to avoid
     undefined behaviour from multiple Rust runtimes aliasing one `WebAssembly.Memory`.
-- **JS glue (repo-root Vite harness):**
-  - CPU worker: `src/workers/cpu-worker.ts` drives `WasmTieredVm` and forwards compile requests.
-  - JIT worker: `src/workers/jit-worker.ts` reads guest bytes from shared guest RAM, calls
-    `compile_tier1_block(...)`, validates the result, and returns either a `WebAssembly.Module` (when
-    structured-cloning is supported) or transferable `wasm_bytes`.
+- **JS glue (web runtime):**
+  - CPU worker: `web/src/workers/cpu.worker.ts` drives `WasmVm` / `WasmTieredVm` and forwards Tier-1 compile requests.
+  - JIT worker: `web/src/workers/jit.worker.ts` compiles Tier-1 WASM bytes into a `WebAssembly.Module` (and caches by
+    content hash). If `WebAssembly.Module` is not structured-cloneable, it reports an `unsupported` error instead.
   - Loader: `web/src/runtime/jit_wasm_loader.ts` loads `aero-jit-wasm` and currently prefers the
     single-threaded package to avoid wasm-bindgen allocating huge `SharedArrayBuffer`s during
     instantiation when `--max-memory` is large.
+
+> Note: `crates/aero-wasm` exposes multiple WASM-facing VM wrappers. The canonical **full-system** export is
+> `aero_wasm::Machine` (backed by `aero_machine::Machine`). The current CPU-worker runtime uses the legacy CPU-only
+> `WasmVm` / `WasmTieredVm` exports.
+>
+> See [`docs/vm-crate-map.md`](./vm-crate-map.md) and [ADR 0014](./adr/0014-canonical-machine-stack.md) for the
+> up-to-date mapping.
 
 This pipeline is currently used by the repo-root Playwright smoke tests to validate Tier-1 compilation,
 installation, invalidation (self-modifying code), and execution in real browsers.
