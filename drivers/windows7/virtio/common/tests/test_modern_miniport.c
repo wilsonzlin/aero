@@ -497,6 +497,75 @@ static void test_negotiate_features_missing_required_fails(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_negotiate_features_requires_version_1(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+    uint64_t negotiated;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /* Device offers no VERSION_1 bit -> negotiation must fail even if Required=0. */
+    sim.host_features = 0;
+    sim.num_queues = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    negotiated = 0xdeadbeefull;
+    st = VirtioPciNegotiateFeatures(&dev, /*Required=*/0, /*Wanted=*/0, &negotiated);
+    assert(st == STATUS_NOT_SUPPORTED);
+    assert(negotiated == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_negotiate_features_version_1_only_succeeds(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+    uint64_t negotiated;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /* Only VERSION_1 is advertised; Required=0 should still negotiate VERSION_1. */
+    sim.host_features = VIRTIO_F_VERSION_1;
+    sim.num_queues = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    negotiated = 0;
+    st = VirtioPciNegotiateFeatures(&dev, /*Required=*/0, /*Wanted=*/0, &negotiated);
+    assert(st == STATUS_SUCCESS);
+    assert(negotiated == VIRTIO_F_VERSION_1);
+    assert(sim.driver_features == VIRTIO_F_VERSION_1);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_negotiate_features_success_and_status_sequence(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1363,6 +1432,8 @@ int main(void)
     test_status_helpers();
     test_write_driver_features_direct();
     test_negotiate_features_missing_required_fails();
+    test_negotiate_features_requires_version_1();
+    test_negotiate_features_version_1_only_succeeds();
     test_negotiate_features_success_and_status_sequence();
     test_negotiate_features_device_rejects_features_ok();
     test_setup_queue_programs_addresses_and_enables();
