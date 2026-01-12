@@ -144,33 +144,49 @@ Reference: Intel HDA specification (publicly available).
 
 ## AudioWorklet Integration
 
+Canonical implementation:
+
+- Output setup (main thread): `web/src/platform/audio.ts` (`createAudioOutput`)
+- Ring consumer (AudioWorklet): `web/src/platform/audio-worklet-processor.js`
+- Ring layout/constants + WASM producer bridge: `crates/platform/src/audio/worklet_bridge.rs`
+
 ```typescript
-// AudioWorklet processor (runs in separate thread)
+// Simplified: AudioWorklet consumer for the SAB playback ring.
+//
+// Notes:
+// - Indices are monotonic *frame counters* (u32 wrapping at 2^32), not modulo indices.
+// - Samples are interleaved f32: [L0, R0, L1, R1, ...].
+// - The consumer (AudioWorklet) increments the underrun counter by the number of
+//   missing frames it had to render as silence.
+const READ_FRAME_INDEX = 0;
+const WRITE_FRAME_INDEX = 1;
+const UNDERRUN_COUNT_INDEX = 2;
+const HEADER_U32_LEN = 4;
+const HEADER_BYTES = HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+
 class AeroAudioProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this.ringBuffer = /* SharedArrayBuffer from main thread */;
-    this.readPtr = new Uint32Array(this.ringBuffer, 0, 1);
-    this.writePtr = new Uint32Array(this.ringBuffer, 4, 1);
-    this.samples = new Float32Array(this.ringBuffer, 8);
+    const sab = options.processorOptions.ringBuffer;
+    this.header = new Uint32Array(sab, 0, HEADER_U32_LEN);
+    this.samples = new Float32Array(sab, HEADER_BYTES);
+    this.channelCount = options.processorOptions.channelCount;
+    this.capacityFrames = options.processorOptions.capacityFrames;
   }
 
-  process(inputs, outputs, parameters) {
+  process(_inputs, outputs) {
     const output = outputs[0];
-    const channel = output[0];
-    
-    for (let i = 0; i < channel.length; i++) {
-      const read = Atomics.load(this.readPtr, 0);
-      const write = Atomics.load(this.writePtr, 0);
-      
-      if (read !== write) {
-        channel[i] = this.samples[read];
-        Atomics.store(this.readPtr, 0, (read + 1) % this.samples.length);
-      } else {
-        channel[i] = 0; // Underflow: output silence
-      }
-    }
-    
+    const framesNeeded = output[0].length;
+
+    const read = Atomics.load(this.header, READ_FRAME_INDEX) >>> 0;
+    const write = Atomics.load(this.header, WRITE_FRAME_INDEX) >>> 0;
+    const available = Math.min((write - read) >>> 0, this.capacityFrames);
+    const framesToRead = Math.min(framesNeeded, available);
+
+    // Copy framesToRead frames from `this.samples` into `output` (wrap-around omitted).
+    // Zero-fill any missing frames and Atomics.add(UNDERRUN_COUNT_INDEX, missingFrames).
+
+    Atomics.store(this.header, READ_FRAME_INDEX, read + framesToRead);
     return true;
   }
 }
