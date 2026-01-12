@@ -69,6 +69,11 @@ mod webusb_uhci_bridge;
 #[cfg(target_arch = "wasm32")]
 pub use webusb_uhci_bridge::WebUsbUhciBridge;
 
+mod virtio_input_bridge;
+pub use virtio_input_bridge::VirtioInputPciDeviceCore;
+#[cfg(target_arch = "wasm32")]
+pub use virtio_input_bridge::VirtioInputPciDevice;
+
 #[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 

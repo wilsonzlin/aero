@@ -645,6 +645,7 @@ dependencies = [
  "aero-shared",
  "aero-snapshot",
  "aero-usb",
+ "aero-virtio",
  "js-sys",
  "linked_list_allocator",
  "memory",

@@ -78,6 +78,22 @@ export interface WasmApi {
     };
 
     /**
+     * Guest-visible virtio-input device exposed via virtio-pci (BAR0 MMIO).
+     */
+    VirtioInputPciDevice: new (guestBase: number, guestSize: number, kind: "keyboard" | "mouse") => {
+        mmio_read(offset: number, size: number): number;
+        mmio_write(offset: number, size: number, value: number): void;
+        poll(): void;
+        driver_ok(): boolean;
+        irq_asserted(): boolean;
+        inject_key(linux_key: number, pressed: boolean): void;
+        inject_rel(dx: number, dy: number): void;
+        inject_button(btn: number, pressed: boolean): void;
+        inject_wheel(delta: number): void;
+        free(): void;
+    };
+
+    /**
      * Guest-visible UHCI controller bridge.
      *
      * Optional and has multiple constructor signatures depending on the deployed WASM build:
@@ -732,6 +748,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        VirtioInputPciDevice: mod.VirtioInputPciDevice,
         SharedRingBuffer: mod.SharedRingBuffer,
         open_ring_by_kind: mod.open_ring_by_kind,
         demo_render_rgba8888: mod.demo_render_rgba8888,
