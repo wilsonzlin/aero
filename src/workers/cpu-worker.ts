@@ -329,11 +329,14 @@ async function runTieredVm(iterations: number, threshold: number) {
   // compatibility with deployed bundles.
   const jitCtxRamBaseOffset = (readMaybeU32(jitAbi, 'jit_ctx_ram_base_offset') ?? 0) >>> 0;
   const jitCtxTlbSaltOffset = (readMaybeU32(jitAbi, 'jit_ctx_tlb_salt_offset') ?? 8) >>> 0;
+  const jitCtxTlbOffset = readMaybeU32(jitAbi, 'jit_ctx_tlb_offset');
   let jitCtxHeaderBytes = readMaybeU32(jitAbi, 'jit_ctx_header_bytes') ?? 0;
   let jitTlbEntries = readMaybeU32(jitAbi, 'jit_tlb_entries') ?? 0;
   let jitTlbEntryBytes = readMaybeU32(jitAbi, 'jit_tlb_entry_bytes') ?? 0;
   let tier2CtxBytes = readMaybeU32(jitAbi, 'tier2_ctx_size') ?? 0;
+  const tier2CtxOffset = readMaybeU32(jitAbi, 'tier2_ctx_offset');
   let commitFlagOffset = readMaybeU32(jitAbi, 'commit_flag_offset') ?? 0;
+  const commitFlagBytes = readMaybeU32(jitAbi, 'commit_flag_bytes');
 
   if (!jitCtxHeaderBytes || !jitTlbEntries || !jitTlbEntryBytes || !tier2CtxBytes || !commitFlagOffset) {
     const abiLayoutFn = api.tiered_vm_jit_abi_layout;
@@ -388,6 +391,30 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  if (jitCtxTlbOffset !== undefined) {
+    const off = jitCtxTlbOffset >>> 0;
+    if (off !== jitCtxHeaderBytes || (off & 7) !== 0) {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason: `Invalid JitContext TLB offset: ${JSON.stringify({
+          jitCtxHeaderBytes,
+          jitCtxTlbOffset: off,
+        })}`,
+      });
+      return;
+    }
+  }
+
+  if (commitFlagBytes !== undefined && (commitFlagBytes >>> 0) !== 4) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid commit_flag_bytes (expected 4): ${JSON.stringify({
+        commitFlagBytes: commitFlagBytes >>> 0,
+      })}`,
+    });
+    return;
+  }
+
   // Sanity checks: ensure the returned values are internally consistent (detect Rust/JS ABI drift).
   const derivedJitCtxTotalBytes = (jitCtxHeaderBytes + jitTlbEntries * jitTlbEntryBytes) >>> 0;
   const exportedJitCtxTotalBytes = readMaybeU32(jitAbi, 'jit_ctx_total_bytes') ?? 0;
@@ -418,6 +445,23 @@ async function runTieredVm(iterations: number, threshold: number) {
       })}`,
     });
     return;
+  }
+
+  if (tier2CtxOffset !== undefined) {
+    const expectedTier2CtxOffset = (cpu_state_size + derivedJitCtxTotalBytes) >>> 0;
+    const gotTier2CtxOffset = tier2CtxOffset >>> 0;
+    if (gotTier2CtxOffset !== expectedTier2CtxOffset) {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason: `Inconsistent Tier-1 tier2_ctx_offset: ${JSON.stringify({
+          gotTier2CtxOffset,
+          expectedTier2CtxOffset,
+          cpu_state_size,
+          derivedJitCtxTotalBytes,
+        })}`,
+      });
+      return;
+    }
   }
 
   const desiredGuestBytes = DEFAULT_GUEST_RAM_BYTES;
