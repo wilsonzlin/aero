@@ -262,6 +262,32 @@ test("agent-env: AERO_CARGO_BUILD_JOBS controls CARGO_BUILD_JOBS", { skip: proce
   }
 });
 
+test("agent-env: defaults rustc/rayon/test threads to CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    delete env.RUSTC_WORKER_THREADS;
+    delete env.RAYON_NUM_THREADS;
+    delete env.RUST_TEST_THREADS;
+
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s|%s|%s" "$RUSTC_WORKER_THREADS" "$RAYON_NUM_THREADS" "$RUST_TEST_THREADS"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.equal(stdout, "2|2|2");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
