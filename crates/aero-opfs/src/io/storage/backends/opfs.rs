@@ -900,13 +900,15 @@ mod wasm {
         pub async fn open(path: &str, create: bool, size_bytes: u64) -> DiskResult<Self> {
             match OpfsBackend::open(path, create, size_bytes).await {
                 Ok(backend) => Ok(Self::Sync(backend)),
-                Err(DiskError::NotSupported(_)) => {
+                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => {
                     match OpfsAsyncBackend::open(path, create, size_bytes).await {
                         Ok(backend) => Ok(Self::Async(backend)),
-                        Err(DiskError::NotSupported(_)) => Ok(Self::IndexedDb(
-                            OpfsIndexedDbBackend::open(&format!("aero-opfs:{path}"), size_bytes)
-                                .await?,
-                        )),
+                        Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => {
+                            Ok(Self::IndexedDb(
+                                OpfsIndexedDbBackend::open(&format!("aero-opfs:{path}"), size_bytes)
+                                    .await?,
+                            ))
+                        }
                         Err(e) => Err(e),
                     }
                 }

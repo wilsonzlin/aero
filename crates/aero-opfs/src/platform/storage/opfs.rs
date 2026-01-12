@@ -110,7 +110,11 @@ mod wasm {
             let dom: web_sys::DomException = err.unchecked_into();
             match dom.name().as_str() {
                 "QuotaExceededError" => return DiskError::QuotaExceeded,
+                // Indicates the browser is blocking access to storage APIs (e.g. disabled
+                // IndexedDB/OPFS, third-party iframe restrictions, etc).
+                "NotAllowedError" | "SecurityError" => return DiskError::BackendUnavailable,
                 "InvalidStateError" => return DiskError::InvalidState(dom.message()),
+                "NotSupportedError" => return DiskError::NotSupported(dom.message()),
                 _ => return DiskError::Io(format!("{}: {}", dom.name(), dom.message())),
             }
         }
@@ -281,8 +285,16 @@ mod wasm {
         let promise = file
             .create_writable(&opts.into())
             .map_err(disk_error_from_js)?;
-        await_promise(promise)
-            .await?
+
+        let stream = match await_promise(promise).await {
+            Ok(stream) => stream,
+            // When a file already has an open sync access handle, browsers use
+            // `InvalidStateError`; map it to the more semantic `InUse`.
+            Err(DiskError::InvalidState(_)) => return Err(DiskError::InUse),
+            Err(e) => return Err(e),
+        };
+
+        stream
             .dyn_into::<FileSystemWritableFileStream>()
             .map_err(disk_error_from_js)
     }
