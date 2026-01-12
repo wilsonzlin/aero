@@ -2373,7 +2373,7 @@ impl Machine {
 
     fn swap_virtio_blk_backend_preserving_state(
         &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+        disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> Result<(), MachineError> {
         let Some(virtio_blk) = &self.virtio_blk else {
             return Ok(());
@@ -2438,16 +2438,13 @@ impl Machine {
 
     /// Attach a disk backend to the virtio-blk controller, if present.
     ///
-    /// Virtio-blk requires a `VirtualDisk + Send` backend (unlike AHCI/IDE which accept the
-    /// non-`Send` [`SharedDisk`]).
-    ///
     /// This method preserves the virtio-blk controller's guest-visible state (PCI config + virtio
     /// transport registers/queues) by snapshotting the current device model state and re-loading
     /// it after swapping the host disk backend. This is intended for host-managed snapshot restore
     /// flows where the disk contents live outside the snapshot blob.
     pub fn attach_virtio_blk_disk(
         &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+        disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> Result<(), MachineError> {
         if self.virtio_blk.is_none() {
             return Ok(());
