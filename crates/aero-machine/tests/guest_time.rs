@@ -75,3 +75,28 @@ fn pit_irq0_pulse_after_accumulated_guest_time() {
 
     assert_eq!(pit.take_irq0_pulses(), 1);
 }
+
+#[test]
+fn guest_time_resync_from_tsc_preserves_future_deltas() {
+    let hz = DEFAULT_GUEST_CPU_HZ;
+
+    let prefix = [1u64, 2, 3, 1, 1, 7, 11, 1];
+    let suffix = [1u64, 1, 2, 5, 1, 3, 8];
+
+    let mut a = GuestTime::new(hz);
+    let mut total_cycles = 0u64;
+    for &n in &prefix {
+        total_cycles = total_cycles.saturating_add(n);
+        let _ = a.advance_guest_time_for_instructions(n);
+    }
+
+    let mut b = GuestTime::new(hz);
+    b.resync_from_tsc(total_cycles);
+
+    for &n in &suffix {
+        assert_eq!(
+            a.advance_guest_time_for_instructions(n),
+            b.advance_guest_time_for_instructions(n)
+        );
+    }
+}

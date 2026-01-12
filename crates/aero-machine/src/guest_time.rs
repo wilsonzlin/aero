@@ -58,6 +58,20 @@ impl GuestTime {
         self.remainder = 0;
     }
 
+    /// Resynchronize the remainder accumulator from a known total cycle count / TSC value.
+    ///
+    /// This is useful when guest execution restarts from a checkpoint where the CPU's TSC is
+    /// already non-zero (e.g. after snapshot restore). Without resynchronization, restarting the
+    /// remainder at 0 would shift subsequent `delta_ns` values and cause timer drift relative to
+    /// a non-checkpointed run.
+    pub fn resync_from_tsc(&mut self, tsc: u64) {
+        if self.cpu_hz == 0 {
+            self.remainder = 0;
+            return;
+        }
+        self.remainder = (tsc as u128 * Self::NS_PER_SEC) % (self.cpu_hz as u128);
+    }
+
     /// Convert `executed` guest instructions/cycles into nanoseconds, accumulating remainder.
     ///
     /// Returns `delta_ns` suitable for passing to `PcPlatform::tick(delta_ns)`.
