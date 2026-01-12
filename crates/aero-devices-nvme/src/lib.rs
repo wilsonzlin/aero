@@ -2575,27 +2575,28 @@ mod tests {
         let disk = TestDisk::new(1024);
         let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
 
-        let mut state = NvmeControllerState::default();
-        state.cc = 1;
-        state.csts = 1;
-
-        state.admin_sq = Some(NvmeSubmissionQueueState {
-            qid: 0,
-            base: 0x10000,
-            size: 0,
-            head: 0,
-            tail: 0,
-            cqid: 0,
-        });
-        state.admin_cq = Some(NvmeCompletionQueueState {
-            qid: 0,
-            base: 0x20000,
-            size: 1,
-            head: 0,
-            tail: 0,
-            phase: true,
-            irq_enabled: true,
-        });
+        let state = NvmeControllerState {
+            cc: 1,
+            csts: 1,
+            admin_sq: Some(NvmeSubmissionQueueState {
+                qid: 0,
+                base: 0x10000,
+                size: 0,
+                head: 0,
+                tail: 0,
+                cqid: 0,
+            }),
+            admin_cq: Some(NvmeCompletionQueueState {
+                qid: 0,
+                base: 0x20000,
+                size: 1,
+                head: 0,
+                tail: 0,
+                phase: true,
+                irq_enabled: true,
+            }),
+            ..Default::default()
+        };
 
         let bytes = state.save_state();
         let err = ctrl.load_state(&bytes).unwrap_err();
@@ -2607,37 +2608,37 @@ mod tests {
         let disk = TestDisk::new(1024);
         let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
 
-        let mut state = NvmeControllerState::default();
-        state.cc = 1;
-        state.csts = 1;
-
-        state.admin_sq = Some(NvmeSubmissionQueueState {
-            qid: 0,
-            base: 0x10000,
-            size: 2,
-            head: 0,
-            tail: 0,
-            cqid: 0,
-        });
-        state.admin_cq = Some(NvmeCompletionQueueState {
-            qid: 0,
-            base: 0x20000,
-            size: 2,
-            head: 0,
-            tail: 0,
-            phase: true,
-            irq_enabled: true,
-        });
-
-        state.io_sqs = vec![NvmeSubmissionQueueState {
-            qid: 1,
-            base: 0x30000,
-            size: 2,
-            head: 0,
-            tail: 0,
-            cqid: 1,
-        }];
-        state.io_cqs = Vec::new();
+        let state = NvmeControllerState {
+            cc: 1,
+            csts: 1,
+            admin_sq: Some(NvmeSubmissionQueueState {
+                qid: 0,
+                base: 0x10000,
+                size: 2,
+                head: 0,
+                tail: 0,
+                cqid: 0,
+            }),
+            admin_cq: Some(NvmeCompletionQueueState {
+                qid: 0,
+                base: 0x20000,
+                size: 2,
+                head: 0,
+                tail: 0,
+                phase: true,
+                irq_enabled: true,
+            }),
+            io_sqs: vec![NvmeSubmissionQueueState {
+                qid: 1,
+                base: 0x30000,
+                size: 2,
+                head: 0,
+                tail: 0,
+                cqid: 1,
+            }],
+            io_cqs: Vec::new(),
+            ..Default::default()
+        };
 
         let bytes = state.save_state();
         let err = ctrl.load_state(&bytes).unwrap_err();
