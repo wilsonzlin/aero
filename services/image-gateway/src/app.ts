@@ -1207,6 +1207,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         })
       );
     } catch (err) {
+      let handled = false;
       const maybeStatus = (
         err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
       ).$metadata?.httpStatusCode;
@@ -1232,6 +1233,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
             }
             throw retryErr;
           }
+          handled = true;
         } else if (maybeStatus === 416) {
           await sendRangeNotSatisfiable({
             reply,
@@ -1248,7 +1250,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           throw new ApiError(maybeStatus, "S3 request rejected", "S3_ERROR");
         }
       }
-      throw err;
+      if (!handled) throw err;
     }
 
     if (!s3Res.Body) {
