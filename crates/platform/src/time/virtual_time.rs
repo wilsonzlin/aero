@@ -47,6 +47,8 @@ const TIMER_KIND_ONE_SHOT: u8 = 1;
 const TIMER_KIND_PERIODIC: u8 = 2;
 const TIMER_KIND_PERIODIC_RATIONAL: u8 = 3;
 
+const MAX_SNAPSHOT_TIMERS: usize = 4096;
+
 fn encode_timer_scheduler_state(state: &TimerSchedulerState) -> Vec<u8> {
     let timer_count: u32 = state
         .timers
@@ -95,6 +97,9 @@ fn decode_timer_scheduler_state(bytes: &[u8]) -> SnapshotResult<TimerSchedulerSt
     let mut d = Decoder::new(bytes);
     let next_timer_id = d.u64()?;
     let timer_count = d.u32()? as usize;
+    if timer_count > MAX_SNAPSHOT_TIMERS {
+        return Err(SnapshotError::InvalidFieldEncoding("timer_count"));
+    }
 
     let mut timers = Vec::with_capacity(timer_count);
     for _ in 0..timer_count {
@@ -142,6 +147,21 @@ fn decode_timer_scheduler_state(bytes: &[u8]) -> SnapshotResult<TimerSchedulerSt
         next_timer_id,
         timers,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_timer_scheduler_state_rejects_excessive_timer_count() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // next_timer_id
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // timer_count
+
+        let err = decode_timer_scheduler_state(&bytes).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("timer_count"));
+    }
 }
 
 /// Convenience wrapper that pairs a [`Clock`] with a [`TimerScheduler`].

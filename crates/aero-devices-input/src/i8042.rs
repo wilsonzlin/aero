@@ -61,6 +61,8 @@ const STATUS_AUX_OBF: u8 = 0x20; // Mouse output buffer full.
 const OUTPUT_PORT_RESET: u8 = 0x01; // CPU reset line (active-low).
 const OUTPUT_PORT_A20: u8 = 0x02; // A20 gate.
 
+const MAX_PENDING_OUTPUT: usize = 4096;
+
 #[derive(Debug, Clone, Copy)]
 enum PendingWrite {
     CommandByte,
@@ -483,14 +485,14 @@ impl I8042Controller {
                     // Bypass translation and device state; this is a controller command
                     // that forces the output buffer to appear as if the keyboard produced
                     // the byte.
-                    self.pending_output.push_back(OutputByte {
+                    self.push_pending_output(OutputByte {
                         value,
                         source: OutputSource::Keyboard,
                     });
                 }
                 PendingWrite::WriteToOutputBufferMouse => {
                     // Same as 0xD2, but marks the byte as mouse-originated (AUX).
-                    self.pending_output.push_back(OutputByte {
+                    self.push_pending_output(OutputByte {
                         value,
                         source: OutputSource::Mouse,
                     });
@@ -553,8 +555,15 @@ impl I8042Controller {
         self.command_byte & 0x20 == 0
     }
 
+    fn push_pending_output(&mut self, out: OutputByte) {
+        if self.pending_output.len() >= MAX_PENDING_OUTPUT {
+            let _ = self.pending_output.pop_front();
+        }
+        self.pending_output.push_back(out);
+    }
+
     fn push_controller_output(&mut self, value: u8) {
-        self.pending_output.push_back(OutputByte {
+        self.push_pending_output(OutputByte {
             value,
             source: OutputSource::Controller,
         });
@@ -608,13 +617,13 @@ impl I8042Controller {
 
         if self.translation_enabled() {
             for out in self.translator.feed(byte) {
-                self.pending_output.push_back(OutputByte {
+                self.push_pending_output(OutputByte {
                     value: out,
                     source: OutputSource::Keyboard,
                 });
             }
         } else {
-            self.pending_output.push_back(OutputByte {
+            self.push_pending_output(OutputByte {
                 value: byte,
                 source: OutputSource::Keyboard,
             });
@@ -629,7 +638,7 @@ impl I8042Controller {
         let Some(byte) = self.mouse.pop_output() else {
             return false;
         };
-        self.pending_output.push_back(OutputByte {
+        self.push_pending_output(OutputByte {
             value: byte,
             source: OutputSource::Mouse,
         });
@@ -812,14 +821,18 @@ impl IoSnapshot for I8042Controller {
         if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
-            for _ in 0..count {
+            let drop = count.saturating_sub(MAX_PENDING_OUTPUT);
+            for idx in 0..count {
                 let value = d.u8()?;
                 let source = match d.u8()? {
                     1 => OutputSource::Keyboard,
                     2 => OutputSource::Mouse,
                     _ => OutputSource::Controller,
                 };
-                self.pending_output.push_back(OutputByte { value, source });
+                if idx < drop {
+                    continue;
+                }
+                self.push_pending_output(OutputByte { value, source });
             }
             d.finish()?;
         }
@@ -876,5 +889,58 @@ impl IoSnapshot for I8042Controller {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_output_queue_is_bounded_during_runtime() {
+        let mut dev = I8042Controller::new();
+
+        // Fill the output buffer so subsequent controller writes accumulate in the pending queue.
+        dev.write_port(0x64, 0xD2);
+        dev.write_port(0x60, 0xAA);
+        assert!(dev.output_buffer.is_some());
+
+        for i in 0..(MAX_PENDING_OUTPUT + 10) {
+            dev.write_port(0x64, 0xD2);
+            dev.write_port(0x60, i as u8);
+        }
+
+        assert_eq!(dev.pending_output.len(), MAX_PENDING_OUTPUT);
+        assert_eq!(dev.pending_output.front().unwrap().value, 10);
+        assert_eq!(
+            dev.pending_output.back().unwrap().value,
+            (MAX_PENDING_OUTPUT + 9) as u8
+        );
+    }
+
+    #[test]
+    fn snapshot_restore_truncates_oversized_pending_output_queue() {
+        const TAG_PENDING_OUTPUT: u16 = 3;
+
+        let count = MAX_PENDING_OUTPUT + 10;
+        let mut enc = Encoder::new().u32(count as u32);
+        for i in 0..count {
+            enc = enc.u8(i as u8).u8(1);
+        }
+
+        let mut w =
+            SnapshotWriter::new(I8042Controller::DEVICE_ID, I8042Controller::DEVICE_VERSION);
+        w.field_bytes(TAG_PENDING_OUTPUT, enc.finish());
+
+        let mut dev = I8042Controller::new();
+        dev.load_state(&w.finish())
+            .expect("snapshot restore should succeed");
+
+        assert_eq!(dev.pending_output.len(), MAX_PENDING_OUTPUT);
+        assert_eq!(dev.pending_output.front().unwrap().value, 10);
+        assert_eq!(
+            dev.pending_output.back().unwrap().value,
+            (MAX_PENDING_OUTPUT + 9) as u8
+        );
     }
 }

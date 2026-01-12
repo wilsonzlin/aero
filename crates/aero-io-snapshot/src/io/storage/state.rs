@@ -665,6 +665,9 @@ impl IoSnapshot for NvmeControllerState {
         const TAG_IO_CQS: u16 = 8;
         const TAG_INTX_LEVEL: u16 = 9;
 
+        const MAX_IO_QUEUES: usize = 4096;
+        const MAX_IN_FLIGHT_COMMANDS: usize = 262_144;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -765,6 +768,9 @@ impl IoSnapshot for NvmeControllerState {
         if let Some(buf) = r.bytes(TAG_IO_QUEUES) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_IO_QUEUES {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io queue count"));
+            }
             self.io_sqs.reserve(count);
             self.io_cqs.reserve(count);
             for idx in 0..count {
@@ -796,6 +802,9 @@ impl IoSnapshot for NvmeControllerState {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             self.io_sqs.clear();
+            if count > MAX_IO_QUEUES {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io sq count"));
+            }
             self.io_sqs.reserve(count);
             for _ in 0..count {
                 self.io_sqs.push(NvmeSubmissionQueueState {
@@ -815,6 +824,9 @@ impl IoSnapshot for NvmeControllerState {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             self.io_cqs.clear();
+            if count > MAX_IO_QUEUES {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io cq count"));
+            }
             self.io_cqs.reserve(count);
             for _ in 0..count {
                 self.io_cqs.push(NvmeCompletionQueueState {
@@ -837,6 +849,9 @@ impl IoSnapshot for NvmeControllerState {
         if let Some(buf) = r.bytes(TAG_IN_FLIGHT) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_IN_FLIGHT_COMMANDS {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme in_flight count"));
+            }
             self.in_flight.reserve(count);
             for _ in 0..count {
                 self.in_flight.push(NvmeInFlightCommandState {
