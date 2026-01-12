@@ -70,65 +70,73 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
         // WebGPU may be behind a flag in some Chromium configurations.
         args: ["--enable-unsafe-webgpu"],
       });
-      const page = await context.newPage();
-      page.on("console", (msg) => logs.push(msg.text()));
+      try {
+        const page = await context.newPage();
+        page.on("console", (msg) => logs.push(msg.text()));
 
-      await page.goto(`${server.baseUrl}/shader_cache_demo.html?large=1`);
-      await page.waitForFunction(() => (window as any).__shaderCacheDemo !== undefined);
+        await page.goto(`${server.baseUrl}/shader_cache_demo.html?large=1`);
+        await page.waitForFunction(() => (window as any).__shaderCacheDemo !== undefined);
 
-      const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
-      if (result?.error) {
-        await context.close();
-        throw new Error(`demo page failed: ${result.error}\nlogs:\n${logs.join("\n")}`);
-      }
-
-      const idbShaderRecord = await page.evaluate(async (key: string) => {
-        const DB_NAME = "aero-gpu-cache";
-        const STORE_SHADERS = "shaders";
-
-        const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          // Open without forcing a schema version so the test stays compatible
-          // if the cache bumps `DB_VERSION` in the future.
-          const req = indexedDB.open(DB_NAME);
-          req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
-          req.onsuccess = () => resolve(req.result);
-        });
-
-        try {
-          const tx = db.transaction([STORE_SHADERS], "readonly");
-          const store = tx.objectStore(STORE_SHADERS);
-          const record = await new Promise<any>((resolve, reject) => {
-            const req = store.get(key);
-            req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
-            req.onsuccess = () => resolve(req.result ?? null);
-          });
-          await new Promise<void>((resolve) => {
-            tx.oncomplete = () => resolve();
-            tx.onabort = () => resolve(); // best-effort; return what we have
-            tx.onerror = () => resolve();
-          });
-
-          if (!record) return null;
-          return {
-            storage: typeof record.storage === "string" ? record.storage : null,
-            opfsFile: typeof record.opfsFile === "string" ? record.opfsFile : null,
-            hasWgsl: typeof record.wgsl === "string",
-          };
-        } finally {
-          db.close();
+        const result = await page.evaluate(() => (window as any).__shaderCacheDemo);
+        if (result?.error) {
+          throw new Error(`demo page failed: ${result.error}`);
         }
-      }, result.key);
 
-      await context.close();
+        const idbShaderRecord = await page.evaluate(async (key: string) => {
+          const DB_NAME = "aero-gpu-cache";
+          const STORE_SHADERS = "shaders";
 
-      return {
-        key: String(result.key),
-        cacheHit: !!result.cacheHit,
-        opfsAvailable: !!result.opfsAvailable,
-        opfsFileExists: !!result.opfsFileExists,
-        idbShaderRecord: idbShaderRecord ?? null,
-        logs,
-      };
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            // Open without forcing a schema version so the test stays compatible
+            // if the cache bumps `DB_VERSION` in the future.
+            const req = indexedDB.open(DB_NAME);
+            req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
+            req.onsuccess = () => resolve(req.result);
+          });
+
+          try {
+            const tx = db.transaction([STORE_SHADERS], "readonly");
+            const store = tx.objectStore(STORE_SHADERS);
+            const record = await new Promise<any>((resolve, reject) => {
+              const req = store.get(key);
+              req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
+              req.onsuccess = () => resolve(req.result ?? null);
+            });
+            await new Promise<void>((resolve) => {
+              tx.oncomplete = () => resolve();
+              tx.onabort = () => resolve(); // best-effort; return what we have
+              tx.onerror = () => resolve();
+            });
+
+            if (!record) return null;
+            return {
+              storage: typeof record.storage === "string" ? record.storage : null,
+              opfsFile: typeof record.opfsFile === "string" ? record.opfsFile : null,
+              hasWgsl: typeof record.wgsl === "string",
+            };
+          } finally {
+            db.close();
+          }
+        }, result.key);
+
+        return {
+          key: String(result.key),
+          cacheHit: !!result.cacheHit,
+          opfsAvailable: !!result.opfsAvailable,
+          opfsFileExists: !!result.opfsFileExists,
+          idbShaderRecord: idbShaderRecord ?? null,
+          logs,
+        };
+      } catch (err) {
+        // Include browser logs to make failures actionable in CI.
+        throw new Error(`${String(err)}\nlogs:\n${logs.join("\n")}`);
+      } finally {
+        try {
+          await context.close();
+        } catch {
+          // Ignore.
+        }
+      }
     }
 
     const first = await runOnce();
