@@ -72,8 +72,8 @@ struct ImageResponse {
     public: bool,
 }
 
-impl From<ImageCatalogEntry> for ImageResponse {
-    fn from(entry: ImageCatalogEntry) -> Self {
+impl ImageResponse {
+    fn from_entry_with_etag(entry: ImageCatalogEntry, etag: String) -> Self {
         let last_modified = entry
             .meta
             .last_modified
@@ -89,12 +89,19 @@ impl From<ImageCatalogEntry> for ImageResponse {
             name: entry.name,
             description: entry.description,
             size_bytes: entry.meta.size,
-            etag: cache::etag_or_fallback(&entry.meta),
+            etag,
             last_modified,
             content_type: entry.meta.content_type.to_string(),
             recommended_chunk_size_bytes: entry.recommended_chunk_size_bytes,
             public: entry.public,
         }
+    }
+}
+
+impl From<ImageCatalogEntry> for ImageResponse {
+    fn from(entry: ImageCatalogEntry) -> Self {
+        let etag = cache::etag_or_fallback(&entry.meta);
+        Self::from_entry_with_etag(entry, etag)
     }
 }
 
@@ -202,8 +209,9 @@ pub async fn get_image_meta(
 ) -> Result<Response, ApiError> {
     let image = state.store.get_image(&id).await?;
     let etag = cache::etag_header_value_for_meta(&image.meta);
+    let etag_str = etag.to_str().ok();
 
-    if cache::is_not_modified(&req_headers, etag.to_str().ok(), image.meta.last_modified) {
+    if cache::is_not_modified(&req_headers, etag_str, image.meta.last_modified) {
         let mut headers = metadata_cache_headers(&state, &req_headers);
         headers.insert(ETAG, etag);
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
@@ -214,12 +222,19 @@ pub async fn get_image_meta(
         return Ok(resp);
     }
 
+    let etag_json = etag_str
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| cache::weak_etag_from_size_and_mtime(image.meta.size, image.meta.last_modified));
     let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, etag);
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);
     }
-    Ok((headers, Json(ImageResponse::from(image))).into_response())
+    Ok((
+        headers,
+        Json(ImageResponse::from_entry_with_etag(image, etag_json)),
+    )
+        .into_response())
 }
 
 pub async fn head_images(
