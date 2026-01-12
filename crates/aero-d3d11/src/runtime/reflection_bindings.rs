@@ -19,6 +19,7 @@ use crate::binding_model::{
 /// - `@group(1)` = pixel/fragment shader resources
 /// - `@group(2)` = compute shader resources
 const MAX_BIND_GROUP_INDEX: u32 = 2;
+pub(super) const UNIFORM_BINDING_SIZE_ALIGN: u64 = 16;
 
 #[derive(Debug, Clone)]
 pub(super) struct PipelineBindingsInfo {
@@ -35,6 +36,8 @@ pub(super) fn build_pipeline_bindings_info<'a, I>(
 where
     I: IntoIterator<Item = &'a [crate::Binding]>,
 {
+    let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
+
     let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
     for shader in shader_bindings {
         for binding in shader {
@@ -44,6 +47,17 @@ where
                     binding.group,
                     MAX_BIND_GROUP_INDEX
                 );
+            }
+
+            if let crate::BindingKind::ConstantBuffer { slot, reg_count } = binding.kind {
+                let required_min = (reg_count as u64)
+                    .saturating_mul(UNIFORM_BINDING_SIZE_ALIGN)
+                    .max(UNIFORM_BINDING_SIZE_ALIGN);
+                if required_min > max_uniform_binding_size {
+                    bail!(
+                        "cbuffer slot {slot} requires {required_min} bytes, which exceeds device limit max_uniform_buffer_binding_size={max_uniform_binding_size}"
+                    );
+                }
             }
             let group_map = groups.entry(binding.group).or_default();
             if let Some(existing) = group_map.get_mut(&binding.binding) {
@@ -210,7 +224,7 @@ pub(super) fn build_bind_group(
                 let mut id = BufferId(0);
                 let mut buffer = provider.dummy_uniform();
                 let mut offset = 0;
-                let mut size = None;
+                let mut size: Option<u64> = None;
                 let mut total_size = 0u64;
 
                 if let Some(bound) = provider.constant_buffer(*slot) {
@@ -222,7 +236,9 @@ pub(super) fn build_bind_group(
                 }
 
                 if id != BufferId(0) {
-                    let required_min = (*reg_count as u64).saturating_mul(16);
+                    let required_min = (*reg_count as u64)
+                        .saturating_mul(UNIFORM_BINDING_SIZE_ALIGN)
+                        .max(UNIFORM_BINDING_SIZE_ALIGN);
 
                     if offset >= total_size {
                         id = BufferId(0);
@@ -241,6 +257,8 @@ pub(super) fn build_bind_group(
                             if bind_size > max_uniform_binding_size {
                                 bind_size = max_uniform_binding_size;
                             }
+                            // WebGPU requires uniform buffer binding sizes to be 16-byte aligned.
+                            bind_size -= bind_size % UNIFORM_BINDING_SIZE_ALIGN;
                             if bind_size < required_min {
                                 id = BufferId(0);
                                 buffer = provider.dummy_uniform();
@@ -265,6 +283,19 @@ pub(super) fn build_bind_group(
                             }
                         }
                     }
+                }
+
+                if id == BufferId(0) {
+                    // Bind a slice of the dummy uniform rather than the full buffer. This keeps the
+                    // binding size within WebGPU limits even if the dummy uniform is larger than
+                    // `max_uniform_buffer_binding_size` on some backends.
+                    let required_min = (*reg_count as u64)
+                        .saturating_mul(UNIFORM_BINDING_SIZE_ALIGN)
+                        .max(UNIFORM_BINDING_SIZE_ALIGN);
+                    let slice_size = required_min
+                        .max(UNIFORM_BINDING_SIZE_ALIGN)
+                        .min(max_uniform_binding_size);
+                    size = Some(slice_size);
                 }
 
                 entries.push(BindGroupCacheEntry {
@@ -552,6 +583,51 @@ mod tests {
             .to_string();
             assert!(
                 err.contains("out of range") && err.contains("binding model"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn pipeline_bindings_info_rejects_cbuffer_over_device_limit() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let max = device.limits().max_uniform_buffer_binding_size as u64;
+            let reg_count = match u32::try_from((max / UNIFORM_BINDING_SIZE_ALIGN) + 1) {
+                Ok(v) => v,
+                Err(_) => {
+                    skip_or_panic(module_path!(), "cannot construct reg_count over device limit");
+                    return;
+                }
+            };
+
+            let bindings = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_CBUFFER,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::ConstantBuffer { slot: 0, reg_count },
+            }];
+
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [bindings.as_slice()],
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(
+                err.contains("exceeds device limit"),
                 "unexpected error: {err}"
             );
         });

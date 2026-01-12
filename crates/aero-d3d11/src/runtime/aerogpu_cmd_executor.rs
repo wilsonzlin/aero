@@ -5625,7 +5625,8 @@ impl AerogpuD3d11Executor {
                 }
                 let mut size = cb.size.unwrap_or(src_size - offset);
                 size = size.min(src_size - offset);
-                let required_min = (reg_count as u64).saturating_mul(16);
+                let required_min = (reg_count as u64)
+                    .saturating_mul(reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN);
                 if size < required_min {
                     continue;
                 }
@@ -5634,6 +5635,19 @@ impl AerogpuD3d11Executor {
                     if size < required_min {
                         continue;
                     }
+                }
+                size -= size % reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN;
+                if size < required_min || size == 0 {
+                    continue;
+                }
+
+                if !offset.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                    || !size.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                {
+                    bail!(
+                        "constant buffer scratch copy requires COPY_BUFFER_ALIGNMENT={} (stage={stage:?} slot={slot} offset={offset} size={size})",
+                        wgpu::COPY_BUFFER_ALIGNMENT
+                    );
                 }
 
                 let scratch = self.get_or_create_constant_buffer_scratch(stage, slot, size);
