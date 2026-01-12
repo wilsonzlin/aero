@@ -139,11 +139,11 @@ fn assemble_vs_passthrough_pos_color() -> Vec<u8> {
     // Matches `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`:
     // vs_2_0:
     //   mov oPos, v0
-    //   mov oD0, v1.zyxw  ; D3DCOLOR is stored as BGRA in memory
+    //   mov oD0, v1
     //   end
     let mut words = vec![0xFFFE_0200];
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
-    words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 1, 0xC6)]));
+    words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 1, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -967,10 +967,11 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     const IL_HANDLE: u32 = 5;
 
     // Vertex format mirrors the Win7 bring-up test: position + D3DCOLOR.
+    // Use a non-symmetric D3DCOLOR (red) so we catch BGRA->RGBA conversion regressions.
     let verts = [
-        (-0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFF00FF00u32),
-        (0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFF00FF00u32),
-        (0.0f32, -0.5f32, 0.0f32, 1.0f32, 0xFF00FF00u32),
+        (-0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFFFF0000u32),
+        (0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFFFF0000u32),
+        (0.0f32, -0.5f32, 0.0f32, 1.0f32, 0xFFFF0000u32),
     ];
 
     let mut vb_data = Vec::new();
@@ -1121,10 +1122,10 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
                 push_i32(out, height as i32);
             });
 
-            // Clear red; triangle should leave top-left corner untouched.
+            // Clear black; triangle should leave top-left corner untouched.
             emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, AEROGPU_CLEAR_COLOR);
-                push_f32(out, 1.0);
+                push_f32(out, 0.0);
                 push_f32(out, 0.0);
                 push_f32(out, 0.0);
                 push_f32(out, 1.0);
@@ -1203,8 +1204,8 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     };
 
     // Equivalent to Win7 `d3d9ex_triangle`: center should be green, corner should be red.
-    assert_eq!(px(width / 2, height / 2), [0, 255, 0, 255]);
-    assert_eq!(px(5, 5), [255, 0, 0, 255]);
+    assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
+    assert_eq!(px(5, 5), [0, 0, 0, 255]);
 }
 
 #[test]
