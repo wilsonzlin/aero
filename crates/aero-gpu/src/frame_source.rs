@@ -157,7 +157,9 @@ impl FrameSource {
         }
         self.last_seq = seq;
 
-        let active_index = header.active_index.load(Ordering::SeqCst) as usize;
+        // The shared-memory header is guest-controlled. Ensure we never panic on unexpected values
+        // (e.g. `active_index` out of range) by clamping it to the valid slot range.
+        let active_index = (header.active_index.load(Ordering::SeqCst) & 1) as usize;
         let active_buf_seq = header.buffer_frame_seq(active_index).load(Ordering::SeqCst);
 
         // Clear the "new frame" flag. The CPU sets this to 1 on publish; clearing it
@@ -521,5 +523,42 @@ mod tests {
             }) => {}
             other => panic!("expected UnalignedBasePtr, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn poll_frame_tolerates_out_of_range_active_index() {
+        let layout = SharedFramebufferLayout::new_rgba8(32, 32, 32).unwrap();
+        let word_len = layout.total_byte_len().div_ceil(4);
+        let mut words = vec![0u32; word_len];
+
+        let shared = unsafe {
+            SharedFramebuffer::from_raw_parts(words.as_mut_ptr() as *mut u8, layout).unwrap()
+        };
+        shared.header().init(layout);
+
+        let mut source =
+            unsafe { FrameSource::from_shared_memory(words.as_mut_ptr() as *mut u8, 0) }.unwrap();
+        assert!(source.poll_frame().is_none());
+
+        let writer = SharedFramebufferWriter::new(shared);
+        writer.write_frame(|buf, dirty, layout| {
+            buf.fill(0x11);
+            if let Some(words) = dirty {
+                // Mark everything dirty.
+                let tile_count = layout.tile_count();
+                for idx in 0..tile_count {
+                    let word = idx / 32;
+                    let bit = idx % 32;
+                    words[word] |= 1u32 << bit;
+                }
+            }
+        });
+
+        // Corrupt the header: use an out-of-range active index. The consumer should not panic.
+        shared.header().active_index.store(3, Ordering::SeqCst);
+
+        let frame = source.poll_frame().expect("new frame");
+        assert_eq!(frame.active_index, 1);
+        assert_eq!(frame.pixels[0], 0x11);
     }
 }
