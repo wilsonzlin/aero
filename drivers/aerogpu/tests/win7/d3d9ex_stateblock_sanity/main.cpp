@@ -31,6 +31,20 @@ static const DWORD kPsCopyTexMulC0[] = {
     0x0000FFFFu, // end
 };
 
+// Pixel shader (ps_2_0):
+//   texld r0, t0, s0
+//   mov oC0, r0
+//   end
+//
+// Used by the test to ensure ApplyStateBlock restores shader bindings even when a
+// stateblock was created via Begin/End around an Apply() call (nested recording).
+static const DWORD kPsCopyTex[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, 0x000F0000u, 0x30E40000u, 0x20E40800u, // texld r0, t0, s0
+    0x02000001u, 0x000F0800u, 0x00E40000u, // mov oC0, r0
+    0x0000FFFFu, // end
+};
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
                                          HWND hwnd,
                                          D3DPRESENT_PARAMETERS* pp,
@@ -306,6 +320,12 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
     return reporter.FailHresult("CreatePixelShader", hr);
   }
 
+  ComPtr<IDirect3DPixelShader9> ps_copy_tex;
+  hr = dev->CreatePixelShader(kPsCopyTex, ps_copy_tex.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreatePixelShader(copy_tex)", hr);
+  }
+
   // Create vertex declaration (pos + tex).
   const D3DVERTEXELEMENT9 decl[] = {
       {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
@@ -479,6 +499,55 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   const D3DCOLOR expected_green = 0xFF00FF00u;
   if ((px & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
     return reporter.Fail("pixel mismatch after Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
+  }
+
+  // Exercise ApplyStateBlock while Begin/EndStateBlock recording is active.
+  //
+  // Some apps use this as a way to "clone" an existing state block.
+  // In this scenario, Apply may be a no-op (state already matches), but the
+  // invoked Apply must still record the applied bindings/states into the
+  // in-progress recording.
+  ComPtr<IDirect3DStateBlock9> sb_from_apply;
+  hr = dev->BeginStateBlock();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("BeginStateBlock (nested)", hr);
+  }
+  hr = sb->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply (nested)", hr);
+  }
+  hr = dev->EndStateBlock(sb_from_apply.put());
+  if (FAILED(hr) || !sb_from_apply) {
+    return reporter.FailHresult("EndStateBlock (nested)", FAILED(hr) ? hr : E_FAIL);
+  }
+
+  // Mutate shader/texture, then Apply the newly recorded block. If the nested
+  // recording missed shader bindings, we'd keep `ps_copy_tex` and render white
+  // instead of green.
+  hr = dev->SetPixelShader(ps_copy_tex.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShader(copy_tex mutate)", hr);
+  }
+  hr = dev->SetTexture(0, tex_b.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture B (nested mutate)", hr);
+  }
+
+  hr = sb_from_apply->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply (from nested)", hr);
+  }
+  hr = DrawQuad(dev.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad (after nested Apply)", hr);
+  }
+  px = 0;
+  hr = ReadBackbufferPixel(dev.get(), NULL, NULL, &px);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixel (after nested Apply)", hr);
+  }
+  if ((px & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+    return reporter.Fail("pixel mismatch after nested Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
   }
 
   // Capture should update the existing block to the current device state.
