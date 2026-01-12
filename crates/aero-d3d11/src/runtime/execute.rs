@@ -6,12 +6,14 @@ use aero_gpu::bindings::bind_group_cache::{
 use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::bindings::CacheStats;
+use aero_gpu::pipeline_key::PipelineLayoutKey;
 use aero_gpu::protocol_d3d11::{
     BindingType, BufferUsage, CmdPacket, CmdStream, D3D11Opcode, DxgiFormat, IndexFormat,
     PipelineKind, PrimitiveTopology, ShaderStageFlags, TextureUsage, VertexFormat, VertexStepMode,
 };
 use anyhow::{anyhow, bail, Context, Result};
 
+use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::resources::{
     BindingDef, BindingKind, BufferResource, ComputePipelineResource, D3D11Resources,
     RenderPipelineResource, SamplerResource, ShaderModuleResource, Texture2dDesc, TextureResource,
@@ -38,6 +40,7 @@ pub struct D3D11Runtime {
     sampler_cache: SamplerCache,
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
+    pipeline_layout_cache: PipelineLayoutCache,
     /// Tracks whether the current command encoder has recorded any GPU work.
     ///
     /// `wgpu::Queue::write_buffer` / `write_texture` enqueue work immediately, so they can reorder
@@ -120,6 +123,7 @@ impl D3D11Runtime {
             sampler_cache: SamplerCache::new(),
             bind_group_layout_cache: BindGroupLayoutCache::new(),
             bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
+            pipeline_layout_cache: PipelineLayoutCache::new(),
             encoder_has_commands: false,
         })
     }
@@ -847,19 +851,20 @@ impl D3D11Runtime {
             .bind_group_layout_cache
             .get_or_create(&self.device, &bind_group_layout_entries);
 
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aero-d3d11 pipeline layout"),
-                bind_group_layouts: &[bind_group_layout.layout.as_ref()],
-                push_constant_ranges: &[],
-            });
+        let layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![bind_group_layout.hash],
+        };
+        let pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            &layout_key,
+            &[bind_group_layout.layout.as_ref()],
+        );
 
         let pipeline = self
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("aero-d3d11 render pipeline"),
-                layout: Some(&pipeline_layout),
+                layout: Some(pipeline_layout.as_ref()),
                 vertex: wgpu::VertexState {
                     module: &vs.module,
                     entry_point: "vs_main",
@@ -928,19 +933,20 @@ impl D3D11Runtime {
             .bind_group_layout_cache
             .get_or_create(&self.device, &bind_group_layout_entries);
 
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aero-d3d11 compute pipeline layout"),
-                bind_group_layouts: &[bind_group_layout.layout.as_ref()],
-                push_constant_ranges: &[],
-            });
+        let layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![bind_group_layout.hash],
+        };
+        let pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            &layout_key,
+            &[bind_group_layout.layout.as_ref()],
+        );
 
         let pipeline = self
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("aero-d3d11 compute pipeline"),
-                layout: Some(&pipeline_layout),
+                layout: Some(pipeline_layout.as_ref()),
                 module: &cs.module,
                 entry_point: "cs_main",
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
