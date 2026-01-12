@@ -301,6 +301,99 @@ fn snapshot_restore_replays_unprocessed_admin_sq_doorbell() {
 }
 
 #[test]
+fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
+    // Similar to `snapshot_restore_replays_unprocessed_admin_sq_doorbell`, but for an IO SQ.
+    // This exercises that `NvmeController::load_state()` reconstructs `pending_sq_tail` for IO
+    // queues (not just the admin queue).
+    let disk = SharedDisk::new(1024);
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+    let write_buf = 0x60000;
+
+    dev.controller.mmio_write(0x0024, 4, 0x000f_000f);
+    dev.controller.mmio_write(0x0028, 8, asq);
+    dev.controller.mmio_write(0x0030, 8, acq);
+    dev.controller.mmio_write(0x0014, 4, 1);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    mem.write_physical(asq, &cmd);
+    dev.controller.mmio_write(0x1000, 4, 1);
+    dev.process(&mut mem);
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    mem.write_physical(asq + 64, &cmd);
+    dev.controller.mmio_write(0x1000, 4, 2);
+    dev.process(&mut mem);
+
+    // Consume admin completions so INTx level is not influenced by them.
+    dev.controller.mmio_write(0x1004, 4, 2);
+    assert!(
+        !dev.irq_level(),
+        "after consuming admin completions, no interrupts should be pending"
+    );
+
+    // Post an IO WRITE into SQ1 entry 0.
+    let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    mem.write_physical(write_buf, &payload);
+
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 0x10);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+
+    // Ring SQ1 tail doorbell but *do not* call `process()` yet.
+    dev.controller.mmio_write(0x1008, 4, 1);
+    assert!(
+        !dev.irq_level(),
+        "no completion should be pending before processing the IO SQ"
+    );
+
+    let snap = dev.save_state();
+    let mem_snap = mem.clone();
+
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    restored.load_state(&snap).unwrap();
+
+    let mut mem2 = mem_snap;
+    restored.process(&mut mem2);
+
+    assert!(restored.irq_level(), "processing should post an IO completion");
+
+    let cqe = read_cqe(&mut mem2, io_cq);
+    assert_eq!(cqe.cid, 0x10);
+    assert_eq!(cqe.status & 0x1, 1);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut disk_read = disk.clone();
+    let mut out = vec![0u8; 512];
+    disk_read.read_at(0, &mut out).unwrap();
+    assert_eq!(out, payload);
+}
+
+#[test]
 fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let disk = SharedDisk::new(1024);
     let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
