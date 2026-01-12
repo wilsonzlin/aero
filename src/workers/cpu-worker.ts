@@ -36,9 +36,15 @@ type CpuWorkerStartMessage = {
 const ENTRY_RIP = 0x1000;
 const STALE_RIP = 0x2000;
 const DEFAULT_MAX_BYTES = 1024;
-// Int32 index inside the shared memory used by the smoke test to coordinate a
-// deterministic stale-code scenario.
-const DEBUG_SYNC_INDEX = 5;
+// Debug-only sync word used by the JIT smoke test to coordinate a deterministic
+// stale-code scenario.
+//
+// IMPORTANT: Do not use a low linear-memory address for this (it may overlap wasm
+// statics/stack/heap). Instead we use a word inside the wasm runtime allocator's
+// reserved tail guard (see `crates/aero-wasm/src/runtime_alloc.rs`).
+//
+// Keep this in sync with `HEAP_TAIL_GUARD_BYTES` (currently 64).
+const DEBUG_SYNC_TAIL_GUARD_BYTES = 64;
 
 // Tier-1 JIT call status slot (mirrors `crates/aero-jit-x86/src/jit_ctx.rs` + `crates/aero-wasm/src/tiered_vm.rs`).
 //
@@ -1065,14 +1071,19 @@ async function runTieredVm(iterations: number, threshold: number) {
     new Uint8Array(memory.buffer).set(code, guest_base + STALE_RIP);
 
     // Coordinate with the JIT worker so we can mutate guest bytes after it reads them.
-    const sync = new Int32Array(memory.buffer);
-    Atomics.store(sync, DEBUG_SYNC_INDEX, 0);
+    const debugSyncOffset =
+      guest_base >= DEBUG_SYNC_TAIL_GUARD_BYTES ? guest_base - DEBUG_SYNC_TAIL_GUARD_BYTES : 0;
+    if ((debugSyncOffset & 3) !== 0 || debugSyncOffset + 4 > memory.buffer.byteLength) {
+      throw new Error(`debug_sync offset out of bounds: offset=${debugSyncOffset} guest_base=${guest_base}`);
+    }
+    const sync = new Int32Array(memory.buffer, debugSyncOffset, 1);
+    Atomics.store(sync, 0, 0);
 
     const staleJob = startCompile(STALE_RIP, { max_bytes: DEFAULT_MAX_BYTES, debug_sync: true });
 
     // Wait for the JIT worker to reach the barrier (sets the slot to `id`).
-    Atomics.wait(sync, DEBUG_SYNC_INDEX, 0, 5_000);
-    const seen = Atomics.load(sync, DEBUG_SYNC_INDEX);
+    Atomics.wait(sync, 0, 0, 5_000);
+    const seen = Atomics.load(sync, 0);
     if (seen === staleJob.id) {
       // Mutate one byte of guest code and bump the page-version tracker.
       const u8 = new Uint8Array(memory.buffer);
@@ -1081,8 +1092,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     }
 
     // Release the JIT worker to respond.
-    Atomics.store(sync, DEBUG_SYNC_INDEX, -staleJob.id);
-    Atomics.notify(sync, DEBUG_SYNC_INDEX);
+    Atomics.store(sync, 0, -staleJob.id);
+    Atomics.notify(sync, 0);
 
     const resp = await staleJob.response;
     await installTier1(resp, staleJob.pre_meta);

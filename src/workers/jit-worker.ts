@@ -33,9 +33,15 @@ function isDataCloneError(err: unknown): boolean {
   return /DataCloneError|could not be cloned/i.test(message);
 }
 
-// Int32 index inside the shared memory used by the smoke test to coordinate a
-// deterministic stale-code scenario.
-const DEBUG_SYNC_INDEX = 5;
+// Debug-only sync word used by the JIT smoke test to coordinate a deterministic
+// stale-code scenario.
+//
+// IMPORTANT: Do not use a low linear-memory address for this (it may overlap wasm
+// statics/stack/heap). Instead we use a word inside the wasm runtime allocator's
+// reserved tail guard (see `crates/aero-wasm/src/runtime_alloc.rs`).
+//
+// Keep this in sync with `HEAP_TAIL_GUARD_BYTES` (currently 64).
+const DEBUG_SYNC_TAIL_GUARD_BYTES = 64;
 
 function postMessageToCpu(msg: JitToCpuMessage, transfer?: Transferable[]) {
   ctx.postMessage(msg, transfer ?? []);
@@ -247,13 +253,20 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
   }
 
   if (req.debug_sync) {
-    const sync = new Int32Array(sharedMemory.buffer);
+    const debugSyncOffset =
+      guestBase >= DEBUG_SYNC_TAIL_GUARD_BYTES ? guestBase - DEBUG_SYNC_TAIL_GUARD_BYTES : 0;
+    if ((debugSyncOffset & 3) !== 0 || debugSyncOffset + 4 > sharedMemory.buffer.byteLength) {
+      throw new Error(
+        `debug_sync offset out of bounds: offset=${debugSyncOffset} guest_base=${guestBase} mem_bytes=${sharedMemory.buffer.byteLength}`,
+      );
+    }
+    const sync = new Int32Array(sharedMemory.buffer, debugSyncOffset, 1);
     // Signal "ready to respond" by writing the request id. The CPU worker will mutate the guest
     // bytes and then write `-id` to release us.
-    Atomics.store(sync, DEBUG_SYNC_INDEX, req.id);
-    Atomics.notify(sync, DEBUG_SYNC_INDEX);
+    Atomics.store(sync, 0, req.id);
+    Atomics.notify(sync, 0);
     // Use a generous timeout to avoid wedging the worker if the CPU side crashes.
-    const waitResult = Atomics.wait(sync, DEBUG_SYNC_INDEX, req.id, 5_000);
+    const waitResult = Atomics.wait(sync, 0, req.id, 5_000);
     if (waitResult === 'timed-out') {
       console.warn(`[jit-worker] debug_sync timed out waiting for CPU ack (id=${req.id})`);
     }
