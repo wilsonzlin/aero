@@ -147,6 +147,30 @@ export interface WasmApi {
         };
     };
 
+    /**
+     * Guest-visible Intel E1000 NIC bridge.
+     *
+     * The I/O worker exposes this as a PCI function with:
+     * - BAR0: MMIO (0x20000 bytes)
+     * - BAR1: I/O (0x40 bytes)
+     *
+     * TX/RX frames are moved over the IO_IPC_NET_{TX,RX} rings by the JS wrapper.
+     */
+    E1000Bridge?: new (guestBase: number, guestSize: number) => {
+        mmio_read(offset: number, size: number): number;
+        mmio_write(offset: number, size: number, value: number): void;
+        io_read(offset: number, size: number): number;
+        io_write(offset: number, size: number, value: number): void;
+        poll(): void;
+        receive_frame(frame: Uint8Array): void;
+        // wasm-bindgen represents `Option<Uint8Array>` as `undefined` in most builds,
+        // but older bindings or manual shims may use `null`. Accept both.
+        pop_tx_frame(): Uint8Array | null | undefined;
+        irq_level(): boolean;
+        mac_addr?(): Uint8Array;
+        free(): void;
+    };
+
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
         mouse_move(dx: number, dy: number): void;
@@ -646,6 +670,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UhciRuntime: mod.UhciRuntime,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
+        E1000Bridge: mod.E1000Bridge,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
         UsbPassthroughDemo: mod.UsbPassthroughDemo,

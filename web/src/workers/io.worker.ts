@@ -23,6 +23,8 @@ import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
   IO_IPC_HID_IN_QUEUE_KIND,
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
   createSharedMemoryViews,
   ringRegionsForWorker,
@@ -38,6 +40,7 @@ import {
 } from "../runtime/protocol";
 import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
+import { E1000PciDevice } from "../io/devices/e1000";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
@@ -133,6 +136,8 @@ let eventRing: RingBuffer | null = null;
 
 let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
+let netTxRing: RingBuffer | null = null;
+let netRxRing: RingBuffer | null = null;
 let hidInRing: RingBuffer | null = null;
 let hidProxyInputRing: RingBuffer | null = null;
 let hidProxyInputRingForwarded = 0;
@@ -161,6 +166,9 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
+let e1000Device: E1000PciDevice | null = null;
+type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
+let e1000Bridge: E1000Bridge | null = null;
 type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
 let uhciControllerBridge: UhciControllerBridge | null = null;
 
@@ -603,6 +611,44 @@ function maybeInitUhciRuntime(): void {
     }
     uhciRuntime = null;
     uhciDevice = null;
+  }
+}
+
+function maybeInitE1000Device(): void {
+  if (e1000Device) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  const Bridge = api.E1000Bridge;
+  if (!Bridge) return;
+  if (!guestBase || !guestSize) return;
+  const txRing = netTxRing;
+  const rxRing = netRxRing;
+  if (!txRing || !rxRing) return;
+
+  let bridge: E1000Bridge;
+  try {
+    bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize E1000 bridge", err);
+    return;
+  }
+
+  try {
+    const dev = new E1000PciDevice({ bridge, irqSink: mgr.irqSink, netTxRing: txRing, netRxRing: rxRing });
+    e1000Bridge = bridge;
+    e1000Device = dev;
+    mgr.registerPciDevice(dev);
+    mgr.addTickable(dev);
+  } catch (err) {
+    console.warn("[io.worker] Failed to register E1000 PCI device", err);
+    try {
+      bridge.free();
+    } catch {
+      // ignore
+    }
+    e1000Bridge = null;
+    e1000Device = null;
   }
 }
 
@@ -1474,6 +1520,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         pendingWasmInit = { api, variant };
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
+        maybeInitE1000Device();
 
         maybeInitWasmHidGuestBridge();
         if (!api.UhciRuntime && api.UsbPassthroughDemo && !usbDemo) {
@@ -1583,6 +1630,13 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
       try {
+        netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+        netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+      } catch {
+        netTxRing = null;
+        netRxRing = null;
+      }
+      try {
         hidInRing = openRingByKind(segments.ioIpc, IO_IPC_HID_IN_QUEUE_KIND);
       } catch {
         hidInRing = null;
@@ -1641,6 +1695,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
       mgr.registerPciDevice(new PciTestDevice());
       maybeInitUhciDevice();
+      maybeInitE1000Device();
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
@@ -2517,6 +2572,9 @@ function shutdown(): void {
       uhciDevice?.destroy();
       uhciDevice = null;
       uhciControllerBridge = null;
+      e1000Device?.destroy();
+      e1000Device = null;
+      e1000Bridge = null;
       uhciHidTopology.setUhciBridge(null);
       try {
         usbDemoApi?.free();
