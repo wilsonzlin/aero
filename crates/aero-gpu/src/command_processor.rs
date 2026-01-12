@@ -12,6 +12,7 @@
 //! stable synchronization and sharing primitives even if rendering is minimal.
 
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use std::collections::{HashMap, HashSet};
 
 /// Per-submission allocation table entry (Win7 WDDM 1.1 legacy path).
@@ -43,11 +44,89 @@ enum ResourceDesc {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextureFormatLayout {
+    /// Uncompressed formats: one texel maps to a fixed number of bytes.
+    Uncompressed { bytes_per_texel: u32 },
+    /// Block-compressed formats (BCn). Blocks are always 4x4 texels.
+    ///
+    /// Note: no BC formats exist in the ABI yet, but the layout rules are defined so size/offset
+    /// validation can be extended safely once `aerogpu_format` grows.
+    #[allow(dead_code)]
+    BlockCompressed { block_bytes: u32 },
+}
+
+impl TextureFormatLayout {
+    fn tight_row_pitch_bytes(
+        self,
+        width_texels: u32,
+    ) -> Result<u64, CommandProcessorError> {
+        match self {
+            TextureFormatLayout::Uncompressed { bytes_per_texel } => u64::from(width_texels)
+                .checked_mul(u64::from(bytes_per_texel))
+                .ok_or(CommandProcessorError::SizeOverflow),
+            TextureFormatLayout::BlockCompressed { block_bytes } => {
+                // BC formats are stored as 4x4 blocks.
+                let blocks_x = width_texels.div_ceil(4);
+                u64::from(blocks_x)
+                    .checked_mul(u64::from(block_bytes))
+                    .ok_or(CommandProcessorError::SizeOverflow)
+            }
+        }
+    }
+
+    fn row_count(self, height_texels: u32) -> u64 {
+        match self {
+            TextureFormatLayout::Uncompressed { .. } => u64::from(height_texels),
+            TextureFormatLayout::BlockCompressed { .. } => u64::from(height_texels.div_ceil(4)),
+        }
+    }
+}
+
+fn texture_format_layout(format: u32) -> Result<TextureFormatLayout, CommandProcessorError> {
+    // Protocol rule: unknown `enum aerogpu_format` values must be treated as invalid.
+    //
+    // We intentionally do not "guess" a layout for unknown formats, because doing so could
+    // underestimate the required guest backing size for forward-compatible additions (e.g. BCn
+    // block compression), weakening bounds validation.
+    match format {
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+
+        x if x == AerogpuFormat::B5G6R5Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 2,
+        }),
+        x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 2,
+        }),
+
+        x if x == AerogpuFormat::D24UnormS8Uint as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::D32Float as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+
+        _ => Err(CommandProcessorError::InvalidCreateTexture2d),
+    }
+}
+
 impl ResourceDesc {
     fn size_bytes(&self) -> Result<u64, CommandProcessorError> {
         match *self {
             ResourceDesc::Buffer { size_bytes, .. } => Ok(size_bytes),
             ResourceDesc::Texture2d {
+                format,
                 width,
                 height,
                 mip_levels,
@@ -55,22 +134,45 @@ impl ResourceDesc {
                 row_pitch_bytes,
                 ..
             } => {
-                // Conservative linear-size estimate:
-                // - For mip0 we trust `row_pitch_bytes`.
-                // - For additional mips we approximate by shifting the mip0 row pitch / height.
-                //
-                // This is intentionally conservative validation used for bounds checking and is
-                // not relied upon for actual texture layout decisions.
+                // Exact linear guest memory layout (D3D9 + D3D10/11):
+                // - For each layer:
+                //   - mip0 is stored with `row_pitch_bytes` (or tight pitch for host-owned
+                //     resources, where `row_pitch_bytes` can be 0).
+                //   - mip>0 are stored tightly by mip dimensions.
+                // - Mips are packed back-to-back with no extra padding.
                 if width == 0 || height == 0 || mip_levels == 0 || array_layers == 0 {
+                    return Err(CommandProcessorError::InvalidCreateTexture2d);
+                }
+
+                let layout = texture_format_layout(format)?;
+
+                // Validate that a non-zero mip0 pitch is large enough to represent a row of mip0.
+                // (Guest-backed textures require `row_pitch_bytes != 0`; host-backed textures may
+                // use 0 to mean "tight".)
+                let mip0_width = width;
+                let min_mip0_row_pitch = layout.tight_row_pitch_bytes(mip0_width)?;
+                if row_pitch_bytes != 0 && u64::from(row_pitch_bytes) < min_mip0_row_pitch {
                     return Err(CommandProcessorError::InvalidCreateTexture2d);
                 }
 
                 let mut total = 0u64;
                 for level in 0..mip_levels {
-                    let level_row_pitch = (u64::from(row_pitch_bytes) >> level).max(1);
-                    let level_height = (u64::from(height) >> level).max(1);
-                    let level_size = level_row_pitch
-                        .checked_mul(level_height)
+                    let mip_width = width.checked_shr(level).unwrap_or(0).max(1);
+                    let mip_height = height.checked_shr(level).unwrap_or(0).max(1);
+
+                    let row_pitch = if level == 0 {
+                        if row_pitch_bytes != 0 {
+                            u64::from(row_pitch_bytes)
+                        } else {
+                            layout.tight_row_pitch_bytes(mip_width)?
+                        }
+                    } else {
+                        layout.tight_row_pitch_bytes(mip_width)?
+                    };
+                    let rows = layout.row_count(mip_height);
+
+                    let level_size = row_pitch
+                        .checked_mul(rows)
                         .ok_or(CommandProcessorError::SizeOverflow)?;
                     total = total
                         .checked_add(level_size)
@@ -883,7 +985,7 @@ mod tests {
         w.create_texture2d(
             TEST_TEX_HANDLE,
             /*usage_flags=*/ 0,
-            /*format=*/ 0,
+            /*format=*/ AerogpuFormat::R8G8B8A8Unorm as u32,
             /*width=*/ 1,
             /*height=*/ 1,
             /*mip_levels=*/ 1,
@@ -910,7 +1012,7 @@ mod tests {
         w.create_texture2d(
             TEST_TEX_HANDLE,
             /*usage_flags=*/ 0,
-            /*format=*/ 0,
+            /*format=*/ AerogpuFormat::R8G8B8A8Unorm as u32,
             /*width=*/ 1,
             /*height=*/ 1,
             /*mip_levels=*/ 1,
@@ -935,7 +1037,7 @@ mod tests {
         w.create_texture2d(
             TEST_TEX_HANDLE,
             /*usage_flags=*/ 0,
-            /*format=*/ 0,
+            /*format=*/ AerogpuFormat::R8G8B8A8Unorm as u32,
             /*width=*/ 1,
             /*height=*/ 1,
             /*mip_levels=*/ 1,
