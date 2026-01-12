@@ -49,23 +49,38 @@ impl GuestWriteLog {
             return;
         }
 
-        let len_u32 = u32::try_from(len).unwrap_or(u32::MAX);
+        // Treat ranges as half-open intervals: `[start, end)`.
+        let mut start = paddr;
+        let mut end = paddr.saturating_add(len as u64);
 
-        // Cheap coalescing: merge with the previous entry if it overlaps or is directly adjacent.
-        if let Some(last) = self.entries.last_mut() {
-            let last_end = last.paddr.saturating_add(u64::from(last.len));
-            let cur_end = paddr.saturating_add(u64::from(len_u32));
-            if paddr <= last_end && cur_end >= last.paddr {
-                let start = last.paddr.min(paddr);
-                let end = last_end.max(cur_end);
-                let merged_len_u64 = end.saturating_sub(start);
-                if merged_len_u64 <= u64::from(u32::MAX) {
-                    last.paddr = start;
-                    last.len = merged_len_u64 as u32;
-                    return;
-                }
+        // Merge with any existing range that overlaps or is directly adjacent.
+        //
+        // Note: we intentionally allow merging out-of-order writes (e.g. stack writes interleaved
+        // with other stores) so we do not blow through the fixed log cap with redundant entries.
+        let mut i = 0usize;
+        while i < self.entries.len() {
+            let entry = self.entries[i];
+            let entry_start = entry.paddr;
+            let entry_end = entry_start.saturating_add(u64::from(entry.len));
+            let overlaps_or_adjacent = start <= entry_end && end >= entry_start;
+            if overlaps_or_adjacent {
+                start = start.min(entry_start);
+                end = end.max(entry_end);
+                // Remove this entry; continue scanning at the same index.
+                self.entries.swap_remove(i);
+                continue;
             }
+            i += 1;
         }
+
+        let merged_len_u64 = end.saturating_sub(start);
+        let Ok(len_u32) = u32::try_from(merged_len_u64) else {
+            // Length doesn't fit in u32 (shouldn't happen for wasm32 guest RAM). Fall back to a
+            // coarse invalidation on drain.
+            self.entries.clear();
+            self.overflowed = true;
+            return;
+        };
 
         if self.entries.len() >= WRITE_LOG_CAP {
             // Overflow: drop fine-grained detail and fall back to invalidating the full guest RAM
@@ -75,10 +90,7 @@ impl GuestWriteLog {
             return;
         }
 
-        self.entries.push(GuestWrite {
-            paddr,
-            len: len_u32,
-        });
+        self.entries.push(GuestWrite { paddr: start, len: len_u32 });
     }
 
     /// Drain the log into `f`.
