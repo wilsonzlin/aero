@@ -129,3 +129,73 @@ fn e1000_device_state_rejects_unaligned_other_regs_key() {
     let err = state.load_state(&bytes).unwrap_err();
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
 }
+
+#[test]
+fn e1000_device_state_rejects_unaligned_pci_bar0() {
+    // TAG_PCI_BAR0 = 2.
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(2, 0xDEAD_BEEF); // BAR0 must have low 4 bits clear
+    let bytes = w.finish();
+
+    let mut state = E1000DeviceState::default();
+    let err = state.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar0"));
+}
+
+#[test]
+fn e1000_device_state_rejects_invalid_pci_bar1_io_flag() {
+    // TAG_PCI_BAR1 = 4.
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+    // BAR1 is an I/O BAR; bit0 must remain set and bit1 clear.
+    w.field_u32(4, 0);
+    let bytes = w.finish();
+
+    let mut state = E1000DeviceState::default();
+    let err = state.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar1"));
+}
+
+#[test]
+fn e1000_device_state_rejects_pci_bar0_probe_mismatch() {
+    // TAG_PCI_BAR0 = 2, TAG_PCI_BAR0_PROBE = 3.
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u32(2, 0xDEAD_BEE0);
+    w.field_bool(3, true);
+    let bytes = w.finish();
+
+    let mut state = E1000DeviceState::default();
+    let err = state.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 pci bar0_probe")
+    );
+}
+
+#[test]
+fn e1000_device_state_rejects_pci_bar1_probe_mismatch() {
+    // TAG_PCI_BAR1 = 4, TAG_PCI_BAR1_PROBE = 5.
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+    // Valid I/O BAR encoding but not the probe/reset value.
+    w.field_u32(4, 0xC001);
+    w.field_bool(5, true);
+    let bytes = w.finish();
+
+    let mut state = E1000DeviceState::default();
+    let err = state.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("e1000 pci bar1_probe")
+    );
+}
