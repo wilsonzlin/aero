@@ -533,6 +533,12 @@ mod tests {
         // Values exactly representable with the 1/128 scaling.
         assert_eq!(encode_u8(0.5), 192);
         assert_eq!(encode_u8(-0.5), 64);
+
+        // Non-finite inputs should never panic and should clamp deterministically.
+        assert_eq!(encode_u8(f32::INFINITY), 255);
+        assert_eq!(encode_u8(f32::NEG_INFINITY), 0);
+        // `NaN` propagates through math ops and becomes 0 on `as u8` conversion.
+        assert_eq!(encode_u8(f32::NAN), 0);
     }
 
     #[test]
@@ -559,6 +565,12 @@ mod tests {
         assert_eq!(encode_i16(2.0), i16::MAX);
         assert_eq!(encode_i16(-1.0), i16::MIN);
         assert_eq!(encode_i16(-2.0), i16::MIN);
+
+        // Non-finite inputs should never panic and should clamp deterministically.
+        assert_eq!(encode_i16(f32::INFINITY), i16::MAX);
+        assert_eq!(encode_i16(f32::NEG_INFINITY), i16::MIN);
+        // `NaN` propagates through clamp/round and becomes 0 on `as i16` conversion.
+        assert_eq!(encode_i16(f32::NAN), 0);
     }
 
     #[test]
@@ -580,6 +592,14 @@ mod tests {
         assert_f32_approx_eq(decode_raw_20(0), 0.0, 1e-6);
         assert_f32_approx_eq(decode_raw_20(524_287), 524_287.0 / 524_288.0, 1e-6);
 
+        // Upper bits may contain garbage; decoding should still use only the low 20 bits.
+        let neg_one_with_garbage = 0xABC0_0000u32 | 0x000F_FFFFu32;
+        assert_f32_approx_eq(
+            decode_one_sample(&neg_one_with_garbage.to_le_bytes(), 20),
+            -1.0 / 524_288.0,
+            1e-6,
+        );
+
         // Encode scaling and clipping.
         assert_eq!(encode_20(0.5), 262_144);
         assert_eq!(encode_20(-0.25), -131_072);
@@ -587,6 +607,12 @@ mod tests {
         assert_eq!(encode_20(2.0), 524_287);
         assert_eq!(encode_20(-1.0), -524_288);
         assert_eq!(encode_20(-2.0), -524_288);
+
+        // Non-finite inputs should never panic and should clamp deterministically.
+        assert_eq!(encode_20(f32::INFINITY), 524_287);
+        assert_eq!(encode_20(f32::NEG_INFINITY), -524_288);
+        // `NaN` propagates through clamp/round and becomes 0 on `as i32` conversion.
+        assert_eq!(encode_20(f32::NAN), 0);
     }
 
     #[test]
@@ -631,12 +657,26 @@ mod tests {
             1e-6,
         );
 
+        // Upper bits may contain garbage; decoding should still use only the low 24 bits.
+        let neg_one_with_garbage = 0xAA00_0000u32 | 0x00FF_FFFFu32;
+        assert_f32_approx_eq(
+            decode_one_sample(&neg_one_with_garbage.to_le_bytes(), 24),
+            -1.0 / 8_388_608.0,
+            1e-6,
+        );
+
         assert_eq!(encode_24(0.5), 4_194_304);
         assert_eq!(encode_24(-0.25), -2_097_152);
         assert_eq!(encode_24(1.0), 8_388_607);
         assert_eq!(encode_24(2.0), 8_388_607);
         assert_eq!(encode_24(-1.0), -8_388_608);
         assert_eq!(encode_24(-2.0), -8_388_608);
+
+        // Non-finite inputs should never panic and should clamp deterministically.
+        assert_eq!(encode_24(f32::INFINITY), 8_388_607);
+        assert_eq!(encode_24(f32::NEG_INFINITY), -8_388_608);
+        // `NaN` propagates through clamp/round and becomes 0 on `as i32` conversion.
+        assert_eq!(encode_24(f32::NAN), 0);
     }
 
     #[test]
@@ -681,6 +721,12 @@ mod tests {
         assert_eq!(encode_i32(2.0), i32::MAX);
         assert_eq!(encode_i32(-1.0), i32::MIN);
         assert_eq!(encode_i32(-2.0), i32::MIN);
+
+        // Non-finite inputs should never panic and should clamp deterministically.
+        assert_eq!(encode_i32(f32::INFINITY), i32::MAX);
+        assert_eq!(encode_i32(f32::NEG_INFINITY), i32::MIN);
+        // `NaN` propagates through clamp/round and becomes 0 on `as i32` conversion.
+        assert_eq!(encode_i32(f32::NAN), 0);
     }
 
     #[test]
