@@ -80,7 +80,15 @@ Audio is important for user experience but not on the critical boot path.
     - IO worker init/wiring: `web/src/workers/io_virtio_snd_init.ts` + `web/src/workers/io.worker.ts`
   - **Ring attachment policy** (SPSC rings): the IO worker attaches the playback/mic rings to **HDA when present**, and falls back
     to attaching them to **virtio-snd** in WASM builds/configurations that omit HDA.
-- **AU-008 (Audio test suite)**: E2E coverage exists for the AudioWorklet + HDA demo (`tests/e2e/audio-worklet-hda-demo.spec.ts`), plus unit coverage for IO-worker HDA tick scheduling (`web/src/io/devices/hda.test.ts`). Remaining work is full-VM guest-driver coverage (Windows playback/capture) once the end-to-end integration is exercised regularly.
+ - **AU-008 (Audio test suite)**: E2E coverage includes:
+   - AudioWorklet worker-tone smoke: `tests/e2e/audio-worklet-worker-tone.spec.ts`
+   - Snapshot/resume regressions:
+     - Worker-tone snapshot: `tests/e2e/audio-worklet-snapshot-resume.spec.ts`
+     - IO-worker HDA PCI snapshot: `tests/e2e/audio-hda-pci-snapshot-resume.spec.ts`
+     - Mic ring discard on resume: `tests/e2e/audio-mic-ring-snapshot-resume.spec.ts`
+   - AudioWorklet + HDA demo (CPU worker harness): `tests/e2e/audio-worklet-hda-demo.spec.ts`
+ 
+   Plus unit coverage for IO-worker HDA tick scheduling (`web/src/io/devices/hda.test.ts`). Remaining work is full-VM guest-driver coverage (Windows playback/capture) once the end-to-end integration is exercised regularly.
 
 ---
 
