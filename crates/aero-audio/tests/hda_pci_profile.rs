@@ -63,5 +63,10 @@ fn hda_pci_config_matches_canonical_profile() {
     );
 
     dev.config_mut().write(0x10, 4, 0xdead_beef);
-    assert_eq!(read_u32(&mut dev, 0x10), 0xdead_bee0);
+    // BAR address writes are masked both for the low flag bits and for the BAR's required
+    // alignment (which is based on its size).
+    assert_eq!(
+        read_u32(&mut dev, 0x10),
+        0xdead_beef & !(HdaPciDevice::MMIO_BAR_SIZE - 1) & 0xffff_fff0
+    );
 }

@@ -236,6 +236,15 @@ pub struct LinearResampler {
 }
 
 impl LinearResampler {
+    /// Maximum number of output frames produced in a single resampling call.
+    ///
+    /// Many callers in the emulator treat frame counts as untrusted (e.g. JS/WASM APIs, guest-driven
+    /// DMA lengths). Bounding resampler output prevents accidental multi-gigabyte allocations when
+    /// a caller passes an absurd `dst_frames` value.
+    ///
+    /// `2^20` frames is ~21s at 48kHz; interleaved stereo `f32` output would be ~8MiB.
+    const MAX_OUTPUT_FRAMES: usize = 1_048_576;
+
     pub fn new(src_rate_hz: u32, dst_rate_hz: u32) -> Self {
         let mut this = Self {
             src_rate_hz,
@@ -275,6 +284,7 @@ impl LinearResampler {
     /// Returns the minimum number of queued source frames required to be able to
     /// generate `dst_frames` output frames.
     pub fn required_source_frames(&self, dst_frames: usize) -> usize {
+        let dst_frames = dst_frames.min(Self::MAX_OUTPUT_FRAMES);
         if dst_frames == 0 {
             return 0;
         }
@@ -291,7 +301,8 @@ impl LinearResampler {
 
     /// Produce up to `dst_frames` output frames, returning interleaved stereo.
     pub fn produce_interleaved_stereo(&mut self, dst_frames: usize) -> Vec<f32> {
-        let mut out = Vec::with_capacity(dst_frames * 2);
+        let dst_frames = dst_frames.min(Self::MAX_OUTPUT_FRAMES);
+        let mut out = Vec::with_capacity(dst_frames.saturating_mul(2));
         let _ = self.produce_interleaved_stereo_into(dst_frames, &mut out);
         out
     }
@@ -308,10 +319,11 @@ impl LinearResampler {
         out: &mut Vec<f32>,
     ) -> usize {
         out.clear();
+        let dst_frames = dst_frames.min(Self::MAX_OUTPUT_FRAMES);
         if dst_frames == 0 {
             return 0;
         }
-        out.reserve(dst_frames * 2);
+        out.reserve(dst_frames.saturating_mul(2));
 
         let mut produced = 0usize;
         for _ in 0..dst_frames {
@@ -331,7 +343,7 @@ impl LinearResampler {
     pub fn produce_available_interleaved_stereo_into(&mut self, out: &mut Vec<f32>) -> usize {
         out.clear();
         let mut produced = 0usize;
-        while self.produce_one_frame(out) {
+        while produced < Self::MAX_OUTPUT_FRAMES && self.produce_one_frame(out) {
             produced += 1;
         }
         produced
@@ -1676,5 +1688,51 @@ mod tests {
         for s in out {
             assert!((0.0..=1.0).contains(&s));
         }
+    }
+
+    #[test]
+    fn resampler_required_source_frames_clamps_absurd_dst_frames() {
+        // When `dst_frames` comes from untrusted sources (DMA lengths, JS API parameters),
+        // `required_source_frames` should remain bounded.
+        let res = LinearResampler::new(48_000, 48_000);
+        assert_eq!(
+            res.required_source_frames(usize::MAX),
+            LinearResampler::MAX_OUTPUT_FRAMES
+        );
+    }
+
+    #[test]
+    fn resampler_produce_into_clamps_absurd_dst_frames() {
+        // Extreme upsampling so a small number of source frames can generate > MAX_OUTPUT_FRAMES
+        // output frames. This ensures output is bounded by the resampler's internal cap, not by
+        // source exhaustion.
+        let mut res = LinearResampler::new(1, 48_000);
+        res.push_source_frames(&vec![[0.0, 0.0]; 64]);
+
+        let mut out = Vec::new();
+        let produced = res.produce_interleaved_stereo_into(usize::MAX, &mut out);
+        assert_eq!(produced, LinearResampler::MAX_OUTPUT_FRAMES);
+        assert_eq!(out.len(), LinearResampler::MAX_OUTPUT_FRAMES * 2);
+        assert!(
+            res.queued_source_frames() > 1,
+            "must still have queued frames; otherwise output wasn't capped"
+        );
+    }
+
+    #[test]
+    fn resampler_produce_available_is_capped() {
+        // Like the `produce_*_into` test above, use extreme upsampling so we can exceed the cap
+        // with a small queue.
+        let mut res = LinearResampler::new(1, 48_000);
+        res.push_source_frames(&vec![[0.0, 0.0]; 64]);
+
+        let mut out = Vec::new();
+        let produced = res.produce_available_interleaved_stereo_into(&mut out);
+        assert_eq!(produced, LinearResampler::MAX_OUTPUT_FRAMES);
+        assert_eq!(out.len(), LinearResampler::MAX_OUTPUT_FRAMES * 2);
+        assert!(
+            res.queued_source_frames() > 1,
+            "must still have queued frames; otherwise output wasn't capped"
+        );
     }
 }
