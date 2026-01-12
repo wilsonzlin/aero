@@ -106,6 +106,14 @@ impl Ps2Mouse {
     }
 
     pub fn inject_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        // In stream mode, PS/2 devices only report motion when data reporting is enabled.
+        // Real guests will typically reset/configure the mouse while reporting is disabled,
+        // and host-side mouse motion during that window should not be buffered (otherwise the
+        // first post-enable packet can deliver a large "cursor jump").
+        if self.mode == Mode::Stream && !self.reporting_enabled {
+            return;
+        }
+
         self.dx += dx;
         self.dy += dy;
         self.wheel += wheel;
@@ -435,6 +443,24 @@ impl IoSnapshot for Ps2Mouse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_mode_drops_motion_until_reporting_enabled() {
+        let mut m = Ps2Mouse::new();
+
+        // Motion before reporting is enabled should not be buffered.
+        m.inject_motion(10, 0, 0);
+
+        // Enable reporting (ACK should be queued).
+        m.receive_byte(0xF4);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        // Now motion should be reported, and should *not* include the prior delta.
+        m.inject_motion(5, 0, 0);
+        assert_eq!(m.pop_output(), Some(0x08)); // status
+        assert_eq!(m.pop_output(), Some(5)); // dx
+        assert_eq!(m.pop_output(), Some(0)); // dy
+    }
 
     #[test]
     fn output_queue_is_bounded_during_runtime() {
