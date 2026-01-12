@@ -359,3 +359,49 @@ fn machine_ahci_writes_are_visible_to_bios_disk_reads() {
     bios_disk.read_sector(1, &mut sector).unwrap();
     assert_eq!(&sector[..], &pattern[..]);
 }
+
+#[test]
+fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Enable A20 for deterministic MMIO access behaviour.
+    m.io_write(0x92, 1, 0x02);
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Read vendor/device ID via PCI config ports (guest-visible).
+    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x00));
+    let id = m.io_read(0xCFC, 4);
+    assert_eq!(id, 0x2922_8086);
+
+    // Interrupt Line should match the canonical PciIntxRouterConfig::default() mapping:
+    // 00:02.0 INTA# -> PIRQ C -> GSI 12.
+    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3C));
+    let irq_line = m.io_read(0xCFC, 1) as u8;
+    assert_eq!(irq_line, 12);
+
+    // BAR5 should be assigned by firmware POST and routed through the PCI MMIO window.
+    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x24));
+    let bar5_reg = m.io_read(0xCFC, 4) as u64;
+    let bar5_base = bar5_reg & !0xFu64;
+    assert!(bar5_base != 0, "expected AHCI BAR5 to be assigned");
+
+    // Enable memory decoding (COMMAND.MEM bit 1) before accessing the ABAR.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    // Smoke-test BAR5 MMIO dispatch by reading CAP/PI.
+    let cap = m.read_physical_u32(bar5_base + 0x00);
+    let pi = m.read_physical_u32(bar5_base + 0x0C);
+
+    assert_eq!(cap, 0x8000_1F00);
+    assert_eq!(pi, 0x0000_0001);
+}

@@ -1608,6 +1608,11 @@ impl Machine {
         self.hpet.clone()
     }
 
+    /// Returns the AHCI controller, if present.
+    pub fn ahci(&self) -> Option<Rc<RefCell<AhciPciDevice>>> {
+        self.ahci.clone()
+    }
+
     /// Returns the E1000 NIC device, if present.
     pub fn e1000(&self) -> Option<Rc<RefCell<E1000Device>>> {
         self.e1000.clone()
@@ -1618,16 +1623,10 @@ impl Machine {
         self.vga.clone()
     }
 
-    /// Returns the AHCI controller device model, if present.
-    pub fn ahci(&self) -> Option<Rc<RefCell<AhciPciDevice>>> {
-        self.ahci.clone()
-    }
-
     /// Returns the PIIX3-compatible IDE controller, if present.
     pub fn ide(&self) -> Option<Rc<RefCell<Piix3IdePciDevice>>> {
         self.ide.clone()
     }
-
     /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
@@ -2509,10 +2508,9 @@ impl Machine {
                         PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
                     if let Some(ahci) = ahci.clone() {
                         let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-                        // ICH9 AHCI uses BAR5 (ABAR).
                         router.register_handler(
                             bdf,
-                            5,
+                            aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
                             MachineAhciMmioBar {
                                 pci_cfg: pci_cfg.clone(),
                                 ahci,
@@ -2852,6 +2850,12 @@ impl Machine {
 
             // Keep the core's A20 view coherent with the chipset latch.
             self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+
+            // Allow storage controllers to make forward progress even while the CPU is halted.
+            //
+            // AHCI completes DMA asynchronously and signals completion via interrupts; those
+            // interrupts must be able to wake a HLT'd CPU.
+            self.process_ahci();
 
             self.poll_network();
             self.process_ahci();
