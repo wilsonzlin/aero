@@ -14,6 +14,7 @@ import {
   requiredBytes,
   wrapRingBuffer,
 } from "./audio_worklet_ring";
+import * as Layout from "../platform/audio_worklet_ring_layout.js";
 
 describe("audio_worklet_ring SharedArrayBuffer layout", () => {
   it("matches the fixed AudioWorklet playback ABI", () => {
@@ -50,5 +51,15 @@ describe("audio_worklet_ring SharedArrayBuffer layout", () => {
     expect(Atomics.load(views.readIndex, 0)).toBe(123);
     expect(Atomics.load(views.writeIndex, 0)).toBe(456);
     expect(views.samples.length).toBe(8);
+  });
+
+  it("re-exports shared layout helpers (avoids duplicate implementations)", () => {
+    // Enforce that TS helpers in `audio_worklet_ring.ts` are *the same functions*
+    // as the AudioWorklet-safe layout module. This prevents subtle drift where
+    // a future edit copies/pastes logic into both places.
+    expect(framesAvailable).toBe(Layout.framesAvailable);
+    expect(framesAvailableClamped).toBe(Layout.framesAvailableClamped);
+    expect(framesFree).toBe(Layout.framesFree);
+    expect(getRingBufferLevelFrames).toBe(Layout.getRingBufferLevelFrames);
   });
 });
