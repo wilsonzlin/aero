@@ -208,7 +208,7 @@ pub async fn head_image(
     serve_image(image_id, state, headers, false).await
 }
 
-async fn image_id_path_len_guard(
+pub(crate) async fn image_id_path_len_guard(
     State(state): State<ImagesState>,
     req: Request<Body>,
     next: Next,
