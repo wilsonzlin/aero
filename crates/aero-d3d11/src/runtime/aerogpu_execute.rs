@@ -671,6 +671,33 @@ impl AerogpuCmdRuntime {
             bail!("shader {ps_handle} is not a pixel/fragment shader");
         }
 
+        // WebGPU requires that the vertex output interface exactly matches the fragment input
+        // interface. D3D shaders, however, frequently export varyings that a given pixel shader does
+        // not consume (because the same VS can be reused with multiple PS variants).
+        //
+        // To preserve the D3D behavior, we trim the generated WGSL vertex output struct down to the
+        // subset of `@location` values actually consumed by the pixel shader for this pipeline.
+        let ps_input_locations = super::wgsl_link::locations_in_struct(&ps.wgsl, "PsIn")?;
+        let vs_output_locations = super::wgsl_link::locations_in_struct(&vs.wgsl, "VsOut")?;
+        for loc in &ps_input_locations {
+            if !vs_output_locations.contains(loc) {
+                bail!("pixel shader expects @location({loc}), but VS does not output it");
+            }
+        }
+        let linked_vs_hash = if vs_output_locations == ps_input_locations {
+            vs.hash
+        } else {
+            let linked_vs_wgsl =
+                super::wgsl_link::trim_vs_outputs_to_locations(&vs.wgsl, &ps_input_locations);
+            let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Vertex,
+                &linked_vs_wgsl,
+                Some("aero-d3d11 aerogpu linked vertex shader"),
+            );
+            hash
+        };
+
         let (color_attachments, color_target_keys, target_size) =
             build_color_attachments(&self.resources, &self.state)?;
 
@@ -719,7 +746,7 @@ impl AerogpuCmdRuntime {
         };
 
         let key = RenderPipelineKey {
-            vertex_shader: vs.hash,
+            vertex_shader: linked_vs_hash,
             fragment_shader: ps.hash,
             color_targets: color_target_keys,
             depth_stencil: depth_target_key,

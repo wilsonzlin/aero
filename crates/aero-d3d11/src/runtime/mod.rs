@@ -6,6 +6,7 @@ pub mod bindings;
 pub mod execute;
 pub mod pipeline_layout_cache;
 mod reflection_bindings;
+mod wgsl_link;
 pub mod resources;
 pub mod state;
 

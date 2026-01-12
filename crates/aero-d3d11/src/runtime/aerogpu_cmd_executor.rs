@@ -419,8 +419,6 @@ struct ShaderResource {
     entry_point: &'static str,
     vs_input_signature: Vec<VsInputSignatureElement>,
     reflection: ShaderReflection,
-    #[cfg(debug_assertions)]
-    #[allow(dead_code)]
     wgsl_source: String,
 }
 
@@ -5426,7 +5424,6 @@ impl AerogpuD3d11Executor {
             None
         };
 
-        #[cfg(debug_assertions)]
         let shader = ShaderResource {
             stage,
             wgsl_hash: hash,
@@ -5436,16 +5433,6 @@ impl AerogpuD3d11Executor {
             vs_input_signature,
             reflection,
             wgsl_source: wgsl,
-        };
-        #[cfg(not(debug_assertions))]
-        let shader = ShaderResource {
-            stage,
-            wgsl_hash: hash,
-            depth_clamp_wgsl_hash,
-            dxbc_hash_fnv1a64,
-            entry_point,
-            vs_input_signature,
-            reflection,
         };
 
         self.resources.shaders.insert(shader_handle, shader);
@@ -7363,38 +7350,74 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let (
-        vs_wgsl_hash,
-        vs_depth_clamp_wgsl_hash,
-        vs_dxbc_hash_fnv1a64,
-        vs_entry_point,
-        vs_input_signature,
-    ) = {
-        let vs = resources
-            .shaders
-            .get(&vs_handle)
-            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
-        if vs.stage != ShaderStage::Vertex {
-            bail!("shader {vs_handle} is not a vertex shader");
-        }
-        (
-            vs.wgsl_hash,
-            vs.depth_clamp_wgsl_hash,
-            vs.dxbc_hash_fnv1a64,
-            vs.entry_point,
-            vs.vs_input_signature.clone(),
-        )
-    };
-    let (ps_wgsl_hash, fs_entry_point) = {
-        let ps = resources
-            .shaders
-            .get(&ps_handle)
-            .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
-        if ps.stage != ShaderStage::Pixel {
-            bail!("shader {ps_handle} is not a pixel shader");
-        }
-        (ps.wgsl_hash, ps.entry_point)
-    };
+    let (vertex_shader, ps_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature, fs_entry_point) =
+        {
+            let vs = resources
+                .shaders
+                .get(&vs_handle)
+                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
+            if vs.stage != ShaderStage::Vertex {
+                bail!("shader {vs_handle} is not a vertex shader");
+            }
+
+            let ps = resources
+                .shaders
+                .get(&ps_handle)
+                .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+            if ps.stage != ShaderStage::Pixel {
+                bail!("shader {ps_handle} is not a pixel shader");
+            }
+
+            // WebGPU requires the vertex output interface to exactly match the fragment input
+            // interface. D3D shaders often export extra varyings (so a single VS can be reused with
+            // multiple PS variants), so trim the VS outputs down to the subset required by the
+            // current PS.
+            let ps_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
+            let vs_outputs = super::wgsl_link::locations_in_struct(&vs.wgsl_source, "VsOut")?;
+            for loc in &ps_inputs {
+                if !vs_outputs.contains(loc) {
+                    bail!("pixel shader expects @location({loc}), but VS does not output it");
+                }
+            }
+
+            let needs_trim = vs_outputs != ps_inputs;
+
+            let selected_vs_hash = if state.depth_clip_enabled {
+                vs.wgsl_hash
+            } else {
+                vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
+            };
+
+            let vertex_shader = if !needs_trim {
+                selected_vs_hash
+            } else {
+                let base_vs_wgsl = if state.depth_clip_enabled {
+                    std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
+                } else {
+                    std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
+                };
+                let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
+                    base_vs_wgsl.as_ref(),
+                    &ps_inputs,
+                );
+                let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+                    device,
+                    map_pipeline_cache_stage(ShaderStage::Vertex),
+                    &trimmed_vs_wgsl,
+                    Some("aerogpu_cmd linked vertex shader"),
+                );
+                hash
+            };
+
+            (
+                vertex_shader,
+                ps.wgsl_hash,
+                vs.dxbc_hash_fnv1a64,
+                vs.entry_point,
+                vs.vs_input_signature.clone(),
+                ps.entry_point,
+            )
+        };
 
     let BuiltVertexState {
         vertex_buffers,
@@ -7406,12 +7429,6 @@ fn get_or_create_render_pipeline_for_state<'a>(
         vs_dxbc_hash_fnv1a64,
         &vs_input_signature,
     )?;
-
-    let vertex_shader = if state.depth_clip_enabled {
-        vs_wgsl_hash
-    } else {
-        vs_depth_clamp_wgsl_hash.unwrap_or(vs_wgsl_hash)
-    };
 
     let mut color_targets = Vec::with_capacity(state.render_targets.len());
     let mut color_target_states = Vec::with_capacity(state.render_targets.len());

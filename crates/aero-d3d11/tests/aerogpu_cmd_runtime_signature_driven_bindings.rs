@@ -553,76 +553,6 @@ fn build_ps_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
-fn build_ps_sample_l_t0_s0_sm5_with_color_input_dxbc(u: f32, v: f32) -> Vec<u8> {
-    // Same token stream as `build_ps_sample_l_t0_s0_sm5_dxbc`, but includes a dummy SV_Position +
-    // COLOR0 input signature so the shader can link with vertex shaders that output `@location(1)`
-    // without triggering WebGPU stage-interface validation errors.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
-    let osgn = build_signature_chunk(&[SigParam {
-        semantic_name: "SV_Target",
-        semantic_index: 0,
-        register: 0,
-        mask: 0x0f,
-    }]);
-
-    // ps_5_0
-    let version_token = 0x50u32;
-
-    let sample_l_opcode_token = 0x46u32 | (14u32 << 11);
-    let ret_token = 0x3eu32 | (1u32 << 11);
-
-    let dst_o0 = 0x0010_f022u32;
-    let imm_vec4 = 0x0000_f042u32;
-    let imm_scalar = 0x0000_0049u32;
-    let t0 = 0x0010_0072u32;
-    let s0 = 0x0010_0062u32;
-
-    let u = u.to_bits();
-    let v = v.to_bits();
-
-    let mut tokens = vec![
-        version_token,
-        0, // length patched below
-        // sample_l o0, l(u,v,0,0), t0, s0, l(0)
-        sample_l_opcode_token,
-        dst_o0,
-        0, // o0 index
-        imm_vec4,
-        u,
-        v,
-        0,
-        0,
-        t0,
-        0,
-        s0,
-        0,
-        imm_scalar,
-        0, // lod=0
-        ret_token,
-    ];
-    tokens[1] = tokens.len() as u32;
-
-    let mut shex = Vec::with_capacity(tokens.len() * 4);
-    for t in tokens {
-        shex.extend_from_slice(&t.to_le_bytes());
-    }
-
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
-}
-
 fn build_ps_sample_l_sm5_dxbc(u: f32, v: f32, tex_slot: u32, sampler_slot: u32) -> Vec<u8> {
     // Variant of `build_ps_sample_l_t0_s0_sm5_dxbc` that samples from a specific texture/sampler
     // slot. This is useful for exercising the binding model at non-zero / max slot indices.
@@ -2304,10 +2234,7 @@ fn aerogpu_cmd_runtime_signature_driven_vs_and_ps_texture_sampler_binding_sm5() 
 
         rt.create_shader_dxbc(VS, &build_vs_sample_t0_s0_to_color1_sm5_dxbc(0.0, 0.0))
             .unwrap();
-        rt.create_shader_dxbc(
-            PS,
-            &build_ps_sample_l_t0_s0_sm5_with_color_input_dxbc(0.0, 0.0),
-        )
+        rt.create_shader_dxbc(PS, &build_ps_sample_l_t0_s0_sm5_dxbc(0.0, 0.0))
             .unwrap();
         rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
 
