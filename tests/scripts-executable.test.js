@@ -8,6 +8,20 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
+function rustcHostTarget() {
+  try {
+    const vv = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+    const m = vv.match(/^host:\s*(.+)\s*$/m);
+    return m ? m[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function cargoTargetRustflagsVar(targetTriple) {
+  return `CARGO_TARGET_${targetTriple.toUpperCase().replace(/[-.]/g, "_")}_RUSTFLAGS`;
+}
+
 function gitFileMode(relPath) {
   const out = execFileSync("git", ["ls-files", "--stage", "--", relPath], {
     cwd: repoRoot,
@@ -419,10 +433,17 @@ test("safe-run.sh can force-disable wrappers via AERO_DISABLE_RUSTC_WRAPPER (Lin
 test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
   try {
+    // `safe-run.sh` caps lld threads via per-target rustflags env vars
+    // (`CARGO_TARGET_<TRIPLE>_RUSTFLAGS`) instead of mutating global `RUSTFLAGS`,
+    // because global `RUSTFLAGS` breaks wasm32 builds (`rust-lld -flavor wasm`
+    // does not understand `-Wl,...`).
+    const hostTarget = rustcHostTarget();
+    const hostTargetVar = hostTarget === null ? null : cargoTargetRustflagsVar(hostTarget);
+
     const binDir = path.join(tmpRoot, "bin");
     fs.mkdirSync(binDir, { recursive: true });
     const fakeCargo = path.join(binDir, "cargo");
-    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s|||%s" "${RUSTFLAGS:-}" "${!AERO_TARGET_RUSTFLAGS_VAR:-}"\n');
     fs.chmodSync(fakeCargo, 0o755);
 
     const env = { ...process.env };
@@ -435,6 +456,11 @@ test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip
     delete env.AERO_RUST_CODEGEN_UNITS;
     delete env.AERO_CODEGEN_UNITS;
     delete env.RUSTFLAGS;
+    delete env.AERO_TARGET_RUSTFLAGS_VAR;
+    if (hostTargetVar) {
+      delete env[hostTargetVar];
+      env.AERO_TARGET_RUSTFLAGS_VAR = hostTargetVar;
+    }
     env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
 
     const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
@@ -443,9 +469,18 @@ test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
-    // Still cap LLVM lld parallelism to match build jobs (default: 1).
-    assert.match(stdout, /-C link-arg=-Wl,--threads=1\b/);
+    const [rustflags, targetFlags] = stdout.split("|||");
+    assert.ok(!rustflags.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${rustflags}`);
+    assert.ok(
+      !rustflags.includes("--threads=") && !rustflags.includes("-Wl,--threads="),
+      `expected safe-run.sh not to inject lld --threads into global RUSTFLAGS, got: ${rustflags}`,
+    );
+
+    // Still cap LLVM lld parallelism to match build jobs (default: 1), but do it via the host
+    // target's per-target rustflags env var.
+    if (hostTargetVar) {
+      assert.match(targetFlags, /-C link-arg=-Wl,--threads=1\b/);
+    }
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -454,10 +489,13 @@ test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip
 test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-jobs-"));
   try {
+    const hostTarget = rustcHostTarget();
+    const hostTargetVar = hostTarget === null ? null : cargoTargetRustflagsVar(hostTarget);
+
     const binDir = path.join(tmpRoot, "bin");
     fs.mkdirSync(binDir, { recursive: true });
     const fakeCargo = path.join(binDir, "cargo");
-    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s|||%s" "${RUSTFLAGS:-}" "${!AERO_TARGET_RUSTFLAGS_VAR:-}"\n');
     fs.chmodSync(fakeCargo, 0o755);
 
     const env = { ...process.env };
@@ -470,6 +508,11 @@ test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (L
     delete env.AERO_RUST_CODEGEN_UNITS;
     delete env.AERO_CODEGEN_UNITS;
     env.AERO_CARGO_BUILD_JOBS = "2";
+    delete env.AERO_TARGET_RUSTFLAGS_VAR;
+    if (hostTargetVar) {
+      delete env[hostTargetVar];
+      env.AERO_TARGET_RUSTFLAGS_VAR = hostTargetVar;
+    }
     env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
 
     const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
@@ -478,8 +521,15 @@ test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (L
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
-    assert.match(stdout, /-C link-arg=-Wl,--threads=2\b/);
+    const [rustflags, targetFlags] = stdout.split("|||");
+    assert.ok(!rustflags.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${rustflags}`);
+    assert.ok(
+      !rustflags.includes("--threads=") && !rustflags.includes("-Wl,--threads="),
+      `expected safe-run.sh not to inject lld --threads into global RUSTFLAGS, got: ${rustflags}`,
+    );
+    if (hostTargetVar) {
+      assert.match(targetFlags, /-C link-arg=-Wl,--threads=2\b/);
+    }
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -491,7 +541,7 @@ test("safe-run.sh uses wasm lld threads flag when building wasm32 targets (Linux
     const binDir = path.join(tmpRoot, "bin");
     fs.mkdirSync(binDir, { recursive: true });
     const fakeCargo = path.join(binDir, "cargo");
-    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s|||%s" "${RUSTFLAGS:-}" "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}"\n');
     fs.chmodSync(fakeCargo, 0o755);
 
     const env = { ...process.env };
@@ -516,8 +566,16 @@ test("safe-run.sh uses wasm lld threads flag when building wasm32 targets (Linux
       },
     );
 
-    assert.match(stdout, /-C link-arg=--threads=1\b/);
-    assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm build not to use -Wl,--threads=; got: ${stdout}`);
+    const [rustflags, wasmTargetFlags] = stdout.split("|||");
+    assert.ok(
+      !rustflags.includes("--threads=") && !rustflags.includes("-Wl,--threads="),
+      `expected safe-run.sh not to inject lld --threads into global RUSTFLAGS, got: ${rustflags}`,
+    );
+    assert.match(wasmTargetFlags, /-C link-arg=--threads=1\b/);
+    assert.ok(
+      !wasmTargetFlags.includes("-Wl,--threads="),
+      `expected wasm build not to use -Wl,--threads=; got: ${wasmTargetFlags}`,
+    );
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
