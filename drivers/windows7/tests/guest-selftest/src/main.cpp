@@ -1951,6 +1951,8 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
 struct VirtioNetAdapter {
   std::wstring instance_id;   // e.g. "{GUID}"
   std::wstring friendly_name; // optional
+  std::wstring service;       // SPDRP_SERVICE (bound driver service name)
+  std::vector<std::wstring> hardware_ids; // SPDRP_HARDWAREID (optional; for debugging/contract checks)
 };
 
 static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
@@ -1974,6 +1976,7 @@ static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
     if (!IsVirtioHardwareId(hwids)) continue;
 
     VirtioNetAdapter adapter{};
+    adapter.hardware_ids = hwids;
     if (auto inst = GetDevicePropertyString(devinfo, &dev, SPDRP_NETCFG_INSTANCE_ID)) {
       adapter.instance_id = *inst;
     }
@@ -1982,10 +1985,17 @@ static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
     } else if (auto desc = GetDevicePropertyString(devinfo, &dev, SPDRP_DEVICEDESC)) {
       adapter.friendly_name = *desc;
     }
+    if (auto svc = GetDevicePropertyString(devinfo, &dev, SPDRP_SERVICE)) {
+      adapter.service = *svc;
+    }
 
     if (!adapter.instance_id.empty()) {
-      log.Logf("virtio-net: detected adapter instance_id=%s name=%s",
-               WideToUtf8(adapter.instance_id).c_str(), WideToUtf8(adapter.friendly_name).c_str());
+      log.Logf("virtio-net: detected adapter instance_id=%s name=%s service=%s",
+               WideToUtf8(adapter.instance_id).c_str(), WideToUtf8(adapter.friendly_name).c_str(),
+               adapter.service.empty() ? "<missing>" : WideToUtf8(adapter.service).c_str());
+      for (size_t i = 0; i < adapter.hardware_ids.size(); i++) {
+        log.Logf("virtio-net:   hwid[%zu]=%s", i, WideToUtf8(adapter.hardware_ids[i]).c_str());
+      }
       out.push_back(std::move(adapter));
     }
   }
@@ -2259,6 +2269,41 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
   if (!chosen.has_value()) {
     log.LogLine("virtio-net: timed out waiting for adapter to be UP with non-APIPA IPv4");
     return false;
+  }
+
+  // Ensure the selected NIC is using the in-tree Aero virtio-net miniport, not a third-party
+  // virtio driver (e.g. virtio-win netkvm). Also ensure the device matches the Aero contract HWID.
+  static const wchar_t kExpectedService[] = L"aero_virtio_net";
+  const bool service_ok = EqualsInsensitive(chosen->service, kExpectedService);
+
+  bool contract_hwid_ok = false;
+  bool contract_rev01 = false;
+  for (const auto& id : chosen->hardware_ids) {
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1041")) {
+      contract_hwid_ok = true;
+      if (ContainsInsensitive(id, L"&REV_01")) contract_rev01 = true;
+    }
+  }
+
+  if (!service_ok || !contract_hwid_ok) {
+    log.Logf("virtio-net: FAIL: selected adapter does not match Aero virtio-net binding/contract");
+    log.Logf("virtio-net: selected name=%s guid=%s", WideToUtf8(chosen_friendly).c_str(),
+             WideToUtf8(chosen->instance_id).c_str());
+    if (!service_ok) {
+      log.Logf("virtio-net: FAIL: expected_service=%s actual_service=%s",
+               WideToUtf8(kExpectedService).c_str(),
+               chosen->service.empty() ? "<missing>" : WideToUtf8(chosen->service).c_str());
+    }
+    if (!contract_hwid_ok) {
+      log.LogLine("virtio-net: FAIL: missing contract HWID substring PCI\\VEN_1AF4&DEV_1041 in hardware IDs");
+    }
+    for (size_t i = 0; i < chosen->hardware_ids.size(); i++) {
+      log.Logf("virtio-net: selected hwid[%zu]=%s", i, WideToUtf8(chosen->hardware_ids[i]).c_str());
+    }
+    return false;
+  }
+  if (!contract_rev01) {
+    log.LogLine("virtio-net: note: contract HWID matched but no &REV_01 entry was found");
   }
 
   const auto dhcp_enabled = IsDhcpEnabledForAdapterGuid(chosen->instance_id);
