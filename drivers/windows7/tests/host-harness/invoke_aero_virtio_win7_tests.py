@@ -88,6 +88,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
     large_body: bytes = bytes(range(256)) * (1024 * 1024 // 256)
     socket_timeout_seconds: float = 60.0
     large_chunk_size: int = 64 * 1024
+    large_etag: str = '"8505ae4435522325"'
 
     def setup(self) -> None:
         super().setup()
@@ -104,6 +105,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
         self._handle_request(send_body=False)
 
     def _handle_request(self, *, send_body: bool) -> None:
+        etag: Optional[str] = None
         if self.path == self.expected_path:
             body = b"OK\n"
             content_type = "text/plain"
@@ -115,6 +117,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
             # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
             body = self.large_body
             content_type = "application/octet-stream"
+            etag = self.large_etag
             self.send_response(200)
         else:
             body = b"NOT_FOUND\n"
@@ -123,6 +126,9 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if etag is not None:
+            self.send_header("ETag", etag)
         self.send_header("Connection", "close")
         self.end_headers()
         if not send_body:

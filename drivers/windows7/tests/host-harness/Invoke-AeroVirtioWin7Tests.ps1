@@ -233,23 +233,28 @@ function Try-HandleAeroHttpRequest {
       $statusLine = if ($ok) { "HTTP/1.1 200 OK" } else { "HTTP/1.1 404 Not Found" }
       $contentType = "text/plain"
       $bodyBytes = $null
+      $etagHeader = $null
       if ($ok -and $large) {
         # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
         $contentType = "application/octet-stream"
+        $etagHeader = "ETag: `"8505ae4435522325`""
         $bodyBytes = Get-AeroSelftestLargePayload
       } else {
         $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
         $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
       }
 
-      $hdr = @(
+      $hdrLines = @(
         $statusLine,
         "Content-Type: $contentType",
         "Content-Length: $($bodyBytes.Length)",
+        "Cache-Control: no-store",
+        $etagHeader,
         "Connection: close",
         "",
         ""
-      ) -join "`r`n"
+      ) | Where-Object { $null -ne $_ -and $_.Length -gt 0 }
+      $hdr = ($hdrLines + @("", "")) -join "`r`n"
 
       $hdrBytes = [System.Text.Encoding]::ASCII.GetBytes($hdr)
       $stream.Write($hdrBytes, 0, $hdrBytes.Length)
