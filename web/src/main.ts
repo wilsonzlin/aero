@@ -1512,7 +1512,7 @@ function renderOpfsPanel(): HTMLElement {
 }
 
 function renderNetTracePanel(): HTMLElement {
-  const panel = el("div", { class: "panel" }, el("h2", { text: "Network trace" }));
+  const panel = el("div", { class: "panel" }, el("h2", { text: "Network trace (PCAPNG)" }));
 
   function requireWorkersRunning(): void {
     const state = workerCoordinator.getVmState();

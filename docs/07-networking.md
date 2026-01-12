@@ -1210,8 +1210,8 @@ Relevant implementation files:
 #### UI workflow (“Network trace (PCAPNG)” panel)
 
 In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there is a panel titled
-**“Network trace (PCAPNG)”** (some legacy/experimental hosts label it just “Network trace”; see
-`web/src/main.ts`) that provides:
+**“Network trace (PCAPNG)”**. The experimental `web/` host UI (`web/src/main.ts`) also exposes this panel.
+It provides:
 
 - **Enable/disable** tracing via a checkbox.
 - (Optional) **Live stats** (captured bytes/records + drop counters) when the backend implements a stats API.
