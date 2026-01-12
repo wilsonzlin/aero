@@ -66,6 +66,30 @@ impl DeviceBackendAsAeroVirtualDisk {
         self.backend
     }
 
+    fn map_backend_io_error(&self, err: io::Error) -> aero_storage::DiskError {
+        // Prefer preserving the original `aero_storage::DiskError` when a backend (often an
+        // adapter such as `AeroVirtualDiskAsDeviceBackend`) stored it inside `io::Error`.
+        //
+        // This keeps cross-crate error handling consistent and ensures that higher layers can
+        // observe semantic failures like quota exhaustion or "backend in use".
+        let kind = err.kind();
+        let msg = err.to_string();
+        if let Some(inner) = err.into_inner() {
+            if let Ok(disk_err) = inner.downcast::<aero_storage::DiskError>() {
+                return *disk_err;
+            }
+        }
+
+        match kind {
+            io::ErrorKind::StorageFull => aero_storage::DiskError::QuotaExceeded,
+            io::ErrorKind::ResourceBusy => aero_storage::DiskError::InUse,
+            io::ErrorKind::NotConnected => aero_storage::DiskError::BackendUnavailable,
+            io::ErrorKind::BrokenPipe => aero_storage::DiskError::InvalidState(msg),
+            io::ErrorKind::Unsupported => aero_storage::DiskError::NotSupported(msg),
+            _ => aero_storage::DiskError::Io(msg),
+        }
+    }
+
     fn check_bounds(&self, offset: u64, len: usize) -> aero_storage::Result<()> {
         let len_u64 =
             u64::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
@@ -95,7 +119,7 @@ impl aero_storage::VirtualDisk for DeviceBackendAsAeroVirtualDisk {
 
         self.backend
             .read_at(offset, buf)
-            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
+            .map_err(|e| self.map_backend_io_error(e))
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
@@ -103,13 +127,13 @@ impl aero_storage::VirtualDisk for DeviceBackendAsAeroVirtualDisk {
 
         self.backend
             .write_at(offset, buf)
-            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
+            .map_err(|e| self.map_backend_io_error(e))
     }
 
     fn flush(&mut self) -> aero_storage::Result<()> {
         self.backend
             .flush()
-            .map_err(|e| aero_storage::DiskError::Io(e.to_string()))
+            .map_err(|e| self.map_backend_io_error(e))
     }
 }
 
@@ -249,5 +273,132 @@ mod tests {
         let mut out = [0u8; 1];
         let err = disk.read_at(4, &mut out).unwrap_err();
         assert!(matches!(err, aero_storage::DiskError::OutOfBounds { .. }));
+    }
+
+    #[test]
+    fn device_backend_as_virtual_disk_preserves_embedded_disk_error() {
+        struct ErrorBackend {
+            err: fn() -> io::Error,
+        }
+
+        impl DiskBackend for ErrorBackend {
+            fn len(&self) -> u64 {
+                512
+            }
+
+            fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> io::Result<()> {
+                Err((self.err)())
+            }
+
+            fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> io::Result<()> {
+                Err((self.err)())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Err((self.err)())
+            }
+        }
+
+        let cases: &[(
+            fn() -> io::Error,
+            fn(&aero_storage::DiskError) -> bool,
+        )] = &[
+            (
+                || io::Error::new(io::ErrorKind::StorageFull, aero_storage::DiskError::QuotaExceeded),
+                |e| matches!(e, aero_storage::DiskError::QuotaExceeded),
+            ),
+            (
+                || io::Error::new(io::ErrorKind::ResourceBusy, aero_storage::DiskError::InUse),
+                |e| matches!(e, aero_storage::DiskError::InUse),
+            ),
+            (
+                || {
+                    io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        aero_storage::DiskError::BackendUnavailable,
+                    )
+                },
+                |e| matches!(e, aero_storage::DiskError::BackendUnavailable),
+            ),
+            (
+                || {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        aero_storage::DiskError::InvalidState("closed".to_string()),
+                    )
+                },
+                |e| matches!(
+                    e,
+                    aero_storage::DiskError::InvalidState(msg) if msg == "closed"
+                ),
+            ),
+            (
+                || {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        aero_storage::DiskError::NotSupported("opfs".to_string()),
+                    )
+                },
+                |e| matches!(
+                    e,
+                    aero_storage::DiskError::NotSupported(msg) if msg == "opfs"
+                ),
+            ),
+            (
+                || io::Error::new(io::ErrorKind::Other, aero_storage::DiskError::Io("boom".to_string())),
+                |e| matches!(e, aero_storage::DiskError::Io(msg) if msg == "boom"),
+            ),
+        ];
+
+        for (err_fn, is_expected) in cases {
+            let backend = Box::new(ErrorBackend { err: *err_fn });
+            let mut disk = DeviceBackendAsAeroVirtualDisk::new(backend);
+
+            let mut buf = [0u8; 1];
+            let err = disk.read_at(0, &mut buf).unwrap_err();
+            assert!(is_expected(&err), "unexpected error: {err:?}");
+
+            let err = disk.write_at(0, &[0u8; 1]).unwrap_err();
+            assert!(is_expected(&err), "unexpected error: {err:?}");
+
+            let err = disk.flush().unwrap_err();
+            assert!(is_expected(&err), "unexpected error: {err:?}");
+        }
+    }
+
+    #[test]
+    fn device_backend_as_virtual_disk_maps_plain_io_error_kinds() {
+        struct PlainErrBackend;
+
+        impl DiskBackend for PlainErrBackend {
+            fn len(&self) -> u64 {
+                512
+            }
+
+            fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::StorageFull, "full"))
+            }
+
+            fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::ResourceBusy, "busy"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::NotConnected, "offline"))
+            }
+        }
+
+        let backend = Box::new(PlainErrBackend);
+        let mut disk = DeviceBackendAsAeroVirtualDisk::new(backend);
+
+        let mut buf = [0u8; 1];
+        let err = disk.read_at(0, &mut buf).unwrap_err();
+        assert!(matches!(err, aero_storage::DiskError::QuotaExceeded));
+
+        let err = disk.write_at(0, &[0u8; 1]).unwrap_err();
+        assert!(matches!(err, aero_storage::DiskError::InUse));
+
+        let err = disk.flush().unwrap_err();
+        assert!(matches!(err, aero_storage::DiskError::BackendUnavailable));
     }
 }
