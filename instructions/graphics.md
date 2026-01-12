@@ -226,6 +226,8 @@ bash ./scripts/safe-run.sh cargo test -p aero --test d3d11_smoke --locked
 
 **Note:** GPU tests may be skipped on headless/GPU-less machines. Set `AERO_REQUIRE_WEBGPU=1` to force failure if no GPU is available.
 
+If you need to validate CPU texture decompression fallbacks (or work around flaky driver/software-adapter compression paths), set `AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1` to force wgpu/WebGPU feature negotiation to avoid BC/ETC2/ASTC texture compression.
+
 ---
 
 ## Quick Start Checklist
