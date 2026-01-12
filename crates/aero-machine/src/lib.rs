@@ -3215,17 +3215,28 @@ impl Machine {
             // `poll_network()` call.
             if let Some(e1000) = e1000.as_ref() {
                 let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-                let command = {
+                let (command, bar0_base, bar1_base) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
-                        .unwrap_or(0)
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    let bar1_base = cfg
+                        .and_then(|cfg| cfg.bar_range(1))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base, bar1_base)
                 };
-                e1000
-                    .borrow_mut()
-                    .pci_config_write(0x04, 2, u32::from(command));
+                let mut nic = e1000.borrow_mut();
+                nic.pci_config_write(0x04, 2, u32::from(command));
+                if let Ok(bar0_base) = u32::try_from(bar0_base) {
+                    nic.pci_config_write(0x10, 4, bar0_base);
+                }
+                if let Ok(bar1_base) = u32::try_from(bar1_base) {
+                    nic.pci_config_write(0x14, 4, bar1_base);
+                }
             }
 
             // Virtio devices also gate DMA and INTx semantics on the PCI command register, but the
@@ -3585,19 +3596,27 @@ impl Machine {
     pub fn poll_network(&mut self) {
         if let Some(e1000) = &self.e1000 {
             let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-            let command = self
+            let (command, bar0_base, bar1_base) = self
                 .pci_cfg
                 .as_ref()
                 .and_then(|pci_cfg| {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    let bar1_base = cfg
+                        .and_then(|cfg| cfg.bar_range(1))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    Some((command, bar0_base, bar1_base))
                 })
-                .unwrap_or(0);
+                .unwrap_or((0, 0, 0));
 
-            // Keep the device model's internal PCI command register in sync with the platform PCI bus.
+            // Keep the device model's internal PCI config registers in sync with the canonical PCI
+            // bus owned by the machine.
             //
             // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
             // while the machine maintains a separate canonical config space for enumeration.
@@ -3606,6 +3625,12 @@ impl Machine {
             // up to date.
             let mut nic = e1000.borrow_mut();
             nic.pci_config_write(0x04, 2, u32::from(command));
+            if let Ok(bar0_base) = u32::try_from(bar0_base) {
+                nic.pci_config_write(0x10, 4, bar0_base);
+            }
+            if let Ok(bar1_base) = u32::try_from(bar1_base) {
+                nic.pci_config_write(0x14, 4, bar1_base);
+            }
 
             const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
             // `Option<B>` implements `NetworkBackend`, so when no backend is installed this still
