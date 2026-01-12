@@ -71,7 +71,8 @@ This section describes the *canonical* browser runtime integration.
    - The coordinator owns the attachment policy (`RingBufferOwner`) because the playback ring is SPSC (exactly one producer).
    - Default policy: CPU worker in demo mode (no disk), IO worker when running a real VM (disk present).
      - See `WorkerCoordinator.defaultAudioRingBufferOwner()` + `syncAudioRingBufferAttachments()`.
-   - Optional override (use with care): `WorkerCoordinator.setAudioRingBufferOwner("cpu" | "io" | "none")`.
+   - Optional override (use with care): `WorkerCoordinator.setAudioRingBufferOwner("cpu" | "io" | "none" | null)`.
+     - Use `null` to clear an override and return to the default policy.
      - Note: `RingBufferOwner` includes `"both"` for compatibility, but the coordinator intentionally rejects it (throws) because it
        violates the SPSC contract (multi-producer access corrupts the ring indices).
    - `ringBuffer`: `SharedArrayBuffer | null` (null detaches)
@@ -91,7 +92,8 @@ This section describes the *canonical* browser runtime integration.
    - The coordinator owns the attachment policy (`RingBufferOwner`) because the mic ring is SPSC (exactly one consumer).
    - Default policy: CPU worker in demo mode, IO worker in VM mode.
      - See `WorkerCoordinator.defaultMicrophoneRingBufferOwner()` + `syncMicrophoneRingBufferAttachments()`.
-   - Optional override (use with care): `WorkerCoordinator.setMicrophoneRingBufferOwner("cpu" | "io" | "none")`.
+    - Optional override (use with care): `WorkerCoordinator.setMicrophoneRingBufferOwner("cpu" | "io" | "none" | null)`.
+      - Use `null` to clear an override and return to the default policy.
      - Note: `RingBufferOwner` includes `"both"` for compatibility, but the coordinator intentionally rejects it (throws) because it
        violates the SPSC contract (multiple consumers would advance `readPos` and effectively double-consume/drop samples).
    - `ringBuffer`: `SharedArrayBuffer | null`

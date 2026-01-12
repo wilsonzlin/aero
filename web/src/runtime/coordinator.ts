@@ -763,7 +763,19 @@ export class WorkerCoordinator {
     return this.shared?.segments.guestMemory ?? null;
   }
 
-  setAudioRingBufferOwner(owner: RingBufferOwner): void {
+  /**
+   * Override which worker receives the AudioWorklet playback ring buffer attachment.
+   *
+   * Pass `null` to clear any prior override and return to the default policy:
+   * - demo mode (no disk): CPU worker
+   * - VM mode (disk present): IO worker
+   */
+  setAudioRingBufferOwner(owner: RingBufferOwner | null): void {
+    if (owner === null) {
+      this.audioRingBufferOwnerOverride = null;
+      this.syncAudioRingBufferAttachments();
+      return;
+    }
     if (owner === "both") {
       throw new Error("Audio ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.");
     }
@@ -771,7 +783,17 @@ export class WorkerCoordinator {
     this.syncAudioRingBufferAttachments();
   }
 
-  setMicrophoneRingBufferOwner(owner: RingBufferOwner): void {
+  /**
+   * Override which worker receives the microphone ring buffer attachment (SPSC consumer).
+   *
+   * Pass `null` to clear any prior override and return to the default policy.
+   */
+  setMicrophoneRingBufferOwner(owner: RingBufferOwner | null): void {
+    if (owner === null) {
+      this.micRingBufferOwnerOverride = null;
+      this.syncMicrophoneRingBufferAttachments();
+      return;
+    }
     if (owner === "both") {
       throw new Error("Microphone ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.");
     }

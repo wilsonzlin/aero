@@ -948,10 +948,10 @@ function renderAudioPanel(): HTMLElement {
       // ignore
     }
     // Detach the AudioWorklet ring from the worker runtime and restore the default
-    // demo-mode routing (CPU worker owns audio output).
+    // routing policy (demo mode: CPU worker; VM mode: IO worker).
     try {
       workerCoordinator.setAudioRingBuffer(null, 0, 0, 0);
-      workerCoordinator.setAudioRingBufferOwner("cpu");
+      workerCoordinator.setAudioRingBufferOwner(null);
     } catch {
       // ignore best-effort detach/reset
     }
@@ -966,7 +966,10 @@ function renderAudioPanel(): HTMLElement {
     syntheticMic?.stop();
     syntheticMic = null;
     workerCoordinator.setMicrophoneRingBuffer(null, 0);
+    // Restore default routing after the loopback demo (demo mode: CPU worker; VM mode: IO worker).
+    workerCoordinator.setMicrophoneRingBufferOwner(null);
     workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
+    workerCoordinator.setAudioRingBufferOwner(null);
   }
 
   function stopHdaDemo(): void {

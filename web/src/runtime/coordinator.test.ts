@@ -262,6 +262,11 @@ describe("runtime/coordinator", () => {
     // Now the CPU must be detached and the IO worker must receive the SAB.
     expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
     expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(audioSab);
+
+    // Clearing the override should restore the default routing policy (CPU in demo mode).
+    coordinator.setAudioRingBufferOwner(null);
+    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(audioSab);
+    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
   });
 
   it("sends net.trace.enable to the net worker when enabling net tracing", () => {
