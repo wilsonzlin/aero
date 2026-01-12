@@ -9707,16 +9707,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   if (!hDevice.pDrvPrivate || !pData || vec4_count == 0) {
     return trace.ret(E_INVALIDARG);
   }
+  const uint32_t stage_norm = (stage == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
+  if (start_reg >= 256 || vec4_count > 256u - start_reg) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  float* dst = (stage == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
-  if (start_reg < 256) {
-    const uint32_t write_regs = std::min(vec4_count, 256u - start_reg);
-    std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(write_regs) * 4 * sizeof(float));
-  }
-  stateblock_record_shader_const_f_locked(dev, stage, start_reg, pData, vec4_count);
+  float* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
+  std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(vec4_count) * 4 * sizeof(float));
+  stateblock_record_shader_const_f_locked(dev, stage_norm, start_reg, pData, vec4_count);
 
   const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
@@ -9724,7 +9725,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   if (!cmd) {
     return trace.ret(E_OUTOFMEMORY);
   }
-  cmd->stage = d3d9_stage_to_aerogpu_stage(stage);
+  cmd->stage = d3d9_stage_to_aerogpu_stage(stage_norm);
   cmd->start_register = start_reg;
   cmd->vec4_count = vec4_count;
   cmd->reserved0 = 0;
