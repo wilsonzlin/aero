@@ -347,6 +347,9 @@ impl UhciRuntime {
 
     pub fn port_read(&mut self, offset: u16, size: u8) -> u32 {
         let size = size as usize;
+        if size == 0 {
+            return 0;
+        }
         match size {
             1 | 2 | 4 => self.ctrl.io_read(offset, size),
             _ => 0xFFFF_FFFF,
