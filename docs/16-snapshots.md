@@ -122,8 +122,8 @@ Restore notes:
 
 Some platform devices are snapshotted as their own `DEVICES` entries and use dedicated `DeviceId` constants:
 
-- `DeviceId::APIC` (`2`) — platform interrupt controller complex (`PlatformInterrupts`: legacy PIC + IOAPIC + LAPIC + IMCR routing). This is the historical id used by existing snapshots.
-- `DeviceId::PLATFORM_INTERRUPTS` (`21`) — preferred id for `PlatformInterrupts` snapshots in new integrations
+- `DeviceId::APIC` (`2`) — platform interrupt controller complex (`PlatformInterrupts`: legacy PIC + IOAPIC + LAPIC + IMCR routing). Historical id used by older snapshots.
+- `DeviceId::PLATFORM_INTERRUPTS` (`21`) — preferred id for `PlatformInterrupts` snapshots (used by the canonical machine)
 - `DeviceId::PIT` (`3`) — PIT (8254)
 - `DeviceId::RTC` (`4`) — RTC/CMOS (0x70/0x71)
 - `DeviceId::PCI` (`5`) — PCI core state (`PciCoreSnapshot` wrapper, inner `PCIC`, containing `PCPT` + `INTX`; see `PCI core state` below)
@@ -236,8 +236,9 @@ wrapper above to match the canonical layout.
 
 Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform
 interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the
-platform interrupt controller complex** (typically the `DeviceId::APIC` snapshot in Aero’s machine model, or
-`DeviceId::PLATFORM_INTERRUPTS` in newer encodings) to re-drive any asserted GSIs (e.g. level-triggered INTx
+platform interrupt controller complex** (typically the `DeviceId::PLATFORM_INTERRUPTS` snapshot in Aero’s machine
+model, or the historical `DeviceId::APIC` id in older snapshots) to re-drive any asserted GSIs (e.g.
+level-triggered INTx
 lines).
 
 ### Storage controllers (AHCI / IDE / ATAPI)

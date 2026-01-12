@@ -178,6 +178,26 @@ fn snapshot_source_emits_single_pci_entry_for_pci_core() {
 }
 
 #[test]
+fn snapshot_source_emits_platform_interrupts_under_platform_interrupts_device_id() {
+    let m = Machine::new(pc_machine_config()).unwrap();
+    let devices = snapshot::SnapshotSource::device_states(&m);
+
+    assert!(
+        devices
+            .iter()
+            .any(|d| d.id == snapshot::DeviceId::PLATFORM_INTERRUPTS),
+        "machine snapshot should include a PLATFORM_INTERRUPTS entry when pc platform is enabled"
+    );
+
+    // `DeviceId::APIC` is the historical id used by older snapshots; new snapshots should prefer
+    // the dedicated `PLATFORM_INTERRUPTS` id.
+    assert!(
+        !devices.iter().any(|d| d.id == snapshot::DeviceId::APIC),
+        "machine snapshot should not emit the legacy APIC DeviceId for platform interrupts"
+    );
+}
+
+#[test]
 fn snapshot_restore_preserves_acpi_pm_timer_and_it_advances_with_manual_clock() {
     let mut src = Machine::new(pc_machine_config()).unwrap();
 

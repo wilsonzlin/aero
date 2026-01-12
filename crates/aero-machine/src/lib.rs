@@ -1545,11 +1545,12 @@ impl snapshot::SnapshotSource for Machine {
 
         // Optional PC platform devices.
         //
-        // Note: We snapshot the combined PIC + IOAPIC + LAPIC router state via
-        // `PlatformInterrupts` under the historical `DeviceId::APIC` ID.
+        // Note: We snapshot the combined PIC + IOAPIC + LAPIC router state via `PlatformInterrupts`.
+        // Prefer the dedicated `DeviceId::PLATFORM_INTERRUPTS` id; keep accepting the historical
+        // `DeviceId::APIC` id for backward compatibility when restoring older snapshots.
         if let Some(interrupts) = &self.interrupts {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                snapshot::DeviceId::APIC,
+                snapshot::DeviceId::PLATFORM_INTERRUPTS,
                 &*interrupts.borrow(),
             ));
         }
@@ -1742,10 +1743,14 @@ impl snapshot::SnapshotTarget for Machine {
         // Optional PC platform devices.
 
         // 1) Restore interrupt controller complex first.
+        //
+        // Prefer the dedicated `PLATFORM_INTERRUPTS` id, but accept the historical `APIC` id for
+        // backward compatibility with older snapshots.
         let mut restored_interrupts = false;
-        if let (Some(interrupts), Some(state)) =
-            (&self.interrupts, by_id.remove(&snapshot::DeviceId::APIC))
-        {
+        let interrupts_state = by_id
+            .remove(&snapshot::DeviceId::PLATFORM_INTERRUPTS)
+            .or_else(|| by_id.remove(&snapshot::DeviceId::APIC));
+        if let (Some(interrupts), Some(state)) = (&self.interrupts, interrupts_state) {
             let mut interrupts = interrupts.borrow_mut();
             restored_interrupts =
                 snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts)
