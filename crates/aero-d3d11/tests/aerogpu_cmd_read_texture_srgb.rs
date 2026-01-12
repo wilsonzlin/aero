@@ -7,7 +7,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
-use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_pci::{
+    AerogpuFormat, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
+};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -29,31 +31,6 @@ fn end_cmd(stream: &mut [u8], start: usize) {
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
-}
-
-fn parse_aerogpu_pci_h_enum_value(header: &str, contains: &[&str]) -> Option<u32> {
-    for line in header.lines() {
-        let line = line.trim();
-        if !line.starts_with("AEROGPU_FORMAT_") {
-            continue;
-        }
-        if !contains.iter().all(|needle| line.contains(needle)) {
-            continue;
-        }
-
-        let (_lhs, rhs) = line.split_once('=')?;
-        let token = rhs
-            .trim()
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .next()?
-            .trim_end_matches(|c: char| c == 'u' || c == 'U');
-
-        if let Some(hex) = token.strip_prefix("0x").or_else(|| token.strip_prefix("0X")) {
-            return u32::from_str_radix(hex, 16).ok();
-        }
-        return token.parse().ok();
-    }
-    None
 }
 
 fn build_clear_present_stream(format_u32: u32) -> Vec<u8> {
@@ -127,17 +104,8 @@ fn aerogpu_cmd_read_texture_rgba8_supports_srgb_render_targets() {
         return;
     }
 
-    // Discover the numeric enum values from the protocol header so this test can land before the
-    // `aero-protocol` Rust enums are updated.
-    let header = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../drivers/aerogpu/protocol/aerogpu_pci.h"
-    ));
-
-    let bgra_srgb = parse_aerogpu_pci_h_enum_value(header, &["B8G8R8A8", "SRGB"])
-        .expect("missing B8G8R8A8 *SRGB aerogpu_format in aerogpu_pci.h");
-    let rgba_srgb = parse_aerogpu_pci_h_enum_value(header, &["R8G8B8A8", "SRGB"])
-        .expect("missing R8G8B8A8 *SRGB aerogpu_format in aerogpu_pci.h");
+    let bgra_srgb = AerogpuFormat::B8G8R8A8UnormSrgb as u32;
+    let rgba_srgb = AerogpuFormat::R8G8B8A8UnormSrgb as u32;
 
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
@@ -176,4 +144,3 @@ fn aerogpu_cmd_read_texture_rgba8_supports_srgb_render_targets() {
         }
     });
 }
-
