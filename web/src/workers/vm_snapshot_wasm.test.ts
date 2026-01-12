@@ -6,7 +6,11 @@ import {
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_I8042,
+  VM_SNAPSHOT_DEVICE_E1000_KIND,
+  VM_SNAPSHOT_DEVICE_ID_E1000,
+  VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
+  VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
@@ -77,15 +81,24 @@ describe("workers/vm_snapshot_wasm", () => {
   it("maps snapshot device kinds/ids for WorkerVmSnapshot", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
+
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_I8042_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_I8042);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_I8042)).toBe(VM_SNAPSHOT_DEVICE_I8042_KIND);
-    expect(vmSnapshotDeviceKindToId("unknown")).toBeNull();
-    expect(vmSnapshotDeviceIdToKind(999)).toBeNull();
-  });
 
-  it("maps HDA audio device kinds/ids for WorkerVmSnapshot", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA)).toBe(VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND);
+
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_NET_STACK_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_NET_STACK);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_NET_STACK)).toBe(VM_SNAPSHOT_DEVICE_NET_STACK_KIND);
+
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_E1000)).toBe(VM_SNAPSHOT_DEVICE_E1000_KIND);
+
+    // Forward compatibility: unknown device IDs should still roundtrip through WorkerVmSnapshot.
+    expect(vmSnapshotDeviceKindToId("device.999")).toBe(999);
+    expect(vmSnapshotDeviceIdToKind(999)).toBe("device.999");
+
+    expect(vmSnapshotDeviceKindToId("unknown")).toBeNull();
   });
 
   it("parses aero-io-snapshot TLV version header when present", () => {

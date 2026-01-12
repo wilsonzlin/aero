@@ -21,6 +21,7 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         (DeviceId::HPET, 17u32, "HPET"),
         (DeviceId::HDA, 18u32, "HDA"),
         (DeviceId::E1000, 19u32, "E1000"),
+        (DeviceId::NET_STACK, 20u32, "NET_STACK"),
     ];
 
     for (id, expected_num, expected_name) in cases {

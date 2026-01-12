@@ -81,6 +81,8 @@ impl DeviceId {
     pub const HDA: DeviceId = DeviceId(18);
     /// Intel E1000 (82540EM-ish) NIC model state.
     pub const E1000: DeviceId = DeviceId(19);
+    /// User-space network stack state (TCP/IP, NAT, etc.).
+    pub const NET_STACK: DeviceId = DeviceId(20);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -103,6 +105,7 @@ impl DeviceId {
             DeviceId::HPET => Some("HPET"),
             DeviceId::HDA => Some("HDA"),
             DeviceId::E1000 => Some("E1000"),
+            DeviceId::NET_STACK => Some("NET_STACK"),
             _ => None,
         }
     }
