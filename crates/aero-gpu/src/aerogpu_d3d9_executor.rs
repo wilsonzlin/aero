@@ -3759,7 +3759,7 @@ impl AerogpuD3d9Executor {
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
                     let dst_underlying = self.resolve_resource_handle(dst_texture)?;
                     let (
-                        (src_format_raw, _src_format, src_w, src_h, src_mips, src_layers),
+                        (src_format_raw, src_format, src_w, src_h, src_mips, src_layers),
                         (
                             dst_format_raw,
                             dst_format,
@@ -3833,6 +3833,12 @@ impl AerogpuD3d9Executor {
                     };
 
                     if src_format_raw != dst_format_raw {
+                        return Err(AerogpuD3d9Error::CopyNotSupported {
+                            src: src_texture,
+                            dst: dst_texture,
+                        });
+                    }
+                    if src_format != dst_format {
                         return Err(AerogpuD3d9Error::CopyNotSupported {
                             src: src_texture,
                             dst: dst_texture,
@@ -3932,6 +3938,28 @@ impl AerogpuD3d9Executor {
                         "COPY_TEXTURE2D: dst",
                     )?;
 
+                    // WebGPU copy operations for BC formats require the copy extents themselves to
+                    // be block-aligned. For mip edges we allow the guest to specify the logical
+                    // width/height, then round up to the containing texel-blocks for the actual
+                    // WebGPU copy (the padded texels are not addressable by sampling).
+                    let dst_is_bc = matches!(
+                        dst_format,
+                        wgpu::TextureFormat::Bc1RgbaUnorm
+                            | wgpu::TextureFormat::Bc2RgbaUnorm
+                            | wgpu::TextureFormat::Bc3RgbaUnorm
+                            | wgpu::TextureFormat::Bc7RgbaUnorm
+                    );
+                    let copy_width = if dst_is_bc {
+                        align_to(width, texel_block.block_width)
+                    } else {
+                        width
+                    };
+                    let copy_height = if dst_is_bc {
+                        align_to(height, texel_block.block_height)
+                    } else {
+                        height
+                    };
+
                     let dst_writeback_plan = if writeback {
                         let dst_backing = dst_backing.ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
@@ -3939,13 +3967,6 @@ impl AerogpuD3d9Executor {
                             )
                         })?;
                         let bc_format = aerogpu_format_bc(dst_format_raw);
-                        let dst_is_bc = matches!(
-                            dst_format,
-                            wgpu::TextureFormat::Bc1RgbaUnorm
-                                | wgpu::TextureFormat::Bc2RgbaUnorm
-                                | wgpu::TextureFormat::Bc3RgbaUnorm
-                                | wgpu::TextureFormat::Bc7RgbaUnorm
-                        );
                         if bc_format.is_some() && !dst_is_bc {
                             return Err(AerogpuD3d9Error::Validation(
                                 "COPY_TEXTURE2D: WRITEBACK_DST is not supported for BC textures when TEXTURE_COMPRESSION_BC is not enabled"
@@ -4212,8 +4233,8 @@ impl AerogpuD3d9Executor {
                             aspect: wgpu::TextureAspect::All,
                         },
                         wgpu::Extent3d {
-                            width,
-                            height,
+                            width: copy_width,
+                            height: copy_height,
                             depth_or_array_layers: 1,
                         },
                     );
@@ -4255,8 +4276,8 @@ impl AerogpuD3d9Executor {
                                 },
                             },
                             wgpu::Extent3d {
-                                width,
-                                height,
+                                width: copy_width,
+                                height: copy_height,
                                 depth_or_array_layers: 1,
                             },
                         );

@@ -697,16 +697,16 @@ fn d3d9_create_texture2d_guest_backing_bounds_bc1() {
 
     let mut writer_ok = AerogpuCmdWriter::new();
     writer_ok.create_texture2d(
-        1,                                 // texture_handle
-        0,                                 // usage_flags
+        1,                                  // texture_handle
+        0,                                  // usage_flags
         AerogpuFormat::BC1RgbaUnorm as u32, // format
-        4,                                 // width
-        4,                                 // height
-        1,                                 // mip_levels
-        1,                                 // array_layers
-        8,                                 // row_pitch_bytes (1 block row)
-        1,                                 // backing_alloc_id
-        0,                                 // backing_offset_bytes
+        4,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        8,                                  // row_pitch_bytes (1 block row)
+        1,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
     );
     let stream_ok = writer_ok.finish();
     exec.execute_cmd_stream_with_guest_memory(&stream_ok, &mut guest_memory, Some(&ok_alloc))
@@ -724,20 +724,23 @@ fn d3d9_create_texture2d_guest_backing_bounds_bc1() {
 
     let mut writer_fail = AerogpuCmdWriter::new();
     writer_fail.create_texture2d(
-        2,                                 // texture_handle
-        0,                                 // usage_flags
+        2,                                  // texture_handle
+        0,                                  // usage_flags
         AerogpuFormat::BC1RgbaUnorm as u32, // format
-        4,                                 // width
-        4,                                 // height
-        1,                                 // mip_levels
-        1,                                 // array_layers
-        8,                                 // row_pitch_bytes (1 block row)
-        1,                                 // backing_alloc_id
-        0,                                 // backing_offset_bytes
+        4,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        8,                                  // row_pitch_bytes (1 block row)
+        1,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
     );
     let stream_fail = writer_fail.finish();
-    match exec.execute_cmd_stream_with_guest_memory(&stream_fail, &mut guest_memory, Some(&small_alloc))
-    {
+    match exec.execute_cmd_stream_with_guest_memory(
+        &stream_fail,
+        &mut guest_memory,
+        Some(&small_alloc),
+    ) {
         Ok(_) => panic!("expected BC1 CREATE_TEXTURE2D to be rejected when alloc is too small"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("out of bounds")),
         Err(other) => panic!("unexpected error: {other:?}"),
@@ -770,16 +773,16 @@ fn d3d9_create_texture2d_guest_backing_bounds_bc3() {
 
     let mut writer_ok = AerogpuCmdWriter::new();
     writer_ok.create_texture2d(
-        1,                                 // texture_handle
-        0,                                 // usage_flags
+        1,                                  // texture_handle
+        0,                                  // usage_flags
         AerogpuFormat::BC3RgbaUnorm as u32, // format
-        4,                                 // width
-        4,                                 // height
-        1,                                 // mip_levels
-        1,                                 // array_layers
-        16,                                // row_pitch_bytes (1 block row)
-        1,                                 // backing_alloc_id
-        0,                                 // backing_offset_bytes
+        4,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        16,                                 // row_pitch_bytes (1 block row)
+        1,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
     );
     let stream_ok = writer_ok.finish();
     exec.execute_cmd_stream_with_guest_memory(&stream_ok, &mut guest_memory, Some(&ok_alloc))
@@ -797,20 +800,23 @@ fn d3d9_create_texture2d_guest_backing_bounds_bc3() {
 
     let mut writer_fail = AerogpuCmdWriter::new();
     writer_fail.create_texture2d(
-        2,                                 // texture_handle
-        0,                                 // usage_flags
+        2,                                  // texture_handle
+        0,                                  // usage_flags
         AerogpuFormat::BC3RgbaUnorm as u32, // format
-        4,                                 // width
-        4,                                 // height
-        1,                                 // mip_levels
-        1,                                 // array_layers
-        16,                                // row_pitch_bytes (1 block row)
-        1,                                 // backing_alloc_id
-        0,                                 // backing_offset_bytes
+        4,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        16,                                 // row_pitch_bytes (1 block row)
+        1,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
     );
     let stream_fail = writer_fail.finish();
-    match exec.execute_cmd_stream_with_guest_memory(&stream_fail, &mut guest_memory, Some(&small_alloc))
-    {
+    match exec.execute_cmd_stream_with_guest_memory(
+        &stream_fail,
+        &mut guest_memory,
+        Some(&small_alloc),
+    ) {
         Ok(_) => panic!("expected BC3 CREATE_TEXTURE2D to be rejected when alloc is too small"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("out of bounds")),
         Err(other) => panic!("unexpected error: {other:?}"),
@@ -869,28 +875,28 @@ fn d3d9_copy_texture2d_rejects_misaligned_bc_region() {
 
     let mut writer = AerogpuCmdWriter::new();
     writer.create_texture2d(
-        1,                                // texture_handle
-        0,                                // usage_flags
+        1,                                  // texture_handle
+        0,                                  // usage_flags
         AerogpuFormat::BC1RgbaUnorm as u32, // format
-        8,                                // width
-        4,                                // height
-        1,                                // mip_levels
-        1,                                // array_layers
-        0,                                // row_pitch_bytes
-        0,                                // backing_alloc_id
-        0,                                // backing_offset_bytes
+        8,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
     );
     writer.create_texture2d(
-        2,                                // texture_handle
-        0,                                // usage_flags
+        2,                                  // texture_handle
+        0,                                  // usage_flags
         AerogpuFormat::BC1RgbaUnorm as u32, // format
-        8,                                // width
-        4,                                // height
-        1,                                // mip_levels
-        1,                                // array_layers
-        0,                                // row_pitch_bytes
-        0,                                // backing_alloc_id
-        0,                                // backing_offset_bytes
+        8,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
     );
 
     // Misaligned destination x (BC blocks are 4x4).
@@ -912,10 +918,200 @@ fn d3d9_copy_texture2d_rejects_misaligned_bc_region() {
 
     let stream = writer.finish();
     match exec.execute_cmd_stream(&stream) {
-        Ok(_) => panic!("expected COPY_TEXTURE2D for BC format with misaligned region to be rejected"),
+        Ok(_) => {
+            panic!("expected COPY_TEXTURE2D for BC format with misaligned region to be rejected")
+        }
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("BC copy origin")),
         Err(other) => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn d3d9_copy_texture2d_rejects_misaligned_bc_width() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        8,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+    writer.create_texture2d(
+        2,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        8,                                  // width
+        4,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+
+    // Non-block-aligned width that does not reach the mip edge.
+    writer.copy_texture2d(
+        2, // dst_texture
+        1, // src_texture
+        0, // dst_mip_level
+        0, // dst_array_layer
+        0, // src_mip_level
+        0, // src_array_layer
+        0, // dst_x
+        0, // dst_y
+        0, // src_x
+        0, // src_y
+        2, // width (BC blocks are 4x4)
+        4, // height
+        0, // flags
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => {
+            panic!("expected COPY_TEXTURE2D for BC format with misaligned width to be rejected")
+        }
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("BC copy width")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_copy_texture2d_rejects_misaligned_bc_height() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        4,                                  // width
+        8,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+    writer.create_texture2d(
+        2,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        4,                                  // width
+        8,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+
+    // Non-block-aligned height that does not reach the mip edge.
+    writer.copy_texture2d(
+        2, // dst_texture
+        1, // src_texture
+        0, // dst_mip_level
+        0, // dst_array_layer
+        0, // src_mip_level
+        0, // src_array_layer
+        0, // dst_x
+        0, // dst_y
+        0, // src_x
+        0, // src_y
+        4, // width
+        2, // height (BC blocks are 4x4)
+        0, // flags
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => {
+            panic!("expected COPY_TEXTURE2D for BC format with misaligned height to be rejected")
+        }
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("BC copy height")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_copy_texture2d_allows_mip_edge_bc_region() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        4,                                  // width (mip1 width=2)
+        4,                                  // height (mip1 height=2)
+        2,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+    writer.create_texture2d(
+        2,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::BC1RgbaUnorm as u32, // format
+        4,                                  // width
+        4,                                  // height
+        2,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes
+        0,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+
+    // Copy the entire mip even though mip dimensions are smaller than the BC block size
+    // (mip1 is 2x2). This should be accepted.
+    writer.copy_texture2d(
+        2, // dst_texture
+        1, // src_texture
+        1, // dst_mip_level
+        0, // dst_array_layer
+        1, // src_mip_level
+        0, // src_array_layer
+        0, // dst_x
+        0, // dst_y
+        0, // src_x
+        0, // src_y
+        2, // width
+        2, // height
+        0, // flags
+    );
+
+    let stream = writer.finish();
+    exec.execute_cmd_stream(&stream)
+        .expect("COPY_TEXTURE2D edge BC region should be accepted");
 }
 
 #[test]
