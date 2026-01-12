@@ -82,6 +82,16 @@ fn pc_machine_e1000_tx_ring_pushes_frame_to_net_tx_ring_backend() {
     m.poll_network();
 
     assert_eq!(tx_ring.try_pop(), Ok(frame));
+
+    let stats = m
+        .network_backend_l2_ring_stats()
+        .expect("expected ring backend stats");
+    assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_dropped_oversize, 0);
+    assert_eq!(stats.tx_dropped_full, 0);
+    assert_eq!(stats.rx_popped_frames, 0);
+    assert_eq!(stats.rx_dropped_oversize, 0);
+    assert_eq!(stats.rx_corrupt, 0);
 }
 
 #[test]

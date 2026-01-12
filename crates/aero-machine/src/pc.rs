@@ -16,7 +16,7 @@ use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::interrupts::InterruptController as _;
 use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::CpuCore;
-use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
+use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig, ResetEvent};
 use aero_platform::reset::ResetKind;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
@@ -247,6 +247,13 @@ impl PcMachine {
     /// Detach (drop) any currently installed network backend.
     pub fn detach_network(&mut self) {
         self.network_backend = None;
+    }
+
+    /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
+    pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.network_backend
+            .as_ref()
+            .and_then(|backend| backend.l2_ring_stats())
     }
 
     /// Reset the machine and transfer control to firmware POST (boot sector).

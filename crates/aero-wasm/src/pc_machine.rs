@@ -8,6 +8,7 @@
 use wasm_bindgen::prelude::*;
 
 use aero_ipc::wasm::SharedRingBuffer;
+use js_sys::{BigInt, Object, Reflect};
 
 use crate::RunExit;
 
@@ -74,5 +75,47 @@ impl PcMachine {
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
         RunExit::from_native(self.inner.run_slice(max_insts as u64))
     }
-}
 
+    /// Return best-effort stats for the attached `NET_TX`/`NET_RX` ring backend (or `null`).
+    ///
+    /// Values are exposed as JS `BigInt` so callers do not lose precision for long-running VMs.
+    pub fn net_stats(&self) -> JsValue {
+        let Some(stats) = self.inner.network_backend_l2_ring_stats() else {
+            return JsValue::NULL;
+        };
+
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_pushed_frames"),
+            &BigInt::from(stats.tx_pushed_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_oversize"),
+            &BigInt::from(stats.tx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("tx_dropped_full"),
+            &BigInt::from(stats.tx_dropped_full).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_popped_frames"),
+            &BigInt::from(stats.rx_popped_frames).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_dropped_oversize"),
+            &BigInt::from(stats.rx_dropped_oversize).into(),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("rx_corrupt"),
+            &BigInt::from(stats.rx_corrupt).into(),
+        );
+
+        obj.into()
+    }
+}
