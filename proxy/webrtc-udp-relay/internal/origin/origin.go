@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // NormalizeHeader validates and normalizes a browser Origin header.
@@ -218,8 +217,10 @@ func normalizeRequestHost(requestHost, scheme string) (string, bool) {
 }
 
 func isASCIIOriginString(s string) bool {
-	for _, r := range s {
-		if r <= 0x20 || r >= 0x7f || unicode.IsSpace(r) || unicode.IsControl(r) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		// Only allow printable ASCII (exclude whitespace and control chars).
+		if c <= 0x20 || c >= 0x7f {
 			return false
 		}
 	}
