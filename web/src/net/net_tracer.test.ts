@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NetTracer } from "./net_tracer";
+import { PCAPNG_LINKTYPE_ETHERNET } from "./pcapng";
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
@@ -26,6 +27,49 @@ function countEpbs(bytes: Uint8Array): number {
     off += blockLen;
   }
   return epbs;
+}
+
+function parsePcapngIdbs(bytes: Uint8Array): Array<{ name: string | null; linkType: number }> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const textDecoder = new TextDecoder();
+  const interfaces: Array<{ name: string | null; linkType: number }> = [];
+
+  let off = 0;
+  while (off < bytes.byteLength) {
+    expect(off + 8).toBeLessThanOrEqual(bytes.byteLength);
+    const blockType = view.getUint32(off, true);
+    const blockLen = view.getUint32(off + 4, true);
+    expect(blockLen).toBeGreaterThanOrEqual(12);
+    expect(blockLen % 4).toBe(0);
+    expect(off + blockLen).toBeLessThanOrEqual(bytes.byteLength);
+    const trailerLen = view.getUint32(off + blockLen - 4, true);
+    expect(trailerLen).toBe(blockLen);
+
+    if (blockType === 0x0000_0001) {
+      const bodyStart = off + 8;
+      const bodyEnd = off + blockLen - 4;
+
+      const linkType = view.getUint16(bodyStart, true);
+      // IDB fixed body is 8 bytes: linktype(u16), reserved(u16), snaplen(u32).
+      let optOff = bodyStart + 8;
+      let name: string | null = null;
+      while (optOff + 4 <= bodyEnd) {
+        const code = view.getUint16(optOff, true);
+        const len = view.getUint16(optOff + 2, true);
+        const valueStart = optOff + 4;
+        const valueEnd = valueStart + len;
+        expect(valueEnd).toBeLessThanOrEqual(bodyEnd);
+        if (code === 0) break;
+        if (code === 2) name = textDecoder.decode(bytes.subarray(valueStart, valueEnd));
+        optOff = valueStart + ((len + 3) & ~3);
+      }
+      interfaces.push({ name, linkType });
+    }
+
+    off += blockLen;
+  }
+
+  return interfaces;
 }
 
 function parsePcapngEpbs(bytes: Uint8Array): Array<{ interfaceId: number; payload: Uint8Array; flags: number | null }> {
@@ -97,6 +141,9 @@ describe("NetTracer", () => {
     expect(tracer.stats().records).toBe(2);
     const bytes = tracer.exportPcapng();
     expect(countEpbs(bytes)).toBe(2);
+
+    const idbs = parsePcapngIdbs(bytes);
+    expect(idbs).toEqual([{ name: "guest-eth0", linkType: PCAPNG_LINKTYPE_ETHERNET }]);
 
     const epbs = parsePcapngEpbs(bytes);
     const tx = epbs.find((e) => arraysEqual(e.payload, txFrame));
