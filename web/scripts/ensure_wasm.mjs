@@ -29,28 +29,39 @@ export function ensureVariant(variant) {
         variant === "threaded" ? "pkg-jit-threaded" : "pkg-jit-single",
     );
 
-    const expectedFiles = [
-        path.join(outDirAero, "aero_wasm.js"),
-        path.join(outDirAero, "aero_wasm_bg.wasm"),
-        path.join(outDirAeroGpu, "aero_gpu_wasm.js"),
-        path.join(outDirAeroGpu, "aero_gpu_wasm_bg.wasm"),
+    const packages = [
+        {
+            id: "core",
+            files: [path.join(outDirAero, "aero_wasm.js"), path.join(outDirAero, "aero_wasm_bg.wasm")],
+        },
+        {
+            id: "gpu",
+            files: [path.join(outDirAeroGpu, "aero_gpu_wasm.js"), path.join(outDirAeroGpu, "aero_gpu_wasm_bg.wasm")],
+        },
     ];
 
     // Optional: the Tier-1 JIT compiler wasm-pack package. Only require it when the
     // crate exists (e.g. downstream forks may not include it).
     const jitCratePath = path.join(repoRoot, "crates/aero-jit-wasm", "Cargo.toml");
     if (existsSync(jitCratePath)) {
-        expectedFiles.push(
-            path.join(outDirAeroJit, "aero_jit_wasm.js"),
-            path.join(outDirAeroJit, "aero_jit_wasm_bg.wasm"),
-        );
+        packages.push({
+            id: "jit",
+            files: [path.join(outDirAeroJit, "aero_jit_wasm.js"), path.join(outDirAeroJit, "aero_jit_wasm_bg.wasm")],
+        });
     }
 
-    if (expectedFiles.every((file) => existsSync(file))) {
+    const expectedFiles = packages.flatMap((pkg) => pkg.files);
+    const missingPackages = packages.filter((pkg) => pkg.files.some((file) => !existsSync(file))).map((pkg) => pkg.id);
+
+    if (missingPackages.length === 0) {
         return;
     }
 
-    const result = spawnSync("node", [path.join(__dirname, "build_wasm.mjs"), variant], { stdio: "inherit" });
+    const result = spawnSync(
+        "node",
+        [path.join(__dirname, "build_wasm.mjs"), variant, "--packages", missingPackages.join(",")],
+        { stdio: "inherit" },
+    );
     if (result.error) {
         throw new EnsureWasmError(
             `[wasm] Failed to execute build_wasm.mjs for variant '${variant}': ${result.error.message}`,

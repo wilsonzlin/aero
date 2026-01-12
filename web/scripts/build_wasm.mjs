@@ -4,7 +4,15 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 function usageAndExit() {
-    console.error("Usage: node ./scripts/build_wasm.mjs <threaded|single> [dev|release]");
+    console.error(
+        [
+            "Usage: node ./scripts/build_wasm.mjs <threaded|single> [dev|release] [options]",
+            "",
+            "Options:",
+            "  --packages <list>   Comma-separated package list to build (default: all).",
+            "                     Known packages: core,gpu,jit",
+        ].join("\n"),
+    );
     process.exit(2);
 }
 
@@ -22,16 +30,61 @@ function checkCommand(command, args, help) {
     return result.stdout.trim();
 }
 
-const variant = process.argv[2];
-const mode = process.argv[3] ?? "release";
+function parseArgs(argv) {
+    if (argv.length === 0 || argv.includes("-h") || argv.includes("--help")) {
+        usageAndExit();
+    }
 
-if (variant !== "threaded" && variant !== "single") {
-    usageAndExit();
+    const variant = argv[0];
+    if (variant !== "threaded" && variant !== "single") {
+        usageAndExit();
+    }
+
+    let mode = "release";
+    let packages = null;
+
+    let i = 1;
+    const maybeMode = argv[i];
+    if (maybeMode === "dev" || maybeMode === "release") {
+        mode = maybeMode;
+        i++;
+    }
+
+    for (; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === "--packages") {
+            const next = argv[i + 1];
+            if (!next) {
+                die("--packages requires a value");
+            }
+            packages = next;
+            i++;
+            continue;
+        }
+        if (arg?.startsWith("--packages=")) {
+            packages = arg.split("=", 2)[1] ?? "";
+            if (!packages) {
+                die("--packages requires a value");
+            }
+            continue;
+        }
+        die(`Unknown argument: ${arg}`);
+    }
+
+    const packagesList =
+        packages === null
+            ? null
+            : packages
+                  .split(",")
+                  .map((p) => p.trim())
+                  .filter(Boolean);
+    return { variant, mode, packages: packagesList };
 }
 
-if (mode !== "dev" && mode !== "release") {
-    usageAndExit();
-}
+const parsed = parseArgs(process.argv.slice(2));
+const variant = parsed.variant;
+const mode = parsed.mode;
+const requestedPackages = parsed.packages;
 
 const isThreaded = variant === "threaded";
 const isRelease = mode === "release";
@@ -93,39 +146,7 @@ function loadPinnedNightlyToolchain() {
     }
 }
 
-const wasmThreadedToolchain = isThreaded ? loadPinnedNightlyToolchain() : null;
-
-if (isThreaded) {
-    // The shared-memory build requires nightly + rust-src (for build-std). We pin the nightly
-    // toolchain to keep threaded WASM builds reproducible (see scripts/toolchains.json).
-    checkCommand(
-        "rustc",
-        [`+${wasmThreadedToolchain}`, "--version"],
-        `Threaded WASM build requires the pinned nightly Rust toolchain (${wasmThreadedToolchain}).\n\nRun:\n  rustup toolchain install ${wasmThreadedToolchain}`,
-    );
-
-    const installedComponents = checkCommand(
-        "rustup",
-        ["component", "list", "--installed", "--toolchain", wasmThreadedToolchain],
-        `Threaded WASM build requires rust-src on ${wasmThreadedToolchain}.\n\nRun:\n  rustup component add rust-src --toolchain ${wasmThreadedToolchain}`,
-    );
-    if (!installedComponents.split("\n").some((line) => line.trim() === "rust-src")) {
-        die(
-            `Threaded WASM build requires rust-src on ${wasmThreadedToolchain}.\n\nRun:\n  rustup component add rust-src --toolchain ${wasmThreadedToolchain}`,
-        );
-    }
-
-    const installedTargets = checkCommand(
-        "rustup",
-        ["target", "list", "--installed", "--toolchain", wasmThreadedToolchain],
-        `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
-    );
-    if (!installedTargets.split("\n").some((line) => line.trim() === "wasm32-unknown-unknown")) {
-        die(
-            `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
-        );
-    }
-}
+let wasmThreadedToolchain = null;
 
 function parseKeyValueLines(output) {
     const values = {};
@@ -196,6 +217,7 @@ const outDirAeroJit = path.join(
 
 const packages = [
     {
+        id: "core",
         cratePath,
         outDir: outDirAero,
         outName: "aero_wasm",
@@ -206,6 +228,7 @@ const packages = [
         threaded: true,
     },
     {
+        id: "gpu",
         cratePath: path.join(repoRoot, "crates/aero-gpu-wasm"),
         outDir: outDirAeroGpu,
         outName: "aero_gpu_wasm",
@@ -218,6 +241,7 @@ const packages = [
 const aeroJitWasmCratePath = path.join(repoRoot, "crates/aero-jit-wasm");
 if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
     packages.push({
+        id: "jit",
         cratePath: aeroJitWasmCratePath,
         outDir: outDirAeroJit,
         outName: "aero_jit_wasm",
@@ -231,6 +255,60 @@ if (existsSync(path.join(aeroJitWasmCratePath, "Cargo.toml"))) {
     console.warn(
         `[wasm] Warning: ${path.relative(repoRoot, aeroJitWasmCratePath)} not found; skipping aero-jit-wasm build.`,
     );
+}
+
+const allPackageIds = new Set(packages.map((pkg) => pkg.id));
+if (requestedPackages && requestedPackages.length !== 0) {
+    const unknown = requestedPackages.filter((id) => !allPackageIds.has(id));
+    if (unknown.length !== 0) {
+        die(
+            `Unknown wasm package id(s): ${unknown.join(", ")}. ` +
+                `Known packages: ${Array.from(allPackageIds).join(", ")}`,
+        );
+    }
+}
+
+const packagesToBuild =
+    requestedPackages && requestedPackages.length !== 0
+        ? packages.filter((pkg) => requestedPackages.includes(pkg.id))
+        : packages;
+
+if (packagesToBuild.length === 0) {
+    die("No wasm packages selected to build.");
+}
+
+const needsThreadedToolchain = isThreaded && packagesToBuild.some((pkg) => pkg.threaded);
+if (needsThreadedToolchain) {
+    wasmThreadedToolchain = loadPinnedNightlyToolchain();
+    // The shared-memory build requires nightly + rust-src (for build-std). We pin the nightly
+    // toolchain to keep threaded WASM builds reproducible (see scripts/toolchains.json).
+    checkCommand(
+        "rustc",
+        [`+${wasmThreadedToolchain}`, "--version"],
+        `Threaded WASM build requires the pinned nightly Rust toolchain (${wasmThreadedToolchain}).\n\nRun:\n  rustup toolchain install ${wasmThreadedToolchain}`,
+    );
+
+    const installedComponents = checkCommand(
+        "rustup",
+        ["component", "list", "--installed", "--toolchain", wasmThreadedToolchain],
+        `Threaded WASM build requires rust-src on ${wasmThreadedToolchain}.\n\nRun:\n  rustup component add rust-src --toolchain ${wasmThreadedToolchain}`,
+    );
+    if (!installedComponents.split("\n").some((line) => line.trim() === "rust-src")) {
+        die(
+            `Threaded WASM build requires rust-src on ${wasmThreadedToolchain}.\n\nRun:\n  rustup component add rust-src --toolchain ${wasmThreadedToolchain}`,
+        );
+    }
+
+    const installedTargets = checkCommand(
+        "rustup",
+        ["target", "list", "--installed", "--toolchain", wasmThreadedToolchain],
+        `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
+    );
+    if (!installedTargets.split("\n").some((line) => line.trim() === "wasm32-unknown-unknown")) {
+        die(
+            `Threaded WASM build requires wasm32-unknown-unknown on ${wasmThreadedToolchain}.\n\nRun:\n  rustup target add wasm32-unknown-unknown --toolchain ${wasmThreadedToolchain}`,
+        );
+    }
 }
 
 const baseTargetFeatures = ["+bulk-memory"];
@@ -316,23 +394,17 @@ function rustflagsForPkg(pkg, pkgUsesThreads) {
 }
 
 const baseEnv = { ...process.env };
-
-if (isThreaded) {
-    // `--shared-memory` requires rebuilding std with atomics/bulk-memory enabled.
-    // This uses the pinned nightly toolchain + rust-src (see scripts/toolchains.json).
-    baseEnv.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
-} else {
-    // Keep the single-threaded build on the repo's pinned stable toolchain, regardless of any
-    // user-level overrides.
-    delete baseEnv.RUSTUP_TOOLCHAIN;
-}
+// Keep all builds on the repo's pinned stable toolchain by default (regardless of any
+// user-level overrides). Individual packages that need nightly (threaded/shared-memory
+// builds) opt in below via `pkgUsesThreads`.
+delete baseEnv.RUSTUP_TOOLCHAIN;
 
 // Prefer reproducible builds when a workspace lockfile is present, but allow
 // building without `Cargo.lock` (e.g. minimal checkouts or downstream forks).
 const lockFile = path.join(repoRoot, "Cargo.lock");
 const useLocked = existsSync(lockFile);
 
-for (const pkg of packages) {
+for (const pkg of packagesToBuild) {
     rmSync(pkg.outDir, { recursive: true, force: true });
     mkdirSync(pkg.outDir, { recursive: true });
 
@@ -361,6 +433,11 @@ for (const pkg of packages) {
     }
 
     const pkgEnv = { ...baseEnv };
+    if (pkgUsesThreads) {
+        // Threaded/shared-memory builds use the pinned nightly toolchain so `-Z build-std`
+        // is reproducible (see scripts/toolchains.json).
+        pkgEnv.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
+    }
     const rustflags = rustflagsForPkg(pkg, pkgUsesThreads);
     if (rustflags) {
         pkgEnv.RUSTFLAGS = rustflags;
@@ -384,7 +461,7 @@ for (const pkg of packages) {
                     "--enable-bulk-memory",
                     "--enable-reference-types",
                     "--enable-mutable-globals",
-                    ...(isThreaded ? ["--enable-threads"] : []),
+                    ...(pkgUsesThreads ? ["--enable-threads"] : []),
                     "-o",
                     `${wasmFile}.opt`,
                     wasmFile,

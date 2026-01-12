@@ -61,7 +61,11 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     const [cmd, args] = spawnSyncMock.mock.calls[0]!;
     expect(cmd).toBe("node");
     expect(Array.isArray(args)).toBe(true);
-    expect((args as string[])[(args as string[]).length - 1]).toBe("single");
+    const argv = args as string[];
+    expect(argv[1]).toBe("single");
+    const idx = argv.indexOf("--packages");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(argv[idx + 1]).toBe("jit");
   });
 
   it("builds missing aero-jit-wasm outputs for the threaded variant when core + gpu outputs exist", async () => {
@@ -115,7 +119,11 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     const [cmd, args] = spawnSyncMock.mock.calls[0]!;
     expect(cmd).toBe("node");
     expect(Array.isArray(args)).toBe(true);
-    expect((args as string[])[(args as string[]).length - 1]).toBe("threaded");
+    const argv = args as string[];
+    expect(argv[1]).toBe("threaded");
+    const idx = argv.indexOf("--packages");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(argv[idx + 1]).toBe("jit");
   });
 
   it("does not rebuild when all expected outputs already exist", async () => {
@@ -240,7 +248,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     });
 
     spawnSyncMock.mockImplementation((_cmd, args) => {
-      const variant = Array.isArray(args) ? String(args[args.length - 1]) : "";
+      const variant = Array.isArray(args) ? String(args[1]) : "";
       if (variant === "threaded") {
         builtThreaded = true;
       }
@@ -254,7 +262,11 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     expect(spawnSyncMock).toHaveBeenCalledTimes(1);
     const [_cmd, args] = spawnSyncMock.mock.calls[0]!;
     expect(Array.isArray(args)).toBe(true);
-    expect((args as string[])[(args as string[]).length - 1]).toBe("threaded");
+    const argv = args as string[];
+    expect(argv[1]).toBe("threaded");
+    const idx = argv.indexOf("--packages");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(argv[idx + 1]).toBe("core,gpu,jit");
   });
 
   it("fails if build succeeds but expected outputs are still missing", async () => {
