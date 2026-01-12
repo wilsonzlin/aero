@@ -2172,6 +2172,26 @@ mod tests {
     }
 
     #[test]
+    fn synth_rejects_output_report_larger_than_full_speed_interrupt_packet() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![simple_item(8, 65)],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].outputReports[0].items[0]");
+        assert!(err.message.contains("interrupt"));
+    }
+
+    #[test]
     fn synth_rejects_report_descriptor_length_overflow() {
         // Each explicit `Usage` local item is 2 bytes when the usage fits in u8 (prefix + 1-byte
         // payload). Emit enough usages to exceed the u16 report descriptor length field.
