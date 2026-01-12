@@ -1293,7 +1293,9 @@ function renderAudioPanel(): HTMLElement {
       const output = await createAudioOutput({
         sampleRate: 48_000,
         latencyHint: "interactive",
-        ringBufferFrames: 16_384, // ~340ms @ 48k; enough slack while workers start.
+        // Match the HDA demo ring size so the AudioWorklet has ample slack while the
+        // worker runtime + WASM bridge spin up in CI/headless environments.
+        ringBufferFrames: 131_072, // ~2.7s @ 48k
       });
 
       (globalThis as typeof globalThis & { __aeroAudioOutputHdaPciDevice?: unknown }).__aeroAudioOutputHdaPciDevice = output;
@@ -1305,10 +1307,15 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
 
-      // Prefill ~200ms of silence so AudioWorklet startup doesn't underrun while we
-      // bring up the workers and program the HDA controller.
+      // Prefill a large chunk of silence so AudioWorklet startup doesn't underrun
+      // while we bring up the workers and program the HDA controller.
+      //
+      // Keep some headroom so the IO-worker HDA device can start writing without
+      // immediately hitting a full buffer (which would count as producer overruns).
       const sr = output.context.sampleRate;
-      const targetPrefillFrames = Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 5));
+      const headroomFrames = Math.floor(sr / 2); // ~500ms headroom
+      const maxPrefill = Math.max(0, output.ringBuffer.capacityFrames - headroomFrames);
+      const targetPrefillFrames = Math.min(maxPrefill, Math.floor(sr * 2)); // ~2s silence
       const existingLevel = output.getBufferLevelFrames();
       const prefillFrames = Math.max(0, targetPrefillFrames - existingLevel);
       if (prefillFrames > 0) {
