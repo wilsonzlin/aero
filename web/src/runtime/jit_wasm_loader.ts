@@ -6,6 +6,10 @@ export type Tier1BlockCompilation = {
   exit_to_interpreter: boolean;
 };
 
+// The Tier-1 wasm-bindgen ABI has evolved. Older builds returned raw `Uint8Array` bytes, while newer
+// ones return a small object with `{ wasm_bytes, code_byte_len, exit_to_interpreter }`.
+export type Tier1CompileResult = Tier1BlockCompilation | Uint8Array;
+
 export interface JitWasmApi {
   /**
    * Compile a Tier-1 x86 basic block into a standalone WASM module.
@@ -22,7 +26,7 @@ export interface JitWasmApi {
      * compiler defaults to 64-bit.
      */
     bitness?: number,
-  ) => Tier1BlockCompilation;
+  ) => Tier1CompileResult;
 }
 
 type RawJitWasmModule = any;

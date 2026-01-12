@@ -57,7 +57,8 @@ describe("runtime/jit_wasm_loader", () => {
 
     const { initJitWasm } = await import("./jit_wasm_loader");
     const { api } = await initJitWasm({ module });
-    const { wasm_bytes: bytes } = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+    const out = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+    const bytes = out instanceof Uint8Array ? out : out.wasm_bytes;
     // `WebAssembly.validate` expects an ArrayBuffer-backed view; `Uint8Array` is
     // generic over `ArrayBufferLike` and may be backed by `SharedArrayBuffer`.
     // Copy when needed so TypeScript (and spec compliance) are happy.
@@ -140,7 +141,8 @@ describe("runtime/jit_wasm_loader", () => {
     expect(threadedImporterCalls).toBe(0);
     expect(allocations.some((a) => !!a.shared && typeof a.maximum === "number" && a.maximum > 1024)).toBe(false);
 
-    const { wasm_bytes: bytes } = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+    const out = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+    const bytes = out instanceof Uint8Array ? out : out.wasm_bytes;
     const bytesForWasm: Uint8Array<ArrayBuffer> =
       bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
     expect(WebAssembly.validate(bytesForWasm)).toBe(true);
@@ -178,7 +180,8 @@ describe("runtime/jit_wasm_loader", () => {
 
       expect(importerCalls).toBe(1);
 
-      const { wasm_bytes: bytes } = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+      const out = api.compile_tier1_block(0n, new Uint8Array([0xc3]), 64, 1024, false, false);
+      const bytes = out instanceof Uint8Array ? out : out.wasm_bytes;
       const bytesForWasm: Uint8Array<ArrayBuffer> =
         bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
       expect(WebAssembly.validate(bytesForWasm)).toBe(true);
