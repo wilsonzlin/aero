@@ -205,15 +205,25 @@ mod wasm {
             if guest_base == 0 {
                 return Err(js_error("guestBase must be non-zero"));
             }
-            if guest_size == 0 {
-                return Err(js_error("guestSize must be non-zero"));
-            }
-            let guest_size_u64 = u64::from(guest_size);
-            let end = u64::from(guest_base).saturating_add(guest_size_u64);
             let mem_len = wasm_memory_byte_len();
+            if u64::from(guest_base) >= mem_len {
+                return Err(js_error(format!(
+                    "Guest RAM mapping out of bounds: guest_base=0x{guest_base:x} wasm_mem=0x{mem_len:x}"
+                )));
+            }
+
+            // Match other WASM bridges (e.g. UHCI/E1000): treat `guest_size=0` as "use the
+            // remainder of linear memory".
+            let guest_size_u64 = if guest_size == 0 {
+                mem_len.saturating_sub(u64::from(guest_base))
+            } else {
+                u64::from(guest_size)
+            };
+
+            let end = u64::from(guest_base).saturating_add(guest_size_u64);
             if end > mem_len {
                 return Err(js_error(format!(
-                    "Guest RAM mapping out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_mem=0x{mem_len:x}"
+                    "Guest RAM mapping out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} end=0x{end:x} wasm_mem=0x{mem_len:x}"
                 )));
             }
             Ok(Self {

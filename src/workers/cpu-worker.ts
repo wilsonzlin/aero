@@ -64,7 +64,9 @@ function readMaybeNumber(obj: unknown, key: string): number {
   if (typeof val === 'function') {
     try {
       const out = (val as (...args: unknown[]) => unknown).call(obj);
-      return typeof out === 'number' ? out : 0;
+      if (typeof out === 'number') return out;
+      if (typeof out === 'bigint') return u64AsNumber(out);
+      return 0;
     } catch {
       return 0;
     }
