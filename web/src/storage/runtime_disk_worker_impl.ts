@@ -27,7 +27,8 @@ import { normalizeDiskOpenSpec } from "./runtime_disk_protocol";
 import { idbDeleteDiskData, opfsDeleteDisk, opfsGetDiskFileHandle } from "./import_export";
 import { RemoteRangeDisk, defaultRemoteRangeUrl, type RemoteRangeDiskMetadataStore } from "./remote_range_disk";
 import { RemoteChunkedDisk } from "./remote_chunked_disk";
-import { remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
+import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
+import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
 import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
@@ -98,6 +99,16 @@ function stableImageIdFromUrl(url: string): string {
   }
 }
 
+async function bestEffortDeleteLegacyRemoteRangeCache(imageId: string, version: string): Promise<void> {
+  try {
+    const legacyCacheKey = await RemoteCacheManager.deriveCacheKey({ imageId, version, deliveryType: "range" });
+    const manager = await RemoteCacheManager.openOpfs();
+    await manager.clearCache(legacyCacheKey);
+  } catch {
+    // best-effort cleanup only
+  }
+}
+
 async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise<AsyncSectorDisk> {
   const cacheBackend: DiskBackend = options?.cacheBackend ?? pickDefaultBackend();
   const cacheLimitBytes = options?.cacheLimitBytes;
@@ -105,17 +116,22 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
   // implement cache eviction. Only select it when OPFS is explicitly requested and
   // caching has not been disabled via `cacheLimitBytes: 0`.
   if (cacheBackend === "opfs" && cacheLimitBytes !== 0 && hasOpfsSyncAccessHandle()) {
+    const chunkSize = options?.blockSize ?? RANGE_STREAM_CHUNK_SIZE;
     const cacheKeyParts = {
       imageId: (options?.cacheImageId ?? stableImageIdFromUrl(url)).trim(),
       version: (options?.cacheVersion ?? "1").trim(),
-      deliveryType: "range",
+      deliveryType: remoteRangeDeliveryType(chunkSize),
     };
     if (!cacheKeyParts.imageId) throw new Error("cacheImageId must not be empty");
     if (!cacheKeyParts.version) throw new Error("cacheVersion must not be empty");
+
+    // Backward-compat cleanup: older clients used `deliveryType: "range"`, which can collide
+    // across different chunkSize configurations for the same image/version.
+    await bestEffortDeleteLegacyRemoteRangeCache(cacheKeyParts.imageId, cacheKeyParts.version);
     return await RemoteRangeDisk.open(url, {
       cacheKeyParts,
       credentials: options?.credentials,
-      chunkSize: options?.blockSize,
+      chunkSize,
       readAheadChunks: options?.prefetchSequentialBlocks,
     });
   }
@@ -904,13 +920,25 @@ async function openRemoteBackedDisk(
 
   const base: AsyncSectorDisk =
     remote.delivery === "range"
-      ? await RemoteRangeDisk.open(remote.url, {
-          cacheKeyParts: { imageId: cacheImageId, version: rangeCacheVersion, deliveryType: remote.delivery },
-          credentials: remote.credentials,
-          chunkSize: remote.chunkSizeBytes,
-          sha256Manifest: await loadSha256Manifest(remote.integrity, fetchFn),
-          fetchFn,
-        })
+      ? await (async () => {
+          const chunkSize = remote.chunkSizeBytes ?? RANGE_STREAM_CHUNK_SIZE;
+
+          // Backward-compat cleanup: older clients keyed range caches as `deliveryType: "range"`,
+          // which collides across different chunkSize values.
+          await bestEffortDeleteLegacyRemoteRangeCache(cacheImageId, rangeCacheVersion);
+
+          return await RemoteRangeDisk.open(remote.url, {
+            cacheKeyParts: {
+              imageId: cacheImageId,
+              version: rangeCacheVersion,
+              deliveryType: remoteRangeDeliveryType(chunkSize),
+            },
+            credentials,
+            chunkSize,
+            sha256Manifest: await loadSha256Manifest(remote.integrity, fetchFn),
+            fetchFn,
+          });
+        })()
       : await RemoteChunkedDisk.open(remote.manifestUrl, {
           credentials,
           cacheImageId,

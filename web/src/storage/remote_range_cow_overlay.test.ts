@@ -4,6 +4,7 @@ import type { RemoteRangeDiskMetadataStore, RemoteRangeDiskSparseCacheFactory } 
 import { RemoteRangeDisk } from "./remote_range_disk";
 import { MemorySparseDisk } from "./memory_sparse_disk";
 import { OpfsCowDisk } from "./opfs_cow";
+import { remoteRangeDeliveryType } from "./remote_cache_manager";
 
 function createRangeFetch(data: Uint8Array<ArrayBuffer>): { fetch: typeof fetch; getCalls: () => number } {
   let calls = 0;
@@ -84,7 +85,7 @@ describe("RemoteRangeDisk + COW overlay", () => {
     };
 
     const base = await RemoteRangeDisk.open("https://example.invalid/disk.img", {
-      cacheKeyParts: { imageId: "test-img", version: "1", deliveryType: "range" },
+      cacheKeyParts: { imageId: "test-img", version: "1", deliveryType: remoteRangeDeliveryType(1024) },
       chunkSize: 1024,
       fetchFn: fetcher,
       metadataStore,
