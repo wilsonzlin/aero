@@ -13,7 +13,13 @@ use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
 use memory::MemoryBus;
 
 // AHCI register offsets/bits (mirrors `aero-devices-storage/src/ahci.rs`).
+const HBA_REG_CAP: u64 = 0x00;
 const HBA_REG_GHC: u64 = 0x04;
+const HBA_REG_IS: u64 = 0x08;
+const HBA_REG_PI: u64 = 0x0C;
+const HBA_REG_VS: u64 = 0x10;
+const HBA_REG_CAP2: u64 = 0x24;
+const HBA_REG_BOHC: u64 = 0x28;
 
 const PORT_BASE: u64 = 0x100;
 
@@ -21,6 +27,7 @@ const PORT_REG_CLB: u64 = 0x00;
 const PORT_REG_CLBU: u64 = 0x04;
 const PORT_REG_FB: u64 = 0x08;
 const PORT_REG_FBU: u64 = 0x0C;
+const PORT_REG_IS: u64 = 0x10;
 const PORT_REG_IE: u64 = 0x14;
 const PORT_REG_CMD: u64 = 0x18;
 const PORT_REG_CI: u64 = 0x38;
@@ -110,6 +117,29 @@ fn decode_size(bits: u8) -> usize {
     }
 }
 
+fn build_known_offsets(port_base: u64) -> Vec<u64> {
+    let mut offsets = vec![
+        HBA_REG_CAP,
+        HBA_REG_GHC,
+        HBA_REG_IS,
+        HBA_REG_PI,
+        HBA_REG_VS,
+        HBA_REG_CAP2,
+        HBA_REG_BOHC,
+    ];
+    offsets.extend_from_slice(&[
+        port_base + PORT_REG_CLB,
+        port_base + PORT_REG_CLBU,
+        port_base + PORT_REG_FB,
+        port_base + PORT_REG_FBU,
+        port_base + PORT_REG_IS,
+        port_base + PORT_REG_IE,
+        port_base + PORT_REG_CMD,
+        port_base + PORT_REG_CI,
+    ]);
+    offsets
+}
+
 fn write_cmd_header(
     mem: &mut dyn MemoryBus,
     clb: u64,
@@ -164,6 +194,8 @@ fuzz_target!(|data: &[u8]| {
     } else {
         (port_sel_seed as usize) % num_ports
     };
+    let port_base = PORT_BASE + (port_idx as u64) * 0x80;
+    let known_offsets = build_known_offsets(port_base);
 
     // Seeds used to bias the location of command list/FIS/table/buffers.
     let clb_seed: u64 = u.arbitrary().unwrap_or(0);
@@ -192,22 +224,34 @@ fuzz_target!(|data: &[u8]| {
         let kind: u8 = u.arbitrary().unwrap_or(0);
         match kind % 3 {
             0 => {
-                let offset: u16 = u.arbitrary().unwrap_or(0);
+                // Bias towards known register offsets to reach deeper state transitions.
+                let use_known: bool = u.arbitrary().unwrap_or(true);
+                let offset = if use_known && !known_offsets.is_empty() {
+                    let idx = u
+                        .int_in_range(0usize..=known_offsets.len().saturating_sub(1))
+                        .unwrap_or(0);
+                    known_offsets[idx]
+                } else {
+                    let offset: u16 = u.arbitrary().unwrap_or(0);
+                    offset as u64
+                };
                 let size = decode_size(u.arbitrary().unwrap_or(0));
-                ops.push(MmioOp::Read {
-                    offset: offset as u64,
-                    size,
-                });
+                ops.push(MmioOp::Read { offset, size });
             }
             1 => {
-                let offset: u16 = u.arbitrary().unwrap_or(0);
+                let use_known: bool = u.arbitrary().unwrap_or(true);
+                let offset = if use_known && !known_offsets.is_empty() {
+                    let idx = u
+                        .int_in_range(0usize..=known_offsets.len().saturating_sub(1))
+                        .unwrap_or(0);
+                    known_offsets[idx]
+                } else {
+                    let offset: u16 = u.arbitrary().unwrap_or(0);
+                    offset as u64
+                };
                 let size = decode_size(u.arbitrary().unwrap_or(0));
                 let value: u64 = u.arbitrary().unwrap_or(0);
-                ops.push(MmioOp::Write {
-                    offset: offset as u64,
-                    size,
-                    value,
-                });
+                ops.push(MmioOp::Write { offset, size, value });
             }
             _ => ops.push(MmioOp::Process),
         }
@@ -235,8 +279,6 @@ fuzz_target!(|data: &[u8]| {
     // Enable PCI bus mastering so `AhciPciDevice::process()` will run DMA.
     // Also set memory space decode (bit 1) for realism.
     dev.config_mut().set_command((1 << 1) | (1 << 2));
-
-    let port_base = PORT_BASE + (port_idx as u64) * 0x80;
 
     // Program registers with fuzz-controlled values (kept within our guest memory blob) so we can
     // reach deeper parsing logic.
