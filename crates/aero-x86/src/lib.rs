@@ -203,22 +203,6 @@ pub mod tier1 {
         Sar,
     }
 
-    impl fmt::Display for AluOp {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let s = match self {
-                AluOp::Add => "add",
-                AluOp::Sub => "sub",
-                AluOp::And => "and",
-                AluOp::Or => "or",
-                AluOp::Xor => "xor",
-                AluOp::Shl => "shl",
-                AluOp::Shr => "shr",
-                AluOp::Sar => "sar",
-            };
-            f.write_str(s)
-        }
-    }
-
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ShiftOp {
         Shl,
@@ -232,6 +216,22 @@ pub mod tier1 {
                 ShiftOp::Shl => "shl",
                 ShiftOp::Shr => "shr",
                 ShiftOp::Sar => "sar",
+            };
+            f.write_str(s)
+        }
+    }
+
+    impl fmt::Display for AluOp {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let s = match self {
+                AluOp::Add => "add",
+                AluOp::Sub => "sub",
+                AluOp::And => "and",
+                AluOp::Or => "or",
+                AluOp::Xor => "xor",
+                AluOp::Shl => "shl",
+                AluOp::Shr => "shr",
+                AluOp::Sar => "sar",
             };
             f.write_str(s)
         }
@@ -470,6 +470,15 @@ pub mod tier1 {
         }
     }
 
+    fn stack_width(bitness: u32) -> Width {
+        match bitness {
+            64 => Width::W64,
+            32 => Width::W32,
+            16 => Width::W16,
+            _ => Width::W64,
+        }
+    }
+
     fn sign_extend_imm(width: Width, imm: u64) -> u64 {
         width.sign_extend(width.truncate(imm))
     }
@@ -530,17 +539,14 @@ pub mod tier1 {
             if bitness == 64 {
                 // RIP-relative (64-bit mode).
                 rip_relative = true;
-                let disp32 = read_le(bytes, *offset, 4)? as u32;
-                *offset += 4;
-                disp = disp32 as i32;
             } else {
                 // Absolute disp32 addressing (32-bit mode). 16-bit mode uses a different
                 // addressing scheme which is not supported by this Tier1 decoder.
                 base = None;
-                let disp32 = read_le(bytes, *offset, 4)? as u32;
-                *offset += 4;
-                disp = disp32 as i32;
             }
+            let disp32 = read_le(bytes, *offset, 4)? as u32;
+            *offset += 4;
+            disp = disp32 as i32;
         } else {
             base = Some(decode_gpr(modrm.rm)?);
         }
@@ -648,6 +654,7 @@ pub mod tier1 {
         offset += 1;
 
         let width = op_width(bitness, rex, operand_override);
+        let stack_width = stack_width(bitness);
 
         let kind = match opcode1 {
             0x40..=0x47 if bitness != 64 => {
@@ -1017,17 +1024,27 @@ pub mod tier1 {
                 }
             }
             0xff => {
-                let (opnd, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, Width::W64)?;
-                let group = modrm.reg & 0x7;
+                // Operand size for INC/DEC (groups 0/1) follows the instruction operand width,
+                // while PUSH (group 6) uses the mode's stack width.
+                let modrm_byte = read_u8(bytes, offset)?;
+                let group = (modrm_byte >> 3) & 0x7;
+                let operand_width = if group == 6 { stack_width } else { width };
+                let (opnd, _modrm) = decode_modrm_operand(
+                    bytes,
+                    &mut offset,
+                    bitness,
+                    rex,
+                    rex.present,
+                    operand_width,
+                )?;
                 match group {
                     0 => InstKind::Inc {
                         dst: opnd,
-                        width: Width::W64,
+                        width,
                     },
                     1 => InstKind::Dec {
                         dst: opnd,
-                        width: Width::W64,
+                        width,
                     },
                     6 => InstKind::Push { src: opnd },
                     _ => {
@@ -1041,7 +1058,7 @@ pub mod tier1 {
                 let reg_code = (opcode1 - 0x50) | if rex.b { 8 } else { 0 };
                 let reg = Operand::Reg(Reg {
                     gpr: decode_gpr(reg_code)?,
-                    width: Width::W64,
+                    width: stack_width,
                     high8: false,
                 });
                 InstKind::Push { src: reg }
@@ -1050,7 +1067,7 @@ pub mod tier1 {
                 let reg_code = (opcode1 - 0x58) | if rex.b { 8 } else { 0 };
                 let reg = Operand::Reg(Reg {
                     gpr: decode_gpr(reg_code)?,
-                    width: Width::W64,
+                    width: stack_width,
                     high8: false,
                 });
                 InstKind::Pop { dst: reg }

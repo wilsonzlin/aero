@@ -123,12 +123,19 @@ pub fn compile_and_install<Cpu, C>(
     backend: &mut WasmBackend<Cpu>,
     runtime: &JitRuntime<WasmBackend<Cpu>, C>,
     entry_rip: u64,
+    bitness: u32,
 ) -> CompiledBlockHandle
 where
     Cpu: Tier1Cpu,
     C: CompileRequestSink,
 {
-    compile_and_install_with_options(backend, runtime, entry_rip, Tier1WasmOptions::default())
+    compile_and_install_with_options(
+        backend,
+        runtime,
+        entry_rip,
+        bitness,
+        Tier1WasmOptions::default(),
+    )
 }
 
 /// Same as [`compile_and_install`], but allows selecting Tier-1 WASM codegen options (e.g. enabling
@@ -137,6 +144,7 @@ pub fn compile_and_install_with_options<Cpu, C>(
     backend: &mut WasmBackend<Cpu>,
     runtime: &JitRuntime<WasmBackend<Cpu>, C>,
     entry_rip: u64,
+    bitness: u32,
     options: Tier1WasmOptions,
 ) -> CompiledBlockHandle
 where
@@ -145,6 +153,6 @@ where
 {
     Tier1Compiler::new(backend.clone(), backend.clone())
         .with_wasm_options(options)
-        .compile_handle(runtime, entry_rip)
+        .compile_handle(runtime, entry_rip, bitness)
         .expect("Tier-1 compilation failed")
 }

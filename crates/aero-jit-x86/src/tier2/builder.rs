@@ -5,7 +5,7 @@ use aero_types::{Cond, Flag, FlagSet, Width};
 use crate::tier1::ir::{
     BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId,
 };
-use crate::tier1::{discover_block, translate_block, BasicBlock, BlockEndKind, BlockLimits};
+use crate::tier1::{discover_block_mode, translate_block, BasicBlock, BlockEndKind, BlockLimits};
 use crate::Tier1Bus;
 
 use super::ir::{BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId};
@@ -38,13 +38,15 @@ impl Default for CfgBuildConfig {
 pub fn build_function_from_x86<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
+    bitness: u32,
     cfg: CfgBuildConfig,
 ) -> Function {
-    Tier2CfgBuilder::new(bus, cfg).build(entry_rip)
+    Tier2CfgBuilder::new(bus, bitness, cfg).build(entry_rip)
 }
 
 struct Tier2CfgBuilder<'a, B: Tier1Bus> {
     bus: &'a B,
+    bitness: u32,
     cfg: CfgBuildConfig,
     rip_to_block: HashMap<u64, BlockId>,
     blocks: Vec<Option<Block>>,
@@ -53,9 +55,10 @@ struct Tier2CfgBuilder<'a, B: Tier1Bus> {
 }
 
 impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
-    fn new(bus: &'a B, cfg: CfgBuildConfig) -> Self {
+    fn new(bus: &'a B, bitness: u32, cfg: CfgBuildConfig) -> Self {
         Self {
             bus,
+            bitness,
             cfg,
             rip_to_block: HashMap::new(),
             blocks: Vec::new(),
@@ -91,7 +94,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
                 continue;
             }
 
-            let bb = discover_block(self.bus, rip, self.cfg.block_limits);
+            let bb = discover_block_mode(self.bus, rip, self.cfg.block_limits, self.bitness);
             let t2_block = self.lower_block(id, &bb);
             self.blocks[id.index()] = Some(t2_block);
         }

@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::tier1::ir::{IrInst, IrTerminator, SideEffects};
 use crate::tier1::{
-    discover_block, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
+    discover_block_mode, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
 };
 use crate::Tier1Bus;
 use aero_x86::tier1::InstKind;
@@ -36,9 +36,10 @@ pub struct Tier1Compilation {
 pub fn compile_tier1_block<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
+    bitness: u32,
     limits: BlockLimits,
 ) -> Result<Tier1Compilation, Tier1CompileError> {
-    compile_tier1_block_with_options(bus, entry_rip, limits, Tier1WasmOptions::default())
+    compile_tier1_block_with_options(bus, entry_rip, bitness, limits, Tier1WasmOptions::default())
 }
 
 /// Compile a single basic block starting at `entry_rip` into a standalone WASM module, using the
@@ -46,10 +47,11 @@ pub fn compile_tier1_block<B: Tier1Bus>(
 pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
+    bitness: u32,
     limits: BlockLimits,
     options: Tier1WasmOptions,
 ) -> Result<Tier1Compilation, Tier1CompileError> {
-    let block = discover_block(bus, entry_rip, limits);
+    let block = discover_block_mode(bus, entry_rip, limits, bitness);
     let byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
     let instruction_count = {
         let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);

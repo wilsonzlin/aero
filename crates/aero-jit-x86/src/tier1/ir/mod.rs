@@ -452,8 +452,9 @@ impl IrBlock {
                 }
             }
             IrTerminator::IndirectJump { target } => {
-                if use_val(target)? != Width::W64 {
-                    return Err("IndirectJump target must be i64".to_string());
+                let ty = use_val(target)?;
+                if !matches!(ty, Width::W32 | Width::W64) {
+                    return Err(format!("IndirectJump target must be i32/i64, got {ty}"));
                 }
             }
             IrTerminator::ExitToInterpreter { .. } => {}

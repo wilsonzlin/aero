@@ -167,7 +167,7 @@ fn run_pf008_payload_64(
 
         for rip in queue.drain() {
             compiler
-                .compile_and_install(dispatcher.jit_mut(), rip)
+                .compile_and_install(dispatcher.jit_mut(), rip, 64)
                 .unwrap();
         }
     }
@@ -250,4 +250,3 @@ fn pf008_call_ret64_checksum_tier1_jit() {
     ];
     run_pf008_payload_64("call_ret64", &code, 0x0209_be07_71df_5500, false);
 }
-

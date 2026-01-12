@@ -17,7 +17,7 @@ fn cfg_builder_linear_blocks() {
     let mut bus = SimpleBus::new(0x2000);
     bus.load(entry, &code);
 
-    let func = build_function_from_x86(&bus, entry, CfgBuildConfig::default());
+    let func = build_function_from_x86(&bus, entry, 64, CfgBuildConfig::default());
     assert_eq!(func.blocks.len(), 2);
 
     let b0 = func.find_block_by_rip(entry).unwrap();
@@ -60,7 +60,7 @@ fn cfg_builder_conditional_branch() {
     let mut bus = SimpleBus::new(0x3000);
     bus.load(entry, &code);
 
-    let func = build_function_from_x86(&bus, entry, CfgBuildConfig::default());
+    let func = build_function_from_x86(&bus, entry, 64, CfgBuildConfig::default());
     assert_eq!(func.blocks.len(), 3);
 
     let head = func.find_block_by_rip(entry).unwrap();
@@ -95,7 +95,7 @@ fn cfg_builder_loop_backedge() {
     let mut bus = SimpleBus::new(0x4000);
     bus.load(entry, &code);
 
-    let func = build_function_from_x86(&bus, entry, CfgBuildConfig::default());
+    let func = build_function_from_x86(&bus, entry, 64, CfgBuildConfig::default());
     assert_eq!(func.blocks.len(), 2);
 
     let loop_bb = func.find_block_by_rip(entry).unwrap();

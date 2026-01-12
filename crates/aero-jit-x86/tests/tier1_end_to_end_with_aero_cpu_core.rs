@@ -132,7 +132,7 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
         });
     for rip in requested {
         compiler
-            .compile_and_install(dispatcher.jit_mut(), rip)
+            .compile_and_install(dispatcher.jit_mut(), rip, 64)
             .unwrap();
     }
 

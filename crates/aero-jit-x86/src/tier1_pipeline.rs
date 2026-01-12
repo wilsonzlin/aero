@@ -153,6 +153,7 @@ where
         &mut self,
         jit: &JitRuntime<B, C>,
         entry_rip: u64,
+        bitness: u32,
     ) -> Result<CompiledBlockHandle, Tier1CompileError>
     where
         B: JitBackend,
@@ -167,6 +168,7 @@ where
         let compilation = compile_tier1_block_with_options(
             &self.provider,
             entry_rip,
+            bitness,
             self.limits,
             self.wasm_options,
         )?;
@@ -189,12 +191,13 @@ where
         &mut self,
         jit: &mut JitRuntime<B, C>,
         entry_rip: u64,
+        bitness: u32,
     ) -> Result<Vec<u64>, Tier1CompileError>
     where
         B: JitBackend,
         C: CompileRequestSink,
     {
-        let handle = self.compile_handle(jit, entry_rip)?;
+        let handle = self.compile_handle(jit, entry_rip, bitness)?;
         Ok(jit.install_handle(handle))
     }
 }

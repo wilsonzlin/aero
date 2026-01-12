@@ -56,13 +56,13 @@ const JNP_CODE: &[u8] = &[
 fn build_test_func() -> Function {
     let mut bus = SimpleBus::new(64);
     bus.load(0, CODE);
-    build_function_from_x86(&bus, 0, CfgBuildConfig::default())
+    build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default())
 }
 
 fn build_func(code: &[u8]) -> Function {
     let mut bus = SimpleBus::new(64);
     bus.load(0, code);
-    build_function_from_x86(&bus, 0, CfgBuildConfig::default())
+    build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default())
 }
 
 #[test]

@@ -35,7 +35,7 @@ fn tier2_traces_have_globally_unique_value_ids_across_blocks() {
     let mut bus = SimpleBus::new(64);
     bus.load(0, code);
 
-    let func = build_function_from_x86(&bus, 0, CfgBuildConfig::default());
+    let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
     assert!(
         func.blocks.len() >= 3,
         "expected at least 3 blocks, got {}",

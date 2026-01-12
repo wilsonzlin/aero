@@ -147,7 +147,7 @@ fn tier1_zero_progress_block_is_not_installed() {
         max_bytes: 64,
     });
 
-    let res = compiler.compile_and_install(dispatcher.jit_mut(), entry);
+    let res = compiler.compile_and_install(dispatcher.jit_mut(), entry, 64);
     assert!(
         matches!(res, Err(Tier1CompileError::BailoutAtEntry { entry_rip }) if entry_rip == entry),
         "expected BailoutAtEntry, got {res:?}"

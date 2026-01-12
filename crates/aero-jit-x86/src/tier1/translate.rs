@@ -116,6 +116,11 @@ fn to_shift_binop(op: ShiftOp) -> BinOp {
 #[must_use]
 pub fn translate_block(block: &BasicBlock) -> IrBlock {
     let mut b = IrBuilder::new(block.entry_rip);
+    let stack_width = match block.bitness {
+        32 => Width::W32,
+        64 => Width::W64,
+        other => panic!("unsupported Tier-1 bitness {other}"),
+    };
 
     // Default terminator: if we run off the end, keep executing in interpreter.
     let mut terminator = match block.end_kind {
@@ -212,8 +217,8 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     width: Width::W64,
                     high8: false,
                 });
-                let eight = b.const_int(Width::W64, 8);
-                let new_rsp = b.binop(BinOp::Sub, Width::W64, rsp, eight, FlagSet::EMPTY);
+                let slot = b.const_int(Width::W64, stack_width.bytes() as u64);
+                let new_rsp = b.binop(BinOp::Sub, Width::W64, rsp, slot, FlagSet::EMPTY);
                 b.write_reg(
                     GuestReg::Gpr {
                         reg: Gpr::Rsp,
@@ -222,8 +227,8 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     },
                     new_rsp,
                 );
-                let v = emit_read_operand(&mut b, inst, src, Width::W64);
-                b.store(Width::W64, new_rsp, v);
+                let v = emit_read_operand(&mut b, inst, src, stack_width);
+                b.store(stack_width, new_rsp, v);
             }
             InstKind::Pop { dst } => {
                 let rsp = b.read_reg(GuestReg::Gpr {
@@ -231,9 +236,9 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     width: Width::W64,
                     high8: false,
                 });
-                let v = b.load(Width::W64, rsp);
-                let eight = b.const_int(Width::W64, 8);
-                let new_rsp = b.binop(BinOp::Add, Width::W64, rsp, eight, FlagSet::EMPTY);
+                let v = b.load(stack_width, rsp);
+                let slot = b.const_int(Width::W64, stack_width.bytes() as u64);
+                let new_rsp = b.binop(BinOp::Add, Width::W64, rsp, slot, FlagSet::EMPTY);
                 b.write_reg(
                     GuestReg::Gpr {
                         reg: Gpr::Rsp,
@@ -242,7 +247,7 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     },
                     new_rsp,
                 );
-                emit_write_operand(&mut b, inst, dst, Width::W64, v);
+                emit_write_operand(&mut b, inst, dst, stack_width, v);
             }
             InstKind::Setcc { cond, dst } => {
                 let c = b.eval_cond(*cond);
@@ -286,8 +291,8 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     width: Width::W64,
                     high8: false,
                 });
-                let eight = b.const_int(Width::W64, 8);
-                let new_rsp = b.binop(BinOp::Sub, Width::W64, rsp, eight, FlagSet::EMPTY);
+                let slot = b.const_int(Width::W64, stack_width.bytes() as u64);
+                let new_rsp = b.binop(BinOp::Sub, Width::W64, rsp, slot, FlagSet::EMPTY);
                 b.write_reg(
                     GuestReg::Gpr {
                         reg: Gpr::Rsp,
@@ -296,8 +301,8 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     },
                     new_rsp,
                 );
-                let ret = b.const_int(Width::W64, return_rip);
-                b.store(Width::W64, new_rsp, ret);
+                let ret = b.const_int(stack_width, return_rip);
+                b.store(stack_width, new_rsp, ret);
                 terminator = IrTerminator::Jump { target: *target };
                 break;
             }
@@ -307,9 +312,9 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                     width: Width::W64,
                     high8: false,
                 });
-                let target = b.load(Width::W64, rsp);
-                let eight = b.const_int(Width::W64, 8);
-                let new_rsp = b.binop(BinOp::Add, Width::W64, rsp, eight, FlagSet::EMPTY);
+                let target = b.load(stack_width, rsp);
+                let slot = b.const_int(Width::W64, stack_width.bytes() as u64);
+                let new_rsp = b.binop(BinOp::Add, Width::W64, rsp, slot, FlagSet::EMPTY);
                 b.write_reg(
                     GuestReg::Gpr {
                         reg: Gpr::Rsp,

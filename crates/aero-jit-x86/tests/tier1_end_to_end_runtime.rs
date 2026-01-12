@@ -195,7 +195,7 @@ fn tier1_end_to_end_compile_install_and_execute() {
     // Compile and install Tier-1 block.
     {
         let jit = dispatcher.jit_mut();
-        let handle = compiler.compile_handle(&*jit, entry).unwrap();
+        let handle = compiler.compile_handle(&*jit, entry, 64).unwrap();
         jit.install_handle(handle);
     }
 
@@ -241,7 +241,7 @@ fn tier1_stale_snapshot_is_rejected_and_requeued() {
     // Compile, then invalidate the code page before installing the handle.
     {
         let jit = dispatcher.jit_mut();
-        let handle = compiler.compile_handle(&*jit, entry).unwrap();
+        let handle = compiler.compile_handle(&*jit, entry, 64).unwrap();
         jit.on_guest_write(entry, 1);
         jit.install_handle(handle);
         assert!(!jit.is_compiled(entry));

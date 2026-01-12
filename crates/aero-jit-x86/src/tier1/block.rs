@@ -29,6 +29,7 @@ pub enum BlockEndKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicBlock {
     pub entry_rip: u64,
+    pub bitness: u32,
     pub insts: Vec<DecodedInst>,
     pub end_kind: BlockEndKind,
 }
@@ -63,6 +64,7 @@ pub fn discover_block_mode<B: Tier1Bus>(
         if insts.len() >= limits.max_insts || total_bytes >= limits.max_bytes {
             return BasicBlock {
                 entry_rip,
+                bitness,
                 insts,
                 end_kind: BlockEndKind::Limit { next_rip: rip },
             };
@@ -89,6 +91,7 @@ pub fn discover_block_mode<B: Tier1Bus>(
         if let Some(kind) = end_kind {
             return BasicBlock {
                 entry_rip,
+                bitness,
                 insts,
                 end_kind: kind,
             };
