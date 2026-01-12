@@ -207,13 +207,17 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
         let mut ahci = ahci.borrow_mut();
         ahci.config_mut().set_command(0);
         // Also simulate a stale BAR5 base (the platform chooses the canonical BAR assignment).
-        ahci.config_mut().set_bar_base(5, 0);
+        ahci.config_mut().set_bar_base(AHCI_ABAR_BAR_INDEX, 0);
     }
 
     // With COMMAND.MEM disabled in the device model, direct MMIO reads return 0xFFFF_FFFF.
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0xFFFF_FFFF);
     assert_eq!(
-        ahci.borrow().config().bar_range(5).unwrap().base,
+        ahci.borrow()
+            .config()
+            .bar_range(AHCI_ABAR_BAR_INDEX)
+            .unwrap()
+            .base,
         0,
         "test setup should leave the device model's BAR5 base desynchronized"
     );
@@ -225,7 +229,11 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
     // The above access should have resynchronized the device model's command register.
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
     assert_eq!(
-        ahci.borrow().config().bar_range(5).unwrap().base,
+        ahci.borrow()
+            .config()
+            .bar_range(AHCI_ABAR_BAR_INDEX)
+            .unwrap()
+            .base,
         bar5_base,
         "platform MMIO should also sync the device model's BAR5 base"
     );
@@ -241,7 +249,11 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
     assert_eq!(pc.memory.read_u32(bar5_base + 0x10), 0x0001_0300);
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
     assert_eq!(
-        ahci.borrow().config().bar_range(5).unwrap().base,
+        ahci.borrow()
+            .config()
+            .bar_range(AHCI_ABAR_BAR_INDEX)
+            .unwrap()
+            .base,
         bar5_base,
         "platform MMIO should keep BAR5 base synced after COMMAND.MEM toggles"
     );
