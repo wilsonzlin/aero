@@ -295,7 +295,7 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 bash ./scripts/safe-run.sh cargo test -p firmware --locked
 
 # Run device model tests
-bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
+bash ./scripts/safe-run.sh cargo test -p devices --locked
 bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 

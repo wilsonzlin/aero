@@ -22,7 +22,7 @@ aerogpu-legacy = []
 
 [dependencies]
 aero-usb = { path = "../aero-usb" }
-aero-devices = { path = "../devices" }
+aero-devices = { package = "devices", path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }

@@ -12,5 +12,5 @@ aero-pc-constants = { path = "../aero-pc-constants" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
-aero-devices = { path = "../devices" }
+aero-devices = { package = "devices", path = "../devices" }
 aero-platform = { path = "../platform" }

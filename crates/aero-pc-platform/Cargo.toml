@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 aero-audio = { path = "../aero-audio" }
 aero-mmu = { path = "../aero-mmu" }
 aero-cpu-core = { path = "../aero-cpu-core" }
-aero-devices = { path = "../devices" }
+aero-devices = { package = "devices", path = "../devices" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme" }
 aero-interrupts = { path = "../aero-interrupts" }
