@@ -2,8 +2,19 @@ use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3};
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_pc_platform::PcPlatform;
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use memory::MemoryBus as _;
+
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -1135,4 +1146,167 @@ fn pc_platform_ide_secondary_nien_suppresses_irq15_for_atapi_dma() {
     let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_routes_ide_irq14_via_ioapic_in_apic_mode() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for ISA IRQ14 (GSI14) to vector 0x60, edge-triggered, active-high.
+    let vector = 0x60u32;
+    program_ioapic_entry(&mut pc, 14, vector, 0);
+
+    let bdf = IDE_PIIX3.bdf;
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0, "BAR4 should be programmed by BIOS POST");
+
+    // Enable bus mastering for DMA (keep I/O decoding enabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    // PRD table at 0x1000: one entry, end-of-table, 512 bytes.
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+    pc.memory.write_u32(prd_addr, read_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+    pc.io.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Issue READ DMA (LBA 0, 1 sector).
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+
+    // Start bus master (direction = to memory).
+    pc.io.write(bm_base, 1, 0x09);
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Acknowledge the interrupt (vector in service).
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    let mut out = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out, b"BOOT");
+
+    // Clear the IDE device interrupt by reading the status register and propagating the deassertion
+    // before EOI, to avoid immediately retriggering in level-triggered configurations.
+    let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+}
+
+#[test]
+fn pc_platform_routes_ide_irq15_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+
+    // Attach ISO with recognizable bytes at sector 0.
+    let mut iso_disk = RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
+    iso_disk.write_at(0, b"DMATEST!").unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for ISA IRQ15 (GSI15) to vector 0x61, edge-triggered, active-high.
+    let vector = 0x61u32;
+    program_ioapic_entry(&mut pc, 15, vector, 0);
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Enable IO decode + Bus Mastering so BMIDE DMA is allowed.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0, "BAR4 should be programmed by BIOS POST");
+
+    // Select master on secondary channel.
+    pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = pc.io.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    // Clear any pending device interrupt from REQUEST SENSE before starting the DMA read.
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // PRD table and DMA buffer in guest RAM.
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // One PRD entry: 2048 bytes, EOT.
+    pc.memory.write_u32(prd_addr, dma_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, 2048);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+
+    // Program secondary PRD pointer (BMIDE base + 8 + 4).
+    pc.io.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // The PACKET command enters a "packet-out" phase and raises an interrupt to request the
+    // 12-byte command packet. The helper above writes the packet synchronously, so clear that
+    // interrupt before checking DMA completion behavior.
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Start secondary bus master, direction=read (device -> memory).
+    pc.io.write(bm_base + 8, 1, 0x09);
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let mut out = [0u8; 8];
+    pc.memory.read_physical(dma_buf, &mut out);
+    assert_eq!(&out, b"DMATEST!");
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Clear the device interrupt so the IRQ line deasserts (and won't retrigger in
+    // level-triggered configurations).
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
