@@ -21,6 +21,7 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         (DeviceId::HDA, 18u32, "HDA"),
         (DeviceId::E1000, 19u32, "E1000"),
         (DeviceId::NET_STACK, 20u32, "NET_STACK"),
+        (DeviceId::PLATFORM_INTERRUPTS, 21u32, "PLATFORM_INTERRUPTS"),
     ];
 
     for (id, expected_num, expected_name) in cases {
@@ -32,3 +33,4 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         assert_eq!(format!("{id}"), format!("{expected_name}({expected_num})"));
     }
 }
+

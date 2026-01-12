@@ -83,6 +83,9 @@ impl DeviceId {
     pub const E1000: DeviceId = DeviceId(19);
     /// User-space network stack/backend state (TCP/IP, DHCP, NAT, proxy bookkeeping).
     pub const NET_STACK: DeviceId = DeviceId(20);
+    /// Platform interrupt controller/routing state (`PlatformInterrupts`: PIC + LAPIC/IOAPIC +
+    /// IMCR routing).
+    pub const PLATFORM_INTERRUPTS: DeviceId = DeviceId(21);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -106,6 +109,7 @@ impl DeviceId {
             DeviceId::HDA => Some("HDA"),
             DeviceId::E1000 => Some("E1000"),
             DeviceId::NET_STACK => Some("NET_STACK"),
+            DeviceId::PLATFORM_INTERRUPTS => Some("PLATFORM_INTERRUPTS"),
             _ => None,
         }
     }
