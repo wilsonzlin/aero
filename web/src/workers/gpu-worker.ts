@@ -27,6 +27,7 @@ import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
   isGpuWorkerMessageBase,
+  type FrameTimingsReport,
   type GpuRuntimeErrorEvent,
   type GpuRuntimeFallbackInfo,
   type GpuRuntimeCursorSetImageMessage,
@@ -128,6 +129,7 @@ let perfFrameHeader: Int32Array | null = null;
 let perfCurrentFrameId = 0;
 let perfGpuMs = 0;
 let perfUploadBytes = 0;
+let latestFrameTimings: FrameTimingsReport | null = null;
 let commandRing: RingBuffer | null = null;
 let eventRing: RingBuffer | null = null;
 let runtimePollTimer: number | null = null;
@@ -234,6 +236,28 @@ async function loadAerogpuWasm(): Promise<AeroGpuWasmApi> {
     })();
   }
   return await aerogpuWasmLoadPromise;
+}
+
+async function tryGetAeroGpuWasmFrameTimings(): Promise<FrameTimingsReport | null> {
+  if (presenter?.backend !== "webgl2_wgpu") return null;
+  let wasm = aerogpuWasm;
+  if (!wasm) {
+    try {
+      wasm = await loadAerogpuWasm();
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const report = wasm.get_frame_timings();
+    if (report && typeof report === "object") {
+      latestFrameTimings = report;
+    }
+    return report ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function ensureAerogpuWasmD3d9(backend: PresenterBackendKind): Promise<AeroGpuWasmApi> {
@@ -904,7 +928,19 @@ function getStatsCounters(): GpuRuntimeStatsCountersV1 {
 
 function postStatsMessage(wasmStats?: unknown): void {
   const backendKind = presenter?.backend ?? (runtimeCanvas ? undefined : "headless");
-  const wasm = wasmStats === undefined ? undefined : sanitizeForPostMessage(wasmStats);
+  const sanitizedWasmStats = wasmStats === undefined ? undefined : sanitizeForPostMessage(wasmStats);
+  const sanitizedFrameTimings = latestFrameTimings ? sanitizeForPostMessage(latestFrameTimings) : undefined;
+
+  let wasm: unknown | undefined = sanitizedWasmStats;
+  if (sanitizedFrameTimings !== undefined) {
+    if (wasm === undefined) {
+      wasm = { frameTimings: sanitizedFrameTimings };
+    } else if (wasm && typeof wasm === "object" && !Array.isArray(wasm)) {
+      wasm = { ...(wasm as Record<string, unknown>), frameTimings: sanitizedFrameTimings };
+    } else {
+      wasm = { wasm, frameTimings: sanitizedFrameTimings };
+    }
+  }
   postToMain({
     type: "stats",
     version: 1,
@@ -1686,7 +1722,18 @@ const handleTick = async () => {
     presentsAttempted += 1;
     const presentStartMs = perfEnabled ? performance.now() : 0;
     const didPresent = await presentOnce();
-    if (perfEnabled) perfGpuMs += performance.now() - presentStartMs;
+    const presentWallMs = perfEnabled ? performance.now() - presentStartMs : 0;
+
+    let presentGpuMs = presentWallMs;
+    if (presenter?.backend === "webgl2_wgpu" && didPresent) {
+      const timings = await tryGetAeroGpuWasmFrameTimings();
+      const gpuUs = timings?.gpu_us;
+      if (typeof gpuUs === "number" && Number.isFinite(gpuUs)) {
+        presentGpuMs = gpuUs / 1000;
+      }
+    }
+
+    if (perfEnabled) perfGpuMs += presentGpuMs;
     if (didPresent) {
       presentsSucceeded += 1;
       framesPresented += 1;
@@ -1800,6 +1847,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
   const prevPresenterBackend = presenter?.backend ?? null;
   presenter?.destroy?.();
   presenter = null;
+  latestFrameTimings = null;
   presenterFallback = undefined;
   presenterErrorGeneration += 1;
   const generation = presenterErrorGeneration;
@@ -2113,6 +2161,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
         presenter?.destroy?.();
         presenter = null;
+        latestFrameTimings = null;
         presenterFallback = undefined;
         presenterInitPromise = null;
         presenterSrcWidth = 0;

@@ -118,6 +118,7 @@ async function main() {
 
   const status = $("status");
   const backendEl = $("backend");
+  let loggedFrameTimings = false;
 
   const cssWidth = 64;
   const cssHeight = 64;
@@ -158,6 +159,16 @@ async function main() {
         // Print a small preview of WASM telemetry so the page can be used as a
         // diagnostics wiring check (particularly for the wgpu-backed WebGL2 presenter).
         window.__aeroTest = { ...(window.__aeroTest ?? {}), lastStats: msg, lastWasmStats: msg.wasm };
+        if (msg.backendKind === "webgl2_wgpu" && !loggedFrameTimings) {
+          const frameTimings = (msg.wasm as any)?.frameTimings;
+          if (frameTimings) {
+            loggedFrameTimings = true;
+            console.log("[gpu-worker] wasm frame timings", frameTimings);
+            if (status) {
+              status.textContent += `wasm.frameTimings=${safeJsonStringify(frameTimings)}\n`;
+            }
+          }
+        }
         if (!status) return;
         if (!msg.wasm) return;
         if (statsLinesWritten >= 1) return;
