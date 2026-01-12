@@ -363,6 +363,20 @@ impl Channel {
         self.status &= !IDE_STATUS_ERR;
     }
 
+    fn abort_command(&mut self, err: u8) {
+        self.data_mode = DataMode::None;
+        self.transfer_kind = None;
+        self.data.clear();
+        self.data_index = 0;
+        self.pending_dma = None;
+        self.pio_write = None;
+
+        self.set_error(err);
+        self.status &= !(IDE_STATUS_BSY | IDE_STATUS_DRQ);
+        self.status |= IDE_STATUS_DRDY;
+        self.set_irq();
+    }
+
     fn begin_pio_in(&mut self, kind: TransferKind, data: Vec<u8>) {
         self.data = data;
         self.data_index = 0;
@@ -444,10 +458,15 @@ impl Channel {
                     .unwrap_or_else(|| (self.tf.lba28(), self.tf.sector_count28() as u64));
                 let data = std::mem::take(&mut self.data);
                 let idx = self.selected_drive() as usize;
-                if let Some(IdeDevice::Ata(dev)) = self.devices[idx].as_mut() {
-                    let _ = ata_pio_write(dev, lba, sectors, &data);
+                let ok = match self.devices[idx].as_mut() {
+                    Some(IdeDevice::Ata(dev)) => ata_pio_write(dev, lba, sectors, &data).is_ok(),
+                    _ => false,
+                };
+                if ok {
+                    self.complete_non_data_command();
+                } else {
+                    self.abort_command(0x04);
                 }
-                self.complete_non_data_command();
             }
             Some(TransferKind::AtapiPioIn) => {
                 // Data phase complete; transition to status phase.
@@ -462,9 +481,7 @@ impl Channel {
                 let result = match self.devices[idx].as_mut() {
                     Some(IdeDevice::Atapi(dev)) => dev.handle_packet(&packet, dma_requested),
                     _ => {
-                        self.set_error(0x04);
-                        self.status &= !IDE_STATUS_DRQ;
-                        self.set_irq();
+                        self.abort_command(0x04);
                         return;
                     }
                 };
@@ -484,15 +501,7 @@ impl Channel {
                     }
                     PacketResult::Error { .. } => {
                         self.tf.sector_count = 0x03;
-                        self.set_error(0x04); // ABRT
-                        self.status &= !IDE_STATUS_DRQ;
-                        self.status |= IDE_STATUS_DRDY;
-                        self.set_irq();
-                        // Command completed with error; exit the packet phase.
-                        self.data_mode = DataMode::None;
-                        self.transfer_kind = None;
-                        self.data.clear();
-                        self.data_index = 0;
+                        self.abort_command(0x04);
                     }
                     PacketResult::DmaIn(buf) => {
                         // Queue a DMA transfer; completion will raise IRQ.
@@ -778,16 +787,10 @@ impl IdeController {
                         chan.tf.lba0 = 0x01;
                         chan.tf.lba1 = 0x14;
                         chan.tf.lba2 = 0xEB;
-                        chan.set_error(0x04);
-                        chan.status &= !IDE_STATUS_BSY;
-                        chan.status |= IDE_STATUS_DRDY;
-                        chan.set_irq();
+                        chan.abort_command(0x04);
                     }
                     None => {
-                        chan.set_error(0x04);
-                        chan.status &= !IDE_STATUS_BSY;
-                        chan.status |= IDE_STATUS_DRDY;
-                        chan.set_irq();
+                        chan.abort_command(0x04);
                     }
                 }
             }
@@ -800,10 +803,7 @@ impl IdeController {
                 if let Some(data) = data {
                     chan.begin_pio_in(TransferKind::Identify, data);
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
-                    chan.status |= IDE_STATUS_DRDY;
-                    chan.set_irq();
+                    chan.abort_command(0x04);
                 }
             }
             0x20 | 0x24 => {
@@ -822,8 +822,7 @@ impl IdeController {
                 if let Some(buf) = res {
                     chan.begin_pio_in(TransferKind::AtaPioRead, buf);
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                    chan.abort_command(0x04);
                 }
             }
             0x30 | 0x34 => {
@@ -844,12 +843,10 @@ impl IdeController {
                         chan.pio_write = Some((lba, sectors));
                         chan.begin_pio_out(TransferKind::AtaPioWrite, byte_len);
                     } else {
-                        chan.set_error(0x04);
-                        chan.status &= !IDE_STATUS_BSY;
+                        chan.abort_command(0x04);
                     }
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                    chan.abort_command(0x04);
                 }
             }
             0xC8 | 0xCA | 0x25 | 0x35 => {
@@ -884,8 +881,7 @@ impl IdeController {
                     chan.status &= !IDE_STATUS_BSY;
                     chan.status |= IDE_STATUS_DRDY;
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                    chan.abort_command(0x04);
                 }
             }
             0xE7 | 0xEA => {
@@ -897,8 +893,7 @@ impl IdeController {
                 if ok {
                     chan.complete_non_data_command();
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                    chan.abort_command(0x04);
                 }
             }
             0xEF => {
@@ -923,8 +918,7 @@ impl IdeController {
                 if ok {
                     chan.complete_non_data_command();
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                    chan.abort_command(0x04);
                 }
             }
             0xA0 => {
@@ -933,14 +927,11 @@ impl IdeController {
                     chan.tf.sector_count = 0x01; // IO=0, CoD=1 (packet)
                     chan.begin_pio_out(TransferKind::AtapiPacket, 12);
                 } else {
-                    chan.set_error(0x04);
-                    chan.status &= !IDE_STATUS_BSY;
+                    chan.abort_command(0x04);
                 }
             }
             _ => {
-                chan.set_error(0x04); // ABRT
-                chan.status &= !IDE_STATUS_BSY;
-                chan.set_irq();
+                chan.abort_command(0x04);
             }
         }
     }
@@ -964,26 +955,38 @@ impl IdeController {
 
         match bm.execute_dma(mem, &mut req) {
             Ok(()) => {
+                let mut ok = true;
                 // Commit writes after the DMA engine has pulled data from guest memory.
-                if let Some(DmaCommit::AtaWrite { lba, sectors }) = req.commit {
+                if let Some(DmaCommit::AtaWrite { lba, sectors }) = req.commit.take() {
                     let dev_idx = chan.selected_drive() as usize;
-                    if let Some(IdeDevice::Ata(dev)) = chan.devices[dev_idx].as_mut() {
-                        let _ = ata_pio_write(dev, lba, sectors, &req.buffer);
+                    ok = match chan.devices[dev_idx].as_mut() {
+                        Some(IdeDevice::Ata(dev)) => ata_pio_write(dev, lba, sectors, &req.buffer)
+                            .is_ok(),
+                        _ => false,
+                    };
+                }
+
+                if ok {
+                    bm.finish_success();
+                    // For ATAPI DMA commands, transition to status phase (interrupt reason).
+                    let dev_idx = chan.selected_drive() as usize;
+                    if matches!(chan.devices[dev_idx], Some(IdeDevice::Atapi(_))) {
+                        chan.tf.sector_count = 0x03; // IO=1, CoD=1
                     }
+                    chan.complete_non_data_command();
+                } else {
+                    bm.finish_error();
+                    chan.abort_command(0x04);
                 }
-                bm.finish_success();
-                // For ATAPI DMA commands, transition to status phase (interrupt reason).
-                let dev_idx = chan.selected_drive() as usize;
-                if matches!(chan.devices[dev_idx], Some(IdeDevice::Atapi(_))) {
-                    chan.tf.sector_count = 0x03; // IO=1, CoD=1
-                }
-                chan.complete_non_data_command();
             }
             Err(_) => {
                 bm.finish_error();
-                chan.set_error(0x04);
-                chan.status &= !IDE_STATUS_BSY;
-                chan.set_irq();
+                // For ATAPI DMA commands, still transition to status phase.
+                let dev_idx = chan.selected_drive() as usize;
+                if matches!(chan.devices[dev_idx], Some(IdeDevice::Atapi(_))) {
+                    chan.tf.sector_count = 0x03;
+                }
+                chan.abort_command(0x04);
             }
         }
     }

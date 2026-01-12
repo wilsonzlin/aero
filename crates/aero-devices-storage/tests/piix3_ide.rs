@@ -211,6 +211,42 @@ fn ata_boot_sector_read_via_legacy_pio_ports() {
 }
 
 #[test]
+fn ata_pio_read_out_of_bounds_raises_irq_and_sets_err() {
+    let capacity = SECTOR_SIZE as u64; // 1 sector
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Issue READ SECTORS for LBA 10, 1 sector (out of bounds).
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1); // count
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, 10); // lba0
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // lba1
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // lba2
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    // Alt-status should reflect error without clearing the IRQ.
+    let st = io.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear (no data phase)");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    // Reading STATUS acknowledges and clears the pending IRQ.
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn ata_lba48_oversized_pio_read_is_rejected_without_entering_data_phase() {
     let sectors = (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) as u32 + 1;
     // The largest possible LBA48 transfer is 65536 sectors (sector_count=0). If the cap ever grows
@@ -337,6 +373,65 @@ fn ata_pio_write_sectors_ext_uses_lba48_hob_bytes() {
     let inner = shared.borrow();
     assert_eq!(inner.last_write_lba, Some(lba));
     assert_eq!(inner.last_write_len, SECTOR_SIZE);
+}
+
+#[test]
+fn ata_dma_write_out_of_bounds_sets_bus_master_and_ata_error() {
+    let capacity = SECTOR_SIZE as u64; // 1 sector
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+    let bm_base = ide.borrow().bus_master_base();
+
+    // Fill one sector worth of DMA source data.
+    let pattern: Vec<u8> = (0..SECTOR_SIZE as u32).map(|v| (v & 0xff) as u8).collect();
+    mem.write_physical(dma_buf, &pattern);
+
+    // PRD entry: one 512-byte segment, EOT.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // WRITE DMA for out-of-bounds LBA 10.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 10);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA); // WRITE DMA
+
+    // Start bus master (direction = from memory).
+    ioports.write(bm_base, 1, 0x01);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_status = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(
+        bm_status & 0x06,
+        0x06,
+        "BMIDE status should have IRQ+ERR set"
+    );
+
+    // ATA status should reflect an error completion.
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    assert!(ide.borrow().controller.primary_irq_pending());
 }
 
 #[test]
