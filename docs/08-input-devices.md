@@ -22,14 +22,18 @@ The WASM-facing wrapper exposes input injection methods that map directly to PS/
   - Optional convenience for PS/2 coordinate conventions: `Machine.inject_ps2_mouse_motion(dx, dy, wheel)` where +Y is up.
 - Mouse buttons:
   - `Machine.inject_mouse_button(button, pressed)` uses DOM `MouseEvent.button` mapping:
-    - `0`: left, `1`: middle, `2`: right (other values ignored)
+    - `0`: left, `1`: middle, `2`: right, `3`: back, `4`: forward (other values ignored)
   - `Machine.inject_mouse_buttons_mask(mask)` uses DOM `MouseEvent.buttons` bitmask:
-    - bit0 (`0x01`): left, bit1 (`0x02`): right, bit2 (`0x04`): middle (higher bits ignored)
+    - bit0 (`0x01`): left, bit1 (`0x02`): right, bit2 (`0x04`): middle, bit3 (`0x08`): back, bit4 (`0x10`): forward (higher bits ignored)
   - Optional alias: `Machine.inject_ps2_mouse_buttons(mask)` (same bit mapping).
-  - Convenience helpers also exist: `inject_mouse_left/right/middle(pressed)`.
+  - Convenience helpers also exist: `inject_mouse_left/right/middle/back/forward(pressed)`.
   - For ergonomics, `crates/aero-wasm` also exports enums that mirror these DOM mappings:
-    - `MouseButton` (`Left=0`, `Middle=1`, `Right=2`)
-    - `MouseButtons` bit values (`Left=1`, `Right=2`, `Middle=4`) which can be OR'd into a mask
+    - `MouseButton` (`Left=0`, `Middle=1`, `Right=2`, `Back=3`, `Forward=4`)
+    - `MouseButtons` bit values (`Left=1`, `Right=2`, `Middle=4`, `Back=8`, `Forward=16`) which can be OR'd into a mask
+
+Note: The legacy 3-byte PS/2 packet format only carries left/right/middle in the first status byte.
+Back/forward are only emitted to the guest in PS/2 stream packets if the guest enables the
+IntelliMouse Explorer (5-button) extension (device ID `0x04`).
 
 Example:
 
@@ -51,8 +55,8 @@ machine.inject_mouse_buttons_mask(0x00); // release all
 If the WASM build exports `MouseButton`/`MouseButtons`, callers can avoid hardcoding numeric values:
 
 ```ts
-const MB = api.MouseButton ?? { Left: 0, Middle: 1, Right: 2 };
-const MBS = api.MouseButtons ?? { Left: 1, Right: 2, Middle: 4 };
+const MB = api.MouseButton ?? { Left: 0, Middle: 1, Right: 2, Back: 3, Forward: 4 };
+const MBS = api.MouseButtons ?? { Left: 1, Right: 2, Middle: 4, Back: 8, Forward: 16 };
 
 machine.inject_mouse_button(MB.Left, true);
 machine.inject_mouse_buttons_mask(MBS.Left | MBS.Right);
