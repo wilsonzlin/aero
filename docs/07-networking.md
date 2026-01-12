@@ -1121,6 +1121,7 @@ Relevant implementation files:
 - UI surface: `web/src/net/trace_ui.ts`
 - Tunnel forwarder owner (where the capture boundary lives): `web/src/workers/net.worker.ts`
 - Capture implementation + PCAPNG writer: `web/src/net/net_tracer.ts`, `web/src/net/pcapng.ts`
+- Coordinator API + message types (worker runtime): `web/src/runtime/coordinator.ts`, `web/src/runtime/protocol.ts`
 
 #### UI workflow (“Network trace (PCAPNG)” panel)
 
@@ -1132,8 +1133,8 @@ In the repo’s browser host UI, there is a panel titled **“Network trace (PCA
 - **Save capture to OPFS** (Origin Private File System) at a configurable path (default
   `captures/aero-net-trace.pcapng`).
 
-If the tracing backend is not installed in the current build/runtime, enabling or downloading will
-fail with an error indicating `window.aero.netTrace` is missing.
+If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
+is missing) or the net worker isn't running, enabling or downloading will fail with an error.
 
 OPFS notes:
 
@@ -1158,6 +1159,11 @@ Some builds may additionally expose:
 
 - `clear(): void | Promise<void>` (drop buffered frames)
 - `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops; some builds may expose `stats()` instead)
+
+Worker-runtime note: in the worker-based runtime, these operations are implemented by sending
+`net.trace.*` `postMessage()` commands to the net worker and receiving the `net.trace.pcapng`
+response. See `web/src/runtime/coordinator.ts` (helper methods) and `web/src/workers/net.worker.ts`
+(the handler + `NetTracer`).
 
 Example:
 
