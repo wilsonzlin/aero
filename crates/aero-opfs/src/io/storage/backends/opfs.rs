@@ -786,6 +786,18 @@ mod wasm {
     /// IMPORTANT: IndexedDB cannot back `aero_storage::StorageBackend` / `aero_storage::VirtualDisk`
     /// (used by Aero's synchronous Rust AHCI/IDE controller path) in the same Worker, because
     /// IndexedDB does not provide synchronous read/write semantics.
+    ///
+    /// As a guardrail, this type intentionally does **not** implement
+    /// [`aero_storage::StorageBackend`]:
+    ///
+    /// ```compile_fail
+    /// use aero_storage::StorageBackend;
+    /// use aero_opfs::OpfsIndexedDbBackend;
+    ///
+    /// fn assert_sync_backend<T: StorageBackend>() {}
+    ///
+    /// assert_sync_backend::<OpfsIndexedDbBackend>();
+    /// ```
     pub struct OpfsIndexedDbBackend {
         inner: StIndexedDbBackend,
         sector_size: u32,
@@ -1270,6 +1282,22 @@ mod native {
         }
     }
 
+    /// Stub for [`OpfsIndexedDbBackend`] on non-wasm targets.
+    ///
+    /// The real IndexedDB implementation is wasm32-only. This stub exists so the crate can
+    /// compile on non-wasm platforms.
+    ///
+    /// IndexedDB is async-only and this type intentionally does **not** implement
+    /// [`aero_storage::StorageBackend`] (see `docs/19-indexeddb-storage-story.md`):
+    ///
+    /// ```compile_fail
+    /// use aero_storage::StorageBackend;
+    /// use aero_opfs::OpfsIndexedDbBackend;
+    ///
+    /// fn assert_sync_backend<T: StorageBackend>() {}
+    ///
+    /// assert_sync_backend::<OpfsIndexedDbBackend>();
+    /// ```
     #[derive(Debug)]
     pub struct OpfsIndexedDbBackend;
 
