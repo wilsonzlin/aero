@@ -6,9 +6,10 @@ use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_snapshot as snapshot;
 use aero_storage::{DiskError, Result as DiskResult, VirtualDisk, SECTOR_SIZE};
 use pretty_assertions::assert_eq;
-use std::io;
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
 
 // AHCI register offsets (HBA + port 0).
@@ -365,6 +366,46 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
 
     // --- Snapshot.
     let snapshot = src.take_snapshot_full().unwrap();
+
+    // Canonical snapshot encoding: store storage controller(s) under a single DISK_CONTROLLER entry
+    // using the DSKC wrapper (per docs/16-snapshots.md). This avoids `(id, version, flags)`
+    // collisions when multiple controllers share the same io-snapshot version.
+    {
+        let mut r = io::Cursor::new(snapshot.as_slice());
+        let index = snapshot::inspect_snapshot(&mut r).expect("snapshot should be inspectable");
+        let devices = index
+            .sections
+            .iter()
+            .find(|s| s.id == snapshot::SectionId::DEVICES)
+            .expect("snapshot should contain a DEVICES section");
+        r.seek(SeekFrom::Start(devices.offset))
+            .expect("seek to DEVICES payload");
+        let mut limited = r.take(devices.len);
+        let mut count_buf = [0u8; 4];
+        limited.read_exact(&mut count_buf).expect("read device count");
+        let count = u32::from_le_bytes(count_buf) as usize;
+        let mut disk_controller_entries = Vec::new();
+        for _ in 0..count {
+            let state = snapshot::DeviceState::decode(&mut limited, devices.len)
+                .expect("decode device entry");
+            if state.id == snapshot::DeviceId::DISK_CONTROLLER {
+                disk_controller_entries.push(state);
+            }
+        }
+        assert_eq!(
+            disk_controller_entries.len(),
+            1,
+            "snapshot should contain exactly one DISK_CONTROLLER entry (DSKC wrapper)"
+        );
+        assert_eq!(
+            disk_controller_entries[0]
+                .data
+                .get(8..12)
+                .expect("io-snapshot header must contain a device id"),
+            b"DSKC",
+            "DISK_CONTROLLER entry should be encoded as a DSKC wrapper"
+        );
+    }
 
     // --- Restore into a fresh machine instance (backends must be reattached explicitly).
     let mut restored = Machine::new(cfg).unwrap();
