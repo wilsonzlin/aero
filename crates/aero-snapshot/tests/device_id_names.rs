@@ -10,4 +10,3 @@ fn usb_device_id_has_stable_name() {
         "DeviceId::USB Display should include name, got: {display}"
     );
 }
-
