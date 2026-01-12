@@ -13,6 +13,9 @@ const PRIMARY_BASE: u16 = 0x1F0;
 // Bus Master IDE register block size is 16 bytes (two channels).
 const DEFAULT_BUS_MASTER_BASE: u16 = 0xC000;
 
+const MAX_PRDS: u8 = 32;
+const MAX_SECTORS: u8 = 8;
+
 fn place_region(seed: u64, mem_size: usize, align: usize, size: usize) -> u64 {
     if mem_size <= size {
         return 0;
@@ -30,12 +33,39 @@ fuzz_target!(|data: &[u8]| {
 
     // Fixed RAM size to keep fuzz runs deterministic and allocations bounded.
     let mem_size = 256usize * 1024;
+
+    // Parse control values first so the remaining bytes can be used as guest RAM contents.
+    let bm_base_seed: u16 = u.arbitrary().unwrap_or(DEFAULT_BUS_MASTER_BASE);
+    let dma_write: bool = u.arbitrary().unwrap_or(false);
+    let sectors_seed: u8 = u.arbitrary().unwrap_or(1);
+    let prd_count_seed: u8 = u.arbitrary().unwrap_or(1);
+    let prd_table_seed: u64 = u.arbitrary().unwrap_or(0);
+    let lba_seed: u32 = u.arbitrary().unwrap_or(0);
+    let force_eot: bool = u.arbitrary().unwrap_or(true);
+    let mismatch_dir: bool = u.arbitrary().unwrap_or(false);
+
+    let prd_count = (prd_count_seed % MAX_PRDS).max(1) as usize;
+    let mut prd_entries: Vec<(u32, u16, bool)> = Vec::with_capacity(prd_count);
+    for i in 0..prd_count {
+        let mut addr: u32 = u.arbitrary().unwrap_or(0);
+        let byte_count: u16 = u.arbitrary().unwrap_or(0);
+        let mut eot: bool = u.arbitrary().unwrap_or(false);
+        if i == prd_count - 1 && force_eot {
+            eot = true;
+        }
+        // Bias some PRD buffers into RAM so DMA actually touches our Vec-backed memory.
+        if (addr & 1) == 0 {
+            addr %= mem_size as u32;
+        }
+        prd_entries.push((addr, byte_count, eot));
+    }
+
     let mut mem = Bus::new(mem_size);
 
     // Seed RAM from the input.
     {
-        let rest_len = u.len();
-        let init = u.bytes(rest_len).unwrap_or(&[]);
+        let init_len = u.len();
+        let init = u.bytes(init_len).unwrap_or(&[]);
         let ram = mem.ram_mut();
         let n = init.len().min(ram.len());
         ram[..n].copy_from_slice(&init[..n]);
@@ -53,7 +83,6 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // Bus Master base (aligned to 16 bytes).
-    let bm_base_seed: u16 = u.arbitrary().unwrap_or(DEFAULT_BUS_MASTER_BASE);
     let bus_master_base: u16 = bm_base_seed & 0xFFF0;
 
     let mut ctl = IdeController::new(bus_master_base);
@@ -61,33 +90,27 @@ fuzz_target!(|data: &[u8]| {
 
     // Synthesize a minimally well-formed PRD table + DMA command to reach the Bus Master DMA
     // descriptor parsing and scatter/gather logic.
-    let dma_write: bool = u.arbitrary().unwrap_or(false);
-    let sectors: u8 = (u.arbitrary::<u8>().unwrap_or(1) % 8).max(1);
-    let byte_len = sectors as usize * SECTOR_SIZE;
+    let sectors: u8 = (sectors_seed % MAX_SECTORS).max(1);
 
-    let prd_seed: u64 = u.arbitrary().unwrap_or(0);
-    let buf_seed: u64 = u.arbitrary().unwrap_or(0);
-
-    // Place a single-entry PRD table (8 bytes) and one contiguous data buffer.
-    let prd_addr = place_region(prd_seed, mem_size, 4, 8).min(u32::MAX as u64) as u32;
-    let buf_addr = place_region(buf_seed, mem_size, 2, byte_len)
+    // Place a PRD table in RAM (8 bytes per entry).
+    let prd_bytes = prd_entries.len().saturating_mul(8);
+    let prd_addr = place_region(prd_table_seed, mem_size, 4, prd_bytes.max(8))
         .min(u32::MAX as u64) as u32;
 
-    // PRD entry: [addr: u32][byte_count: u16][flags: u16]. End-of-table bit is 0x8000.
-    mem.write_u32(prd_addr as u64, buf_addr);
-    mem.write_u16(prd_addr as u64 + 4, byte_len as u16);
-    mem.write_u16(prd_addr as u64 + 6, 0x8000);
+    for (i, (addr, count, eot)) in prd_entries.into_iter().enumerate() {
+        let entry_addr = (prd_addr as u64).wrapping_add((i as u64) * 8);
+        mem.write_u32(entry_addr, addr);
+        mem.write_u16(entry_addr + 4, count);
+        let flags = if eot { 0x8000u16 } else { 0 };
+        mem.write_u16(entry_addr + 6, flags);
+    }
 
     // Program Bus Master PRD base (primary channel, reg 4).
     ctl.io_write(bus_master_base + 4, 4, prd_addr);
 
     // Program ATA registers for a 28-bit DMA command (primary master, LBA mode).
     let lba_max = (capacity / SECTOR_SIZE as u64).saturating_sub(sectors as u64);
-    let lba: u32 = if lba_max == 0 {
-        0
-    } else {
-        u.arbitrary::<u32>().unwrap_or(0) % (lba_max as u32 + 1)
-    };
+    let lba: u32 = if lba_max == 0 { 0 } else { lba_seed % (lba_max as u32 + 1) };
 
     // Drive/head: master + LBA bit set.
     let dev = 0xE0u8 | ((lba >> 24) as u8 & 0x0F);
@@ -104,10 +127,12 @@ fuzz_target!(|data: &[u8]| {
     // Start Bus Master engine (primary channel). Direction bit:
     // - 1 => device -> memory (read)
     // - 0 => memory -> device (write)
-    let bm_cmd = if dma_write { 0x01u32 } else { 0x09u32 };
+    let mut bm_cmd = 0x01u32;
+    let dir_bit = if dma_write { 0 } else { 0x08 };
+    let dir_bit = if mismatch_dir { dir_bit ^ 0x08 } else { dir_bit };
+    bm_cmd |= dir_bit;
     ctl.io_write(bus_master_base + 0, 1, bm_cmd);
 
     // Complete DMA synchronously.
     ctl.tick(&mut mem);
 });
-

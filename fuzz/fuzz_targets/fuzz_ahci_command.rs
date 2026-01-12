@@ -33,6 +33,9 @@ const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
 
+const MAX_PRDTL: u16 = 32;
+const MAX_SECTORS: u16 = 8;
+
 fn place_region(seed: u64, mem_size: usize, align: usize, size: usize) -> u64 {
     if mem_size <= size {
         return 0;
@@ -45,46 +48,36 @@ fn place_region(seed: u64, mem_size: usize, align: usize, size: usize) -> u64 {
     off as u64
 }
 
-fn write_cmd_header(
-    mem: &mut dyn MemoryBus,
-    clb: u64,
-    slot: usize,
-    ctba: u64,
-    prdtl: u16,
-    write: bool,
-) {
-    // CFL=5 dwords (20 bytes) is enough for our fixed 64-byte CFIS buffer.
-    let cfl = 5u32;
-    let w = if write { 1u32 << 6 } else { 0 };
-    let flags = cfl | w | ((prdtl as u32) << 16);
-    let addr = clb + (slot as u64) * 32;
-    mem.write_u32(addr, flags);
-    mem.write_u32(addr + 4, 0); // PRDBC
-    mem.write_u32(addr + 8, ctba as u32);
-    mem.write_u32(addr + 12, (ctba >> 32) as u32);
-}
-
-fn write_prdt(mem: &mut dyn MemoryBus, ctba: u64, entry: usize, dba: u64, dbc: u32) {
-    let addr = ctba + 0x80 + (entry as u64) * 16;
-    mem.write_u32(addr, dba as u32);
-    mem.write_u32(addr + 4, (dba >> 32) as u32);
-    mem.write_u32(addr + 8, 0);
-    // DBC field stores byte_count-1 in bits 0..21.
-    mem.write_u32(addr + 12, dbc.saturating_sub(1) & 0x003F_FFFF);
-}
-
-fn write_cfis(mem: &mut dyn MemoryBus, ctba: u64, cfis: &[u8; 64]) {
-    mem.write_physical(ctba, cfis);
-}
-
 fuzz_target!(|data: &[u8]| {
     let mut u = Unstructured::new(data);
 
     // Fixed-size RAM to keep allocations bounded and deterministic.
     let mem_size = 256usize * 1024;
+
+    // Control fields are consumed first so the remaining bytes can be used as "guest RAM" backing.
+    let clb_seed: u64 = u.arbitrary().unwrap_or(0);
+    let fb_seed: u64 = u.arbitrary().unwrap_or(0);
+    let ctba_seed: u64 = u.arbitrary().unwrap_or(0);
+    let slot_seed: u8 = u.arbitrary().unwrap_or(0);
+    let header_flags_seed: u32 = u.arbitrary().unwrap_or(0);
+    let cmd_seed: u8 = u.arbitrary().unwrap_or(0);
+    let feature_low: u8 = u.arbitrary().unwrap_or(0);
+    let lba_seed: u64 = u.arbitrary().unwrap_or(0);
+    let sectors_seed: u16 = u.arbitrary().unwrap_or(1);
+    let prdtl_seed: u16 = u.arbitrary().unwrap_or(0);
+    let force_valid_fis: bool = u.arbitrary().unwrap_or(true);
+    let mmio_ops: u8 = u.int_in_range(0u8..=8).unwrap_or(0);
+    let mut ops: Vec<(u16, u32)> = Vec::with_capacity(mmio_ops as usize);
+    for _ in 0..mmio_ops {
+        let off: u16 = u.arbitrary().unwrap_or(0);
+        let val: u32 = u.arbitrary().unwrap_or(0);
+        ops.push((off, val));
+    }
+
     let mut mem = Bus::new(mem_size);
 
-    // Seed guest RAM from the input for baseline entropy.
+    // Seed guest RAM from the remaining bytes so the fuzzer can directly influence descriptor
+    // tables (command list/table + PRDT) and DMA buffers.
     {
         let init_len = u.len();
         let init = u.bytes(init_len).unwrap_or(&[]);
@@ -112,41 +105,54 @@ fuzz_target!(|data: &[u8]| {
     dev.config_mut().set_command((1 << 1) | (1 << 2));
 
     // Bias the location of CLB/FB/CTBA to be inside guest RAM.
-    let clb_seed: u64 = u.arbitrary().unwrap_or(0);
-    let fb_seed: u64 = u.arbitrary().unwrap_or(0);
-    let ctba_seed: u64 = u.arbitrary().unwrap_or(0);
-    let buf_seed: u64 = u.arbitrary().unwrap_or(0);
-
-    // Keep transfers <= 8 sectors (4KiB) to keep fuzz runs fast.
-    let sector_count_seed: u8 = u.arbitrary().unwrap_or(1);
-    let sector_count = (sector_count_seed % 8).max(1) as usize;
-    let byte_len = sector_count * SECTOR_SIZE;
-
-    let prdtl_seed: u8 = u.arbitrary().unwrap_or(1);
-    let prdtl = (prdtl_seed as u16 % 8).max(1);
-
-    let cmd_sel: u8 = u.arbitrary().unwrap_or(0);
-    let cmd = match cmd_sel % 6 {
-        0 => ATA_CMD_IDENTIFY,
-        1 => ATA_CMD_READ_DMA_EXT,
-        2 => ATA_CMD_WRITE_DMA_EXT,
-        3 => ATA_CMD_FLUSH_CACHE,
-        4 => ATA_CMD_FLUSH_CACHE_EXT,
-        _ => ATA_CMD_SET_FEATURES,
-    };
-
-    let slot_seed: u8 = u.arbitrary().unwrap_or(0);
-    let slot: u32 = (slot_seed % 32) as u32;
-
-    // Regions.
     let clb = place_region(clb_seed, mem_size, 1024, 1024);
     let fb = place_region(fb_seed, mem_size, 256, 256);
+
+    // Keep transfers <= 8 sectors (4KiB) to keep fuzz runs fast.
+    let sectors = (sectors_seed % MAX_SECTORS).max(1);
+
+    // Choose a command value; bias toward known commands so we reach deeper DMA/PRDT paths, but
+    // still allow unknown commands for negative testing.
+    let cmd = if (cmd_seed & 0x80) == 0 {
+        match cmd_seed % 6 {
+            0 => ATA_CMD_IDENTIFY,
+            1 => ATA_CMD_READ_DMA_EXT,
+            2 => ATA_CMD_WRITE_DMA_EXT,
+            3 => ATA_CMD_FLUSH_CACHE,
+            4 => ATA_CMD_FLUSH_CACHE_EXT,
+            _ => ATA_CMD_SET_FEATURES,
+        }
+    } else {
+        cmd_seed
+    };
+
+    let expected_len = match cmd {
+        ATA_CMD_IDENTIFY => 512usize,
+        ATA_CMD_READ_DMA_EXT | ATA_CMD_WRITE_DMA_EXT => (sectors as usize) * SECTOR_SIZE,
+        _ => 0usize,
+    };
+
+    let mut prdtl = (prdtl_seed % (MAX_PRDTL + 1)) as u16; // 0..=MAX_PRDTL
+    // If the command expects a DMA buffer, bias towards a non-empty PRDT so we actually parse it.
+    if expected_len != 0 && prdtl == 0 {
+        prdtl = 1;
+    }
+
+    let slot: u32 = (slot_seed % 32) as u32;
+
+    // Command table region large enough for CFIS + PRDT.
     let ctba_size = 0x80usize + (prdtl as usize) * 16 + 64;
     let ctba = place_region(ctba_seed, mem_size, 128, ctba_size);
-    let buf_base = place_region(buf_seed, mem_size, 4, byte_len);
 
     // Program registers (in-range) to reach deeper parsing logic.
     let port_base = PORT_BASE;
+
+    // Apply a small number of fuzzer-driven MMIO writes first (to stress register decode paths),
+    // then overwrite the critical registers below so we can reach command execution.
+    for (off, val) in ops {
+        dev.mmio_write(off as u64, 4, val as u64);
+    }
+
     dev.mmio_write(port_base + PORT_REG_CLB, 4, clb as u64);
     dev.mmio_write(port_base + PORT_REG_CLBU, 4, (clb >> 32) as u64);
     dev.mmio_write(port_base + PORT_REG_FB, 4, fb as u64);
@@ -162,53 +168,45 @@ fuzz_target!(|data: &[u8]| {
         (PORT_CMD_ST | PORT_CMD_FRE) as u64,
     );
 
-    // Overlay a minimally well-formed command header/table so we exercise command parsing + PRDT
-    // DMA scatter/gather logic.
-    let is_write = cmd == ATA_CMD_WRITE_DMA_EXT;
-    write_cmd_header(&mut mem, clb, slot as usize, ctba, prdtl, is_write);
+    // Overlay *only* the critical fields in the command header so:
+    // - CTBA stays in-range (avoids early-exit from unmapped CFIS reads),
+    // - PRDTL stays bounded (avoids pathological loops),
+    // while still leaving other bytes attacker-controlled via the seeded guest RAM.
+    let header_addr = clb + (slot as u64) * 32;
+    let flags_low = header_flags_seed & 0x0000_FFFF;
+    let flags = flags_low | ((prdtl as u32) << 16);
+    mem.write_u32(header_addr, flags);
+    mem.write_u32(header_addr + 4, 0); // PRDBC
+    mem.write_u32(header_addr + 8, ctba as u32);
+    mem.write_u32(header_addr + 12, (ctba >> 32) as u32);
 
-    let mut cfis = [0u8; 64];
-    // Register Host-to-Device FIS.
-    cfis[0] = 0x27; // FIS_TYPE_REG_H2D
-    cfis[1] = 0x80; // C bit (command)
-    cfis[2] = cmd;
-    cfis[7] = 0x40; // LBA mode
+    // Patch the CFIS in-place to keep internal allocations bounded and to ensure we frequently
+    // reach the deeper command parsing and PRDT/DMA paths.
+    if force_valid_fis {
+        mem.write_u8(ctba, 0x27);
+        let b1 = mem.read_u8(ctba + 1);
+        mem.write_u8(ctba + 1, b1 | 0x80);
+    }
+    mem.write_u8(ctba + 2, cmd);
+    mem.write_u8(ctba + 3, feature_low);
+    let dev_byte = mem.read_u8(ctba + 7);
+    mem.write_u8(ctba + 7, dev_byte | 0x40);
 
-    // LBA48 (bounded).
-    let lba_seed: u64 = u.arbitrary().unwrap_or(0);
+    // Clamp LBA so successful DMA reads/writes occur frequently (helps coverage).
     let max_lba = capacity / SECTOR_SIZE as u64;
     let lba = if max_lba == 0 { 0 } else { lba_seed % max_lba };
-    cfis[4] = (lba & 0xFF) as u8;
-    cfis[5] = ((lba >> 8) & 0xFF) as u8;
-    cfis[6] = ((lba >> 16) & 0xFF) as u8;
-    cfis[8] = ((lba >> 24) & 0xFF) as u8;
-    cfis[9] = ((lba >> 32) & 0xFF) as u8;
-    cfis[10] = ((lba >> 40) & 0xFF) as u8;
+    mem.write_u8(ctba + 4, (lba & 0xFF) as u8);
+    mem.write_u8(ctba + 5, ((lba >> 8) & 0xFF) as u8);
+    mem.write_u8(ctba + 6, ((lba >> 16) & 0xFF) as u8);
+    mem.write_u8(ctba + 8, ((lba >> 24) & 0xFF) as u8);
+    mem.write_u8(ctba + 9, ((lba >> 32) & 0xFF) as u8);
+    mem.write_u8(ctba + 10, ((lba >> 40) & 0xFF) as u8);
 
-    // Sector count (avoid 0 => 65536 semantics).
-    cfis[12] = (sector_count & 0xFF) as u8;
-    cfis[13] = ((sector_count >> 8) & 0xFF) as u8;
-
-    // SET FEATURES subcommand is in Features (low byte).
-    cfis[3] = u.arbitrary().unwrap_or(0);
-    write_cfis(&mut mem, ctba, &cfis);
-
-    // PRDT entries cover the transfer buffer.
-    let mut remaining = byte_len;
-    let mut cur = buf_base;
-    for entry in 0..(prdtl as usize) {
-        if remaining == 0 {
-            write_prdt(&mut mem, ctba, entry, cur, 1);
-            continue;
-        }
-        let chunk = remaining.min(4096);
-        write_prdt(&mut mem, ctba, entry, cur, chunk as u32);
-        cur = cur.wrapping_add(chunk as u64);
-        remaining -= chunk;
-    }
+    // Clamp sector count away from 0 to avoid the ATA semantics of 0 => 65536 sectors.
+    mem.write_u8(ctba + 12, (sectors & 0xFF) as u8);
+    mem.write_u8(ctba + 13, ((sectors >> 8) & 0xFF) as u8);
 
     // Issue the command.
     dev.mmio_write(port_base + PORT_REG_CI, 4, (1u32 << slot) as u64);
     dev.process(&mut mem);
 });
-
