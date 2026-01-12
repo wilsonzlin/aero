@@ -629,6 +629,46 @@ function Sanitize-AeroMarkerValue {
   return $Value.Replace("|", "/").Replace("`r", " ").Replace("`n", " ").Trim()
 }
 
+function Try-EmitAeroVirtioNetLargeMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-net|"
+  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  if ($matches.Count -eq 0) { return }
+
+  $line = $matches[$matches.Count - 1].Value
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx)
+    $v = $tok.Substring($idx + 1)
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  if (-not ($fields.ContainsKey("large_bytes") -or $fields.ContainsKey("large_mbps") -or $fields.ContainsKey("large_fnv1a64"))) {
+    return
+  }
+
+  $status = "INFO"
+  if ($fields.ContainsKey("large_ok")) {
+    if ($fields["large_ok"] -eq "1") { $status = "PASS" }
+    elseif ($fields["large_ok"] -eq "0") { $status = "FAIL" }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|$status"
+  foreach ($k in @("large_ok", "large_bytes", "large_fnv1a64", "large_mbps")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  Write-Host $out
+}
+
 function Invoke-AeroVirtioSndWavVerification {
   param(
     [Parameter(Mandatory = $true)] [string]$WavPath,
@@ -1353,6 +1393,8 @@ try {
       }
     }
   }
+
+  Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
 
   switch ($result.Result) {
     "PASS" {
