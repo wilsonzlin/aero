@@ -1602,7 +1602,7 @@ def main() -> int:
                         result_code = 0
                         break
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
-                        print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
+                        print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                         _print_tail(serial_log)
                         result_code = 1
                         break
@@ -1968,7 +1968,7 @@ def main() -> int:
                             result_code = 0
                             break
                         if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
-                            print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
+                            print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                             _print_tail(serial_log)
                             result_code = 1
                             break
