@@ -18,7 +18,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
-use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
+use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
 use aero_virtio::devices::net::{NetBackend, VirtioNet};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VirtioPciDevice};

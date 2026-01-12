@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_ipc::ipc::{IpcQueueSpec, create_ipc_buffer};
+use aero_ipc::ipc::{create_ipc_buffer, IpcQueueSpec};
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
 use aero_virtio::devices::net_offload::VirtioNetHdr;
 use aero_virtio::pci::{
@@ -166,6 +166,8 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
 
     // Notify queue 1: notify base + notify_mult*1 (notify_mult=4).
     bridge.mmio_write(NOTIFY + 4, 2, 1);
+    // Modern virtio-pci defers queue processing until the device is polled.
+    bridge.poll();
 
     assert!(
         bridge.irq_asserted(),
