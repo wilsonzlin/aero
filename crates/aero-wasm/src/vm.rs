@@ -911,7 +911,8 @@ export function installAeroMmioTestShims() {
     #[wasm_bindgen_test]
     fn guest_ram_remap_translation_maps_high_ram_above_4gib() {
         // Low RAM below ECAM base + small high-RAM region remapped above 4GiB.
-        let ram_bytes = 0xB000_0000u64 + 0x2000;
+        let pcie_ecam_base = aero_pc_constants::PCIE_ECAM_BASE;
+        let ram_bytes = pcie_ecam_base + 0x2000;
 
         // paddr 0 -> RAM offset 0.
         assert_eq!(
@@ -921,15 +922,15 @@ export function installAeroMmioTestShims() {
 
         // ECAM base is inside the hole.
         assert_eq!(
-            crate::guest_phys::translate_guest_paddr_range(ram_bytes, 0xB000_0000, 1),
+            crate::guest_phys::translate_guest_paddr_range(ram_bytes, pcie_ecam_base, 1),
             crate::guest_phys::GuestRamRange::Hole
         );
 
-        // High RAM begins at 4GiB and maps to offset 0xB000_0000 in the contiguous backing store.
+        // High RAM begins at 4GiB and maps to offset `PCIE_ECAM_BASE` in the contiguous backing store.
         assert_eq!(
             crate::guest_phys::translate_guest_paddr_range(ram_bytes, 0x1_0000_0000, 1),
             crate::guest_phys::GuestRamRange::Ram {
-                ram_offset: 0xB000_0000
+                ram_offset: pcie_ecam_base
             }
         );
     }

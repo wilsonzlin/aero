@@ -716,15 +716,16 @@ mod remap_tests {
 
     #[test]
     fn virtio_wasm_guest_memory_maps_high_ram_above_4gib() {
-        // Simulate a guest with low RAM up to 0xB000_0000 and 8KiB of remapped high RAM.
-        let ram_bytes = 0xB000_0000u64 + 0x2000;
+        // Simulate a guest with low RAM up to the PCIe ECAM base and 8KiB of remapped high RAM.
+        let pcie_ecam_base = aero_pc_constants::PCIE_ECAM_BASE;
+        let ram_bytes = pcie_ecam_base + 0x2000;
 
-        // Only allocate the high-RAM portion and map it as a window starting at ram offset
-        // 0xB000_0000. This avoids requiring a multi-GB allocation in the unit test.
+        // Only allocate the high-RAM portion and map it as a window starting at the low-RAM end.
+        // This avoids requiring a multi-GB allocation in the unit test.
         let mut high = vec![0u8; 0x2000];
         high[0..4].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
 
-        let mem = WasmGuestMemory::new_for_test(ram_bytes, 0xB000_0000, high.as_mut_slice());
+        let mem = WasmGuestMemory::new_for_test(ram_bytes, pcie_ecam_base, high.as_mut_slice());
 
         let slice = mem.get_slice(0x1_0000_0000, 4).expect("high RAM slice");
         assert_eq!(slice, &[0x11, 0x22, 0x33, 0x44]);
