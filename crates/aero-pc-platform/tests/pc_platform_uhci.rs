@@ -5,6 +5,7 @@ use aero_snapshot::DeviceId;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs::*;
 use aero_usb::uhci::UhciController;
+use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -18,6 +19,12 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(0xCFC, 4)
+}
+
+fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
@@ -182,4 +189,86 @@ fn uhci_snapshot_roundtrip_restores_regs_and_port_state() {
 
     assert_eq!(restored.regs().frnum, expected_frnum);
     assert_eq!(restored.hub().read_portsc(0), expected_portsc0);
+}
+
+#[test]
+fn pc_platform_uhci_dma_writes_mark_dirty_pages_when_enabled() {
+    let mut pc = PcPlatform::new_with_dirty_tracking(2 * 1024 * 1024);
+    let uhci = pc.uhci.as_ref().expect("UHCI should be enabled").clone();
+    let bdf = USB_UHCI_PIIX3.bdf;
+
+    // Enable Bus Mastering so UHCI DMA reaches guest memory.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    // Propagate the updated PCI command register into the UHCI model; the platform maintains
+    // a separate canonical config space for enumeration.
+    pc.tick(0);
+
+    const FRAME_LIST_BASE: u64 = 0x3000;
+    const TD_ADDR: u64 = 0x4000;
+    const LINK_PTR_TERMINATE: u32 = 1;
+    const TD_STATUS_ACTIVE: u32 = 1 << 23;
+    const TD_STATUS_CRC_TIMEOUT: u32 = 1 << 18;
+
+    // Frame list entry 0 points at our test TD.
+    pc.memory
+        .write_physical(FRAME_LIST_BASE, &(TD_ADDR as u32).to_le_bytes());
+
+    // TD layout: link, status/control, token, buffer.
+    pc.memory
+        .write_physical(TD_ADDR, &LINK_PTR_TERMINATE.to_le_bytes());
+    pc.memory
+        .write_physical(TD_ADDR + 4, &TD_STATUS_ACTIVE.to_le_bytes());
+
+    // Token: PID=IN (0x69), dev_addr=1 (no device attached), endpoint=0, max_len_field=0x7ff.
+    let token = 0x69u32 | (1u32 << 8) | (0x7ffu32 << 21);
+    pc.memory.write_physical(TD_ADDR + 8, &token.to_le_bytes());
+    pc.memory.write_physical(TD_ADDR + 12, &0u32.to_le_bytes());
+
+    {
+        // Program controller registers directly; I/O routing is tested separately.
+        let mut dev = uhci.borrow_mut();
+        dev.controller_mut()
+            .io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE as u32);
+        dev.controller_mut().io_write(REG_FRNUM, 2, 0);
+        dev.controller_mut()
+            .io_write(REG_USBCMD, 2, u32::from(USBCMD_RS | USBCMD_MAXP));
+    }
+
+    // Clear dirty tracking for CPU-initiated setup writes; we want to observe only the writes the
+    // UHCI scheduler performs when completing the TD.
+    pc.memory.clear_dirty();
+
+    uhci.borrow_mut().tick_1ms(&mut pc.memory);
+
+    let status = pc.memory.read_u32(TD_ADDR + 4);
+    assert_eq!(
+        status & TD_STATUS_ACTIVE,
+        0,
+        "TD should be completed (active bit cleared)"
+    );
+    assert_ne!(
+        status & TD_STATUS_CRC_TIMEOUT,
+        0,
+        "TD should record a CRC/timeout error when no device is attached"
+    );
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_page = TD_ADDR / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_page),
+        "dirty pages should include TD page (got {dirty:?})"
+    );
 }
