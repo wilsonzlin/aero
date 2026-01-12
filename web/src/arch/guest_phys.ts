@@ -10,7 +10,14 @@
  */
 
 /**
- * Start of the 32-bit PCI MMIO aperture (512MiB window up to 4GiB).
+ * Start of the guest-physical PCI MMIO BAR allocation window used by the web runtime.
+ *
+ * The canonical PC/Q35 platform reserves a larger below-4 GiB PCI/MMIO hole
+ * (`0xC000_0000..0x1_0000_0000`) and places PCIe ECAM at `0xB000_0000..0xC000_0000`.
+ *
+ * For the web runtime we currently allocate PCI MMIO BARs out of the high 512 MiB sub-window
+ * `[PCI_MMIO_BASE, 0x1_0000_0000)`, keeping guest RAM clamped below `PCI_MMIO_BASE` so BARs never
+ * overlap RAM in a simple flat layout.
  *
  * Guest RAM is clamped so it never covers `[PCI_MMIO_BASE, 0x1_0000_0000)`.
  */

@@ -18,10 +18,12 @@ pub const MAX_WASM32_PAGES: u64 = 65536;
 /// NOTE: Keep this in sync with `web/src/runtime/shared_layout.ts` (`RUNTIME_RESERVED_BYTES`).
 pub const RUNTIME_RESERVED_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 
-/// Start of the guest-physical PCI MMIO aperture (32-bit).
+/// Start of the guest-physical PCI MMIO BAR allocation window (32-bit) used by the web runtime.
 ///
-/// The web runtime auto-assigns PCI MMIO BARs starting at this address. Guest RAM is therefore
-/// clamped to `<= PCI_MMIO_BASE` so that PCI device MMIO space never overlaps guest RAM.
+/// The canonical PC/Q35 platform reserves a larger PCI/MMIO hole below 4 GiB
+/// (`0xC000_0000..0x1_0000_0000`). In the web runtime we allocate device BARs out of the high
+/// sub-window starting at `PCI_MMIO_BASE`, so guest RAM is clamped to `<= PCI_MMIO_BASE` to avoid
+/// overlap in a flat guest RAM layout.
 ///
 /// NOTE: Keep this in sync with `web/src/arch/guest_phys.ts` (`PCI_MMIO_BASE`).
 pub const PCI_MMIO_BASE: u64 = 0xE000_0000;
