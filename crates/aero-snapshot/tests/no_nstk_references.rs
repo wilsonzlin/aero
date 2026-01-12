@@ -10,7 +10,7 @@ fn should_skip_dir(path: &Path) -> bool {
     // generated output is both expensive and may introduce accidental false positives.
     matches!(
         path.file_name().and_then(|n| n.to_str()),
-        Some("target" | "node_modules")
+        Some(".git" | "target" | "node_modules")
     )
 }
 
@@ -84,19 +84,22 @@ fn no_lingering_legacy_net_stack_4cc_references_in_repo() {
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let roots = [
-        repo_root.join("docs"),
-        repo_root.join("crates"),
-        repo_root.join("src"),
-        repo_root.join("web"),
+        repo_root.join(".github"),
+        repo_root.join("bench"),
         repo_root.join("backend"),
-        repo_root.join("tests"),
-        repo_root.join("instructions"),
+        repo_root.join("ci"),
+        repo_root.join("crates"),
+        repo_root.join("deploy"),
+        repo_root.join("docs"),
         repo_root.join("drivers"),
         repo_root.join("emulator"),
-        repo_root.join("tools"),
-        repo_root.join("xtask"),
+        repo_root.join("instructions"),
         repo_root.join("scripts"),
-        repo_root.join("ci"),
+        repo_root.join("src"),
+        repo_root.join("tests"),
+        repo_root.join("tools"),
+        repo_root.join("web"),
+        repo_root.join("xtask"),
     ];
 
     let mut hits = Vec::new();
