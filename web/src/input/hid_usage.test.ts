@@ -24,11 +24,17 @@ describe("keyboardCodeToHidUsage", () => {
     expect(Array.isArray(entries)).toBe(true);
     expect(entries.length).toBeGreaterThan(0);
 
+    const seen = new Set<string>();
     for (const entry of entries) {
+      if (seen.has(entry.code)) {
+        throw new Error(
+          `duplicate fixture entry for KeyboardEvent.code=${JSON.stringify(entry.code)}`,
+        );
+      }
+      seen.add(entry.code);
       expect(keyboardCodeToHidUsage(entry.code)).toBe(parseHexU8(entry.usage));
     }
 
     expect(keyboardCodeToHidUsage("NoSuchKey")).toBeNull();
   });
 });
-

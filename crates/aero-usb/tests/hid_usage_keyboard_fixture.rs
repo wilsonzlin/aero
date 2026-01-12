@@ -1,5 +1,6 @@
 use aero_usb::hid::usage::keyboard_code_to_usage;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -31,7 +32,13 @@ fn keyboard_code_to_usage_matches_shared_fixture() {
         "fixture {fixture_path:?} should not be empty"
     );
 
+    let mut seen = HashSet::with_capacity(entries.len());
     for entry in entries {
+        assert!(
+            seen.insert(entry.code.clone()),
+            "duplicate fixture entry for KeyboardEvent.code={:?}",
+            entry.code
+        );
         let expected = parse_hex_u8(&entry.usage);
         assert_eq!(
             keyboard_code_to_usage(&entry.code),
