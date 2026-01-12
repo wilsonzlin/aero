@@ -63,6 +63,14 @@ import {
   type CursorSetStateMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
+import {
+  serializeVmSnapshotError,
+  type CoordinatorToWorkerSnapshotMessage,
+  type VmSnapshotCpuStateMessage,
+  type VmSnapshotCpuStateSetMessage,
+  type VmSnapshotPausedMessage,
+  type VmSnapshotResumedMessage,
+} from "../runtime/snapshot_protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import { AeroIpcIoClient } from "../io/ipc/aero_ipc_io";
 
@@ -907,6 +915,7 @@ let diskDemoStarted = false;
 let diskDemoResponses = 0;
 
 let cursorDemoEnabled = false;
+let snapshotPaused = false;
 
 function startCursorDemo(): void {
   cursorDemoEnabled = true;
@@ -937,12 +946,97 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     | Partial<ConfigUpdateMessage>
     | Partial<SetAudioRingBufferMessage>
     | Partial<SetMicrophoneRingBufferMessage>
+    | Partial<CoordinatorToWorkerSnapshotMessage>
     | Partial<AudioOutputHdaDemoStartMessage>
     | Partial<AudioOutputHdaDemoStopMessage>
     | Partial<CursorDemoStartMessage>
     | Partial<CursorDemoStopMessage>
     | undefined;
   if (!msg) return;
+
+  const snapshotMsg = msg as Partial<CoordinatorToWorkerSnapshotMessage>;
+  if (typeof snapshotMsg.kind === "string" && snapshotMsg.kind.startsWith("vm.snapshot.")) {
+    const requestId = snapshotMsg.requestId;
+    if (typeof requestId !== "number") return;
+
+    switch (snapshotMsg.kind) {
+      case "vm.snapshot.pause": {
+        snapshotPaused = true;
+        ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+        return;
+      }
+      case "vm.snapshot.resume": {
+        snapshotPaused = false;
+        ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+        return;
+      }
+      case "vm.snapshot.getCpuState": {
+        try {
+          const vm = wasmVm;
+          if (!vm) {
+            throw new Error("WasmVm is not initialized; cannot snapshot CPU state.");
+          }
+          const save = vm.save_state_v2;
+          if (typeof save !== "function") {
+            throw new Error("WasmVm.save_state_v2 is unavailable in this WASM build.");
+          }
+          const saved = save.call(vm);
+          const cpu = saved?.cpu;
+          const mmu = saved?.mmu;
+          if (!(cpu instanceof Uint8Array) || !(mmu instanceof Uint8Array)) {
+            throw new Error("WasmVm.save_state_v2 returned an unexpected result shape.");
+          }
+
+          // Always copy into a standalone ArrayBuffer so it can be transferred safely
+          // (WASM memory / SharedArrayBuffer-backed views are not transferable).
+          const cpuBuf = new Uint8Array(cpu.byteLength);
+          cpuBuf.set(cpu);
+          const mmuBuf = new Uint8Array(mmu.byteLength);
+          mmuBuf.set(mmu);
+
+          ctx.postMessage(
+            { kind: "vm.snapshot.cpuState", requestId, ok: true, cpu: cpuBuf.buffer, mmu: mmuBuf.buffer } satisfies VmSnapshotCpuStateMessage,
+            [cpuBuf.buffer, mmuBuf.buffer],
+          );
+        } catch (err) {
+          ctx.postMessage({
+            kind: "vm.snapshot.cpuState",
+            requestId,
+            ok: false,
+            error: serializeVmSnapshotError(err),
+          } satisfies VmSnapshotCpuStateMessage);
+        }
+        return;
+      }
+      case "vm.snapshot.setCpuState": {
+        try {
+          const vm = wasmVm;
+          if (!vm) {
+            throw new Error("WasmVm is not initialized; cannot restore CPU state.");
+          }
+          const load = vm.load_state_v2;
+          if (typeof load !== "function") {
+            throw new Error("WasmVm.load_state_v2 is unavailable in this WASM build.");
+          }
+          if (!(snapshotMsg.cpu instanceof ArrayBuffer) || !(snapshotMsg.mmu instanceof ArrayBuffer)) {
+            throw new Error("vm.snapshot.setCpuState expected ArrayBuffer payloads.");
+          }
+          load.call(vm, new Uint8Array(snapshotMsg.cpu), new Uint8Array(snapshotMsg.mmu));
+          ctx.postMessage({ kind: "vm.snapshot.cpuStateSet", requestId, ok: true } satisfies VmSnapshotCpuStateSetMessage);
+        } catch (err) {
+          ctx.postMessage({
+            kind: "vm.snapshot.cpuStateSet",
+            requestId,
+            ok: false,
+            error: serializeVmSnapshotError(err),
+          } satisfies VmSnapshotCpuStateSetMessage);
+        }
+        return;
+      }
+      default:
+        return;
+    }
+  }
 
   if ((msg as Partial<AudioOutputHdaDemoStopMessage>).type === "audioOutputHdaDemo.stop") {
     stopHdaDemo();
@@ -1383,6 +1477,13 @@ async function runLoopInner(): Promise<void> {
     }
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
+
+    if (snapshotPaused) {
+      // VM execution is paused for snapshotting. Keep draining ring-buffer commands
+      // (above), but avoid touching guest state until we receive a resume request.
+      await commandRing.waitForDataAsync(100);
+      continue;
+    }
 
     if (running) {
       const now = performance.now();

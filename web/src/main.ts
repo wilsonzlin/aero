@@ -3232,6 +3232,48 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const error = el("pre", { text: "" });
   const guestRamValue = el("span", { class: "mono", text: "" });
 
+  const VM_SNAPSHOT_PATH = "state/worker-vm-autosave.snap";
+  const snapshotLine = el("div", { class: "mono", text: "" });
+  let snapshotInFlight = false;
+  const snapshotSaveButton = el("button", {
+    text: "Save snapshot",
+    onclick: async () => {
+      error.textContent = "";
+      snapshotInFlight = true;
+      update();
+      snapshotLine.textContent = `snapshot: saving → ${VM_SNAPSHOT_PATH}…`;
+      try {
+        await workerCoordinator.snapshotSaveToOpfs(VM_SNAPSHOT_PATH);
+        snapshotLine.textContent = `snapshot: saved → ${VM_SNAPSHOT_PATH}`;
+      } catch (err) {
+        snapshotLine.textContent = "snapshot: save failed";
+        error.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        snapshotInFlight = false;
+        update();
+      }
+    },
+  }) as HTMLButtonElement;
+  const snapshotLoadButton = el("button", {
+    text: "Load snapshot",
+    onclick: async () => {
+      error.textContent = "";
+      snapshotInFlight = true;
+      update();
+      snapshotLine.textContent = `snapshot: restoring ← ${VM_SNAPSHOT_PATH}…`;
+      try {
+        await workerCoordinator.snapshotRestoreFromOpfs(VM_SNAPSHOT_PATH);
+        snapshotLine.textContent = `snapshot: restored ← ${VM_SNAPSHOT_PATH}`;
+      } catch (err) {
+        snapshotLine.textContent = "snapshot: restore failed";
+        error.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        snapshotInFlight = false;
+        update();
+      }
+    },
+  }) as HTMLButtonElement;
+
   const jitDemoLine = el("div", { class: "mono", text: "jit: (idle)" });
   const jitDemoError = el("pre", { text: "" });
 
@@ -3589,6 +3631,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     resetButton.disabled = !anyActive;
     powerOffButton.disabled = !anyActive;
 
+    const snapshotSupported = report.opfsSyncAccessHandle;
+    const snapshotReady = statuses.cpu.state === "ready" && statuses.io.state === "ready";
+    snapshotSaveButton.disabled = !snapshotSupported || snapshotInFlight || !snapshotReady;
+    snapshotLoadButton.disabled = !snapshotSupported || snapshotInFlight || !snapshotReady;
+    if (!snapshotSupported) {
+      snapshotLine.textContent = "snapshot: unavailable (OPFS sync access handles unsupported)";
+    } else if (!snapshotInFlight && !snapshotLine.textContent) {
+      snapshotLine.textContent = `snapshot: path=${VM_SNAPSHOT_PATH}`;
+    }
+
     const vmState = workerCoordinator.getVmState();
     const pendingRestart = workerCoordinator.getPendingFullRestart();
     vmStateLine.textContent = pendingRestart
@@ -3805,6 +3857,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       forceJitCspBlock,
       forceJitCspLabel,
     ),
+    el("div", { class: "row" }, snapshotSaveButton, snapshotLoadButton),
+    snapshotLine,
     vgaCanvasRow,
     vgaInfoLine,
     vmStateLine,

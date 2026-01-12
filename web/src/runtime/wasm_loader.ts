@@ -446,9 +446,11 @@ export interface WasmApi {
         reset_real_mode(entryIp: number): void;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         /**
-         * Deterministic CPU/MMU snapshot for the minimal Tier-0 VM loop.
+         * Deterministic CPU/MMU snapshot helpers for the minimal Tier-0 VM loop.
          *
-         * Optional for older WASM builds.
+         * Used by the multi-worker VM snapshot orchestrator (CPU + IO workers).
+         *
+         * Optional while older WASM builds are still in circulation.
          */
         save_state_v2?: () => { cpu: Uint8Array; mmu: Uint8Array };
         load_state_v2?: (cpu: Uint8Array, mmu: Uint8Array) => void;

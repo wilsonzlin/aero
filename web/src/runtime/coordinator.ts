@@ -32,6 +32,15 @@ import {
   type WorkerInitMessage,
   type WasmReadyMessage,
 } from "./protocol";
+import type {
+  VmSnapshotCpuStateMessage,
+  VmSnapshotCpuStateSetMessage,
+  VmSnapshotPausedMessage,
+  VmSnapshotResumedMessage,
+  VmSnapshotRestoredMessage,
+  VmSnapshotSavedMessage,
+  VmSnapshotSerializedError,
+} from "./snapshot_protocol";
 import type { WasmVariant } from "./wasm_context";
 import { precompileWasm } from "./wasm_preload";
 import {
@@ -209,6 +218,8 @@ export class WorkerCoordinator {
   private frameStateSab?: SharedArrayBuffer;
   private platformFeatures: PlatformFeatureReport | null = null;
   private nextCmdSeq = 1;
+  private nextSnapshotRequestId = 1;
+  private snapshotInFlight = false;
 
   private lastHeartbeatFromRing = 0;
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
@@ -700,6 +711,184 @@ export class WorkerCoordinator {
     capacityFrames: number,
   ): void {
     this.setAudioRingBuffer(ringBuffer, capacityFrames, channelCount, sampleRate);
+  }
+
+  async snapshotSaveToOpfs(path: string): Promise<void> {
+    if (this.snapshotInFlight) {
+      throw new Error("VM snapshot already in progress.");
+    }
+
+    const cpu = this.workers.cpu;
+    const io = this.workers.io;
+    if (!cpu?.worker || !io?.worker) {
+      throw new Error("Cannot save VM snapshot: CPU/IO workers are not running.");
+    }
+    if (cpu.status.state !== "ready" || io.status.state !== "ready") {
+      throw new Error("Cannot save VM snapshot: CPU/IO workers are not ready.");
+    }
+
+    this.snapshotInFlight = true;
+    try {
+      const cpuPause = this.snapshotRpc<VmSnapshotPausedMessage>(cpu.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+        timeoutMs: 5_000,
+      });
+      const ioPause = this.snapshotRpc<VmSnapshotPausedMessage>(io.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+        timeoutMs: 5_000,
+      });
+      this.assertSnapshotOk("pause cpu", await cpuPause);
+      this.assertSnapshotOk("pause io", await ioPause);
+
+      const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
+        cpu.worker,
+        { kind: "vm.snapshot.getCpuState" },
+        "vm.snapshot.cpuState",
+        { timeoutMs: 10_000 },
+      );
+      this.assertSnapshotOk("getCpuState", cpuState);
+      if (!cpuState.ok) {
+        // Unreachable due to assert above, but helps TS narrow.
+        throw new Error("cpuState missing payload");
+      }
+
+      // Forward CPU state bytes to the IO worker so it can build an `aero-snapshot`
+      // container alongside shared guest RAM + device blobs.
+      const cpuBuf = cpuState.cpu;
+      const mmuBuf = cpuState.mmu;
+      const saved = await this.snapshotRpc<VmSnapshotSavedMessage>(
+        io.worker,
+        { kind: "vm.snapshot.saveToOpfs", path, cpu: cpuBuf, mmu: mmuBuf },
+        "vm.snapshot.saved",
+        { timeoutMs: 120_000, transfer: [cpuBuf, mmuBuf] },
+      );
+      this.assertSnapshotOk("saveToOpfs", saved);
+    } finally {
+      try {
+        await this.resumeWorkersAfterSnapshot();
+      } finally {
+        this.snapshotInFlight = false;
+      }
+    }
+  }
+
+  async snapshotRestoreFromOpfs(path: string): Promise<void> {
+    if (this.snapshotInFlight) {
+      throw new Error("VM snapshot already in progress.");
+    }
+
+    const cpu = this.workers.cpu;
+    const io = this.workers.io;
+    if (!cpu?.worker || !io?.worker) {
+      throw new Error("Cannot restore VM snapshot: CPU/IO workers are not running.");
+    }
+    if (cpu.status.state !== "ready" || io.status.state !== "ready") {
+      throw new Error("Cannot restore VM snapshot: CPU/IO workers are not ready.");
+    }
+
+    this.snapshotInFlight = true;
+    try {
+      const cpuPause = this.snapshotRpc<VmSnapshotPausedMessage>(cpu.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+        timeoutMs: 5_000,
+      });
+      const ioPause = this.snapshotRpc<VmSnapshotPausedMessage>(io.worker, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+        timeoutMs: 5_000,
+      });
+      this.assertSnapshotOk("pause cpu", await cpuPause);
+      this.assertSnapshotOk("pause io", await ioPause);
+
+      const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
+        io.worker,
+        { kind: "vm.snapshot.restoreFromOpfs", path },
+        "vm.snapshot.restored",
+        { timeoutMs: 120_000 },
+      );
+      this.assertSnapshotOk("restoreFromOpfs", restored);
+      if (!restored.ok) {
+        throw new Error("restored missing payload");
+      }
+
+      const cpuBuf = restored.cpu;
+      const mmuBuf = restored.mmu;
+      const cpuSet = await this.snapshotRpc<VmSnapshotCpuStateSetMessage>(
+        cpu.worker,
+        { kind: "vm.snapshot.setCpuState", cpu: cpuBuf, mmu: mmuBuf },
+        "vm.snapshot.cpuStateSet",
+        { timeoutMs: 10_000, transfer: [cpuBuf, mmuBuf] },
+      );
+      this.assertSnapshotOk("setCpuState", cpuSet);
+    } finally {
+      try {
+        await this.resumeWorkersAfterSnapshot();
+      } finally {
+        this.snapshotInFlight = false;
+      }
+    }
+  }
+
+  private assertSnapshotOk(context: string, msg: { ok: boolean; error?: VmSnapshotSerializedError; kind?: unknown }): void {
+    if (msg.ok) return;
+    const err = msg.error;
+    const suffix = err ? `${err.name}: ${err.message}` : "unknown error";
+    throw new Error(`Snapshot ${context} failed: ${suffix}`);
+  }
+
+  private async resumeWorkersAfterSnapshot(): Promise<void> {
+    const cpu = this.workers.cpu?.worker;
+    const io = this.workers.io?.worker;
+    if (!cpu || !io) return;
+
+    const cpuResume = this.snapshotRpc<VmSnapshotResumedMessage>(cpu, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
+      timeoutMs: 5_000,
+    });
+    const ioResume = this.snapshotRpc<VmSnapshotResumedMessage>(io, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
+      timeoutMs: 5_000,
+    });
+
+    // Best-effort: resume even if one worker fails to respond; we don't want a
+    // snapshot error to strand a running VM forever.
+    await Promise.allSettled([cpuResume, ioResume]);
+  }
+
+  private snapshotRpc<TResponse extends { kind: string; requestId: number }>(
+    worker: Worker,
+    request: Record<string, unknown>,
+    expectedKind: TResponse["kind"],
+    opts: { timeoutMs: number; transfer?: Transferable[] },
+  ): Promise<TResponse> {
+    const requestId = this.nextSnapshotRequestId++;
+    const msg = { ...request, requestId };
+
+    return new Promise<TResponse>((resolve, reject) => {
+      const onMessage = (ev: MessageEvent<unknown>) => {
+        const data = ev.data as { kind?: unknown; requestId?: unknown };
+        if (!data || typeof data !== "object") return;
+        if (data.kind !== expectedKind) return;
+        if (data.requestId !== requestId) return;
+        cleanup();
+        resolve(ev.data as TResponse);
+      };
+
+      const cleanup = () => {
+        worker.removeEventListener("message", onMessage as EventListener);
+        clearTimeout(timer);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for ${expectedKind} (requestId=${requestId})`));
+      }, opts.timeoutMs);
+
+      worker.addEventListener("message", onMessage as EventListener);
+      try {
+        if (opts.transfer && opts.transfer.length) {
+          worker.postMessage(msg, opts.transfer);
+        } else {
+          worker.postMessage(msg);
+        }
+      } catch (err) {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
   }
 
   private emitEvent<K extends keyof WorkerCoordinatorEventMap>(type: K, detail: WorkerCoordinatorEventMap[K]): void {

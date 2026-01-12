@@ -11,6 +11,15 @@ import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
 import {
+  serializeVmSnapshotError,
+  type CoordinatorToWorkerSnapshotMessage,
+  type VmSnapshotDeviceBlob,
+  type VmSnapshotPausedMessage,
+  type VmSnapshotResumedMessage,
+  type VmSnapshotRestoredMessage,
+  type VmSnapshotSavedMessage,
+} from "../runtime/snapshot_protocol";
+import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
   IO_IPC_HID_IN_QUEUE_KIND,
@@ -160,6 +169,83 @@ let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
 
 const WEBUSB_GUEST_ROOT_PORT = 1;
+
+let snapshotPaused = false;
+let snapshotOpInFlight = false;
+
+const VM_SNAPSHOT_DEVICE_USB = "usb.uhci";
+
+function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out.buffer;
+}
+
+function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const runtime = uhciRuntime;
+  if (runtime) {
+    const save =
+      (runtime as unknown as { save_state?: unknown }).save_state ?? (runtime as unknown as { snapshot_state?: unknown }).snapshot_state;
+    if (typeof save === "function") {
+      try {
+        const bytes = save.call(runtime) as unknown;
+        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB, bytes };
+      } catch (err) {
+        console.warn("[io.worker] UhciRuntime save_state failed:", err);
+      }
+    }
+  }
+
+  const bridge = uhciControllerBridge;
+  if (bridge) {
+    const save =
+      (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+    if (typeof save === "function") {
+      try {
+        const bytes = save.call(bridge) as unknown;
+        if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_USB, bytes };
+      } catch (err) {
+        console.warn("[io.worker] UhciControllerBridge save_state failed:", err);
+      }
+    }
+  }
+
+  return null;
+}
+
+function restoreUsbDeviceState(bytes: Uint8Array): void {
+  const runtime = uhciRuntime;
+  if (runtime) {
+    const load =
+      (runtime as unknown as { load_state?: unknown }).load_state ?? (runtime as unknown as { restore_state?: unknown }).restore_state;
+    if (typeof load === "function") {
+      load.call(runtime, bytes);
+      return;
+    }
+  }
+
+  const bridge = uhciControllerBridge;
+  if (bridge) {
+    const load =
+      (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+    if (typeof load === "function") {
+      load.call(bridge, bytes);
+      return;
+    }
+  }
+}
+
+function resolveWasmVmSnapshotFn(
+  api: WasmApi,
+  names: string[],
+): ((...args: unknown[]) => unknown) | null {
+  const anyApi = api as unknown as Record<string, unknown>;
+  for (const name of names) {
+    const fn = anyApi[name];
+    if (typeof fn === "function") return fn as (...args: unknown[]) => unknown;
+  }
+  return null;
+}
 
 // Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
 // harness panel, demo driver, etc). The demo uses 1_000_000_000 and the harness uses 2_000_000_000.
@@ -1213,6 +1299,117 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   cdDisk = openedCd;
 }
 
+async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: ArrayBuffer): Promise<void> {
+  if (snapshotOpInFlight) {
+    throw new Error("VM snapshot operation already in progress.");
+  }
+  snapshotOpInFlight = true;
+  try {
+    const api = wasmApi;
+    if (!api) {
+      throw new Error("WASM is not initialized in the IO worker; cannot save VM snapshot.");
+    }
+
+    const usb = snapshotUsbDeviceState();
+    const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
+    if (usb) devices.push(usb);
+
+    const saveFn =
+      resolveWasmVmSnapshotFn(api, [
+        // Preferred names (Task 1078).
+        "vm_snapshot_save_to_opfs",
+        "save_vm_snapshot_to_opfs",
+        // Legacy/alternate spellings.
+        "snapshot_vm_to_opfs",
+        "snapshot_worker_vm_to_opfs",
+        "worker_vm_snapshot_to_opfs",
+      ]) ??
+      null;
+    if (!saveFn) {
+      throw new Error("WASM VM snapshot builder export is unavailable (expected *_snapshot*_to_opfs).");
+    }
+
+    // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
+    const devicePayload = devices.map((d) => ({ kind: d.kind, bytes: d.bytes }));
+
+    // Always pass fresh Uint8Array views for the CPU state so callers can transfer the ArrayBuffer.
+    const cpuBytes = new Uint8Array(cpu);
+    const mmuBytes = new Uint8Array(mmu);
+
+    await Promise.resolve(saveFn.call(api as unknown, path, cpuBytes, mmuBytes, devicePayload));
+  } finally {
+    snapshotOpInFlight = false;
+  }
+}
+
+async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
+  cpu: ArrayBuffer;
+  mmu: ArrayBuffer;
+  devices?: VmSnapshotDeviceBlob[];
+}> {
+  if (snapshotOpInFlight) {
+    throw new Error("VM snapshot operation already in progress.");
+  }
+  snapshotOpInFlight = true;
+  try {
+    const api = wasmApi;
+    if (!api) {
+      throw new Error("WASM is not initialized in the IO worker; cannot restore VM snapshot.");
+    }
+
+    const restoreFn =
+      resolveWasmVmSnapshotFn(api, [
+        // Preferred names (Task 1078).
+        "vm_snapshot_restore_from_opfs",
+        "restore_vm_snapshot_from_opfs",
+        // Legacy/alternate spellings.
+        "restore_snapshot_vm_from_opfs",
+        "restore_worker_vm_snapshot_from_opfs",
+        "snapshot_restore_vm_from_opfs",
+      ]) ??
+      null;
+    if (!restoreFn) {
+      throw new Error("WASM VM snapshot restore export is unavailable (expected *_restore*_from_opfs).");
+    }
+
+    const res = await Promise.resolve(restoreFn.call(api as unknown, path));
+    const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
+    if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array)) {
+      throw new Error("WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array}).");
+    }
+
+    const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
+    const devices: VmSnapshotDeviceBlob[] = [];
+    for (const entry of devicesRaw) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as { kind?: unknown; bytes?: unknown };
+      if (typeof e.kind !== "string") continue;
+      if (!(e.bytes instanceof Uint8Array)) continue;
+      devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+    }
+
+    // Apply device state locally (IO worker owns USB).
+    const usbBlob = devicesRaw.find(
+      (entry): entry is { kind: string; bytes: Uint8Array } =>
+        !!entry &&
+        typeof (entry as { kind?: unknown }).kind === "string" &&
+        (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_USB &&
+        (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
+    );
+    if (usbBlob) {
+      restoreUsbDeviceState(usbBlob.bytes);
+    }
+
+    return {
+      cpu: copyU8ToArrayBuffer(rec.cpu),
+      mmu: copyU8ToArrayBuffer(rec.mmu),
+      devices: devices.length ? devices : undefined,
+    };
+  } finally {
+    snapshotOpInFlight = false;
+  }
+}
+
 async function initWorker(init: WorkerInitMessage): Promise<void> {
   perf.spanBegin("worker:boot");
   try {
@@ -1444,6 +1641,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     const data = ev.data as
       | Partial<WorkerInitMessage>
       | Partial<ConfigUpdateMessage>
+      | Partial<CoordinatorToWorkerSnapshotMessage>
       | Partial<InputBatchMessage>
       | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
@@ -1457,6 +1655,88 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<HidInputReportMessage>
       | undefined;
     if (!data) return;
+
+    const snapshotMsg = data as Partial<CoordinatorToWorkerSnapshotMessage>;
+    if (typeof snapshotMsg.kind === "string" && snapshotMsg.kind.startsWith("vm.snapshot.")) {
+      const requestId = snapshotMsg.requestId;
+      if (typeof requestId !== "number") return;
+
+      switch (snapshotMsg.kind) {
+        case "vm.snapshot.pause": {
+          snapshotPaused = true;
+          ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+          return;
+        }
+        case "vm.snapshot.resume": {
+          snapshotPaused = false;
+          ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+          return;
+        }
+        case "vm.snapshot.saveToOpfs": {
+          void (async () => {
+            try {
+              if (!snapshotPaused) {
+                throw new Error("IO worker is not paused; call vm.snapshot.pause before saving.");
+              }
+              if (typeof snapshotMsg.path !== "string") {
+                throw new Error("vm.snapshot.saveToOpfs expected a string path.");
+              }
+              if (!(snapshotMsg.cpu instanceof ArrayBuffer) || !(snapshotMsg.mmu instanceof ArrayBuffer)) {
+                throw new Error("vm.snapshot.saveToOpfs expected cpu/mmu ArrayBuffer payloads.");
+              }
+              await handleVmSnapshotSaveToOpfs(snapshotMsg.path, snapshotMsg.cpu, snapshotMsg.mmu);
+              ctx.postMessage({ kind: "vm.snapshot.saved", requestId, ok: true } satisfies VmSnapshotSavedMessage);
+            } catch (err) {
+              ctx.postMessage({
+                kind: "vm.snapshot.saved",
+                requestId,
+                ok: false,
+                error: serializeVmSnapshotError(err),
+              } satisfies VmSnapshotSavedMessage);
+            }
+          })();
+          return;
+        }
+        case "vm.snapshot.restoreFromOpfs": {
+          void (async () => {
+            try {
+              if (!snapshotPaused) {
+                throw new Error("IO worker is not paused; call vm.snapshot.pause before restoring.");
+              }
+              if (typeof snapshotMsg.path !== "string") {
+                throw new Error("vm.snapshot.restoreFromOpfs expected a string path.");
+              }
+              const restored = await handleVmSnapshotRestoreFromOpfs(snapshotMsg.path);
+              const transfers: Transferable[] = [restored.cpu, restored.mmu];
+              if (restored.devices) {
+                for (const dev of restored.devices) transfers.push(dev.bytes);
+              }
+              ctx.postMessage(
+                {
+                  kind: "vm.snapshot.restored",
+                  requestId,
+                  ok: true,
+                  cpu: restored.cpu,
+                  mmu: restored.mmu,
+                  devices: restored.devices,
+                } satisfies VmSnapshotRestoredMessage,
+                transfers,
+              );
+            } catch (err) {
+              ctx.postMessage({
+                kind: "vm.snapshot.restored",
+                requestId,
+                ok: false,
+                error: serializeVmSnapshotError(err),
+              } satisfies VmSnapshotRestoredMessage);
+            }
+          })();
+          return;
+        }
+        default:
+          return;
+      }
+    }
 
     if ((data as Partial<ConfigUpdateMessage>).kind === "config.update") {
       const update = data as ConfigUpdateMessage;
@@ -1807,6 +2087,17 @@ function startIoIpcServer(): void {
     tick: (nowMs) => {
       const perfActive = isPerfActive();
       const t0 = perfActive ? performance.now() : 0;
+
+      // Snapshot pause: freeze device-side state so the coordinator can take a
+      // consistent CPU + RAM + device snapshot. Keep draining the runtime control
+      // ring so shutdown requests are still observed, but avoid ticking devices.
+      if (snapshotPaused) {
+        drainRuntimeCommands();
+        if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
+          ioServerAbort?.abort();
+        }
+        return;
+      }
 
       flushPendingIoEvents();
       drainRuntimeCommands();
