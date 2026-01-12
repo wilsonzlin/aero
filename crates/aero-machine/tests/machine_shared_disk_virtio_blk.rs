@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::profile::VIRTIO_BLK;
+use aero_devices::{a20_gate::A20_GATE_PORT, pci::PCI_CFG_ADDR_PORT, pci::PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::SECTOR_SIZE;
 use aero_virtio::devices::blk::{VIRTIO_BLK_S_OK, VIRTIO_BLK_T_IN};
@@ -20,13 +21,25 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    m.io_write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    m.io_write(0xCFC, 2, u32::from(value));
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
+    m.io_write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 3),
+        2,
+        u32::from(value),
+    );
 }
 
 fn write_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    m.io_write(0xCF8, 4, cfg_addr(bus, device, function, offset));
-    m.io_write(0xCFC, 4, value);
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
+    m.io_write(PCI_CFG_DATA_PORT + u16::from(offset & 3), 4, value);
 }
 
 fn write_desc(
@@ -82,7 +95,7 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     assert_eq!(&expected[..marker.len()], marker);
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Program the virtio-blk controller and issue a READ request.
     let bdf = VIRTIO_BLK.bdf;
