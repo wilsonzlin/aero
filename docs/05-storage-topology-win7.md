@@ -84,6 +84,11 @@ Notes:
 This matches the explicit attachment API in the IDE model:
 `aero_devices_storage::pci_ide::IdeController::attach_secondary_master_atapi(...)`.
 
+Note: `IDE_PIIX3` is PCI function `00:01.1`. For OS enumeration to reliably discover it, the
+platform should also expose the PIIX3 ISA bridge function (`aero_devices::pci::profile::ISA_PIIX3`
+at `00:01.0`) with the multi-function bit set in its header type (see
+`docs/pci-device-compatibility.md`).
+
 ---
 
 ## Interrupt routing expectations (normative)
