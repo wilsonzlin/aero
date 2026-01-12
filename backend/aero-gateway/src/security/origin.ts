@@ -25,28 +25,46 @@ function asciiStartsWithIgnoreCase(s: string, prefix: string): boolean {
   return true;
 }
 
+function isValidOriginHeaderString(trimmed: string): boolean {
+  // Browser Origin is an ASCII serialization (RFC 6454 / WHATWG URL). Be strict:
+  // reject any non-printable/non-ASCII characters that URL parsers may otherwise
+  // normalize away (e.g. tabs/newlines/zero-width chars).
+  //
+  // Also reject characters that different URL libraries treat inconsistently or
+  // that browsers never emit in Origin headers.
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const c = trimmed.charCodeAt(i);
+    if (c <= 0x20 || c >= 0x7f) return false;
+    // Disallow percent-encoding and IPv6 zone identifiers; browsers don't emit
+    // these in Origin, and different URL libraries disagree on how to handle them.
+    if (c === 0x25 /* '%' */) return false;
+    // Reject comma-delimited values. Browsers send a single Origin serialization,
+    // but some HTTP stacks may join repeated headers with commas.
+    if (c === 0x2c /* ',' */) return false;
+    // Some URL libraries (notably Go's net/url) reject additional host codepoints
+    // that WHATWG URL parsers accept. Reject them here so Origin validation stays
+    // consistent across components.
+    if (
+      c === 0x7b /* '{' */ ||
+      c === 0x7d /* '}' */ ||
+      c === 0x5c /* '\\' */ ||
+      c === 0x60 /* '`' */
+    ) {
+      return false;
+    }
+    // Reject query and fragment delimiters even when empty. WHATWG URL parsers
+    // normalize `https://example.com?` or `https://example.com#` to the same origin,
+    // but browsers don't emit those in Origin headers.
+    if (c === 0x3f /* '?' */ || c === 0x23 /* '#' */) return false;
+  }
+  return true;
+}
+
 export function normalizeOriginString(origin: string): string | null {
   const trimmed = origin.trim();
   if (trimmed === '') return null;
   if (trimmed === 'null') return 'null';
-  // Browser Origin is an ASCII serialization (RFC 6454 / WHATWG URL). Be strict:
-  // reject any non-printable/non-ASCII characters that URL parsers may otherwise
-  // normalize away (e.g. tabs/newlines/zero-width chars).
-  if (!/^[\x21-\x7E]+$/.test(trimmed)) return null;
-  // Disallow percent-encoding and IPv6 zone identifiers; browsers don't emit
-  // these in Origin, and different URL libraries disagree on how to handle them.
-  if (trimmed.includes('%')) return null;
-  // Reject comma-delimited values. Browsers send a single Origin serialization,
-  // but some HTTP stacks may join repeated headers with commas.
-  if (trimmed.includes(',')) return null;
-  // Some URL libraries (notably Go's net/url) reject additional host codepoints
-  // that WHATWG URL parsers accept. Reject them here so Origin validation stays
-  // consistent across components.
-  if (/[{}\\`]/.test(trimmed)) return null;
-  // Reject query and fragment delimiters even when empty. WHATWG URL parsers
-  // normalize `https://example.com?` or `https://example.com#` to the same origin,
-  // but browsers don't emit those in Origin headers.
-  if (trimmed.includes('?') || trimmed.includes('#')) return null;
+  if (!isValidOriginHeaderString(trimmed)) return null;
   // Require an explicit scheme://host serialization; WHATWG URL parsers accept
   // weird variants like `https:example.com` and will normalize them to an
   // authority URL, but browsers don't emit those in Origin headers.
@@ -64,9 +82,6 @@ export function normalizeOriginString(origin: string): string | null {
   // which could cause us to accept non-origin strings in allowlist checks.
   const pathStart = trimmed.indexOf('/', schemePrefix.length);
   if (pathStart !== -1 && pathStart !== trimmed.length - 1) return null;
-  // Reject backslashes; some URL parsers normalize them to `/`, which can
-  // silently change the host/path boundary.
-  if (trimmed.includes('\\')) return null;
   // Reject empty port specs like `https://example.com:` or `https://example.com:/`.
   if (trimmed.endsWith(':') || trimmed.endsWith(':/')) return null;
 
