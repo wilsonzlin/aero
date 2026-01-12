@@ -96,6 +96,12 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     // With I/O decoding enabled, reads should hit the device.
     assert_eq!(pc.io.read(old_base, 1), 0);
 
+    // Multi-byte port I/O should only decode when the full access fits inside the BAR.
+    // (e.g. a 16-bit access starting at the last byte of a BAR should not decode.)
+    assert_eq!(pc.io.read(old_base.wrapping_add(0x0c), 4), 0);
+    assert_eq!(pc.io.read(old_base.wrapping_add(0x0f), 2), 0xFFFF);
+    assert_eq!(pc.io.read(old_base.wrapping_add(0x0e), 4), 0xFFFF_FFFF);
+
     // Disable PCI I/O decoding: reads should float high.
     write_cfg_u16(&mut pc, bdf, 0x04, 0x0000);
     assert_eq!(pc.io.read(old_base, 1), 0xFF);
