@@ -1249,8 +1249,8 @@ void main() {
               fail("ACMD CREATE_TEXTURE2D handle " + textureHandle + " is already an alias (underlying=" + shared + ")");
             }
 
-            if (mipLevels !== 1) fail("ACMD CREATE_TEXTURE2D mip_levels not supported: " + mipLevels);
-            if (arrayLayers !== 1) fail("ACMD CREATE_TEXTURE2D array_layers not supported: " + arrayLayers);
+            if (mipLevels === 0) fail("ACMD CREATE_TEXTURE2D mip_levels must be >= 1");
+            if (arrayLayers === 0) fail("ACMD CREATE_TEXTURE2D array_layers must be >= 1");
 
             let glInternalFormat = 0;
             let glFormat = 0;
@@ -1266,42 +1266,69 @@ void main() {
 
             const tex = gl.createTexture();
             if (!tex) fail("gl.createTexture failed");
-            gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texImage2D(gl.TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, null);
+            const target = arrayLayers > 1 ? gl.TEXTURE_2D_ARRAY : gl.TEXTURE_2D;
+            gl.bindTexture(target, tex);
+            gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            if (target === gl.TEXTURE_2D_ARRAY) {
+              gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+              gl.texStorage3D(target, mipLevels, glInternalFormat, width, height, arrayLayers);
+            } else {
+              gl.texStorage2D(target, mipLevels, glInternalFormat, width, height);
+            }
 
             if (backingAllocId !== 0) {
               if (!allocMemory) fail("ACMD CREATE_TEXTURE2D missing alloc memory map");
               const alloc = allocMemory.get(backingAllocId);
               if (!alloc) fail("ACMD CREATE_TEXTURE2D missing alloc_id=" + backingAllocId);
 
-              const rowBytes = width * 4;
-              const pitch = rowPitchBytes !== 0 ? rowPitchBytes : rowBytes;
-              if (pitch < rowBytes) {
-                fail("ACMD CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
-              }
+              // Guest backing is a packed `(array_layer, mip)` chain; mip0 uses
+              // `row_pitch_bytes`, other mips are tightly packed.
+              let chainOff = backingOffsetBytes;
+              for (let layer = 0; layer < arrayLayers; layer++) {
+                for (let mip = 0; mip < mipLevels; mip++) {
+                  const mipW = Math.max(1, width >> mip);
+                  const mipH = Math.max(1, height >> mip);
+                  const rowBytes = mipW * 4;
+                  const pitch = mip === 0 ? (rowPitchBytes !== 0 ? rowPitchBytes : rowBytes) : rowBytes;
+                  if (pitch < rowBytes) {
+                    fail("ACMD CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
+                  }
+                  const requiredBytes = pitch * mipH;
+                  const endOff = chainOff + requiredBytes;
+                  if (endOff > alloc.bytes.byteLength) {
+                    fail("ACMD CREATE_TEXTURE2D backing range out of bounds");
+                  }
 
-              const requiredBytes = backingOffsetBytes + pitch * height;
-              if (requiredBytes > alloc.bytes.byteLength) {
-                fail("ACMD CREATE_TEXTURE2D backing range out of bounds");
-              }
+                  const packed = new Uint8Array(rowBytes * mipH);
+                  for (let y = 0; y < mipH; y++) {
+                    const srcOff = chainOff + y * pitch;
+                    packed.set(alloc.bytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+                  }
 
-              const packed = new Uint8Array(rowBytes * height);
-              for (let y = 0; y < height; y++) {
-                const srcOff = backingOffsetBytes + y * pitch;
-                packed.set(alloc.bytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+                  if (target === gl.TEXTURE_2D_ARRAY) {
+                    gl.texSubImage3D(target, mip, 0, 0, layer, mipW, mipH, 1, glFormat, glType, packed);
+                  } else {
+                    gl.texSubImage2D(target, mip, 0, 0, mipW, mipH, glFormat, glType, packed);
+                  }
+
+                  chainOff = endOff;
+                }
               }
-              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, packed);
             }
 
             const fb = gl.createFramebuffer();
             if (!fb) fail("gl.createFramebuffer failed");
             const prevFb = acmdFramebuffer;
             gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            if (target === gl.TEXTURE_2D_ARRAY) {
+              // Protocol `SET_RENDER_TARGETS` has no layer selector; attach layer0/mip0.
+              gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, tex, 0, 0);
+            } else {
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            }
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
             const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
             if (status !== gl.FRAMEBUFFER_COMPLETE) {
@@ -1309,7 +1336,7 @@ void main() {
             }
             gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb);
 
-            acmdTextures.set(textureHandle, { texture: tex, framebuffer: fb, width, height, format });
+            acmdTextures.set(textureHandle, { texture: tex, framebuffer: fb, width, height, format, target, mipLevels, arrayLayers });
             registerSharedHandle(textureHandle);
             break;
           }
@@ -1947,8 +1974,8 @@ void main() {
             const backingOffsetBytes = dv.getUint32(off + 44, true);
 
             if (width === 0 || height === 0) fail("CREATE_TEXTURE2D invalid dimensions");
-            if (mipLevels !== 1 || arrayLayers !== 1) {
-              fail("CREATE_TEXTURE2D only supports mip_levels=1, array_layers=1");
+            if (mipLevels === 0 || arrayLayers === 0) {
+              fail("CREATE_TEXTURE2D mip_levels/array_layers must be >= 1");
             }
             if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM && format !== AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
               const bcHint = format >= 64 && format <= 71 ? " (BC formats require GPU backend)" : "";
@@ -1957,55 +1984,71 @@ void main() {
 
             const tex = gl.createTexture();
             if (!tex) fail("gl.createTexture failed");
-            gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texImage2D(
-              gl.TEXTURE_2D,
-              0,
-              gl.RGBA8,
-              width,
-              height,
-              0,
-              gl.RGBA,
-              gl.UNSIGNED_BYTE,
-              null,
-            );
+            const target = arrayLayers > 1 ? gl.TEXTURE_2D_ARRAY : gl.TEXTURE_2D;
+            gl.bindTexture(target, tex);
+            gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            if (target === gl.TEXTURE_2D_ARRAY) {
+              gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+              gl.texStorage3D(target, mipLevels, gl.RGBA8, width, height, arrayLayers);
+            } else {
+              gl.texStorage2D(target, mipLevels, gl.RGBA8, width, height);
+            }
 
             if (backingAllocId !== 0) {
               const allocBytes = memAllocs.get(backingAllocId);
               if (!allocBytes) fail("missing alloc_id=" + backingAllocId + " for CREATE_TEXTURE2D");
 
-              const rowBytes = width * 4;
-              const pitch = rowPitchBytes !== 0 ? rowPitchBytes : rowBytes;
-              if (pitch < rowBytes) {
-                fail("CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
-              }
-              const requiredBytes = backingOffsetBytes + pitch * height;
-              if (requiredBytes > allocBytes.byteLength) {
-                fail("CREATE_TEXTURE2D backing out of bounds");
-              }
+              // Guest backing is a packed `(array_layer, mip)` chain.
+              let chainOff = backingOffsetBytes;
+              for (let layer = 0; layer < arrayLayers; layer++) {
+                for (let mip = 0; mip < mipLevels; mip++) {
+                  const mipW = Math.max(1, width >> mip);
+                  const mipH = Math.max(1, height >> mip);
+                  const rowBytes = mipW * 4;
+                  const pitch = mip === 0 ? (rowPitchBytes !== 0 ? rowPitchBytes : rowBytes) : rowBytes;
+                  if (pitch < rowBytes) {
+                    fail("CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
+                  }
+                  const requiredBytes = pitch * mipH;
+                  const endOff = chainOff + requiredBytes;
+                  if (endOff > allocBytes.byteLength) {
+                    fail("CREATE_TEXTURE2D backing out of bounds");
+                  }
 
-              const packed = new Uint8Array(rowBytes * height);
-              for (let y = 0; y < height; y++) {
-                const srcOff = backingOffsetBytes + y * pitch;
-                packed.set(allocBytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+                  const packed = new Uint8Array(rowBytes * mipH);
+                  for (let y = 0; y < mipH; y++) {
+                    const srcOff = chainOff + y * pitch;
+                    packed.set(allocBytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+                  }
+
+                  if (target === gl.TEXTURE_2D_ARRAY) {
+                    gl.texSubImage3D(target, mip, 0, 0, layer, mipW, mipH, 1, gl.RGBA, gl.UNSIGNED_BYTE, packed);
+                  } else {
+                    gl.texSubImage2D(target, mip, 0, 0, mipW, mipH, gl.RGBA, gl.UNSIGNED_BYTE, packed);
+                  }
+
+                  chainOff = endOff;
+                }
               }
-              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, packed);
             }
 
             const fb = gl.createFramebuffer();
             if (!fb) fail("gl.createFramebuffer failed");
             gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            if (target === gl.TEXTURE_2D_ARRAY) {
+              gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, tex, 0, 0);
+            } else {
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            }
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
             const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
             if (status !== gl.FRAMEBUFFER_COMPLETE) {
               fail("incomplete framebuffer (status=0x" + status.toString(16) + ")");
             }
-            textures.set(textureHandle, { tex, fb, width, height });
+            textures.set(textureHandle, { tex, fb, width, height, target, mipLevels, arrayLayers });
             // Creating resources should not implicitly switch render targets.
             bindRenderTarget(currentRenderTarget);
             break;
