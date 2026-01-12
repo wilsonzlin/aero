@@ -72,9 +72,11 @@ describe("InputCapture preventDefault policy", () => {
       (capture as any).hasFocus = true;
 
       const preventDefault = vi.fn();
-      const ev = { button: 3, preventDefault, timeStamp: 0, target: canvas } as unknown as MouseEvent;
+      const stopPropagation = vi.fn();
+      const ev = { button: 3, preventDefault, stopPropagation, timeStamp: 0, target: canvas } as unknown as MouseEvent;
       (capture as any).handleMouseDown(ev);
       expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
   });
 });

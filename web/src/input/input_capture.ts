@@ -284,6 +284,7 @@ export class InputCapture {
       return;
     }
     event.preventDefault();
+    event.stopPropagation();
     const bit = buttonToMask(event.button);
     if (bit === 0) {
       return;
@@ -299,6 +300,7 @@ export class InputCapture {
       return;
     }
     event.preventDefault();
+    event.stopPropagation();
     const bit = buttonToMask(event.button);
     if (bit === 0) {
       return;
@@ -313,6 +315,7 @@ export class InputCapture {
 
     // Prevent page scroll while interacting with the VM.
     event.preventDefault();
+    event.stopPropagation();
 
     const dz = wheelEventToSteps(event);
     if (dz === 0) {
@@ -326,6 +329,7 @@ export class InputCapture {
   private readonly handleContextMenu = (event: Event): void => {
     if (this.isCapturingMouse()) {
       event.preventDefault();
+      event.stopPropagation();
     }
   };
 
