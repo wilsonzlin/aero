@@ -2,6 +2,7 @@
 
 use aero_gpu::aerogpu_executor::AllocTable;
 use aero_gpu::VecGuestMemory;
+use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use libfuzzer_sys::fuzz_target;
 
@@ -19,6 +20,37 @@ fuzz_target!(|data: &[u8]| {
 
     // Treat the entire input as a candidate command stream. All errors are acceptable.
     let _ = aero_gpu::parse_cmd_stream(data);
+
+    // Also exercise the canonical protocol-level command stream parser + typed packet decoders.
+    //
+    // This avoids wgpu device creation and stays in pure parsing/bounds-checking code.
+    let _ = cmd::decode_cmd_stream_header_le(data);
+    if let Ok(iter) = cmd::AerogpuCmdStreamIter::new(data) {
+        for pkt in iter.take(1024) {
+            let Ok(pkt) = pkt else { continue };
+            match pkt.opcode {
+                Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
+                    let _ = pkt.decode_create_shader_dxbc_payload_le();
+                }
+                Some(cmd::AerogpuCmdOpcode::UploadResource) => {
+                    let _ = pkt.decode_upload_resource_payload_le();
+                }
+                Some(cmd::AerogpuCmdOpcode::CreateInputLayout) => {
+                    let _ = pkt.decode_create_input_layout_payload_le();
+                }
+                Some(cmd::AerogpuCmdOpcode::SetVertexBuffers) => {
+                    let _ = pkt.decode_set_vertex_buffers_payload_le();
+                }
+                Some(cmd::AerogpuCmdOpcode::SetSamplers) => {
+                    let _ = pkt.decode_set_samplers_payload_le();
+                }
+                Some(cmd::AerogpuCmdOpcode::SetConstantBuffers) => {
+                    let _ = pkt.decode_set_constant_buffers_payload_le();
+                }
+                _ => {}
+            }
+        }
+    }
 
     // If the input is large enough, also try alloc-table decoding via both the canonical protocol
     // decoder and the executor's GuestMemory-backed decoder.
