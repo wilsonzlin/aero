@@ -282,9 +282,9 @@ async fn serve_image(
         let cache_control = data_cache_control_value(&state, &req_headers, image_public);
 
         // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
-        // ETag we would send on success. Some store implementations may not provide an ETag (or
-        // may provide an invalid one); in that case fall back to our deterministic weak ETag so
-        // `If-None-Match: *` and revalidation still work.
+        // ETag we would send on success. Store-provided ETags may be missing or invalid; we
+        // sanitize and fall back to a deterministic weak ETag so conditional logic matches the
+        // value emitted in responses.
         let current_etag = cache::etag_or_fallback(&meta);
 
         // Conditional requests: if the client has a matching validator, we can return `304` and
