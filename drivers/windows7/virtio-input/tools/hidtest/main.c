@@ -1364,6 +1364,10 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--ioctl-bad-xfer-packet and --hidd-bad-set-output-report are mutually exclusive.\n");
         return 2;
     }
+    if (opt.ioctl_bad_write_report && opt.hidd_bad_set_output_report) {
+        wprintf(L"--ioctl-bad-write-report and --hidd-bad-set-output-report are mutually exclusive.\n");
+        return 2;
+    }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
         wprintf(L"No matching HID devices found.\n");
