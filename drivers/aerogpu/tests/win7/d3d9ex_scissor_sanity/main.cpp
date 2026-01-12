@@ -137,10 +137,12 @@ static HRESULT DrawFullscreenQuad(IDirect3DDevice9Ex* dev, int width, int height
 }
 
 static int ValidateCenterAndCorner(aerogpu_test::TestReporter& reporter,
-                                  const char* test_name,
-                                  IDirect3DDevice9Ex* dev,
-                                  bool dump,
-                                  const wchar_t* dump_bmp_name) {
+                                   const char* test_name,
+                                   IDirect3DDevice9Ex* dev,
+                                   bool dump,
+                                   const wchar_t* dump_bmp_name,
+                                   uint32_t expected_center,
+                                   uint32_t expected_corner) {
   if (!dev) {
     return reporter.Fail("ValidateCenterAndCorner: device is null");
   }
@@ -188,8 +190,6 @@ static int ValidateCenterAndCorner(aerogpu_test::TestReporter& reporter,
   const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
 
-  const uint32_t expected_center = 0xFF0000FFu;  // BGRA blue.
-  const uint32_t expected_corner = 0xFFFF0000u;  // BGRA red.
   if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
     DumpBgraBackbuffer(test_name,
@@ -342,6 +342,8 @@ static int RunD3D9ExScissorSanity(int argc, char** argv) {
 
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
   const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
+  const uint32_t kExpectedRedBgra = 0xFFFF0000u;
+  const uint32_t kExpectedBlueBgra = 0xFF0000FFu;
 
   // Ensure the scissor rect is established while scissor testing is disabled.
   RECT scissor;
@@ -349,6 +351,40 @@ static int RunD3D9ExScissorSanity(int argc, char** argv) {
   scissor.top = kHeight / 4;
   scissor.right = kWidth * 3 / 4;
   scissor.bottom = kHeight * 3 / 4;
+
+  // ---------------------------------------------------------------------------
+  // Scenario 0: enable scissor before setting a scissor rect. The default rect is
+  // expected to behave like a viewport-sized/full-target scissor (i.e. not clip
+  // everything).
+  // ---------------------------------------------------------------------------
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE) (scenario 0)", hr);
+  }
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::Clear (scenario 0)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE) (scenario 0)", hr);
+  }
+  hr = DrawFullscreenQuad(dev.get(), kWidth, kHeight, kBlue);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawFullscreenQuad (scenario 0)", hr);
+  }
+  {
+    int rc = ValidateCenterAndCorner(reporter,
+                                    kTestName,
+                                    dev.get(),
+                                    dump,
+                                    L"d3d9ex_scissor_sanity_default.bmp",
+                                    kExpectedBlueBgra,
+                                    kExpectedBlueBgra);
+    if (rc != 0) {
+      return rc;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Scenario A: set scissor rect while disabled, then enable scissor and verify
@@ -378,7 +414,13 @@ static int RunD3D9ExScissorSanity(int argc, char** argv) {
     return reporter.FailHresult("DrawFullscreenQuad (scenario A)", hr);
   }
   {
-    int rc = ValidateCenterAndCorner(reporter, kTestName, dev.get(), dump, L"d3d9ex_scissor_sanity_direct.bmp");
+    int rc = ValidateCenterAndCorner(reporter,
+                                    kTestName,
+                                    dev.get(),
+                                    dump,
+                                    L"d3d9ex_scissor_sanity_direct.bmp",
+                                    kExpectedBlueBgra,
+                                    kExpectedRedBgra);
     if (rc != 0) {
       return rc;
     }
@@ -438,7 +480,13 @@ static int RunD3D9ExScissorSanity(int argc, char** argv) {
     return reporter.FailHresult("DrawFullscreenQuad (scenario B)", hr);
   }
   {
-    int rc = ValidateCenterAndCorner(reporter, kTestName, dev.get(), dump, L"d3d9ex_scissor_sanity_stateblock.bmp");
+    int rc = ValidateCenterAndCorner(reporter,
+                                    kTestName,
+                                    dev.get(),
+                                    dump,
+                                    L"d3d9ex_scissor_sanity_stateblock.bmp",
+                                    kExpectedBlueBgra,
+                                    kExpectedRedBgra);
     if (rc != 0) {
       return rc;
     }
