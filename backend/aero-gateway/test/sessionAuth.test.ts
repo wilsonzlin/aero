@@ -18,6 +18,7 @@ const baseConfig = {
   TLS_ENABLED: false,
   TLS_CERT_PATH: '',
   TLS_KEY_PATH: '',
+  TCP_ALLOW_PRIVATE_IPS: false,
   TCP_ALLOWED_HOSTS: [],
   TCP_ALLOWED_PORTS: [],
   TCP_BLOCKED_CLIENT_IPS: [],
@@ -40,6 +41,14 @@ const baseConfig = {
   DNS_ALLOW_PRIVATE_PTR: true,
   DNS_QPS_PER_IP: 0,
   DNS_BURST_PER_IP: 0,
+
+  UDP_RELAY_BASE_URL: '',
+  UDP_RELAY_AUTH_MODE: 'none' as const,
+  UDP_RELAY_API_KEY: '',
+  UDP_RELAY_JWT_SECRET: '',
+  UDP_RELAY_TOKEN_TTL_SECONDS: 300,
+  UDP_RELAY_AUDIENCE: '',
+  UDP_RELAY_ISSUER: '',
 };
 
 test('/dns-query requires a valid aero_session cookie', async () => {
@@ -59,8 +68,14 @@ test('/dns-query requires a valid aero_session cookie', async () => {
 
   const auth = await app.inject({ method: 'GET', url: `/dns-query?dns=${dns}`, headers: { cookie } });
   assert.equal(auth.statusCode, 200);
-  assert.ok((auth.headers['content-type'] ?? '').startsWith('application/dns-message'));
+  const contentType = auth.headers['content-type'];
+  const contentTypeStr =
+    typeof contentType === 'string'
+      ? contentType
+      : Array.isArray(contentType)
+        ? contentType.join(',')
+        : String(contentType ?? '');
+  assert.ok(contentTypeStr.startsWith('application/dns-message'));
 
   await app.close();
 });
-

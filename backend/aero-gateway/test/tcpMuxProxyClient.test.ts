@@ -327,14 +327,13 @@ describe("tcp-mux browser client integration", () => {
   it("appends ?token= when authToken option is provided (dev relay compatibility)", async () => {
     const server = http.createServer();
 
-    let seenUrl: string | null = null;
     const wss = new WebSocketServer({
       server,
       path: "/tcp-mux",
       handleProtocols: (protocols) => (protocols.has(TCP_MUX_SUBPROTOCOL) ? TCP_MUX_SUBPROTOCOL : false),
     });
-    wss.on("connection", (_ws, req) => {
-      seenUrl = req.url ?? null;
+    const seenUrlPromise = new Promise<string>((resolve) => {
+      wss.once("connection", (_ws, req) => resolve(req.url ?? ""));
     });
 
     let client: WebSocketTcpMuxProxyClient | null = null;
@@ -342,13 +341,7 @@ describe("tcp-mux browser client integration", () => {
       const port = await listen(server, "127.0.0.1");
       client = new WebSocketTcpMuxProxyClient(`http://127.0.0.1:${port}`, { authToken: "dev-token" });
 
-      await withTimeout(
-        new Promise<void>((resolve) => wss.once("connection", () => resolve())),
-        2_000,
-        "expected WebSocket connection",
-      );
-
-      assert.ok(seenUrl !== null);
+      const seenUrl = await withTimeout(seenUrlPromise, 2_000, "expected WebSocket connection");
       assert.ok(seenUrl.includes("token=dev-token"), `expected token in url, got ${seenUrl}`);
     } finally {
       await client?.shutdown().catch(() => {});

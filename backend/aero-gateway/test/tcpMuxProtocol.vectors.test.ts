@@ -95,7 +95,7 @@ describe("tcp-mux protocol vectors", () => {
     it(`errorPayload/${v.name}`, () => {
       const payload = decodeB64(v.payload_b64);
 
-      if ("expectError" in v && v.expectError) {
+      if ("expectError" in v) {
         assert.throws(
           () => decodeTcpMuxErrorPayload(payload),
           (err) => err instanceof Error && err.message.includes(v.errorContains),
@@ -119,7 +119,7 @@ describe("tcp-mux protocol vectors", () => {
         parsed.push(...parser.push(decodeB64(chunkB64)));
       }
 
-      if ("expectError" in v && v.expectError) {
+      if ("expectError" in v) {
         assert.throws(
           () => parser.finish(),
           (err) => err instanceof Error && err.message.includes(v.errorContains),
@@ -127,17 +127,17 @@ describe("tcp-mux protocol vectors", () => {
         return;
       }
 
-      assert.equal(parsed.length, v.expectFrames.length);
-      for (let i = 0; i < v.expectFrames.length; i++) {
-        const exp = v.expectFrames[i]!;
+      const ok = v;
+      assert.equal(parsed.length, ok.expectFrames.length);
+      for (let i = 0; i < ok.expectFrames.length; i++) {
+        const expected = ok.expectFrames[i]!;
         const got = parsed[i]!;
-        assert.equal(got.msgType, exp.msgType);
-        assert.equal(got.streamId, exp.streamId);
-        assert.deepEqual(got.payload, decodeB64(exp.payload_b64));
+        assert.equal(got.msgType, expected.msgType);
+        assert.equal(got.streamId, expected.streamId);
+        assert.deepEqual(got.payload, decodeB64(expected.payload_b64));
       }
 
       assert.doesNotThrow(() => parser.finish());
     });
   }
 });
-

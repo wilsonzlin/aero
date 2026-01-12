@@ -96,6 +96,7 @@ test('HTTPS server starts and serves /healthz', async (t) => {
     TLS_ENABLED: true,
     TLS_CERT_PATH: certPath,
     TLS_KEY_PATH: keyPath,
+    TCP_ALLOW_PRIVATE_IPS: false,
     TCP_ALLOWED_HOSTS: [],
     TCP_ALLOWED_PORTS: [],
     TCP_BLOCKED_CLIENT_IPS: [],

@@ -90,29 +90,30 @@ describe('UDP relay JWT minting matches vectors', () => {
   });
 
   for (const v of vectors.jwtTokens.vectors) {
-    if ('expectError' in v && v.expectError) continue;
+    if ('expectError' in v) continue;
+    const ok = v;
 
-    it(v.name, () => {
-      const ttlSeconds = v.exp - v.iat;
+    it(ok.name, () => {
+      const ttlSeconds = ok.exp - ok.iat;
       const cfg = {
         UDP_RELAY_BASE_URL: 'https://relay.example.test',
         UDP_RELAY_AUTH_MODE: 'jwt',
         UDP_RELAY_API_KEY: '',
-        UDP_RELAY_JWT_SECRET: v.secret,
+        UDP_RELAY_JWT_SECRET: ok.secret,
         UDP_RELAY_TOKEN_TTL_SECONDS: ttlSeconds,
-        UDP_RELAY_AUDIENCE: v.aud ?? '',
-        UDP_RELAY_ISSUER: v.iss ?? '',
+        UDP_RELAY_AUDIENCE: ok.aud ?? '',
+        UDP_RELAY_ISSUER: ok.iss ?? '',
       } as unknown as Config;
 
       const tokenInfo = mintUdpRelayToken(cfg, {
-        sessionId: v.sid,
-        origin: v.origin,
-        nowMs: v.nowSec * 1000,
+        sessionId: ok.sid,
+        origin: ok.origin,
+        nowMs: ok.nowSec * 1000,
       });
       assert.ok(tokenInfo, 'expected mintUdpRelayToken to return token');
       assert.equal(tokenInfo.authMode, 'jwt');
-      assert.equal(tokenInfo.token, v.token);
-      assert.equal(tokenInfo.expiresAt, new Date(v.exp * 1000).toISOString());
+      assert.equal(tokenInfo.token, ok.token);
+      assert.equal(tokenInfo.expiresAt, new Date(ok.exp * 1000).toISOString());
     });
   }
 });

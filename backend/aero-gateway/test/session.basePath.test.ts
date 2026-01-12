@@ -18,6 +18,7 @@ const baseConfig = {
   TLS_ENABLED: false,
   TLS_CERT_PATH: '',
   TLS_KEY_PATH: '',
+  TCP_ALLOW_PRIVATE_IPS: false,
   TCP_ALLOWED_HOSTS: [],
   TCP_ALLOWED_PORTS: [],
   TCP_BLOCKED_CLIENT_IPS: [],
@@ -40,6 +41,14 @@ const baseConfig = {
   DNS_ALLOW_PRIVATE_PTR: false,
   DNS_QPS_PER_IP: 0,
   DNS_BURST_PER_IP: 0,
+
+  UDP_RELAY_BASE_URL: '',
+  UDP_RELAY_AUTH_MODE: 'none' as const,
+  UDP_RELAY_API_KEY: '',
+  UDP_RELAY_JWT_SECRET: '',
+  UDP_RELAY_TOKEN_TTL_SECONDS: 300,
+  UDP_RELAY_AUDIENCE: '',
+  UDP_RELAY_ISSUER: '',
 };
 
 test('POST /session endpoint discovery includes PUBLIC_BASE_URL base path', async () => {
@@ -55,4 +64,3 @@ test('POST /session endpoint discovery includes PUBLIC_BASE_URL base path', asyn
 
   await app.close();
 });
-

@@ -86,7 +86,7 @@ describe('gateway session token vectors', () => {
       const secret = Buffer.from(v.secret, 'utf8');
 
       const verified = verifySessionToken(v.token, secret, v.nowMs);
-      if ('expectError' in v && v.expectError) {
+      if ('expectError' in v) {
         assert.equal(verified, null);
         return;
       }

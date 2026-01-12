@@ -34,7 +34,7 @@ describe('origin vectors', () => {
   for (const v of vectors.normalize) {
     it(`normalize/${v.name}`, () => {
       const normalized = normalizeOriginString(v.rawOriginHeader);
-      if ('expectError' in v && v.expectError) {
+      if ('expectError' in v) {
         assert.equal(normalized, null);
         return;
       }
