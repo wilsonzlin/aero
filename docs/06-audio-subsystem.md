@@ -52,6 +52,9 @@ This section describes the *canonical* browser runtime integration.
 ### Ownership model
 
 - The **IO worker** owns the guest-visible device layer (PCI/MMIO/virtio) and is the intended home for guest audio devices (**HDA** and **virtio-snd**).
+  - Note: in the current browser runtime, **HDA is wired and registered** (`web/src/io/devices/hda.ts`). The Rust virtio-snd
+    model exists (`crates/aero-virtio/src/devices/snd.rs`), but a corresponding IO-worker `PciDevice` wrapper is not yet wired
+    into `web/src/io/devices/*`.
 - The **AudioWorkletProcessor** runs on the browser’s audio rendering thread.
 - The **main thread** owns the browser audio graph (`AudioContext` + `AudioWorkletNode`), typically gated by user gesture.
 - The **coordinator** forwards `SharedArrayBuffer` attachments to workers via `postMessage`.

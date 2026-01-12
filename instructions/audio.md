@@ -73,6 +73,8 @@ Audio is important for user experience but not on the critical boot path.
     - `HdaControllerBridge` (`crates/aero-wasm/src/hda_controller_bridge.rs`)
     - `HdaPciDevice` (`web/src/io/devices/hda.ts`)
   - Ring buffers are forwarded by the coordinator (`SetAudioRingBufferMessage` / `SetMicrophoneRingBufferMessage`).
+  - virtio-snd exists as a Rust device model (`crates/aero-virtio/src/devices/snd.rs`) + Win7 driver contract, but is not yet
+    registered as a device in the browser IO-worker PCI stack.
 - **AU-008 (Audio test suite)**: E2E coverage exists for the AudioWorklet + HDA demo (`tests/e2e/audio-worklet-hda-demo.spec.ts`), plus unit coverage for IO-worker HDA tick scheduling (`web/src/io/devices/hda.test.ts`). Remaining work is full-VM guest-driver coverage (Windows playback/capture) once the end-to-end integration is exercised regularly.
 
 ---
