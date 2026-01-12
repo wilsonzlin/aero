@@ -243,6 +243,9 @@ impl<B: DiskBackend> BlockCache<B> {
 
     pub fn new(backend: B, config: BlockCacheConfig) -> DiskResult<Self> {
         let sector_size = backend.sector_size();
+        if sector_size == 0 {
+            return Err(DiskError::Unsupported("sector size must be non-zero"));
+        }
         if config.block_size == 0 || !(config.block_size as u64).is_multiple_of(sector_size as u64)
         {
             return Err(DiskError::Unsupported(
@@ -736,5 +739,39 @@ mod tests {
             .filter(|l| l.starts_with("read:"))
             .collect();
         assert_eq!(reads, vec!["read:0:1024"]);
+    }
+
+    #[test]
+    fn block_cache_rejects_zero_sector_size_backend() {
+        struct ZeroSectorSizeDisk;
+
+        impl DiskBackend for ZeroSectorSizeDisk {
+            fn sector_size(&self) -> u32 {
+                0
+            }
+
+            fn total_sectors(&self) -> u64 {
+                1
+            }
+
+            fn read_sectors(&mut self, _lba: u64, _buf: &mut [u8]) -> DiskResult<()> {
+                Ok(())
+            }
+
+            fn write_sectors(&mut self, _lba: u64, _buf: &[u8]) -> DiskResult<()> {
+                Ok(())
+            }
+
+            fn flush(&mut self) -> DiskResult<()> {
+                Ok(())
+            }
+        }
+
+        let backend = ZeroSectorSizeDisk;
+        let config = BlockCacheConfig::new(512, 1);
+        assert!(matches!(
+            BlockCache::new(backend, config),
+            Err(DiskError::Unsupported("sector size must be non-zero"))
+        ));
     }
 }
