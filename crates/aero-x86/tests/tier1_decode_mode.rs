@@ -1,4 +1,4 @@
-use aero_types::{Gpr, Width};
+use aero_types::{Cond, Gpr, Width};
 use aero_x86::tier1::{decode_one_mode, InstKind, Operand, Reg, ShiftOp};
 
 #[test]
@@ -220,6 +220,65 @@ fn decode_one_mode_64bit_push_pop_use_w64() {
                 width: Width::W64,
                 high8: false,
             }),
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_16bit_jmp_rel16_uses_imm16() {
+    // jmp near -2 (rel16) in 16-bit mode:
+    // next IP = 0x1003, target = 0x1001
+    let inst = decode_one_mode(0x1000, &[0xe9, 0xfe, 0xff], 16);
+    assert_eq!(inst.len, 3);
+    assert_eq!(inst.kind, InstKind::JmpRel { target: 0x1001 });
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_jmp_rel16() {
+    // In 32-bit mode, 0x66 selects 16-bit operand size, and near JMP uses a rel16.
+    // 66 E9 FC FF = jmp -4
+    // next EIP = 0x1004, target = 0x1000
+    let inst = decode_one_mode(0x1000, &[0x66, 0xe9, 0xfc, 0xff], 32);
+    assert_eq!(inst.len, 4);
+    assert_eq!(inst.kind, InstKind::JmpRel { target: 0x1000 });
+}
+
+#[test]
+fn decode_one_mode_16bit_call_rel16_uses_imm16() {
+    // call near +0 (rel16) in 16-bit mode:
+    // next IP = 0x2003, target = 0x2003
+    let inst = decode_one_mode(0x2000, &[0xe8, 0x00, 0x00], 16);
+    assert_eq!(inst.len, 3);
+    assert_eq!(inst.kind, InstKind::CallRel { target: 0x2003 });
+}
+
+#[test]
+fn decode_one_mode_16bit_jcc_rel16_uses_imm16() {
+    // jnz near -2 (rel16): 0F 85 FE FF
+    // next IP = 0x3004, target = 0x3002
+    let inst = decode_one_mode(0x3000, &[0x0f, 0x85, 0xfe, 0xff], 16);
+    assert_eq!(inst.len, 4);
+    assert_eq!(
+        inst.kind,
+        InstKind::JccRel {
+            cond: Cond::Ne,
+            target: 0x3002
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_jcc_rel16() {
+    // In 32-bit mode, 0x66 selects 16-bit operand size, and near Jcc uses a rel16.
+    // 66 0F 84 02 00 = jz +2
+    // next EIP = 0x4005, target = 0x4007
+    let inst = decode_one_mode(0x4000, &[0x66, 0x0f, 0x84, 0x02, 0x00], 32);
+    assert_eq!(inst.len, 5);
+    assert_eq!(
+        inst.kind,
+        InstKind::JccRel {
+            cond: Cond::E,
+            target: 0x4007
         }
     );
 }

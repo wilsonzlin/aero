@@ -506,6 +506,39 @@ pub mod tier1 {
         }
     }
 
+    fn near_branch_disp_width(bitness: u32, operand_override: bool) -> Width {
+        match bitness {
+            // In 64-bit mode, near branches always use a 32-bit relative displacement.
+            64 => Width::W32,
+            // In 16/32-bit modes, the displacement size follows the operand-size attribute.
+            32 => {
+                if operand_override {
+                    Width::W16
+                } else {
+                    Width::W32
+                }
+            }
+            16 => {
+                if operand_override {
+                    Width::W32
+                } else {
+                    Width::W16
+                }
+            }
+            _ => Width::W32,
+        }
+    }
+
+    fn read_rel(bytes: &[u8], offset: usize, width: Width) -> Result<i64, DecodeError> {
+        match width {
+            Width::W16 => Ok(read_le(bytes, offset, 2)? as u16 as i16 as i64),
+            Width::W32 => Ok(read_le(bytes, offset, 4)? as u32 as i32 as i64),
+            _ => Err(DecodeError {
+                message: "invalid rel width",
+            }),
+        }
+    }
+
     fn sign_extend_imm(width: Width, imm: u64) -> u64 {
         width.sign_extend(width.truncate(imm))
     }
@@ -1175,9 +1208,11 @@ pub mod tier1 {
                 }
             }
             0xe9 => {
-                let rel32 = read_le(bytes, offset, 4)? as u32;
-                offset += 4;
-                let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64) & ip_mask(bitness);
+                let rel_width = near_branch_disp_width(bitness, operand_override);
+                let rel = read_rel(bytes, offset, rel_width)?;
+                offset += rel_width.bytes();
+                let target =
+                    (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
                 InstKind::JmpRel { target }
             }
             0xeb => {
@@ -1187,10 +1222,44 @@ pub mod tier1 {
                 InstKind::JmpRel { target }
             }
             0xe8 => {
-                let rel32 = read_le(bytes, offset, 4)? as u32;
-                offset += 4;
-                let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64) & ip_mask(bitness);
-                InstKind::CallRel { target }
+                match bitness {
+                    // In 64-bit mode, CALL rel32 is the only near relative encoding.
+                    64 => {
+                        let rel32 = read_rel(bytes, offset, Width::W32)?;
+                        offset += 4;
+                        let target =
+                            (rip + offset as u64).wrapping_add(rel32 as u64) & ip_mask(bitness);
+                        InstKind::CallRel { target }
+                    }
+                    // In 16/32-bit modes, CALL's displacement and pushed return-address size follow
+                    // the operand-size attribute. Tier1 currently only supports the default form
+                    // (no operand-size override) so we can keep translation semantics simple.
+                    32 => {
+                        if operand_override {
+                            return Err(DecodeError {
+                                message: "unsupported operand-size override for CALL",
+                            });
+                        }
+                        let rel32 = read_rel(bytes, offset, Width::W32)?;
+                        offset += 4;
+                        let target =
+                            (rip + offset as u64).wrapping_add(rel32 as u64) & ip_mask(bitness);
+                        InstKind::CallRel { target }
+                    }
+                    16 => {
+                        if operand_override {
+                            return Err(DecodeError {
+                                message: "unsupported operand-size override for CALL",
+                            });
+                        }
+                        let rel16 = read_rel(bytes, offset, Width::W16)?;
+                        offset += 2;
+                        let target =
+                            (rip + offset as u64).wrapping_add(rel16 as u64) & ip_mask(bitness);
+                        InstKind::CallRel { target }
+                    }
+                    _ => unreachable!(),
+                }
             }
             0xc3 => InstKind::Ret,
             0x70..=0x7f => {
@@ -1212,9 +1281,11 @@ pub mod tier1 {
                         let cond = Cond::from_cc(cc).ok_or(DecodeError {
                             message: "invalid condition code",
                         })?;
-                        let rel32 = read_le(bytes, offset, 4)? as u32;
-                        offset += 4;
-                        let target = (rip + offset as u64).wrapping_add(rel32 as i32 as i64 as u64) & ip_mask(bitness);
+                        let rel_width = near_branch_disp_width(bitness, operand_override);
+                        let rel = read_rel(bytes, offset, rel_width)?;
+                        offset += rel_width.bytes();
+                        let target =
+                            (rip + offset as u64).wrapping_add(rel as u64) & ip_mask(bitness);
                         InstKind::JccRel { cond, target }
                     }
                     0x90..=0x9f => {
