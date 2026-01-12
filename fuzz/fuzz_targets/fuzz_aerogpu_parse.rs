@@ -1501,6 +1501,58 @@ fuzz_target!(|data: &[u8]| {
         /*size=*/ (ring::AerogpuAllocTableHeader::SIZE_BYTES as u32).saturating_sub(1),
     );
 
+    // Deterministic alloc-table decode errors for the canonical protocol decoder.
+    let alloc_header_size = ring::AerogpuAllocTableHeader::SIZE_BYTES;
+    let alloc_entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES as u32;
+    // Bad magic.
+    let mut alloc_bad_magic = vec![0u8; alloc_header_size];
+    alloc_bad_magic[0..4].copy_from_slice(&0u32.to_le_bytes());
+    alloc_bad_magic[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    alloc_bad_magic[8..12].copy_from_slice(&(alloc_header_size as u32).to_le_bytes());
+    let _ = ring::decode_alloc_table_le(&alloc_bad_magic);
+    fuzz_alloc_table(&alloc_bad_magic);
+    // Unsupported ABI major.
+    let mut alloc_bad_abi = vec![0u8; alloc_header_size];
+    alloc_bad_abi[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    let alloc_unsupported_abi_version =
+        ((pci::AEROGPU_ABI_MAJOR + 1) << 16) | pci::AEROGPU_ABI_MINOR;
+    alloc_bad_abi[4..8].copy_from_slice(&alloc_unsupported_abi_version.to_le_bytes());
+    alloc_bad_abi[8..12].copy_from_slice(&(alloc_header_size as u32).to_le_bytes());
+    let _ = ring::decode_alloc_table_le(&alloc_bad_abi);
+    fuzz_alloc_table(&alloc_bad_abi);
+    // size_bytes too small.
+    let mut alloc_bad_size_small = vec![0u8; alloc_header_size];
+    alloc_bad_size_small[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_bad_size_small[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    alloc_bad_size_small[8..12].copy_from_slice(&0u32.to_le_bytes());
+    let _ = ring::decode_alloc_table_le(&alloc_bad_size_small);
+    fuzz_alloc_table(&alloc_bad_size_small);
+    // entry_stride_bytes too small.
+    let mut alloc_bad_stride = vec![0u8; alloc_header_size];
+    alloc_bad_stride[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_bad_stride[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    alloc_bad_stride[8..12].copy_from_slice(&(alloc_header_size as u32).to_le_bytes());
+    alloc_bad_stride[16..20].copy_from_slice(&0u32.to_le_bytes());
+    let _ = ring::decode_alloc_table_le(&alloc_bad_stride);
+    fuzz_alloc_table(&alloc_bad_stride);
+    // size_bytes larger than provided buffer.
+    let mut alloc_bad_size_large = vec![0u8; alloc_header_size];
+    alloc_bad_size_large[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_bad_size_large[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    alloc_bad_size_large[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+    alloc_bad_size_large[16..20].copy_from_slice(&alloc_entry_stride.to_le_bytes());
+    let _ = ring::decode_alloc_table_le(&alloc_bad_size_large);
+    fuzz_alloc_table(&alloc_bad_size_large);
+    // CountOutOfBounds: entry_count indicates an entry, but size_bytes omits the entries region.
+    let mut alloc_count_oob = vec![0u8; alloc_header_size + alloc_entry_stride as usize];
+    alloc_count_oob[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_count_oob[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    alloc_count_oob[8..12].copy_from_slice(&(alloc_header_size as u32).to_le_bytes());
+    alloc_count_oob[12..16].copy_from_slice(&1u32.to_le_bytes());
+    alloc_count_oob[16..20].copy_from_slice(&alloc_entry_stride.to_le_bytes());
+    let _ = ring::decode_alloc_table_le(&alloc_count_oob);
+    fuzz_alloc_table(&alloc_count_oob);
+
     // Patched ring layouts: create fixed-size prefix buffers so we can set magic/version and hit
     // deeper validation checks without copying the entire (potentially large) ring slice.
     let mut ring_hdr_bytes = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
@@ -1526,4 +1578,39 @@ fuzz_target!(|data: &[u8]| {
     fence_bytes[0..4].copy_from_slice(&ring::AEROGPU_FENCE_PAGE_MAGIC.to_le_bytes());
     fence_bytes[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
     fuzz_ring_layouts(&fence_bytes);
+
+    // Deterministic ring layout validation errors.
+    let mut ring_hdr_bad_entry_count = ring_hdr_bytes;
+    ring_hdr_bad_entry_count[12..16].copy_from_slice(&0u32.to_le_bytes());
+    fuzz_ring_layouts(&ring_hdr_bad_entry_count);
+    let mut ring_hdr_bad_stride = ring_hdr_bytes;
+    ring_hdr_bad_stride[16..20].copy_from_slice(&0u32.to_le_bytes());
+    fuzz_ring_layouts(&ring_hdr_bad_stride);
+    let mut ring_hdr_bad_size = ring_hdr_bytes;
+    ring_hdr_bad_size[8..12]
+        .copy_from_slice(&(ring::AerogpuRingHeader::SIZE_BYTES as u32).to_le_bytes());
+    fuzz_ring_layouts(&ring_hdr_bad_size);
+    let mut ring_hdr_bad_abi = ring_hdr_bytes;
+    let ring_unsupported_abi_version =
+        ((pci::AEROGPU_ABI_MAJOR + 1) << 16) | pci::AEROGPU_ABI_MINOR;
+    ring_hdr_bad_abi[4..8].copy_from_slice(&ring_unsupported_abi_version.to_le_bytes());
+    fuzz_ring_layouts(&ring_hdr_bad_abi);
+    let mut ring_hdr_bad_magic = ring_hdr_bytes;
+    ring_hdr_bad_magic[0..4].copy_from_slice(&0u32.to_le_bytes());
+    fuzz_ring_layouts(&ring_hdr_bad_magic);
+
+    let mut submit_bad = submit_bytes;
+    submit_bad[0..4].copy_from_slice(&0u32.to_le_bytes());
+    fuzz_ring_layouts(&submit_bad);
+
+    let mut fence_bad_magic = fence_bytes;
+    fence_bad_magic[0..4].copy_from_slice(&0u32.to_le_bytes());
+    fuzz_ring_layouts(&fence_bad_magic);
+    let mut fence_bad_abi = fence_bytes;
+    fence_bad_abi[4..8].copy_from_slice(&ring_unsupported_abi_version.to_le_bytes());
+    fuzz_ring_layouts(&fence_bad_abi);
+
+    // Fence page writer should gracefully reject too-small buffers.
+    let mut too_small = [0u8; ring::AerogpuFencePage::SIZE_BYTES - 1];
+    let _ = ring::write_fence_page_completed_fence_le(&mut too_small, 1);
 });
