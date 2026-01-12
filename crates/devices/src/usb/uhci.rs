@@ -48,6 +48,11 @@ impl UhciPciDevice {
     }
 
     pub fn irq_level(&self) -> bool {
+        // PCI command bit 10 disables legacy INTx assertion.
+        let intx_disabled = (self.config.command() & (1 << 10)) != 0;
+        if intx_disabled {
+            return false;
+        }
         self.controller.irq_level()
     }
 

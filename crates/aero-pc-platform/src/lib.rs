@@ -1492,7 +1492,23 @@ impl PcPlatform {
                 pci_intx_sources.push(PciIntxSource {
                     bdf,
                     pin: PciInterruptPin::IntA,
-                    query_level: Box::new(move |_pc| uhci_for_intx.borrow().irq_level()),
+                    query_level: Box::new(move |pc| {
+                        let command = {
+                            let mut pci_cfg = pc.pci_cfg.borrow_mut();
+                            pci_cfg
+                                .bus_mut()
+                                .device_config(bdf)
+                                .map(|cfg| cfg.command())
+                                .unwrap_or(0)
+                        };
+
+                        // Keep device-side gating consistent when the same device model is also
+                        // used outside the platform (e.g. in unit tests).
+                        let mut uhci = uhci_for_intx.borrow_mut();
+                        uhci.config_mut().set_command(command);
+
+                        uhci.irq_level()
+                    }),
                 });
             }
 

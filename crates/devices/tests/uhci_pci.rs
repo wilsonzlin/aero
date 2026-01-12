@@ -65,6 +65,31 @@ fn uhci_pci_config_and_bar_io() {
     assert_eq!(uhci.borrow().controller().regs().usbintr, regs::USBINTR_IOC);
 }
 
+#[test]
+fn uhci_irq_level_is_gated_by_pci_command_intx_disable() {
+    let mut dev = UhciPciDevice::default();
+
+    // Enable IOC interrupts and force a USBINT status bit so the controller asserts its IRQ line.
+    dev.controller_mut()
+        .io_write(regs::REG_USBINTR, 2, u32::from(regs::USBINTR_IOC));
+    dev.controller_mut().set_usbsts_bits(regs::USBSTS_USBINT);
+    dev.config_mut().set_command(0x0001);
+
+    assert!(dev.irq_level(), "IRQ should assert when USBINTR is enabled");
+
+    // PCI command bit 10 disables legacy INTx assertion.
+    dev.config_mut().set_command(0x0001 | (1 << 10));
+    assert!(
+        !dev.irq_level(),
+        "IRQ must be suppressed when PCI COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx without touching UHCI register state: the pending controller interrupt should
+    // become visible again.
+    dev.config_mut().set_command(0x0001);
+    assert!(dev.irq_level());
+}
+
 #[derive(Clone)]
 struct CountingRam {
     inner: Rc<RefCell<Vec<u8>>>,
