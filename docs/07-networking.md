@@ -336,7 +336,7 @@ The in-browser `aero-net-stack` can snapshot/restore its internal bookkeeping (D
 The L2 tunnel is a host transport (WebSocket/WebRTC DataChannel) carrying raw Ethernet frames; the connection itself is **not bit-restorable**.
 
 - On resume, the tunnel reconnects **best-effort** (normal reconnect/backoff policy).
-- The shared `NET_TX` / `NET_RX` rings are **cleared** on resume/restore to avoid replaying stale frames into a restored guest.
+- The shared `NET_TX` / `NET_RX` rings are **cleared** during snapshot pause (before save/restore) to avoid replaying stale frames into a restored guest.
 
 ### Snapshot ordering requirements (web runtime)
 
