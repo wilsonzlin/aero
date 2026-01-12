@@ -325,3 +325,40 @@ fn int10_write_string_without_update_cursor_leaves_cursor_unchanged() {
     // But the character was written at the requested location.
     assert_eq!(mem.read_u8(0xB8000), b'X');
 }
+
+#[test]
+fn int10_write_char_only_preserves_existing_attribute_and_cursor() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Put distinct attributes in two adjacent cells.
+    mem.write_u8(0xB8000, b'A');
+    mem.write_u8(0xB8001, 0x2E);
+    mem.write_u8(0xB8002, b'B');
+    mem.write_u8(0xB8003, 0x1F);
+
+    // Cursor at (0,0).
+    cpu.set_ax(0x0200);
+    cpu.set_bx(0x0000);
+    cpu.set_dx(0x0000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 0));
+
+    // AH=0Ah: write 'X' twice without modifying attributes.
+    cpu.set_ax(0x0A58); // AH=0Ah, AL='X'
+    cpu.set_bx(0x0000); // page 0
+    cpu.set_cx(2);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(mem.read_u8(0xB8000), b'X');
+    assert_eq!(mem.read_u8(0xB8001), 0x2E);
+    assert_eq!(mem.read_u8(0xB8002), b'X');
+    assert_eq!(mem.read_u8(0xB8003), 0x1F);
+    // Cursor remains unchanged.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 0));
+}

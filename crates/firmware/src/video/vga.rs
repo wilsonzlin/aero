@@ -243,6 +243,32 @@ impl VgaDevice {
         }
     }
 
+    pub fn write_char_only(&mut self, mem: &mut impl MemoryBus, page: u8, ch: u8, count: u16) {
+        if count == 0 {
+            return;
+        }
+
+        let cols = BiosDataArea::read_screen_cols(mem).max(1) as u8;
+        let rows = 25u8;
+        let (row0, col0) = BiosDataArea::read_cursor_pos(mem, page);
+        let base = self.text_base_for_page(mem, page);
+
+        let mut linear = row0 as u32 * cols as u32 + col0 as u32;
+        let max = rows as u32 * cols as u32;
+        for _ in 0..count {
+            if linear >= max {
+                break;
+            }
+            let row = (linear / cols as u32) as u8;
+            let col = (linear % cols as u32) as u8;
+            let off = self.text_offset(cols as u16, row as u16, col as u16);
+            let attr = mem.read_u8(base + off + 1);
+            mem.write_u8(base + off, ch);
+            mem.write_u8(base + off + 1, attr);
+            linear += 1;
+        }
+    }
+
     pub fn read_char_attr_at_cursor(&self, mem: &mut impl MemoryBus, page: u8) -> (u8, u8) {
         let (row, col) = BiosDataArea::read_cursor_pos(mem, page);
         let cols = BiosDataArea::read_screen_cols(mem).max(1);

@@ -156,6 +156,13 @@ impl Bios {
                     .vga
                     .write_char_attr(memory, page, ch, attr, count);
             }
+            0x0A => {
+                // Write Character Only at Cursor
+                let ch = cpu.al();
+                let page = cpu.bh();
+                let count = cpu.cx();
+                self.video.vga.write_char_only(memory, page, ch, count);
+            }
             0x13 => {
                 // Write String
                 //
