@@ -77,7 +77,7 @@ mod platform_handle {
             DiskError::BackendUnavailable => {
                 io::Error::new(io::ErrorKind::NotConnected, err.to_string())
             }
-            DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
+            DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err.to_string()),
             DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err.to_string()),
             DiskError::InvalidState(_) => {
                 io::Error::new(io::ErrorKind::BrokenPipe, err.to_string())
