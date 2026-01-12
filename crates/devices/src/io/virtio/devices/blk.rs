@@ -209,6 +209,8 @@ mod tests {
     use super::*;
     use crate::io::virtio::core::{DenseMemory, GuestMemory, VirtQueue, VIRTQ_DESC_F_NEXT};
     use crate::storage::DiskBackend;
+    use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+    use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
     use std::io;
     use std::sync::{Arc, Mutex};
 
@@ -324,6 +326,64 @@ mod tests {
     impl VirtioInterrupt for TestIrq {
         fn trigger(&mut self) {
             self.count += 1;
+        }
+    }
+
+    #[derive(Clone)]
+    struct SharedAeroDisk {
+        inner: Arc<Mutex<RawDisk<MemBackend>>>,
+        flush_count: Arc<Mutex<usize>>,
+    }
+
+    impl SharedAeroDisk {
+        fn new(capacity_bytes: u64) -> Self {
+            let disk = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
+            Self {
+                inner: Arc::new(Mutex::new(disk)),
+                flush_count: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn lock(&self) -> std::sync::MutexGuard<'_, RawDisk<MemBackend>> {
+            self.inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+
+        fn bytes(&self, offset: u64, len: usize) -> Vec<u8> {
+            let mut disk = self.lock();
+            let mut out = vec![0u8; len];
+            disk.read_at(offset, &mut out).unwrap();
+            out
+        }
+
+        fn flush_count(&self) -> usize {
+            *self
+                .flush_count
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+    }
+
+    impl VirtualDisk for SharedAeroDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.lock().capacity_bytes()
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            self.lock().read_at(offset, buf)
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+            self.lock().write_at(offset, buf)
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            *self
+                .flush_count
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+            self.lock().flush()
         }
     }
 
@@ -482,5 +542,124 @@ mod tests {
 
         assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_IOERR);
         assert_eq!(irq.count, 1);
+    }
+
+    #[test]
+    fn rw_roundtrip_works_with_aero_storage_disk_via_adapter() {
+        let disk = SharedAeroDisk::new(8 * SECTOR_SIZE as u64);
+        let payload: Vec<u8> = (0..SECTOR_SIZE as u32).map(|v| (v & 0xff) as u8).collect();
+
+        // 1) Write a full sector via virtio-blk OUT.
+        {
+            let drive = VirtualDrive::new(
+                512,
+                Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk.clone()))),
+            );
+            let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
+            let mut dev = VirtioBlkDevice::new(drive, vq);
+
+            let mut mem = DenseMemory::new(0x10000).unwrap();
+            let header_addr = 0x4000;
+            let data_addr = 0x5000;
+            let status_addr = 0x6000;
+
+            mem.write_u32_le(header_addr, VIRTIO_BLK_T_OUT).unwrap();
+            mem.write_u32_le(header_addr + 4, 0).unwrap();
+            mem.write_u64_le(header_addr + 8, 0).unwrap(); // sector 0
+
+            mem.write_from(data_addr, &payload).unwrap();
+
+            write_desc(&mut mem, 0, header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
+            write_desc(
+                &mut mem,
+                1,
+                data_addr,
+                payload.len() as u32,
+                VIRTQ_DESC_F_NEXT,
+                2,
+            );
+            write_desc(&mut mem, 2, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
+            write_avail(&mut mem, 1, 0);
+
+            let mut irq = TestIrq::default();
+            dev.process_queue(&mut mem, &mut irq).unwrap();
+
+            assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_OK);
+            assert_eq!(read_used_elem(&mem, 0), (0, 1));
+            assert_eq!(irq.count, 1);
+        }
+
+        assert_eq!(disk.bytes(0, payload.len()), payload);
+
+        // 2) Read it back via virtio-blk IN.
+        {
+            let drive = VirtualDrive::new(
+                512,
+                Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk.clone()))),
+            );
+            let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
+            let mut dev = VirtioBlkDevice::new(drive, vq);
+
+            let mut mem = DenseMemory::new(0x10000).unwrap();
+            let header_addr = 0x4000;
+            let data_addr = 0x5000;
+            let status_addr = 0x6000;
+
+            mem.write_u32_le(header_addr, VIRTIO_BLK_T_IN).unwrap();
+            mem.write_u32_le(header_addr + 4, 0).unwrap();
+            mem.write_u64_le(header_addr + 8, 0).unwrap(); // sector 0
+
+            write_desc(&mut mem, 0, header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
+            write_desc(
+                &mut mem,
+                1,
+                data_addr,
+                payload.len() as u32,
+                VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+                2,
+            );
+            write_desc(&mut mem, 2, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
+            write_avail(&mut mem, 1, 0);
+
+            let mut irq = TestIrq::default();
+            dev.process_queue(&mut mem, &mut irq).unwrap();
+
+            assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_OK);
+            assert_eq!(read_used_elem(&mem, 0), (0, payload.len() as u32 + 1));
+
+            let mut out = vec![0u8; payload.len()];
+            mem.read_into(data_addr, &mut out).unwrap();
+            assert_eq!(out, payload);
+            assert_eq!(irq.count, 1);
+        }
+
+        // 3) Flush uses the disk's `flush()` impl (adapter path uses a `VirtualDisk`).
+        {
+            let drive = VirtualDrive::new(
+                512,
+                Box::new(AeroVirtualDiskAsDeviceBackend::new(Box::new(disk.clone()))),
+            );
+            let vq = VirtQueue::new(8, DESC_ADDR, AVAIL_ADDR, USED_ADDR);
+            let mut dev = VirtioBlkDevice::new(drive, vq);
+
+            let mut mem = DenseMemory::new(0x10000).unwrap();
+            let header_addr = 0x4000;
+            let status_addr = 0x6000;
+
+            mem.write_u32_le(header_addr, VIRTIO_BLK_T_FLUSH).unwrap();
+            mem.write_u32_le(header_addr + 4, 0).unwrap();
+            mem.write_u64_le(header_addr + 8, 0).unwrap();
+
+            write_desc(&mut mem, 0, header_addr, 16, VIRTQ_DESC_F_NEXT, 1);
+            write_desc(&mut mem, 1, status_addr, 1, VIRTQ_DESC_F_WRITE, 0);
+            write_avail(&mut mem, 1, 0);
+
+            let mut irq = TestIrq::default();
+            dev.process_queue(&mut mem, &mut irq).unwrap();
+
+            assert_eq!(mem.read_u8_le(status_addr).unwrap(), VIRTIO_BLK_S_OK);
+        }
+
+        assert_eq!(disk.flush_count(), 1);
     }
 }

@@ -16,4 +16,5 @@ memory = { path = "../memory" }
 aero-acpi = { path = "../aero-acpi" }
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
+aero-storage = { path = "../aero-storage" }
 serde_json = "1"

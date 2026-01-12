@@ -167,6 +167,7 @@ dependencies = [
  "aero-io-snapshot",
  "aero-platform",
  "aero-snapshot",
+ "aero-storage",
  "aero-storage-adapters",
  "memory",
  "serde_json",
