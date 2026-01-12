@@ -1,0 +1,105 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { InputCapture } from "./input_capture";
+
+function withStubbedDocument<T>(run: (doc: any) => T): T {
+  const original = (globalThis as any).document;
+  const doc = {
+    pointerLockElement: null,
+    visibilityState: "visible",
+    hasFocus: () => true,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    exitPointerLock: () => {},
+  };
+  (globalThis as any).document = doc;
+  try {
+    return run(doc);
+  } finally {
+    (globalThis as any).document = original;
+  }
+}
+
+describe("InputCapture auxclick handling", () => {
+  it("swallows auxclick events on the canvas while capture is active", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      (capture as any).handleAuxClick({
+        button: 1,
+        target: canvas,
+        preventDefault,
+        stopPropagation,
+      } as unknown as MouseEvent);
+
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not swallow auxclick events outside the canvas when pointer lock is inactive", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      (capture as any).handleAuxClick({
+        button: 1,
+        target: {},
+        preventDefault,
+        stopPropagation,
+      } as unknown as MouseEvent);
+
+      expect(preventDefault).toHaveBeenCalledTimes(0);
+      expect(stopPropagation).toHaveBeenCalledTimes(0);
+    });
+  });
+
+  it("swallows auxclick events while pointer lock is active even if the target is outside the canvas", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      (capture as any).pointerLock.locked = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      (capture as any).handleAuxClick({
+        button: 1,
+        target: {},
+        preventDefault,
+        stopPropagation,
+      } as unknown as MouseEvent);
+
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+

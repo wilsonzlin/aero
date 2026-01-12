@@ -369,6 +369,22 @@ export class InputCapture {
     this.setMouseButtons(this.mouseButtons & ~bit, event.timeStamp);
   };
 
+  private readonly handleAuxClick = (event: MouseEvent): void => {
+    if (!this.isCapturingMouse()) {
+      return;
+    }
+
+    // `auxclick` is fired for non-primary buttons (middle/back/forward/etc.). Even if the
+    // corresponding `mousedown`/`mouseup` were swallowed, this synthesized event would still bubble
+    // and can trigger host-side behavior (e.g. autoscroll) or app-level listeners.
+    if (!this.pointerLock.isLocked && event.target !== this.canvas) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   private readonly handleWheel = (event: WheelEvent): void => {
     if (!this.isCapturingMouse()) {
       return;
@@ -459,6 +475,7 @@ export class InputCapture {
     document.addEventListener('mousemove', this.handleMouseMove, { capture: true });
     document.addEventListener('mousedown', this.handleMouseDown, { capture: true });
     document.addEventListener('mouseup', this.handleMouseUp, { capture: true });
+    document.addEventListener('auxclick', this.handleAuxClick, { capture: true });
 
     // Wheel must be non-passive so we can preventDefault.
     this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
@@ -505,6 +522,7 @@ export class InputCapture {
     document.removeEventListener('mousemove', this.handleMouseMove, { capture: true } as AddEventListenerOptions);
     document.removeEventListener('mousedown', this.handleMouseDown, { capture: true } as AddEventListenerOptions);
     document.removeEventListener('mouseup', this.handleMouseUp, { capture: true } as AddEventListenerOptions);
+    document.removeEventListener('auxclick', this.handleAuxClick, { capture: true } as AddEventListenerOptions);
 
     this.canvas.removeEventListener('wheel', this.handleWheel as EventListener);
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
