@@ -19,12 +19,25 @@ export type HdaControllerBridgeLike = {
   attach_audio_ring?: (ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number) => void;
   detach_audio_ring?: () => void;
   /**
+   * Optional legacy/compat audio ring attachment helper.
+   *
+   * Some WASM builds expose `set_audio_ring_buffer(undefined)` as the detach mechanism.
+   */
+  set_audio_ring_buffer?: (ringSab?: SharedArrayBuffer, capacityFrames?: number, channelCount?: number) => void;
+  /**
+   * Alias helpers retained for older spec drafts / call sites.
+   */
+  attach_output_ring?: (ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number) => void;
+  detach_output_ring?: () => void;
+  /**
    * Optional host sample-rate plumbing (newer WASM builds).
    *
    * Must match the output AudioContext's `sampleRate` when streaming into an
    * AudioWorklet ring buffer.
    */
   set_output_rate_hz?: (rate: number) => void;
+  set_output_sample_rate_hz?: (rate: number) => void;
+  readonly output_sample_rate_hz?: number;
   free(): void;
 };
 
@@ -206,9 +219,12 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     // Plumb host output sample rate first so the HDA controller's time base matches
     // the `frames` argument passed via {@link tick}.
-    if (dstSampleRateHz > 0 && typeof this.#bridge.set_output_rate_hz === "function") {
+    const setRate =
+      this.#bridge.set_output_rate_hz ??
+      (this.#bridge as unknown as { set_output_sample_rate_hz?: unknown }).set_output_sample_rate_hz;
+    if (dstSampleRateHz > 0 && typeof setRate === "function") {
       try {
-        this.#bridge.set_output_rate_hz(dstSampleRateHz);
+        (setRate as (rate: number) => void).call(this.#bridge, dstSampleRateHz);
         if (dstSampleRateHz !== this.#outputRateHz) {
           this.#outputRateHz = dstSampleRateHz;
           // Recreate the clock at the new rate, preserving the last observed time
@@ -224,18 +240,38 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     // Attach/detach the output ring buffer (newer WASM builds only).
     if (ring) {
-      if (typeof this.#bridge.attach_audio_ring === "function") {
+      const attach =
+        this.#bridge.attach_audio_ring ??
+        this.#bridge.attach_output_ring ??
+        (this.#bridge as unknown as { set_audio_ring_buffer?: unknown }).set_audio_ring_buffer;
+      if (typeof attach === "function") {
         try {
-          this.#bridge.attach_audio_ring(ring, capacityFrames, channelCount);
+          (attach as (ring: SharedArrayBuffer, cap: number, ch: number) => void).call(
+            this.#bridge,
+            ring,
+            capacityFrames,
+            channelCount,
+          );
         } catch {
           // ignore
         }
       }
-    } else if (typeof this.#bridge.detach_audio_ring === "function") {
-      try {
-        this.#bridge.detach_audio_ring();
-      } catch {
-        // ignore
+    } else {
+      const detach =
+        this.#bridge.detach_audio_ring ??
+        this.#bridge.detach_output_ring ??
+        (this.#bridge as unknown as { set_audio_ring_buffer?: unknown }).set_audio_ring_buffer;
+      if (typeof detach === "function") {
+        try {
+          if (detach === this.#bridge.set_audio_ring_buffer) {
+            // Detach via legacy `set_audio_ring_buffer(undefined, ...)` entry point.
+            (detach as (ring?: SharedArrayBuffer, cap?: number, ch?: number) => void).call(this.#bridge, undefined, 0, 0);
+          } else {
+            (detach as () => void).call(this.#bridge);
+          }
+        } catch {
+          // ignore
+        }
       }
     }
   }

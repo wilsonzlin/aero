@@ -162,6 +162,53 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     expect(detach).toHaveBeenCalled();
   });
 
+  it("falls back to set_audio_ring_buffer when attach/detach exports are unavailable", () => {
+    const setAudioRing = vi.fn();
+    const setOutputRate = vi.fn();
+
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      set_audio_ring_buffer: setAudioRing,
+      set_output_rate_hz: setOutputRate,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    const ringBuffer =
+      typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
+
+    dev.setAudioRingBuffer({ ringBuffer, capacityFrames: 128, channelCount: 2, dstSampleRateHz: 48_000 });
+    expect(setAudioRing).toHaveBeenNthCalledWith(1, ringBuffer, 128, 2);
+
+    dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 0 });
+    expect(setAudioRing).toHaveBeenNthCalledWith(2, undefined, 0, 0);
+  });
+
+  it("falls back to set_output_sample_rate_hz when set_output_rate_hz is unavailable", () => {
+    const setOutputSampleRate = vi.fn();
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: vi.fn(),
+      set_output_sample_rate_hz: setOutputSampleRate,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 44_100 });
+    expect(setOutputSampleRate).toHaveBeenCalledWith(44_100);
+  });
+
   it("uses the configured output sample rate as the tick time base when set_output_rate_hz is available", () => {
     const irq: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     let totalFrames = 0;
