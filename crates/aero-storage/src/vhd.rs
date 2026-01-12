@@ -105,6 +105,7 @@ pub struct VhdDisk<B> {
     dynamic: Option<VhdDynamicHeader>,
     bat: Vec<u32>,
     bitmap_cache: LruCache<u64, Arc<Vec<u8>>>,
+    fixed_data_offset: u64,
 }
 
 impl<B: StorageBackend> VhdDisk<B> {
@@ -130,9 +131,25 @@ impl<B: StorageBackend> VhdDisk<B> {
 
         match footer.disk_type {
             VHD_DISK_TYPE_FIXED => {
-                let required_len = footer
-                    .current_size
-                    .checked_add(SECTOR_SIZE as u64)
+                // Some tools may store an extra copy of the footer at offset 0 even for fixed
+                // disks. If present and valid (and identical to the EOF footer), the disk payload
+                // begins immediately after it.
+                let mut fixed_data_offset = 0u64;
+                if len >= (SECTOR_SIZE as u64) * 2 {
+                    let mut raw_footer_copy = [0u8; SECTOR_SIZE];
+                    backend.read_at(0, &mut raw_footer_copy)?;
+                    if raw_footer_copy[..8] == VHD_FOOTER_COOKIE {
+                        if let Ok(copy) = VhdFooter::parse(raw_footer_copy) {
+                            if copy.raw == footer.raw && copy.disk_type == VHD_DISK_TYPE_FIXED {
+                                fixed_data_offset = SECTOR_SIZE as u64;
+                            }
+                        }
+                    }
+                }
+
+                let required_len = fixed_data_offset
+                    .checked_add(footer.current_size)
+                    .and_then(|v| v.checked_add(SECTOR_SIZE as u64))
                     .ok_or(DiskError::CorruptImage("vhd current_size overflow"))?;
                 if len < required_len {
                     return Err(DiskError::CorruptImage("vhd fixed disk truncated"));
@@ -143,6 +160,7 @@ impl<B: StorageBackend> VhdDisk<B> {
                     dynamic: None,
                     bat: Vec::new(),
                     bitmap_cache: LruCache::new(NonZeroUsize::MIN),
+                    fixed_data_offset,
                 })
             }
             VHD_DISK_TYPE_DYNAMIC => {
@@ -345,6 +363,7 @@ impl<B: StorageBackend> VhdDisk<B> {
                     dynamic: Some(dynamic),
                     bat,
                     bitmap_cache: LruCache::new(cap),
+                    fixed_data_offset: 0,
                 })
             }
             _ => Err(DiskError::Unsupported("vhd disk type")),
@@ -735,7 +754,11 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
         }
 
         if self.dynamic.is_none() {
-            self.backend_read_at(offset, buf, "vhd fixed disk truncated")?;
+            let phys = self
+                .fixed_data_offset
+                .checked_add(offset)
+                .ok_or(DiskError::OffsetOverflow)?;
+            self.backend_read_at(phys, buf, "vhd fixed disk truncated")?;
             return Ok(());
         }
 
@@ -826,7 +849,11 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
         }
 
         if self.dynamic.is_none() {
-            self.backend.write_at(offset, buf)?;
+            let phys = self
+                .fixed_data_offset
+                .checked_add(offset)
+                .ok_or(DiskError::OffsetOverflow)?;
+            self.backend.write_at(phys, buf)?;
             return Ok(());
         }
 
