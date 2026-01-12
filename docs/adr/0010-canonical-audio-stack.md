@@ -9,7 +9,8 @@ The repo accumulated two overlapping audio implementations:
    - `crates/aero-virtio` (virtio device models, including virtio-snd)
    - `crates/platform::audio::*` (SharedArrayBuffer ring-buffer layouts used by AudioWorklets)
    - `crates/aero-wasm` (wasm-pack exports used by the browser runtime, including the IO-worker-facing
-     `HdaControllerBridge` that exposes HDA as a PCI/MMIO device and attaches the AudioWorklet/mic rings)
+      `HdaControllerBridge` (HDA) and `VirtioSndPciBridge` (virtio-snd) that expose guest audio devices as PCI functions and attach
+      the AudioWorklet/mic rings)
 
 2. **Legacy/parallel**:
    - `crates/emulator/src/io/audio/*` (AC97, HDA, DSP, capture plumbing)
@@ -31,7 +32,8 @@ We standardize on the **newer audio stack** as the canonical implementation:
 - **HDA device model**: `crates/aero-audio` (`aero_audio::hda`)
 - **virtio-snd device model**: `crates/aero-virtio` (`aero_virtio::devices::snd`)
 - **AudioWorklet + microphone SharedArrayBuffer bridges**: `crates/platform` (`aero_platform::audio::{worklet_bridge,mic_bridge}`)
-- **Browser runtime WASM exports**: `crates/aero-wasm` (exports device bridges like `HdaControllerBridge` used by the IO worker)
+- **Browser runtime WASM exports**: `crates/aero-wasm` (exports device bridges like `HdaControllerBridge` and `VirtioSndPciBridge`
+  used by the IO worker)
 
 The legacy `crates/emulator` audio implementation is retained short-term, but is
 **not built by default**. It is gated behind the `emulator/legacy-audio` feature
