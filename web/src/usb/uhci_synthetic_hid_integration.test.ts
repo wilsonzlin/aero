@@ -349,4 +349,158 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
   });
+
+  it("preserves externally attached UsbHidPassthroughBridge devices across UhciRuntime.load_state", async () => {
+    const desiredGuestBytes = 2 * 1024 * 1024;
+    const layoutHint = computeGuestRamLayout(desiredGuestBytes);
+    const memory = new WebAssembly.Memory({ initial: layoutHint.wasm_pages, maximum: layoutHint.wasm_pages });
+
+    let api: Awaited<ReturnType<typeof initWasm>>["api"];
+    try {
+      ({ api } = await initWasm({ variant: "single", memory }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Missing single-thread WASM package")) return;
+      throw err;
+    }
+
+    if (!api.UhciRuntime) return;
+    if (!api.UsbHidPassthroughBridge) return;
+
+    const layout = api.guest_ram_layout(desiredGuestBytes);
+    const guestBase = layout.guest_base >>> 0;
+    const guestSize = layout.guest_size >>> 0;
+    expect(guestBase).toBeGreaterThan(0);
+    expect(guestSize).toBeGreaterThan(0x20000);
+
+    const runtime = new api.UhciRuntime(guestBase, guestSize);
+    if (typeof runtime.attach_usb_hid_passthrough_device !== "function") return;
+    const save =
+      (runtime as unknown as { save_state?: unknown }).save_state ?? (runtime as unknown as { snapshot_state?: unknown }).snapshot_state;
+    const load =
+      (runtime as unknown as { load_state?: unknown }).load_state ?? (runtime as unknown as { restore_state?: unknown }).restore_state;
+    if (typeof save !== "function" || typeof load !== "function") return;
+
+    const HidBridge = api.UsbHidPassthroughBridge;
+    const keyboardDev = new HidBridge(
+      0x1234,
+      0x0001,
+      "Aero",
+      "Keyboard",
+      undefined,
+      USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
+      false,
+      USB_HID_INTERFACE_SUBCLASS_BOOT,
+      USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
+    );
+    const mouseDev = new HidBridge(
+      0x1234,
+      0x0002,
+      "Aero",
+      "Mouse",
+      undefined,
+      USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+      false,
+      USB_HID_INTERFACE_SUBCLASS_BOOT,
+      USB_HID_INTERFACE_PROTOCOL_MOUSE,
+    );
+    const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+
+    runtime.attach_usb_hid_passthrough_device([0, 1], keyboardDev);
+    runtime.attach_usb_hid_passthrough_device([0, 2], mouseDev);
+    runtime.attach_usb_hid_passthrough_device([0, 3], gamepadDev);
+
+    // Wrap UhciRuntime into the same shape the helper functions expect.
+    const uhci: { io_write(offset: number, size: number, value: number): void; step_frame(): void; tick_1ms(): void } = {
+      io_write: (offset, size, value) => runtime.port_write(offset >>> 0, size >>> 0, value >>> 0),
+      step_frame: () => runtime.step_frame(),
+      tick_1ms: () => runtime.tick_1ms(),
+    };
+
+    const view = new DataView(memory.buffer);
+    const alloc = new Alloc(0x2000);
+    const flBase = 0x1000;
+
+    // Enable IOC interrupts.
+    uhci.io_write(REG_USBINTR, 2, USBINTR_IOC);
+
+    // Reset root port 0 and wait the UHCI-mandated ~50ms so the hub becomes enabled.
+    uhci.io_write(REG_PORTSC1, 2, PORTSC_PR);
+    for (let i = 0; i < 50; i += 1) tick1ms(uhci);
+
+    // Start the controller (RS) with 64-byte max packet size.
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS | USBCMD_MAXP);
+
+    // Enumerate + configure the hub itself at address 0 -> 1.
+    controlNoData({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 0,
+      setup: { bmRequestType: 0x00, bRequest: 0x05, wValue: 1, wIndex: 0, wLength: 0 },
+    });
+    controlNoData({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 1,
+      setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 1, wIndex: 0, wLength: 0 },
+    });
+
+    const setupHubSetPortFeature = (port: number, feature: number): SetupPacket => ({
+      bmRequestType: 0x23,
+      bRequest: 0x03,
+      wValue: feature,
+      wIndex: port,
+      wLength: 0,
+    });
+    const setupHubClearPortFeature = (port: number, feature: number): SetupPacket => ({
+      bmRequestType: 0x23,
+      bRequest: 0x01,
+      wValue: feature,
+      wIndex: port,
+      wLength: 0,
+    });
+
+    const addrs = [5, 6, 7];
+    for (let port = 1; port <= 3; port += 1) {
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 8) }); // PORT_POWER
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 4) }); // PORT_RESET
+      for (let i = 0; i < 50; i += 1) tick1ms(uhci);
+
+      for (const feature of [20, 16, 17]) {
+        controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubClearPortFeature(port, feature) });
+      }
+
+      const addr = addrs[port - 1]!;
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 0, setup: { bmRequestType: 0x00, bRequest: 0x05, wValue: addr, wIndex: 0, wLength: 0 } });
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: addr, setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 1, wIndex: 0, wLength: 0 } });
+    }
+
+    expect(keyboardDev.configured()).toBe(true);
+    expect(mouseDev.configured()).toBe(true);
+    expect(gamepadDev.configured()).toBe(true);
+
+    const snapshotBytes = save.call(runtime) as unknown;
+    expect(snapshotBytes).toBeInstanceOf(Uint8Array);
+    load.call(runtime, snapshotBytes);
+
+    // The runtime should preserve externally attached devices during snapshot restore so they remain
+    // connected to the JS-side `UsbHidPassthroughBridge` handles.
+    expect(keyboardDev.configured()).toBe(true);
+    expect(mouseDev.configured()).toBe(true);
+    expect(gamepadDev.configured()).toBe(true);
+
+    const usbHid = new api.UsbHidBridge();
+    usbHid.keyboard_event(0x04, true);
+    const kbReport = usbHid.drain_next_keyboard_report();
+    expect(kbReport).toBeInstanceOf(Uint8Array);
+    keyboardDev.push_input_report(0, kbReport!);
+
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
+  });
 });

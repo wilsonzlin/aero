@@ -1150,8 +1150,14 @@ pub mod tier1 {
                         let cond = Cond::from_cc(cc).ok_or(DecodeError {
                             message: "invalid condition code",
                         })?;
-                        let (src, modrm) =
-                            decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, width)?;
+                        let (src, modrm) = decode_modrm_operand(
+                            bytes,
+                            &mut offset,
+                            bitness,
+                            rex,
+                            rex.present,
+                            width,
+                        )?;
                         let dst = decode_reg_from_modrm(modrm, rex.present, width)?;
                         InstKind::Cmovcc {
                             cond,

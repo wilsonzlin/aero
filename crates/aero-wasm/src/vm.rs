@@ -76,8 +76,7 @@ impl WasmPhysBus {
             return None;
         }
 
-        let linear = (self.guest_base as u64)
-            .checked_add(paddr)?;
+        let linear = (self.guest_base as u64).checked_add(paddr)?;
         Some(linear as *const u8)
     }
 
@@ -270,11 +269,7 @@ impl WasmVm {
         );
         bus.sync(&cpu.state);
 
-        Ok(Self {
-            cpu,
-            assist,
-            bus,
-        })
+        Ok(Self { cpu, assist, bus })
     }
 
     /// Reset CPU state to 16-bit real mode and set `CS:IP = 0x0000:entry_ip`.

@@ -165,6 +165,17 @@ pub struct UhciRuntime {
     external_hub: Option<ExternalHubState>,
     external_hub_port_count_hint: Option<u8>,
 
+    /// Externally managed USB HID passthrough devices attached via
+    /// [`UhciRuntime::attach_usb_hid_passthrough_device`].
+    ///
+    /// These are usually synthetic browser input devices (keyboard/mouse/gamepad) that live in JS
+    /// as `UsbHidPassthroughBridge` instances. We track their handles so we can reattach them when
+    /// the external hub is replaced (e.g. due to a port-count grow) or during snapshot restore.
+    ///
+    /// NOTE: These devices are not currently snapshotted/recreated by the runtime. Instead, we
+    /// assume the host reattaches them before snapshot restore (as `io.worker.ts` does).
+    usb_hid_passthrough_devices: HashMap<Vec<u8>, UsbHidPassthroughHandle>,
+
     webusb: Option<WebUsbDeviceState>,
 }
 
@@ -221,6 +232,7 @@ impl UhciRuntime {
             webhid_hub_ports: HashMap::new(),
             external_hub: None,
             external_hub_port_count_hint: None,
+            usb_hid_passthrough_devices: HashMap::new(),
             webusb: None,
         })
     }
@@ -475,11 +487,11 @@ impl UhciRuntime {
             let hub_port = path[1];
             self.ensure_external_hub(hub_port)?;
         }
-        crate::uhci_controller_bridge::attach_device_at_path(
-            &mut self.ctrl,
-            &path,
-            Box::new(device.as_usb_device()),
-        )
+        let dev = device.as_usb_device();
+        // Remember the handle so we can reattach it after hub replacement / snapshot restore.
+        self.usb_hid_passthrough_devices
+            .insert(path.clone(), dev.clone());
+        crate::uhci_controller_bridge::attach_device_at_path(&mut self.ctrl, &path, Box::new(dev))
     }
 
     pub fn webhid_drain_output_reports(&mut self) -> JsValue {
@@ -1158,6 +1170,38 @@ impl UhciRuntime {
             );
         }
 
+        // Reattach any externally managed HID passthrough devices before restoring hub state.
+        //
+        // These devices are typically created and owned by JS (e.g. Aero's synthetic keyboard/mouse/gamepad),
+        // so we cannot recreate them here. Instead, we keep track of their `UsbHidPassthroughHandle`s when
+        // they are attached and reattach them after snapshot reset so the hub snapshot can load their
+        // dynamic state.
+        if self.external_hub.is_some() {
+            let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = self
+                .usb_hid_passthrough_devices
+                .iter()
+                .map(|(path, dev)| (path.clone(), dev.clone()))
+                .collect();
+
+            for (path, dev) in passthrough_to_reattach {
+                if path.len() < 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
+                    continue;
+                }
+                let hub_port = path[1];
+                // Avoid clobbering WebHID devices restored from the snapshot.
+                if self.webhid_hub_ports.contains_key(&hub_port) {
+                    continue;
+                }
+                // Best-effort: if a passthrough device can't be reattached, continue restoring the
+                // snapshot so other devices still come back.
+                let _ = crate::uhci_controller_bridge::attach_device_at_path(
+                    &mut self.ctrl,
+                    &path,
+                    Box::new(dev),
+                );
+            }
+        }
+
         // Restore hub dynamic state after attaching downstream devices.
         if let Some(hub_state) = hub_state_bytes {
             let Some(hub) = self.external_hub_mut() else {
@@ -1345,6 +1389,30 @@ impl UhciRuntime {
 
         for (hub_port, dev) in to_reattach {
             let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
+            crate::uhci_controller_bridge::attach_device_at_path(
+                &mut self.ctrl,
+                &path,
+                Box::new(dev),
+            )?;
+        }
+
+        // Reattach any externally managed HID passthrough devices (e.g. synthetic browser input
+        // devices) that were previously attached behind the external hub.
+        let passthrough_to_reattach: Vec<(Vec<u8>, UsbHidPassthroughHandle)> = self
+            .usb_hid_passthrough_devices
+            .iter()
+            .map(|(path, dev)| (path.clone(), dev.clone()))
+            .collect();
+
+        for (path, dev) in passthrough_to_reattach {
+            if path.len() < 2 || path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
+                continue;
+            }
+            let hub_port = path[1];
+            // Avoid clobbering WebHID devices.
+            if self.webhid_hub_ports.contains_key(&hub_port) {
+                continue;
+            }
             crate::uhci_controller_bridge::attach_device_at_path(
                 &mut self.ctrl,
                 &path,
