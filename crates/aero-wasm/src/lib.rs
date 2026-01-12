@@ -2563,3 +2563,51 @@ impl Machine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod machine_mouse_button_cache_tests {
+    use super::*;
+
+    #[test]
+    fn mouse_button_cache_tracks_transitions_and_invalidates_on_snapshot_restore() {
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // New machines start with a known "all released" state.
+        assert!(m.mouse_buttons_known);
+        assert_eq!(m.mouse_buttons, 0);
+
+        // Individual helpers update the cache.
+        m.inject_mouse_left(true);
+        assert!(m.mouse_buttons_known);
+        assert_eq!(m.mouse_buttons, 0x01);
+
+        m.inject_mouse_right(true);
+        assert_eq!(m.mouse_buttons, 0x03);
+
+        m.inject_mouse_left(false);
+        assert_eq!(m.mouse_buttons, 0x02);
+
+        // Absolute mask injection should update the cache as well.
+        m.inject_mouse_buttons_mask(0x07);
+        assert!(m.mouse_buttons_known);
+        assert_eq!(m.mouse_buttons, 0x07);
+
+        // Taking/restoring a snapshot should invalidate the cache because device state rewinds.
+        let snap = m.snapshot_full().expect("snapshot_full ok");
+        m.inject_mouse_buttons_mask(0x00);
+        assert_eq!(m.mouse_buttons, 0x00);
+
+        m.restore_snapshot(&snap).expect("restore_snapshot ok");
+        assert!(!m.mouse_buttons_known);
+
+        // The next mask call should re-establish a known cache.
+        m.inject_mouse_buttons_mask(0x01);
+        assert!(m.mouse_buttons_known);
+        assert_eq!(m.mouse_buttons, 0x01);
+
+        // Reset should also bring us back to a known released state.
+        m.reset();
+        assert!(m.mouse_buttons_known);
+        assert_eq!(m.mouse_buttons, 0x00);
+    }
+}
