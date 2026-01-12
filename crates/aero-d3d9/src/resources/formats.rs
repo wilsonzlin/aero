@@ -267,6 +267,41 @@ pub fn format_info(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dxt_formats_use_bc_when_supported() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+
+        for (format, expected_wgpu) in [
+            (D3DFormat::Dxt1, wgpu::TextureFormat::Bc1RgbaUnorm),
+            (D3DFormat::Dxt3, wgpu::TextureFormat::Bc2RgbaUnorm),
+            (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
+        ] {
+            let info = format_info(format, features, TextureUsageKind::Sampled).unwrap();
+            assert_eq!(info.wgpu, expected_wgpu);
+            assert!(!info.decompress_to_bgra8);
+            assert!(info.upload_is_compressed);
+            assert!(info.d3d_is_compressed);
+        }
+    }
+
+    #[test]
+    fn dxt_formats_fallback_to_bgra8_when_bc_unsupported() {
+        let features = wgpu::Features::empty();
+
+        for format in [D3DFormat::Dxt1, D3DFormat::Dxt3, D3DFormat::Dxt5] {
+            let info = format_info(format, features, TextureUsageKind::Sampled).unwrap();
+            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+            assert!(info.decompress_to_bgra8);
+            assert!(!info.upload_is_compressed);
+            assert!(info.d3d_is_compressed);
+        }
+    }
+}
+
 pub fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     bytes_per_row.div_ceil(align) * align
