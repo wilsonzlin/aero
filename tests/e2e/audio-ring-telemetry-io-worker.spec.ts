@@ -31,6 +31,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     );
     const { ringCtrl } = await import("/web/src/ipc/layout.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
+    const { requiredBytes: audioRequiredBytes, wrapRingBuffer: wrapAudioRingBuffer } = await import("/web/src/audio/audio_worklet_ring.ts");
 
     const WASM_PAGE_BYTES = 64 * 1024;
     const guestBase = RUNTIME_RESERVED_BYTES >>> 0;
@@ -129,10 +130,12 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
 
     const capacityFrames = 128;
     const channelCount = 2;
-    const headerBytes = 4 * Uint32Array.BYTES_PER_ELEMENT;
-    const ringBuffer = new SharedArrayBuffer(headerBytes + capacityFrames * channelCount * Float32Array.BYTES_PER_ELEMENT);
-    const header = new Uint32Array(ringBuffer, 0, 4);
-    for (let i = 0; i < 4; i++) Atomics.store(header, i, 0);
+    const ringBuffer = new SharedArrayBuffer(audioRequiredBytes(capacityFrames, channelCount));
+    const views = wrapAudioRingBuffer(ringBuffer, capacityFrames, channelCount);
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 0);
+    Atomics.store(views.underrunCount, 0, 0);
+    Atomics.store(views.overrunCount, 0, 0);
 
     ioWorker.postMessage({
       type: "setAudioRingBuffer",
@@ -143,15 +146,15 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     });
 
     // Simulate the AudioWorklet consumer and guest producer moving indices in the ring header.
-    Atomics.store(header, 0, 0);
-    Atomics.store(header, 1, 64);
-    Atomics.store(header, 2, 123);
-    Atomics.store(header, 3, 456);
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 64);
+    Atomics.store(views.underrunCount, 0, 123);
+    Atomics.store(views.overrunCount, 0, 456);
     const sample1 = await waitForStatus({ level: 64, underrun: 123, overrun: 456 });
 
-    Atomics.store(header, 1, 100);
-    Atomics.store(header, 2, 124);
-    Atomics.store(header, 3, 457);
+    Atomics.store(views.writeIndex, 0, 100);
+    Atomics.store(views.underrunCount, 0, 124);
+    Atomics.store(views.overrunCount, 0, 457);
     const sample2 = await waitForStatus({ level: 100, underrun: 124, overrun: 457 });
 
     // Detach the ring; IO worker should clear telemetry once.
@@ -173,4 +176,3 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
   expect(result.sample2.level).toBe(100);
   expect(result.cleared.level).toBe(0);
 });
-
