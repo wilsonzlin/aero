@@ -2040,6 +2040,8 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
     control: init.controlSab,
     guestMemory: init.guestMemory,
     vgaFramebuffer: init.vgaFramebuffer,
+    scanoutState: init.scanoutState,
+    scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
     ioIpc: init.ioIpcSab,
     sharedFramebuffer: init.sharedFramebuffer,
     sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,

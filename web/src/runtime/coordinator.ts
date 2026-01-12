@@ -1578,6 +1578,8 @@ export class WorkerCoordinator {
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
         vgaFramebuffer: segments.vgaFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

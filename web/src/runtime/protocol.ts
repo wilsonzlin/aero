@@ -50,6 +50,16 @@ export type WorkerInitMessage = {
   controlSab: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
+  /**
+   * Shared scanout descriptor used to select which framebuffer is currently presented.
+   *
+   * Layout/protocol: `web/src/ipc/scanout_state.ts` / `crates/aero-shared/src/scanout_state.rs`.
+   */
+  scanoutState?: SharedArrayBuffer;
+  /**
+   * Byte offset within `scanoutState` where the scanout header begins (typically 0).
+   */
+  scanoutStateOffsetBytes?: number;
   /** Optional precompiled WASM module (structured-cloneable in modern browsers). */
   wasmModule?: WebAssembly.Module;
   /** Variant corresponding to `wasmModule` (or the preferred variant when no module is sent). */

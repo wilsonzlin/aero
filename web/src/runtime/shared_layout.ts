@@ -10,6 +10,12 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
   SharedFramebufferHeaderIndex,
 } from "../ipc/shared-layout";
+import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_STATE_U32_LEN,
+  ScanoutStateIndex,
+} from "../ipc/scanout_state";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit", "net"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -220,6 +226,19 @@ export interface SharedMemorySegments {
   ioIpc: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
   /**
+   * Shared scanout descriptor used to select which framebuffer the presenter should display.
+   *
+   * Layout/protocol: `web/src/ipc/scanout_state.ts` / `crates/aero-shared/src/scanout_state.rs`.
+   */
+  scanoutState?: SharedArrayBuffer;
+  /**
+   * Byte offset within `scanoutState` where the scanout header begins.
+   *
+   * This is typically 0 (dedicated SharedArrayBuffer), but the contract supports embedding
+   * in a larger shared region in the future.
+   */
+  scanoutStateOffsetBytes?: number;
+  /**
    * Byte offset within `sharedFramebuffer` where the header begins.
    *
    * Note: `sharedFramebuffer` may alias `guestMemory.buffer` (embedded in WASM
@@ -242,6 +261,9 @@ export interface SharedMemoryViews {
   vgaFramebuffer: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
   sharedFramebufferOffsetBytes: number;
+  scanoutState?: SharedArrayBuffer;
+  scanoutStateOffsetBytes?: number;
+  scanoutStateI32?: Int32Array;
 }
 
 function align(value: number, alignment: number): number {
@@ -441,6 +463,19 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
 
+  // Single authoritative scanout state (for selecting legacy VGA/VBE vs WDDM).
+  const scanoutState = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * 4);
+  const scanoutStateOffsetBytes = 0;
+  const scanoutWords = new Int32Array(scanoutState, scanoutStateOffsetBytes, SCANOUT_STATE_U32_LEN);
+  Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, 0);
+  Atomics.store(scanoutWords, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_LEGACY_TEXT);
+  Atomics.store(scanoutWords, ScanoutStateIndex.BASE_PADDR_LO, 0);
+  Atomics.store(scanoutWords, ScanoutStateIndex.BASE_PADDR_HI, 0);
+  Atomics.store(scanoutWords, ScanoutStateIndex.WIDTH, 0);
+  Atomics.store(scanoutWords, ScanoutStateIndex.HEIGHT, 0);
+  Atomics.store(scanoutWords, ScanoutStateIndex.PITCH_BYTES, 0);
+  Atomics.store(scanoutWords, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8);
+
   return {
     control,
     guestMemory,
@@ -453,6 +488,8 @@ export function allocateSharedMemorySegments(options?: {
     ioIpc: createIoIpcSab(),
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
+    scanoutState,
+    scanoutStateOffsetBytes,
   };
 }
 
@@ -499,6 +536,11 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     guestLayout.guest_base,
     Math.floor(guestLayout.guest_size / Int32Array.BYTES_PER_ELEMENT),
   );
+
+  const scanoutState = segments.scanoutState;
+  const scanoutStateOffsetBytes = segments.scanoutStateOffsetBytes ?? 0;
+  const scanoutStateI32 =
+    scanoutState instanceof SharedArrayBuffer ? new Int32Array(scanoutState, scanoutStateOffsetBytes, SCANOUT_STATE_U32_LEN) : undefined;
   return {
     segments,
     status,
@@ -508,6 +550,9 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     vgaFramebuffer: segments.vgaFramebuffer,
     sharedFramebuffer: segments.sharedFramebuffer,
     sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+    scanoutState,
+    scanoutStateOffsetBytes,
+    scanoutStateI32,
   };
 }
 

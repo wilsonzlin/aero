@@ -6,6 +6,12 @@ import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_STATE_U32_LEN,
+  snapshotScanoutState,
+} from "../ipc/scanout_state";
+import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
   CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
@@ -141,6 +147,18 @@ describe("runtime/shared_layout", () => {
     expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
     expect(views.sharedFramebuffer).toBe(segments.sharedFramebuffer);
     expect(views.sharedFramebufferOffsetBytes).toBe(segments.sharedFramebufferOffsetBytes);
+  });
+
+  it("allocates and initializes scanoutState", () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    expect(segments.scanoutState).toBeInstanceOf(SharedArrayBuffer);
+    expect(segments.scanoutStateOffsetBytes).toBe(0);
+
+    const words = new Int32Array(segments.scanoutState!, 0, SCANOUT_STATE_U32_LEN);
+    const snap = snapshotScanoutState(words);
+    expect(snap.generation).toBe(0);
+    expect(snap.source).toBe(SCANOUT_SOURCE_LEGACY_TEXT);
+    expect(snap.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
   });
 
   it("clamps maximum guest RAM size below the PCI MMIO aperture", () => {
