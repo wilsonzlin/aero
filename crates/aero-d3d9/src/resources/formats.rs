@@ -369,6 +369,7 @@ mod tests {
 
     #[test]
     fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
+        assert!(!wgpu_bc_texture_dimensions_compatible(1, 1, 1));
         assert!(!wgpu_bc_texture_dimensions_compatible(9, 9, 1));
         assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 1));
     }
@@ -386,6 +387,18 @@ mod tests {
     #[test]
     fn dxt_format_selection_falls_back_when_dims_incompatible_even_if_bc_supported() {
         let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+
+        let info = format_info_for_texture(
+            D3DFormat::Dxt1,
+            features,
+            TextureUsageKind::Sampled,
+            1,
+            1,
+            1,
+        )
+        .unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(info.decompress_to_bgra8);
 
         let info = format_info_for_texture(
             D3DFormat::Dxt1,
