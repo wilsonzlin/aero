@@ -281,6 +281,51 @@ mod tests {
     }
 
     #[test]
+    fn pci_command_bme_clear_still_advances_root_hub_port_reset_timers() {
+        #[derive(Clone)]
+        struct DummyDevice;
+
+        impl crate::io::usb::UsbDeviceModel for DummyDevice {
+            fn handle_control_request(
+                &mut self,
+                _setup: crate::io::usb::SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> crate::io::usb::ControlResponse {
+                crate::io::usb::ControlResponse::Stall
+            }
+        }
+
+        const PORTSC_PED: u16 = 1 << 2;
+        const PORTSC_PR: u16 = 1 << 9;
+
+        let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
+
+        // Enable I/O decoding so we can manipulate PORTSC, but keep BME disabled.
+        dev.config_write(0x04, 2, 1 << 0);
+
+        // Attach a dummy device so the port is connected; when reset completes the simplified root
+        // hub model enables the port automatically.
+        dev.controller.hub_mut().attach(0, Box::new(DummyDevice));
+
+        // Assert port reset.
+        dev.port_write(0x1000 + regs::REG_PORTSC1, 2, u32::from(PORTSC_PR));
+        assert_ne!(
+            dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16 & PORTSC_PR,
+            0
+        );
+
+        // With BME clear, ticking must not DMA but should still run port reset timers.
+        let mut mem = PanicMem;
+        for _ in 0..50 {
+            dev.tick_1ms(&mut mem);
+        }
+
+        let portsc = dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16;
+        assert_eq!(portsc & PORTSC_PR, 0, "port reset should self-clear after 50ms");
+        assert_ne!(portsc & PORTSC_PED, 0, "port should be enabled after reset");
+    }
+
+    #[test]
     fn pci_command_intx_disable_bit_masks_irq_level() {
         let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
 
