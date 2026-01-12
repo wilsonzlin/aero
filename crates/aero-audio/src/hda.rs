@@ -161,10 +161,25 @@ struct BdlEntry {
 }
 
 fn read_bdl_entry(mem: &dyn MemoryAccess, base: u64, index: usize) -> BdlEntry {
-    let addr = base + index as u64 * 16;
+    let entry_off = u64::try_from(index)
+        .ok()
+        .and_then(|idx| idx.checked_mul(16))
+        .and_then(|off| base.checked_add(off));
+    let Some(addr) = entry_off else {
+        // Invalid/overflowing BDL pointer: treat as a null entry so callers stop DMA.
+        return BdlEntry {
+            addr: 0,
+            len: 0,
+            ioc: false,
+        };
+    };
+
     let buf_addr = mem.read_u64(addr);
-    let len = mem.read_u32(addr + 8);
-    let flags = mem.read_u32(addr + 12);
+    let len = addr.checked_add(8).map(|addr| mem.read_u32(addr)).unwrap_or(0);
+    let flags = addr
+        .checked_add(12)
+        .map(|addr| mem.read_u32(addr))
+        .unwrap_or(0);
     BdlEntry {
         addr: buf_addr,
         len,
@@ -211,10 +226,9 @@ fn dma_read_stream_bytes(
 
         let start = out.len();
         out.resize(start + remaining, 0);
-        mem.read_physical(
-            entry.addr + *bdl_offset as u64,
-            &mut out[start..start + remaining],
-        );
+        if let Some(addr) = entry.addr.checked_add(*bdl_offset as u64) {
+            mem.read_physical(addr, &mut out[start..start + remaining]);
+        }
 
         *bdl_offset += remaining as u32;
         bytes -= remaining;
@@ -281,7 +295,9 @@ fn dma_write_stream_bytes(
             continue;
         }
 
-        mem.write_physical(entry.addr + *bdl_offset as u64, &bytes[..remaining]);
+        if let Some(addr) = entry.addr.checked_add(*bdl_offset as u64) {
+            mem.write_physical(addr, &bytes[..remaining]);
+        }
         bytes = &bytes[remaining..];
         written += remaining;
 
@@ -1569,9 +1585,13 @@ impl HdaController {
 
         let base = self.posbuf_base_addr();
         for (stream, sd) in self.streams.iter().enumerate() {
-            let entry_addr = base + (stream as u64) * 8;
+            let Some(entry_addr) = base.checked_add((stream as u64) * 8) else {
+                break;
+            };
             mem.write_u32(entry_addr, sd.lpib);
-            mem.write_u32(entry_addr + 4, 0);
+            if let Some(hi_addr) = entry_addr.checked_add(4) {
+                mem.write_u32(hi_addr, 0);
+            }
         }
     }
 
@@ -1630,7 +1650,9 @@ impl HdaController {
         while self.corbrp != self.corbwp && processed < entries {
             processed += 1;
             self.corbrp = (self.corbrp + 1) & mask;
-            let addr = corb_base + self.corbrp as u64 * 4;
+            let Some(addr) = corb_base.checked_add(self.corbrp as u64 * 4) else {
+                break;
+            };
             let cmd = mem.read_u32(addr);
 
             let cad = ((cmd >> 28) & 0x0f) as u8;
@@ -1650,9 +1672,12 @@ impl HdaController {
         let entries = self.rirb_entries();
         self.rirbwp = (self.rirbwp + 1) % entries;
 
-        let addr = self.rirb_base() + self.rirbwp as u64 * 8;
-        mem.write_u32(addr, resp);
-        mem.write_u32(addr + 4, cad as u32);
+        if let Some(addr) = self.rirb_base().checked_add(self.rirbwp as u64 * 8) {
+            mem.write_u32(addr, resp);
+            if let Some(hi_addr) = addr.checked_add(4) {
+                mem.write_u32(hi_addr, cad as u32);
+            }
+        }
 
         self.rirbsts |= 1; // response received
         if (self.rirbctl & RIRBCTL_RINTCTL) != 0 {

@@ -98,3 +98,48 @@ fn hda_process_completes_on_oob_bdl_address() {
     hda.process(&mut mem, 128);
 }
 
+#[test]
+fn hda_process_completes_on_dma_addr_overflow() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Configure the codec converter to listen on stream 1, channel 0.
+    // SET_STREAM_CHANNEL: verb 0x706, payload = stream<<4 | channel
+    let set_stream_ch = (0x706u32 << 8) | 0x10;
+    hda.codec_mut().execute_verb(2, set_stream_ch);
+
+    // Stream format: 48kHz, 16-bit, 2ch.
+    let fmt_raw: u16 = (1 << 4) | 0x1;
+    // SET_CONVERTER_FORMAT (4-bit verb group 0x2 encoded in low 16 bits)
+    let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
+    hda.codec_mut().execute_verb(2, set_fmt);
+
+    // Guest buffer layout: BDL is in-bounds, but the buffer address is chosen so
+    // `addr + bdl_offset` will overflow on the second tick.
+    let bdl_base = 0x1000u64;
+    let pcm_len_bytes = 0x1000u32; // larger than the first DMA read (512 bytes)
+    let near_end = u64::MAX - 100;
+
+    mem.write_u64(bdl_base, near_end);
+    mem.write_u32(bdl_base + 8, pcm_len_bytes);
+    mem.write_u32(bdl_base + 12, 0);
+
+    {
+        let sd = hda.stream_mut(0);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = pcm_len_bytes;
+        sd.lvi = 0;
+        sd.fmt = fmt_raw;
+        // SRST | RUN | stream number 1.
+        sd.ctl = (1 << 0) | (1 << 1) | (1 << 20);
+    }
+
+    // First tick: consumes 512 bytes (128 frames @ 16-bit stereo), leaving a non-zero BDL offset.
+    hda.process(&mut mem, 128);
+    // Second tick: attempts to DMA from `near_end + 512`, which overflows; must not panic.
+    hda.process(&mut mem, 128);
+}
