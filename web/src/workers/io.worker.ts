@@ -2408,8 +2408,13 @@ function runHdaMicCaptureTest(requestId: number): void {
     const mmioRead = bridge.mmio_read as (offset: number, size: number) => number;
     const stepFrames = bridge.step_frames as (frames: number) => void;
 
-    // Bring controller out of reset and configure CORB/RIRB.
-    mmioWrite(0x08, 4, 0x1); // GCTL.CRST
+    // Reset the controller to a known state, then bring it out of reset.
+    //
+    // This keeps repeated harness calls deterministic (e.g. avoids capture resampler
+    // state carrying over between runs, which would otherwise leak non-zero samples
+    // into the "mic ring empty -> silence" case).
+    mmioWrite(0x08, 4, 0x0); // GCTL.CRST=0 (enter reset)
+    mmioWrite(0x08, 4, 0x1); // GCTL.CRST=1 (leave reset)
     mmioWrite(0x40, 4, corbBase); // CORBLBASE
     mmioWrite(0x44, 4, 0); // CORBUBASE
     mmioWrite(0x50, 4, rirbBase); // RIRBLBASE
