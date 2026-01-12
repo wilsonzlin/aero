@@ -8,6 +8,8 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use aero_cpu_core::assist::AssistContext;
@@ -115,7 +117,29 @@ pub struct PcMachine {
     disk: VecBlockDevice,
 
     network_backend: Option<Box<dyn NetworkBackend>>,
+    net_ring_backend: Option<
+        Rc<
+            RefCell<
+                L2TunnelRingBackend<Box<dyn FrameRing>, Box<dyn FrameRing>>,
+            >,
+        >,
+    >,
     e1000_mac_addr: Option<[u8; 6]>,
+}
+
+#[derive(Clone)]
+struct SharedL2TunnelRingBackend {
+    inner: Rc<RefCell<L2TunnelRingBackend<Box<dyn FrameRing>, Box<dyn FrameRing>>>>,
+}
+
+impl NetworkBackend for SharedL2TunnelRingBackend {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        self.inner.borrow_mut().transmit(frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        self.inner.borrow_mut().poll_receive()
+    }
 }
 
 impl PcMachine {
@@ -183,6 +207,7 @@ impl PcMachine {
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
+            net_ring_backend: None,
             e1000_mac_addr,
         };
 
@@ -217,7 +242,13 @@ impl PcMachine {
         tx: TX,
         rx: RX,
     ) {
-        self.network_backend = Some(Box::new(L2TunnelRingBackend::new(tx, rx)));
+        let tx: Box<dyn FrameRing> = Box::new(tx);
+        let rx: Box<dyn FrameRing> = Box::new(rx);
+        let backend = Rc::new(RefCell::new(L2TunnelRingBackend::new(tx, rx)));
+        self.network_backend = Some(Box::new(SharedL2TunnelRingBackend {
+            inner: backend.clone(),
+        }));
+        self.net_ring_backend = Some(backend);
     }
 
     /// Convenience for native callers using [`aero_ipc::ring::RingBuffer`].
@@ -243,18 +274,20 @@ impl PcMachine {
     /// Install/replace the host-side network backend used by any emulated NICs (currently E1000).
     pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
         self.network_backend = Some(backend);
+        self.net_ring_backend = None;
     }
 
     /// Detach (drop) any currently installed network backend.
     pub fn detach_network(&mut self) {
         self.network_backend = None;
+        self.net_ring_backend = None;
     }
 
     /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
     pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.network_backend
+        self.net_ring_backend
             .as_ref()
-            .and_then(|backend| backend.l2_ring_stats())
+            .map(|backend| backend.borrow().stats())
     }
 
     /// Reset the machine and transfer control to firmware POST (boot sector).
