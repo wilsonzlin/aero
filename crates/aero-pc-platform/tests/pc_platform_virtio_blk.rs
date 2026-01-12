@@ -668,6 +668,225 @@ fn pc_platform_virtio_blk_multi_descriptor_read_write_roundtrip() {
 }
 
 #[test]
+fn pc_platform_virtio_blk_indirect_descriptor_read_write_roundtrip() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const DISK_SECTORS: u64 = 8;
+
+    let mut disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * VIRTIO_BLK_SECTOR_SIZE)
+        .expect("failed to allocate in-memory virtio-blk disk");
+    disk.write_at(0, &[9, 8, 7, 6]).unwrap();
+    disk.write_at(VIRTIO_BLK_SECTOR_SIZE, &[5, 4, 3, 2]).unwrap();
+
+    let mut pc = PcPlatform::new_with_virtio_blk_disk(RAM_SIZE, Box::new(disk));
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Enable memory decoding + bus mastering so the virtio-blk device can DMA.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    const COMMON: u64 = 0x0000;
+    const NOTIFY: u64 = 0x1000;
+    const ISR: u64 = 0x2000;
+
+    // Basic feature negotiation (accept whatever the device offers).
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
+
+    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 0);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
+
+    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
+
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8); // + FEATURES_OK
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8 | 4); // + DRIVER_OK
+
+    // Configure queue 0.
+    const DESC_TABLE: u64 = 0x4000;
+    const AVAIL_RING: u64 = 0x5000;
+    const USED_RING: u64 = 0x6000;
+    pc.memory.write_u16(bar0_base + COMMON + 0x16, 0); // queue_select
+    let qsz = pc.memory.read_u16(bar0_base + COMMON + 0x18);
+    assert!(qsz >= 8);
+    pc.memory.write_u64(bar0_base + COMMON + 0x20, DESC_TABLE);
+    pc.memory.write_u64(bar0_base + COMMON + 0x28, AVAIL_RING);
+    pc.memory.write_u64(bar0_base + COMMON + 0x30, USED_RING);
+    pc.memory.write_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    const VIRTIO_BLK_T_IN: u32 = 0;
+    const VIRTIO_BLK_T_OUT: u32 = 1;
+    const VIRTQ_DESC_F_NEXT: u16 = 0x0001;
+    const VIRTQ_DESC_F_WRITE: u16 = 0x0002;
+    const VIRTQ_DESC_F_INDIRECT: u16 = 0x0004;
+
+    let header = 0x7000u64;
+    let data0 = 0x8000u64;
+    let data1 = 0x9000u64;
+    let status = 0xA000u64;
+    let indirect = 0xB000u64;
+
+    // Main table descriptor 0 points at the indirect descriptor table.
+    write_desc(
+        &mut pc,
+        DESC_TABLE,
+        0,
+        indirect,
+        (4 * 16) as u32,
+        VIRTQ_DESC_F_INDIRECT,
+        0,
+    );
+
+    // Reset ring indices.
+    pc.memory.write_u16(AVAIL_RING, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 0);
+    pc.memory.write_u16(USED_RING, 0);
+    pc.memory.write_u16(USED_RING + 2, 0);
+
+    // --- Request 0: READ 2 sectors using indirect descriptors. ---
+    pc.memory.write_u32(header, VIRTIO_BLK_T_IN);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, 0);
+    pc.memory
+        .write_physical(data0, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
+    pc.memory
+        .write_physical(data1, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
+    pc.memory.write_u8(status, 0xff);
+
+    // Indirect table: header -> data0 -> data1 -> status.
+    write_desc(&mut pc, indirect, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut pc,
+        indirect,
+        1,
+        data0,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        2,
+    );
+    write_desc(
+        &mut pc,
+        indirect,
+        2,
+        data1,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        3,
+    );
+    write_desc(&mut pc, indirect, 3, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    // Avail ring entry 0 references main descriptor 0.
+    pc.memory.write_u16(AVAIL_RING + 4, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 1);
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+    pc.process_virtio_blk();
+
+    assert_eq!(pc.memory.read_u8(status), 0);
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 1);
+
+    let mut first4 = [0u8; 4];
+    pc.memory.read_physical(data0, &mut first4);
+    assert_eq!(first4, [9, 8, 7, 6]);
+    pc.memory.read_physical(data1, &mut first4);
+    assert_eq!(first4, [5, 4, 3, 2]);
+
+    let _ = pc.memory.read_u8(bar0_base + ISR);
+
+    // --- Request 1: WRITE 2 sectors using indirect descriptors, then read them back. ---
+    let mut sector0 = [0u8; VIRTIO_BLK_SECTOR_SIZE as usize];
+    sector0[0..4].copy_from_slice(&[1, 2, 3, 4]);
+    let mut sector1 = [0u8; VIRTIO_BLK_SECTOR_SIZE as usize];
+    sector1[0..4].copy_from_slice(&[4, 3, 2, 1]);
+    pc.memory.write_physical(data0, &sector0);
+    pc.memory.write_physical(data1, &sector1);
+    pc.memory.write_u32(header, VIRTIO_BLK_T_OUT);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, 0);
+    pc.memory.write_u8(status, 0xff);
+
+    // Indirect table for WRITE: header (RO) -> data0 (RO) -> data1 (RO) -> status (WO).
+    write_desc(&mut pc, indirect, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut pc,
+        indirect,
+        1,
+        data0,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(
+        &mut pc,
+        indirect,
+        2,
+        data1,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT,
+        3,
+    );
+    write_desc(&mut pc, indirect, 3, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING + 6, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 2);
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+    pc.process_virtio_blk();
+
+    assert_eq!(pc.memory.read_u8(status), 0);
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 2);
+
+    let _ = pc.memory.read_u8(bar0_base + ISR);
+
+    // Read back.
+    pc.memory
+        .write_physical(data0, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
+    pc.memory
+        .write_physical(data1, &[0u8; VIRTIO_BLK_SECTOR_SIZE as usize]);
+    pc.memory.write_u32(header, VIRTIO_BLK_T_IN);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, 0);
+    pc.memory.write_u8(status, 0xff);
+
+    write_desc(&mut pc, indirect, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut pc,
+        indirect,
+        1,
+        data0,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        2,
+    );
+    write_desc(
+        &mut pc,
+        indirect,
+        2,
+        data1,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        3,
+    );
+    write_desc(&mut pc, indirect, 3, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING + 8, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 3);
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+    pc.process_virtio_blk();
+
+    assert_eq!(pc.memory.read_u8(status), 0);
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 3);
+
+    pc.memory.read_physical(data0, &mut first4);
+    assert_eq!(first4, [1, 2, 3, 4]);
+    pc.memory.read_physical(data1, &mut first4);
+    assert_eq!(first4, [4, 3, 2, 1]);
+}
+
+#[test]
 fn pc_platform_virtio_blk_dma_writes_mark_dirty_pages_when_enabled() {
     let mut pc = PcPlatform::new_with_config_dirty_tracking(
         2 * 1024 * 1024,
