@@ -184,7 +184,7 @@ The ICH9 AHCI controller exposes the ABAR register block via **BAR5** (MMIO), si
 `aero_devices::pci::profile::AHCI_ABAR_SIZE` (`0x2000`).
 
 The PCI config space register offset for the ABAR itself is
-`aero_devices::pci::profile::AHCI_ABAR_CFG_OFFSET`.
+`aero_devices::pci::profile::AHCI_ABAR_CFG_OFFSET` (`0x24`).
 
 ---
 
