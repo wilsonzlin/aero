@@ -168,6 +168,10 @@ jobs:
             echo "qemu: $(\"${qemu_system}\" --version 2>&1 | head -n 1 || true)"
             echo
 
+            echo "Running host-harness unit tests..."
+            python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests
+            echo
+
             with_virtio_snd="${{ inputs.with_virtio_snd }}"
             virtio_snd_audio_backend="${{ inputs.virtio_snd_audio_backend }}"
             virtio_snd_verify_wav="${{ inputs.virtio_snd_verify_wav }}"
