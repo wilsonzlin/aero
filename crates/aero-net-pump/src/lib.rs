@@ -16,9 +16,13 @@ use memory::MemoryBus;
 pub const DEFAULT_MAX_FRAMES_PER_POLL: usize = 256;
 
 /// Number of frames pumped in each direction during a tick/poll.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PumpCounts {
+    /// Guest → host frames forwarded to the backend via [`NetworkBackend::transmit`].
     pub tx_frames: usize,
+    /// Host → guest frames fetched from the backend via [`NetworkBackend::poll_receive`] and
+    /// queued into the NIC.
     pub rx_frames: usize,
 }
 
