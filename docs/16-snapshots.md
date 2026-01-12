@@ -70,6 +70,18 @@ This framing enables **backward-compatible schema evolution**:
 - `CPUS` entries are written in canonical order: ascending `apic_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
 
+### Validation / corruption handling
+
+To keep restore behavior deterministic and avoid ambiguous state merges, the decoder treats the following as **corrupt**:
+
+- Duplicate core sections (e.g. multiple `META`/`MMU`/`DEVICES`/`DISKS`/`RAM` sections).
+- Multiple CPU sections (any mix of `CPU` + `CPUS`).
+- Duplicate entries inside canonical lists:
+  - `DEVICES`: duplicate `(device_id, version, flags)`
+  - `DISKS`: duplicate `disk_id`
+  - `CPUS`: duplicate `apic_id`
+- Dirty RAM snapshots (`RAM` `mode = Dirty`) whose page index list is not **strictly increasing**.
+
 ### Core sections (format v1)
 
 | Section | Contents |
