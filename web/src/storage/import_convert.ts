@@ -542,6 +542,8 @@ const QCOW2_OFLAG_COMPRESSED = 1n << 62n;
 const QCOW2_OFLAG_ZERO = 1n;
 const QCOW2_MAX_TABLE_BYTES = 128 * 1024 * 1024;
 const QCOW2_MAX_CLUSTER_OFFSETS_BYTES = 128 * 1024 * 1024;
+// Avoid pathological images forcing huge JS `Set` allocations while validating metadata overlap.
+const QCOW2_MAX_METADATA_CLUSTERS = 1_000_000;
 
 async function convertQcow2ToSparse(
   src: RandomAccessSource,
@@ -1082,6 +1084,7 @@ class Qcow2 {
         if (blockOff % clusterSize !== 0) throw new Error("qcow2 invalid refcount block entry");
         validateClusterNotOverlappingMetadata(blockOff);
         if (metadataClusters.has(blockOff)) throw new Error("qcow2 metadata clusters overlap");
+        if (metadataClusters.size >= QCOW2_MAX_METADATA_CLUSTERS) throw new Error("qcow2 too many metadata clusters");
         metadataClusters.add(blockOff);
         const end = blockOff + clusterSize;
         if (!Number.isSafeInteger(end) || end > src.size) throw new Error("qcow2 refcount block truncated");
@@ -1106,6 +1109,7 @@ class Qcow2 {
       if (l2Off % clusterSize !== 0) throw new Error("invalid qcow2 l2 table offset");
       validateClusterNotOverlappingMetadata(l2Off);
       if (metadataClusters.has(l2Off)) throw new Error("qcow2 metadata clusters overlap");
+      if (metadataClusters.size >= QCOW2_MAX_METADATA_CLUSTERS) throw new Error("qcow2 too many metadata clusters");
       metadataClusters.add(l2Off);
 
       const l2End = l2Off + clusterSize;
