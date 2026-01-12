@@ -1,4 +1,5 @@
 use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY};
+use aero_devices::pci::PciResourceAllocatorConfig;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
@@ -31,6 +32,12 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(0xCFC, 2, u32::from(value));
 }
 
+fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCFC, 4, value);
+}
+
 fn read_bar0_base(pc: &mut PcPlatform) -> u64 {
     let bdf = VIRTIO_BLK.bdf;
     let lo = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
@@ -53,6 +60,81 @@ fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
     pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
     pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
+
+#[test]
+fn pc_platform_sets_virtio_blk_intx_line_and_pin_registers() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+    let bdf = VIRTIO_BLK.bdf;
+
+    let line = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+    assert_eq!(line, 11, "00:09.0 INTA# should route to GSI/IRQ11 by default");
+
+    let pin = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+    assert_eq!(pin, 1, "Interrupt Pin should be INTA#");
+}
+
+#[test]
+fn pc_platform_gates_virtio_blk_mmio_on_pci_command_register() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+    let bdf = VIRTIO_BLK.bdf;
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    const COMMON: u64 = 0x0000;
+
+    // device_status starts cleared.
+    assert_eq!(pc.memory.read_u8(bar0_base + COMMON + 0x14), 0);
+
+    // Disable PCI memory decoding: MMIO should behave like an unmapped region (reads return 0xFF).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    assert_eq!(pc.memory.read_u32(bar0_base + COMMON + 0x04), 0xFFFF_FFFF);
+
+    // Writes should be ignored while decoding is disabled.
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1);
+
+    // Re-enable decoding: state should reflect that the write above did not reach the device.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    assert_eq!(pc.memory.read_u8(bar0_base + COMMON + 0x14), 0);
+
+    // Now writes should take effect again.
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1);
+    assert_eq!(pc.memory.read_u8(bar0_base + COMMON + 0x14), 1);
+}
+
+#[test]
+fn pc_platform_routes_virtio_blk_mmio_after_bar0_reprogramming() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+    let bdf = VIRTIO_BLK.bdf;
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    const COMMON: u64 = 0x0000;
+
+    // Touch device state at the original BAR0 base.
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1);
+    assert_eq!(pc.memory.read_u8(bar0_base + COMMON + 0x14), 1);
+
+    // Move BAR0 within the platform's PCI MMIO window.
+    let alloc_cfg = PciResourceAllocatorConfig::default();
+    let new_base = alloc_cfg.mmio_base + 0x00A0_0000;
+    assert_eq!(new_base % 0x4000, 0);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        new_base as u32,
+    );
+
+    // Old base should no longer decode.
+    assert_eq!(pc.memory.read_u32(bar0_base + COMMON + 0x04), 0xFFFF_FFFF);
+
+    // New base should decode and preserve state.
+    assert_eq!(pc.memory.read_u8(new_base + COMMON + 0x14), 1);
 }
 
 #[test]
