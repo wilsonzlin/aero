@@ -650,6 +650,18 @@ if [[ "${cmd0_basename}" == "node" || "${cmd0_basename}" == "node.exe" ]]; then
         esac
     done
 
+    # Node+WASM can reserve a large amount of virtual address space (even when the actual resident
+    # memory use is small). Under `RLIMIT_AS`, this can cause seemingly tiny wasm allocations to fail
+    # with:
+    #   RangeError: WebAssembly.Memory(): could not allocate memory
+    #
+    # When running the Node test runner we want `safe-run.sh node --test ...` to "just work", so if
+    # the caller didn't explicitly pick an `AERO_MEM_LIMIT`, bump the default address-space cap to a
+    # higher value that leaves enough headroom for V8/Wasm reservations.
+    if [[ "${wants_test}" == "true" && -z "${AERO_MEM_LIMIT:-}" ]]; then
+        MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-32G}"
+    fi
+
     if [[ "${wants_test}" == "true" && "${has_concurrency}" == "false" ]]; then
         injected=false
         new_args=("${1}")
