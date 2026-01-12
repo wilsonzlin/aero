@@ -313,7 +313,13 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
             .cloned()
             .collect::<Vec<_>>()
             .as_slice(),
-        &["audio.hda", "input.i8042", "net.e1000", "net.stack", "usb.uhci"],
+        &[
+            "audio.hda",
+            "input.i8042",
+            "net.e1000",
+            "net.stack",
+            "usb.uhci"
+        ],
         "restored device kinds should match input kinds"
     );
     assert_eq!(
@@ -451,7 +457,7 @@ fn vm_snapshot_builder_roundtrips_unknown_device_id_kind() {
 }
 
 #[wasm_bindgen_test]
-fn vm_snapshot_builder_preserves_cpu_internal_device_state_version() {
+fn vm_snapshot_builder_encodes_cpu_internal_as_v2() {
     // Ensure we have at least one guest page above the runtime-reserved region (128MiB).
     let _ = common::alloc_guest_region_bytes(64 * 1024);
 
@@ -462,19 +468,18 @@ fn vm_snapshot_builder_preserves_cpu_internal_device_state_version() {
     let mmu_js = Uint8Array::from(mmu_bytes.as_slice());
 
     let cpu_internal = CpuInternalState {
-        interrupt_inhibit: 3,
-        pending_external_interrupts: vec![0x20, 0x21, 0x80],
+        interrupt_inhibit: 1,
+        pending_external_interrupts: vec![0x20],
     };
-    let cpu_internal_blob = cpu_internal
+    let cpu_internal_bytes = cpu_internal
         .to_device_state()
         .expect("CpuInternalState::to_device_state ok")
         .data;
 
-    // CPU_INTERNAL is a raw device blob (no `aero-io-snapshot` header) stored under device id 9.
-    let kind = format!("device.{}", DeviceId::CPU_INTERNAL.0);
-    let devices_js = build_devices_js(&[(kind.as_str(), cpu_internal_blob.as_slice())]);
+    // CPU_INTERNAL is surfaced via the forward-compatible `device.<id>` spelling.
+    let devices_js = build_devices_js(&[("device.9", cpu_internal_bytes.as_slice())]);
 
-    let snap = vm_snapshot_save(cpu_js.clone(), mmu_js.clone(), devices_js)
+    let snap = vm_snapshot_save(cpu_js, mmu_js, devices_js)
         .expect("vm_snapshot_save ok")
         .to_vec();
 
@@ -496,7 +501,18 @@ fn vm_snapshot_builder_preserves_cpu_internal_device_state_version() {
             self.ram_len
         }
 
-        fn write_ram(&mut self, _offset: u64, _data: &[u8]) -> aero_snapshot::Result<()> {
+        fn write_ram(&mut self, offset: u64, data: &[u8]) -> aero_snapshot::Result<()> {
+            use aero_snapshot::SnapshotError;
+
+            let offset: usize = offset
+                .try_into()
+                .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+            let end = offset
+                .checked_add(data.len())
+                .ok_or(SnapshotError::Corrupt("ram write overflow"))?;
+            if end > self.ram_len {
+                return Err(SnapshotError::Corrupt("ram write out of bounds"));
+            }
             Ok(())
         }
     }
@@ -520,18 +536,18 @@ fn vm_snapshot_builder_preserves_cpu_internal_device_state_version() {
     )
     .expect("restore_snapshot_checked ok");
 
-    let state = inspect
+    let cpu_internal_state = inspect
         .devices
         .iter()
         .find(|d| d.id == DeviceId::CPU_INTERNAL)
         .expect("snapshot should contain CPU_INTERNAL device state");
     assert_eq!(
-        (state.version, state.flags),
+        (cpu_internal_state.version, cpu_internal_state.flags),
         (CpuInternalState::VERSION, 0),
-        "CPU_INTERNAL device metadata should use CpuInternalState::VERSION"
+        "CPU_INTERNAL DeviceState version/flags should be v2.0"
     );
     assert_eq!(
-        state.data, cpu_internal_blob,
+        cpu_internal_state.data, cpu_internal_bytes,
         "CPU_INTERNAL device blob should be preserved verbatim"
     );
 }
