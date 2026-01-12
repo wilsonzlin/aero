@@ -4,6 +4,7 @@ use aero_storage::{
     detect_format, DiskFormat, DiskImage, MemBackend, Qcow2Disk, VhdDisk, VirtualDisk,
     StorageBackend,
     DiskError,
+    AeroSparseConfig, AeroSparseDisk,
 };
 use proptest::prelude::*;
 
@@ -205,6 +206,44 @@ fn detect_qcow2_and_vhd() {
 
     let mut vhd = make_vhd_fixed_with_pattern();
     assert_eq!(detect_format(&mut vhd).unwrap(), DiskFormat::Vhd);
+}
+
+#[test]
+fn detect_aerosparse_and_raw() {
+    let sparse = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let mut sparse_backend = sparse.into_backend();
+    assert_eq!(
+        detect_format(&mut sparse_backend).unwrap(),
+        DiskFormat::AeroSparse
+    );
+
+    let mut raw = MemBackend::with_len(16).unwrap();
+    assert_eq!(detect_format(&mut raw).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
+fn open_auto_works_for_aerosparse_and_raw() {
+    let sparse = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let disk = DiskImage::open_auto(sparse.into_backend()).unwrap();
+    assert_eq!(disk.format(), DiskFormat::AeroSparse);
+
+    let raw = MemBackend::with_len(16).unwrap();
+    let disk = DiskImage::open_auto(raw).unwrap();
+    assert_eq!(disk.format(), DiskFormat::Raw);
 }
 
 #[test]
