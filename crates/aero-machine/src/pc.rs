@@ -107,6 +107,7 @@ pub struct PcMachine {
     cfg: PcMachineConfig,
 
     pub cpu: CpuCore,
+    tsc_ns_remainder: u64,
     assist: AssistContext,
     pub bus: PcCpuBus,
     bios: Bios,
@@ -175,6 +176,7 @@ impl PcMachine {
         let mut machine = Self {
             cfg,
             cpu: CpuCore::new(CpuMode::Real),
+            tsc_ns_remainder: 0,
             assist: AssistContext::default(),
             bus: PcCpuBus::new(platform),
             bios: Bios::new(BiosConfig::default()),
@@ -265,6 +267,7 @@ impl PcMachine {
 
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
+        self.tsc_ns_remainder = 0;
 
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
@@ -303,7 +306,7 @@ impl PcMachine {
             })
     }
 
-    fn poll_and_queue_one_external_interrupt(&mut self) {
+    fn poll_and_queue_one_external_interrupt(&mut self) -> bool {
         // Avoid unbounded growth of the external interrupt FIFO if the guest has IF=0, interrupts
         // are inhibited, etc. Also avoids tight polling loops when a level-triggered interrupt
         // line stays asserted.
@@ -313,13 +316,55 @@ impl PcMachine {
             || (self.cpu.state.rflags() & RFLAGS_IF) == 0
             || self.cpu.pending.interrupt_inhibit() != 0
         {
-            return;
+            return false;
         }
 
         let mut ctrl = self.bus.interrupt_controller();
         if let Some(vector) = ctrl.poll_interrupt() {
             self.cpu.pending.inject_external_interrupt(vector);
+            return true;
         }
+        false
+    }
+
+    fn tick_platform_from_cycles(&mut self, cycles: u64) {
+        if cycles == 0 {
+            return;
+        }
+
+        let tsc_hz = self.cpu.time.tsc_hz();
+        if tsc_hz == 0 {
+            return;
+        }
+
+        const NS_PER_SEC: u128 = 1_000_000_000u128;
+        let acc = (cycles as u128) * NS_PER_SEC + (self.tsc_ns_remainder as u128);
+        let delta_ns_u128 = acc / (tsc_hz as u128);
+        self.tsc_ns_remainder = (acc % (tsc_hz as u128)) as u64;
+
+        let delta_ns = delta_ns_u128.min(u64::MAX as u128) as u64;
+        if delta_ns != 0 {
+            self.bus.platform.tick(delta_ns);
+        }
+    }
+
+    fn idle_tick_platform_1ms(&mut self) {
+        // Only tick while halted when maskable interrupts are enabled; otherwise HLT is expected to
+        // be terminal (until NMI/SMI/reset, which we do not model here).
+        if (self.cpu.state.rflags() & RFLAGS_IF) == 0 {
+            return;
+        }
+
+        let tsc_hz = self.cpu.time.tsc_hz();
+        if tsc_hz == 0 {
+            return;
+        }
+
+        // Advance 1ms worth of CPU cycles while halted so PIT/RTC/HPET/LAPIC timers can wake the CPU.
+        let cycles = (tsc_hz / 1000).max(1);
+        self.cpu.time.advance_cycles(cycles);
+        self.cpu.state.msr.tsc = self.cpu.time.read_tsc();
+        self.tick_platform_from_cycles(cycles);
     }
 
     /// Poll the E1000 + network backend bridge once (DMA + TX/RX frame pumping).
@@ -391,7 +436,7 @@ impl PcMachine {
 
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and inject at most one
             // vector into the CPU's external interrupt FIFO.
-            self.poll_and_queue_one_external_interrupt();
+            let _ = self.poll_and_queue_one_external_interrupt();
 
             let remaining = max_insts - executed;
             let batch = run_batch_cpu_core_with_assists(
@@ -403,10 +448,31 @@ impl PcMachine {
             );
             executed = executed.saturating_add(batch.executed);
 
+            // Deterministically advance platform time based on executed CPU cycles.
+            self.tick_platform_from_cycles(batch.executed);
+
             match batch.exit {
                 BatchExit::Completed => return RunExit::Completed { executed },
                 BatchExit::Branch => continue,
-                BatchExit::Halted => return RunExit::Halted { executed },
+                BatchExit::Halted => {
+                    // After advancing timers, poll again so any newly-due timer interrupts are
+                    // injected into `cpu.pending.external_interrupts`.
+                    //
+                    // Only poll after the batch when we are going to re-enter execution within the
+                    // same `run_slice` call. This avoids acknowledging interrupts at the end of a
+                    // slice boundary when the CPU will not execute another instruction until the
+                    // host calls `run_slice` again.
+                    if self.poll_and_queue_one_external_interrupt() {
+                        continue;
+                    }
+
+                    // When halted, advance platform time so timer interrupts can wake the CPU.
+                    self.idle_tick_platform_1ms();
+                    if self.poll_and_queue_one_external_interrupt() {
+                        continue;
+                    }
+                    return RunExit::Halted { executed };
+                }
                 BatchExit::BiosInterrupt(vector) => {
                     self.handle_bios_interrupt(vector);
                 }
