@@ -830,6 +830,97 @@ mod tests {
     }
 
     #[test]
+    fn rx_does_not_consume_extra_frames_when_buffers_run_out() {
+        #[derive(Default)]
+        struct CountingBackend {
+            polls: usize,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetBackend for CountingBackend {
+            fn transmit(&mut self, _packet: Vec<u8>) {}
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.polls += 1;
+                self.rx.pop_front()
+            }
+        }
+
+        let mut backend = CountingBackend::default();
+        let frame1 = vec![0x11u8; 14];
+        let frame2 = vec![0x22u8; 14];
+        backend.rx.push_back(frame1.clone());
+        backend.rx.push_back(frame2.clone());
+
+        let mut dev = VirtioNet::new(backend, [0; 6]);
+        dev.set_features(0);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let buf0 = 0x4000;
+        let buf1 = 0x4100;
+
+        write_desc(&mut mem, desc_table, 0, buf0, 64, VIRTQ_DESC_F_WRITE, 0);
+        write_desc(&mut mem, desc_table, 1, buf1, 64, VIRTQ_DESC_F_WRITE, 0);
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let chain0 = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+        dev.process_rx(chain0, &mut queue, &mut mem).unwrap();
+
+        assert_eq!(dev.backend_mut().polls, 1);
+        assert_eq!(dev.backend_mut().rx.len(), 1);
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        let payload = mem
+            .get_slice(buf0 + VirtioNetHdr::BASE_LEN as u64, frame1.len())
+            .unwrap();
+        assert_eq!(payload, frame1);
+
+        // Post a second buffer and ensure the second frame is still available to be delivered.
+        write_u16_le(&mut mem, avail + 2, 2).unwrap();
+        write_u16_le(&mut mem, avail + 4 + 2, 1).unwrap();
+        let chain1 = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+        dev.process_rx(chain1, &mut queue, &mut mem).unwrap();
+
+        assert_eq!(dev.backend_mut().polls, 2);
+        assert_eq!(dev.backend_mut().rx.len(), 0);
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 2);
+        let payload = mem
+            .get_slice(buf1 + VirtioNetHdr::BASE_LEN as u64, frame2.len())
+            .unwrap();
+        assert_eq!(payload, frame2);
+    }
+
+    #[test]
     fn rx_posted_buffer_queue_is_bounded() {
         // This simulates a malicious guest that bumps `avail.idx` far ahead so the transport keeps
         // popping descriptor chains for the same handful of ring entries. The device must not grow
