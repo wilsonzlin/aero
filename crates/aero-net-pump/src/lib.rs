@@ -1123,7 +1123,16 @@ mod tests {
         out
     }
 
-    fn parse_dhcp_from_frame(frame: &[u8]) -> DhcpMessage {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct DhcpFrameMeta {
+        eth_src: MacAddr,
+        eth_dst: MacAddr,
+        ip_src: Ipv4Addr,
+        ip_dst: Ipv4Addr,
+        dhcp: DhcpMessage,
+    }
+
+    fn parse_dhcp_from_frame(frame: &[u8]) -> DhcpFrameMeta {
         let eth = EthernetFrame::parse(frame).expect("parse Ethernet frame");
         assert_eq!(
             eth.ethertype(),
@@ -1132,10 +1141,27 @@ mod tests {
         );
         let ip = Ipv4Packet::parse(eth.payload()).expect("parse IPv4 packet");
         assert_eq!(ip.protocol(), Ipv4Protocol::UDP, "expected UDP protocol");
+        assert!(
+            ip.checksum_valid(),
+            "invalid IPv4 header checksum in DHCP reply"
+        );
+
         let udp = UdpPacket::parse(ip.payload()).expect("parse UDP packet");
+        assert!(
+            udp.checksum_valid_ipv4(ip.src_ip(), ip.dst_ip()),
+            "invalid UDP checksum in DHCP reply"
+        );
         assert_eq!(udp.src_port(), 67, "expected DHCP server src port");
         assert_eq!(udp.dst_port(), 68, "expected DHCP client dst port");
-        DhcpMessage::parse(udp.payload()).expect("parse DHCP message")
+        let dhcp = DhcpMessage::parse(udp.payload()).expect("parse DHCP message");
+
+        DhcpFrameMeta {
+            eth_src: eth.src_mac(),
+            eth_dst: eth.dest_mac(),
+            ip_src: ip.src_ip(),
+            ip_dst: ip.dst_ip(),
+            dhcp,
+        }
     }
 
     fn read_rx_desc_len_status(mem: &TestMem, addr: u64) -> (u16, u8) {
@@ -1202,6 +1228,18 @@ mod tests {
             counts0.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP OFFER)"
         );
+        assert!(
+            !backend.stack().is_ip_assigned(),
+            "stack should not mark IP assigned after DHCP OFFER"
+        );
+
+        // Ensure the E1000 wrote back DD on the TX descriptor (RS was set).
+        let tx0_status = mem.read_vec(0x1000 + 12, 1)[0];
+        assert_ne!(
+            tx0_status & 0b0000_0001,
+            0,
+            "TX desc 0 should have DD set after DMA (status={tx0_status:#04x})"
+        );
 
         const DD_EOP: u8 = 0b0000_0011;
         let (rx0_len, rx0_status) = read_rx_desc_len_status(&mem, 0x2000);
@@ -1229,14 +1267,50 @@ mod tests {
         let offer1_frame = mem.read_vec(rx_bufs[1], rx1_len as usize);
         let offer0 = parse_dhcp_from_frame(&offer0_frame);
         let offer1 = parse_dhcp_from_frame(&offer1_frame);
-        assert_eq!(offer0.transaction_id, xid, "offer0 XID mismatch");
-        assert_eq!(offer1.transaction_id, xid, "offer1 XID mismatch");
+        for (i, offer) in [offer0, offer1].iter().enumerate() {
+            assert_eq!(offer.dhcp.transaction_id, xid, "offer{i} XID mismatch");
+            assert_eq!(
+                offer.dhcp.message_type,
+                DhcpMessageType::Offer,
+                "expected DHCP OFFER in frame {i}"
+            );
+            assert_eq!(
+                offer.dhcp.client_mac, guest_mac,
+                "offer{i} client MAC mismatch"
+            );
+            assert_eq!(
+                offer.dhcp.your_ip,
+                backend.stack().config().guest_ip,
+                "offer{i} yiaddr mismatch"
+            );
+            assert_eq!(
+                offer.dhcp.server_identifier,
+                Some(backend.stack().config().gateway_ip),
+                "offer{i} server identifier mismatch"
+            );
+            assert_eq!(offer.ip_src, backend.stack().config().gateway_ip);
+            assert_eq!(offer.eth_src, backend.stack().config().our_mac);
+        }
+
+        // Stack should emit one broadcast and one unicast OFFER (order not guaranteed).
+        let mut saw_broadcast = false;
+        let mut saw_unicast = false;
+        for offer in [offer0, offer1] {
+            if offer.eth_dst == MacAddr::BROADCAST && offer.ip_dst == Ipv4Addr::BROADCAST {
+                saw_broadcast = true;
+            } else if offer.eth_dst == guest_mac && offer.ip_dst == backend.stack().config().guest_ip
+            {
+                saw_unicast = true;
+            } else {
+                panic!(
+                    "unexpected DHCP OFFER destination: eth_dst={} ip_dst={}",
+                    offer.eth_dst, offer.ip_dst
+                );
+            }
+        }
         assert!(
-            offer0.message_type == DhcpMessageType::Offer
-                || offer1.message_type == DhcpMessageType::Offer,
-            "expected DHCP OFFER, got offer0={:?} offer1={:?}",
-            offer0.message_type,
-            offer1.message_type
+            saw_broadcast && saw_unicast,
+            "expected one broadcast and one unicast DHCP OFFER (saw_broadcast={saw_broadcast} saw_unicast={saw_unicast})"
         );
 
         // --- DHCP REQUEST → ACK ---
@@ -1274,6 +1348,13 @@ mod tests {
             "expected 2 backend RX frames (broadcast + unicast DHCP ACK)"
         );
 
+        let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
+        assert_ne!(
+            tx1_status & 0b0000_0001,
+            0,
+            "TX desc 1 should have DD set after DMA (status={tx1_status:#04x})"
+        );
+
         let (rx2_len, rx2_status) = read_rx_desc_len_status(&mem, 0x2020);
         let (rx3_len, rx3_status) = read_rx_desc_len_status(&mem, 0x2030);
         assert!(
@@ -1299,10 +1380,47 @@ mod tests {
         let ack1_frame = mem.read_vec(rx_bufs[3], rx3_len as usize);
         let ack0 = parse_dhcp_from_frame(&ack0_frame);
         let ack1 = parse_dhcp_from_frame(&ack1_frame);
-        assert_eq!(ack0.transaction_id, xid, "ack0 XID mismatch");
-        assert_eq!(ack1.transaction_id, xid, "ack1 XID mismatch");
-        assert_eq!(ack0.message_type, DhcpMessageType::Ack);
-        assert_eq!(ack1.message_type, DhcpMessageType::Ack);
+        for (i, ack) in [ack0, ack1].iter().enumerate() {
+            assert_eq!(ack.dhcp.transaction_id, xid, "ack{i} XID mismatch");
+            assert_eq!(
+                ack.dhcp.message_type,
+                DhcpMessageType::Ack,
+                "expected DHCP ACK in frame {i}"
+            );
+            assert_eq!(ack.dhcp.client_mac, guest_mac, "ack{i} client MAC mismatch");
+            assert_eq!(
+                ack.dhcp.your_ip,
+                backend.stack().config().guest_ip,
+                "ack{i} yiaddr mismatch"
+            );
+            assert_eq!(
+                ack.dhcp.server_identifier,
+                Some(backend.stack().config().gateway_ip),
+                "ack{i} server identifier mismatch"
+            );
+            assert_eq!(ack.ip_src, backend.stack().config().gateway_ip);
+            assert_eq!(ack.eth_src, backend.stack().config().our_mac);
+        }
+
+        // Stack should emit one broadcast and one unicast ACK (order not guaranteed).
+        let mut saw_broadcast = false;
+        let mut saw_unicast = false;
+        for ack in [ack0, ack1] {
+            if ack.eth_dst == MacAddr::BROADCAST && ack.ip_dst == Ipv4Addr::BROADCAST {
+                saw_broadcast = true;
+            } else if ack.eth_dst == guest_mac && ack.ip_dst == backend.stack().config().guest_ip {
+                saw_unicast = true;
+            } else {
+                panic!(
+                    "unexpected DHCP ACK destination: eth_dst={} ip_dst={}",
+                    ack.eth_dst, ack.ip_dst
+                );
+            }
+        }
+        assert!(
+            saw_broadcast && saw_unicast,
+            "expected one broadcast and one unicast DHCP ACK (saw_broadcast={saw_broadcast} saw_unicast={saw_unicast})"
+        );
         assert!(
             backend.stack().is_ip_assigned(),
             "expected backend stack to mark IP assigned after DHCP ACK"
