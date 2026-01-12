@@ -760,6 +760,18 @@ static int RunProducer(int argc, char** argv) {
   const bool duplicated_into_child = (ok && shared_in_child != NULL);
   if (!duplicated_into_child) {
     DWORD werr = GetLastError();
+    const bool strict_mode = (require_umd || (!allow_microsoft && !allow_non_aerogpu));
+    if (strict_mode) {
+      TerminateProcess(pi.hProcess, 2);
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      if (job) {
+        CloseHandle(job);
+      }
+      CloseHandle(shared);
+      return reporter.Fail("DuplicateHandle(shared) failed: %s", aerogpu_test::Win32ErrorToString(werr).c_str());
+    }
+
     aerogpu_test::PrintfStdout("INFO: %s: DuplicateHandle failed (%s); falling back to raw handle value %p",
                                kTestName,
                                aerogpu_test::Win32ErrorToString(werr).c_str(),
@@ -775,21 +787,30 @@ static int RunProducer(int argc, char** argv) {
       // It's possible (though unlikely) for the duplicated handle to end up with the same numeric
       // value in the child. Try duplicating again so we can still cover the "numeric instability"
       // case without failing spuriously.
-      HANDLE shared_in_child2 = NULL;
-      ok = DuplicateHandle(GetCurrentProcess(),
-                           shared,
-                           pi.hProcess,
-                           &shared_in_child2,
-                           0,
-                           FALSE,
-                           DUPLICATE_SAME_ACCESS);
-      if (ok && shared_in_child2 != NULL && (uintptr_t)shared_in_child2 != (uintptr_t)shared) {
-        shared_in_child = shared_in_child2;
-        aerogpu_test::PrintfStdout(
-            "INFO: %s: re-duplicated shared handle to avoid numeric collision: now %p (consumer)",
-            kTestName,
-            shared_in_child);
-      } else {
+      bool got_different_value = false;
+      for (int attempt = 0; attempt < 8; ++attempt) {
+        HANDLE tmp = NULL;
+        ok = DuplicateHandle(GetCurrentProcess(),
+                             shared,
+                             pi.hProcess,
+                             &tmp,
+                             0,
+                             FALSE,
+                             DUPLICATE_SAME_ACCESS);
+        if (!ok || tmp == NULL) {
+          break;
+        }
+        shared_in_child = tmp;
+        if ((uintptr_t)shared_in_child != (uintptr_t)shared) {
+          got_different_value = true;
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: re-duplicated shared handle to avoid numeric collision: now %p (consumer)",
+              kTestName,
+              shared_in_child);
+          break;
+        }
+      }
+      if (!got_different_value) {
         aerogpu_test::PrintfStdout(
             "INFO: %s: duplicated shared handle is numerically identical across processes; continuing anyway",
             kTestName);
