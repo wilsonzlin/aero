@@ -53,8 +53,9 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
   const rootDir = path.resolve(process.cwd(), "web");
   const server = await startStaticServer(rootDir);
 
+  let userDataDir: string | null = null;
   try {
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-shader-cache-opfs-"));
+    userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-shader-cache-opfs-"));
 
     async function runOnce(): Promise<{
       key: string;
@@ -212,5 +213,12 @@ test("large shader payload spills to OPFS when available", async ({}, testInfo) 
     expect(second.idbShaderRecord?.hasReflection).toBe(false);
   } finally {
     await server.close();
+    if (userDataDir) {
+      try {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failures; they are non-fatal.
+      }
+    }
   }
 });
