@@ -63,6 +63,10 @@ describe("web Vite build outputs", () => {
         persistentCacheShimSource,
         "js/persistent_cache_shim.js should contain wasm-bindgen exports like computeShaderCacheKey (sanity check for a non-empty/mis-emitted asset)",
       ).toContain("computeShaderCacheKey");
+      expect(
+        persistentCacheShimSource,
+        "js/persistent_cache_shim.js should reference globalThis.AeroPersistentGpuCache (ensure we emitted the actual shim implementation, not a broken re-export stub)",
+      ).toContain("globalThis.AeroPersistentGpuCache");
       // AudioWorklet modules are emitted as static assets; ensure their unbundled
       // dependency files are also present.
       expect(existsSync(path.join(outDir, "assets", "mic_ring.js"))).toBe(true);
