@@ -1763,7 +1763,7 @@ impl Machine {
     /// were derived from the shared disk so IDENTIFY geometry remains coherent.
     pub fn set_disk_backend(
         &mut self,
-        backend: Box<dyn aero_storage::VirtualDisk + Send>,
+        backend: Box<dyn aero_storage::VirtualDisk>,
     ) -> Result<(), MachineError> {
         self.disk.set_backend(backend);
         self.attach_shared_disk_to_storage_controllers()?;

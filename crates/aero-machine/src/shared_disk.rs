@@ -15,12 +15,15 @@ use crate::MachineError;
 /// See `docs/20-storage-trait-consolidation.md`.
 #[derive(Clone)]
 pub struct SharedDisk {
-    inner: Arc<Mutex<Box<dyn VirtualDisk + Send>>>,
+    // NOTE: `VirtualDisk` backends are not necessarily `Send` on wasm32 (e.g. OPFS backends may
+    // hold JS values). The canonical `aero_machine::Machine` is single-threaded today (it holds
+    // `Rc<RefCell<_>>` device models), so we intentionally do *not* require `Send` here.
+    inner: Arc<Mutex<Box<dyn VirtualDisk>>>,
 }
 
 impl SharedDisk {
     /// Construct a new shared disk wrapper around an existing [`VirtualDisk`] backend.
-    pub fn new(backend: Box<dyn VirtualDisk + Send>) -> Self {
+    pub fn new(backend: Box<dyn VirtualDisk>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(backend)),
         }
@@ -35,7 +38,7 @@ impl SharedDisk {
     }
 
     /// Replace the underlying disk backend for **all** shared handles.
-    pub fn set_backend(&self, backend: Box<dyn VirtualDisk + Send>) {
+    pub fn set_backend(&self, backend: Box<dyn VirtualDisk>) {
         *self
             .inner
             .lock()
@@ -53,7 +56,7 @@ impl SharedDisk {
 
     fn virtual_disk_from_bytes(
         mut bytes: Vec<u8>,
-    ) -> Result<Box<dyn VirtualDisk + Send>, MachineError> {
+    ) -> Result<Box<dyn VirtualDisk>, MachineError> {
         if !bytes.len().is_multiple_of(SECTOR_SIZE) {
             return Err(MachineError::InvalidDiskSize(bytes.len()));
         }
