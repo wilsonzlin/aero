@@ -2138,7 +2138,9 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     // On surprise removal, the device may no longer be accessible. Avoid any
     // further virtio BAR MMIO access here; full software cleanup happens in
     // HaltEx (PASSIVE_LEVEL).
-    DbgPrint("aero_virtio_net: pnp: SurpriseRemoved=TRUE; stopping without virtio MMIO\n");
+#if DBG
+    DbgPrint("aero_virtio_net: pnp: SurpriseRemoved=TRUE; skipping hardware quiesce (BAR0 MMIO may be invalid)\n");
+#endif
   }
 }
 
