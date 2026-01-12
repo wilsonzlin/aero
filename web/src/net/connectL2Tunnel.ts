@@ -157,12 +157,26 @@ function buildWebSocketUrlFromEndpoint(gatewayBaseUrl: string, endpoint: string)
     basePath = basePath.replace(/\/(l2|eth)$/, "");
   }
 
-  if (endpoint.startsWith("/")) {
-    url.pathname = endpoint;
-  } else {
-    const normalizedBase = basePath.replace(/\/$/, "");
-    url.pathname = `${normalizedBase}/${endpoint}`;
+  // The gateway session response returns path-like strings (typically beginning
+  // with `/`). Treat them as relative to the configured gateway base path so
+  // deployments behind a reverse-proxy prefix (`/base`) continue to work.
+  //
+  // Newer gateways will already include the base prefix in `endpoints.*` (e.g.
+  // `/base/l2`); for compatibility with older gateways, avoid double-prefixing.
+  const trimmedEndpoint = endpoint.trim();
+  const normalizedBase = basePath.replace(/\/$/, "");
+
+  if (
+    normalizedBase.length > 0 &&
+    trimmedEndpoint.startsWith("/") &&
+    trimmedEndpoint.startsWith(`${normalizedBase}/`)
+  ) {
+    url.pathname = trimmedEndpoint;
+    return url.toString();
   }
+
+  const endpointPath = trimmedEndpoint.startsWith("/") ? trimmedEndpoint.slice(1) : trimmedEndpoint;
+  url.pathname = `${normalizedBase}/${endpointPath}`.replace(/^\/\//, "/");
 
   return url.toString();
 }

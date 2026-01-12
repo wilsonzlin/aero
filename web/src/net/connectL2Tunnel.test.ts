@@ -238,7 +238,37 @@ describe("net/connectL2Tunnel", () => {
     });
 
     try {
-      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+    }
+  });
+
+  it("does not double-prefix endpoints.l2 that already include the gateway base path", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(JSON.stringify({ endpoints: { l2: "/base/l2" } }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("https://gateway.example.com/base", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+    });
+
+    try {
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
     } finally {
       tunnel.close();
       globalThis.fetch = originalFetch;
