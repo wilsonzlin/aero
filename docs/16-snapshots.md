@@ -178,12 +178,12 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `BIOS` | `10` | `device.10` | Firmware/BIOS runtime state |
 | `MEMORY` | `11` | `device.11` | Memory-bus glue state (A20, ROM windows, etc.) |
 | `USB` | `12` | `usb.uhci` | Browser USB stack (UHCI controller + runtime/bridge state) |
-| `I8042` | `13` | `device.13` | Legacy i8042 PS/2 controller state |
+| `I8042` | `13` | `input.i8042` | Legacy i8042 PS/2 controller state |
 | `PCI_CFG` | `14` | `device.14` | Legacy split PCI config ports + bus state (prefer `DeviceId::PCI`) |
 | `PCI_INTX` | `15` | `device.15` | Legacy split PCI INTx routing state (prefer `DeviceId::PCI`) |
 | `ACPI_PM` | `16` | `device.16` | ACPI fixed-feature power management state |
 | `HPET` | `17` | `device.17` | High Precision Event Timer state |
-| `HDA` | `18` | `device.18` | HD Audio controller/runtime state |
+| `HDA` | `18` | `audio.hda` | HD Audio controller/runtime state |
 | `E1000` | `19` | `net.e1000` | Intel E1000 NIC device model state |
 | `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/NAT/proxy bookkeeping) |
 | `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
