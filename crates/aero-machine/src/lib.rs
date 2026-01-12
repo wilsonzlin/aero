@@ -3521,8 +3521,9 @@ impl Machine {
                         Some(nvme.clone())
                     }
                     None => {
-                        let dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(self.disk.clone()))
-                            .expect("machine disk should be 512-byte aligned");
+                        let dev =
+                            NvmePciDevice::try_new_from_virtual_disk(Box::new(self.disk.clone()))
+                                .expect("machine disk should be 512-byte aligned");
                         Some(Rc::new(RefCell::new(dev)))
                     }
                 }

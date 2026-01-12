@@ -337,8 +337,14 @@ fn build_io_maps(
                     return Err(ShaderTranslateError::ConflictingSignatureRegister {
                         io: "input",
                         register: p.register,
-                        first: format!("{}{}", existing.param.semantic_name, existing.param.semantic_index),
-                        second: format!("{}{}", info.param.semantic_name, info.param.semantic_index),
+                        first: format!(
+                            "{}{}",
+                            existing.param.semantic_name, existing.param.semantic_index
+                        ),
+                        second: format!(
+                            "{}{}",
+                            info.param.semantic_name, info.param.semantic_index
+                        ),
                     });
                 }
 
@@ -363,8 +369,14 @@ fn build_io_maps(
                     return Err(ShaderTranslateError::ConflictingSignatureRegister {
                         io: "output",
                         register: p.register,
-                        first: format!("{}{}", existing.param.semantic_name, existing.param.semantic_index),
-                        second: format!("{}{}", info.param.semantic_name, info.param.semantic_index),
+                        first: format!(
+                            "{}{}",
+                            existing.param.semantic_name, existing.param.semantic_index
+                        ),
+                        second: format!(
+                            "{}{}",
+                            info.param.semantic_name, info.param.semantic_index
+                        ),
                     });
                 }
 

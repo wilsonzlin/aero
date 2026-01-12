@@ -84,8 +84,7 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
                 let disk_type = be_u32(&footer[60..64]);
                 if disk_type == 2 {
                     let current_size = be_u64(&footer[48..56]);
-                    if let Some(required) = current_size.checked_add((VHD_FOOTER_SIZE as u64) * 2)
-                    {
+                    if let Some(required) = current_size.checked_add((VHD_FOOTER_SIZE as u64) * 2) {
                         if len >= required {
                             return Ok(DiskFormat::Vhd);
                         }

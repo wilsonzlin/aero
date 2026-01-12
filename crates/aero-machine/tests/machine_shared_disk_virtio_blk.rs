@@ -5,8 +5,8 @@ use aero_machine::{Machine, MachineConfig};
 use aero_storage::SECTOR_SIZE;
 use aero_virtio::devices::blk::{VIRTIO_BLK_S_OK, VIRTIO_BLK_T_IN};
 use aero_virtio::pci::{
-    VIRTIO_F_VERSION_1, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
-    VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_F_VERSION_1, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 use firmware::bios::BlockDevice as _;
@@ -89,7 +89,14 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     let bar0_base: u64 = 0xE200_0000;
 
     // BAR0 is mem64.
-    write_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x10, bar0_base as u32);
+    write_cfg_u32(
+        &mut m,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        bar0_base as u32,
+    );
     write_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x14, 0);
 
     // Enable memory decoding + bus mastering (required for DMA processing).
@@ -129,7 +136,10 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     m.write_physical_u32(bar0_base + COMMON_BASE + 0x08, 0); // driver_feature_select=0
     m.write_physical_u32(bar0_base + COMMON_BASE + 0x0c, 0); // low bits
     m.write_physical_u32(bar0_base + COMMON_BASE + 0x08, 1); // driver_feature_select=1
-    m.write_physical_u32(bar0_base + COMMON_BASE + 0x0c, (VIRTIO_F_VERSION_1 >> 32) as u32);
+    m.write_physical_u32(
+        bar0_base + COMMON_BASE + 0x0c,
+        (VIRTIO_F_VERSION_1 >> 32) as u32,
+    );
 
     // status |= FEATURES_OK (triggers negotiation).
     m.write_physical_u8(
@@ -159,15 +169,7 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     m.write_physical_u32(req_hdr + 4, 0);
     m.write_physical_u64(req_hdr + 8, lba);
 
-    write_desc(
-        &mut m,
-        desc_addr,
-        0,
-        req_hdr,
-        16,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(&mut m, desc_addr, 0, req_hdr, 16, VIRTQ_DESC_F_NEXT, 1);
     write_desc(
         &mut m,
         desc_addr,
@@ -192,4 +194,3 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     let got = m.read_physical_bytes(data_buf, SECTOR_SIZE);
     assert_eq!(&got[..], &expected[..]);
 }
-

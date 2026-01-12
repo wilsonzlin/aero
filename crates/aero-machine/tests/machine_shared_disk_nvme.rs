@@ -99,7 +99,14 @@ fn machine_shared_bios_disk_is_visible_to_nvme_dma() {
     let bar0_base: u64 = 0xE300_0000;
 
     // BAR0 is mem64.
-    write_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x10, bar0_base as u32);
+    write_cfg_u32(
+        &mut m,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        bar0_base as u32,
+    );
     write_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x14, 0);
 
     // Enable memory decoding + bus mastering (required for DMA processing).
@@ -180,4 +187,3 @@ fn machine_shared_bios_disk_is_visible_to_nvme_dma() {
     let got = m.read_physical_bytes(read_buf, SECTOR_SIZE);
     assert_eq!(&got[..], &expected[..]);
 }
-
