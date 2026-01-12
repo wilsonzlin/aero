@@ -84,7 +84,7 @@ The trace buffer is only dumped when triggered:
 
 - `AEROGPU_D3D9_TRACE_DUMP_PRESENT=<N>`  
   Dumps once when the UMD device `present_count` reaches `N` (works for both `Present` and `PresentEx`).
-  Note: when `AEROGPU_D3D9_TRACE_MODE=unique`, the triggering `Present`/`PresentEx` call is force-recorded so the dump still includes the call that caused the trigger.
+  Note: when `AEROGPU_D3D9_TRACE_MODE=unique`, the triggering `Present`/`PresentEx` call is force-recorded so the dump still includes the call that caused the trigger (unless it is filtered out by `AEROGPU_D3D9_TRACE_FILTER`).
 
 - `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1`  
   Dumps once on `DllMain(DLL_PROCESS_DETACH)`.
