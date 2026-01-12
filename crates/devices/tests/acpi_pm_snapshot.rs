@@ -557,7 +557,14 @@ fn snapshot_restore_rejects_invalid_pm_timer_remainder() {
     const TAG_PM_TIMER_REMAINDER: u16 = 9;
 
     let cfg = AcpiPmConfig::default();
-    let mut pm = AcpiPmIo::new(cfg);
+    let clock = CountingClock::new(1);
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    clock.reset_calls();
+
+    // Mutate state so we can confirm the restore remains atomic on failure.
+    pm.write(cfg.pm1a_cnt_blk, 2, 0x1234);
+    let pm1_cnt_before = pm.pm1_cnt();
 
     let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
     w.field_u32(TAG_PM_TIMER_TICKS, 0);
@@ -570,6 +577,16 @@ fn snapshot_restore_rejects_invalid_pm_timer_remainder() {
             Err(SnapshotError::InvalidFieldEncoding("pm_timer_remainder"))
         ),
         "invalid remainders must be rejected (expected SnapshotError::InvalidFieldEncoding)"
+    );
+    assert_eq!(
+        clock.calls(),
+        0,
+        "load_state should validate pm_timer_remainder before sampling the clock"
+    );
+    assert_eq!(
+        pm.pm1_cnt(),
+        pm1_cnt_before,
+        "load_state must leave device state unchanged on decode/validation error"
     );
 }
 

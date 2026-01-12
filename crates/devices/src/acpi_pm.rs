@@ -552,6 +552,17 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         // `sci_level` is derived from the register state; it is snapshotted for completeness.
         let _ = r.bool(TAG_SCI_LEVEL)?;
 
+        // Validate tick-based timer fields before sampling the clock so corrupt snapshots do not
+        // produce any observable side effects (some test clocks intentionally advance on each
+        // `now_ns()` call).
+        if elapsed_ns.is_none() {
+            if let Some(rem) = pm_timer_remainder {
+                if u128::from(rem) >= NS_PER_SEC {
+                    return Err(SnapshotError::InvalidFieldEncoding("pm_timer_remainder"));
+                }
+            }
+        }
+
         // Sample the clock once and reuse that value throughout restore so snapshot restore is
         // deterministic even under unusual clock implementations (e.g. test clocks that advance on
         // each `now_ns()` call).
@@ -604,10 +615,8 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                 // such that:
                 //   (ticks_mod + k*2^24) * 1e9 + remainder
                 // is divisible by `FREQ`.
+                // Remainder validated above.
                 let remainder = u128::from(rem);
-                if remainder >= NS_PER_SEC {
-                    return Err(SnapshotError::InvalidFieldEncoding("pm_timer_remainder"));
-                }
                 let mod_ticks = u128::from(PM_TIMER_MASK_24BIT) + 1;
                 let freq = PM_TIMER_FREQUENCY_HZ;
 
