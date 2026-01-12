@@ -65,16 +65,16 @@ enum RenderMode {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct VbeRegs {
-    xres: u16,
-    yres: u16,
-    bpp: u16,
-    enable: u16,
-    bank: u16,
-    virt_width: u16,
-    virt_height: u16,
-    x_offset: u16,
-    y_offset: u16,
+pub struct VbeRegs {
+    pub xres: u16,
+    pub yres: u16,
+    pub bpp: u16,
+    pub enable: u16,
+    pub bank: u16,
+    pub virt_width: u16,
+    pub virt_height: u16,
+    pub x_offset: u16,
+    pub y_offset: u16,
 }
 
 impl VbeRegs {
@@ -125,7 +125,7 @@ pub struct VgaDevice {
 
     // Bochs VBE.
     vbe_index: u16,
-    vbe: VbeRegs,
+    pub vbe: VbeRegs,
 
     // VRAM: the first 256KiB are treated as planar VGA memory (4 planes).
     // SVGA linear modes use the same underlying VRAM starting at offset 0.
@@ -216,6 +216,7 @@ impl VgaDevice {
         self.crtc[0x0F] = 0x00;
 
         self.vbe.enable = 0;
+        self.ensure_buffers(80 * 9, 25 * 16);
         self.dirty = true;
     }
 
@@ -239,6 +240,7 @@ impl VgaDevice {
         self.graphics[4] = 0x00;
 
         self.vbe.enable = 0;
+        self.ensure_buffers(320, 200);
         self.dirty = true;
     }
 
@@ -254,6 +256,7 @@ impl VgaDevice {
         self.vbe.bank = 0;
 
         self.vbe.enable = 0x0001 | if lfb { 0x0040 } else { 0 };
+        self.ensure_buffers(width as u32, height as u32);
         self.dirty = true;
     }
 

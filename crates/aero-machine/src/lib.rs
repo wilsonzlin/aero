@@ -2242,6 +2242,11 @@ impl Machine {
             cpu_count: self.cfg.cpu_count,
             ..Default::default()
         });
+        // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
+        // firmware-only tests can access it without MMIO routing. For the real machine, force the
+        // BIOS to report the fixed Bochs/QEMU-compatible LFB base that our VGA device is mapped at
+        // so OSes and bootloaders see a stable, MMIO-safe framebuffer address.
+        self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
         let bus: &mut dyn BiosBus = &mut self.mem;
         if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
@@ -2483,9 +2488,42 @@ impl Machine {
     fn handle_bios_interrupt(&mut self, vector: u8) {
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
-        let bus: &mut dyn BiosBus = &mut self.mem;
-        self.bios
-            .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
+        {
+            let bus: &mut dyn BiosBus = &mut self.mem;
+            self.bios
+                .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
+        }
+
+        // The BIOS INT 10h implementation is HLE and only updates its internal `firmware::video`
+        // state + writes to guest memory; it does not program VGA/VBE ports. Mirror relevant VBE
+        // state into the emulated VGA device so mode sets immediately affect the visible output.
+        if vector == 0x10 {
+            let Some(vga) = &self.vga else {
+                self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+                return;
+            };
+
+            match self.bios.video.vbe.current_mode {
+                Some(mode) => {
+                    if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                        let mut vga = vga.borrow_mut();
+                        vga.set_svga_mode(
+                            mode_info.width,
+                            mode_info.height,
+                            mode_info.bpp as u16,
+                            /* lfb */ true,
+                        );
+                        vga.vbe.bank = self.bios.video.vbe.bank;
+                        vga.vbe.virt_width = self.bios.video.vbe.logical_width_pixels;
+                        vga.vbe.x_offset = self.bios.video.vbe.display_start_x;
+                        vga.vbe.y_offset = self.bios.video.vbe.display_start_y;
+                    }
+                }
+                None => {
+                    vga.borrow_mut().set_text_mode_80x25();
+                }
+            }
+        }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
 
         // INT 10h text services update the BDA cursor state but do not perform VGA port I/O.
