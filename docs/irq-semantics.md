@@ -72,6 +72,13 @@ Example:
 
 - **i8042 keyboard/mouse controller** (ISA IRQ1/IRQ12): pulse when a byte becomes available and interrupts are enabled.
 
+Implementation note (WASM bridge):
+
+- The browser runtime's `crates/aero-wasm::I8042Bridge` exposes `drain_irqs()` which returns a bitmask of **pending IRQ pulses**
+  since the last call (bit0=IRQ1, bit1=IRQ12). This exists because a *level-only* API can miss pulses when the i8042 refills the
+  output buffer immediately after a port `0x60` read (multiple bytes pending).
+  Consumers should prefer `drain_irqs()` when available and translate each bit into an explicit `raiseIrq`+`lowerIrq` pulse.
+
 ## Level-triggered sources
 
 Level-triggered devices assert their interrupt line while an interrupt condition remains pending, and deassert it once the condition is cleared/acknowledged.
