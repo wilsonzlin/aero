@@ -14,6 +14,7 @@ aero-net-backend = { path = "../aero-net-backend" }
 aero-pc-platform = { path = "../aero-pc-platform" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
+aero-net-e1000 = { path = "../aero-net-e1000" }
 firmware = { path = "../firmware" }
 memory = { path = "../memory" }
 

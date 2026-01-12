@@ -79,6 +79,8 @@ impl DeviceId {
     pub const HPET: DeviceId = DeviceId(17);
     /// Guest-visible HD Audio (HDA) controller/runtime state.
     pub const HDA: DeviceId = DeviceId(18);
+    /// Intel E1000 (82540EM-ish) NIC model state.
+    pub const E1000: DeviceId = DeviceId(19);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -100,6 +102,7 @@ impl DeviceId {
             DeviceId::ACPI_PM => Some("ACPI_PM"),
             DeviceId::HPET => Some("HPET"),
             DeviceId::HDA => Some("HDA"),
+            DeviceId::E1000 => Some("E1000"),
             _ => None,
         }
     }

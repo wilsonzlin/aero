@@ -33,8 +33,8 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    register_pci_config_ports, PciConfigPorts, PciCoreSnapshot, PciIntxRouter,
-    PciIntxRouterConfig, SharedPciConfigPorts,
+    register_pci_config_ports, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice, PciInterruptPin,
+    PciIntxRouter, PciIntxRouterConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -43,6 +43,7 @@ use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
+use aero_net_e1000::E1000Device;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterrupts,
@@ -63,6 +64,7 @@ const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS: usize = 1024 * 1024;
 const NS_PER_SEC: u128 = 1_000_000_000;
+const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 
 pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
@@ -86,6 +88,12 @@ pub struct MachineConfig {
     pub enable_a20_gate: bool,
     /// Whether to attach a reset control device at port `0xCF9`.
     pub enable_reset_ctrl: bool,
+    /// Whether to attach an Intel E1000 (82540EM-ish) PCI NIC.
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_e1000: bool,
+    /// Optional MAC address for the E1000 NIC.
+    pub e1000_mac_addr: Option<[u8; 6]>,
 }
 
 impl Default for MachineConfig {
@@ -98,6 +106,8 @@ impl Default for MachineConfig {
             enable_i8042: true,
             enable_a20_gate: true,
             enable_reset_ctrl: true,
+            enable_e1000: false,
+            e1000_mac_addr: None,
         }
     }
 }
@@ -345,6 +355,28 @@ impl aero_mmu::MemoryBus for SystemMemory {
     }
 }
 
+struct E1000PciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl E1000PciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::NIC_E1000_82540EM.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for E1000PciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 /// Canonical Aero machine: CPU + physical memory + port I/O devices + firmware.
 pub struct Machine {
     cfg: MachineConfig,
@@ -368,6 +400,7 @@ pub struct Machine {
     pci_intx: Option<Rc<RefCell<PciIntxRouter>>>,
     acpi_pm: Option<SharedAcpiPmIo<ManualClock>>,
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
+    e1000: Option<Rc<RefCell<E1000Device>>>,
 
     bios: Bios,
     disk: VecBlockDevice,
@@ -419,6 +452,7 @@ impl Machine {
             pci_intx: None,
             acpi_pm: None,
             hpet: None,
+            e1000: None,
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
@@ -564,6 +598,11 @@ impl Machine {
         self.hpet.clone()
     }
 
+    /// Returns the E1000 NIC device, if present.
+    pub fn e1000(&self) -> Option<Rc<RefCell<E1000Device>>> {
+        self.e1000.clone()
+    }
+
     /// Advance deterministic platform time and poll any timer devices.
     ///
     /// This is a testing/debugging helper; the canonical CPU stepping loop does not currently
@@ -649,6 +688,37 @@ impl Machine {
         self.tsc_ns_remainder = ((tsc as u128) * NS_PER_SEC % (tsc_hz as u128)) as u64;
     }
 
+    fn sync_pci_intx_sources_to_interrupts(&mut self) {
+        let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) else {
+            return;
+        };
+
+        // E1000 legacy INTx (level-triggered).
+        if let Some(e1000) = &self.e1000 {
+            let bdf: PciBdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+            let pin = PciInterruptPin::IntA;
+
+            let mut level = e1000.borrow().irq_level();
+
+            // Respect PCI command register Interrupt Disable bit (bit 10).
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let intx_disabled = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .is_some_and(|cfg| (cfg.command() & (1 << 10)) != 0)
+                };
+                if intx_disabled {
+                    level = false;
+                }
+            }
+
+            let mut pci_intx = pci_intx.borrow_mut();
+            let mut interrupts = interrupts.borrow_mut();
+            pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+        }
+    }
     /// Take (drain) all serial output accumulated so far.
     pub fn take_serial_output(&mut self) -> Vec<u8> {
         self.flush_serial();
@@ -870,6 +940,17 @@ impl Machine {
 
             let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock.clone())));
 
+            let e1000 = if self.cfg.enable_e1000 {
+                let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                    Box::new(E1000PciConfigDevice::new()),
+                );
+                Some(Rc::new(RefCell::new(E1000Device::new(mac))))
+            } else {
+                None
+            };
+
             self.platform_clock = Some(clock);
             self.interrupts = Some(interrupts);
             self.pit = Some(pit);
@@ -878,6 +959,7 @@ impl Machine {
             self.pci_intx = Some(pci_intx);
             self.acpi_pm = Some(acpi_pm);
             self.hpet = Some(hpet);
+            self.e1000 = e1000;
         } else {
             self.platform_clock = None;
             self.interrupts = None;
@@ -887,6 +969,7 @@ impl Machine {
             self.pci_intx = None;
             self.acpi_pm = None;
             self.hpet = None;
+            self.e1000 = None;
         }
 
         if self.cfg.enable_serial {
@@ -1177,6 +1260,12 @@ impl snapshot::SnapshotSource for Machine {
                 ));
             }
         }
+        if let Some(e1000) = &self.e1000 {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::E1000,
+                &*e1000.borrow(),
+            ));
+        }
         if let Some(acpi_pm) = &self.acpi_pm {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::ACPI_PM,
@@ -1437,6 +1526,16 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
+        // Restore E1000 after the interrupt controller + PCI INTx router so any restored
+        // interrupt level can be re-driven into the sink immediately.
+        if let (Some(e1000), Some(state)) = (&self.e1000, by_id.remove(&snapshot::DeviceId::E1000))
+        {
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *e1000.borrow_mut(),
+            );
+        }
+
         // Restore i8042 after the interrupt controller complex so any restored IRQ pulses are
         // delivered into the correct sink state.
         if let (Some(ctrl), Some(state)) = (&self.i8042, by_id.remove(&snapshot::DeviceId::I8042)) {
@@ -1445,6 +1544,12 @@ impl snapshot::SnapshotTarget for Machine {
                 &mut *ctrl.borrow_mut(),
             );
         }
+
+        // Re-drive PCI INTx levels derived from restored device state (e.g. E1000). This is
+        // required because `IoSnapshot::load_state()` cannot access the interrupt sink directly,
+        // and some device models surface their INTx level via polling rather than storing it in
+        // the router snapshot.
+        self.sync_pci_intx_sources_to_interrupts();
 
         // CPU_INTERNAL: machine-defined CPU bookkeeping (applied in `post_restore`).
         if let Some(state) = by_id.remove(&snapshot::DeviceId::CPU_INTERNAL) {

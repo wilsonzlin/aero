@@ -393,6 +393,7 @@ dependencies = [
  "aero-ipc",
  "aero-mmu",
  "aero-net-backend",
+ "aero-net-e1000",
  "aero-pc-platform",
  "aero-platform",
  "aero-snapshot",
