@@ -90,7 +90,7 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 | `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
-| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/I8042/HPET/ACPI_PM/PCI/PCI_CFG/PCI_INTX/Disk/VGA/etc) as typed TLVs |
+| `DEVICES` | List of device states (PIC/APIC/PIT/RTC/I8042/HPET/ACPI_PM/PCI/Disk/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
 
@@ -122,9 +122,13 @@ Restore notes:
 
 Some platform devices are snapshotted as their own `DEVICES` entries and use dedicated `DeviceId` constants:
 
+- `DeviceId::APIC` (`2`) — platform interrupt controller complex (legacy PIC + IOAPIC + LAPIC + IMCR routing)
+- `DeviceId::PIT` (`3`) — PIT (8254)
+- `DeviceId::RTC` (`4`) — RTC/CMOS (0x70/0x71)
 - `DeviceId::PCI` (`5`) — PCI core wrapper (store config ports + INTx router together; see `PCI core state` below)
-- `DeviceId::PCI_CFG` (`14`) — optional split-out PCI config I/O ports (`PciConfigPorts`)
-- `DeviceId::PCI_INTX` (`15`) — optional split-out PCI INTx router (`PciIntxRouter`)
+- `DeviceId::I8042` (`13`) — i8042 PS/2 controller (0x60/0x64)
+- `DeviceId::PCI_CFG` (`14`) — legacy/split-out PCI config I/O ports (`PciConfigPorts`)
+- `DeviceId::PCI_INTX` (`15`) — legacy/split-out PCI INTx router (`PciIntxRouter`)
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
 - `DeviceId::HPET` (`17`) — HPET timer state
 
