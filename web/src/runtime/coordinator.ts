@@ -728,6 +728,10 @@ export class WorkerCoordinator {
     return this.workers.io?.worker ?? null;
   }
 
+  getCpuWorker(): Worker | null {
+    return this.workers.cpu?.worker ?? null;
+  }
+
   getIoIpcSab(): SharedArrayBuffer | null {
     return this.shared?.segments.ioIpc ?? null;
   }

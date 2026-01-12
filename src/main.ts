@@ -906,6 +906,7 @@ function renderAudioPanel(): HTMLElement {
   installNetTraceBackendOnAeroGlobal(workerCoordinator);
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;
+  let hdaPciDeviceTimer: number | null = null;
   let loopbackTimer: number | null = null;
   let syntheticMic: SyntheticMicSource | null = null;
   let hdaCaptureRequestId = 1;
@@ -922,6 +923,26 @@ function renderAudioPanel(): HTMLElement {
       window.clearInterval(toneTimer);
       toneTimer = null;
     }
+  }
+
+  function stopHdaPciDevice(): void {
+    if (hdaPciDeviceTimer !== null) {
+      window.clearInterval(hdaPciDeviceTimer);
+      hdaPciDeviceTimer = null;
+    }
+    // Detach the AudioWorklet ring from the IO worker HDA device (if the worker is running).
+    try {
+      workerCoordinator.getIoWorker()?.postMessage({
+        type: "setAudioRingBuffer",
+        ringBuffer: null,
+        capacityFrames: 0,
+        channelCount: 0,
+        dstSampleRate: 0,
+      });
+    } catch {
+      // ignore best-effort detach
+    }
+    (globalThis as typeof globalThis & { __aeroAudioOutputHdaPciDevice?: unknown }).__aeroAudioOutputHdaPciDevice = undefined;
   }
 
   function stopLoopback(): void {
@@ -952,6 +973,7 @@ function renderAudioPanel(): HTMLElement {
     stopTone();
     stopLoopback();
     stopHdaDemo();
+    stopHdaPciDevice();
 
     const freqHz = 440;
     const gain = 0.1;
@@ -1010,6 +1032,7 @@ function renderAudioPanel(): HTMLElement {
       status.textContent = "";
       stopLoopback();
       stopHdaDemo();
+      stopHdaPciDevice();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
       (globalThis as typeof globalThis & { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
@@ -1039,6 +1062,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopHdaPciDevice();
 
       const workerConfig: AeroConfig = {
         guestMemoryMiB: 64,
@@ -1116,6 +1140,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopHdaPciDevice();
 
       const output = await createAudioOutput({
         sampleRate: 48_000,
@@ -1256,6 +1281,148 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const hdaPciDeviceButton = el("button", {
+    id: "init-audio-hda-pci-device",
+    text: "Init audio output (HDA PCI device)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopLoopback();
+      stopHdaDemo();
+      stopHdaPciDevice();
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ringBufferFrames: 16_384, // ~340ms @ 48k; enough slack while workers start.
+      });
+
+      (globalThis as typeof globalThis & { __aeroAudioOutputHdaPciDevice?: unknown }).__aeroAudioOutputHdaPciDevice = output;
+      (globalThis as typeof globalThis & { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
+      (globalThis as typeof globalThis & { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "io-worker-hda-pci";
+
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      // Prefill ~200ms of silence so AudioWorklet startup doesn't underrun while we
+      // bring up the workers and program the HDA controller.
+      const sr = output.context.sampleRate;
+      const targetPrefillFrames = Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 5));
+      const existingLevel = output.getBufferLevelFrames();
+      const prefillFrames = Math.max(0, targetPrefillFrames - existingLevel);
+      if (prefillFrames > 0) {
+        Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
+      }
+
+      const workerConfig: AeroConfig = {
+        guestMemoryMiB: 64,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      };
+
+      try {
+        workerCoordinator.start(workerConfig);
+        workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      // Attach the AudioWorklet ring buffer to the IO worker HDA device.
+      workerCoordinator.getIoWorker()?.postMessage({
+        type: "setAudioRingBuffer",
+        ringBuffer: output.ringBuffer.buffer,
+        capacityFrames: output.ringBuffer.capacityFrames,
+        channelCount: output.ringBuffer.channelCount,
+        dstSampleRate: output.context.sampleRate,
+      });
+
+      // Ask the CPU worker to program the HDA PCI device over the real port/mmio path.
+      const cpu = workerCoordinator.getWorker("cpu");
+      if (!cpu) {
+        status.textContent = "Missing CPU worker (workerCoordinator.getWorker(\"cpu\") returned null).";
+        return;
+      }
+
+      const ready = new Promise<{ pci: { bus: number; device: number; function: number }; bar0: number }>((resolve, reject) => {
+        // HDA device registration depends on WASM init in the IO worker (can be slow in CI without a wasm cache).
+        const timeoutMs = 45_000;
+        const onMessage = (ev: MessageEvent<unknown>) => {
+          const data = ev.data as { type?: unknown; message?: unknown; pci?: unknown; bar0?: unknown } | null;
+          if (!data || typeof data !== "object") return;
+          if (data.type === "audioOutputHdaPciDevice.ready") {
+            cleanup();
+            const pci = (data as { pci?: unknown }).pci as { bus: number; device: number; function: number };
+            const bar0 = (data as { bar0?: unknown }).bar0 as number;
+            resolve({ pci, bar0 });
+          } else if (data.type === "audioOutputHdaPciDevice.error") {
+            cleanup();
+            reject(new Error(typeof data.message === "string" ? data.message : "HDA PCI device init failed"));
+          }
+        };
+        const onError = (ev: ErrorEvent) => {
+          cleanup();
+          reject(new Error(ev.message || "CPU worker error while starting HDA PCI device"));
+        };
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error(`Timed out waiting for HDA PCI device init (${timeoutMs}ms).`));
+        }, timeoutMs);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        const cleanup = () => {
+          window.clearTimeout(timer);
+          cpu.removeEventListener("message", onMessage as EventListener);
+          cpu.removeEventListener("error", onError as EventListener);
+        };
+        cpu.addEventListener("message", onMessage as EventListener);
+        cpu.addEventListener("error", onError as EventListener);
+      });
+
+      cpu.postMessage({ type: "audioOutputHdaPciDevice.start", freqHz: 440, gain: 0.1 });
+
+      let initInfo: { pci: { bus: number; device: number; function: number }; bar0: number };
+      try {
+        initInfo = await ready;
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      try {
+        await output.resume();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      status.textContent = `Audio initialized and HDA PCI device started (bus=${initInfo.pci.bus} dev=${initInfo.pci.device}).`;
+      const timer = window.setInterval(() => {
+        const metrics = output.getMetrics();
+        const header = output.ringBuffer.header;
+        const read = Atomics.load(header, 0) >>> 0;
+        const write = Atomics.load(header, 1) >>> 0;
+        status.textContent =
+          `AudioContext: ${metrics.state}\n` +
+          `sampleRate: ${metrics.sampleRate}\n` +
+          `capacityFrames: ${metrics.capacityFrames}\n` +
+          `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
+          `underrunFrames: ${metrics.underrunCount}\n` +
+          `overrunFrames: ${metrics.overrunCount}\n` +
+          `ring.readFrameIndex: ${read}\n` +
+          `ring.writeFrameIndex: ${write}\n` +
+          `pci: ${initInfo.pci.bus}:${initInfo.pci.device}.${initInfo.pci.function}\n` +
+          `bar0: 0x${initInfo.bar0.toString(16)}`;
+      }, 50);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      hdaPciDeviceTimer = timer as unknown as number;
+    },
+  });
+
   const loopbackButton = el("button", {
     id: "init-audio-loopback-synthetic",
     text: "Init audio loopback (synthetic mic)",
@@ -1264,6 +1431,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopHdaPciDevice();
 
       const output = await createAudioOutput({
         sampleRate: 48_000,
@@ -1408,6 +1576,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopHdaPciDevice();
 
       const globals =
         globalThis as typeof globalThis & {
@@ -1591,7 +1760,7 @@ function renderAudioPanel(): HTMLElement {
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton, hdaDemoButton, loopbackButton, hdaCaptureButton),
+    el("div", { class: "row" }, button, workerButton, hdaDemoButton, hdaPciDeviceButton, loopbackButton, hdaCaptureButton),
     status,
   );
 }

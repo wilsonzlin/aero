@@ -160,6 +160,31 @@ type CursorDemoStopMessage = {
   type: "cursorDemo.stop";
 };
 
+type AudioOutputHdaPciDeviceStartMessage = {
+  type: "audioOutputHdaPciDevice.start";
+  /**
+   * Optional test-tone frequency used to populate the guest DMA buffer.
+   * Defaults to 440Hz.
+   */
+  freqHz?: number;
+  /**
+   * Optional sine gain used to populate the guest DMA buffer.
+   * Defaults to 0.1.
+   */
+  gain?: number;
+};
+
+type AudioOutputHdaPciDeviceReadyMessage = {
+  type: "audioOutputHdaPciDevice.ready";
+  pci: { bus: number; device: number; function: number };
+  bar0: number;
+};
+
+type AudioOutputHdaPciDeviceErrorMessage = {
+  type: "audioOutputHdaPciDevice.error";
+  message: string;
+};
+
 let role: WorkerRole = "cpu";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
@@ -221,6 +246,8 @@ let hdaDemoNextStatsMs = 0;
 let hdaDemoWasmMemory: WebAssembly.Memory | null = null;
 let hdaDemoClock: AudioFrameClock | null = null;
 let hdaDemoClockStarted = false;
+
+let pendingHdaPciDeviceStart: AudioOutputHdaPciDeviceStartMessage | null = null;
 
 function hdaDemoTargetFrames(capacityFrames: number, sampleRate: number): number {
   // Default to ~200ms buffered, but scale up for larger ring buffers so the demo has
@@ -434,6 +461,229 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   hdaDemoTimer = timer as unknown as number;
 
   ctx.postMessage({ type: "audioOutputHdaDemo.ready" } satisfies AudioOutputHdaDemoReadyMessage);
+}
+
+function guestBoundsCheck(offset: number, len: number): void {
+  const mem = guestU8 as unknown as Uint8Array | undefined;
+  if (!mem) throw new Error("guest memory is not initialized yet");
+  if (offset < 0 || offset + len > mem.byteLength) {
+    throw new Error(`guest memory out of bounds: need [0x${offset.toString(16)}, +${len}]`);
+  }
+}
+
+async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Promise<void> {
+  const client = io;
+  if (!client) {
+    throw new Error("I/O client is not initialized yet");
+  }
+
+  // Stream descriptor control bits (subset).
+  const SD_CTL_SRST = 1 << 0;
+  const SD_CTL_RUN = 1 << 1;
+  const SD_CTL_IOCE = 1 << 2;
+  const SD_CTL_STRM_SHIFT = 20;
+
+  // Wait for the IO worker to report ready (PCI config + MMIO routes depend on it).
+  const ioReadyIndex = StatusIndex.IoReady;
+  const ioReadyDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 30_000;
+  while (Atomics.load(status, ioReadyIndex) !== 1) {
+    const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+    if (now >= ioReadyDeadline) {
+      throw new Error("Timed out waiting for IO worker ready while starting HDA PCI device.");
+    }
+    await sleepMs(50);
+  }
+
+  const pciEnable = 0x8000_0000;
+  const cfgAddr = (bus: number, dev: number, fn: number, reg: number) =>
+    (pciEnable | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) | ((fn & 0x7) << 8) | (reg & 0xfc)) >>> 0;
+  const readDword = (bus: number, dev: number, fn: number, reg: number) => {
+    client.portWrite(0x0cf8, 4, cfgAddr(bus, dev, fn, reg));
+    return client.portRead(0x0cfc, 4) >>> 0;
+  };
+  const writeDword = (bus: number, dev: number, fn: number, reg: number, value: number) => {
+    client.portWrite(0x0cf8, 4, cfgAddr(bus, dev, fn, reg));
+    client.portWrite(0x0cfc, 4, value >>> 0);
+  };
+
+  // Scan bus0 for Intel ICH6 HD Audio (8086:2668).
+  //
+  // This device is registered by the IO worker after WASM init completes; when Chromium
+  // doesn't have a cached compilation artifact yet (common in CI), we may need to retry.
+  let found: { bus: number; device: number; function: number } | null = null;
+  const scanDeadlineMs = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 45_000;
+  while ((typeof performance?.now === "function" ? performance.now() : Date.now()) < scanDeadlineMs) {
+    for (let dev = 0; dev < 32; dev++) {
+      const id = readDword(0, dev, 0, 0x00);
+      const vendorId = id & 0xffff;
+      const deviceId = (id >>> 16) & 0xffff;
+      if (vendorId === 0xffff) continue;
+      if (vendorId === 0x8086 && deviceId === 0x2668) {
+        found = { bus: 0, device: dev, function: 0 };
+        break;
+      }
+    }
+    if (found) break;
+    await sleepMs(50);
+  }
+  if (!found) {
+    throw new Error("Timed out waiting for Intel HDA PCI function (8086:2668) to appear on bus0.");
+  }
+
+  const { bus, device, function: fn } = found;
+
+  // Enable memory-space decoding + bus mastering in PCI command register.
+  const cmdStatus = readDword(bus, device, fn, 0x04);
+  const command = cmdStatus & 0xffff;
+  const newCommand = (command | 0x2 | 0x4) & 0xffff;
+  writeDword(bus, device, fn, 0x04, (cmdStatus & 0xffff_0000) | newCommand);
+
+  const bar0 = readDword(bus, device, fn, 0x10) >>> 0;
+  const bar0Base = BigInt(bar0 & 0xffff_fff0);
+  if (bar0Base === 0n) {
+    throw new Error("HDA BAR0 is zero after enabling MEM decoding.");
+  }
+
+  // MMIO register offsets (subset).
+  const REG_GCTL = 0x08n;
+  const REG_STATESTS = 0x0en;
+  const REG_INTCTL = 0x20n;
+
+  const REG_CORBLBASE = 0x40n;
+  const REG_CORBUBASE = 0x44n;
+  const REG_CORBWP = 0x48n;
+  const REG_CORBRP = 0x4an;
+  const REG_CORBCTL = 0x4cn;
+  const REG_CORBSIZE = 0x4en;
+
+  const REG_RIRBLBASE = 0x50n;
+  const REG_RIRBUBASE = 0x54n;
+  const REG_RIRBWP = 0x58n;
+  const REG_RIRBCTL = 0x5cn;
+  const REG_RIRBSIZE = 0x5en;
+
+  const REG_SD0_CTL = 0x80n;
+  const REG_SD0_CBL = 0x88n;
+  const REG_SD0_LVI = 0x8cn;
+  const REG_SD0_FMT = 0x92n;
+  const REG_SD0_BDPL = 0x98n;
+  const REG_SD0_BDPU = 0x9cn;
+
+  // Bring controller out of reset.
+  client.mmioWrite(bar0Base + REG_GCTL, 4, 0x1);
+  const gctlDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 1_000;
+  while ((client.mmioRead(bar0Base + REG_GCTL, 4) & 0x1) === 0) {
+    const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+    if (now >= gctlDeadline) {
+      throw new Error("Timed out waiting for HDA GCTL.CRST to become 1.");
+    }
+    await sleepMs(1);
+  }
+
+  // STATESTS bit0 should indicate codec0 present once out of reset.
+  const statests = client.mmioRead(bar0Base + REG_STATESTS, 2) & 0xffff;
+  if ((statests & 0x1) === 0) {
+    // Not fatal in the harness, but helps debug if the model is miswired.
+    console.warn(`[cpu] HDA STATESTS missing codec0 presence bit: 0x${statests.toString(16)}`);
+  }
+
+  // Guest memory layout for CORB/RIRB + BDL + PCM.
+  const corbBase = 0x1000;
+  const rirbBase = 0x2000;
+  const bdlBase = 0x3000;
+  const pcmBase = 0x4000;
+
+  const CORB_ENTRIES = 256;
+  const RIRB_ENTRIES = 256;
+  const CORB_BYTES = CORB_ENTRIES * 4;
+  const RIRB_BYTES = RIRB_ENTRIES * 8;
+
+  guestBoundsCheck(corbBase, CORB_BYTES);
+  guestBoundsCheck(rirbBase, RIRB_BYTES);
+  guestBoundsCheck(bdlBase, 16);
+
+  // Configure CORB/RIRB to exercise the command/response path.
+  client.mmioWrite(bar0Base + REG_CORBLBASE, 4, corbBase);
+  client.mmioWrite(bar0Base + REG_CORBUBASE, 4, 0);
+  client.mmioWrite(bar0Base + REG_CORBSIZE, 1, 0x2); // 256 entries
+  client.mmioWrite(bar0Base + REG_CORBRP, 2, 0x00ff); // first command lands at entry 0
+
+  client.mmioWrite(bar0Base + REG_RIRBLBASE, 4, rirbBase);
+  client.mmioWrite(bar0Base + REG_RIRBUBASE, 4, 0);
+  client.mmioWrite(bar0Base + REG_RIRBSIZE, 1, 0x2); // 256 entries
+  client.mmioWrite(bar0Base + REG_RIRBWP, 2, 0x00ff); // first response lands at entry 0
+
+  client.mmioWrite(bar0Base + REG_RIRBCTL, 1, 0x02); // RUN
+  client.mmioWrite(bar0Base + REG_CORBCTL, 1, 0x02); // RUN
+
+  const guestDv = new DataView(guestU8.buffer, guestU8.byteOffset, guestU8.byteLength);
+
+  // Configure codec output converter (NID 2) to listen on stream 1, channel 0.
+  // HDA CORB command format: CAD[31:28] | NID[27:20] | VERB[19:0].
+  const mkCorbCmd = (cad: number, nid: number, verb20: number) =>
+    (((cad & 0xf) << 28) | ((nid & 0x7f) << 20) | (verb20 & 0x000f_ffff)) >>> 0;
+
+  const setStreamChVerb20 = ((0x706 << 8) | 0x10) >>> 0; // stream=1, channel=0
+  const fmtRaw = 0x0011; // 48kHz base, 16-bit, stereo
+  const setFmtVerb20 = ((0x200 << 8) | (fmtRaw & 0xffff)) >>> 0;
+
+  guestDv.setUint32(corbBase + 0, mkCorbCmd(0, 2, setStreamChVerb20), true);
+  guestDv.setUint32(corbBase + 4, mkCorbCmd(0, 2, setFmtVerb20), true);
+  client.mmioWrite(bar0Base + REG_CORBWP, 2, 0x0001);
+
+  // Wait for both verbs to be processed (RIRBWP should advance to 1).
+  const rirbDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 1_000;
+  while ((client.mmioRead(bar0Base + REG_RIRBWP, 2) & 0xffff) !== 0x0001) {
+    const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+    if (now >= rirbDeadline) {
+      throw new Error("Timed out waiting for HDA CORB/RIRB verb processing.");
+    }
+    await sleepMs(1);
+  }
+
+  // Populate a looping PCM buffer (sine wave) and a single-entry BDL pointing at it.
+  const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
+  const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
+  const sampleRate = 48_000;
+  const frames = Math.floor(sampleRate / 5); // ~200ms
+  const bytesPerFrame = 4; // 16-bit stereo
+  const pcmLenBytes = frames * bytesPerFrame;
+
+  guestBoundsCheck(pcmBase, pcmLenBytes);
+
+  for (let n = 0; n < frames; n++) {
+    const t = n / sampleRate;
+    const s = Math.sin(2 * Math.PI * freqHz * t) * gain;
+    let v16 = Math.round(s * 0x7fff);
+    if (v16 > 0x7fff) v16 = 0x7fff;
+    if (v16 < -0x8000) v16 = -0x8000;
+
+    const off = pcmBase + n * bytesPerFrame;
+    guestDv.setInt16(off, v16, true);
+    guestDv.setInt16(off + 2, v16, true);
+  }
+
+  // BDL entry: [addr:u64, len:u32, flags:u32]. IOC=1 so real implementations can raise BCIS.
+  guestDv.setUint32(bdlBase + 0, pcmBase >>> 0, true);
+  guestDv.setUint32(bdlBase + 4, 0, true);
+  guestDv.setUint32(bdlBase + 8, pcmLenBytes >>> 0, true);
+  guestDv.setUint32(bdlBase + 12, 1, true);
+
+  // Program stream descriptor 0.
+  client.mmioWrite(bar0Base + REG_SD0_BDPL, 4, bdlBase);
+  client.mmioWrite(bar0Base + REG_SD0_BDPU, 4, 0);
+  client.mmioWrite(bar0Base + REG_SD0_CBL, 4, pcmLenBytes >>> 0);
+  client.mmioWrite(bar0Base + REG_SD0_LVI, 2, 0);
+  client.mmioWrite(bar0Base + REG_SD0_FMT, 2, fmtRaw);
+
+  // SRST | RUN | IOCE | stream number 1.
+  const sdCtl = (SD_CTL_SRST | SD_CTL_RUN | SD_CTL_IOCE | (1 << SD_CTL_STRM_SHIFT)) >>> 0;
+  client.mmioWrite(bar0Base + REG_SD0_CTL, 4, sdCtl);
+
+  // Enable global interrupt + stream0 enable (best-effort).
+  client.mmioWrite(bar0Base + REG_INTCTL, 4, 0x8000_0000 | 0x1);
+
+  ctx.postMessage({ type: "audioOutputHdaPciDevice.ready", pci: found, bar0 } satisfies AudioOutputHdaPciDeviceReadyMessage);
 }
 
 type WasmMicBridgeHandle = {
@@ -1322,6 +1572,21 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
+  if ((msg as Partial<AudioOutputHdaPciDeviceStartMessage>).type === "audioOutputHdaPciDevice.start") {
+    const startMsg = msg as AudioOutputHdaPciDeviceStartMessage;
+    if (!io) {
+      pendingHdaPciDeviceStart = startMsg;
+      return;
+    }
+    pendingHdaPciDeviceStart = null;
+    void startHdaPciDevice(startMsg).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(err);
+      ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
+    });
+    return;
+  }
+
   if ((msg as Partial<CursorDemoStopMessage>).type === "cursorDemo.stop") {
     stopCursorDemo();
     return;
@@ -1561,6 +1826,16 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
       if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
+
+      const pending = pendingHdaPciDeviceStart;
+      if (pending) {
+        pendingHdaPciDeviceStart = null;
+        void startHdaPciDevice(pending).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(err);
+          ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
+        });
+      }
 
       // WASM is optional in this repo (CI runs with `--skip-wasm`), but worker init
       // should be fast enough to start pumping AudioWorklet ring buffers.
