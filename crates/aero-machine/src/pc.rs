@@ -415,13 +415,9 @@ impl PcMachine {
             return;
         };
 
-        // Move the backend out to avoid borrow conflicts between `self.bus.platform` and
-        // `self.network_backend`.
-        let mut backend = self.network_backend.take();
-
         // Budgets for pumping guest ↔ host frames per emulation slice.
-        const MAX_TX_FRAMES_PER_POLL: usize = 256;
-        const MAX_RX_FRAMES_PER_POLL: usize = 256;
+        const MAX_TX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
+        const MAX_RX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
 
         // Keep the device model's internal PCI config image in sync with the platform PCI config
         // space. The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config
@@ -463,13 +459,10 @@ impl PcMachine {
         tick_e1000(
             &mut dev,
             &mut self.bus.platform.memory,
-            &mut backend,
+            &mut self.network_backend,
             MAX_TX_FRAMES_PER_POLL,
             MAX_RX_FRAMES_PER_POLL,
         );
-        drop(dev);
-
-        self.network_backend = backend;
     }
 
     /// Run the CPU for at most `max_insts` guest instructions.
