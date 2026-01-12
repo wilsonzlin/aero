@@ -477,6 +477,7 @@ pub mod tier1 {
     fn decode_modrm_operand(
         bytes: &[u8],
         offset: &mut usize,
+        bitness: u32,
         rex: Rex,
         rex_present: bool,
         width: Width,
@@ -526,11 +527,20 @@ pub mod tier1 {
                 disp = disp32 as i32;
             }
         } else if rm_low3 == 5 && modrm.mod_bits == 0 {
-            // RIP-relative (64-bit mode).
-            rip_relative = true;
-            let disp32 = read_le(bytes, *offset, 4)? as u32;
-            *offset += 4;
-            disp = disp32 as i32;
+            if bitness == 64 {
+                // RIP-relative (64-bit mode).
+                rip_relative = true;
+                let disp32 = read_le(bytes, *offset, 4)? as u32;
+                *offset += 4;
+                disp = disp32 as i32;
+            } else {
+                // Absolute disp32 addressing (32-bit mode). 16-bit mode uses a different
+                // addressing scheme which is not supported by this Tier1 decoder.
+                base = None;
+                let disp32 = read_le(bytes, *offset, 4)? as u32;
+                *offset += 4;
+                disp = disp32 as i32;
+            }
         } else {
             base = Some(decode_gpr(modrm.rm)?);
         }
@@ -698,7 +708,8 @@ pub mod tier1 {
             }
             0x89 | 0x88 => {
                 let w = if opcode1 == 0x88 { Width::W8 } else { width };
-                let (dst, modrm) = decode_modrm_operand(bytes, &mut offset, rex, rex.present, w)?;
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, w)?;
                 let src_reg = decode_reg_from_modrm(modrm, rex.present, w)?;
                 InstKind::Mov {
                     dst,
@@ -708,7 +719,8 @@ pub mod tier1 {
             }
             0x8b | 0x8a => {
                 let w = if opcode1 == 0x8a { Width::W8 } else { width };
-                let (src, modrm) = decode_modrm_operand(bytes, &mut offset, rex, rex.present, w)?;
+                let (src, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, w)?;
                 let dst_reg = decode_reg_from_modrm(modrm, rex.present, w)?;
                 InstKind::Mov {
                     dst: Operand::Reg(dst_reg),
@@ -718,7 +730,8 @@ pub mod tier1 {
             }
             0xc7 | 0xc6 => {
                 let w = if opcode1 == 0xc6 { Width::W8 } else { width };
-                let (dst, modrm) = decode_modrm_operand(bytes, &mut offset, rex, rex.present, w)?;
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, w)?;
                 let group = modrm.reg & 0x7;
                 if group != 0 {
                     return Err(DecodeError {
@@ -748,8 +761,14 @@ pub mod tier1 {
                 }
             }
             0x8d => {
-                let (src, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W64)?;
+                let (src, modrm) = decode_modrm_operand(
+                    bytes,
+                    &mut offset,
+                    bitness,
+                    rex,
+                    rex.present,
+                    Width::W64,
+                )?;
                 let Operand::Mem(addr) = src else {
                     return Err(DecodeError {
                         message: "LEA requires memory operand",
@@ -761,7 +780,7 @@ pub mod tier1 {
             0x01 | 0x03 | 0x21 | 0x23 | 0x09 | 0x0b | 0x31 | 0x33 | 0x29 | 0x2b | 0x39 | 0x3b
             | 0x85 => {
                 let (rm_op, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, width)?;
                 let reg_op = Operand::Reg(decode_reg_from_modrm(modrm, rex.present, width)?);
 
                 let (op, is_cmp, is_test, dst, src) = match opcode1 {
@@ -850,7 +869,7 @@ pub mod tier1 {
             }
             0x81 | 0x83 => {
                 let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, width)?;
                 let group = modrm.reg & 0x7;
                 let imm = if opcode1 == 0x83 {
                     let imm8 = read_u8(bytes, offset)? as i8 as i64 as u64;
@@ -911,7 +930,7 @@ pub mod tier1 {
             }
             0xd1 => {
                 let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, width)?;
                 let group = modrm.reg & 0x7;
                 let op = match group {
                     4 => ShiftOp::Shl,
@@ -953,7 +972,7 @@ pub mod tier1 {
             }
             0xc1 => {
                 let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, width)?;
                 let group = modrm.reg & 0x7;
                 let op = match group {
                     4 => ShiftOp::Shl,
@@ -999,7 +1018,7 @@ pub mod tier1 {
             }
             0xff => {
                 let (opnd, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W64)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, Width::W64)?;
                 let group = modrm.reg & 0x7;
                 match group {
                     0 => InstKind::Inc {
@@ -1099,8 +1118,14 @@ pub mod tier1 {
                         let cond = Cond::from_cc(cc).ok_or(DecodeError {
                             message: "invalid condition code",
                         })?;
-                        let (dst, _modrm) =
-                            decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W8)?;
+                        let (dst, _modrm) = decode_modrm_operand(
+                            bytes,
+                            &mut offset,
+                            bitness,
+                            rex,
+                            rex.present,
+                            Width::W8,
+                        )?;
                         InstKind::Setcc { cond, dst }
                     }
                     0x40..=0x4f => {
@@ -1109,7 +1134,7 @@ pub mod tier1 {
                             message: "invalid condition code",
                         })?;
                         let (src, modrm) =
-                            decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                            decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, width)?;
                         let dst = decode_reg_from_modrm(modrm, rex.present, width)?;
                         InstKind::Cmovcc {
                             cond,
