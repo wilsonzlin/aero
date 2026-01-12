@@ -315,10 +315,26 @@ impl VgaDevice {
 
     fn clear_text_buffer(&self, mem: &mut impl MemoryBus, attr: u8) {
         // Clear the full 32KiB text window (16k cells). This covers all BIOS text pages.
-        for cell in 0..0x4000u32 {
-            let addr = self.text_base + (cell as u64) * 2;
-            mem.write_u8(addr, b' ');
-            mem.write_u8(addr + 1, attr);
+        //
+        // Use a bulk `write_physical` path when available so clearing does not devolve into
+        // byte-at-a-time MMIO operations when the text window is backed by an emulated VGA device.
+        const BYTES: usize = 0x4000 * 2;
+        const CHUNK_SIZE: usize = 4096;
+        const _: () = assert!(CHUNK_SIZE % 2 == 0);
+
+        let mut chunk = [0u8; CHUNK_SIZE];
+        for pair in chunk.chunks_exact_mut(2) {
+            pair[0] = b' ';
+            pair[1] = attr;
+        }
+
+        let mut addr = self.text_base;
+        let mut remaining = BYTES;
+        while remaining != 0 {
+            let len = remaining.min(CHUNK_SIZE);
+            mem.write_physical(addr, &chunk[..len]);
+            addr = addr.saturating_add(len as u64);
+            remaining -= len;
         }
     }
 
