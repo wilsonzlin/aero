@@ -661,19 +661,6 @@ impl IdeController {
         self.secondary.drive_present[0] = true;
     }
 
-    /// Reset controller state back to its initial ("power-on") baseline while preserving attached
-    /// drives/media.
-    pub fn reset(&mut self) {
-        self.primary.reset();
-        self.primary.control = 0;
-        self.secondary.reset();
-        self.secondary.control = 0;
-
-        for bm in &mut self.bus_master {
-            bm.reset();
-        }
-    }
-
     fn decode_bus_master(&self, port: u16) -> Option<(usize, u16)> {
         let base = self.bus_master_base;
         // Use wrapping arithmetic so pathological base addresses near `u16::MAX` can't trigger an
