@@ -328,8 +328,19 @@ fn print_disks_section_summary(file: &mut fs::File, section: &SnapshotSectionInf
             out
         }
 
-        let base = truncate(&disk.base_image, MAX_PRINT_CHARS);
-        let overlay = truncate(&disk.overlay_image, MAX_PRINT_CHARS);
+        fn display_disk_ref(s: &str, max_chars: usize) -> String {
+            if s.is_empty() {
+                // Some snapshot adapters intentionally emit placeholder disk entries with empty
+                // fields to preserve stable `disk_id` mappings even when a host backend is not
+                // configured.
+                "<unset>".to_string()
+            } else {
+                truncate(s, max_chars)
+            }
+        }
+
+        let base = display_disk_ref(&disk.base_image, MAX_PRINT_CHARS);
+        let overlay = display_disk_ref(&disk.overlay_image, MAX_PRINT_CHARS);
         println!(
             "  - [{idx}] disk_id={} base_image={base:?} overlay_image={overlay:?}",
             disk.disk_id
