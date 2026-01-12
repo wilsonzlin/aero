@@ -272,6 +272,28 @@ fn snapshot_load_samples_clock_once_for_timer_restore() {
 }
 
 #[test]
+fn snapshot_load_ignores_invalid_tick_field_when_elapsed_ns_is_present() {
+    const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(10_000_000_000);
+
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+
+    // Provide a valid elapsed-ns field and a deliberately corrupted tick field. `load_state` should
+    // restore the PM timer from elapsed-ns and ignore the invalid redundant tick field.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u64(TAG_PM_TIMER_ELAPSED_NS, 1_000_000_000);
+    w.field_bytes(TAG_PM_TIMER_TICKS, vec![0xAA]); // invalid encoding for u32
+    pm.load_state(&w.finish()).unwrap();
+
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF, 3_579_545);
+}
+
+#[test]
 fn snapshot_restore_from_ticks_and_remainder_without_elapsed_ns_preserves_phase() {
     const TAG_PM_TIMER_TICKS: u16 = 8;
     const TAG_PM_TIMER_REMAINDER: u16 = 9;

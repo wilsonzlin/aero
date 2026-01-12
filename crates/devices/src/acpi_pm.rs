@@ -524,8 +524,18 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         }
 
         let elapsed_ns = r.u64(TAG_PM_TIMER_ELAPSED_NS)?;
-        let pm_timer_ticks = r.u32(TAG_PM_TIMER_TICKS)?;
-        let pm_timer_remainder = r.u32(TAG_PM_TIMER_REMAINDER)?;
+        // Only decode tick-based timer fields when `elapsed_ns` is absent. This avoids rejecting an
+        // otherwise-valid snapshot due to a corrupted/unparseable redundant field.
+        let pm_timer_ticks = if elapsed_ns.is_none() {
+            r.u32(TAG_PM_TIMER_TICKS)?
+        } else {
+            None
+        };
+        let pm_timer_remainder = if pm_timer_ticks.is_some() {
+            r.u32(TAG_PM_TIMER_REMAINDER)?
+        } else {
+            None
+        };
 
         // `sci_level` is derived from the register state; it is snapshotted for completeness.
         let _ = r.bool(TAG_SCI_LEVEL)?;
