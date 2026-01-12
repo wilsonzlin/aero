@@ -99,6 +99,9 @@ static void test_connect_validation(void)
     intx_test_ctx_t ctx;
     NTSTATUS status;
 
+    WdkTestResetIoConnectInterruptCount();
+    WdkTestResetIoDisconnectInterruptCount();
+
     desc = make_int_desc();
     RtlZeroMemory(&ctx, sizeof(ctx));
 
@@ -119,6 +122,10 @@ static void test_connect_validation(void)
     desc.Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
     status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
     assert(status == STATUS_NOT_SUPPORTED);
+
+    /* Parameter validation failures must not call through to WDK interrupt routines. */
+    assert(WdkTestGetIoConnectInterruptCount() == 0);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 0);
 }
 
 static void test_connect_descriptor_translation(void)
@@ -171,6 +178,9 @@ static void test_connect_failure_zeroes_state(void)
     intx_test_ctx_t ctx;
     NTSTATUS status;
 
+    WdkTestResetIoConnectInterruptCount();
+    WdkTestResetIoDisconnectInterruptCount();
+
     desc = make_int_desc();
     RtlZeroMemory(&ctx, sizeof(ctx));
 
@@ -190,6 +200,14 @@ static void test_connect_failure_zeroes_state(void)
     assert(intx.Dpc.DeferredRoutine == NULL);
     assert(intx.PendingIsrStatus == 0);
     assert(intx.DpcInFlight == 0);
+
+    /*
+     * Even on failure, VirtioIntxConnect should have attempted IoConnectInterrupt
+     * exactly once, and should not call IoDisconnectInterrupt because the
+     * interrupt object was never created.
+     */
+    assert(WdkTestGetIoConnectInterruptCount() == 1);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 0);
 
     /* Restore default for other tests. */
     WdkTestSetIoConnectInterruptStatus(STATUS_SUCCESS);
