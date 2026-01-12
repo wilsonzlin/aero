@@ -2906,6 +2906,30 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
                                              WINHTTP_HEADER_NAME_BY_INDEX, &content_len, &content_len_size,
                                              WINHTTP_NO_HEADER_INDEX) != 0;
 
+  auto query_header_string = [&](DWORD query) -> std::wstring {
+    DWORD needed = 0;
+    WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &needed,
+                        WINHTTP_NO_HEADER_INDEX);
+    const DWORD err = GetLastError();
+    if (err != ERROR_INSUFFICIENT_BUFFER || needed == 0) return L"";
+
+    std::vector<wchar_t> buf((needed / sizeof(wchar_t)) + 1, L'\0');
+    DWORD size = needed;
+    if (!WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, buf.data(), &size,
+                             WINHTTP_NO_HEADER_INDEX)) {
+      return L"";
+    }
+    return std::wstring(buf.data());
+  };
+
+  const std::wstring content_type = query_header_string(WINHTTP_QUERY_CONTENT_TYPE);
+  const std::wstring etag = query_header_string(WINHTTP_QUERY_ETAG);
+  if (!content_type.empty() || !etag.empty()) {
+    log.Logf("virtio-net: HTTP GET large headers content_type=%s etag=%s",
+             content_type.empty() ? "-" : WideToUtf8(content_type).c_str(),
+             etag.empty() ? "-" : WideToUtf8(etag).c_str());
+  }
+
   uint64_t total_read = 0;
   uint64_t hash = kFnvOffsetBasis;
   bool read_ok = true;
