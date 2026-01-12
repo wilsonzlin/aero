@@ -11,6 +11,12 @@ Usage (from repo root, after building/running the probe for both arches):
     --x86 out_x86.txt \\
     --x64 out_x64.txt \\
     --out drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h
+
+By default this script emits a small curated set of ABI-critical anchors.
+
+Optional flags:
+  - `--allow-na`: allow optional `offsetof(...)=<n/a>` entries (omits those macros).
+  - `--all`: emit *all* parsed `sizeof(...)` / `offsetof(...)` values from the probe output.
 """
 
 from __future__ import annotations
