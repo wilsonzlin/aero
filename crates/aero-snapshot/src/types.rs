@@ -84,8 +84,11 @@ pub struct CpuState {
     pub rflags: u64,
     pub mode: CpuMode,
     pub halted: bool,
-    /// Interrupt vector recorded by a real-mode `INT n` instruction so a subsequent BIOS ROM stub
-    /// `HLT` can be surfaced as a BIOS hypercall.
+    /// Interrupt vector recorded when real/v8086-mode vector delivery enters a BIOS ROM stub
+    /// (`HLT; IRET`).
+    ///
+    /// Tier-0 treats `HLT` as a BIOS hypercall boundary only when this marker is set, surfacing
+    /// the event as `BiosInterrupt(vector)` instead of permanently halting.
     pub pending_bios_int: u8,
     pub pending_bios_int_valid: bool,
     /// A20 gate (real mode address wrap) state.
