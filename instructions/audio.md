@@ -25,8 +25,12 @@ Audio is important for user experience but not on the critical boot path.
 
 | Crate/Directory | Purpose |
 |-----------------|---------|
-| `crates/aero-audio/` | Audio subsystem (HDA controller, codecs) |
-| `web/src/audio/` | TypeScript AudioWorklet integration |
+| `crates/aero-audio/` | Guest audio device models (HDA controller + codec + PCM helpers) |
+| `crates/platform/src/audio/` | SharedArrayBuffer ring layouts + WASM bridges (`WorkletBridge`, `MicBridge`) |
+| `web/src/platform/` | Web Audio output setup + AudioWorklet consumer (`audio.ts`, `audio-worklet-processor.js`) |
+| `web/src/audio/` | Microphone capture UI + AudioWorklet producer (`mic_capture.ts`, `mic-worklet-processor.js`) |
+| `web/src/runtime/` | Coordinator↔worker control plane (ring buffer attachment messages + routing) |
+| `web/src/io/` + `web/src/workers/io.worker.ts` | Worker runtime device stack (PCI/MMIO/virtio; IO worker owns guest audio devices) |
 
 ---
 
