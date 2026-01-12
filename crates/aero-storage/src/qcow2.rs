@@ -27,6 +27,7 @@ const QCOW2_REFCOUNT_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 struct Qcow2Header {
     cluster_bits: u32,
     size: u64,
+    header_length: u32,
     l1_entries: u64,
     l1_table_offset: u64,
     refcount_table_offset: u64,
@@ -160,6 +161,7 @@ impl Qcow2Header {
         Ok(Self {
             cluster_bits,
             size,
+            header_length,
             l1_entries: required_l1,
             l1_table_offset,
             refcount_table_offset,
@@ -368,6 +370,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         if offset == 0 {
             return Err(DiskError::CorruptImage("qcow2 invalid l1 entry"));
         }
+        self.validate_cluster_not_overlapping_metadata(offset)?;
         Ok(Some(offset))
     }
 
@@ -395,7 +398,63 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         if offset == 0 {
             return Err(DiskError::CorruptImage("qcow2 invalid l2 entry"));
         }
+        self.validate_cluster_not_overlapping_metadata(offset)?;
         Ok(Some(offset))
+    }
+
+    fn validate_cluster_not_overlapping_metadata(&self, cluster_offset: u64) -> Result<()> {
+        let cluster_size = self.cluster_size();
+        if !cluster_offset.is_multiple_of(cluster_size) {
+            return Err(DiskError::CorruptImage("qcow2 cluster offset not aligned"));
+        }
+        let cluster_end = cluster_offset
+            .checked_add(cluster_size)
+            .ok_or(DiskError::OffsetOverflow)?;
+
+        let header_end = self.header.header_length as u64;
+        if cluster_offset < header_end {
+            return Err(DiskError::CorruptImage("qcow2 cluster overlaps header"));
+        }
+
+        let l1_bytes = self
+            .header
+            .l1_entries
+            .checked_mul(8)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let l1_end = self
+            .header
+            .l1_table_offset
+            .checked_add(l1_bytes)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if ranges_overlap(
+            cluster_offset,
+            cluster_end,
+            self.header.l1_table_offset,
+            l1_end,
+        ) {
+            return Err(DiskError::CorruptImage("qcow2 cluster overlaps l1 table"));
+        }
+
+        let refcount_table_bytes = (self.header.refcount_table_clusters as u64)
+            .checked_mul(cluster_size)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let refcount_end = self
+            .header
+            .refcount_table_offset
+            .checked_add(refcount_table_bytes)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if ranges_overlap(
+            cluster_offset,
+            cluster_end,
+            self.header.refcount_table_offset,
+            refcount_end,
+        ) {
+            return Err(DiskError::CorruptImage(
+                "qcow2 cluster overlaps refcount table",
+            ));
+        }
+
+        Ok(())
     }
 
     fn load_l2_table(&mut self, l2_offset: u64) -> Result<Vec<u64>> {
