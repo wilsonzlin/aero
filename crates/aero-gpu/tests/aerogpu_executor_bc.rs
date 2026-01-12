@@ -1579,8 +1579,10 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
 
 #[test]
 fn executor_bc_dirty_range_upload_pads_small_mips() {
-    const TEST_NAME: &str =
-        concat!(module_path!(), "::executor_bc_dirty_range_upload_pads_small_mips");
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_bc_dirty_range_upload_pads_small_mips"
+    );
     pollster::block_on(async {
         if env_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION") {
             common::skip_or_panic(

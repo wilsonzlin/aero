@@ -647,7 +647,9 @@ fn try_new_usb_device_model_from_snapshot(
                 return Err(SnapshotError::InvalidFieldEncoding("hub port count"));
             }
 
-            Ok(Some(Box::new(UsbHubDevice::new_with_ports(num_ports as usize))))
+            Ok(Some(Box::new(UsbHubDevice::new_with_ports(
+                num_ports as usize,
+            ))))
         }
         b"UKBD" => Ok(Some(Box::new(UsbHidKeyboardHandle::new()))),
         b"UMSE" => Ok(Some(Box::new(UsbHidMouseHandle::new()))),

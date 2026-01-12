@@ -72,11 +72,7 @@ fn machine_restore_accepts_legacy_single_disk_controller_blob_nvme() {
     });
 
     let mut restored = Machine::new(cfg).unwrap();
-    let before = restored
-        .nvme()
-        .expect("NVMe enabled")
-        .borrow()
-        .save_state();
+    let before = restored.nvme().expect("NVMe enabled").borrow().save_state();
     assert_ne!(
         before, nvme_blob,
         "precondition: restored machine should start with different NVMe state"

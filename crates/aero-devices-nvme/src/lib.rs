@@ -2454,7 +2454,10 @@ mod tests {
 
         let bytes = state.save_state();
         let err = ctrl.load_state(&bytes).unwrap_err();
-        assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme io queue count"));
+        assert_eq!(
+            err,
+            SnapshotError::InvalidFieldEncoding("nvme io queue count")
+        );
     }
 
     #[test]

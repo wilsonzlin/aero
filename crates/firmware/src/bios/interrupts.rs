@@ -1543,7 +1543,10 @@ mod tests {
         // DH=heads-1=1, DL=drive count=1
         assert_eq!(cpu.gpr[gpr::RDX] as u16, 0x0101);
         assert_eq!(cpu.segments.es.selector, super::super::BIOS_SEGMENT);
-        assert_eq!(cpu.gpr[gpr::RDI] as u16, super::super::DISKETTE_PARAM_TABLE_OFFSET);
+        assert_eq!(
+            cpu.gpr[gpr::RDI] as u16,
+            super::super::DISKETTE_PARAM_TABLE_OFFSET
+        );
         assert_eq!(cpu.gpr[gpr::RBX] as u8, 0x04);
     }
 
