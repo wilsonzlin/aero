@@ -150,6 +150,21 @@ struct StateBlock {
   bool n_patch_mode_set = false;
   float n_patch_mode = 0.0f;
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // Fixed-function lighting/material state. Cached-only and not currently
+  // consumed by the AeroGPU shader pipeline, but tracked for Get*/state-block
+  // compatibility with legacy apps.
+  bool material_set = false;
+  bool material_valid = false;
+  D3DMATERIAL9 material{};
+
+  std::bitset<Device::kMaxLights> light_mask{};
+  std::array<D3DLIGHT9, Device::kMaxLights> lights{};
+  std::bitset<Device::kMaxLights> light_valid_bits{};
+  std::bitset<Device::kMaxLights> light_enable_mask{};
+  std::bitset<Device::kMaxLights> light_enable_bits{};
+#endif
+
   // Texture bindings (pixel shader stages only; 0..15).
   std::bitset<16> texture_mask{};
   std::array<Resource*, 16> textures{};
@@ -2635,6 +2650,51 @@ inline void stateblock_record_npatch_mode_locked(Device* dev, float mode) {
   sb->n_patch_mode_set = true;
   sb->n_patch_mode = mode;
 }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+inline void stateblock_record_material_locked(Device* dev, const D3DMATERIAL9& material, bool valid) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->material_set = true;
+  sb->material_valid = valid;
+  sb->material = material;
+}
+
+inline void stateblock_record_light_locked(Device* dev, uint32_t index, const D3DLIGHT9& light, bool valid) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (index >= Device::kMaxLights) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->light_mask.set(index);
+  sb->lights[index] = light;
+  if (valid) {
+    sb->light_valid_bits.set(index);
+  } else {
+    sb->light_valid_bits.reset(index);
+  }
+}
+
+inline void stateblock_record_light_enable_locked(Device* dev, uint32_t index, BOOL enabled) {
+  if (!dev || !dev->recording_state_block) {
+    return;
+  }
+  if (index >= Device::kMaxLights) {
+    return;
+  }
+  StateBlock* sb = dev->recording_state_block;
+  sb->light_enable_mask.set(index);
+  if (enabled) {
+    sb->light_enable_bits.set(index);
+  } else {
+    sb->light_enable_bits.reset(index);
+  }
+}
+#endif
 
 inline void stateblock_record_texture_locked(Device* dev, uint32_t stage, Resource* tex) {
   if (!dev || !dev->recording_state_block) {
@@ -9468,6 +9528,24 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->n_patch_mode_set = true;
     sb->n_patch_mode = dev->n_patch_mode;
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    sb->material_set = true;
+    sb->material_valid = dev->material_valid;
+    sb->material = dev->material;
+
+    for (uint32_t i = 0; i < Device::kMaxLights; ++i) {
+      sb->light_mask.set(i);
+      sb->lights[i] = dev->lights[i];
+      if (dev->light_valid[i]) {
+        sb->light_valid_bits.set(i);
+      }
+      sb->light_enable_mask.set(i);
+      if (dev->light_enabled[i]) {
+        sb->light_enable_bits.set(i);
+      }
+    }
+#endif
+
     sb->vertex_decl_set = true;
     sb->vertex_decl = dev->vertex_decl;
     sb->fvf_set = true;
@@ -9537,6 +9615,30 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
   if (sb->n_patch_mode_set) {
     sb->n_patch_mode = dev->n_patch_mode;
   }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (sb->material_set) {
+    sb->material_valid = dev->material_valid;
+    sb->material = dev->material;
+  }
+  for (uint32_t i = 0; i < Device::kMaxLights; ++i) {
+    if (sb->light_mask.test(i)) {
+      sb->lights[i] = dev->lights[i];
+      if (dev->light_valid[i]) {
+        sb->light_valid_bits.set(i);
+      } else {
+        sb->light_valid_bits.reset(i);
+      }
+    }
+    if (sb->light_enable_mask.test(i)) {
+      if (dev->light_enabled[i]) {
+        sb->light_enable_bits.set(i);
+      } else {
+        sb->light_enable_bits.reset(i);
+      }
+    }
+  }
+#endif
 
   for (uint32_t idx = 0; idx < 16u * 16u; ++idx) {
     if (sb->sampler_state_mask.test(idx)) {
@@ -9788,6 +9890,25 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     dev->n_patch_mode = sb->n_patch_mode;
     stateblock_record_npatch_mode_locked(dev, dev->n_patch_mode);
   }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (sb->material_set) {
+    dev->material = sb->material;
+    dev->material_valid = sb->material_valid;
+    stateblock_record_material_locked(dev, dev->material, dev->material_valid);
+  }
+  for (uint32_t i = 0; i < Device::kMaxLights; ++i) {
+    if (sb->light_mask.test(i)) {
+      dev->lights[i] = sb->lights[i];
+      dev->light_valid[i] = sb->light_valid_bits.test(i);
+      stateblock_record_light_locked(dev, i, dev->lights[i], dev->light_valid[i]);
+    }
+    if (sb->light_enable_mask.test(i)) {
+      dev->light_enabled[i] = sb->light_enable_bits.test(i) ? TRUE : FALSE;
+      stateblock_record_light_enable_locked(dev, i, dev->light_enabled[i]);
+    }
+  }
+#endif
 
   // Samplers/textures.
   for (uint32_t stage = 0; stage < 16; ++stage) {
@@ -10718,6 +10839,7 @@ HRESULT device_set_material_impl(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMa
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->material = *pMaterial;
   dev->material_valid = true;
+  stateblock_record_material_locked(dev, dev->material, dev->material_valid);
   return trace.ret(S_OK);
 }
 
@@ -10775,6 +10897,7 @@ HRESULT device_set_light_impl(D3DDDI_HDEVICE hDevice, IndexT index, const LightT
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::memcpy(&dev->lights[idx], pLight, sizeof(dev->lights[idx]));
   dev->light_valid[idx] = true;
+  stateblock_record_light_locked(dev, idx, dev->lights[idx], dev->light_valid[idx]);
   return trace.ret(S_OK);
 }
 
@@ -10836,6 +10959,7 @@ HRESULT device_light_enable_impl(D3DDDI_HDEVICE hDevice, IndexT index, BoolT ena
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->light_enabled[idx] = d3d9_to_u32(enabled) ? TRUE : FALSE;
+  stateblock_record_light_enable_locked(dev, idx, dev->light_enabled[idx]);
   return trace.ret(S_OK);
 }
 

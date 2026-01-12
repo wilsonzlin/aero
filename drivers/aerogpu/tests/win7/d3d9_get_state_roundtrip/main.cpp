@@ -398,30 +398,36 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
-  // Clip plane round-trip (fixed-function cached state).
-  if (caps.MaxUserClipPlanes >= 1) {
+  // Clip plane round-trip (fixed-function cached state). Some D3D9 runtimes
+  // reject SetClipPlane up-front when MaxUserClipPlanes is 0; treat that as a
+  // supported skip rather than a failure.
+  {
     const float plane_set[4] = {1.25f, -2.5f, 3.75f, -4.0f};
     hr = dev->SetClipPlane(0, plane_set);
     if (FAILED(hr)) {
-      return reporter.FailHresult("SetClipPlane(0)", hr);
-    }
-    float plane_got[4] = {};
-    hr = dev->GetClipPlane(0, plane_got);
-    if (FAILED(hr)) {
-      return reporter.FailHresult("GetClipPlane(0)", hr);
-    }
-    for (int i = 0; i < 4; ++i) {
-      if (!NearlyEqual(plane_got[i], plane_set[i], 1e-6f)) {
-        return reporter.Fail("GetClipPlane mismatch at element %d: got=%f expected=%f",
-                             i,
-                             (double)plane_got[i],
-                             (double)plane_set[i]);
+      if (hr == D3DERR_INVALIDCALL && caps.MaxUserClipPlanes == 0) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipPlane (MaxUserClipPlanes=%lu hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)caps.MaxUserClipPlanes,
+                                   (unsigned long)hr);
+      } else {
+        return reporter.FailHresult("SetClipPlane(0)", hr);
+      }
+    } else {
+      float plane_got[4] = {};
+      hr = dev->GetClipPlane(0, plane_got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetClipPlane(0)", hr);
+      }
+      for (int i = 0; i < 4; ++i) {
+        if (!NearlyEqual(plane_got[i], plane_set[i], 1e-6f)) {
+          return reporter.Fail("GetClipPlane mismatch at element %d: got=%f expected=%f",
+                               i,
+                               (double)plane_got[i],
+                               (double)plane_set[i]);
+        }
       }
     }
-  } else {
-    aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipPlane (MaxUserClipPlanes=%lu)",
-                               kTestName,
-                               (unsigned long)caps.MaxUserClipPlanes);
   }
 
   // StreamSourceFreq (cached state).
@@ -485,8 +491,8 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
-  // Fixed-function lighting/material caching.
-  if (caps.MaxActiveLights >= 1) {
+  // Fixed-function material caching.
+  {
     D3DMATERIAL9 mat;
     ZeroMemory(&mat, sizeof(mat));
     mat.Diffuse.r = 0.1f;
@@ -520,7 +526,12 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (std::memcmp(&got_mat, &mat, sizeof(mat)) != 0) {
       return reporter.Fail("GetMaterial mismatch");
     }
+  }
 
+  // Fixed-function lighting caching. Some D3D9 runtimes reject SetLight up-front
+  // when MaxActiveLights is 0; treat that as a supported skip rather than a
+  // failure.
+  {
     D3DLIGHT9 light;
     ZeroMemory(&light, sizeof(light));
     light.Type = D3DLIGHT_POINT;
@@ -536,6 +547,14 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
     hr = dev->SetLight(0, &light);
     if (FAILED(hr)) {
+      if (hr == D3DERR_INVALIDCALL && caps.MaxActiveLights == 0) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetLight (MaxActiveLights=%lu hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)caps.MaxActiveLights,
+                                   (unsigned long)hr);
+        // Skip LightEnable as well since it is tied to light slots.
+        goto skip_light_enable;
+      }
       return reporter.FailHresult("SetLight(0)", hr);
     }
     D3DLIGHT9 got_light;
@@ -560,10 +579,8 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (!enabled) {
       return reporter.Fail("GetLightEnable mismatch: expected enabled");
     }
-  } else {
-    aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetMaterial/Light (MaxActiveLights=%lu)",
-                               kTestName,
-                               (unsigned long)caps.MaxActiveLights);
+  skip_light_enable:
+    ;
   }
 
   {
@@ -609,6 +626,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   const UINT stream_freq_clobber = 1;
   bool stream_freq_test = false;
 
+  D3DMATERIAL9 mat_sb;
+  ZeroMemory(&mat_sb, sizeof(mat_sb));
+  mat_sb.Diffuse.r = 0.11f;
+  mat_sb.Diffuse.g = 0.22f;
+  mat_sb.Diffuse.b = 0.33f;
+  mat_sb.Diffuse.a = 0.44f;
+  mat_sb.Power = 8.0f;
+  D3DMATERIAL9 mat_clobber = mat_sb;
+  mat_clobber.Diffuse.r = 0.9f;
+  mat_clobber.Diffuse.g = 0.8f;
+  mat_clobber.Diffuse.b = 0.7f;
+  mat_clobber.Diffuse.a = 0.6f;
+  mat_clobber.Power = 32.0f;
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -652,6 +683,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   hr = dev->SetTransform(D3DTS_WORLD, &world_sb);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTransform(D3DTS_WORLD) (stateblock)", hr);
+  }
+
+  hr = dev->SetMaterial(&mat_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetMaterial (stateblock)", hr);
   }
 
   hr = dev->SetVertexShaderConstantI(10, vs_i_sb, 1);
@@ -713,6 +749,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, (DWORD)D3DTOP_MODULATE2X);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP) (clobber)", hr);
+    }
+
+    hr = dev->SetMaterial(&mat_clobber);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetMaterial (clobber)", hr);
     }
 
     const int vs_i_clobber[4] = {-1, -2, -3, -4};
@@ -812,6 +853,16 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
     if (!MatrixEqual(got_world, world_sb)) {
       return reporter.Fail("stateblock restore mismatch: WORLD matrix mismatch");
+    }
+
+    D3DMATERIAL9 got_mat;
+    ZeroMemory(&got_mat, sizeof(got_mat));
+    hr = dev->GetMaterial(&got_mat);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetMaterial (after Apply)", hr);
+    }
+    if (std::memcmp(&got_mat, &mat_sb, sizeof(mat_sb)) != 0) {
+      return reporter.Fail("stateblock restore mismatch: Material");
     }
 
     int got_i[4] = {};
