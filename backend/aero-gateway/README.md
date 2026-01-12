@@ -176,6 +176,18 @@ TCP proxy (`/tcp`, `/tcp-mux`):
 - `TCP_MUX_MAX_STREAM_BUFFER_BYTES` (default: `1048576`)
 - `TCP_MUX_MAX_FRAME_PAYLOAD_BYTES` (default: `16777216`)
 
+L2 tunnel (`/l2`) payload limits (advertised via `POST /session` `limits.l2.*`):
+
+- `AERO_L2_MAX_FRAME_PAYLOAD` (default: `2048`; legacy alias: `AERO_L2_MAX_FRAME_SIZE`)
+  - Maximum payload bytes for L2 tunnel `FRAME` messages.
+  - This value is surfaced to clients as `limits.l2.maxFramePayloadBytes`.
+- `AERO_L2_MAX_CONTROL_PAYLOAD` (default: `256`)
+  - Maximum payload bytes for L2 tunnel control messages (`PING`/`PONG`/`ERROR`).
+  - This value is surfaced to clients as `limits.l2.maxControlPayloadBytes`.
+
+Note: the gateway does **not** terminate `/l2` itself; `aero-l2-proxy` enforces these limits at runtime. Keep
+the gateway's advertised values in sync with the actual proxy configuration.
+
 DNS-over-HTTPS:
 
 - `DNS_UPSTREAMS` (default: `1.1.1.1:53,8.8.8.8:53`)
