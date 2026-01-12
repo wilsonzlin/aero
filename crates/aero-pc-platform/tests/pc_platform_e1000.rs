@@ -313,6 +313,42 @@ fn pc_platform_routes_e1000_io_bar() {
 }
 
 #[test]
+fn pc_platform_routes_e1000_io_bar_after_bar1_reprogramming() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    let old_base = read_e1000_bar1_base(&mut pc);
+    assert_ne!(old_base, 0);
+    let new_base = old_base + 0x40;
+    assert_eq!(new_base % 0x40, 0);
+
+    // Relocate BAR1.
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x14,
+        new_base,
+    );
+
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+    let mmio_status = pc.memory.read_u32(bar0_base + 0x08);
+    assert_ne!(mmio_status, 0xFFFF_FFFF);
+
+    let old_base = u16::try_from(old_base).expect("BAR1 base should fit in u16 for IoPortBus");
+    let new_base = u16::try_from(new_base).expect("BAR1 base should fit in u16 for IoPortBus");
+
+    // Old base should no longer decode.
+    pc.io.write(old_base, 4, 0x0000_0008);
+    assert_eq!(pc.io.read(old_base + 0x04, 4), 0xFFFF_FFFF);
+
+    // New base should decode.
+    pc.io.write(new_base, 4, 0x0000_0008);
+    assert_eq!(pc.io.read(new_base + 0x04, 4), mmio_status);
+}
+
+#[test]
 fn pc_platform_defers_e1000_dma_until_process_e1000() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
