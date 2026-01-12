@@ -10,6 +10,115 @@ use std::collections::BTreeMap;
 const MAX_DISK_STRING_BYTES: usize = 64 * 1024;
 const MAX_REMOTE_CHUNK_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 const MAX_OVERLAY_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+const MAX_DISK_CONTROLLER_COUNT: usize = 256;
+const MAX_DISK_CONTROLLER_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+
+// ----------------------------------------
+// Disk controller multiplexing wrapper
+// ----------------------------------------
+
+/// Snapshot wrapper that can hold multiple disk-controller `aero-io-snapshot` blobs keyed by PCI
+/// BDF (`bus<<8 | device<<3 | function`).
+///
+/// This is intended for higher-level snapshot formats that need to store multiple distinct
+/// controller implementations (AHCI, virtio-blk, NVMe, ...) under a single device entry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiskControllersSnapshot {
+    controllers: BTreeMap<u16, Vec<u8>>,
+}
+
+impl DiskControllersSnapshot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, pci_bdf_u16: u16, bytes: Vec<u8>) -> Option<Vec<u8>> {
+        self.controllers.insert(pci_bdf_u16, bytes)
+    }
+
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, u16, Vec<u8>> {
+        self.controllers.iter()
+    }
+
+    pub fn controllers(&self) -> &BTreeMap<u16, Vec<u8>> {
+        &self.controllers
+    }
+
+    pub fn controllers_mut(&mut self) -> &mut BTreeMap<u16, Vec<u8>> {
+        &mut self.controllers
+    }
+}
+
+impl IoSnapshot for DiskControllersSnapshot {
+    const DEVICE_ID: [u8; 4] = *b"DSKC";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_CONTROLLERS: u16 = 1;
+
+        let mut entries: Vec<Vec<u8>> = Vec::with_capacity(self.controllers.len());
+        for (bdf, snap) in &self.controllers {
+            let mut entry = Vec::with_capacity(2 + snap.len());
+            entry.extend_from_slice(&bdf.to_le_bytes());
+            entry.extend_from_slice(snap);
+            entries.push(entry);
+        }
+
+        let controllers = Encoder::new().vec_bytes(&entries).finish();
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_bytes(TAG_CONTROLLERS, controllers);
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_CONTROLLERS: u16 = 1;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        let mut out: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
+        if let Some(buf) = r.bytes(TAG_CONTROLLERS) {
+            let mut d = Decoder::new(buf);
+
+            // We manually decode the vector to validate the declared count/lengths before any large
+            // allocations.
+            let count = d.u32()? as usize;
+            if count > MAX_DISK_CONTROLLER_COUNT {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "disk controller count",
+                ));
+            }
+
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len < 2 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "disk controller entry too short",
+                    ));
+                }
+                if len - 2 > MAX_DISK_CONTROLLER_SNAPSHOT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "disk controller snapshot too large",
+                    ));
+                }
+                let entry = d.bytes(len)?;
+                let bdf = u16::from_le_bytes([entry[0], entry[1]]);
+                let nested = entry[2..].to_vec();
+                if out.insert(bdf, nested).is_some() {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "disk controller duplicate bdf",
+                    ));
+                }
+            }
+
+            d.finish()?;
+        }
+
+        self.controllers = out;
+        Ok(())
+    }
+}
 
 // ----------------------------------------
 // Disk layer state (host-side)
