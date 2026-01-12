@@ -38,11 +38,24 @@ import {
 export type AeroGpuCpuTexture = {
   width: number;
   height: number;
+  mipLevels: number;
+  arrayLayers: number;
   usageFlags: number;
   format: number;
+  /// Total packed backing size in bytes for the full mip+array chain, using the canonical
+  /// `(array_layer, mip)` packing rules documented in `drivers/aerogpu/protocol/allocation-table.md`.
+  totalBackingSizeBytes: number;
   rowPitchBytes: number;
   // Internal representation is always RGBA8, tightly packed.
   data: Uint8Array;
+  /// Per-subresource RGBA8 data in D3D subresource order:
+  /// `subresource = mip + array_layer * mipLevels`.
+  ///
+  /// `data` is always an alias of `subresources[0]` (mip0/layer0) for backwards compatibility.
+  subresources: Uint8Array[];
+  /// Per-subresource guest backing layout for the packed chain, expressed relative to the start of
+  /// the resource (i.e. `backing.offsetBytes` is added separately).
+  subresourceLayouts: AeroGpuTextureSubresourceLayout[];
   backing?: { allocId: number; offsetBytes: number };
 };
 
@@ -55,6 +68,16 @@ export type AeroGpuCpuBuffer = {
 
 export type AeroGpuAllocTableEntry = { gpa: number; sizeBytes: number; flags: number };
 export type AeroGpuAllocTable = Map<number, AeroGpuAllocTableEntry>;
+
+export type AeroGpuTextureSubresourceLayout = {
+  mipLevel: number;
+  arrayLayer: number;
+  width: number;
+  height: number;
+  offsetBytes: number;
+  rowPitchBytes: number;
+  sizeBytes: number;
+};
 
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 
@@ -484,6 +507,96 @@ const writeTexelFromRgba = (format: number, src: Uint8Array, srcOff: number, dst
   }
 };
 
+const isX8Format = (format: number): boolean =>
+  format === AEROGPU_FORMAT_R8G8B8X8_UNORM ||
+  format === AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB ||
+  format === AEROGPU_FORMAT_B8G8R8X8_UNORM ||
+  format === AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB;
+
+const mipDim = (base: number, mipLevel: number): number => Math.max(1, base >>> mipLevel);
+
+const subresourceIndex = (mipLevel: number, arrayLayer: number, mipLevels: number): number => mipLevel + arrayLayer * mipLevels;
+
+const forceOpaqueAlphaRgba8 = (rgba8: Uint8Array): void => {
+  for (let i = 3; i < rgba8.length; i += 4) rgba8[i] = 255;
+};
+
+const buildTexture2dSubresourceLayouts = (
+  width: number,
+  height: number,
+  mipLevels: number,
+  arrayLayers: number,
+  mip0RowPitchBytes: number,
+): { layouts: AeroGpuTextureSubresourceLayout[]; totalSizeBytes: number } => {
+  if (width === 0 || height === 0) {
+    throw new Error(`aerogpu: CREATE_TEXTURE2D invalid dimensions ${width}x${height}`);
+  }
+  if (mipLevels === 0 || arrayLayers === 0) {
+    throw new Error(`aerogpu: CREATE_TEXTURE2D invalid mip_levels/array_layers ${mipLevels}/${arrayLayers}`);
+  }
+
+  const layouts: AeroGpuTextureSubresourceLayout[] = [];
+  let offsetBytes = 0;
+
+  for (let layer = 0; layer < arrayLayers; layer += 1) {
+    for (let mip = 0; mip < mipLevels; mip += 1) {
+      const mipW = mipDim(width, mip);
+      const mipH = mipDim(height, mip);
+      const rowBytes = mipW * 4;
+      const rowPitchBytes = mip === 0 ? mip0RowPitchBytes : rowBytes;
+      if (rowPitchBytes < rowBytes) {
+        throw new Error(
+          `aerogpu: CREATE_TEXTURE2D mip${mip} row_pitch_bytes too small (${rowPitchBytes} < ${rowBytes})`,
+        );
+      }
+      if (rowPitchBytes % 4 !== 0) {
+        throw new Error(`aerogpu: CREATE_TEXTURE2D row_pitch_bytes must be a multiple of 4 (got ${rowPitchBytes})`);
+      }
+
+      const sizeBytes = rowPitchBytes * mipH;
+      layouts.push({
+        mipLevel: mip,
+        arrayLayer: layer,
+        width: mipW,
+        height: mipH,
+        offsetBytes,
+        rowPitchBytes,
+        sizeBytes,
+      });
+      offsetBytes += sizeBytes;
+    }
+  }
+
+  return { layouts, totalSizeBytes: offsetBytes };
+};
+
+const uploadTextureSubresourceFromGuest = (
+  handle: number,
+  format: number,
+  layout: AeroGpuTextureSubresourceLayout,
+  dstRgba8: Uint8Array,
+  guest: Uint8Array,
+  baseGpa: number,
+): void => {
+  const rowBytes = layout.width * 4;
+  for (let y = 0; y < layout.height; y += 1) {
+    const srcRow = sliceGuestChecked(
+      guest,
+      baseGpa + layout.offsetBytes + y * layout.rowPitchBytes,
+      rowBytes,
+      `texture ${handle} subresource upload`,
+    );
+    const dstRowOff = y * rowBytes;
+    if (format === AEROGPU_FORMAT_R8G8B8A8_UNORM || format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
+      dstRgba8.set(srcRow, dstRowOff);
+    } else {
+      for (let x = 0; x < rowBytes; x += 4) {
+        readTexelIntoRgba(format, srcRow, x, dstRgba8, dstRowOff + x);
+      }
+    }
+  }
+};
+
 export type ExecuteAerogpuCmdStreamOptions = {
   allocTable: AeroGpuAllocTable | null;
   guestU8: Uint8Array | null;
@@ -632,8 +745,8 @@ export const executeAerogpuCmdStream = (
         if (width === 0 || height === 0) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D invalid dimensions ${width}x${height}`);
         }
-        if (mipLevels !== 1 || arrayLayers !== 1) {
-          throw new Error("aerogpu: CREATE_TEXTURE2D only supports mip_levels=1 and array_layers=1 in the browser executor");
+        if (mipLevels === 0 || arrayLayers === 0) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D invalid mip_levels/array_layers ${mipLevels}/${arrayLayers}`);
         }
         if (backingAllocId !== 0 && rowPitchBytesRaw === 0) {
           throw new Error("aerogpu: CREATE_TEXTURE2D backing_alloc_id requires non-zero row_pitch_bytes");
@@ -660,6 +773,14 @@ export const executeAerogpuCmdStream = (
           throw new Error(`aerogpu: CREATE_TEXTURE2D row_pitch_bytes must be a multiple of 4 (got ${rowPitchBytes})`);
         }
 
+        const { layouts: subresourceLayouts, totalSizeBytes: totalBackingSizeBytes } = buildTexture2dSubresourceLayouts(
+          width,
+          height,
+          mipLevels,
+          arrayLayers,
+          rowPitchBytes,
+        );
+
         const backing = (() => {
           if (backingAllocId === 0) return undefined;
           const table = requireAllocTable(opts.allocTable);
@@ -667,10 +788,10 @@ export const executeAerogpuCmdStream = (
           if (!alloc) {
             throw new Error(`aerogpu: CREATE_TEXTURE2D unknown alloc_id ${backingAllocId} for texture ${handle}`);
           }
-          const endBytes = BigInt(backingOffsetBytes) + BigInt(rowPitchBytes) * BigInt(height);
+          const endBytes = BigInt(backingOffsetBytes) + BigInt(totalBackingSizeBytes);
           if (endBytes > BigInt(alloc.sizeBytes)) {
             throw new Error(
-              `aerogpu: CREATE_TEXTURE2D backing out of bounds (alloc_id=${backingAllocId}, offset=${backingOffsetBytes}, rowPitch=${rowPitchBytes}, height=${height}, allocBytes=${alloc.sizeBytes})`,
+              `aerogpu: CREATE_TEXTURE2D backing out of bounds (alloc_id=${backingAllocId}, offset=${backingOffsetBytes}, requiredBytes=${totalBackingSizeBytes}, allocBytes=${alloc.sizeBytes})`,
             );
           }
           return { allocId: backingAllocId, offsetBytes: backingOffsetBytes };
@@ -681,12 +802,14 @@ export const executeAerogpuCmdStream = (
           if (
             existing.width !== width ||
             existing.height !== height ||
+            existing.mipLevels !== mipLevels ||
+            existing.arrayLayers !== arrayLayers ||
             existing.usageFlags !== usageFlags ||
             existing.format !== format ||
             existing.rowPitchBytes !== rowPitchBytes
           ) {
             throw new Error(
-              `aerogpu: CREATE_TEXTURE2D rebind mismatch for handle ${handle} (expected ${existing.width}x${existing.height} fmt=${existing.format} usage=0x${existing.usageFlags.toString(16)} rowPitch=${existing.rowPitchBytes}, got ${width}x${height} fmt=${format} usage=0x${usageFlags.toString(16)} rowPitch=${rowPitchBytes})`,
+              `aerogpu: CREATE_TEXTURE2D rebind mismatch for handle ${handle} (expected ${existing.width}x${existing.height} mipLevels=${existing.mipLevels} arrayLayers=${existing.arrayLayers} fmt=${existing.format} usage=0x${existing.usageFlags.toString(16)} rowPitch=${existing.rowPitchBytes}, got ${width}x${height} mipLevels=${mipLevels} arrayLayers=${arrayLayers} fmt=${format} usage=0x${usageFlags.toString(16)} rowPitch=${rowPitchBytes})`,
             );
           }
           existing.backing = backing;
@@ -694,22 +817,39 @@ export const executeAerogpuCmdStream = (
           break;
         }
 
-        const byteLenBig = BigInt(width) * BigInt(height) * 4n;
-        if (byteLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-          throw new Error(`aerogpu: CREATE_TEXTURE2D texture too large for JS (${byteLenBig} bytes)`);
-        }
-        const data = new Uint8Array(Number(byteLenBig));
-        if (
-          format === AEROGPU_FORMAT_R8G8B8X8_UNORM ||
-          format === AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB ||
-          format === AEROGPU_FORMAT_B8G8R8X8_UNORM ||
-          format === AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB
-        ) {
-          for (let i = 3; i < data.length; i += 4) {
-            data[i] = 255;
+        const subresourceCount = mipLevels * arrayLayers;
+        const subresources = new Array<Uint8Array>(subresourceCount);
+        let totalInternalBytes = 0n;
+        for (let i = 0; i < subresourceLayouts.length; i += 1) {
+          const layout = subresourceLayouts[i]!;
+          const byteLenBig = BigInt(layout.width) * BigInt(layout.height) * 4n;
+          if (byteLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+            throw new Error(`aerogpu: CREATE_TEXTURE2D texture too large for JS (subresource bytes=${byteLenBig})`);
           }
+          const bytes = new Uint8Array(Number(byteLenBig));
+          if (isX8Format(format)) {
+            forceOpaqueAlphaRgba8(bytes);
+          }
+          subresources[i] = bytes;
+          totalInternalBytes += byteLenBig;
         }
-        const tex: AeroGpuCpuTexture = { width, height, usageFlags, format, rowPitchBytes, data };
+        if (totalInternalBytes > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D texture too large for JS (total bytes=${totalInternalBytes})`);
+        }
+        const data = subresources[0]!;
+        const tex: AeroGpuCpuTexture = {
+          width,
+          height,
+          mipLevels,
+          arrayLayers,
+          usageFlags,
+          format,
+          totalBackingSizeBytes: totalBackingSizeBytes,
+          rowPitchBytes,
+          data,
+          subresources,
+          subresourceLayouts,
+        };
         tex.backing = backing;
         state.textures.set(handle, tex);
         registerSharedHandle(state, handle);
@@ -792,12 +932,7 @@ export const executeAerogpuCmdStream = (
         const alloc = table.get(backing.allocId);
         if (!alloc) throw new Error(`aerogpu: unknown alloc_id ${backing.allocId} for texture ${handle}`);
 
-        const rowBytes = tex.width * 4;
-        const textureBytesBig = BigInt(tex.rowPitchBytes) * BigInt(tex.height);
-        if (textureBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-          throw new Error(`aerogpu: texture backing too large for JS (${textureBytesBig} bytes)`);
-        }
-        const textureBytes = Number(textureBytesBig);
+        const textureBytes = tex.totalBackingSizeBytes;
         if (dirtyOffsetBytes + dirtySizeBytes > textureBytes) {
           throw new Error(
             `aerogpu: RESOURCE_DIRTY_RANGE out of bounds for texture ${handle} (offset=${dirtyOffsetBytes}, size=${dirtySizeBytes}, texBytes=${textureBytes})`,
@@ -811,34 +946,14 @@ export const executeAerogpuCmdStream = (
 
         const dirtyStart = dirtyOffsetBytes;
         const dirtyEnd = dirtyOffsetBytes + dirtySizeBytes;
-        const startRow = Math.floor(dirtyStart / tex.rowPitchBytes);
-        const endRow = Math.floor((dirtyEnd - 1) / tex.rowPitchBytes);
 
         const baseGpa = alloc.gpa + backing.offsetBytes;
-        for (let y = startRow; y <= endRow; y += 1) {
-          const rowBackingStart = y * tex.rowPitchBytes;
-          const rowBackingEnd = rowBackingStart + rowBytes;
-          const start = Math.max(rowBackingStart, dirtyStart);
-          const end = Math.min(rowBackingEnd, dirtyEnd);
-          if (end <= start) continue;
-
-          const copyLen = end - start;
-          const dstRowStart = y * rowBytes;
-          const dst = dstRowStart + (start - rowBackingStart);
-
-          const srcBytes = sliceGuestChecked(guest, baseGpa + start, copyLen, `texture ${handle}`);
-          const dstBytes = tex.data;
-          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
-            dstBytes.set(srcBytes, dst);
-            continue;
-          }
-
-          if (dst % 4 !== 0 || copyLen % 4 !== 0) {
-            throw new Error("aerogpu: RESOURCE_DIRTY_RANGE texture uploads must be 4-byte aligned");
-          }
-          for (let i = 0; i < copyLen; i += 4) {
-            readTexelIntoRgba(tex.format, srcBytes, i, dstBytes, dst + i);
-          }
+        for (let i = 0; i < tex.subresourceLayouts.length; i += 1) {
+          const layout = tex.subresourceLayouts[i]!;
+          const subStart = layout.offsetBytes;
+          const subEnd = subStart + layout.sizeBytes;
+          if (subEnd <= dirtyStart || subStart >= dirtyEnd) continue;
+          uploadTextureSubresourceFromGuest(handle, tex.format, layout, tex.subresources[i]!, guest, baseGpa);
         }
         break;
       }
@@ -1028,9 +1143,6 @@ export const executeAerogpuCmdStream = (
         if (dstTexture === 0 || srcTexture === 0) {
           throw new Error("aerogpu: COPY_TEXTURE2D resource handles must be non-zero");
         }
-        if (dstMipLevel !== 0 || dstArrayLayer !== 0 || srcMipLevel !== 0 || srcArrayLayer !== 0) {
-          throw new Error("aerogpu: COPY_TEXTURE2D only supports mip0 layer0 in the browser executor");
-        }
 
         const src = state.textures.get(srcTexture);
         if (!src) throw new Error(`aerogpu: COPY_TEXTURE2D unknown src texture ${srcTextureRaw} (resolved=${srcTexture})`);
@@ -1039,19 +1151,36 @@ export const executeAerogpuCmdStream = (
         if (src.format !== dst.format) {
           throw new Error("aerogpu: COPY_TEXTURE2D format mismatch");
         }
+        if (srcMipLevel >= src.mipLevels || dstMipLevel >= dst.mipLevels) {
+          throw new Error("aerogpu: COPY_TEXTURE2D mip_level out of bounds");
+        }
+        if (srcArrayLayer >= src.arrayLayers || dstArrayLayer >= dst.arrayLayers) {
+          throw new Error("aerogpu: COPY_TEXTURE2D array_layer out of bounds");
+        }
 
-        if (srcX + width > src.width || srcY + height > src.height) {
+        const srcW = mipDim(src.width, srcMipLevel);
+        const srcH = mipDim(src.height, srcMipLevel);
+        const dstW = mipDim(dst.width, dstMipLevel);
+        const dstH = mipDim(dst.height, dstMipLevel);
+        if (srcX + width > srcW || srcY + height > srcH) {
           throw new Error("aerogpu: COPY_TEXTURE2D src rect out of bounds");
         }
-        if (dstX + width > dst.width || dstY + height > dst.height) {
+        if (dstX + width > dstW || dstY + height > dstH) {
           throw new Error("aerogpu: COPY_TEXTURE2D dst rect out of bounds");
         }
+
+        const srcSub = subresourceIndex(srcMipLevel, srcArrayLayer, src.mipLevels);
+        const dstSub = subresourceIndex(dstMipLevel, dstArrayLayer, dst.mipLevels);
+        const srcBytes = src.subresources[srcSub];
+        if (!srcBytes) throw new Error("aerogpu: COPY_TEXTURE2D missing src subresource bytes");
+        const dstBytes = dst.subresources[dstSub];
+        if (!dstBytes) throw new Error("aerogpu: COPY_TEXTURE2D missing dst subresource bytes");
 
         const rowBytes = width * 4;
         const tmp = new Uint8Array(rowBytes * height);
         for (let row = 0; row < height; row += 1) {
-          const srcOff = ((srcY + row) * src.width + srcX) * 4;
-          tmp.set(src.data.subarray(srcOff, srcOff + rowBytes), row * rowBytes);
+          const srcOff = ((srcY + row) * srcW + srcX) * 4;
+          tmp.set(srcBytes.subarray(srcOff, srcOff + rowBytes), row * rowBytes);
         }
 
         type CopyTexture2dWriteback = { guest: Uint8Array; baseGpa: number };
@@ -1072,7 +1201,11 @@ export const executeAerogpuCmdStream = (
 
           // Bounds check against destination backing allocation.
           const lastRow = dstY + height - 1;
-          const endInBacking = lastRow * dst.rowPitchBytes + dstX * 4 + rowBytes;
+          const dstLayout = dst.subresourceLayouts[dstSub];
+          if (!dstLayout) {
+            throw new Error(`aerogpu: COPY_TEXTURE2D missing dst layout for subresource ${dstSub}`);
+          }
+          const endInBacking = dstLayout.offsetBytes + lastRow * dstLayout.rowPitchBytes + dstX * 4 + rowBytes;
           if (endInBacking > alloc.sizeBytes - backing.offsetBytes) {
             throw new Error(
               `aerogpu: COPY_TEXTURE2D writeback out of bounds for alloc ${backing.allocId} (end=${endInBacking}, allocBytes=${alloc.sizeBytes})`,
@@ -1083,13 +1216,14 @@ export const executeAerogpuCmdStream = (
         }
 
         for (let row = 0; row < height; row += 1) {
-          const dstOff = ((dstY + row) * dst.width + dstX) * 4;
-          dst.data.set(tmp.subarray(row * rowBytes, (row + 1) * rowBytes), dstOff);
+          const dstOff = ((dstY + row) * dstW + dstX) * 4;
+          dstBytes.set(tmp.subarray(row * rowBytes, (row + 1) * rowBytes), dstOff);
         }
 
         if (writeback) {
+          const dstLayout = dst.subresourceLayouts[dstSub]!;
           for (let row = 0; row < height; row += 1) {
-            const dstBackingOff = (dstY + row) * dst.rowPitchBytes + dstX * 4;
+            const dstBackingOff = dstLayout.offsetBytes + (dstY + row) * dstLayout.rowPitchBytes + dstX * 4;
             const tmpOff = row * rowBytes;
             const dstRowBytes = sliceGuestChecked(
               writeback.guest,

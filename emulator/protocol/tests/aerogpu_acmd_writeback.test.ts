@@ -136,6 +136,65 @@ test("ACMD COPY_TEXTURE2D writeback packs rows using row_pitch_bytes and encodes
   assert.deepEqual(Array.from(guest.subarray(300 + 4 + 8, 300 + 4 + 12)), [0, 0, 0, 0]);
 });
 
+test("ACMD COPY_TEXTURE2D supports mip+array subresource selectors in the browser executor", () => {
+  const guest = new Uint8Array(2048);
+  const allocTableBuf = buildAllocTable([{ allocId: 1, flags: 0, gpa: 0, sizeBytes: guest.byteLength }]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  const width = 2;
+  const height = 2;
+  const mipLevels = 2;
+  const arrayLayers = 2;
+  const mip0RowPitchBytes = 12; // padded (rowBytes=8)
+
+  const mip0Size = mip0RowPitchBytes * height; // 24
+  const mip1Size = 4; // 1x1 RGBA
+  const layerStride = mip0Size + mip1Size; // 28
+  const totalBackingSize = layerStride * arrayLayers; // 56
+
+  const writeSolidRgba = (
+    base: number,
+    w: number,
+    h: number,
+    rowPitchBytes: number,
+    rgba: [number, number, number, number],
+  ) => {
+    for (let y = 0; y < h; y += 1) {
+      const rowBase = base + y * rowPitchBytes;
+      for (let x = 0; x < w; x += 1) {
+        guest.set(rgba, rowBase + x * 4);
+      }
+    }
+  };
+
+  const srcBackingOffset = 0;
+  // layer0 mip0 = red
+  writeSolidRgba(srcBackingOffset + 0, 2, 2, mip0RowPitchBytes, [255, 0, 0, 255]);
+  // layer0 mip1 = green
+  writeSolidRgba(srcBackingOffset + mip0Size, 1, 1, 4, [0, 255, 0, 255]);
+  // layer1 mip0 = blue
+  writeSolidRgba(srcBackingOffset + layerStride + 0, 2, 2, mip0RowPitchBytes, [0, 0, 255, 255]);
+  // layer1 mip1 = yellow (the one we'll copy)
+  writeSolidRgba(srcBackingOffset + layerStride + mip0Size, 1, 1, 4, [255, 255, 0, 255]);
+
+  const dstBackingOffset = 512;
+
+  const w = new AerogpuCmdWriter();
+  w.createTexture2d(1, 0, AerogpuFormat.R8G8B8A8Unorm, width, height, mipLevels, arrayLayers, mip0RowPitchBytes, 1, srcBackingOffset);
+  w.createTexture2d(2, 0, AerogpuFormat.R8G8B8A8Unorm, width, height, mipLevels, arrayLayers, mip0RowPitchBytes, 1, dstBackingOffset);
+  // Upload full mip+array chain from guest memory into the executor's internal state.
+  w.resourceDirtyRange(1, 0n, BigInt(totalBackingSize));
+  // Copy from src (layer=1,mip=1) into dst (layer=0,mip=1) and write back to guest memory.
+  w.copyTexture2d(2, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest });
+
+  // Destination mip1/layer0 starts immediately after the padded mip0 rows.
+  const dstPixelOff = dstBackingOffset + mip0Size;
+  assert.deepEqual(Array.from(guest.subarray(dstPixelOff, dstPixelOff + 4)), [255, 255, 0, 255]);
+});
+
 test("ACMD binding table packets are ignored but validated by the browser executor", () => {
   const w = new AerogpuCmdWriter();
   w.createSampler(
