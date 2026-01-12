@@ -321,6 +321,18 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         }
     }
 
+    fn validate_cluster_present(&mut self, cluster_offset: u64, ctx: &'static str) -> Result<()> {
+        let cluster_size = self.cluster_size();
+        let end = cluster_offset
+            .checked_add(cluster_size)
+            .ok_or(DiskError::OffsetOverflow)?;
+        let len = self.backend.len()?;
+        if end > len {
+            return Err(DiskError::CorruptImage(ctx));
+        }
+        Ok(())
+    }
+
     fn cluster_size(&self) -> u64 {
         self.header.cluster_size()
     }
@@ -847,7 +859,10 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
             }
 
             let data_cluster = match existing {
-                Some(off) => off,
+                Some(off) => {
+                    self.validate_cluster_present(off, "qcow2 data cluster truncated")?;
+                    off
+                }
                 None => self.ensure_data_cluster(guest_cluster_index)?,
             };
             let phys = data_cluster
