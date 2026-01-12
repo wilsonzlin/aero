@@ -124,6 +124,8 @@ export type DisabledAudioOutput = {
 
 export type AudioOutput = EnabledAudioOutput | DisabledAudioOutput;
 
+export { restoreAudioWorkletRing, type AudioWorkletRingStateLike } from "./audio_ring_restore";
+
 function clampFrames(value: number, min: number, max: number): number {
   const v = Math.floor(Number.isFinite(value) ? value : 0);
   const lo = Math.floor(Number.isFinite(min) ? min : 0);
