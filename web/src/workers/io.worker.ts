@@ -1584,11 +1584,20 @@ function maybeInitHdaDevice(): void {
   try {
     const base = guestBase >>> 0;
     const size = guestSize >>> 0;
+    // Best-effort: if the audio output sample rate is already known (e.g. the coordinator
+    // attached the AudioWorklet ring before WASM initialization completed), pass it into the
+    // HDA bridge constructor so the controller's time base is correct immediately.
+    const outputSampleRateHz = audioOutDstSampleRate > 0 ? (audioOutDstSampleRate >>> 0) : undefined;
+    // wasm-bindgen's JS glue can enforce constructor arity in some builds; try a few common
+    // layouts in descending order of specificity.
     try {
-      bridge = Ctor.length >= 2 ? new Ctor(base, size) : new Ctor(base);
+      bridge = new Ctor(base, size, outputSampleRateHz);
     } catch {
-      // Retry with the opposite arity to support older/newer wasm-bindgen outputs.
-      bridge = Ctor.length >= 2 ? new Ctor(base) : new Ctor(base, size);
+      try {
+        bridge = new Ctor(base, size);
+      } catch {
+        bridge = new Ctor(base);
+      }
     }
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
@@ -1635,7 +1644,9 @@ function maybeInitHdaDevice(): void {
     }
 
     // Apply any existing audio output ring-buffer attachment (producer-side).
-    if (audioOutRingBuffer) {
+    // Also plumb host output sample rate even if the ring buffer is currently detached (so the
+    // device tick scheduling stays in sync with the AudioContext sample rate).
+    if (audioOutRingBuffer || audioOutDstSampleRate > 0) {
       dev.setAudioRingBuffer({
         ringBuffer: audioOutRingBuffer,
         capacityFrames: audioOutCapacityFrames,
