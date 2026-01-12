@@ -2630,6 +2630,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       }
     }
 
+    let wasmInitFatal = false;
     await perf.spanAsync("wasm:init", async () => {
       try {
         const { api, variant } = await initWasmForContext({
@@ -2746,12 +2747,14 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           // actionable error explaining why the worker is terminating.
           pushEventBlocking({ kind: "log", level: "error", message });
           fatal(err);
+          wasmInitFatal = true;
           return;
         }
         console.error(`[io.worker] wasm:init failed: ${message}`);
         pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
       }
     });
+    if (wasmInitFatal) return;
 
     perf.spanBegin("worker:init");
     try {
