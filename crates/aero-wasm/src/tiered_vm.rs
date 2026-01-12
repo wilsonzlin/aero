@@ -510,6 +510,8 @@ pub struct WasmTieredVm {
     compile_queue: CompileQueue,
 
     jit_abi: JitAbiBuffer,
+    jit_config: JitConfig,
+    tlb_salt: u64,
 
     total_interp_blocks: u64,
     total_jit_blocks: u64,
@@ -560,25 +562,24 @@ impl WasmTieredVm {
         // JIT ABI buffer: CpuState + jit_ctx + tier2_ctx.
         let jit_abi_len = (TIER2_CTX_OFFSET + TIER2_CTX_SIZE) as usize;
         let mut jit_abi = JitAbiBuffer::new(jit_abi_len, CPU_STATE_ALIGN);
-        jit_abi.init_jit_ctx_header(guest_base as u64, DEFAULT_TLB_SALT);
+        let tlb_salt = DEFAULT_TLB_SALT;
+        jit_abi.init_jit_ctx_header(guest_base as u64, tlb_salt);
 
         let cpu_ptr = jit_abi.cpu_ptr();
         let jit_ctx_ptr = jit_abi.jit_ctx_ptr();
 
-        let backend = WasmJitBackend::new(cpu_ptr, jit_ctx_ptr, guest_base, DEFAULT_TLB_SALT);
+        let backend = WasmJitBackend::new(cpu_ptr, jit_ctx_ptr, guest_base, tlb_salt);
 
-        let jit = JitRuntime::new(
-            JitConfig {
-                enabled: true,
-                // Low threshold for browser bring-up: we want hot blocks to quickly transition to
-                // Tier-1 so the JS wiring can observe JIT execution.
-                hot_threshold: 3,
-                cache_max_blocks: 1024,
-                cache_max_bytes: 0,
-            },
-            backend,
-            compile_queue.clone(),
-        );
+        let jit_config = JitConfig {
+            enabled: true,
+            // Low threshold for browser bring-up: we want hot blocks to quickly transition to
+            // Tier-1 so the JS wiring can observe JIT execution.
+            hot_threshold: 3,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+        };
+
+        let jit = JitRuntime::new(jit_config.clone(), backend, compile_queue.clone());
 
         let interp = Tier0Interpreter::new(10_000);
         let dispatcher = ExecDispatcher::new(interp, jit);
@@ -590,6 +591,8 @@ impl WasmTieredVm {
             dispatcher,
             compile_queue,
             jit_abi,
+            jit_config,
+            tlb_salt,
             total_interp_blocks: 0,
             total_jit_blocks: 0,
         })
@@ -643,7 +646,28 @@ impl WasmTieredVm {
         // Reset JIT ABI context (especially the inline-TLB fast-path state).
         self.jit_abi.clear_tlb();
         self.jit_abi
-            .init_jit_ctx_header(self.guest_base as u64, DEFAULT_TLB_SALT);
+            .init_jit_ctx_header(self.guest_base as u64, self.tlb_salt);
+
+        // Reset the tiering engine itself (code cache + hotness profile). Resetting just the CPU
+        // core is not enough: older compiled blocks may no longer be valid after a boot sector is
+        // reloaded or a snapshot restore changes guest RAM.
+        let cpu_ptr = self.jit_abi.cpu_ptr();
+        let jit_ctx_ptr = self.jit_abi.jit_ctx_ptr();
+        let backend = WasmJitBackend::new(cpu_ptr, jit_ctx_ptr, self.guest_base, self.tlb_salt);
+        let jit = JitRuntime::new(self.jit_config.clone(), backend, self.compile_queue.clone());
+        let interp = Tier0Interpreter::new(10_000);
+        self.dispatcher = ExecDispatcher::new(interp, jit);
+    }
+
+    /// Notify the JIT runtime that guest code bytes were modified in-place (e.g. via DMA or host
+    /// I/O worker writes).
+    ///
+    /// This bumps the internal page-version tracker so any compiled blocks covering the modified
+    /// pages are rejected or recompiled.
+    pub fn jit_on_guest_write(&mut self, paddr: u64, len: u32) {
+        self.dispatcher
+            .jit_mut()
+            .on_guest_write(paddr, len as usize);
     }
 
     /// Drain de-duplicated Tier-1 compilation requests (entry RIPs) as `BigInt` values.

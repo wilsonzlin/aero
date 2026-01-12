@@ -78,25 +78,6 @@ function u64AsNumber(v: bigint): number {
   return u > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(u);
 }
 
-function readMaybeNumber(obj: unknown, key: string): number {
-  if (!obj || typeof obj !== 'object') return 0;
-  const rec = obj as Record<string, unknown>;
-  const val = rec[key];
-  if (typeof val === 'number') return val;
-  if (typeof val === 'bigint') return u64AsNumber(val);
-  if (typeof val === 'function') {
-    try {
-      const out = (val as (...args: unknown[]) => unknown).call(obj);
-      if (typeof out === 'number') return out;
-      if (typeof out === 'bigint') return u64AsNumber(out);
-      return 0;
-    } catch {
-      return 0;
-    }
-  }
-  return 0;
-}
-
 function i64ToBigInt(v: bigint): bigint {
   return BigInt.asIntN(64, v);
 }

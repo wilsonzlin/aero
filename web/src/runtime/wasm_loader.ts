@@ -622,19 +622,26 @@ export interface WasmApi {
     };
 
     /**
-      * Tiered VM loop (Tier-0 interpreter + Tier-1 JIT dispatch via `globalThis.__aero_jit_call`).
-      *
-      * Intended for the root Vite harness JIT smoke test (`src/workers/cpu-worker.ts`).
-      *
-      * Optional while older WASM builds are still in circulation.
-      */
+     * Tiered VM loop (Tier-0 interpreter + Tier-1 JIT dispatch via `globalThis.__aero_jit_call`).
+     *
+     * Used by the browser CPU worker runtime and the root Vite harness JIT smoke test
+     * (`src/workers/cpu-worker.ts`).
+     *
+     * Optional while older WASM builds are still in circulation.
+     */
     WasmTieredVm?: new (guestBase: number, guestSize: number) => {
+        readonly guest_base: number;
+        readonly guest_size: number;
+        readonly interp_blocks_total: bigint;
+        readonly jit_blocks_total: bigint;
+
         reset_real_mode(entryIp: number): void;
+
         /**
-          * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
-          *
-          * Newer WASM builds return a structured result object; older builds return `void`.
-          */
+         * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
+         *
+         * Newer WASM builds return a structured result object; older builds return `void`.
+         */
         run_blocks(
             blocks: number,
         ):
@@ -647,7 +654,7 @@ export interface WasmApi {
               }
             | void;
         /**
-         * Drain queued compilation requests (entry RIPs) produced by the tiered runtime.
+         * Drain de-duplicated compile requests (entry RIPs).
          */
         drain_compile_requests(): bigint[] | Uint32Array;
         /**
@@ -661,6 +668,8 @@ export interface WasmApi {
         on_guest_write?(paddr: bigint | number, len: number): void;
         /**
          * Install a compiled Tier-1 block into the runtime cache.
+         *
+         * Returns an array of evicted entry RIPs so the JS runtime can free/reuse table slots.
          */
         install_tier1_block(
             entryRip: bigint | number,
@@ -668,6 +677,10 @@ export interface WasmApi {
             codePaddr: bigint | number,
             byteLen: number,
         ): bigint[] | Uint32Array | void;
+        /**
+         * Notify the JIT runtime that guest code bytes were modified (e.g. DMA writes).
+         */
+        jit_on_guest_write?(paddr: bigint | number, len: number): void;
         readonly interp_executions?: number;
         readonly jit_executions?: number;
         readonly guest_base?: number;
