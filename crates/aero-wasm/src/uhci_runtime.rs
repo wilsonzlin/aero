@@ -45,6 +45,12 @@ impl LinearGuestMemory {
         let pages = core::arch::wasm32::memory_size(0) as u64;
         let mem_bytes = pages.saturating_mul(64 * 1024);
 
+        // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
+        let guest_size_u64 = u64::from(guest_size).min(crate::guest_layout::PCI_MMIO_BASE);
+        let guest_size: u32 = guest_size_u64
+            .try_into()
+            .map_err(|_| js_error("guest_size does not fit in u32"))?;
+
         let end = guest_base as u64 + guest_size as u64;
         if end > mem_bytes {
             return Err(js_error(&format!(

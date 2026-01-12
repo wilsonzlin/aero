@@ -125,6 +125,8 @@ impl E1000Bridge {
         } else {
             guest_size as u64
         };
+        // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
+        let guest_size_u64 = guest_size_u64.min(crate::guest_layout::PCI_MMIO_BASE);
 
         let end = (guest_base as u64)
             .checked_add(guest_size_u64)

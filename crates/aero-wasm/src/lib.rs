@@ -320,6 +320,20 @@ pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
     }
 }
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod guest_ram_layout_tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn clamps_max_guest_ram_to_pci_mmio_base() {
+        // The web runtime reserves the high 512MiB of the 32-bit guest physical address space for
+        // PCI MMIO BARs, so guest RAM must never exceed `PCI_MMIO_BASE`.
+        let layout = guest_ram_layout(u32::MAX);
+        assert_eq!(layout.guest_size(), guest_layout::PCI_MMIO_BASE as u32);
+    }
+}
+
 #[wasm_bindgen]
 pub fn sum(a: i32, b: i32) -> i32 {
     a + b

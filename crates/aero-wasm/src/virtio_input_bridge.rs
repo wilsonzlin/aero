@@ -228,6 +228,8 @@ mod wasm {
             } else {
                 u64::from(guest_size)
             };
+            // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
+            let guest_size_u64 = guest_size_u64.min(crate::guest_layout::PCI_MMIO_BASE);
 
             let end = guest_base_u64
                 .checked_add(guest_size_u64)
