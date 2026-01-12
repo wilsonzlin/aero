@@ -601,53 +601,60 @@ fn executor_upload_x8_srgb_forces_opaque_alpha() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
-        const TEX_HANDLE: u32 = 1;
-        let pixel = [10u8, 20u8, 30u8, 0u8]; // alpha should be forced to 255 for X8 formats
+        let cases = [
+            ("rgba_x8_srgb", AerogpuFormat::R8G8B8X8UnormSrgb),
+            ("bgra_x8_srgb", AerogpuFormat::B8G8R8X8UnormSrgb),
+        ];
 
-        let stream = build_stream(|out| {
-            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
-                push_u32(out, TEX_HANDLE); // texture_handle
-                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
-                push_u32(out, AerogpuFormat::R8G8B8X8UnormSrgb as u32); // format
-                push_u32(out, 1); // width
-                push_u32(out, 1); // height
-                push_u32(out, 1); // mip_levels
-                push_u32(out, 1); // array_layers
-                push_u32(out, 0); // row_pitch_bytes
-                push_u32(out, 0); // backing_alloc_id
-                push_u32(out, 0); // backing_offset_bytes
-                push_u64(out, 0); // reserved0
+        for (idx, (label, format)) in cases.into_iter().enumerate() {
+            let tex_handle = u32::try_from(idx + 1).unwrap();
+            let pixel = [10u8, 20u8, 30u8, 0u8]; // alpha should be forced to 255 for X8 formats
+
+            let stream = build_stream(|out| {
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, tex_handle); // texture_handle
+                    push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE); // usage_flags
+                    push_u32(out, format as u32); // format
+                    push_u32(out, 1); // width
+                    push_u32(out, 1); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 0); // row_pitch_bytes
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                    push_u32(out, tex_handle); // resource_handle
+                    push_u32(out, 0); // reserved0
+                    push_u64(out, 0); // offset_bytes
+                    push_u64(out, pixel.len() as u64); // size_bytes
+                    out.extend_from_slice(&pixel);
+                });
             });
 
-            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
-                push_u32(out, TEX_HANDLE); // resource_handle
-                push_u32(out, 0); // reserved0
-                push_u64(out, 0); // offset_bytes
-                push_u64(out, pixel.len() as u64); // size_bytes
-                out.extend_from_slice(&pixel);
-            });
-        });
+            let report = exec.process_cmd_stream(&stream, &mut guest, None);
+            assert!(report.is_ok(), "executor reported errors ({label}): {report:?}");
 
-        let report = exec.process_cmd_stream(&stream, &mut guest, None);
-        assert!(report.is_ok(), "executor reported errors: {report:?}");
-
-        let tex = exec.texture(TEX_HANDLE).expect("texture should exist");
-        let rgba = readback_rgba8(
-            exec.device(),
-            exec.queue(),
-            tex,
-            TextureRegion {
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
+            let tex = exec.texture(tex_handle).expect("texture should exist");
+            let rgba = readback_rgba8(
+                exec.device(),
+                exec.queue(),
+                tex,
+                TextureRegion {
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
                 },
-            },
-        )
-        .await;
+            )
+            .await;
 
-        assert_eq!(&rgba[0..4], &[10, 20, 30, 255]);
+            assert_eq!(&rgba[0..4], &[10, 20, 30, 255], "{label}");
+        }
     });
 }
