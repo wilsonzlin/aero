@@ -47,6 +47,11 @@ mod pci_mmio;
 pub use cpu_core::{PcCpuBus, PcInterruptController};
 pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
 
+// AHCI (ICH9) uses BAR5 (ABAR). The device model gates MMIO on its internal PCI command register,
+// while the platform maintains a separate guest-facing PCI config space. Use the generic
+// config-synchronizing MMIO adapter under a clearer alias for AHCI call sites.
+type PcAhciMmioBar = pci_mmio::PciConfigSyncedMmioBar<AhciPciDevice>;
+
 mod firmware_pci;
 pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
 
@@ -1669,7 +1674,7 @@ impl PcPlatform {
                 router.register_handler(
                     bdf,
                     5,
-                    pci_mmio::PciConfigSyncedMmioBar::new(pci_cfg.clone(), ahci, bdf, 5),
+                    PcAhciMmioBar::new(pci_cfg.clone(), ahci, bdf, 5),
                 );
             }
             if let Some(e1000) = e1000.clone() {
