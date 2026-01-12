@@ -325,3 +325,44 @@ fn snapshot_save_samples_clock_once_for_timer_encoding() {
         "ACPI PM save_state should sample Clock::now_ns once when encoding PM timer fields"
     );
 }
+
+#[test]
+fn snapshot_load_is_atomic_on_decode_error() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(1_000_000_000);
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+
+    // Move the PM timer away from zero so a partial restore that resets the timer base would be
+    // detectable.
+    clock.advance_ns(123_456_789);
+
+    // Mutate some state so a partial restore that resets register state would be detectable.
+    pm.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    pm.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    pm.trigger_power_button();
+    pm.write(cfg.pm1a_cnt_blk, 2, 0x1235);
+    let half = (cfg.gpe0_blk_len as u16) / 2;
+    pm.write(cfg.gpe0_blk + half, 1, 0x02);
+
+    let pm1_sts_before = pm.pm1_status();
+    let pm1_cnt_before = pm.pm1_cnt();
+    let gpe0_en_before = pm.read(cfg.gpe0_blk + half, 1);
+    let sci_before = pm.sci_level();
+    let tmr_before = pm.read(cfg.pm_tmr_blk, 4);
+
+    // Construct a corrupted snapshot that includes a PM1_STS field with an invalid length for `u16`.
+    const TAG_PM1_STS: u16 = 1;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_bytes(TAG_PM1_STS, vec![0xAA]); // should be 2 bytes
+    let bytes = w.finish();
+
+    assert!(pm.load_state(&bytes).is_err());
+
+    assert_eq!(pm.pm1_status(), pm1_sts_before);
+    assert_eq!(pm.pm1_cnt(), pm1_cnt_before);
+    assert_eq!(pm.read(cfg.gpe0_blk + half, 1), gpe0_en_before);
+    assert_eq!(pm.sci_level(), sci_before);
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4), tmr_before);
+}

@@ -492,59 +492,53 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        // Reset dynamic register state while keeping `cfg`, `callbacks`, and `clock` attached.
-        //
         // NOTE: Avoid driving the SCI line low during restore. `Machine::restore_snapshot_*` and
         // other snapshot consumers may restore into an already-running instance, and introducing a
         // spurious SCI deassert/reassert edge can create an extra interrupt in edge-triggered PIC
         // mode (and generally adds non-deterministic timing).
         //
-        // Sample the clock once and reuse that value throughout restore so snapshot restore is
-        // deterministic even under unusual clock implementations (e.g. test clocks that advance on
-        // each `now_ns()` call).
-        let now = self.clock.now_ns();
-        self.pm1_sts = 0;
-        self.pm1_en = 0;
-        self.pm1_cnt = if self.cfg.start_enabled {
-            PM1_CNT_SCI_EN
-        } else {
-            0
-        };
-        for b in &mut self.gpe0_sts {
-            *b = 0;
-        }
-        for b in &mut self.gpe0_en {
-            *b = 0;
-        }
-        self.timer_base_ns = now;
-        self.timer_last_clock_ns = now;
+        // Decode all fields into temporary locals first so `load_state()` is atomic: if decoding
+        // fails due to snapshot corruption, the device remains unchanged.
 
-        if let Some(v) = r.u16(TAG_PM1_STS)? {
-            self.pm1_sts = v;
-        }
-        if let Some(v) = r.u16(TAG_PM1_EN)? {
-            self.pm1_en = v;
-        }
+        let pm1_sts = r.u16(TAG_PM1_STS)?.unwrap_or(0);
+        let pm1_en = r.u16(TAG_PM1_EN)?.unwrap_or(0);
+
+        // Restore PM1a_CNT directly. Snapshot loads must not replay guest port writes
+        // as those may trigger host callbacks (e.g. S5 shutdown via SLP_TYP/SLP_EN).
+        let mut pm1_cnt = if self.cfg.start_enabled { PM1_CNT_SCI_EN } else { 0 };
         if let Some(v) = r.u16(TAG_PM1_CNT)? {
-            // Restore PM1a_CNT directly. Snapshot loads must not replay guest port writes
-            // as those may trigger host callbacks (e.g. S5 shutdown via SLP_TYP/SLP_EN).
-            self.pm1_cnt = v;
+            pm1_cnt = v;
         }
 
+        let mut gpe0_sts = vec![0u8; self.gpe0_sts.len()];
+        let mut gpe0_en = vec![0u8; self.gpe0_en.len()];
         if let Some(buf) = r.bytes(TAG_GPE0_STS) {
-            for (dst, src) in self.gpe0_sts.iter_mut().zip(buf.iter().copied()) {
+            for (dst, src) in gpe0_sts.iter_mut().zip(buf.iter().copied()) {
                 *dst = src;
             }
         }
         if let Some(buf) = r.bytes(TAG_GPE0_EN) {
-            for (dst, src) in self.gpe0_en.iter_mut().zip(buf.iter().copied()) {
+            for (dst, src) in gpe0_en.iter_mut().zip(buf.iter().copied()) {
                 *dst = src;
             }
         }
 
-        if let Some(elapsed) = r.u64(TAG_PM_TIMER_ELAPSED_NS)? {
-            self.timer_base_ns = now.wrapping_sub(elapsed);
-        } else if let Some(ticks) = r.u32(TAG_PM_TIMER_TICKS)? {
+        let elapsed_ns = r.u64(TAG_PM_TIMER_ELAPSED_NS)?;
+        let pm_timer_ticks = r.u32(TAG_PM_TIMER_TICKS)?;
+        let pm_timer_remainder = r.u32(TAG_PM_TIMER_REMAINDER)?;
+
+        // `sci_level` is derived from the register state; it is snapshotted for completeness.
+        let _ = r.bool(TAG_SCI_LEVEL)?;
+
+        // Sample the clock once and reuse that value throughout restore so snapshot restore is
+        // deterministic even under unusual clock implementations (e.g. test clocks that advance on
+        // each `now_ns()` call).
+        let now = self.clock.now_ns();
+
+        let mut timer_base_ns = now;
+        if let Some(elapsed) = elapsed_ns {
+            timer_base_ns = now.wrapping_sub(elapsed);
+        } else if let Some(ticks) = pm_timer_ticks {
             // Forward-compatible fallback for snapshots that may omit `TAG_PM_TIMER_ELAPSED_NS`.
             //
             // Pick an elapsed-nanoseconds value that yields the desired 24-bit PM_TMR tick count under:
@@ -579,7 +573,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
             }
 
             let ticks_mod = (ticks & PM_TIMER_MASK_24BIT) as u128;
-            if let Some(rem) = r.u32(TAG_PM_TIMER_REMAINDER)? {
+            if let Some(rem) = pm_timer_remainder {
                 // The remainder is the numerator remainder in:
                 //   ticks = (elapsed_ns * FREQ) / 1e9
                 //   remainder = (elapsed_ns * FREQ) % 1e9
@@ -604,16 +598,19 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                         let rhs = (m as i128 - b_mod).rem_euclid(m as i128);
                         let k = (rhs * inv).rem_euclid(m as i128) as u128;
                         let ticks_total = ticks_mod.saturating_add(k.saturating_mul(mod_ticks));
-                        let numer = ticks_total.saturating_mul(NS_PER_SEC).saturating_add(remainder);
+                        let numer =
+                            ticks_total.saturating_mul(NS_PER_SEC).saturating_add(remainder);
                         let elapsed_ns = numer / freq;
-                        self.timer_base_ns = now.wrapping_sub(elapsed_ns as u64);
+                        let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
+                        timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
                     } else {
                         // Fall back to restoring the visible tick counter only.
                         let numer = ticks_mod.saturating_mul(NS_PER_SEC);
                         let elapsed_ns = numer
                             .saturating_add(freq.saturating_sub(1))
                             / freq;
-                        self.timer_base_ns = now.wrapping_sub(elapsed_ns as u64);
+                        let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
+                        timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
                     }
                 } else {
                     // Fall back to restoring the visible tick counter only.
@@ -621,7 +618,8 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                     let elapsed_ns = numer
                         .saturating_add(freq.saturating_sub(1))
                         / freq;
-                    self.timer_base_ns = now.wrapping_sub(elapsed_ns as u64);
+                    let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
+                    timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
                 }
             } else {
                 // Restore the visible tick counter only (no fractional remainder).
@@ -630,13 +628,24 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
                     .saturating_add(PM_TIMER_FREQUENCY_HZ.saturating_sub(1))
                     / PM_TIMER_FREQUENCY_HZ;
                 let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
-                self.timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
+                timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
             }
         }
-        self.timer_last_clock_ns = now;
 
-        // `sci_level` is derived from the register state; it is snapshotted for completeness.
-        let _ = r.bool(TAG_SCI_LEVEL)?;
+        // Apply decoded state.
+        self.pm1_sts = pm1_sts;
+        self.pm1_en = pm1_en;
+        self.pm1_cnt = pm1_cnt;
+
+        for (dst, src) in self.gpe0_sts.iter_mut().zip(gpe0_sts) {
+            *dst = src;
+        }
+        for (dst, src) in self.gpe0_en.iter_mut().zip(gpe0_en) {
+            *dst = src;
+        }
+
+        self.timer_base_ns = timer_base_ns;
+        self.timer_last_clock_ns = now;
 
         // Re-drive SCI based on the restored latch/enabled state.
         self.update_sci();
