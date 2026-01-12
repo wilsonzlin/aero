@@ -50,9 +50,8 @@ enum TextureFormatLayout {
     Uncompressed { bytes_per_texel: u32 },
     /// Block-compressed formats (BCn). Blocks are always 4x4 texels.
     ///
-    /// Note: no BC formats exist in the ABI yet, but the layout rules are defined so size/offset
-    /// validation can be extended safely once `aerogpu_format` grows.
-    #[allow(dead_code)]
+    /// Note: formats are stored in 4x4 blocks. The stored size is based on `ceil(width/4)` by
+    /// `ceil(height/4)` blocks, even when the logical width/height are not multiples of 4.
     BlockCompressed { block_bytes: u32 },
 }
 
@@ -102,6 +101,18 @@ fn texture_format_layout(format: u32) -> Result<TextureFormatLayout, CommandProc
         x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
             bytes_per_texel: 4,
         }),
+        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
+        x if x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => Ok(TextureFormatLayout::Uncompressed {
+            bytes_per_texel: 4,
+        }),
 
         x if x == AerogpuFormat::B5G6R5Unorm as u32 => Ok(TextureFormatLayout::Uncompressed {
             bytes_per_texel: 2,
@@ -116,6 +127,15 @@ fn texture_format_layout(format: u32) -> Result<TextureFormatLayout, CommandProc
         x if x == AerogpuFormat::D32Float as u32 => Ok(TextureFormatLayout::Uncompressed {
             bytes_per_texel: 4,
         }),
+
+        x if x == AerogpuFormat::BC1RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 8 }),
+        x if x == AerogpuFormat::BC1RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 8 }),
+        x if x == AerogpuFormat::BC2RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
+        x if x == AerogpuFormat::BC2RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
+        x if x == AerogpuFormat::BC3RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
+        x if x == AerogpuFormat::BC3RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
+        x if x == AerogpuFormat::BC7RgbaUnorm as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
+        x if x == AerogpuFormat::BC7RgbaUnormSrgb as u32 => Ok(TextureFormatLayout::BlockCompressed { block_bytes: 16 }),
 
         _ => Err(CommandProcessorError::InvalidCreateTexture2d),
     }
