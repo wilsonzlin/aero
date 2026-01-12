@@ -374,6 +374,10 @@ fn virtio_snd_snapshot_restore_can_rewind_eventq_progress_to_recover_buffers() {
     dev.config_write(0x04, &0x0004u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
 
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+
     let mut mem = GuestRam::new(0x20000);
 
     // Feature negotiation: accept everything the device offers.
