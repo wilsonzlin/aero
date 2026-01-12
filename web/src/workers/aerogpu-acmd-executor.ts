@@ -81,6 +81,16 @@ export type AeroGpuTextureSubresourceLayout = {
 
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 
+/**
+ * Guest physical address layout (PC/Q35 E820) for wasm32 builds.
+ *
+ * Keep in sync with:
+ * - `web/src/runtime/shared_layout.ts` (LOW_RAM_END / HIGH_RAM_START + helpers)
+ * - `crates/aero-wasm/src/guest_phys.rs`
+ */
+const LOW_RAM_END = 0xb000_0000;
+const HIGH_RAM_START = 0x1_0000_0000;
+
 export type AerogpuCpuSharedSurfaceState = {
   // share_token -> underlying handle
   byToken: Map<bigint, number>;
@@ -234,20 +244,89 @@ const requireAllocTable = (allocTable: AeroGpuAllocTable | null | undefined): Ae
   return allocTable;
 };
 
+const toU64 = (value: number, label: string): number => {
+  if (!Number.isFinite(value)) throw new Error(`aerogpu: invalid ${label}: expected a finite integer, got ${String(value)}`);
+  const int = Math.trunc(value);
+  if (!Number.isSafeInteger(int) || int < 0) throw new Error(`aerogpu: invalid ${label}: expected u64, got ${String(value)}`);
+  return int;
+};
+
+const guestPaddrToRamOffset = (ramBytes: number, paddr: number): number | null => {
+  const addr = toU64(paddr, "guest paddr");
+  const ram = toU64(ramBytes, "guest ram_bytes");
+
+  if (ram <= LOW_RAM_END) {
+    return addr < ram ? addr : null;
+  }
+
+  // Low RAM.
+  if (addr < LOW_RAM_END) return addr;
+
+  // High RAM remap.
+  const highLen = ram - LOW_RAM_END;
+  const highEnd = HIGH_RAM_START + highLen;
+  if (addr >= HIGH_RAM_START && addr < highEnd) {
+    return LOW_RAM_END + (addr - HIGH_RAM_START);
+  }
+
+  // Hole or out-of-range.
+  return null;
+};
+
+const guestRangeInBounds = (ramBytes: number, paddr: number, byteLength: number): boolean => {
+  const addr = toU64(paddr, "guest paddr");
+  const len = toU64(byteLength, "byteLength");
+  const ram = toU64(ramBytes, "guest ram_bytes");
+
+  if (ram <= LOW_RAM_END) {
+    if (len === 0) return addr <= ram;
+    return addr < ram && len <= ram - addr;
+  }
+
+  // Low RAM region: [0..LOW_RAM_END).
+  if (addr <= LOW_RAM_END) {
+    if (len === 0) return true;
+    return addr < LOW_RAM_END && len <= LOW_RAM_END - addr;
+  }
+
+  // High RAM remap: [HIGH_RAM_START..HIGH_RAM_START + (ram-LOW_RAM_END)).
+  const highLen = ram - LOW_RAM_END;
+  const highEnd = HIGH_RAM_START + highLen;
+  if (addr >= HIGH_RAM_START && addr <= highEnd) {
+    if (len === 0) return true;
+    return addr < highEnd && len <= highEnd - addr;
+  }
+
+  // Hole or out-of-range.
+  return false;
+};
+
 const sliceGuestChecked = (guest: Uint8Array, gpa: number, len: number, label: string): Uint8Array => {
-  if (!Number.isFinite(gpa) || !Number.isSafeInteger(gpa) || gpa < 0) {
-    throw new Error(`aerogpu: invalid guest gpa for ${label}: ${gpa}`);
-  }
-  if (!Number.isFinite(len) || !Number.isSafeInteger(len) || len < 0) {
-    throw new Error(`aerogpu: invalid length for ${label}: ${len}`);
-  }
-  const start = gpa;
-  const end = start + len;
-  if (end < start || end > guest.byteLength) {
+  const ramBytes = toU64(guest.byteLength, "guest_len");
+  const addr = toU64(gpa, "guest gpa");
+  const length = toU64(len, "len");
+
+  if (!guestRangeInBounds(ramBytes, addr, length)) {
     throw new Error(
-      `aerogpu: guest memory out of bounds for ${label} (gpa=${start}, len=${len}, guest_len=${guest.byteLength})`,
+      `aerogpu: guest memory out of bounds for ${label} (gpa=0x${addr.toString(16)}, len=0x${length.toString(16)}, guest_len=0x${ramBytes.toString(16)})`,
     );
   }
+
+  const start = guestPaddrToRamOffset(ramBytes, addr);
+  if (start === null) {
+    // Ranges can be "in bounds" for len=0 at segment boundaries. Treat as a no-op and
+    // return an empty view (caller must still tolerate zero-length operations).
+    if (length === 0) return guest.subarray(0, 0);
+    throw new Error(`aerogpu: guest gpa is not backed by RAM for ${label}: 0x${addr.toString(16)}`);
+  }
+
+  const end = start + length;
+  if (end < start || end > ramBytes) {
+    throw new Error(
+      `aerogpu: guest memory out of bounds for ${label} after paddr translation (gpa=0x${addr.toString(16)} ram_off=0x${start.toString(16)} len=0x${length.toString(16)} guest_len=0x${ramBytes.toString(16)})`,
+    );
+  }
+
   return guest.subarray(start, end);
 };
 

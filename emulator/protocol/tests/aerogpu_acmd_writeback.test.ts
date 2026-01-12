@@ -70,6 +70,58 @@ test("ACMD COPY_BUFFER writeback updates guest memory backing for dst buffer", (
   assert.deepEqual(Array.from(guest.subarray(118, 122)), [1, 2, 3, 4]);
 });
 
+test("ACMD COPY_BUFFER writeback supports guest paddr in high-RAM remap window (>=4GiB)", () => {
+  // Mirrors the PC/Q35 E820 layout constants used by the web runtime.
+  // Keep in sync with `web/src/runtime/shared_layout.ts`.
+  const LOW_RAM_END = 0xb000_0000;
+  const HIGH_RAM_START = 0x1_0000_0000;
+
+  class FakeGuestU8 {
+    readonly byteLength: number;
+    lastSubarray: { start: number; end: number } | null = null;
+    lastWrite: { start: number; data: number[] } | null = null;
+
+    constructor(byteLength: number) {
+      this.byteLength = byteLength;
+    }
+
+    subarray(start: number, end: number): Uint8Array {
+      this.lastSubarray = { start, end };
+      // Return a minimal view-like object that implements `set()`.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return {
+        set: (src: Uint8Array, offset = 0) => {
+          this.lastWrite = { start: start + (offset >>> 0), data: Array.from(src) };
+        },
+      } as any as Uint8Array;
+    }
+  }
+
+  // Fake a 2.75GiB+256 guest RAM backing store without actually allocating it.
+  const guestSize = LOW_RAM_END + 0x100;
+  const fakeGuest = new FakeGuestU8(guestSize);
+  const guest = fakeGuest as unknown as Uint8Array;
+
+  const allocTableBuf = buildAllocTable([
+    // Backing range lives in the remapped high-RAM segment at >=4GiB.
+    { allocId: 42, flags: 0, gpa: HIGH_RAM_START, sizeBytes: 0x100 },
+  ]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  const w = new AerogpuCmdWriter();
+  w.createBuffer(1, 0, 8n, 0, 0); // src
+  w.createBuffer(2, 0, 8n, 42, 0); // dst backed at HIGH_RAM_START
+  w.uploadResource(1, 0n, Uint8Array.of(1, 2, 3, 4));
+  w.copyBuffer(2, 1, 0n, 0n, 4n, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest });
+
+  // HIGH_RAM_START should translate to backing RAM offset LOW_RAM_END.
+  assert.deepEqual(fakeGuest.lastSubarray, { start: LOW_RAM_END, end: LOW_RAM_END + 4 });
+  assert.deepEqual(fakeGuest.lastWrite, { start: LOW_RAM_END, data: [1, 2, 3, 4] });
+});
+
 test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
   const guest = new Uint8Array(256);
   const allocTableBuf = buildAllocTable([{ allocId: 42, flags: AEROGPU_ALLOC_FLAG_READONLY, gpa: 100, sizeBytes: 128 }]);
