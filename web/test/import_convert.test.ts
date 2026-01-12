@@ -710,6 +710,41 @@ test("convertToAeroSparse: dynamic VHD allows max_table_entries > required", asy
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
 });
 
+test("convertToAeroSparse: dynamic VHD rejects footer copy mismatch", async () => {
+  const { file } = buildDynamicVhdFixture();
+
+  // Mutate a non-essential field (timestamp) in the offset-0 footer copy while keeping checksum valid.
+  const footerCopy = file.slice(0, 512);
+  writeU32BE(footerCopy, 24, 1234);
+  writeU32BE(footerCopy, 64, vhdChecksum(footerCopy, 64));
+  file.set(footerCopy, 0);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD footer copy mismatch/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: dynamic VHD rejects BAT overlapping dynamic header", async () => {
+  const { file } = buildDynamicVhdFixture();
+  const dynHeaderOffset = 512;
+
+  const dyn = file.slice(dynHeaderOffset, dynHeaderOffset + 1024);
+  // Place the BAT inside the dynamic header region.
+  writeU64BE(dyn, 16, 1024n);
+  writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
+  file.set(dyn, dynHeaderOffset);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD BAT overlaps dynamic header/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: rejects dynamic VHD with absurd BAT size", async () => {
   const footerSize = 512;
   const dynHeaderOffset = 512;
@@ -740,6 +775,8 @@ test("convertToAeroSparse: rejects dynamic VHD with absurd BAT size", async () =
 
   const fileSize = batOffset + footerSize;
   const file = new Uint8Array(fileSize);
+  // Footer copy at offset 0.
+  file.set(footer, 0);
   file.set(dyn, dynHeaderOffset);
   file.set(footer, fileSize - footerSize);
 

@@ -617,6 +617,31 @@ async function convertVhdToSparse(
   if (footer.diskType !== VHD_TYPE_DYNAMIC) {
     throw new Error(`unsupported VHD type ${footer.diskType}`);
   }
+
+  // Dynamic VHDs require:
+  // - a footer copy at offset 0 that matches the EOF footer
+  // - a dynamic header fully contained before the EOF footer
+  const footerOffset = src.size - 512;
+  const dynHeaderEnd = footer.dataOffset + 1024;
+  if (!Number.isSafeInteger(dynHeaderEnd) || dynHeaderEnd > footerOffset) {
+    throw new Error("VHD dynamic header overlaps footer");
+  }
+  let footerCopyBytes: Uint8Array;
+  try {
+    footerCopyBytes = await src.readAt(0, 512);
+  } catch {
+    throw new Error("VHD footer copy truncated");
+  }
+  let footerCopy: VhdFooter;
+  try {
+    footerCopy = VhdFooter.parse(footerCopyBytes);
+  } catch {
+    throw new Error("VHD footer copy mismatch");
+  }
+  if (!bytesEqual(footerCopy.raw, footer.raw)) {
+    throw new Error("VHD footer copy mismatch");
+  }
+
   const dyn = await VhdDynamicHeader.read(src, footer.dataOffset);
   if (!Number.isSafeInteger(dyn.blockSize) || dyn.blockSize <= 0) throw new Error("invalid VHD block size");
   assertBlockSize(dyn.blockSize);
@@ -629,6 +654,14 @@ async function convertVhdToSparse(
   // for the advertised disk size, but the metadata region must still be coherent and bounded.
   const batBytesOnDisk = dyn.maxTableEntries * 4;
   if (!Number.isSafeInteger(batBytesOnDisk) || batBytesOnDisk > VHD_MAX_BAT_BYTES) throw new Error("VHD BAT too large");
+  const batSizeOnDisk = alignUp(batBytesOnDisk, 512);
+  const batEndOnDisk = dyn.tableOffset + batSizeOnDisk;
+  if (!Number.isSafeInteger(batEndOnDisk) || batEndOnDisk > footerOffset) {
+    throw new Error("VHD BAT truncated");
+  }
+  if (rangesOverlap(footer.dataOffset, dynHeaderEnd, dyn.tableOffset, batEndOnDisk)) {
+    throw new Error("VHD BAT overlaps dynamic header");
+  }
 
   // Only read the entries required for the advertised virtual size. This avoids allocating
   // memory proportional to max_table_entries when it is larger than needed.
@@ -647,11 +680,10 @@ async function convertVhdToSparse(
   const totalBlocks = divCeil(logicalSize, dyn.blockSize);
 
   // Pre-validate BAT entries to avoid reading metadata as block payload when the image is corrupt.
-  const footerOffset = src.size - 512;
-  const batBytes = batBytesOnDisk;
+  const batBytes = batSizeOnDisk;
   const metadataRanges: Array<{ start: number; end: number }> = [
     { start: 0, end: 512 }, // footer copy
-    { start: footer.dataOffset, end: footer.dataOffset + 1024 }, // dynamic header
+    { start: footer.dataOffset, end: dynHeaderEnd }, // dynamic header
     { start: dyn.tableOffset, end: dyn.tableOffset + batBytes }, // BAT
   ];
 
