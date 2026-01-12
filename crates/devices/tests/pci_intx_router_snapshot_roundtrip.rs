@@ -2,6 +2,7 @@ use aero_devices::pci::{
     GsiLevelSink, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
+use std::collections::BTreeSet;
 
 #[derive(Default)]
 struct MockSink {
@@ -21,9 +22,10 @@ fn intx_router_snapshot_roundtrip_preserves_assert_counts() {
 
     let dev0 = PciBdf::new(0, 0, 0);
     let dev4 = PciBdf::new(0, 4, 0); // Same PIRQ swizzle as dev0.
+    let gsi_dev0 = router.gsi_for_intx(dev0, PciInterruptPin::IntA);
 
     router.assert_intx(dev0, PciInterruptPin::IntA, &mut sink);
-    assert_eq!(sink.events, vec![(10, true)]);
+    assert_eq!(sink.events, vec![(gsi_dev0, true)]);
 
     // Save deterministically.
     let bytes = router.save_state();
@@ -35,15 +37,32 @@ fn intx_router_snapshot_roundtrip_preserves_assert_counts() {
     // Re-asserting an already-asserted source should be a no-op after restore.
     let mut sink2 = MockSink::default();
     router2.sync_levels_to_sink(&mut sink2);
+
+    // Derive the router's configured PIRQ->GSI mapping in the same order `sync_levels_to_sink`
+    // uses (PIRQ[A-D]), but avoid hard-coding the legacy 10-13 mapping.
+    let pirq_gsis = [
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntA),
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntB),
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntC),
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntD),
+    ];
+    let mut seen = BTreeSet::new();
+    let mut expected_sync = Vec::new();
+    for gsi in pirq_gsis {
+        if !seen.insert(gsi) {
+            continue;
+        }
+        expected_sync.push((gsi, gsi == gsi_dev0));
+    }
     assert_eq!(
         sink2.events,
-        vec![(10, true), (11, false), (12, false), (13, false)]
+        expected_sync
     );
 
     router2.assert_intx(dev0, PciInterruptPin::IntA, &mut sink2);
     assert_eq!(
         sink2.events,
-        vec![(10, true), (11, false), (12, false), (13, false)]
+        expected_sync
     );
 
     // Asserting another source that shares the same GSI should *not* toggle the line because the
@@ -51,6 +70,6 @@ fn intx_router_snapshot_roundtrip_preserves_assert_counts() {
     router2.assert_intx(dev4, PciInterruptPin::IntA, &mut sink2);
     assert_eq!(
         sink2.events,
-        vec![(10, true), (11, false), (12, false), (13, false)]
+        expected_sync
     );
 }

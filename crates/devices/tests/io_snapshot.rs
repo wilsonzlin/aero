@@ -435,9 +435,10 @@ fn pci_intx_router_snapshot_restore_preserves_reference_counts() {
 
     let dev0 = PciBdf::new(0, 0, 0);
     let dev4 = PciBdf::new(0, 4, 0);
+    let gsi = router.gsi_for_intx(dev0, PciInterruptPin::IntA);
     router.assert_intx(dev0, PciInterruptPin::IntA, &mut sink);
     router.assert_intx(dev4, PciInterruptPin::IntA, &mut sink);
-    assert_eq!(sink.events, vec![(10, true)]);
+    assert_eq!(sink.events, vec![(gsi, true)]);
 
     let snap = router.save_state();
 
@@ -451,5 +452,5 @@ fn pci_intx_router_snapshot_restore_preserves_reference_counts() {
         "first deassert should not lower shared line"
     );
     restored.deassert_intx(dev4, PciInterruptPin::IntA, &mut sink2);
-    assert_eq!(sink2.events, vec![(10, false)]);
+    assert_eq!(sink2.events, vec![(gsi, false)]);
 }

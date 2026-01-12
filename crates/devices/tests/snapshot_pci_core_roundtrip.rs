@@ -4,6 +4,7 @@ use aero_devices::pci::{
     PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
+use std::collections::BTreeSet;
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
@@ -100,11 +101,17 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
     let mut sink = MockSink::default();
     let dev0 = PciBdf::new(0, 0, 0);
     let dev4 = PciBdf::new(0, 4, 0); // Same PIRQ/GSI as dev0 for INTA#.
+    let gsi_dev0 = router.gsi_for_intx(dev0, PciInterruptPin::IntA);
+    let gsi_bdf = router.gsi_for_intx(bdf, PciInterruptPin::IntA);
 
     router.assert_intx(dev0, PciInterruptPin::IntA, &mut sink);
     router.assert_intx(dev4, PciInterruptPin::IntA, &mut sink);
     router.assert_intx(bdf, PciInterruptPin::IntA, &mut sink);
-    assert_eq!(sink.events, vec![(10, true), (11, true)]);
+    let mut expected_events = vec![(gsi_dev0, true)];
+    if gsi_bdf != gsi_dev0 {
+        expected_events.push((gsi_bdf, true));
+    }
+    assert_eq!(sink.events, expected_events);
 
     // Snapshot deterministically.
     let bytes = {
@@ -151,29 +158,38 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
     // INTx levels must be re-driven via `sync_levels_to_sink()` after restore.
     let mut sink2 = MockSink::default();
     router2.sync_levels_to_sink(&mut sink2);
-    assert_eq!(
-        sink2.events,
-        vec![(10, true), (11, true), (12, false), (13, false)]
-    );
+
+    // `sync_levels_to_sink` iterates PIRQ[A-D] in order and skips duplicate GSIs.
+    // Derive that mapping via gsi_for_intx without hard-coding the legacy 10-13 IRQ scheme.
+    let pirq_gsis = [
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntA),
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntB),
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntC),
+        router2.gsi_for_intx(dev0, PciInterruptPin::IntD),
+    ];
+    let mut seen = BTreeSet::new();
+    let mut expected_sync = Vec::new();
+    for gsi in pirq_gsis {
+        if !seen.insert(gsi) {
+            continue;
+        }
+        let asserted = gsi == gsi_dev0 || gsi == gsi_bdf;
+        expected_sync.push((gsi, asserted));
+    }
+    assert_eq!(sink2.events, expected_sync);
 
     // Restored refcounts should keep the shared line asserted until all sources deassert.
     router2.deassert_intx(dev0, PciInterruptPin::IntA, &mut sink2);
-    assert_eq!(
-        sink2.events,
-        vec![(10, true), (11, true), (12, false), (13, false)]
-    );
+    assert_eq!(sink2.events, expected_sync);
 
     router2.deassert_intx(dev4, PciInterruptPin::IntA, &mut sink2);
     router2.deassert_intx(bdf, PciInterruptPin::IntA, &mut sink2);
-    assert_eq!(
-        sink2.events,
-        vec![
-            (10, true),
-            (11, true),
-            (12, false),
-            (13, false),
-            (10, false),
-            (11, false),
-        ]
-    );
+    let mut expected_after_deassert = expected_sync.clone();
+    if gsi_bdf != gsi_dev0 {
+        expected_after_deassert.push((gsi_dev0, false));
+        expected_after_deassert.push((gsi_bdf, false));
+    } else {
+        expected_after_deassert.push((gsi_dev0, false));
+    }
+    assert_eq!(sink2.events, expected_after_deassert);
 }
