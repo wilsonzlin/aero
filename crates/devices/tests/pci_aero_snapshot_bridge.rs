@@ -12,8 +12,8 @@ use aero_snapshot::{
     MmuState, Result, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
-const DEVICE_ID_PCI_CFG: DeviceId = DeviceId(0x5000);
-const DEVICE_ID_PCI_INTX: DeviceId = DeviceId(0x5001);
+const DEVICE_ID_PCI_CFG: DeviceId = DeviceId::PCI_CFG;
+const DEVICE_ID_PCI_INTX: DeviceId = DeviceId::PCI_INTX;
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
