@@ -261,6 +261,20 @@ test("normalizeCollections(validate): rejects output reports longer than a full-
   });
 });
 
+test("normalizeCollections(validate): rejects reportId prefixes that push output reports over 64 bytes", () => {
+  const bigItem: HidReportItem = { ...BASE_ITEM, reportSize: 8, reportCount: 64 };
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      outputReports: [{ reportId: 1, items: [bigItem] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /collections\[0\]\.outputReports\[0\]\.items\[0\]/,
+  });
+});
+
 test("normalizeCollections: rejects excessive collection depth with a path", () => {
   const root = baseCollection() as unknown as { children: any[] };
   let current: { children: any[] } = root;
