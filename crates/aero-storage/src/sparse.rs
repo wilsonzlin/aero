@@ -9,6 +9,9 @@ const ZERO_BUF: [u8; 4096] = [0; 4096];
 // Hard cap to avoid absurd allocations from untrusted images.
 const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const MAX_TABLE_ENTRIES: u64 = MAX_TABLE_BYTES / 8;
+// Keep allocation units bounded. Extremely large block sizes cause pathological I/O patterns
+// (e.g. allocating a single block can require zero-filling gigabytes).
+const MAX_BLOCK_SIZE_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 /// Parameters used when creating a new sparse disk.
 #[derive(Copy, Clone, Debug)]
@@ -133,6 +136,9 @@ impl AeroSparseHeader {
                 "block_size must be power of two",
             ));
         }
+        if block_size_bytes > MAX_BLOCK_SIZE_BYTES {
+            return Err(DiskError::InvalidSparseHeader("block_size too large"));
+        }
         if disk_size_bytes == 0 || !disk_size_bytes.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::InvalidSparseHeader(
                 "disk_size must be a non-zero multiple of 512",
@@ -213,6 +219,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             return Err(DiskError::InvalidSparseHeader(
                 "block_size must be power of two",
             ));
+        }
+        if cfg.block_size_bytes > MAX_BLOCK_SIZE_BYTES {
+            return Err(DiskError::InvalidSparseHeader("block_size too large"));
         }
         if cfg.disk_size_bytes == 0 || !cfg.disk_size_bytes.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::InvalidSparseHeader(
