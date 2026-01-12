@@ -339,8 +339,12 @@ static VOID AerovNetFreeRxBuffer(_Inout_ AEROVNET_RX_BUFFER* Rx) {
   }
 
   if (Rx->BufferVa) {
-    MmFreeContiguousMemory(Rx->BufferVa);
+    if (Rx->BufferBytes != 0) {
+      MmFreeContiguousMemorySpecifyCache(Rx->BufferVa, Rx->BufferBytes, MmCached);
+    }
     Rx->BufferVa = NULL;
+    Rx->BufferBytes = 0;
+    Rx->BufferPa.QuadPart = 0;
   }
 }
 
@@ -365,7 +369,9 @@ static VOID AerovNetFreeTxResources(_Inout_ AEROVNET_ADAPTER* Adapter) {
   InitializeListHead(&Adapter->TxSubmittedList);
 
   if (Adapter->TxHeaderBlockVa) {
-    MmFreeContiguousMemory(Adapter->TxHeaderBlockVa);
+    if (Adapter->TxHeaderBlockBytes != 0) {
+      MmFreeContiguousMemorySpecifyCache(Adapter->TxHeaderBlockVa, Adapter->TxHeaderBlockBytes, MmCached);
+    }
     Adapter->TxHeaderBlockVa = NULL;
     Adapter->TxHeaderBlockBytes = 0;
     Adapter->TxHeaderBlockPa.QuadPart = 0;
