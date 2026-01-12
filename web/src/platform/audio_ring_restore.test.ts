@@ -67,6 +67,21 @@ describe("restoreAudioWorkletRing", () => {
     expect(getRingBufferLevelFrames(ring)).toBe(5);
   });
 
+  it("clamps correctly when wrapping u32 math yields available > capacity", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    // Treat read/write as wrapping u32 counters: writePos=1, readPos=0xffff_fff0 -> available=17.
+    // Since available > capacity, restore should clamp to a consistent "full" state (available=8).
+    const state: AudioWorkletRingStateLike = { capacityFrames: 8, readPos: 0xffff_fff0, writePos: 1 };
+    restoreAudioWorkletRing(ring, state);
+
+    expect(Atomics.load(ring.header, READ_FRAME_INDEX)).toBe(0xffff_fff9);
+    expect(Atomics.load(ring.header, WRITE_FRAME_INDEX)).toBe(1);
+    expect(getRingBufferLevelFrames(ring)).toBe(8);
+    expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
+  });
+
   it("ignores snapshot capacity mismatches and proceeds", () => {
     const ring = createTestRingBuffer(1, 8);
     ring.samples.fill(1);
