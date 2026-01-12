@@ -109,3 +109,8 @@ export async function readJsonResponseWithLimit(resp: Response, opts: { maxBytes
     throw new Error(`${opts.label} is not valid JSON (${err instanceof Error ? err.message : String(err)})`);
   }
 }
+
+export async function readTextResponseWithLimit(resp: Response, opts: { maxBytes: number; label: string }): Promise<string> {
+  const bytes = await readResponseBytesWithLimit(resp, opts);
+  return new TextDecoder().decode(bytes);
+}

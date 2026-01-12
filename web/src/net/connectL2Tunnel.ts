@@ -1,6 +1,7 @@
 import { WebSocketL2TunnelClient, type L2TunnelClientOptions, type L2TunnelSink } from "./l2Tunnel";
 import { connectL2Relay } from "./l2RelaySignalingClient";
 import type { RelaySignalingMode } from "./webrtcRelaySignalingClient";
+import { readTextResponseWithLimit } from "../storage/response_json";
 
 export type L2TunnelTransportMode = "ws" | "webrtc";
 
@@ -97,6 +98,9 @@ type GatewaySessionResponse = Readonly<{
 }>;
 
 const DEFAULT_KEEPALIVE_MAX_MS = 15_000;
+// Gateway session responses should be small JSON payloads; cap size to avoid pathological
+// allocations if the gateway is misconfigured or attacker-controlled.
+const MAX_GATEWAY_SESSION_RESPONSE_BYTES = 1024 * 1024; // 1 MiB
 
 function parseGatewayBaseUrl(gatewayBaseUrl: string): URL {
   // `gatewayBaseUrl` is generally an absolute URL, but same-origin deployments may
@@ -175,7 +179,10 @@ async function bootstrapSession(gatewayBaseUrl: string): Promise<string> {
     body: "{}",
   });
 
-  const text = await res.text();
+  const text = await readTextResponseWithLimit(res, {
+    maxBytes: MAX_GATEWAY_SESSION_RESPONSE_BYTES,
+    label: "gateway session response",
+  });
   if (!res.ok) {
     throw new Error(`failed to bootstrap gateway session (${res.status}): ${text}`);
   }

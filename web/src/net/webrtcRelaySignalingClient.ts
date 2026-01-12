@@ -6,6 +6,7 @@ import {
   type SessionDescription,
   type SignalMessage,
 } from "../shared/udpRelaySignaling";
+import { readJsonResponseWithLimit, readTextResponseWithLimit } from "../storage/response_json";
 
 export type RelaySignalingMode = "ws-trickle" | "http-offer" | "legacy-offer";
 
@@ -20,6 +21,10 @@ const DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS = 30_000;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 const DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS = 10_000;
+
+// WebRTC signaling endpoints should return small JSON payloads. Cap response size to avoid
+// pathological allocations if a relay/gateway is misconfigured or attacker-controlled.
+const MAX_SIGNALING_RESPONSE_BYTES = 1024 * 1024; // 1 MiB
 
 export async function connectRelaySignaling(
   opts: ConnectRelaySignalingOptions,
@@ -88,7 +93,10 @@ async function fetchIceServers(baseUrl: string, authToken?: string): Promise<RTC
     throw new Error(`failed to fetch ICE servers (${res.status})`);
   }
 
-  const body: unknown = await res.json();
+  const body: unknown = await readJsonResponseWithLimit(res, {
+    maxBytes: MAX_SIGNALING_RESPONSE_BYTES,
+    label: "webrtc ice servers response",
+  });
   if (Array.isArray(body)) return body as RTCIceServer[];
   if (typeof body !== "object" || body === null) return [];
 
@@ -282,7 +290,10 @@ async function negotiateHttpOffer(pc: RTCPeerConnection, baseUrl: string, authTo
     }
     throw err;
   }
-  const text = await res.text();
+  const text = await readTextResponseWithLimit(res, {
+    maxBytes: MAX_SIGNALING_RESPONSE_BYTES,
+    label: "webrtc offer response",
+  });
   if (!res.ok) {
     throw new Error(`webrtc offer failed (${res.status}): ${text}`);
   }
@@ -333,7 +344,10 @@ async function negotiateLegacyOffer(pc: RTCPeerConnection, baseUrl: string, auth
     }
     throw err;
   }
-  const text = await res.text();
+  const text = await readTextResponseWithLimit(res, {
+    maxBytes: MAX_SIGNALING_RESPONSE_BYTES,
+    label: "legacy offer response",
+  });
   if (!res.ok) {
     throw new Error(`legacy offer failed (${res.status}): ${text}`);
   }

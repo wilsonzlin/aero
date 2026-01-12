@@ -153,6 +153,32 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("rejects oversized session bootstrap responses", async () => {
+    const originalFetch = globalThis.fetch;
+
+    const fetchMock = vi.fn(async () => {
+      return new Response("{}", {
+        status: 201,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": String(1024 * 1024 + 1),
+        },
+      });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    try {
+      await expect(
+        connectL2Tunnel("https://gateway.example.com/base", {
+          mode: "ws",
+          sink: () => {},
+        }),
+      ).rejects.toHaveProperty("name", "ResponseTooLargeError");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("supports explicit wss:// gateway URLs (bootstraps session over https and reuses /l2 path)", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;

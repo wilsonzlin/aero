@@ -12,6 +12,7 @@ import { perf } from "../perf/perf";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
+import { readTextResponseWithLimit } from "../storage/response_json";
 import {
   serializeVmSnapshotError,
   type CoordinatorToWorkerSnapshotMessage,
@@ -38,6 +39,10 @@ import {
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
+
+// Gateway session responses should be small JSON payloads; cap size to avoid pathological
+// allocations if the gateway is misconfigured or attacker-controlled.
+const MAX_GATEWAY_SESSION_RESPONSE_BYTES = 1024 * 1024; // 1 MiB
 
 const tracer = new NetTracer();
 const traceFrame = (ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }): void => {
@@ -287,7 +292,10 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
 
     let text = "";
     try {
-      text = await res.text();
+      text = await readTextResponseWithLimit(res, {
+        maxBytes: MAX_GATEWAY_SESSION_RESPONSE_BYTES,
+        label: "gateway session response",
+      });
     } catch {
       text = "";
     }

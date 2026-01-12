@@ -8,6 +8,10 @@ import {
   type ResolvedAeroConfig,
 } from "./aero_config";
 import { clearStoredAeroConfig, loadStoredAeroConfig, saveStoredAeroConfig } from "./storage";
+import { readJsonResponseWithLimit } from "../storage/response_json";
+
+// Deployment-provided config should be small; cap response size to avoid pathological allocations.
+const MAX_STATIC_CONFIG_JSON_BYTES = 1024 * 1024; // 1 MiB
 
 export interface AeroConfigManagerOptions {
   capabilities?: AeroBrowserCapabilities;
@@ -73,7 +77,10 @@ export class AeroConfigManager {
         this.emit();
         return;
       }
-      this.staticConfig = (await res.json()) as unknown;
+      this.staticConfig = await readJsonResponseWithLimit(res, {
+        maxBytes: MAX_STATIC_CONFIG_JSON_BYTES,
+        label: "static config",
+      });
     } catch {
       // Ignore; optional.
     }

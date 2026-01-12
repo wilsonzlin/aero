@@ -141,6 +141,29 @@ function installMockFetch(handler: (url: URL) => Response | Promise<Response>): 
 }
 
 describe("net/webrtcRelaySignalingClient", () => {
+  it("rejects oversized /webrtc/ice responses", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => {
+      return new Response("[]", {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": String(1024 * 1024 + 1),
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(
+        connectRelaySignaling({ baseUrl: "wss://relay.example.com/base" }, () => {
+          throw new Error("should not create data channel");
+        }),
+      ).rejects.toHaveProperty("name", "ResponseTooLargeError");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("uses https:// for HTTP endpoints when baseUrl is wss://", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const originalPc = g.RTCPeerConnection;
