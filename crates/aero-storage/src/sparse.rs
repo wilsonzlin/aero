@@ -318,6 +318,24 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             ));
         }
 
+        // Prepare allocation table validation state.
+        let mut actual_allocated_blocks = 0u64;
+        let allocated_blocks_usize: usize = header
+            .allocated_blocks
+            .try_into()
+            .map_err(|_| DiskError::CorruptSparseImage("allocated_blocks out of range"))?;
+        // Use a bitset instead of `Vec<bool>` to keep validation overhead small even for
+        // large tables (important on wasm32).
+        let bitset_len = allocated_blocks_usize
+            .checked_add(63)
+            .ok_or(DiskError::OffsetOverflow)?
+            / 64;
+        let mut seen_phys_idx: Vec<u64> = Vec::new();
+        seen_phys_idx
+            .try_reserve_exact(bitset_len)
+            .map_err(|_| DiskError::Unsupported("aerosparse allocation table too large"))?;
+        seen_phys_idx.resize(bitset_len, 0);
+
         // Read allocation table.
         //
         // IMPORTANT:
@@ -351,83 +369,69 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                 let bytes: [u8; 8] = chunk
                     .try_into()
                     .map_err(|_| DiskError::CorruptSparseImage("allocation table chunk size"))?;
-                table.push(u64::from_le_bytes(bytes));
+                let phys = u64::from_le_bytes(bytes);
+                table.push(phys);
+
+                if phys == 0 {
+                    continue;
+                }
+
+                // Validate entries as we go so corrupt images fail fast without reading the
+                // entire allocation table first.
+                actual_allocated_blocks = actual_allocated_blocks
+                    .checked_add(1)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                if actual_allocated_blocks > header.allocated_blocks {
+                    return Err(DiskError::CorruptSparseImage(
+                        "allocated_blocks does not match allocation table",
+                    ));
+                }
+
+                if phys < header.data_offset {
+                    return Err(DiskError::CorruptSparseImage(
+                        "data block offset before data region",
+                    ));
+                }
+                let rel = phys - header.data_offset;
+                if rel % block_size != 0 {
+                    return Err(DiskError::CorruptSparseImage(
+                        "misaligned data block offset",
+                    ));
+                }
+
+                let phys_idx = rel / block_size;
+                if phys_idx >= header.allocated_blocks {
+                    return Err(DiskError::CorruptSparseImage(
+                        "data block offset out of bounds",
+                    ));
+                }
+                let phys_end = phys.checked_add(block_size).ok_or(DiskError::CorruptSparseImage(
+                    "data block offset out of bounds",
+                ))?;
+                if phys_end > expected_min_len {
+                    return Err(DiskError::CorruptSparseImage(
+                        "data block offset out of bounds",
+                    ));
+                }
+
+                let phys_idx_usize: usize = phys_idx.try_into().map_err(|_| {
+                    DiskError::CorruptSparseImage("data block offset out of bounds")
+                })?;
+                let word_idx = phys_idx_usize / 64;
+                let bit_idx = phys_idx_usize % 64;
+                let mask = 1u64 << bit_idx;
+                let word = seen_phys_idx
+                    .get_mut(word_idx)
+                    .ok_or(DiskError::CorruptSparseImage("data block offset out of bounds"))?;
+                if (*word & mask) != 0 {
+                    return Err(DiskError::CorruptSparseImage("duplicate data block offset"));
+                }
+                *word |= mask;
             }
             offset = offset
                 .checked_add(read_len as u64)
                 .ok_or(DiskError::OffsetOverflow)?;
             remaining -= read_len;
-        }
-
-        // Validate allocation table consistency and physical offsets.
-        let mut actual_allocated_blocks = 0u64;
-        let allocated_blocks_usize: usize = header
-            .allocated_blocks
-            .try_into()
-            .map_err(|_| DiskError::CorruptSparseImage("allocated_blocks out of range"))?;
-        // Use a bitset instead of `Vec<bool>` to keep validation overhead small even for
-        // large tables (important on wasm32).
-        let bitset_len = allocated_blocks_usize
-            .checked_add(63)
-            .ok_or(DiskError::OffsetOverflow)?
-            / 64;
-        let mut seen_phys_idx: Vec<u64> = Vec::new();
-        seen_phys_idx
-            .try_reserve_exact(bitset_len)
-            .map_err(|_| DiskError::Unsupported("aerosparse allocation table too large"))?;
-        seen_phys_idx.resize(bitset_len, 0);
-
-        for &phys in &table {
-            if phys == 0 {
-                continue;
-            }
-
-            actual_allocated_blocks = actual_allocated_blocks
-                .checked_add(1)
-                .ok_or(DiskError::OffsetOverflow)?;
-
-            if phys < header.data_offset {
-                return Err(DiskError::CorruptSparseImage(
-                    "data block offset before data region",
-                ));
-            }
-            let rel = phys - header.data_offset;
-            if rel % block_size != 0 {
-                return Err(DiskError::CorruptSparseImage(
-                    "misaligned data block offset",
-                ));
-            }
-
-            let phys_idx = rel / block_size;
-            if phys_idx >= header.allocated_blocks {
-                return Err(DiskError::CorruptSparseImage(
-                    "data block offset out of bounds",
-                ));
-            }
-            let phys_end = phys.checked_add(block_size).ok_or(DiskError::CorruptSparseImage(
-                "data block offset out of bounds",
-            ))?;
-            if phys_end > expected_min_len {
-                return Err(DiskError::CorruptSparseImage(
-                    "data block offset out of bounds",
-                ));
-            }
-
-            let phys_idx_usize: usize = phys_idx
-                .try_into()
-                .map_err(|_| DiskError::CorruptSparseImage("data block offset out of bounds"))?;
-            let word_idx = phys_idx_usize / 64;
-            let bit_idx = phys_idx_usize % 64;
-            let mask = 1u64 << bit_idx;
-            let word = seen_phys_idx
-                .get_mut(word_idx)
-                .ok_or(DiskError::CorruptSparseImage(
-                    "data block offset out of bounds",
-                ))?;
-            if (*word & mask) != 0 {
-                return Err(DiskError::CorruptSparseImage("duplicate data block offset"));
-            }
-            *word |= mask;
         }
 
         if actual_allocated_blocks != header.allocated_blocks {
