@@ -108,6 +108,14 @@ describe("workers/net.worker (worker_threads)", () => {
     } as unknown as WorkerOptions);
 
     try {
+      const fetchCalledAbs = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown }).type === "fetch.called" &&
+          (msg as { url?: unknown }).url === "https://gateway.example.com/session" &&
+          (msg as { method?: unknown }).method === "POST",
+        10000,
+      );
       const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
         url?: string;
       }>;
@@ -121,6 +129,7 @@ describe("workers/net.worker (worker_threads)", () => {
       worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
       worker.postMessage(makeInit(segments));
 
+      await fetchCalledAbs;
       const createdMsg = await wsCreated;
       expect(createdMsg.url).toBe("wss://gateway.example.com/l2");
 
@@ -128,10 +137,19 @@ describe("workers/net.worker (worker_threads)", () => {
 
       // Switch to a same-origin relative path and ensure it resolves against the
       // worker's location (Node shim provides a stable https://gateway.example.com base).
+      const fetchCalledRel = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown }).type === "fetch.called" &&
+          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session" &&
+          (msg as { method?: unknown }).method === "POST",
+        10000,
+      );
       const wsCreatedRel = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
         url?: string;
       }>;
       worker.postMessage({ kind: "config.update", version: 2, config: makeConfig("/base") });
+      await fetchCalledRel;
       const createdRelMsg = await wsCreatedRel;
       expect(createdRelMsg.url).toBe("wss://gateway.example.com/base/l2");
 
@@ -208,12 +226,21 @@ describe("workers/net.worker (worker_threads)", () => {
 
       // If the tunnel closes unexpectedly, the net worker should reconnect and
       // resume forwarding frames.
+      const fetchCalledReconnect = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown }).type === "fetch.called" &&
+          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session" &&
+          (msg as { method?: unknown }).method === "POST",
+        10000,
+      );
       worker.postMessage({ type: "ws.close", code: 1000, reason: "test" });
       const wsCreated2 = (await waitForWorkerMessage(
         worker,
         (msg) => (msg as { type?: unknown }).type === "ws.created",
         10000,
       )) as { url?: string };
+      await fetchCalledReconnect;
       expect(wsCreated2.url).toBe("wss://gateway.example.com/base/l2");
 
       const frame2 = Uint8Array.of(6, 7, 8);

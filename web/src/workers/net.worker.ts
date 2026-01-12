@@ -49,6 +49,22 @@ let l2ReconnectAttempts = 0;
 let l2ReconnectTimer: number | null = null;
 let l2ReconnectGeneration = 0;
 
+type GatewaySessionResponse = Readonly<{
+  endpoints?: Readonly<{
+    l2?: string;
+  }>;
+  limits?: Readonly<{
+    l2?: Readonly<{
+      maxFramePayloadBytes: number;
+      maxControlPayloadBytes: number;
+    }>;
+  }>;
+}>;
+
+let l2BootstrapPromise: Promise<void> | null = null;
+let l2BootstrapProxyUrl: string | null = null;
+let l2BootstrapGeneration = 0;
+
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
@@ -78,6 +94,81 @@ const L2_RECONNECT_JITTER_FRACTION = 0.2;
 
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function resolveUrlAgainstLocation(raw: string): URL {
+  const baseHref = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
+  return baseHref && typeof baseHref === "string" ? new URL(raw, baseHref) : new URL(raw);
+}
+
+function buildSessionUrl(proxyUrl: string): string {
+  const url = resolveUrlAgainstLocation(proxyUrl);
+
+  // `fetch()` does not support ws(s) schemes. If the caller passed a WebSocket
+  // URL (explicit `/l2`), map it back to the HTTP origin for session bootstrap.
+  if (url.protocol === "ws:") url.protocol = "http:";
+  if (url.protocol === "wss:") url.protocol = "https:";
+
+  // Session bootstrap is an HTTP endpoint and does not accept query parameters.
+  url.search = "";
+  url.hash = "";
+
+  // `proxyUrl` may be a base path (append `/l2` later) or an explicit L2
+  // endpoint (`.../l2` or legacy `.../eth`). The session endpoint is a sibling.
+  let path = url.pathname.replace(/\/$/, "");
+  if (path.endsWith("/l2") || path.endsWith("/eth")) {
+    path = path.replace(/\/(l2|eth)$/, "");
+  }
+
+  url.pathname = `${path.replace(/\/$/, "")}/session`;
+  return url.toString();
+}
+
+function buildWebSocketUrlFromEndpoint(proxyUrl: string, endpoint: string): string {
+  const url = resolveUrlAgainstLocation(proxyUrl);
+  if (url.protocol === "http:") url.protocol = "ws:";
+  if (url.protocol === "https:") url.protocol = "wss:";
+  url.search = "";
+  url.hash = "";
+
+  // `proxyUrl` may already include `/l2` or legacy `/eth`.
+  let basePath = url.pathname.replace(/\/$/, "");
+  if (basePath.endsWith("/l2") || basePath.endsWith("/eth")) {
+    basePath = basePath.replace(/\/(l2|eth)$/, "");
+  }
+
+  // The gateway session response uses path-like strings (usually beginning with
+  // `/`). Treat them as relative to the configured gateway base path so that
+  // deployments behind a reverse-proxy prefix (`/base`) continue to work.
+  const trimmedEndpoint = endpoint.trim();
+
+  const normalizedBase = basePath.replace(/\/$/, "");
+  if (
+    normalizedBase.length > 0 &&
+    trimmedEndpoint.startsWith("/") &&
+    trimmedEndpoint.startsWith(`${normalizedBase}/`)
+  ) {
+    // If the endpoint already includes the base prefix, avoid duplicating it.
+    url.pathname = trimmedEndpoint;
+    return url.toString();
+  }
+
+  const endpointPath = trimmedEndpoint.startsWith("/") ? trimmedEndpoint.slice(1) : trimmedEndpoint;
+  url.pathname = `${normalizedBase}/${endpointPath}`.replace(/^\/\//, "/");
+
+  return url.toString();
+}
+
+function parseGatewaySessionResponse(text: string): GatewaySessionResponse {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return {};
+  try {
+    const json: unknown = JSON.parse(trimmed);
+    if (typeof json !== "object" || json === null) return {};
+    return json as GatewaySessionResponse;
+  } catch {
+    return {};
+  }
 }
 
 function pushEvent(evt: Event): void {
@@ -150,6 +241,75 @@ function scheduleReconnect(): void {
   l2ReconnectTimer = timer as unknown as number;
 }
 
+async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number): Promise<void> {
+  const forwarder = l2Forwarder;
+  if (!forwarder) return;
+
+  // Best-effort bootstrap: failures should not prevent connecting in dev setups
+  // that do not require session auth.
+  let session: GatewaySessionResponse | null = null;
+  try {
+    const res = await fetch(buildSessionUrl(proxyUrl), {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    let text = "";
+    try {
+      text = await res.text();
+    } catch {
+      text = "";
+    }
+
+    if (!res.ok) {
+      throw new Error(`failed to bootstrap gateway session (${res.status}): ${text}`);
+    }
+
+    session = parseGatewaySessionResponse(text);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    pushEvent({ kind: "log", level: "warn", message: `Failed to bootstrap gateway session: ${message}` });
+  }
+
+  // Avoid races with config updates / reconnect generations while the fetch is in-flight.
+  if (generation !== l2ReconnectGeneration) return;
+  if (l2TunnelProxyUrl !== proxyUrl) return;
+  if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+
+  // If another task already created a tunnel, do not clobber it.
+  if (l2TunnelClient) return;
+
+  const endpoint = session?.endpoints?.l2;
+  const wsBaseUrl = typeof endpoint === "string" && endpoint.length > 0 ? buildWebSocketUrlFromEndpoint(proxyUrl, endpoint) : proxyUrl;
+
+  const maxFramePayloadBytes = session?.limits?.l2?.maxFramePayloadBytes;
+  const tunnelOpts =
+    typeof maxFramePayloadBytes === "number" && Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0
+      ? { maxFrameSize: maxFramePayloadBytes }
+      : undefined;
+
+  const client = new WebSocketL2TunnelClient(
+    wsBaseUrl,
+    (ev) => {
+      // Avoid stale events from previously replaced tunnels clobbering telemetry state.
+      if (l2TunnelClient !== client) return;
+      forwarder.sink(ev);
+    },
+    tunnelOpts,
+  );
+
+  l2TunnelClient = client;
+  forwarder.setTunnel(l2TunnelClient);
+
+  if (l2TunnelTelemetry && l2TunnelTelemetry.connectionState !== "open") {
+    l2TunnelTelemetry.onConnectInitiated();
+  }
+
+  forwarder.start();
+}
+
 function applyL2TunnelConfig(config: AeroConfig | null): void {
   const proxyUrl = config?.proxyUrl ?? null;
   const forwarder = l2Forwarder;
@@ -178,18 +338,28 @@ function applyL2TunnelConfig(config: AeroConfig | null): void {
     return;
   }
 
-  if (!l2TunnelClient) {
-    const client = new WebSocketL2TunnelClient(proxyUrl, (ev) => {
-      // Avoid stale events from previously replaced tunnels clobbering telemetry state.
-      if (l2TunnelClient !== client) return;
-      forwarder.sink(ev);
-    });
-    l2TunnelClient = client;
-    forwarder.setTunnel(l2TunnelClient);
-  }
-
   if (telemetry && telemetry.connectionState !== "open") {
     telemetry.onConnectInitiated();
+  }
+
+  if (!l2TunnelClient) {
+    const generation = l2ReconnectGeneration;
+    if (
+      l2BootstrapPromise &&
+      l2BootstrapProxyUrl === proxyUrl &&
+      l2BootstrapGeneration === generation
+    ) {
+      return;
+    }
+
+    l2BootstrapProxyUrl = proxyUrl;
+    l2BootstrapGeneration = generation;
+    l2BootstrapPromise = connectL2TunnelWithBootstrap(proxyUrl, generation).finally(() => {
+      if (l2BootstrapProxyUrl === proxyUrl && l2BootstrapGeneration === generation) {
+        l2BootstrapPromise = null;
+      }
+    });
+    return;
   }
 
   forwarder.start();
