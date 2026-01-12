@@ -225,15 +225,14 @@ export interface WasmApi {
     };
 
     /**
-     * Guest-visible virtio-net device (virtio-pci, modern BAR0 MMIO).
+     * Guest-visible virtio-net PCI bridge.
      *
-     * Optional while older wasm builds are still in circulation.
+     * In the browser runtime this is backed by the `NET_TX`/`NET_RX` AIPC rings inside `ioIpcSab`
+     * (see `web/src/runtime/shared_layout.ts`).
+     *
+     * Optional until all deployed WASM builds include virtio networking support.
      */
-    VirtioNetPciBridge?: new (
-        guestBase: number,
-        guestSize: number,
-        ioIpcSab: SharedArrayBuffer,
-    ) => VirtioNetPciBridgeHandle;
+    VirtioNetPciBridge?: new (guestBase: number, guestSize: number, ioIpcSab: SharedArrayBuffer) => VirtioNetPciBridgeHandle;
 
     /**
      * Legacy i8042 (PS/2 keyboard + mouse) controller bridge.

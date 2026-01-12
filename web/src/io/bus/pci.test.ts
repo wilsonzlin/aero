@@ -586,4 +586,34 @@ describe("io/bus/pci", () => {
     cfg.writeU16(addr.device, addr.function, 0x04, 0x0000);
     expect(mmioBus.read(newBase, 4)).toBe(0xffff_ffff);
   });
+
+  it("notifies devices on PCI command register writes (bus master + interrupt disable)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const seen: number[] = [];
+    const dev: PciDevice = {
+      name: "cmd_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      onPciCommandWrite: (command) => {
+        seen.push(command & 0xffff);
+      },
+    };
+    pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    // Bus Master Enable (bit 2).
+    cfg.writeU32(0, 0, 0x04, 0x0000_0004);
+    // Interrupt Disable (bit 10) + Bus Master Enable.
+    cfg.writeU32(0, 0, 0x04, 0x0000_0404);
+
+    // Writing status bits should not trigger a callback (command unchanged).
+    cfg.writeU32(0, 0, 0x04, 0xabcd_0404);
+
+    expect(seen).toEqual([0x0004, 0x0404]);
+  });
 });
