@@ -33,7 +33,7 @@ fn compute_stage_resource_bindings_use_compute_visibility() {
         ],
     };
 
-    let bindings = reflect_resource_bindings(&module);
+    let bindings = reflect_resource_bindings(&module).expect("reflect bindings");
     let cb = bindings
         .iter()
         .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, .. }))
@@ -42,4 +42,3 @@ fn compute_stage_resource_bindings_use_compute_visibility() {
     assert!(cb.visibility.contains(wgpu::ShaderStages::COMPUTE));
     assert_eq!(cb.group, 2, "compute-stage bindings should use @group(2)");
 }
-

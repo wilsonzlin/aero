@@ -163,8 +163,8 @@ pub fn translate_sm4_module_to_wgsl(
 /// Note: Full compute-stage WGSL translation is not implemented yet, but the
 /// binding model reserves `@group(2)` for compute resources. This helper is used
 /// by tests and is intended to support future compute-stage translation work.
-pub fn reflect_resource_bindings(module: &Sm4Module) -> Vec<Binding> {
-    scan_resources(module).bindings(module.stage)
+pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
+    Ok(scan_resources(module)?.bindings(module.stage))
 }
 
 fn translate_vs(

@@ -1,5 +1,6 @@
 mod common;
 
+use aero_d3d11::binding_model::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -54,7 +55,7 @@ fn aerogpu_cmd_set_samplers_rejects_slot_out_of_range() {
 
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetSamplers as u32);
         stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
-        stream.extend_from_slice(&16u32.to_le_bytes()); // start_slot (0..15 supported)
+        stream.extend_from_slice(&MAX_SAMPLER_SLOTS.to_le_bytes()); // start_slot (0..MAX_SAMPLER_SLOTS-1 supported)
         stream.extend_from_slice(&1u32.to_le_bytes()); // sampler_count
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u32.to_le_bytes()); // sampler handle (unbind)
@@ -137,7 +138,7 @@ fn aerogpu_cmd_set_texture_rejects_slot_out_of_range() {
 
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetTexture as u32);
         stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
-        stream.extend_from_slice(&128u32.to_le_bytes()); // slot (0..127 supported)
+        stream.extend_from_slice(&MAX_TEXTURE_SLOTS.to_le_bytes()); // slot (0..MAX_TEXTURE_SLOTS-1 supported)
         stream.extend_from_slice(&0u32.to_le_bytes()); // texture handle (unbind)
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);

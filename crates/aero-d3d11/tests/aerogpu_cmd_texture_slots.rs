@@ -1,6 +1,7 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::binding_model::MAX_TEXTURE_SLOTS;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -27,7 +28,7 @@ fn end_cmd(stream: &mut [u8], start: usize) {
 }
 
 #[test]
-fn aerogpu_cmd_set_texture_accepts_128_slots() {
+fn aerogpu_cmd_set_texture_accepts_max_slots() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -46,7 +47,7 @@ fn aerogpu_cmd_set_texture_accepts_128_slots() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
 
-        for slot in 0..128u32 {
+        for slot in 0..MAX_TEXTURE_SLOTS {
             let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetTexture as u32);
             stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
             stream.extend_from_slice(&slot.to_le_bytes());
