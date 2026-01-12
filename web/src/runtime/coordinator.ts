@@ -89,6 +89,9 @@ export interface WorkerWasmStatus {
  */
 export type RingBufferOwner = "cpu" | "io" | "both" | "none";
 
+const AUDIO_RING_WORKER_ROLES = ["cpu", "io"] as const;
+type AudioRingWorkerRole = (typeof AUDIO_RING_WORKER_ROLES)[number];
+
 export type VmLifecycleState = "stopped" | "starting" | "running" | "restarting" | "resetting" | "poweredOff" | "failed";
 
 export type WorkerCoordinatorFatalKind =
@@ -165,25 +168,6 @@ type PendingNetTraceStatusRequest = {
 
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-}
-
-function ringOwnerIncludes(owner: RingBufferOwner, role: "cpu" | "io"): boolean {
-  switch (owner) {
-    case "cpu":
-      return role === "cpu";
-    case "io":
-      return role === "io";
-    case "both":
-      // Useful for debugging, but violates the SPSC contract. Prefer selecting a
-      // single owner unless you really know what you're doing.
-      return true;
-    case "none":
-      return false;
-    default: {
-      const neverOwner: never = owner;
-      throw new Error(`Unknown ring buffer owner: ${String(neverOwner)}`);
-    }
-  }
 }
 
 function maybeGetHudPerfChannel(): PerfChannel | null {
@@ -299,6 +283,11 @@ export class WorkerCoordinator {
   private audioCapacityFrames = 0;
   private audioChannelCount = 0;
   private audioDstSampleRate = 0;
+  // Tracks which worker currently owns the SPSC producer/consumer roles for the
+  // SharedArrayBuffer rings. This lets the coordinator enforce "detach old owner
+  // before attach new owner" regardless of worker ordering.
+  private audioRingProducerOwner: AudioRingWorkerRole | null = null;
+  private micRingConsumerOwner: AudioRingWorkerRole | null = null;
   // Explicit forwarding policies to avoid accidental multi-producer/multi-consumer bugs
   // as real devices move between workers (e.g. HDA in the IO worker).
   //
@@ -722,11 +711,17 @@ export class WorkerCoordinator {
   }
 
   setAudioRingBufferOwner(owner: RingBufferOwner): void {
+    if (owner === "both") {
+      throw new Error("Audio ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.");
+    }
     this.audioRingBufferOwnerOverride = owner;
     this.syncAudioRingBufferAttachments();
   }
 
   setMicrophoneRingBufferOwner(owner: RingBufferOwner): void {
+    if (owner === "both") {
+      throw new Error("Microphone ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.");
+    }
     this.micRingBufferOwnerOverride = owner;
     this.syncMicrophoneRingBufferAttachments();
   }
@@ -921,34 +916,84 @@ export class WorkerCoordinator {
     const ringBuffer = this.audioRingBuffer;
     const owner = this.effectiveAudioRingBufferOwner();
 
-    for (const role of ["cpu", "io"] as const) {
+    if (owner === "both") {
+      throw new Error("Audio ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.");
+    }
+
+    let nextOwner: AudioRingWorkerRole | null = null;
+    if (ringBuffer && (owner === "cpu" || owner === "io")) {
+      nextOwner = owner;
+    }
+
+    const prevOwner = this.audioRingProducerOwner;
+    if (prevOwner && prevOwner !== nextOwner) {
+      const info = this.workers[prevOwner];
+      if (info) {
+        info.worker.postMessage({
+          type: "setAudioRingBuffer",
+          ringBuffer: null,
+          capacityFrames: 0,
+          channelCount: 0,
+          dstSampleRate: 0,
+        } satisfies SetAudioRingBufferMessage);
+      }
+    }
+
+    for (const role of AUDIO_RING_WORKER_ROLES) {
       const info = this.workers[role];
       if (!info) continue;
-      const shouldAttach = ringOwnerIncludes(owner, role);
+      const attach = role === nextOwner;
       info.worker.postMessage({
         type: "setAudioRingBuffer",
-        ringBuffer: shouldAttach ? ringBuffer : null,
-        capacityFrames: this.audioCapacityFrames,
-        channelCount: this.audioChannelCount,
-        dstSampleRate: this.audioDstSampleRate,
+        ringBuffer: attach ? ringBuffer : null,
+        capacityFrames: attach ? this.audioCapacityFrames : 0,
+        channelCount: attach ? this.audioChannelCount : 0,
+        dstSampleRate: attach ? this.audioDstSampleRate : 0,
       } satisfies SetAudioRingBufferMessage);
     }
+
+    this.audioRingProducerOwner = nextOwner;
   }
 
   private syncMicrophoneRingBufferAttachments(): void {
     const ringBuffer = this.micRingBuffer;
     const owner = this.effectiveMicrophoneRingBufferOwner();
 
-    for (const role of ["cpu", "io"] as const) {
+    if (owner === "both") {
+      throw new Error(
+        "Microphone ring buffer owner 'both' violates SPSC constraints; choose 'cpu', 'io', or 'none'.",
+      );
+    }
+
+    let nextOwner: AudioRingWorkerRole | null = null;
+    if (ringBuffer && (owner === "cpu" || owner === "io")) {
+      nextOwner = owner;
+    }
+
+    const prevOwner = this.micRingConsumerOwner;
+    if (prevOwner && prevOwner !== nextOwner) {
+      const info = this.workers[prevOwner];
+      if (info) {
+        info.worker.postMessage({
+          type: "setMicrophoneRingBuffer",
+          ringBuffer: null,
+          sampleRate: 0,
+        } satisfies SetMicrophoneRingBufferMessage);
+      }
+    }
+
+    for (const role of AUDIO_RING_WORKER_ROLES) {
       const info = this.workers[role];
       if (!info) continue;
-      const shouldAttach = ringOwnerIncludes(owner, role);
+      const attach = role === nextOwner;
       info.worker.postMessage({
         type: "setMicrophoneRingBuffer",
-        ringBuffer: shouldAttach ? ringBuffer : null,
-        sampleRate: this.micSampleRate,
+        ringBuffer: attach ? ringBuffer : null,
+        sampleRate: attach ? this.micSampleRate : 0,
       } satisfies SetMicrophoneRingBufferMessage);
     }
+
+    this.micRingConsumerOwner = nextOwner;
   }
 
   async snapshotSaveToOpfs(path: string): Promise<void> {

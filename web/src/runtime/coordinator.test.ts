@@ -5,6 +5,10 @@ import { WorkerCoordinator } from "./coordinator";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
 
 class MockWorker {
+  // Global postMessage trace to assert coordinator message ordering across workers.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  static globalPosted: Array<{ specifier: string | URL; message: any; transfer?: any[] }> = [];
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly posted: Array<{ message: any; transfer?: any[] }> = [];
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -20,6 +24,7 @@ class MockWorker {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   postMessage(message: any, transfer?: any[]): void {
     this.posted.push({ message, transfer });
+    MockWorker.globalPosted.push({ specifier: this.specifier, message, transfer });
   }
 
   terminate(): void {}
@@ -32,6 +37,7 @@ describe("runtime/coordinator", () => {
   beforeEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (globalThis as any).Worker = MockWorker;
+    MockWorker.globalPosted.length = 0;
     vi.spyOn(perf, "registerWorker").mockImplementation(() => 0);
   });
 
@@ -195,5 +201,79 @@ describe("runtime/coordinator", () => {
     (coordinator as any).terminateWorker("net");
 
     await expect(promise).rejects.toThrow(/net worker restarted/i);
+  });
+
+  it("enforces SPSC ownership when switching audio/mic ring buffer attachments between workers", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    expect(() => coordinator.setAudioRingBufferOwner("both")).toThrow(/violates SPSC constraints/i);
+    expect(() => coordinator.setMicrophoneRingBufferOwner("both")).toThrow(/violates SPSC constraints/i);
+
+    const audioSab = new SharedArrayBuffer(16);
+    coordinator.setAudioRingBufferOwner("io");
+    coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
+
+    MockWorker.globalPosted.length = 0;
+    coordinator.setAudioRingBufferOwner("cpu");
+
+    const detachIoAudioIdx = MockWorker.globalPosted.findIndex(
+      (entry) =>
+        String(entry.specifier).includes("io.worker.ts") &&
+        entry.message?.type === "setAudioRingBuffer" &&
+        entry.message?.ringBuffer === null,
+    );
+    const attachCpuAudioIdx = MockWorker.globalPosted.findIndex(
+      (entry) =>
+        String(entry.specifier).includes("cpu.worker.ts") &&
+        entry.message?.type === "setAudioRingBuffer" &&
+        entry.message?.ringBuffer === audioSab,
+    );
+    expect(detachIoAudioIdx).toBeGreaterThanOrEqual(0);
+    expect(attachCpuAudioIdx).toBeGreaterThanOrEqual(0);
+    expect(detachIoAudioIdx).toBeLessThan(attachCpuAudioIdx);
+    expect(
+      MockWorker.globalPosted.some(
+        (entry) =>
+          String(entry.specifier).includes("io.worker.ts") &&
+          entry.message?.type === "setAudioRingBuffer" &&
+          entry.message?.ringBuffer === audioSab,
+      ),
+    ).toBe(false);
+
+    const micSab = new SharedArrayBuffer(16);
+    coordinator.setMicrophoneRingBufferOwner("io");
+    coordinator.setMicrophoneRingBuffer(micSab, 44_100);
+
+    MockWorker.globalPosted.length = 0;
+    coordinator.setMicrophoneRingBufferOwner("cpu");
+
+    const detachIoMicIdx = MockWorker.globalPosted.findIndex(
+      (entry) =>
+        String(entry.specifier).includes("io.worker.ts") &&
+        entry.message?.type === "setMicrophoneRingBuffer" &&
+        entry.message?.ringBuffer === null,
+    );
+    const attachCpuMicIdx = MockWorker.globalPosted.findIndex(
+      (entry) =>
+        String(entry.specifier).includes("cpu.worker.ts") &&
+        entry.message?.type === "setMicrophoneRingBuffer" &&
+        entry.message?.ringBuffer === micSab,
+    );
+    expect(detachIoMicIdx).toBeGreaterThanOrEqual(0);
+    expect(attachCpuMicIdx).toBeGreaterThanOrEqual(0);
+    expect(detachIoMicIdx).toBeLessThan(attachCpuMicIdx);
+    expect(
+      MockWorker.globalPosted.some(
+        (entry) =>
+          String(entry.specifier).includes("io.worker.ts") &&
+          entry.message?.type === "setMicrophoneRingBuffer" &&
+          entry.message?.ringBuffer === micSab,
+      ),
+    ).toBe(false);
   });
 });
