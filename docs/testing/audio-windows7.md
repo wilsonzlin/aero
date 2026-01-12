@@ -226,13 +226,15 @@ const out =
 
 out?.getMetrics?.()
 
-// Raw ring header counters (u32):
-// 0=readFrameIndex, 1=writeFrameIndex, 2=underrunCount, 3=overrunCount
-out?.ringBuffer?.header && {
-  read: Atomics.load(out.ringBuffer.header, 0) >>> 0,
-  write: Atomics.load(out.ringBuffer.header, 1) >>> 0,
-  underruns: Atomics.load(out.ringBuffer.header, 2) >>> 0,
-  overruns: Atomics.load(out.ringBuffer.header, 3) >>> 0,
+// Raw ring counters (u32). Prefer using the named views (`readIndex`, `writeIndex`, etc.)
+// instead of hardcoding header offsets; the canonical layout is defined in:
+//   - `web/src/platform/audio_worklet_ring_layout.js`
+//   - re-exported by `web/src/audio/audio_worklet_ring.ts`
+out?.ringBuffer && {
+  read: Atomics.load(out.ringBuffer.readIndex, 0) >>> 0,
+  write: Atomics.load(out.ringBuffer.writeIndex, 0) >>> 0,
+  underruns: Atomics.load(out.ringBuffer.underrunCount, 0) >>> 0,
+  overruns: Atomics.load(out.ringBuffer.overrunCount, 0) >>> 0,
 };
 ```
 
