@@ -961,6 +961,26 @@ function restoreAudioVirtioSndDeviceState(bytes: Uint8Array): void {
   const ok = dev.loadState(bytes);
   if (ok) {
     pendingAudioVirtioSndSnapshotBytes = null;
+
+    // Re-apply the current audio output ring configuration after restore.
+    //
+    // The virtio-snd snapshot includes the host sample rate used for resampling; if the snapshot
+    // was produced under a different host AudioContext rate (or if we restore before the UI
+    // reattaches the AudioWorklet ring), the restored rate can diverge from the current host.
+    //
+    // Re-applying the attachment is idempotent and ensures the playback ring + host sample rate
+    // are consistent with the current coordinator-provided AudioContext.
+    try {
+      const shouldAttach = !hdaDevice;
+      dev.setAudioRingBuffer({
+        ringBuffer: shouldAttach ? audioOutRingBuffer : null,
+        capacityFrames: audioOutCapacityFrames,
+        channelCount: audioOutChannelCount,
+        dstSampleRateHz: audioOutDstSampleRate,
+      });
+    } catch (err) {
+      console.warn("[io.worker] Failed to reapply virtio-snd audio output settings after snapshot restore", err);
+    }
   } else {
     cachePending();
   }
