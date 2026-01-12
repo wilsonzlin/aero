@@ -927,6 +927,35 @@ mod tests {
     }
 
     #[test]
+    fn pcm_32bit_selected_values_round_trip_through_f32() {
+        fn round_trip(v: i32) -> i32 {
+            let sample = decode_one_sample(&v.to_le_bytes(), 32);
+            let mut out = [0u8; 4];
+            encode_one_sample(&mut out, 32, sample);
+            i32::from_le_bytes(out)
+        }
+
+        // `f32` can represent all integer multiples of 256 in the 32-bit PCM range exactly
+        // (spacing at that exponent is 256). Use such values to ensure the round-trip is stable
+        // and deterministic across platforms.
+        let values: &[i32] = &[
+            i32::MIN,
+            -(1 << 30),
+            -256,
+            -1,
+            0,
+            1,
+            256,
+            1 << 30,
+            i32::MAX - 255, // max multiple of 256 representable in-range
+            i32::MAX,
+        ];
+        for &v in values {
+            assert_eq!(round_trip(v), v, "32-bit round-trip failed for {v}");
+        }
+    }
+
+    #[test]
     fn decode_pcm_to_stereo_f32_into_channel_mapping() {
         // Mono is duplicated to L/R.
         let fmt_mono = StreamFormat {
