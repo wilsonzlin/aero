@@ -22,6 +22,12 @@ test("shared framebuffer dirty tiles smoke: partial uploads keep untouched regio
     throw new Error(String((result as any).error));
   }
 
+  expect((result as any).backend).toBe("webgl2_raw");
+  expect((result as any).uploadBytesFullEstimate).toBe(64 * 64 * 4);
+  expect((result as any).uploadBytesMax).toBeGreaterThan(0);
+  expect((result as any).uploadBytesMax).toBeLessThan((result as any).uploadBytesFullEstimate);
+  expect((result as any).uploadBytesMax).toBeLessThanOrEqual(10_000);
+
   expect((result as any).pass).toBe(true);
 
   // Sanity: green frame and mixed frame should differ.
@@ -32,4 +38,3 @@ test("shared framebuffer dirty tiles smoke: partial uploads keep untouched regio
   expect((result as any).samples.mixedTopLeft).toEqual([255, 0, 0, 255]);
   expect((result as any).samples.mixedTopRight).toEqual([0, 255, 0, 255]);
 });
-

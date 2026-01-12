@@ -8,6 +8,7 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
 } from "./src/ipc/shared-layout";
 import { FRAME_DIRTY, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
+import type { GpuTelemetrySnapshot } from "./src/gpu/telemetry";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -17,6 +18,9 @@ declare global {
       ready?: boolean;
       error?: string;
       pass?: boolean;
+      backend?: string;
+      uploadBytesMax?: number;
+      uploadBytesFullEstimate?: number;
       hashes?: { green: string; mixed: string; gotGreen: string; gotMixed: string };
       samples?: {
         greenTopLeft: number[];
@@ -151,12 +155,16 @@ async function main() {
   >();
   let nextRequestId = 1;
 
+  let readyPayload: any = null;
+  let latestTelemetry: GpuTelemetrySnapshot | null = null;
+
   const ready = new Promise<void>((resolve, reject) => {
     const onMessage = (event: MessageEvent) => {
       const msg = event.data as any;
       if (!msg || typeof msg !== "object") return;
       if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
       if (msg.type === "ready") {
+        readyPayload = msg;
         gpu.removeEventListener("message", onMessage);
         resolve();
       } else if (msg.type === "error") {
@@ -180,6 +188,12 @@ async function main() {
       if (!pending) return;
       pendingScreenshots.delete(msg.requestId);
       pending.resolve({ width: msg.width, height: msg.height, rgba8: msg.rgba8, frameSeq: msg.frameSeq });
+      return;
+    }
+    if (msg.type === "metrics") {
+      if (msg.telemetry && typeof msg.telemetry === "object") {
+        latestTelemetry = msg.telemetry as GpuTelemetrySnapshot;
+      }
     }
   });
 
@@ -191,7 +205,7 @@ async function main() {
       sharedFrameState,
       sharedFramebuffer: shared,
       sharedFramebufferOffsetBytes: 0,
-      options: { preferWebGpu: false },
+      options: { forceBackend: "webgl2_raw", disableWebGpu: true },
     },
     [offscreen],
   );
@@ -230,6 +244,19 @@ async function main() {
     }
   };
 
+  const waitForTelemetryFrame = async (): Promise<GpuTelemetrySnapshot> => {
+    const deadline = performance.now() + 2_000;
+    while (performance.now() < deadline) {
+      const telem = latestTelemetry;
+      const count = (telem as any)?.textureUpload?.bytesPerFrame?.stats?.count;
+      if (typeof count === "number" && count > 0) {
+        return telem!;
+      }
+      await sleep(25);
+    }
+    throw new Error("Timed out waiting for GPU telemetry (metrics messages)");
+  };
+
   try {
     await ready;
 
@@ -260,7 +287,23 @@ async function main() {
     const expectedGreenHash = fnv1a32Hex(expectedGreen);
     const expectedMixedHash = fnv1a32Hex(expectedMixed);
 
-    const pass = gotGreenHash === expectedGreenHash && gotMixedHash === expectedMixedHash;
+    const fullUploadEstimate = width * height * 4;
+    const telemetry = await waitForTelemetryFrame();
+    const uploadBytesMax = (telemetry as any)?.textureUpload?.bytesPerFrame?.stats?.max;
+    if (typeof uploadBytesMax !== "number") {
+      throw new Error("GPU telemetry missing textureUpload.bytesPerFrame.stats.max");
+    }
+
+    const backend = typeof readyPayload?.backendKind === "string" ? readyPayload.backendKind : undefined;
+    const partialUploadsOk = uploadBytesMax <= 10_000;
+    const hashesOk = gotGreenHash === expectedGreenHash && gotMixedHash === expectedMixedHash;
+    const pass = hashesOk && partialUploadsOk;
+
+    if (!partialUploadsOk) {
+      throw new Error(
+        `Expected partial texture uploads (presentDirtyRects). maxUploadBytes=${uploadBytesMax} fullEstimate=${fullUploadEstimate} backend=${backend ?? "unknown"}`,
+      );
+    }
 
     const sample = (rgba: Uint8Array, x: number, y: number) => {
       const i = (y * width + x) * 4;
@@ -274,6 +317,9 @@ async function main() {
     window.__aeroTest = {
       ready: true,
       pass,
+      backend,
+      uploadBytesMax,
+      uploadBytesFullEstimate: fullUploadEstimate,
       hashes: { green: expectedGreenHash, mixed: expectedMixedHash, gotGreen: gotGreenHash, gotMixed: gotMixedHash },
       samples: {
         greenTopLeft: sample(gotGreen, 8, 8),
