@@ -590,6 +590,26 @@ mod tests {
     }
 
     #[test]
+    fn pcm_20bit_selected_values_round_trip_through_f32() {
+        fn decode_raw_20(v: i32) -> f32 {
+            let raw = (v & 0x000F_FFFF) as u32;
+            decode_one_sample(&raw.to_le_bytes(), 20)
+        }
+        fn encode_20(sample: f32) -> i32 {
+            let mut out = [0u8; 4];
+            encode_one_sample(&mut out, 20, sample);
+            i32::from_le_bytes(out)
+        }
+
+        let values: &[i32] = &[-524_288, -12345, -1, 0, 1, 12345, 524_287];
+        for &v in values {
+            let decoded = decode_raw_20(v);
+            let encoded = encode_20(decoded);
+            assert_eq!(encoded, v, "20-bit round-trip failed for {v}");
+        }
+    }
+
+    #[test]
     fn pcm_24bit_sign_extension_scaling_and_clipping() {
         fn decode_raw_24(v: i32) -> f32 {
             let raw = (v & 0x00FF_FFFF) as u32; // low 24 bits, upper bits zero
@@ -617,6 +637,26 @@ mod tests {
         assert_eq!(encode_24(2.0), 8_388_607);
         assert_eq!(encode_24(-1.0), -8_388_608);
         assert_eq!(encode_24(-2.0), -8_388_608);
+    }
+
+    #[test]
+    fn pcm_24bit_selected_values_round_trip_through_f32() {
+        fn decode_raw_24(v: i32) -> f32 {
+            let raw = (v & 0x00FF_FFFF) as u32;
+            decode_one_sample(&raw.to_le_bytes(), 24)
+        }
+        fn encode_24(sample: f32) -> i32 {
+            let mut out = [0u8; 4];
+            encode_one_sample(&mut out, 24, sample);
+            i32::from_le_bytes(out)
+        }
+
+        let values: &[i32] = &[-8_388_608, -123456, -1, 0, 1, 123456, 8_388_607];
+        for &v in values {
+            let decoded = decode_raw_24(v);
+            let encoded = encode_24(decoded);
+            assert_eq!(encoded, v, "24-bit round-trip failed for {v}");
+        }
     }
 
     #[test]
@@ -729,6 +769,62 @@ mod tests {
         assert_eq!(ch1, 8192);
         assert_eq!(ch2, 0);
         assert_eq!(ch3, 0);
+    }
+
+    #[test]
+    fn encode_then_decode_round_trips_for_common_formats() {
+        // Choose values that are exactly representable with all current scaling factors.
+        let input: &[f32] = &[0.0, 0.5, -0.5, 0.25, -0.25];
+
+        let fmts = [
+            StreamFormat {
+                sample_rate_hz: 48_000,
+                bits_per_sample: 8,
+                channels: 1,
+            },
+            StreamFormat {
+                sample_rate_hz: 48_000,
+                bits_per_sample: 16,
+                channels: 2,
+            },
+            StreamFormat {
+                sample_rate_hz: 48_000,
+                bits_per_sample: 20,
+                channels: 4,
+            },
+            StreamFormat {
+                sample_rate_hz: 48_000,
+                bits_per_sample: 24,
+                channels: 1,
+            },
+            StreamFormat {
+                sample_rate_hz: 48_000,
+                bits_per_sample: 32,
+                channels: 6,
+            },
+        ];
+
+        for fmt in fmts {
+            let pcm = encode_mono_f32_to_pcm(input, fmt);
+            // Ensure channel padding is silence for multi-channel formats.
+            if fmt.channels >= 3 {
+                let bps = fmt.bytes_per_sample();
+                let bpf = fmt.bytes_per_frame();
+                let frame0 = &pcm[0..bpf];
+                // channels 2.. are silence.
+                for ch in 2..fmt.channels as usize {
+                    let off = ch * bps;
+                    assert!(frame0[off..off + bps].iter().all(|&b| b == 0));
+                }
+            }
+
+            let decoded = decode_pcm_to_stereo_f32(&pcm, fmt);
+            assert_eq!(decoded.len(), input.len());
+            for (frame, &mono) in decoded.iter().zip(input) {
+                assert_f32_approx_eq(frame[0], mono, 1e-6);
+                assert_f32_approx_eq(frame[1], mono, 1e-6);
+            }
+        }
     }
 
     #[test]
