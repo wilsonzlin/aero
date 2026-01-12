@@ -45,12 +45,12 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
         <T as NetworkBackend>::transmit(&mut **self, frame);
     }
 
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        <T as NetworkBackend>::l2_ring_stats(&**self)
-    }
-
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         <T as NetworkBackend>::poll_receive(&mut **self)
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        <T as NetworkBackend>::l2_ring_stats(&**self)
     }
 }
 
@@ -59,12 +59,12 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for &mut T {
         <T as NetworkBackend>::transmit(&mut **self, frame);
     }
 
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        <T as NetworkBackend>::l2_ring_stats(&**self)
-    }
-
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         <T as NetworkBackend>::poll_receive(&mut **self)
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        <T as NetworkBackend>::l2_ring_stats(&**self)
     }
 }
 
@@ -79,12 +79,12 @@ impl<B: NetworkBackend> NetworkBackend for Option<B> {
         }
     }
 
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.as_ref().and_then(|backend| backend.l2_ring_stats())
-    }
-
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         self.as_mut().and_then(|backend| backend.poll_receive())
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.as_ref().and_then(|backend| backend.l2_ring_stats())
     }
 }
 
