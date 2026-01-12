@@ -688,8 +688,9 @@ impl NetworkStack {
 
         // Normalise to lower-case for DNS cache keys and host actions.
         // `make_ascii_lowercase` is in-place (no extra allocation).
-        while name.ends_with('.') {
-            name.pop();
+        let trimmed_len = name.trim_end_matches('.').len();
+        if trimmed_len != name.len() {
+            name.truncate(trimmed_len);
         }
         name.make_ascii_lowercase();
         let rd = query.recursion_desired();
