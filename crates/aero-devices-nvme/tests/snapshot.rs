@@ -249,6 +249,9 @@ fn snapshot_restore_replays_unprocessed_admin_sq_doorbell() {
     ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
+    // Enable bus mastering so the controller is permitted to DMA when `process()` runs.
+    dev.config_mut().set_command(0x0006); // MEM + BME
+
     let asq = 0x10000;
     let acq = 0x20000;
     let id_buf = 0x30000;
@@ -310,6 +313,9 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
         disk.clone(),
     ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    // Enable bus mastering so the controller is permitted to DMA when `process()` runs.
+    dev.config_mut().set_command(0x0006); // MEM + BME
 
     let asq = 0x10000;
     let acq = 0x20000;
@@ -400,6 +406,9 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
         disk.clone(),
     ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    // Enable bus mastering so the controller is permitted to DMA when `process()` runs.
+    dev.config_mut().set_command(0x0006); // MEM + BME
 
     let asq = 0x10000;
     let acq = 0x20000;
@@ -552,6 +561,10 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
         disk.clone(),
     ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    // Enable bus mastering so the controller is permitted to DMA and raise INTx for the pending IO
+    // completion we generate below.
+    dev.config_mut().set_command(0x0006); // MEM + BME
 
     let asq = 0x10000;
     let acq = 0x20000;

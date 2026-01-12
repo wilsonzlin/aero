@@ -78,3 +78,84 @@ fn nvme_irq_level_is_gated_by_pci_command_intx_disable() {
     dev.config_mut().set_command(0x0002);
     assert!(dev.irq_level());
 }
+
+#[test]
+fn nvme_process_is_gated_by_pci_command_bus_master_enable() {
+    use memory::MemoryBus as _;
+
+    #[derive(Default)]
+    struct CountingMem {
+        buf: Vec<u8>,
+        reads: u64,
+        writes: u64,
+    }
+
+    impl CountingMem {
+        fn new(size: usize) -> Self {
+            Self {
+                buf: vec![0u8; size],
+                reads: 0,
+                writes: 0,
+            }
+        }
+    }
+
+    impl memory::MemoryBus for CountingMem {
+        fn read_physical(&mut self, paddr: u64, out: &mut [u8]) {
+            self.reads += 1;
+            let start = paddr as usize;
+            let end = start + out.len();
+            out.copy_from_slice(&self.buf[start..end]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, data: &[u8]) {
+            self.writes += 1;
+            let start = paddr as usize;
+            let end = start + data.len();
+            self.buf[start..end].copy_from_slice(data);
+        }
+    }
+
+    let mut dev = NvmePciDevice::default();
+    let mut mem = CountingMem::new(2 * 1024 * 1024);
+
+    // Enable MMIO decoding (MEM bit) so the controller register programming takes effect, but keep
+    // Bus Master Enable clear so DMA is not allowed yet.
+    dev.config_mut().set_command(0x0002); // MEM
+
+    // Minimal controller enable with a small admin queue pair.
+    let asq: u64 = 0x10000;
+    let acq: u64 = 0x20000;
+    // AQA: both admin SQ/CQ size = 16 entries (encoded as size-1).
+    dev.write(0x0024, 4, 0x000f_000f);
+    dev.write(0x0028, 8, asq);
+    dev.write(0x0030, 8, acq);
+    dev.write(NVME_CC, 4, 1); // CC.EN
+
+    // Queue one invalid admin command so `process()` would need to DMA-read the SQ entry and
+    // DMA-write a CQ completion.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0xFF; // invalid opcode
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    mem.write_physical(asq, &cmd);
+
+    // Ring the SQ0 tail doorbell (admin SQ is qid=0; SQ tail doorbell at 0x1000).
+    dev.write(0x1000, 4, 1);
+
+    // With BME disabled, the device must not access guest memory.
+    dev.process(&mut mem);
+    assert_eq!(mem.reads, 0, "expected no DMA reads while BME is disabled");
+    assert_eq!(mem.writes, 1, "expected only the test's own write_physical call");
+
+    // Enable bus mastering and retry: now DMA should occur.
+    dev.config_mut().set_command(0x0006); // MEM + BME
+    dev.process(&mut mem);
+    assert!(
+        mem.reads > 0,
+        "expected NVMe process() to DMA-read from guest memory once BME is enabled"
+    );
+    assert!(
+        mem.writes > 1,
+        "expected NVMe process() to DMA-write to guest memory once BME is enabled"
+    );
+}

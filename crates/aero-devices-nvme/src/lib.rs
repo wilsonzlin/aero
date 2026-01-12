@@ -1489,6 +1489,16 @@ impl NvmePciDevice {
 
     /// Process any DMA work that was made pending by MMIO doorbell writes.
     pub fn process(&mut self, memory: &mut dyn MemoryBus) {
+        // Only allow the device to DMA when PCI Bus Mastering is enabled (PCI command bit 2).
+        //
+        // This mirrors the behavior of other PCI DMA devices in the repo (e.g. AHCI/E1000/UHCI),
+        // and ensures platforms that drive the NVMe controller via explicit `process()` calls do
+        // not accidentally perform guest-memory DMA before the guest enables bus mastering during
+        // PCI enumeration.
+        let bus_master_enabled = (self.config.command() & (1 << 2)) != 0;
+        if !bus_master_enabled {
+            return;
+        }
         self.controller.process(memory);
     }
 }
