@@ -18,6 +18,12 @@ pub const VIRTIO_NET_F_STATUS: u64 = 1 << 16;
 
 pub const VIRTIO_NET_S_LINK_UP: u16 = 1;
 
+/// Upper bound on the amount of backend RX work performed per `flush_rx()` call.
+///
+/// This ensures `VirtioPciDevice::poll()` remains bounded even if a backend
+/// misbehaves and always reports a packet ready.
+const MAX_RX_FRAMES_PER_FLUSH: usize = 256;
+
 #[derive(Default, Debug)]
 pub struct LoopbackNet {
     pub tx_packets: Vec<Vec<u8>>,
@@ -302,7 +308,10 @@ impl<B: NetBackend> VirtioNet<B> {
                 .map_err(|_| VirtioDeviceError::IoError)?;
         }
 
-        while let Some(pkt) = self.backend.poll_receive() {
+        for _ in 0..MAX_RX_FRAMES_PER_FLUSH {
+            let Some(pkt) = self.backend.poll_receive() else {
+                break;
+            };
             // Contract v1: drop undersized/oversized Ethernet frames.
             if pkt.len() < 14 || pkt.len() > 1514 {
                 continue;
@@ -594,5 +603,44 @@ mod tests {
 
         assert_eq!(dev.backend_mut().tx_packets.len(), 3);
         assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    }
+
+    #[test]
+    fn rx_poll_budget_prevents_infinite_backend_loop() {
+        #[derive(Default)]
+        struct InfiniteRxBackend {
+            polls: usize,
+        }
+
+        impl NetBackend for InfiniteRxBackend {
+            fn transmit(&mut self, _packet: Vec<u8>) {}
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.polls += 1;
+                assert!(
+                    self.polls <= MAX_RX_FRAMES_PER_FLUSH,
+                    "flush_rx should not poll_receive() more than MAX_RX_FRAMES_PER_FLUSH times"
+                );
+                Some(vec![0u8; 14])
+            }
+        }
+
+        let mut dev = VirtioNet::new(InfiniteRxBackend::default(), [0; 6]);
+        let mut mem = GuestRam::new(0x1000);
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: 0,
+                avail_addr: 0,
+                used_addr: 0,
+            },
+            false,
+        )
+        .unwrap();
+
+        // Without a bound, this would loop forever because the backend never returns `None`.
+        let irq = dev.flush_rx(&mut queue, &mut mem).unwrap();
+        assert!(!irq);
+        assert_eq!(dev.backend_mut().polls, MAX_RX_FRAMES_PER_FLUSH);
     }
 }
