@@ -2144,6 +2144,18 @@ impl Machine {
         self.inner.inject_browser_key(code, pressed);
     }
 
+    /// Inject a relative PS/2 mouse movement event (plus optional wheel delta).
+    ///
+    /// Coordinate conventions:
+    /// - `dx`: positive is right.
+    /// - `dy`: positive is up (PS/2 convention).
+    /// - `wheel`: positive is wheel up.
+    pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        // The canonical machine mouse injection API uses browser-style coordinates (+Y is down).
+        // Convert PS/2 convention (+Y is up) into that API.
+        self.inject_mouse_motion(dx, -dy, wheel);
+    }
+
     /// Inject relative mouse movement into the guest PS/2 i8042 controller.
     ///
     /// - `dx`/`dy` use browser-style coordinates: +X is right, +Y is down.
@@ -2168,6 +2180,13 @@ impl Machine {
             2 => self.inject_mouse_right(pressed),
             _ => {}
         }
+    }
+
+    /// Set PS/2 mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+    ///
+    /// This mirrors the PS/2 packet button bits (and also DOM `MouseEvent.buttons`).
+    pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
+        self.inject_mouse_buttons_mask(buttons);
     }
 
     /// Set all mouse buttons at once using a bitmask matching DOM `MouseEvent.buttons`:
