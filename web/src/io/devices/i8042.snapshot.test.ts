@@ -127,5 +127,23 @@ describe("io/devices/i8042 snapshot", () => {
     expect(drained).toHaveLength(max);
     expect(new Set(drained)).toEqual(new Set([0x11]));
   });
-});
 
+  it("resynchronizes the A20 gate via systemControl sink on restore", () => {
+    const ctrl = makeController();
+    // Non-standard enable-A20 command supported by the model.
+    ctrl.portWrite(0x64, 1, 0xdf);
+    const snap = ctrl.saveState();
+
+    const calls: boolean[] = [];
+    const irq: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const restored = new I8042Controller(irq, {
+      systemControl: {
+        setA20: (enabled) => calls.push(Boolean(enabled)),
+        requestReset: () => {},
+      },
+    });
+    restored.loadState(snap);
+
+    expect(calls).toEqual([true]);
+  });
+});

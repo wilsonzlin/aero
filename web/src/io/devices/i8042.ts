@@ -928,6 +928,16 @@ export class I8042Controller implements PortIoHandler {
     const pending = r.u8() & 0xff;
     this.#pendingCommand = pending === 0xff ? null : pending;
 
+    // `#outputPort` controls platform A20 gate state (bit 1). When restoring from a snapshot,
+    // resynchronize the sink so the rest of the VM observes the same A20 state as the restored
+    // output-port image. Snapshot restore should not request a reset even if the reset bit is low.
+    const a20Enabled = (this.#outputPort & OUTPUT_PORT_A20) !== 0;
+    try {
+      this.#sysCtrl?.setA20(a20Enabled);
+    } catch {
+      // Ignore system control errors during snapshot restore; the VM can still continue.
+    }
+
     this.#outQueue.length = 0;
     const outLenRaw = r.u32();
     const outLen = Math.min(outLenRaw, MAX_CONTROLLER_OUTPUT_QUEUE);
