@@ -45,6 +45,7 @@ pub fn dispatch_interrupt(
         0x11 => handle_int11(cpu, bus),
         0x12 => handle_int12(cpu, bus),
         0x13 => handle_int13(bios, cpu, bus, disk),
+        0x14 => handle_int14(cpu, bus),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
         0x18 => handle_int18(bios, cpu, bus, disk),
@@ -70,6 +71,61 @@ fn handle_int11(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     // used by DOS-era software.
     let equip_flags = bus.read_u16(BDA_BASE + 0x10);
     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (equip_flags as u64);
+    cpu.rflags &= !FLAG_CF;
+}
+
+fn handle_int14(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
+    // Serial port services.
+    //
+    // This BIOS does not currently emulate UART registers, but exposing the INT 14h surface helps
+    // DOS-era software probe for COM ports.
+    //
+    // We derive port presence from the BDA COM port base address table (0x40:0x00).
+    //
+    // Return convention: AH=line status, AL=modem status (BIOS-compatible).
+    let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
+    let port = (cpu.gpr[gpr::RDX] & 0xFFFF) as u16;
+    let com_base = if port < 4 {
+        bus.read_u16(BDA_BASE + (port as u64) * 2)
+    } else {
+        0
+    };
+
+    let present = com_base != 0;
+    let mut line_status: u8 =
+        if present { 0x60 } else { 0x80 }; // THR empty + TSR empty, or timeout
+    let mut al_out: u8 = 0;
+
+    match ah {
+        0x00 => {
+            // Initialize port.
+            // We ignore the line control bits in AL; just report status.
+        }
+        0x01 => {
+            // Transmit character (blocking on real hardware).
+            // We ignore the character and report success if the port exists.
+        }
+        0x02 => {
+            // Receive character (blocking on real hardware).
+            //
+            // We don't model RX input; report timeout if the port exists but no data is available.
+            if present {
+                line_status = 0x80;
+            }
+            al_out = 0;
+        }
+        0x03 => {
+            // Get port status.
+        }
+        _ => {
+            // Unknown function: timeout/error.
+            line_status = 0x80;
+        }
+    }
+
+    let ax = (u16::from(line_status) << 8) | u16::from(al_out);
+    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (ax as u64);
+    // INT 14h does not define flag outputs; keep CF clear so callers treat it as implemented.
     cpu.rflags &= !FLAG_CF;
 }
 
@@ -1718,6 +1774,41 @@ mod tests {
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, (EBDA_BASE / 1024) as u16);
+    }
+
+    #[test]
+    fn int14_status_reports_timeout_for_missing_port_and_ready_for_com1() {
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+
+        // COM1 present.
+        cpu.gpr[gpr::RAX] = 0x0300; // AH=03h status
+        cpu.gpr[gpr::RDX] = 0x0000; // DX=0 -> COM1
+        handle_int14(&mut cpu, &mut mem);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x60);
+
+        // COM2 missing.
+        cpu.gpr[gpr::RAX] = 0x0300;
+        cpu.gpr[gpr::RDX] = 0x0001; // DX=1 -> COM2
+        handle_int14(&mut cpu, &mut mem);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x80);
+    }
+
+    #[test]
+    fn int14_receive_reports_timeout_when_no_data_available() {
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+
+        cpu.gpr[gpr::RAX] = 0x0200; // AH=02h receive
+        cpu.gpr[gpr::RDX] = 0x0000; // COM1
+        handle_int14(&mut cpu, &mut mem);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x80);
+        assert_eq!(cpu.gpr[gpr::RAX] as u8, 0);
     }
 
     #[test]
