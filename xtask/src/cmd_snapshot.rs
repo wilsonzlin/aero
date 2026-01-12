@@ -944,6 +944,7 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
         mode: Option<String>,
         halted: Option<bool>,
         internal_len: Option<u64>,
+        internal_preview: Option<Vec<u8>>,
         decode_error: Option<String>,
     }
 
@@ -1000,6 +1001,7 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
         let mut mode: Option<String> = None;
         let mut halted: Option<bool> = None;
         let mut internal_len: Option<u64> = None;
+        let mut internal_preview: Option<Vec<u8>> = None;
         let mut decode_error: Option<String> = None;
 
         {
@@ -1028,7 +1030,23 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
             }
 
             match read_u64_le_lossy(&mut entry_reader) {
-                Ok(v) => internal_len = Some(v),
+                Ok(v) => {
+                    internal_len = Some(v);
+                    if v != 0 {
+                        let preview_len = (v as usize).min(8);
+                        if preview_len != 0 {
+                            let mut preview = vec![0u8; preview_len];
+                            match entry_reader.read_exact(&mut preview) {
+                                Ok(()) => internal_preview = Some(preview),
+                                Err(e) => {
+                                    if decode_error.is_none() {
+                                        decode_error = Some(format!("internal_state: {e}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Err(e) => {
                     if decode_error.is_none() {
                         decode_error = Some(format!("internal_len: {e}"));
@@ -1044,6 +1062,7 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
             mode,
             halted,
             internal_len,
+            internal_preview,
             decode_error,
         });
 
@@ -1076,6 +1095,16 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
         }
         if let Some(internal_len) = entry.internal_len {
             suffix.push_str(&format!(" internal_len={internal_len}"));
+        }
+        if let Some(preview) = entry.internal_preview.as_deref() {
+            suffix.push_str(" internal_preview=[");
+            for (idx, b) in preview.iter().copied().enumerate() {
+                if idx != 0 {
+                    suffix.push_str(", ");
+                }
+                suffix.push_str(&format!("0x{b:02x}"));
+            }
+            suffix.push(']');
         }
         if let Some(err) = entry.decode_error.as_deref() {
             suffix.push_str(&format!(" <{err}>"));
