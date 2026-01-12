@@ -2,6 +2,7 @@ use crate::io::state::codec::{Decoder, Encoder};
 use crate::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 // Snapshots may be loaded from untrusted sources (e.g. downloaded files). Keep decoding bounded so
@@ -18,6 +19,47 @@ pub trait DiskBackend {
     fn read_at(&self, offset: u64, buf: &mut [u8]);
     fn write_at(&mut self, offset: u64, data: &[u8]);
     fn flush(&mut self);
+}
+
+/// Adapter to use a real [`aero_storage::VirtualDisk`] as a snapshot [`DiskBackend`].
+///
+/// `aero_storage` uses `&mut self` for reads as well (to support internal caching),
+/// so we wrap the disk in a [`RefCell`] to provide interior mutability.
+pub struct AeroStorageDiskBackend(pub RefCell<Box<dyn aero_storage::VirtualDisk + Send>>);
+
+impl AeroStorageDiskBackend {
+    pub fn new(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
+        Self(RefCell::new(disk))
+    }
+}
+
+impl DiskBackend for AeroStorageDiskBackend {
+    fn read_at(&self, offset: u64, buf: &mut [u8]) {
+        let Ok(mut disk) = self.0.try_borrow_mut() else {
+            debug_assert!(false, "aero-storage disk backend already mutably borrowed");
+            return;
+        };
+        let _ = disk.read_at(offset, buf);
+    }
+
+    fn write_at(&mut self, offset: u64, data: &[u8]) {
+        let disk = self.0.get_mut();
+        let _ = disk.write_at(offset, data);
+    }
+
+    fn flush(&mut self) {
+        let disk = self.0.get_mut();
+        let _ = disk.flush();
+    }
+}
+
+/// Convenience helper to attach an [`aero_storage::VirtualDisk`] to an existing
+/// [`DiskLayerState`].
+pub fn attach_aero_storage_disk(
+    state: &mut DiskLayerState,
+    disk: Box<dyn aero_storage::VirtualDisk + Send>,
+) {
+    state.attach_backend(Box::new(AeroStorageDiskBackend::new(disk)));
 }
 
 /// Local disk backend identity (browser-backed disks).

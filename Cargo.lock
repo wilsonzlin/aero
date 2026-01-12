@@ -301,6 +301,7 @@ name = "aero-io-snapshot"
 version = "0.1.0"
 dependencies = [
  "aero-devices-input",
+ "aero-storage",
 ]
 
 [[package]]

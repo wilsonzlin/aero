@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+aero-storage = { path = "../aero-storage" }
 
 [dev-dependencies]
 aero-devices-input = { path = "../aero-devices-input" }
