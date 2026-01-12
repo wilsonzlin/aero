@@ -1250,6 +1250,40 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     AerovblkHandleRequestSense(devExt, srb);
     return TRUE;
 
+  case SCSIOP_REPORT_LUNS: {
+    ULONG allocLen;
+    ULONG outLen;
+    UCHAR resp[16];
+
+    /* REPORT LUNS (12-byte CDB): allocation length is bytes 6..9 (big-endian). */
+    allocLen = AerovblkBe32ToCpu(&srb->Cdb[6]);
+
+    if (srb->DataBuffer == NULL || srb->DataTransferLength == 0 || allocLen == 0) {
+      srb->DataTransferLength = 0;
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+      return TRUE;
+    }
+
+    outLen = (srb->DataTransferLength < allocLen) ? srb->DataTransferLength : allocLen;
+    if (outLen > sizeof(resp)) {
+      outLen = sizeof(resp);
+    }
+
+    /*
+     * Minimal REPORT LUNS response for one LUN (LUN0):
+     *   - LUN list length: 8 (big-endian)
+     *   - reserved: 0
+     *   - one 8-byte LUN entry: all zeros
+     */
+    RtlZeroMemory(resp, sizeof(resp));
+    AerovblkWriteBe32(resp + 0, 8u);
+
+    RtlCopyMemory(srb->DataBuffer, resp, outLen);
+    srb->DataTransferLength = outLen;
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+
   case SCSIOP_READ_CAPACITY:
     AerovblkHandleReadCapacity10(devExt, srb);
     return TRUE;
