@@ -204,6 +204,24 @@ fn machine_win7_storage_topology_nvme_enabled_has_canonical_bdf_and_interrupt_li
         .device_config_mut(NVME_BDF)
         .expect("NVME_CONTROLLER config function missing from PCI bus");
 
+    assert_eq!(
+        cfg.bar_definition(0),
+        Some(PciBarDefinition::Mmio64 {
+            size: 0x4000,
+            prefetchable: false
+        }),
+        "NVME_CONTROLLER BAR0 definition drifted"
+    );
+    let bar0 = cfg
+        .bar_range(0)
+        .expect("NVME_CONTROLLER BAR0 should be assigned by PCI BIOS POST");
+    assert_eq!(bar0.kind, PciBarKind::Mmio64);
+    assert_eq!(bar0.size, 0x4000);
+    // Do not freeze the BAR base address (allocator-dependent), but ensure it is non-zero and
+    // properly aligned for the BAR size.
+    assert_ne!(bar0.base, 0);
+    assert_eq!(bar0.base & (0x4000 - 1), 0);
+
     // NVMe 00:03.0 INTA -> GSI 13.
     let expected_gsi = router.gsi_for_intx(NVME_BDF, PciInterruptPin::IntA);
     assert_eq!(expected_gsi, 13, "NVMe expected GSI drifted");
