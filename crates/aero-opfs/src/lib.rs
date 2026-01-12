@@ -3,6 +3,9 @@
 //! This crate provides wasm32 implementations of `aero-storage` traits on top of browser
 //! persistence APIs.
 //!
+//! Note: the Cargo package name is `aero-opfs`, but it is imported as `aero_opfs` in Rust code
+//! (hyphens become underscores).
+//!
 //! The primary, boot-critical storage path is OPFS `FileSystemSyncAccessHandle` (fast and
 //! synchronous in a Dedicated Worker). Some additional backends (async OPFS APIs, IndexedDB)
 //! exist as async-only fallbacks for host-side tooling and environments where sync handles

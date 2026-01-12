@@ -5,7 +5,8 @@ use crate::{DiskError, Result};
 /// In the browser this is typically implemented by OPFS `FileSystemSyncAccessHandle`
 /// (fast, synchronous in a Worker).
 ///
-/// A concrete wasm32 implementation is provided by the `aero-opfs` crate:
+/// A concrete wasm32 implementation is provided by the `aero-opfs` crate (imported as
+/// `aero_opfs` in Rust code):
 ///
 /// ```text
 /// aero_opfs::OpfsByteStorage
