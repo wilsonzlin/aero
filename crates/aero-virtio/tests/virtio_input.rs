@@ -25,7 +25,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -76,20 +76,20 @@ fn bar_read(dev: &mut VirtioPciDevice, off: u64, len: usize) -> Vec<u8> {
     buf
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u64) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u64(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u64) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
 fn write_desc(
@@ -119,7 +119,7 @@ fn virtio_input_posts_buffers_then_delivers_events() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.isr, 0);
     assert_ne!(caps.device, 0);
@@ -185,7 +185,8 @@ fn virtio_input_posts_buffers_then_delivers_events() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
 
     // Host injects an input event.
@@ -212,7 +213,7 @@ fn virtio_input_statusq_buffers_are_consumed() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.notify_mult, 0);
 
@@ -277,11 +278,8 @@ fn virtio_input_statusq_buffers_are_consumed() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify + u64::from(caps.notify_mult),
-        &1u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify + u64::from(caps.notify_mult), &1u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
     let len = read_u32_le(&mem, used + 4 + 4).unwrap();
@@ -292,7 +290,7 @@ fn virtio_input_statusq_buffers_are_consumed() {
 fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let keyboard = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(keyboard), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x10000);
 
@@ -340,7 +338,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     // Mouse variant exposes a different name and capability bitmap.
     let mouse = VirtioInput::new(VirtioInputDeviceKind::Mouse);
     let mut dev = VirtioPciDevice::new(Box::new(mouse), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_NAME);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
@@ -378,7 +376,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
 fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x10000);
 
@@ -402,7 +400,8 @@ fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
     let used_id = read_u32_le(&mem, used + 4).unwrap();
@@ -415,7 +414,7 @@ fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
 fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     // Virtio-input exposes 2 queues (eventq + statusq). Select a non-existent queue index.
@@ -440,7 +439,7 @@ fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes
 fn virtio_pci_queue_notify_off_matches_queue_index() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     for q in 0u16..2 {
@@ -453,7 +452,7 @@ fn virtio_pci_queue_notify_off_matches_queue_index() {
 fn virtio_pci_reserved_feature_select_reads_zero_and_ignores_writes() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     // device_feature_select values other than 0 or 1 must read as 0.
@@ -472,7 +471,7 @@ fn virtio_pci_reserved_feature_select_reads_zero_and_ignores_writes() {
 fn virtio_pci_queue_size_is_read_only() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
@@ -488,7 +487,7 @@ fn virtio_pci_queue_size_is_read_only() {
 fn virtio_pci_notify_accepts_32bit_writes() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     // Feature negotiation.
@@ -550,11 +549,8 @@ fn virtio_pci_notify_accepts_32bit_writes() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Contract v1 requires notify to accept 32-bit writes too.
-    dev.bar0_write(
-        caps.notify + u64::from(caps.notify_mult),
-        &1u32.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify + u64::from(caps.notify_mult), &1u32.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
 }
@@ -563,7 +559,7 @@ fn virtio_pci_notify_accepts_32bit_writes() {
 fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     // Basic status transition.
@@ -601,7 +597,7 @@ fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
 fn virtio_pci_clears_features_ok_when_driver_omits_version_1_in_modern_mode() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     bar_write_u8(
@@ -680,7 +676,7 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let (irq, irq_state) = SharedLegacyIrq::new();
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     // Standard init and feature negotiation.
@@ -733,7 +729,8 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Queue kick only makes the buffer available; it should not raise an interrupt.
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
     {
         let state = irq_state.borrow();
         assert_eq!(state.raised, 0);
@@ -772,7 +769,7 @@ fn virtio_pci_device_cfg_writes_do_not_raise_config_interrupt() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let (irq, irq_state) = SharedLegacyIrq::new();
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
     // Device config writes are used by virtio-input selector probing. They must not

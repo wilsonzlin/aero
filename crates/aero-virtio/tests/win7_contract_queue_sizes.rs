@@ -2,7 +2,6 @@ use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
 use aero_virtio::devices::snd::VirtioSnd;
-use aero_virtio::memory::GuestRam;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice, VIRTIO_PCI_CAP_COMMON_CFG};
 
 #[derive(Default)]
@@ -10,7 +9,7 @@ struct Caps {
     common: u64,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -43,8 +42,8 @@ fn bar_read_u16(dev: &mut VirtioPciDevice, off: u64) -> u16 {
     u16::from_le_bytes(buf)
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
 fn assert_queue_layout(
@@ -53,7 +52,6 @@ fn assert_queue_layout(
     expected_sizes: &[u16],
 ) {
     let caps = parse_caps(dev);
-    let mut mem = GuestRam::new(0x1000);
 
     // Common cfg: num_queues.
     assert_eq!(
@@ -64,7 +62,7 @@ fn assert_queue_layout(
 
     for (q, &expected_size) in expected_sizes.iter().enumerate() {
         let q = q as u16;
-        bar_write_u16(dev, &mut mem, caps.common + 0x16, q);
+        bar_write_u16(dev, caps.common + 0x16, q);
 
         // Contract v1 treats queue_size as read-only and fixed per queue/device.
         assert_eq!(
@@ -81,12 +79,7 @@ fn assert_queue_layout(
     }
 
     // Out-of-range queue_select must read queue_size and notify_off as 0 and ignore writes.
-    bar_write_u16(
-        dev,
-        &mut mem,
-        caps.common + 0x16,
-        expected_num_queues.wrapping_add(3),
-    );
+    bar_write_u16(dev, caps.common + 0x16, expected_num_queues.wrapping_add(3));
     assert_eq!(bar_read_u16(dev, caps.common + 0x18), 0);
     assert_eq!(bar_read_u16(dev, caps.common + 0x1e), 0);
 }

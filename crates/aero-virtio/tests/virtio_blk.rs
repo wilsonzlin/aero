@@ -69,7 +69,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -116,20 +116,20 @@ fn bar_read_u64(dev: &mut VirtioPciDevice, off: u64) -> u64 {
     u64::from_le_bytes(buf)
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u64) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u64(dev: &mut VirtioPciDevice, off: u64, val: u64) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
 fn write_desc(
@@ -223,48 +223,40 @@ fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRa
     dev.config_read(0x14, &mut bar);
     assert_eq!(u32::from_le_bytes(bar), 0);
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     // `common` may legitimately be at BAR offset 0; the rest should be mapped.
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.isr, 0);
     assert_ne!(caps.device, 0);
     assert_ne!(caps.notify_mult, 0);
 
-    let mut mem = GuestRam::new(0x10000);
+    let mem = GuestRam::new(0x10000);
 
     // Feature negotiation.
+    bar_write_u8(&mut dev, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     bar_write_u8(
         &mut dev,
-        &mut mem,
-        caps.common + 0x14,
-        VIRTIO_STATUS_ACKNOWLEDGE,
-    );
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 0); // device_feature_select
+    bar_write_u32(&mut dev, caps.common, 0); // device_feature_select
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0); // driver_feature_select
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, caps.common + 0x08, 0); // driver_feature_select
+    bar_write_u32(&mut dev, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    bar_write_u32(&mut dev, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u32(&mut dev, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f1);
 
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE
             | VIRTIO_STATUS_DRIVER
@@ -273,14 +265,14 @@ fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRa
     );
 
     // Configure queue 0.
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0); // queue_select
+    bar_write_u16(&mut dev, caps.common + 0x16, 0); // queue_select
     let qsz = bar_read_u16(&mut dev, caps.common + 0x18);
     assert!(qsz >= 8);
 
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, DESC_TABLE);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, AVAIL_RING);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, USED_RING);
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1); // queue_enable
+    bar_write_u64(&mut dev, caps.common + 0x20, DESC_TABLE);
+    bar_write_u64(&mut dev, caps.common + 0x28, AVAIL_RING);
+    bar_write_u64(&mut dev, caps.common + 0x30, USED_RING);
+    bar_write_u16(&mut dev, caps.common + 0x1c, 1); // queue_enable
 
     (dev, caps, mem)
 }
@@ -318,7 +310,8 @@ fn setup_with_irq(irq: TestIrq) -> SetupWithIrq {
 }
 
 fn kick_queue0(dev: &mut VirtioPciDevice, caps: &Caps, mem: &mut GuestRam) {
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(mem);
 }
 
 fn setup_aero_storage_disk() -> (VirtioPciDevice, Caps, GuestRam) {
@@ -518,7 +511,7 @@ fn virtio_blk_snapshot_restore_preserves_virtqueue_progress_and_does_not_duplica
     let mut restored = VirtioPciDevice::new(Box::new(blk), Box::new(irq1.clone()));
     restored.load_state(&snap_bytes).unwrap();
     let mut mem2 = mem_snap.clone();
-    let caps_restored = parse_caps(&restored);
+    let caps_restored = parse_caps(&mut restored);
 
     // Ensure virtqueue progress is preserved.
     assert_eq!(restored.debug_queue_used_idx(&mem2, 0), Some(1));

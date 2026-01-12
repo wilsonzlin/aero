@@ -1,7 +1,5 @@
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk, VIRTIO_BLK_T_FLUSH};
-use aero_virtio::memory::{
-    read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
-};
+use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
     InterruptSink, VirtioPciDevice, VIRTIO_PCI_LEGACY_GUEST_FEATURES,
     VIRTIO_PCI_LEGACY_HOST_FEATURES, VIRTIO_PCI_LEGACY_ISR, VIRTIO_PCI_LEGACY_ISR_QUEUE,
@@ -89,24 +87,15 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     // `VIRTQ_AVAIL_F_NO_INTERRUPT` (simplifies the legacy ISR/INTx assertions).
     let guest_features = host_features & !(1u32 << 29);
 
-    dev.legacy_io_write(
-        VIRTIO_PCI_LEGACY_STATUS,
-        &[VIRTIO_STATUS_ACKNOWLEDGE],
-        &mut mem,
-    );
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE]);
     dev.legacy_io_write(
         VIRTIO_PCI_LEGACY_STATUS,
         &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
-        &mut mem,
     );
-    dev.legacy_io_write(
-        VIRTIO_PCI_LEGACY_GUEST_FEATURES,
-        &guest_features.to_le_bytes(),
-        &mut mem,
-    );
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_GUEST_FEATURES, &guest_features.to_le_bytes());
 
     // 2) Configure queue 0 using PFN.
-    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes(), &mut mem);
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());
     let mut qsz_bytes = [0u8; 2];
     dev.legacy_io_read(VIRTIO_PCI_LEGACY_QUEUE_NUM, &mut qsz_bytes);
     let qsz = u16::from_le_bytes(qsz_bytes);
@@ -114,7 +103,7 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
 
     let ring_base = 0x4000u64; // 4096-aligned
     let pfn = u32::try_from(ring_base >> 12).unwrap();
-    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN, &pfn.to_le_bytes(), &mut mem);
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_PFN, &pfn.to_le_bytes());
 
     let mut pfn_back = [0u8; 4];
     dev.legacy_io_read(VIRTIO_PCI_LEGACY_QUEUE_PFN, &mut pfn_back);
@@ -123,7 +112,6 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     dev.legacy_io_write(
         VIRTIO_PCI_LEGACY_STATUS,
         &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK],
-        &mut mem,
     );
 
     // 3) Build a minimal FLUSH request chain and kick.
@@ -146,11 +134,8 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     write_u16_le(&mut mem, used, 0).unwrap();
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
-    dev.legacy_io_write(
-        VIRTIO_PCI_LEGACY_QUEUE_NOTIFY,
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
@@ -173,11 +158,8 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     mem.write(status, &[0xff]).unwrap();
     write_u16_le(&mut mem, avail + 4 + 2, 0).unwrap();
     write_u16_le(&mut mem, avail + 2, 2).unwrap();
-    dev.legacy_io_write(
-        VIRTIO_PCI_LEGACY_QUEUE_NOTIFY,
-        &0u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 2);

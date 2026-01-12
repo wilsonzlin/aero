@@ -19,7 +19,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -58,20 +58,20 @@ fn bar_read_u16(dev: &mut VirtioPciDevice, off: u64) -> u16 {
     u16::from_le_bytes(buf)
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u64) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u64(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u64) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
 fn write_desc(
@@ -154,15 +154,15 @@ fn kick_queue(dev: &mut VirtioPciDevice, mem: &mut GuestRam, caps: &Caps, queue:
     dev.bar0_write(
         caps.notify + u64::from(queue) * u64::from(caps.notify_mult),
         &queue.to_le_bytes(),
-        mem,
     );
+    dev.process_notified_queues(mem);
 }
 
 #[test]
 fn virtio_snd_tx_missing_status_descriptor_does_not_stall_queue() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);
     negotiate_features(&mut dev, &mut mem, &caps);
@@ -204,7 +204,7 @@ fn virtio_snd_tx_missing_status_descriptor_does_not_stall_queue() {
 fn virtio_snd_tx_invalid_out_buffer_does_not_stall_queue() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);
     negotiate_features(&mut dev, &mut mem, &caps);
@@ -257,7 +257,7 @@ fn virtio_snd_tx_invalid_out_buffer_does_not_stall_queue() {
 fn virtio_snd_rx_short_response_descriptor_does_not_stall_queue() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);
     negotiate_features(&mut dev, &mut mem, &caps);
@@ -305,7 +305,7 @@ fn virtio_snd_rx_short_response_descriptor_does_not_stall_queue() {
 fn virtio_snd_rx_invalid_header_buffer_does_not_stall_queue() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);
     negotiate_features(&mut dev, &mut mem, &caps);

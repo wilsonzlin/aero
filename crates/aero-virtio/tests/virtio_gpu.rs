@@ -31,7 +31,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -72,20 +72,20 @@ fn bar_read_u16(dev: &mut VirtioPciDevice, off: u64) -> u16 {
     u16::from_le_bytes(buf)
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u64) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u64(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u64) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
 fn write_desc(
@@ -185,7 +185,8 @@ fn submit_control(
     ctrlq.avail_idx = ctrlq.avail_idx.wrapping_add(1);
     write_u16_le(mem, ctrlq.avail + 2, ctrlq.avail_idx).unwrap();
 
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(mem);
 
     let used_ring_index = u64::from(ctrlq.used_idx % ctrlq.qsz);
     let used_elem = ctrlq.used + 4 + used_ring_index * 8;
@@ -213,7 +214,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     assert_eq!(cfg[0x0b], 0x03);
     assert_eq!(cfg[0x0a], 0x80);
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.isr, 0);
     assert_ne!(caps.device, 0);
@@ -417,7 +418,7 @@ fn virtio_gpu_rejects_oversize_request_without_wedging_queue() {
     let shared_scanout = Rc::new(RefCell::new(Vec::new()));
     let gpu = VirtioGpu2d::new(4, 4, SharedScanout(shared_scanout));
     let mut dev = VirtioPciDevice::new(Box::new(gpu), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x20000);
 
     // Feature negotiation (accept whatever the device offers).
@@ -504,7 +505,8 @@ fn virtio_gpu_rejects_oversize_request_without_wedging_queue() {
     avail_idx = avail_idx.wrapping_add(1);
     write_u16_le(&mut mem, avail + 2, avail_idx).unwrap();
 
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     let used_ring_index = (used_idx % qsz) as u64;
     let used_elem = used + 4 + used_ring_index * 8;

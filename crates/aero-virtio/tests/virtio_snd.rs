@@ -75,7 +75,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -114,27 +114,27 @@ fn bar_read_u16(dev: &mut VirtioPciDevice, off: u64) -> u16 {
     u16::from_le_bytes(buf)
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u64) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u64(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u64) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
 #[test]
 fn virtio_snd_pci_contract_v1_features_and_queue_sizes() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x4000);
 
@@ -249,8 +249,8 @@ fn submit_chain(dev: &mut VirtioPciDevice, mem: &mut GuestRam, caps: &Caps, subm
     dev.bar0_write(
         caps.notify + u64::from(submit.queue_index) * u64::from(caps.notify_mult),
         &submit.queue_index.to_le_bytes(),
-        mem,
     );
+    dev.process_notified_queues(mem);
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let (irq, irq_state) = SharedLegacyIrq::new();
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(irq));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);
 
@@ -327,8 +327,8 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
     dev.bar0_write(
         caps.notify + u64::from(VIRTIO_SND_QUEUE_EVENT) * u64::from(caps.notify_mult),
         &VIRTIO_SND_QUEUE_EVENT.to_le_bytes(),
-        &mut mem,
     );
+    dev.process_notified_queues(&mut mem);
     assert_eq!(
         u16::from_le_bytes(mem.get_slice(used + 2, 2).unwrap().try_into().unwrap()),
         0
@@ -361,7 +361,7 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.isr, 0);
     assert_ne!(caps.device, 0);
@@ -578,7 +578,7 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
     let snd = VirtioSnd::new_with_host_sample_rate(output, host_rate_hz);
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x40000);
 
     // Feature negotiation: accept everything the device offers.

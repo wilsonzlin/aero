@@ -41,7 +41,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -80,20 +80,20 @@ fn bar_read_u16(dev: &mut VirtioPciDevice, off: u64) -> u16 {
     u16::from_le_bytes(buf)
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u64) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u64(dev: &mut VirtioPciDevice, off: u64, val: u64) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
 fn write_desc(
@@ -126,7 +126,7 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
     assert_ne!(caps.isr, 0);
     assert_ne!(caps.device, 0);
@@ -135,38 +135,30 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let mut mem = GuestRam::new(0x20000);
 
     // Feature negotiation: accept everything the device offers.
+    bar_write_u8(&mut dev, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     bar_write_u8(
         &mut dev,
-        &mut mem,
-        caps.common + 0x14,
-        VIRTIO_STATUS_ACKNOWLEDGE,
-    );
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    bar_write_u32(&mut dev, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    bar_write_u32(&mut dev, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u32(&mut dev, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f1);
 
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE
             | VIRTIO_STATUS_DRIVER
@@ -187,23 +179,23 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let rx_desc = 0x1000;
     let rx_avail = 0x2000;
     let rx_used = 0x3000;
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    bar_write_u16(&mut dev, caps.common + 0x16, 0);
     assert!(bar_read_u16(&mut dev, caps.common + 0x18) >= 8);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, rx_desc);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, rx_avail);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, rx_used);
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+    bar_write_u64(&mut dev, caps.common + 0x20, rx_desc);
+    bar_write_u64(&mut dev, caps.common + 0x28, rx_avail);
+    bar_write_u64(&mut dev, caps.common + 0x30, rx_used);
+    bar_write_u16(&mut dev, caps.common + 0x1c, 1);
 
     // Configure TX queue 1.
     let tx_desc = 0x4000;
     let tx_avail = 0x5000;
     let tx_used = 0x6000;
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u16(&mut dev, caps.common + 0x16, 1);
     assert!(bar_read_u16(&mut dev, caps.common + 0x18) >= 8);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, tx_desc);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, tx_avail);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, tx_used);
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+    bar_write_u64(&mut dev, caps.common + 0x20, tx_desc);
+    bar_write_u64(&mut dev, caps.common + 0x28, tx_avail);
+    bar_write_u64(&mut dev, caps.common + 0x30, tx_used);
+    bar_write_u16(&mut dev, caps.common + 0x1c, 1);
 
     // TX: header + payload.
     let hdr_addr = 0x7000;
@@ -239,11 +231,8 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     write_u16_le(&mut mem, tx_used, 0).unwrap();
     write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
 
-    dev.bar0_write(
-        caps.notify + u64::from(caps.notify_mult),
-        &1u16.to_le_bytes(),
-        &mut mem,
-    );
+    dev.bar0_write(caps.notify + u64::from(caps.notify_mult), &1u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     assert_eq!(backing.borrow().tx_packets, vec![payload.to_vec()]);
     assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
@@ -281,7 +270,8 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     write_u16_le(&mut mem, rx_used, 0).unwrap();
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
     assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
 
     let rx_packet = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00".to_vec();
@@ -313,42 +303,34 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
 
     let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
     let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x20000);
 
     // Feature negotiation: accept everything the device offers.
+    bar_write_u8(&mut dev, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     bar_write_u8(
         &mut dev,
-        &mut mem,
-        caps.common + 0x14,
-        VIRTIO_STATUS_ACKNOWLEDGE,
-    );
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    bar_write_u32(&mut dev, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    bar_write_u32(&mut dev, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u32(&mut dev, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f1);
 
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE
             | VIRTIO_STATUS_DRIVER
@@ -360,11 +342,11 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     let rx_desc = 0x1000;
     let rx_avail = 0x2000;
     let rx_used = 0x3000;
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, rx_desc);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, rx_avail);
-    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, rx_used);
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+    bar_write_u16(&mut dev, caps.common + 0x16, 0);
+    bar_write_u64(&mut dev, caps.common + 0x20, rx_desc);
+    bar_write_u64(&mut dev, caps.common + 0x28, rx_avail);
+    bar_write_u64(&mut dev, caps.common + 0x30, rx_used);
+    bar_write_u16(&mut dev, caps.common + 0x1c, 1);
 
     // Post an RX buffer that is large enough for small frames but not for a 60-byte frame.
     let rx_hdr_addr = 0x4000;
@@ -398,7 +380,8 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     write_u16_le(&mut mem, rx_used, 0).unwrap();
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
 
     // Provide a 60-byte frame. The device must drop it and must NOT consume the chain.
     backing.borrow_mut().rx_packets.push(vec![0u8; 60]);

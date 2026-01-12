@@ -73,7 +73,7 @@ struct Caps {
     notify_mult: u32,
 }
 
-fn parse_caps(dev: &VirtioPciDevice) -> Caps {
+fn parse_caps(dev: &mut VirtioPciDevice) -> Caps {
     let mut cfg = [0u8; 256];
     dev.config_read(0, &mut cfg);
     let mut caps = Caps::default();
@@ -106,21 +106,21 @@ fn bar_read_u32(dev: &mut VirtioPciDevice, off: u64) -> u32 {
     u32::from_le_bytes(buf)
 }
 
-fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut dyn GuestMemory, off: u64, val: u8) {
-    dev.bar0_write(off, &[val], mem);
+fn bar_write_u8(dev: &mut VirtioPciDevice, off: u64, val: u8) {
+    dev.bar0_write(off, &[val]);
 }
 
-fn bar_write_u16(dev: &mut VirtioPciDevice, mem: &mut dyn GuestMemory, off: u64, val: u16) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u16(dev: &mut VirtioPciDevice, off: u64, val: u16) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut dyn GuestMemory, off: u64, val: u32) {
-    dev.bar0_write(off, &val.to_le_bytes(), mem);
+fn bar_write_u32(dev: &mut VirtioPciDevice, off: u64, val: u32) {
+    dev.bar0_write(off, &val.to_le_bytes());
 }
 
-fn bar_write_u64_split(dev: &mut VirtioPciDevice, mem: &mut dyn GuestMemory, off: u64, val: u64) {
-    bar_write_u32(dev, mem, off, val as u32);
-    bar_write_u32(dev, mem, off + 4, (val >> 32) as u32);
+fn bar_write_u64_split(dev: &mut VirtioPciDevice, off: u64, val: u64) {
+    bar_write_u32(dev, off, val as u32);
+    bar_write_u32(dev, off + 4, (val >> 32) as u32);
 }
 
 #[test]
@@ -129,44 +129,36 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
 
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
-    let caps = parse_caps(&dev);
+    let caps = parse_caps(&mut dev);
     assert_eq!(caps.notify_mult, 4);
 
     let mut mem = WindowedGuestMemory::new(BASE, 0x20000);
 
     // Standard virtio modern init + feature negotiation (accept what the device offers).
+    bar_write_u8(&mut dev, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     bar_write_u8(
         &mut dev,
-        &mut mem,
-        caps.common + 0x14,
-        VIRTIO_STATUS_ACKNOWLEDGE,
-    );
-    bar_write_u8(
-        &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    bar_write_u32(&mut dev, caps.common, 0);
     let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f0);
 
-    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    bar_write_u32(&mut dev, caps.common, 1);
     let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
-    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u32(&mut dev, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, caps.common + 0x0c, f1);
 
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
     bar_write_u8(
         &mut dev,
-        &mut mem,
         caps.common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE
             | VIRTIO_STATUS_DRIVER
@@ -179,11 +171,11 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     let avail = BASE + 0x2000;
     let used = BASE + 0x3000;
 
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
-    bar_write_u64_split(&mut dev, &mut mem, caps.common + 0x20, desc);
-    bar_write_u64_split(&mut dev, &mut mem, caps.common + 0x28, avail);
-    bar_write_u64_split(&mut dev, &mut mem, caps.common + 0x30, used);
-    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+    bar_write_u16(&mut dev, caps.common + 0x16, 0);
+    bar_write_u64_split(&mut dev, caps.common + 0x20, desc);
+    bar_write_u64_split(&mut dev, caps.common + 0x28, avail);
+    bar_write_u64_split(&mut dev, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, caps.common + 0x1c, 1);
 
     // Post a single 8-byte event buffer, also above 4GiB.
     let event_buf = BASE + 0x4000;
@@ -200,7 +192,8 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     write_u16_le(&mut mem, used + 2, 0).unwrap();
 
     // Kicking the queue only makes the buffer available; without an event, it must not complete.
-    dev.bar0_write(caps.notify, &0u16.to_le_bytes(), &mut mem);
+    dev.bar0_write(caps.notify, &0u16.to_le_bytes());
+    dev.process_notified_queues(&mut mem);
     assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
 
     // Deliver an event; the device should write it into the >4GiB buffer and complete the chain.

@@ -22,6 +22,9 @@ use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
+use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
+use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError};
+use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
@@ -68,6 +71,7 @@ pub struct PcPlatformConfig {
     pub enable_e1000: bool,
     pub mac_addr: Option<[u8; 6]>,
     pub enable_uhci: bool,
+    pub enable_virtio_blk: bool,
 }
 
 impl Default for PcPlatformConfig {
@@ -83,6 +87,7 @@ impl Default for PcPlatformConfig {
             // USB is a core piece of the canonical PC platform; enable UHCI by default so guests
             // can discover a basic USB 1.1 controller without opting in to extra devices.
             enable_uhci: true,
+            enable_virtio_blk: false,
         }
     }
 }
@@ -163,6 +168,27 @@ impl E1000PciConfigDevice {
 }
 
 impl PciDevice for E1000PciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
+struct VirtioBlkPciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioBlkPciConfigDevice {
+    fn new() -> Self {
+        let config = aero_devices::pci::profile::VIRTIO_BLK.build_config_space();
+        Self { config }
+    }
+}
+
+impl PciDevice for VirtioBlkPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.config
     }
@@ -486,6 +512,98 @@ impl aero_audio::mem::MemoryAccess for HdaDmaMemory<'_> {
     }
 }
 
+#[derive(Default)]
+struct NoopVirtioInterruptSink;
+
+impl VirtioInterruptSink for NoopVirtioInterruptSink {
+    fn raise_legacy_irq(&mut self) {}
+
+    fn lower_legacy_irq(&mut self) {}
+
+    fn signal_msix(&mut self, _vector: u16) {}
+}
+
+fn all_ones(size: usize) -> u64 {
+    match size {
+        0 => 0,
+        1 => 0xff,
+        2 => 0xffff,
+        3 => 0x00ff_ffff,
+        4 => 0xffff_ffff,
+        5 => 0x0000_ffff_ffff,
+        6 => 0x00ff_ffff_ffff,
+        7 => 0x00ff_ffff_ffff_ffff,
+        _ => u64::MAX,
+    }
+}
+
+struct VirtioPciBar0Mmio {
+    dev: Rc<RefCell<VirtioPciDevice>>,
+}
+
+impl PciBarMmioHandler for VirtioPciBar0Mmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let mut dev = self.dev.borrow_mut();
+        match size {
+            1 | 2 | 4 | 8 => {
+                let mut buf = [0u8; 8];
+                dev.bar0_read(offset, &mut buf[..size]);
+                u64::from_le_bytes(buf)
+            }
+            _ => all_ones(size),
+        }
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let mut dev = self.dev.borrow_mut();
+        match size {
+            1 | 2 | 4 | 8 => {
+                let bytes = value.to_le_bytes();
+                dev.bar0_write(offset, &bytes[..size]);
+            }
+            _ => {}
+        }
+    }
+}
+
+struct VirtioDmaMemory<'a> {
+    mem: &'a mut MemoryBus,
+}
+
+impl VirtioGuestMemory for VirtioDmaMemory<'_> {
+    fn len(&self) -> u64 {
+        self.mem.ram().size()
+    }
+
+    fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), VirtioGuestMemoryError> {
+        self.mem
+            .ram()
+            .read_into(addr, dst)
+            .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr, len: dst.len() })
+    }
+
+    fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), VirtioGuestMemoryError> {
+        self.mem
+            .ram_mut()
+            .write_from(addr, src)
+            .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr, len: src.len() })
+    }
+
+    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], VirtioGuestMemoryError> {
+        self.mem
+            .ram()
+            .get_slice(addr, len)
+            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
+    }
+
+    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], VirtioGuestMemoryError> {
+        self.mem
+            .ram_mut()
+            .get_slice_mut(addr, len)
+            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
+    }
+}
+
 struct IoApicMmio {
     interrupts: Rc<RefCell<PlatformInterrupts>>,
 }
@@ -598,6 +716,7 @@ pub struct PcPlatform {
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     pub uhci: Option<Rc<RefCell<UhciPciDevice>>>,
+    pub virtio_blk: Option<Rc<RefCell<VirtioPciDevice>>>,
 
     pci_intx_sources: Vec<PciIntxSource>,
     pci_allocator: PciResourceAllocator,
@@ -734,6 +853,16 @@ impl PcPlatform {
                 ..Default::default()
             },
             DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
+    pub fn new_with_virtio_blk(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_virtio_blk: true,
+                ..Default::default()
+            },
         )
     }
 
@@ -1020,6 +1149,36 @@ impl PcPlatform {
             None
         };
 
+        let virtio_blk = if config.enable_virtio_blk {
+            let profile = aero_devices::pci::profile::VIRTIO_BLK;
+            let bdf = profile.bdf;
+
+            let virtio_blk = Rc::new(RefCell::new(VirtioPciDevice::new(
+                Box::new(VirtioBlk::new(MemDisk::new(16 * 1024 * 1024))),
+                Box::new(NoopVirtioInterruptSink),
+            )));
+
+            {
+                let virtio_for_intx = virtio_blk.clone();
+                pci_intx_sources.push(PciIntxSource {
+                    bdf,
+                    pin: PciInterruptPin::IntA,
+                    query_level: Box::new(move |_pc| virtio_for_intx.borrow().irq_level()),
+                });
+            }
+
+            let mut dev = VirtioBlkPciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(virtio_blk)
+        } else {
+            None
+        };
+
         {
             let mut pci_cfg = pci_cfg.borrow_mut();
             bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
@@ -1146,6 +1305,13 @@ impl PcPlatform {
                 e1000,
             );
         }
+        if let Some(virtio_blk) = virtio_blk.clone() {
+            pci_mmio_router.register_handler(
+                aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                0,
+                VirtioPciBar0Mmio { dev: virtio_blk },
+            )
+        }
         memory
             .map_mmio(
                 pci_allocator_config.mmio_base,
@@ -1214,6 +1380,7 @@ impl PcPlatform {
             ide,
             e1000,
             uhci,
+            virtio_blk,
             pci_intx_sources,
             pci_allocator,
             pci_io_bars,
@@ -1451,6 +1618,28 @@ impl PcPlatform {
 
         let mut ide = ide.borrow_mut();
         ide.tick(&mut self.memory);
+    }
+
+    pub fn process_virtio_blk(&mut self) {
+        let Some(virtio_blk) = self.virtio_blk.as_ref() else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+        let bus_master_enabled = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .is_some_and(|cfg| (cfg.command() & (1 << 2)) != 0)
+        };
+        if !bus_master_enabled {
+            return;
+        }
+
+        let mut virtio_blk = virtio_blk.borrow_mut();
+        let mut mem = VirtioDmaMemory { mem: &mut self.memory };
+        virtio_blk.process_notified_queues(&mut mem);
     }
 
     pub fn attach_ahci_drive(&mut self, port: usize, drive: AtaDrive) {
