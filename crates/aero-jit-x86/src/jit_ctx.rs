@@ -114,6 +114,19 @@ pub const TIER2_CTX_SIZE: u32 = 12;
 /// Backwards-compatible alias for [`TIER2_CTX_SIZE`].
 pub const JIT_CTX_SIZE: u32 = TIER2_CTX_SIZE;
 
+const _: () = {
+    // Keep the Tier-2 context layout stable and internally consistent. The JS host and tiered VM
+    // rely on these offsets when allocating and inspecting the shared JIT ABI buffer.
+    assert!(TIER2_CTX_OFFSET == abi::CPU_STATE_SIZE + (JitContext::TOTAL_BYTE_SIZE as u32));
+    assert!(TRACE_EXIT_REASON_OFFSET == TIER2_CTX_OFFSET);
+    assert!(CODE_VERSION_TABLE_PTR_OFFSET == TIER2_CTX_OFFSET + 4);
+    assert!(CODE_VERSION_TABLE_LEN_OFFSET == TIER2_CTX_OFFSET + 8);
+    assert!(TIER2_CTX_SIZE == 12);
+    assert!(JIT_CTX_SIZE == TIER2_CTX_SIZE);
+    assert!(TIER2_CTX_OFFSET % 4 == 0);
+    assert!(TIER2_CTX_SIZE % 4 == 0);
+};
+
 #[cfg(test)]
 mod tests {
     use memoffset::offset_of;
