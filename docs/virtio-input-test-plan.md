@@ -418,10 +418,12 @@ Equivalent:
 npm run dev
 ```
 
-Open the printed URL with a verbose log level (example):
+Note: when running the repo-root Vite harness (`cargo xtask web dev` / `npm run dev`), the web runtime is served at `/web/`.
+
+Open it with a verbose log level (example):
 
 ```text
-http://localhost:5173/?log=debug
+http://localhost:5173/web/?log=debug
 ```
 
 Note: most multi-worker test/debug flows (SharedArrayBuffer, ring buffers, etc.) require `crossOriginIsolated` to be true (COOP/COEP headers).
