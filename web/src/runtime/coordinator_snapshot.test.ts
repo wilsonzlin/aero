@@ -37,13 +37,19 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-function installReadyWorkers(coordinator: WorkerCoordinator, cpu: StubWorker, io: StubWorker, net: StubWorker): void {
+function installReadyWorkers(
+  coordinator: WorkerCoordinator,
+  workers: { cpu: StubWorker; io: StubWorker; net?: StubWorker },
+): void {
   const ioIpc = createIoIpcSab();
-  (coordinator as any).workers = {
-    cpu: { role: "cpu", instanceId: 1, worker: cpu as unknown as Worker, status: { state: "ready" } },
-    io: { role: "io", instanceId: 1, worker: io as unknown as Worker, status: { state: "ready" } },
-    net: { role: "net", instanceId: 1, worker: net as unknown as Worker, status: { state: "ready" } },
+  const map: Record<string, unknown> = {
+    cpu: { role: "cpu", instanceId: 1, worker: workers.cpu as unknown as Worker, status: { state: "ready" } },
+    io: { role: "io", instanceId: 1, worker: workers.io as unknown as Worker, status: { state: "ready" } },
   };
+  if (workers.net) {
+    map.net = { role: "net", instanceId: 1, worker: workers.net as unknown as Worker, status: { state: "ready" } };
+  }
+  (coordinator as any).workers = map;
   // Snapshot orchestration resets NET_TX/NET_RX via the shared `ioIpc` segment.
   (coordinator as any).shared = { segments: { ioIpc } };
 }
@@ -54,7 +60,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const cpu = new StubWorker();
     const io = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io, net);
+    installReadyWorkers(coordinator, { cpu, io, net });
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
@@ -117,7 +123,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const cpu = new StubWorker();
     const io = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io, net);
+    installReadyWorkers(coordinator, { cpu, io, net });
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
@@ -172,7 +178,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const cpu = new StubWorker();
     const io = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io, net);
+    installReadyWorkers(coordinator, { cpu, io, net });
 
     const shared = (coordinator as any).shared;
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
@@ -232,12 +238,67 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it("orchestrates snapshotRestoreFromOpfs without a net worker (still resets NET rings)", async () => {
+    const coordinator = new WorkerCoordinator();
+    const cpu = new StubWorker();
+    const io = new StubWorker();
+    installReadyWorkers(coordinator, { cpu, io });
+
+    const shared = (coordinator as any).shared;
+    const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+    const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+    txRing.tryPush(new Uint8Array([0xaa]));
+    rxRing.tryPush(new Uint8Array([0xbb]));
+
+    const promise = coordinator.snapshotRestoreFromOpfs("state/test.snap");
+
+    expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    // Snapshot boundary must clear NET_TX/NET_RX rings even when there is no net worker.
+    expect(txRing.tryPop()).toBeNull();
+    expect(rxRing.tryPop()).toBeNull();
+
+    expect(io.posted[1]?.message.kind).toBe("vm.snapshot.restoreFromOpfs");
+    const cpuBuf = new ArrayBuffer(4);
+    const mmuBuf = new ArrayBuffer(8);
+    io.emitMessage({
+      kind: "vm.snapshot.restored",
+      requestId: io.posted[1]!.message.requestId,
+      ok: true,
+      cpu: cpuBuf,
+      mmu: mmuBuf,
+      devices: [],
+    });
+    await flushMicrotasks();
+
+    expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.setCpuState");
+    expect(cpu.posted[1]?.message.cpu).toBe(cpuBuf);
+    expect(cpu.posted[1]?.message.mmu).toBe(mmuBuf);
+    expect(cpu.posted[1]?.transfer).toEqual([cpuBuf, mmuBuf]);
+
+    cpu.emitMessage({ kind: "vm.snapshot.cpuStateSet", requestId: cpu.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
+    io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
   it("does not reset NET rings until IO is paused (regression: IO enqueue after drain)", async () => {
     const coordinator = new WorkerCoordinator();
     const cpu = new StubWorker();
     const io = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, cpu, io, net);
+    installReadyWorkers(coordinator, { cpu, io, net });
 
     const ioIpc = (coordinator as any).shared.segments.ioIpc as SharedArrayBuffer;
     const netTxRing = openRingByKind(ioIpc, IO_IPC_NET_TX_QUEUE_KIND);

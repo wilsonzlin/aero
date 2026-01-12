@@ -1048,16 +1048,17 @@ export class WorkerCoordinator {
     const cpu = this.workers.cpu;
     const io = this.workers.io;
     const net = this.workers.net;
-    if (!cpu?.worker || !io?.worker || !net?.worker) {
-      throw new Error("Cannot save VM snapshot: CPU/IO/NET workers are not running.");
+    if (!cpu?.worker || !io?.worker) {
+      throw new Error("Cannot save VM snapshot: CPU/IO workers are not running.");
     }
-    if (cpu.status.state !== "ready" || io.status.state !== "ready" || net.status.state !== "ready") {
-      throw new Error("Cannot save VM snapshot: CPU/IO/NET workers are not ready.");
+    if (cpu.status.state !== "ready" || io.status.state !== "ready") {
+      throw new Error("Cannot save VM snapshot: CPU/IO workers are not ready.");
     }
 
     this.snapshotInFlight = true;
     try {
-      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: net.worker });
+      const netWorker = net?.status.state === "ready" ? net.worker : undefined;
+      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
 
       const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
         cpu.worker,
@@ -1099,16 +1100,17 @@ export class WorkerCoordinator {
     const cpu = this.workers.cpu;
     const io = this.workers.io;
     const net = this.workers.net;
-    if (!cpu?.worker || !io?.worker || !net?.worker) {
-      throw new Error("Cannot restore VM snapshot: CPU/IO/NET workers are not running.");
+    if (!cpu?.worker || !io?.worker) {
+      throw new Error("Cannot restore VM snapshot: CPU/IO workers are not running.");
     }
-    if (cpu.status.state !== "ready" || io.status.state !== "ready" || net.status.state !== "ready") {
-      throw new Error("Cannot restore VM snapshot: CPU/IO/NET workers are not ready.");
+    if (cpu.status.state !== "ready" || io.status.state !== "ready") {
+      throw new Error("Cannot restore VM snapshot: CPU/IO workers are not ready.");
     }
 
     this.snapshotInFlight = true;
     try {
-      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: net.worker });
+      const netWorker = net?.status.state === "ready" ? net.worker : undefined;
+      await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
 
       const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
         io.worker,
@@ -1140,7 +1142,7 @@ export class WorkerCoordinator {
   }
 
   /**
-   * Pause CPU → IO → NET, then clear the NET_TX/NET_RX rings.
+   * Pause CPU → IO → NET (when present), then clear the NET_TX/NET_RX rings.
    *
    * Ordering matters:
    * - NET_TX/NET_RX are shared-memory rings accessed by multiple workers (guest + host sides).
@@ -1149,7 +1151,7 @@ export class WorkerCoordinator {
    * - Therefore, we pause the "guest" side first (CPU then IO), then pause NET, and only
    *   once *all* participants are paused do we reset the rings.
    */
-  private async pauseWorkersForSnapshot(opts: { cpu: Worker; io: Worker; net: Worker }): Promise<void> {
+  private async pauseWorkersForSnapshot(opts: { cpu: Worker; io: Worker; net?: Worker }): Promise<void> {
     // NOTE: Pausing sequentially enforces the stronger ordering required to safely reset
     // the NET rings without races from CPU/IO enqueue/dequeue.
     const cpuPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.cpu, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
@@ -1162,12 +1164,15 @@ export class WorkerCoordinator {
     });
     this.assertSnapshotOk("pause io", ioPause);
 
-    const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.net, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
-      timeoutMs: 5_000,
-    });
-    this.assertSnapshotOk("pause net", netPause);
+    if (opts.net) {
+      const netPause = await this.snapshotRpc<VmSnapshotPausedMessage>(opts.net, { kind: "vm.snapshot.pause" }, "vm.snapshot.paused", {
+        timeoutMs: 5_000,
+      });
+      this.assertSnapshotOk("pause net", netPause);
+    }
 
-    // Now that CPU+IO+NET are all paused, it is safe to reset the NET_TX/NET_RX rings.
+    // Now that CPU+IO are paused (and NET, if running), it is safe to reset the
+    // NET_TX/NET_RX rings.
     this.resetNetRingsForSnapshot();
   }
 
