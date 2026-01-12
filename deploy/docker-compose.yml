@@ -135,6 +135,14 @@ services:
       # gateway defaults to allowing the origin derived from PUBLIC_BASE_URL.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
 
+      # Optional: L2 tunnel payload limits surfaced in `POST /session`.
+      #
+      # These are owned/enforced by `crates/aero-l2-proxy`, but the browser client
+      # uses `limits.l2` to cap outbound frames. Keep gateway + L2 proxy in sync
+      # when overriding.
+      AERO_L2_MAX_FRAME_PAYLOAD: ${AERO_L2_MAX_FRAME_PAYLOAD:-}
+      AERO_L2_MAX_CONTROL_PAYLOAD: ${AERO_L2_MAX_CONTROL_PAYLOAD:-}
+
       # Same-origin UDP relay integration.
       #
       # This enables `POST /session` to return `udpRelay` connection info for browser
@@ -194,6 +202,13 @@ services:
       #   AERO_L2_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
       ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}
       AERO_L2_ALLOWED_ORIGINS_EXTRA: ${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
+
+      # Optional: L2 tunnel payload limits (defense in depth).
+      #
+      # Keep these in sync with the gateway `POST /session` response (gateway reads
+      # the same env vars when present).
+      AERO_L2_MAX_FRAME_PAYLOAD: ${AERO_L2_MAX_FRAME_PAYLOAD:-}
+      AERO_L2_MAX_CONTROL_PAYLOAD: ${AERO_L2_MAX_CONTROL_PAYLOAD:-}
 
       # L2 tunnel auth (Option C).
       #
