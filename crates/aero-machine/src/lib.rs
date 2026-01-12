@@ -2456,7 +2456,14 @@ impl Machine {
                     })
                     .unwrap_or(0);
 
-                let mut level = virtio.borrow().irq_level();
+                // Keep the virtio transport's internal PCI command register in sync so `irq_level`
+                // can respect COMMAND.INTX_DISABLE (bit 10) while the machine owns the canonical PCI
+                // config space.
+                let mut level = {
+                    let mut virtio = virtio.borrow_mut();
+                    virtio.set_pci_command(command);
+                    virtio.irq_level()
+                };
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -3194,6 +3201,23 @@ impl Machine {
                     .pci_config_write(0x04, 2, u32::from(command));
             }
 
+            // Virtio devices also gate DMA and INTx semantics on the PCI command register, but the
+            // machine owns the canonical PCI config space (`PciConfigPorts`) rather than the virtio
+            // transport model. Mirror the command register so the transport observes the guest's
+            // configuration.
+            if let Some(virtio_net) = virtio_net.as_ref() {
+                let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
+                let command = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.command())
+                        .unwrap_or(0)
+                };
+                virtio_net.borrow_mut().set_pci_command(command);
+            }
+
             let vga = self.vga.clone();
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
@@ -3586,6 +3610,13 @@ impl Machine {
                     .map(|cfg| cfg.command())
             })
             .unwrap_or(0);
+
+        // Keep the virtio transport's internal PCI command register in sync with the canonical PCI
+        // config space owned by the machine.
+        {
+            let mut virtio = virtio.borrow_mut();
+            virtio.set_pci_command(command);
+        }
 
         if (command & (1 << 2)) == 0 {
             return;
