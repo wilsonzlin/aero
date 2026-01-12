@@ -195,6 +195,11 @@ See the canonical driver README for the full build + signing workflow and CI out
 
 - [`drivers/windows7/virtio-input/README.md`](../drivers/windows7/virtio-input/README.md)
 
+If you built via CI scripts, the packaged outputs are typically staged under:
+
+- `out/packages/windows7/virtio-input/x86/`
+- `out/packages/windows7/virtio-input/x64/`
+
 ### 3.1 Boot QEMU with virtio-input devices
 
 Example (x64), keeping PS/2 enabled during installation so you don’t lose input:
