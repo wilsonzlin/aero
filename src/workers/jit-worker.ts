@@ -50,6 +50,14 @@ function sliceCodeWindow(entryRip: number, maxBytes: number): Uint8Array {
   return new Uint8Array(buf, base, len);
 }
 
+function toOwnedArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Always copy into an ArrayBuffer-backed view so:
+  // - WebAssembly.validate/compile accept it under `ES2024.SharedMemory` libs
+  // - We never accidentally transfer/detach a large wasm memory buffer
+  // - It is safe to transfer the exact wasm bytes payload.
+  return new Uint8Array(bytes) as Uint8Array<ArrayBuffer>;
+}
+
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {
     postMessageToCpu({
@@ -93,7 +101,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
-  const wasmBytes = compilation.wasm_bytes as Uint8Array<ArrayBuffer>;
+  const wasmBytes = toOwnedArrayBufferBytes(compilation.wasm_bytes);
   if (!WebAssembly.validate(wasmBytes)) {
     postMessageToCpu({
       type: 'CompileError',
@@ -146,4 +154,3 @@ ctx.addEventListener('message', (ev: MessageEvent<CpuToJitMessage>) => {
       break;
   }
 });
-
