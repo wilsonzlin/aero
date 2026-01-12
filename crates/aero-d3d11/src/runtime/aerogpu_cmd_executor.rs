@@ -2836,12 +2836,15 @@ impl AerogpuD3d11Executor {
                                 .try_into()
                                 .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
                             if slot_usize < used_slots.len() && used_slots[slot_usize] {
-                                let needs_upload =
-                                    self.resources.textures.get(&texture).is_some_and(|tex| {
-                                        tex.dirty && tex.backing.is_some()
-                                    });
+                                let needs_upload = self
+                                    .resources
+                                    .textures
+                                    .get(&texture)
+                                    .is_some_and(|tex| tex.dirty && tex.backing.is_some());
                                 if needs_upload && !used_textures_in_pass.contains(&texture) {
-                                    self.upload_texture_from_guest_memory(texture, allocs, guest_mem)?;
+                                    self.upload_texture_from_guest_memory(
+                                        texture, allocs, guest_mem,
+                                    )?;
                                 }
                             }
                         }
