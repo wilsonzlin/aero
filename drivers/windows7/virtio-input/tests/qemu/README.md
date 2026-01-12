@@ -230,6 +230,17 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    ```
    This validates that the device exposes an output report and accepts writes. (In a VM there may not be a physical LED to observe.)
 
+5. (Optional) send a keyboard LED output report via `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`):
+   ```bat
+   hidtest.exe --keyboard --led-hidd 0x02
+   ```
+
+6. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
+   ```bat
+   hidtest.exe --keyboard --ioctl-bad-write-report
+   hidtest.exe --keyboard --hidd-bad-set-output-report
+   ```
+
 ## Troubleshooting
 
 ### Device Manager shows an error code
@@ -249,6 +260,7 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 ### `hidtest` cannot open the device
 
 - Some HID devices cannot be opened with `GENERIC_WRITE`; try running without `--led`.
+- If `--led` fails, try `--led-hidd` (it uses a different HID output path).
 - If `hidtest` fails to read:
   - Confirm the device is present and enabled in Device Manager.
   - Try selecting the other collection (keyboard vs mouse).

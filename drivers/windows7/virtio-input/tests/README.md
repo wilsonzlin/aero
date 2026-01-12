@@ -16,3 +16,7 @@ gcc -std=c11 -Wall -Wextra -Werror \
 
 - `qemu/` — QEMU-based manual bring-up notes.
 - `offline-install/` — offline/slipstream install notes (DISM).
+
+For exercising HID output report paths, see:
+
+- `tools/hidtest/` (supports `--led`, `--led-hidd`, and negative pointer tests).
