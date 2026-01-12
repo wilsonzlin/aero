@@ -128,6 +128,8 @@ Reference implementation:
 
 - Shared-memory segment allocation + layout computation: [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)
 - WASM-exported layout API: `crates/aero-wasm/src/lib.rs` (`guest_ram_layout`)
+- Hole-aware guest RAM backend for PC/Q35-style holes + open-bus semantics:
+  `crates/memory/src/mapped.rs` (`MappedGuestMemory`)
 - WASM build flags (imported memory, max memory, stack placement): [`web/scripts/build_wasm.mjs`](../../web/scripts/build_wasm.mjs)
 - IPC protocol (binary rings + atomics contracts): [`docs/ipc-protocol.md`](../ipc-protocol.md)
 

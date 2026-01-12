@@ -205,6 +205,11 @@ contiguous `[0, total_ram)` region once PCI holes are modeled. Physical addresse
 holes must not hit RAM (and if not claimed by an MMIO device, should behave like open bus reads:
 `0xFF` bytes / all-ones).
 
+Implementation note: in the Rust VM core, this is modeled via `memory::MappedGuestMemory`
+(`crates/memory/src/mapped.rs`) and is already applied by the canonical PC memory buses when
+`ram_size > PCIE_ECAM_BASE` (see `crates/platform/src/memory.rs::MemoryBus::wrap_pc_high_memory`
+and `crates/aero-machine/src/lib.rs::SystemMemory::new`).
+
 ---
 
 ## Interrupt Routing

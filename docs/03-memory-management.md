@@ -547,6 +547,10 @@ See: `crates/firmware/src/bios/interrupts.rs::build_e820_map`
 Implementation note: the `memory` crate already provides a helper that encodes this behavior:
 `crates/memory/src/mapped.rs` (`MappedGuestMemory`).
 
+This is used by the canonical PC physical memory buses when `ram_size > PCIE_ECAM_BASE`
+(see `crates/platform/src/memory.rs::MemoryBus::wrap_pc_high_memory` and
+`crates/aero-machine/src/lib.rs::SystemMemory::new`).
+
 Even though `0x000A_0000–0x000B_FFFF` sits in the “conventional memory” area, it must be treated as device memory: the emulator should register an `MmioRegion` for the **AeroGPU legacy VGA window**, so BIOS/bootloader/Windows writes to `0xB8000` (text mode) and VBE LFB modes are visible on the canvas.
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)

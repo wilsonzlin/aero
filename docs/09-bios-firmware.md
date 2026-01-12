@@ -724,6 +724,11 @@ This implies the emulator must support a **non-contiguous** guest-physical RAM l
 the reserved holes must not be backed by RAM (and if not handled by an MMIO device, should behave
 like an open bus read).
 
+Implementation note: the canonical hole-aware RAM backend is `memory::MappedGuestMemory`
+(`crates/memory/src/mapped.rs`). The PC platform memory buses wrap large RAM configurations using
+this mapping (see `crates/platform/src/memory.rs::MemoryBus::wrap_pc_high_memory` and
+`crates/aero-machine/src/lib.rs::SystemMemory::new`).
+
 ```rust
 #[derive(Clone, Copy)]
 #[repr(C)]
