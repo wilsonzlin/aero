@@ -2357,6 +2357,39 @@ impl Machine {
         Ok(())
     }
 
+    /// Attach a disk backend to the NVMe controller, if present.
+    ///
+    /// Unlike AHCI/IDE, the NVMe device model requires a `Send` disk backend, so this cannot use
+    /// the machine's canonical [`SharedDisk`] (which is intentionally `!Send`/`!Sync` for WASM
+    /// compatibility).
+    ///
+    /// This method preserves the NVMe controller's internal state (including PCI config space
+    /// fields that are snapshotted by the device model) by snapshotting the current NVMe device
+    /// state and re-loading it after swapping the backend.
+    pub fn attach_nvme_disk(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> Result<(), MachineError> {
+        let Some(nvme) = &self.nvme else {
+            return Ok(());
+        };
+
+        // Preserve the device model's in-flight state (queues, pending interrupts, PCI config
+        // snapshot bytes, etc.) while swapping the disk backend.
+        let state = nvme.borrow().save_state();
+
+        let mut new_dev = NvmePciDevice::try_new_from_virtual_disk(disk)
+            .map_err(|e| MachineError::DiskBackend(format!("nvme disk backend error: {e:?}")))?;
+        new_dev.load_state(&state).map_err(|e| {
+            MachineError::DiskBackend(format!(
+                "failed to restore nvme state after attaching disk backend: {e}"
+            ))
+        })?;
+
+        *nvme.borrow_mut() = new_dev;
+        Ok(())
+    }
+
     /// Attach the machine's canonical [`SharedDisk`] to AHCI port 0 (if AHCI is enabled).
     ///
     /// This makes firmware INT13 disk reads and AHCI DMA observe the same underlying bytes.
