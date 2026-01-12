@@ -275,7 +275,7 @@ fn ata_boot_sector_read_via_legacy_pio_ports_dword_reads() {
 
     let mut buf = [0u8; SECTOR_SIZE];
     for i in 0..(SECTOR_SIZE / 4) {
-        let d = io.read(PRIMARY_PORTS.cmd_base, 4) as u32;
+        let d = io.read(PRIMARY_PORTS.cmd_base, 4);
         buf[i * 4..i * 4 + 4].copy_from_slice(&d.to_le_bytes());
     }
 
@@ -417,7 +417,7 @@ fn ata_pio_write_sector_via_dword_data_port_writes_roundtrip() {
 
     let mut out = [0u8; SECTOR_SIZE];
     for i in 0..(SECTOR_SIZE / 4) {
-        let d = io.read(PRIMARY_PORTS.cmd_base, 4) as u32;
+        let d = io.read(PRIMARY_PORTS.cmd_base, 4);
         out[i * 4..i * 4 + 4].copy_from_slice(&d.to_le_bytes());
     }
 
