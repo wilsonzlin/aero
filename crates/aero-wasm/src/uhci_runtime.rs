@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
@@ -11,7 +12,8 @@ use aero_usb::hid::passthrough::{UsbHidPassthroughHandle, UsbHidPassthroughOutpu
 use aero_usb::hid::webhid;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{
-    SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion,
+    SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+    UsbHostCompletionOut,
 };
 use aero_usb::uhci::UhciController;
 use aero_usb::{MemoryBus, UsbWebUsbPassthroughDevice};
@@ -540,8 +542,200 @@ impl UhciRuntime {
         let Some(state) = self.webusb.as_ref() else {
             return Ok(());
         };
-        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
-            .map_err(|e| js_error(&format!("Invalid UsbHostCompletion: {e}")))?;
+        let obj: Object = completion
+            .dyn_into()
+            .map_err(|_| js_error("Invalid UsbHostCompletion: expected an object"))?;
+
+        let kind = Reflect::get(&obj, &JsValue::from_str("kind"))
+            .map_err(|_| js_error("Invalid UsbHostCompletion: missing kind"))?
+            .as_string()
+            .ok_or_else(|| js_error("Invalid UsbHostCompletion: kind must be a string"))?;
+
+        let id = Reflect::get(&obj, &JsValue::from_str("id"))
+            .map_err(|_| js_error("Invalid UsbHostCompletion: missing id"))?
+            .as_f64()
+            .and_then(|v| {
+                if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= u32::MAX as f64 {
+                    Some(v as u32)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| js_error("Invalid UsbHostCompletion: id must be a u32 number"))?;
+
+        let status = Reflect::get(&obj, &JsValue::from_str("status"))
+            .map_err(|_| js_error("Invalid UsbHostCompletion: missing status"))?
+            .as_string()
+            .ok_or_else(|| js_error("Invalid UsbHostCompletion: status must be a string"))?;
+
+        let read_data_bytes = || -> Result<Vec<u8>, JsValue> {
+            let val = Reflect::get(&obj, &JsValue::from_str("data"))
+                .map_err(|_| js_error("Invalid UsbHostCompletion: missing data"))?;
+
+            if let Ok(buf) = val.clone().dyn_into::<Uint8Array>() {
+                return Ok(buf.to_vec());
+            }
+
+            if Array::is_array(&val) {
+                let arr = Array::from(&val);
+                let mut out = Vec::with_capacity(arr.length() as usize);
+                for i in 0..arr.length() {
+                    let b = arr
+                        .get(i)
+                        .as_f64()
+                        .and_then(|v| {
+                            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= 255.0 {
+                                Some(v as u8)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            js_error("Invalid UsbHostCompletion: data must be a Uint8Array or number[]")
+                        })?;
+                    out.push(b);
+                }
+                return Ok(out);
+            }
+
+            Err(js_error(
+                "Invalid UsbHostCompletion: data must be a Uint8Array or number[]",
+            ))
+        };
+
+        let completion = match kind.as_str() {
+            "controlIn" => UsbHostCompletion::ControlIn {
+                id,
+                result: match status.as_str() {
+                    "success" => UsbHostCompletionIn::Success {
+                        data: read_data_bytes()?,
+                    },
+                    "stall" => UsbHostCompletionIn::Stall,
+                    "error" => {
+                        let msg = Reflect::get(&obj, &JsValue::from_str("message"))
+                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing message"))?
+                            .as_string()
+                            .ok_or_else(|| {
+                                js_error("Invalid UsbHostCompletion: message must be a string")
+                            })?;
+                        UsbHostCompletionIn::Error { message: msg }
+                    }
+                    other => {
+                        return Err(js_error(&format!(
+                            "Invalid UsbHostCompletion: unknown status {other} (expected success|stall|error)"
+                        )));
+                    }
+                },
+            },
+            "bulkIn" => UsbHostCompletion::BulkIn {
+                id,
+                result: match status.as_str() {
+                    "success" => UsbHostCompletionIn::Success {
+                        data: read_data_bytes()?,
+                    },
+                    "stall" => UsbHostCompletionIn::Stall,
+                    "error" => {
+                        let msg = Reflect::get(&obj, &JsValue::from_str("message"))
+                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing message"))?
+                            .as_string()
+                            .ok_or_else(|| {
+                                js_error("Invalid UsbHostCompletion: message must be a string")
+                            })?;
+                        UsbHostCompletionIn::Error { message: msg }
+                    }
+                    other => {
+                        return Err(js_error(&format!(
+                            "Invalid UsbHostCompletion: unknown status {other} (expected success|stall|error)"
+                        )));
+                    }
+                },
+            },
+            "controlOut" => UsbHostCompletion::ControlOut {
+                id,
+                result: match status.as_str() {
+                    "success" => {
+                        let bytes_written = Reflect::get(&obj, &JsValue::from_str("bytesWritten"))
+                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing bytesWritten"))?
+                            .as_f64()
+                            .and_then(|v| {
+                                if v.is_finite()
+                                    && v.fract() == 0.0
+                                    && v >= 0.0
+                                    && v <= u32::MAX as f64
+                                {
+                                    Some(v as u32)
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or_else(|| {
+                                js_error("Invalid UsbHostCompletion: bytesWritten must be a u32 number")
+                            })?;
+                        UsbHostCompletionOut::Success { bytes_written }
+                    }
+                    "stall" => UsbHostCompletionOut::Stall,
+                    "error" => {
+                        let msg = Reflect::get(&obj, &JsValue::from_str("message"))
+                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing message"))?
+                            .as_string()
+                            .ok_or_else(|| {
+                                js_error("Invalid UsbHostCompletion: message must be a string")
+                            })?;
+                        UsbHostCompletionOut::Error { message: msg }
+                    }
+                    other => {
+                        return Err(js_error(&format!(
+                            "Invalid UsbHostCompletion: unknown status {other} (expected success|stall|error)"
+                        )));
+                    }
+                },
+            },
+            "bulkOut" => UsbHostCompletion::BulkOut {
+                id,
+                result: match status.as_str() {
+                    "success" => {
+                        let bytes_written = Reflect::get(&obj, &JsValue::from_str("bytesWritten"))
+                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing bytesWritten"))?
+                            .as_f64()
+                            .and_then(|v| {
+                                if v.is_finite()
+                                    && v.fract() == 0.0
+                                    && v >= 0.0
+                                    && v <= u32::MAX as f64
+                                {
+                                    Some(v as u32)
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or_else(|| {
+                                js_error("Invalid UsbHostCompletion: bytesWritten must be a u32 number")
+                            })?;
+                        UsbHostCompletionOut::Success { bytes_written }
+                    }
+                    "stall" => UsbHostCompletionOut::Stall,
+                    "error" => {
+                        let msg = Reflect::get(&obj, &JsValue::from_str("message"))
+                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing message"))?
+                            .as_string()
+                            .ok_or_else(|| {
+                                js_error("Invalid UsbHostCompletion: message must be a string")
+                            })?;
+                        UsbHostCompletionOut::Error { message: msg }
+                    }
+                    other => {
+                        return Err(js_error(&format!(
+                            "Invalid UsbHostCompletion: unknown status {other} (expected success|stall|error)"
+                        )));
+                    }
+                },
+            },
+            other => {
+                return Err(js_error(&format!(
+                    "Invalid UsbHostCompletion: unknown kind {other}"
+                )));
+            }
+        };
         state.dev.push_completion(completion);
         Ok(())
     }

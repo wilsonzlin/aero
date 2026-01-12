@@ -1492,6 +1492,33 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         }
       };
 
+      // WASM-side MMIO glue: the `crates/aero-wasm` Tier-0 VM calls these shims
+      // when a guest memory access falls outside the configured guest RAM region.
+      (globalThis as any).__aero_mmio_read = (addr: bigint, size: number) => {
+        const client = io;
+        if (!client) return 0;
+        const t0 = performance.now();
+        try {
+          perfDeviceExits += 1;
+          perfDeviceIoReadBytes += size >>> 0;
+          return client.mmioRead(addr, size >>> 0) >>> 0;
+        } finally {
+          perfIoWaitMs += performance.now() - t0;
+        }
+      };
+      (globalThis as any).__aero_mmio_write = (addr: bigint, size: number, value: number) => {
+        const client = io;
+        if (!client) return;
+        const t0 = performance.now();
+        try {
+          perfDeviceExits += 1;
+          perfDeviceIoWriteBytes += size >>> 0;
+          client.mmioWrite(addr, size >>> 0, value >>> 0);
+        } finally {
+          perfIoWaitMs += performance.now() - t0;
+        }
+      };
+
       // Tier-1 JIT execution hook used by `WasmTieredVm`.
       //
       // The tiered VM calls out to JS so the CPU worker can execute JIT blocks that were

@@ -47,6 +47,12 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_io_port_write)]
     fn js_io_port_write(port: u32, size: u32, value: u32);
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_mmio_read)]
+    fn js_mmio_read(addr: u64, size: u32) -> u32;
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = __aero_mmio_write)]
+    fn js_mmio_write(addr: u64, size: u32, value: u32);
 }
 
 fn wasm_memory_byte_len() -> u64 {
@@ -81,69 +87,105 @@ impl WasmPhysBus {
     }
 
     #[inline]
-    fn read_scalar<const N: usize>(&self, paddr: u64) -> [u8; N] {
-        let Some(ptr) = self.ptr(paddr, N) else {
-            return [0xFFu8; N];
-        };
+    fn read_scalar<const N: usize>(&self, paddr: u64) -> Option<[u8; N]> {
+        let ptr = self.ptr(paddr, N)?;
         // Safety: `ptr()` bounds-checks against the configured guest region.
         unsafe {
             let mut out = [0u8; N];
             core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
-            out
+            Some(out)
         }
     }
 
     #[inline]
-    fn write_scalar<const N: usize>(&self, paddr: u64, bytes: [u8; N]) {
+    fn write_scalar<const N: usize>(&self, paddr: u64, bytes: [u8; N]) -> bool {
         let Some(ptr) = self.ptr_mut(paddr, N) else {
-            return;
+            return false;
         };
         // Safety: `ptr_mut()` bounds-checks against the configured guest region.
         unsafe {
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, N);
         }
+        true
     }
 }
 
 impl MemoryBus for WasmPhysBus {
     #[inline]
     fn read_u8(&mut self, paddr: u64) -> u8 {
-        self.read_scalar::<1>(paddr)[0]
+        match self.read_scalar::<1>(paddr) {
+            Some(bytes) => bytes[0],
+            None => js_mmio_read(paddr, 1) as u8,
+        }
     }
 
     #[inline]
     fn read_u16(&mut self, paddr: u64) -> u16 {
-        u16::from_le_bytes(self.read_scalar::<2>(paddr))
+        match self.read_scalar::<2>(paddr) {
+            Some(bytes) => u16::from_le_bytes(bytes),
+            None => js_mmio_read(paddr, 2) as u16,
+        }
     }
 
     #[inline]
     fn read_u32(&mut self, paddr: u64) -> u32 {
-        u32::from_le_bytes(self.read_scalar::<4>(paddr))
+        match self.read_scalar::<4>(paddr) {
+            Some(bytes) => u32::from_le_bytes(bytes),
+            None => js_mmio_read(paddr, 4),
+        }
     }
 
     #[inline]
     fn read_u64(&mut self, paddr: u64) -> u64 {
-        u64::from_le_bytes(self.read_scalar::<8>(paddr))
+        match self.read_scalar::<8>(paddr) {
+            Some(bytes) => u64::from_le_bytes(bytes),
+            None => {
+                let lo = js_mmio_read(paddr, 4) as u64;
+                let hi_addr = match paddr.checked_add(4) {
+                    Some(v) => v,
+                    None => return 0xFFFF_FFFF_FFFF_FFFF,
+                };
+                let hi = js_mmio_read(hi_addr, 4) as u64;
+                lo | (hi << 32)
+            }
+        }
     }
 
     #[inline]
     fn write_u8(&mut self, paddr: u64, value: u8) {
-        self.write_scalar::<1>(paddr, [value]);
+        if self.write_scalar::<1>(paddr, [value]) {
+            return;
+        }
+        js_mmio_write(paddr, 1, u32::from(value));
     }
 
     #[inline]
     fn write_u16(&mut self, paddr: u64, value: u16) {
-        self.write_scalar::<2>(paddr, value.to_le_bytes());
+        if self.write_scalar::<2>(paddr, value.to_le_bytes()) {
+            return;
+        }
+        js_mmio_write(paddr, 2, u32::from(value));
     }
 
     #[inline]
     fn write_u32(&mut self, paddr: u64, value: u32) {
-        self.write_scalar::<4>(paddr, value.to_le_bytes());
+        if self.write_scalar::<4>(paddr, value.to_le_bytes()) {
+            return;
+        }
+        js_mmio_write(paddr, 4, value);
     }
 
     #[inline]
     fn write_u64(&mut self, paddr: u64, value: u64) {
-        self.write_scalar::<8>(paddr, value.to_le_bytes());
+        if self.write_scalar::<8>(paddr, value.to_le_bytes()) {
+            return;
+        }
+        let lo = value as u32;
+        let hi = (value >> 32) as u32;
+        js_mmio_write(paddr, 4, lo);
+        if let Some(hi_addr) = paddr.checked_add(4) {
+            js_mmio_write(hi_addr, 4, hi);
+        }
     }
 }
 
@@ -414,6 +456,178 @@ impl WasmVm {
         self.cpu.state.msr.tsc = mmu_state.tsc;
 
         Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// wasm-bindgen tests
+// -----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::WasmPhysBus;
+
+    use aero_mmu::MemoryBus;
+    use js_sys::{Array, Reflect};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen(inline_js = r#"
+export function installAeroMmioTestShims() {
+  // Simple call log consumed by the Rust-side assertions.
+  globalThis.__aero_test_mmio_calls = [];
+
+  globalThis.__aero_mmio_read = function (addr, size) {
+    // Store addr as a Number for easier Rust access. Tests only use small addresses
+    // (<2^53) so the conversion is exact.
+    globalThis.__aero_test_mmio_calls.push({
+      kind: "read",
+      addr: Number(addr),
+      size: size >>> 0,
+    });
+    // Return the low 32 bits of the address so split reads can be asserted.
+    return Number(addr) >>> 0;
+  };
+
+  globalThis.__aero_mmio_write = function (addr, size, value) {
+    globalThis.__aero_test_mmio_calls.push({
+      kind: "write",
+      addr: Number(addr),
+      size: size >>> 0,
+      value: value >>> 0,
+    });
+  };
+
+  // Install no-op port shims so any incidental WasmVm instantiation from other tests
+  // doesn't trap due to missing globals.
+  if (typeof globalThis.__aero_io_port_read !== "function") {
+    globalThis.__aero_io_port_read = function (_port, _size) { return 0; };
+  }
+  if (typeof globalThis.__aero_io_port_write !== "function") {
+    globalThis.__aero_io_port_write = function (_port, _size, _value) { };
+  }
+}
+"#)]
+    extern "C" {
+        fn installAeroMmioTestShims();
+    }
+
+    fn mmio_calls() -> Array {
+        let global = js_sys::global();
+        let calls = Reflect::get(&global, &JsValue::from_str("__aero_test_mmio_calls"))
+            .expect("get __aero_test_mmio_calls");
+        calls
+            .dyn_into::<Array>()
+            .expect("__aero_test_mmio_calls must be an Array")
+    }
+
+    fn call_prop_u32(call: &JsValue, key: &str) -> u32 {
+        Reflect::get(call, &JsValue::from_str(key))
+            .expect("prop exists")
+            .as_f64()
+            .expect("prop is number")
+            .round() as u32
+    }
+
+    fn call_prop_str(call: &JsValue, key: &str) -> String {
+        Reflect::get(call, &JsValue::from_str(key))
+            .expect("prop exists")
+            .as_string()
+            .expect("prop is string")
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_phys_bus_routes_out_of_ram_accesses_to_mmio() {
+        installAeroMmioTestShims();
+
+        let mut guest = vec![0u8; 0x10];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u64;
+
+        let mut bus = WasmPhysBus {
+            guest_base,
+            guest_size,
+        };
+
+        // In-RAM access uses the RAM fast path and must not invoke MMIO shims.
+        bus.write_u32(0, 0x1122_3344);
+        assert_eq!(bus.read_u32(0), 0x1122_3344);
+        assert_eq!(mmio_calls().length(), 0, "unexpected MMIO calls for RAM access");
+
+        // Out-of-RAM access must invoke MMIO shims.
+        assert_eq!(bus.read_u32(0x20), 0x20, "mmio read returns stubbed value");
+        bus.write_u16(0x30, 0x1234);
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 2, "expected exactly 2 MMIO calls");
+
+        let c0 = calls.get(0);
+        assert_eq!(call_prop_str(&c0, "kind"), "read");
+        assert_eq!(call_prop_u32(&c0, "addr"), 0x20);
+        assert_eq!(call_prop_u32(&c0, "size"), 4);
+
+        let c1 = calls.get(1);
+        assert_eq!(call_prop_str(&c1, "kind"), "write");
+        assert_eq!(call_prop_u32(&c1, "addr"), 0x30);
+        assert_eq!(call_prop_u32(&c1, "size"), 2);
+        assert_eq!(call_prop_u32(&c1, "value"), 0x1234);
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_phys_bus_splits_u64_mmio_into_u32_ops() {
+        installAeroMmioTestShims();
+
+        let mut guest = vec![0u8; 0x10];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u64;
+
+        let mut bus = WasmPhysBus {
+            guest_base,
+            guest_size,
+        };
+
+        let value = bus.read_u64(0x100);
+        let expected = (0x104u64 << 32) | 0x100u64;
+        assert_eq!(value, expected);
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 2, "read_u64 should issue two mmio_read calls");
+
+        let c0 = calls.get(0);
+        assert_eq!(call_prop_str(&c0, "kind"), "read");
+        assert_eq!(call_prop_u32(&c0, "addr"), 0x100);
+        assert_eq!(call_prop_u32(&c0, "size"), 4);
+
+        let c1 = calls.get(1);
+        assert_eq!(call_prop_str(&c1, "kind"), "read");
+        assert_eq!(call_prop_u32(&c1, "addr"), 0x104);
+        assert_eq!(call_prop_u32(&c1, "size"), 4);
+
+        // Reset call log.
+        Reflect::set(
+            &js_sys::global(),
+            &JsValue::from_str("__aero_test_mmio_calls"),
+            &Array::new(),
+        )
+        .expect("clear call log");
+
+        bus.write_u64(0x200, 0x8877_6655_4433_2211);
+
+        let calls = mmio_calls();
+        assert_eq!(calls.length(), 2, "write_u64 should issue two mmio_write calls");
+
+        let c0 = calls.get(0);
+        assert_eq!(call_prop_str(&c0, "kind"), "write");
+        assert_eq!(call_prop_u32(&c0, "addr"), 0x200);
+        assert_eq!(call_prop_u32(&c0, "size"), 4);
+        assert_eq!(call_prop_u32(&c0, "value"), 0x4433_2211);
+
+        let c1 = calls.get(1);
+        assert_eq!(call_prop_str(&c1, "kind"), "write");
+        assert_eq!(call_prop_u32(&c1, "addr"), 0x204);
+        assert_eq!(call_prop_u32(&c1, "size"), 4);
+        assert_eq!(call_prop_u32(&c1, "value"), 0x8877_6655);
     }
 }
 // Tiered (Tier-0 + Tier-1) execution lives in `crate::tiered_vm`.
