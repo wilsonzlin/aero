@@ -64,6 +64,9 @@ pub use vhd::VhdDisk;
 #[cfg(test)]
 mod tests;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod proptests;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod range_set;
 #[cfg(not(target_arch = "wasm32"))]
