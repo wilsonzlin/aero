@@ -2080,9 +2080,10 @@ struct VirtioInputHidPaths {
   std::wstring keyboard_path;
   std::wstring mouse_path;
   std::string reason;
+  DWORD win32_error = 0;
 };
 
-static std::optional<VirtioInputHidPaths> FindVirtioInputHidPaths(Logger& log) {
+static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
   // {4D1E55B2-F16F-11CF-88CB-001111000030}
   static const GUID kHidInterfaceGuid = {0x4D1E55B2,
                                          0xF16F,
@@ -2091,12 +2092,14 @@ static std::optional<VirtioInputHidPaths> FindVirtioInputHidPaths(Logger& log) {
 
   HDEVINFO devinfo = SetupDiGetClassDevsW(&kHidInterfaceGuid, nullptr, nullptr,
                                          DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  VirtioInputHidPaths out{};
   if (devinfo == INVALID_HANDLE_VALUE) {
-    log.Logf("virtio-input-events: SetupDiGetClassDevs(GUID_DEVINTERFACE_HID) failed: %lu", GetLastError());
-    return std::nullopt;
+    out.reason = "setupapi_classdevs_failed";
+    out.win32_error = GetLastError();
+    log.Logf("virtio-input-events: SetupDiGetClassDevs(GUID_DEVINTERFACE_HID) failed: %lu", out.win32_error);
+    return out;
   }
 
-  VirtioInputHidPaths out{};
   bool had_error = false;
 
   for (DWORD idx = 0;; idx++) {
@@ -2163,6 +2166,7 @@ static std::optional<VirtioInputHidPaths> FindVirtioInputHidPaths(Logger& log) {
 
   if (had_error) {
     out.reason = "ioctl_or_open_failed";
+    // Best-effort: `ReadHidReportDescriptor` already logs details, so this is informational only.
     return out;
   }
   if (out.keyboard_path.empty()) {
@@ -2267,7 +2271,9 @@ static void ProcessKeyboardReport(VirtioInputEventsTestResult& out, const uint8_
   if (!buf || len == 0) return;
 
   size_t off = 0;
-  if (buf[0] == 1) off = 1; // ReportID=1 (virtio-input keyboard)
+  // virtio-input keyboard input report is typically 9 bytes with ReportID=1:
+  //   [1][mod][res][k1..k6]
+  if (len >= 9 && buf[0] == 1) off = 1;
   if (len < off + 2) return;
 
   const uint8_t modifiers = buf[off];
@@ -2291,7 +2297,9 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   if (!buf || len == 0) return;
 
   size_t off = 0;
-  if (buf[0] == 2) off = 1; // ReportID=2 (virtio-input mouse)
+  // virtio-input mouse input report is typically 5 bytes with ReportID=2:
+  //   [2][buttons][dx][dy][wheel]
+  if (len >= 5 && buf[0] == 2) off = 1;
   if (len < off + 3) return;
 
   const uint8_t buttons = buf[off + 0];
@@ -2309,13 +2317,9 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log) {
   VirtioInputEventsTestResult out{};
 
   const auto paths = FindVirtioInputHidPaths(log);
-  if (!paths.has_value()) {
-    out.reason = "hid_enum_failed";
-    out.win32_error = GetLastError();
-    return out;
-  }
-  if (!paths->reason.empty()) {
-    out.reason = paths->reason;
+  if (!paths.reason.empty()) {
+    out.reason = paths.reason;
+    out.win32_error = paths.win32_error;
     return out;
   }
 
@@ -2324,13 +2328,13 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log) {
   kbd.buf.resize(64);
   mouse.buf.resize(64);
 
-  kbd.h = OpenHidDeviceForRead(paths->keyboard_path.c_str());
+  kbd.h = OpenHidDeviceForRead(paths.keyboard_path.c_str());
   if (kbd.h == INVALID_HANDLE_VALUE) {
     out.reason = "open_keyboard_failed";
     out.win32_error = GetLastError();
     return out;
   }
-  mouse.h = OpenHidDeviceForRead(paths->mouse_path.c_str());
+  mouse.h = OpenHidDeviceForRead(paths.mouse_path.c_str());
   if (mouse.h == INVALID_HANDLE_VALUE) {
     out.reason = "open_mouse_failed";
     out.win32_error = GetLastError();
