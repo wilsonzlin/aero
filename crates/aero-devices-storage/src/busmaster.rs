@@ -300,7 +300,8 @@ impl Default for BusMasterChannel {
 
 #[cfg(test)]
 mod tests {
-    use super::BusMasterChannel;
+    use super::*;
+    use memory::{Bus, MemoryBus};
 
     #[test]
     fn reset_preserves_dma_capability_bits() {
@@ -319,5 +320,38 @@ mod tests {
         assert_eq!(bm.read(4, 4), 0);
         // Capability bits are derived from attached devices and must survive reset.
         assert_eq!(bm.read(2, 1), 0x60);
+    }
+
+    #[test]
+    fn prd_entry_cap_prevents_pathological_dma_loop() {
+        // Construct a PRD list that would require more than `MAX_PRD_ENTRIES_PER_DMA` entries to
+        // transfer the request buffer. The DMA engine should stop early with a bounded amount of
+        // work instead of iterating forever (or for millions of entries).
+        let prd_entries = BusMasterChannel::MAX_PRD_ENTRIES_PER_DMA + 1;
+        let prd_base: u64 = 0x1000;
+
+        // 8 bytes per PRD entry, plus a bit of headroom.
+        let mem_size = (prd_base as usize)
+            .saturating_add(prd_entries.saturating_mul(8))
+            .saturating_add(8);
+        let mut mem = Bus::new(mem_size);
+
+        // PRDs: 1 byte per entry; EOT only on the final entry (which is beyond our cap).
+        for i in 0..prd_entries {
+            let entry_addr = prd_base.wrapping_add((i as u64).wrapping_mul(8));
+            mem.write_u32(entry_addr, 0); // addr (within RAM)
+            mem.write_u16(entry_addr + 4, 1); // byte_count
+            let flags = if i == prd_entries - 1 { 0x8000u16 } else { 0 };
+            mem.write_u16(entry_addr + 6, flags);
+        }
+
+        let mut bm = BusMasterChannel::new();
+        bm.write(4, 4, prd_base as u32);
+        // Direction=ToMemory (bit 3), start bit set (bit 0).
+        bm.write(0, 1, 0x09);
+
+        let mut req = DmaRequest::ata_read(vec![0u8; BusMasterChannel::MAX_PRD_ENTRIES_PER_DMA + 1]);
+        let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
+        assert_eq!(err, DmaError::PrdMissingEndOfTable);
     }
 }

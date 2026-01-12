@@ -733,9 +733,6 @@ fn dma_read_sectors_into_guest(
         return Ok(());
     }
 
-    let mut remaining = byte_len;
-    let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
-
     // Guard against pathological PRDT lists that would otherwise turn a single synchronous DMA
     // operation into an extremely long loop. Real guests use relatively small PRDTs.
     const MAX_PRDT_ENTRIES_PER_COMMAND: u16 = 32_768;
@@ -746,6 +743,9 @@ fn dma_read_sectors_into_guest(
             "PRDT too large for DMA read",
         ));
     }
+
+    let mut remaining = byte_len;
+    let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
 
     for i in 0..prdt_entries as u64 {
         if remaining == 0 {
@@ -806,9 +806,6 @@ fn dma_write_sectors_from_guest(
         return Ok(());
     }
 
-    let mut remaining = byte_len;
-    let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
-
     // Guard against pathological PRDT lists that would otherwise turn a single synchronous DMA
     // operation into an extremely long loop. Real guests use relatively small PRDTs.
     const MAX_PRDT_ENTRIES_PER_COMMAND: u16 = 32_768;
@@ -819,6 +816,9 @@ fn dma_write_sectors_from_guest(
             "PRDT too large for DMA write",
         ));
     }
+
+    let mut remaining = byte_len;
+    let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
 
     for i in 0..prdt_entries as u64 {
         if remaining == 0 {
@@ -1221,5 +1221,26 @@ mod tests {
         // Clearing interrupt bits should deassert the IRQ line.
         ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS | PORT_IS_TFES);
         assert!(!irq.level());
+    }
+
+    #[test]
+    fn dma_rejects_excessive_prdt_entries() {
+        // The AHCI PRDT entry count is guest-controlled. Ensure we reject pathological counts
+        // early (without iterating or allocating per-entry buffers).
+        let (_ctl, _irq, mut mem, mut drive) = setup_controller();
+        let header = CommandHeader {
+            ctba: 0,
+            prdtl: 40_000,
+        };
+
+        let err = dma_read_sectors_into_guest(&mut mem, &header, &mut drive, 0, SECTOR_SIZE)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.to_string(), "PRDT too large for DMA read");
+
+        let err = dma_write_sectors_from_guest(&mut mem, &header, &mut drive, 0, SECTOR_SIZE)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.to_string(), "PRDT too large for DMA write");
     }
 }
