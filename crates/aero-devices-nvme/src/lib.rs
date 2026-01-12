@@ -55,6 +55,10 @@ const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
 // DoS guard: cap the number of guest-created I/O queues. Otherwise a malicious guest can create
 // thousands of queues and force O(n) scans in interrupt paths and snapshot serialization.
 const NVME_MAX_IO_QUEUES: usize = 256;
+// DoS guard: cap pending doorbell updates. Guests can write doorbells for arbitrary QIDs within
+// the mapped BAR0 window; without a cap this could grow `pending_sq_tail` without bound between
+// processing ticks.
+const NVME_MAX_PENDING_SQ_TAIL_UPDATES: usize = NVME_MAX_IO_QUEUES + 1; // + admin SQ0
 
 /// Errors returned by disk backends.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -749,6 +753,29 @@ impl NvmeController {
         }
 
         self.set_sq_tail(qid, val);
+        // Avoid unbounded growth of the pending doorbell map. This is a per-tick work queue; real
+        // guests keep it small.
+        //
+        // Note: we always allow updating an existing entry. If the map is full and the guest rings
+        // a doorbell for a brand new QID, we drop it to keep memory usage bounded.
+        //
+        // SQ0 (admin) is special: it must always be accepted to avoid stalling admin processing. If
+        // the map is full and SQ0 is not yet present, evict one other entry to make room so the
+        // overall map size stays capped.
+        if self.pending_sq_tail.contains_key(&qid) {
+            self.pending_sq_tail.insert(qid, val);
+            return;
+        }
+
+        if self.pending_sq_tail.len() >= NVME_MAX_PENDING_SQ_TAIL_UPDATES {
+            if qid == 0 {
+                // Evict the largest QID (arbitrary but deterministic) to make room for SQ0.
+                let _ = self.pending_sq_tail.pop_last();
+            } else {
+                return;
+            }
+        }
+
         self.pending_sq_tail.insert(qid, val);
     }
 
@@ -1267,6 +1294,13 @@ impl IoSnapshot for NvmeController {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         let mut state = NvmeControllerState::default();
         state.load_state(bytes)?;
+
+        // Snapshots may be loaded from untrusted sources. Keep controller restore bounded by
+        // rejecting snapshots that contain absurd numbers of IO queues (even if the underlying
+        // `NvmeControllerState` decoder allows them for compatibility with other implementations).
+        if state.io_sqs.len() > NVME_MAX_IO_QUEUES || state.io_cqs.len() > NVME_MAX_IO_QUEUES {
+            return Err(SnapshotError::InvalidFieldEncoding("nvme io queue count"));
+        }
 
         self.cap = state.cap;
         self.vs = state.vs;
@@ -2350,6 +2384,77 @@ mod tests {
         };
         let (status, _result) = ctrl.cmd_create_io_sq(cmd);
         assert_eq!(status, NvmeStatus::INVALID_FIELD);
+    }
+
+    #[test]
+    fn pending_sq_tail_map_is_capped() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // Enable controller so doorbells are accepted.
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, 0x10000);
+        ctrl.mmio_write(0x0030, 8, 0x20000);
+        ctrl.mmio_write(0x0014, 4, 1);
+        assert_eq!(ctrl.csts & 1, 1);
+
+        // Fill the doorbell map to capacity without ever ringing SQ0.
+        for qid in 1u16..=(NVME_MAX_PENDING_SQ_TAIL_UPDATES as u16) {
+            let offset = 0x1000u64 + (qid as u64) * 8;
+            ctrl.mmio_write(offset, 4, 1);
+        }
+        assert_eq!(ctrl.pending_sq_tail.len(), NVME_MAX_PENDING_SQ_TAIL_UPDATES);
+        assert!(!ctrl.pending_sq_tail.contains_key(&0));
+
+        // SQ0 doorbells must still be accepted, but the map size must remain capped.
+        ctrl.mmio_write(0x1000, 4, 1);
+        assert_eq!(ctrl.pending_sq_tail.len(), NVME_MAX_PENDING_SQ_TAIL_UPDATES);
+        assert!(ctrl.pending_sq_tail.contains_key(&0));
+
+        // Existing QIDs can still be updated even when the map is full.
+        ctrl.mmio_write(0x1008, 4, 2); // SQ1 tail = 2
+        assert_eq!(ctrl.pending_sq_tail.get(&1), Some(&2));
+
+        // New QIDs should be dropped once the cap is reached.
+        let before = ctrl.pending_sq_tail.len();
+        ctrl.mmio_write(0x3ff8, 4, 3); // SQ1535 tail
+        assert_eq!(ctrl.pending_sq_tail.len(), before);
+    }
+
+    #[test]
+    fn load_state_rejects_excess_io_queues() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        let mut state = NvmeControllerState::default();
+        let count = NVME_MAX_IO_QUEUES + 1;
+
+        state.io_sqs = (1u16..=(count as u16))
+            .map(|qid| NvmeSubmissionQueueState {
+                qid,
+                base: 0x1000_0000u64 + (qid as u64) * (PAGE_SIZE as u64),
+                size: 1,
+                head: 0,
+                tail: 0,
+                cqid: qid,
+            })
+            .collect();
+
+        state.io_cqs = (1u16..=(count as u16))
+            .map(|qid| NvmeCompletionQueueState {
+                qid,
+                base: 0x2000_0000u64 + (qid as u64) * (PAGE_SIZE as u64),
+                size: 1,
+                head: 0,
+                tail: 0,
+                phase: true,
+                irq_enabled: true,
+            })
+            .collect();
+
+        let bytes = state.save_state();
+        let err = ctrl.load_state(&bytes).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme io queue count"));
     }
 
     #[test]
