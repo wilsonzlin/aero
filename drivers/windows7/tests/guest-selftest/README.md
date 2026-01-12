@@ -49,6 +49,9 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Enable with `--test-input-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`).
     - The selftest opens the virtio-input keyboard + mouse HID interfaces and reads **input reports** directly via `ReadFile`
       on the HID device path (no window focus required).
+    - Expected injected sequence (used by the host harness via QMP `input-send-event`):
+      - keyboard: `'a'` press + release
+      - mouse: small relative move + left click
     - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`), then waits
       (with a hard timeout) for host-injected events (intended to be paired with QMP `input-send-event` injection) and emits
       `...|PASS|...` or `...|FAIL|reason=...|...`.
