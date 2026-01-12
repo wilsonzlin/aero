@@ -120,6 +120,10 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 Note: If the guest was provisioned without `--test-input-events`, it will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`.
 The host harness only requires `virtio-input-events|PASS` when `-WithInputEvents` / `--with-input-events` is set.
+
+Note: If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events`
+marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early with a
+`MISSING_VIRTIO_INPUT_EVENTS` reason. Update/re-provision the guest selftest binary.
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
