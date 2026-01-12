@@ -259,7 +259,8 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet:
 
-- `pfnSetShaderConstI` / `pfnSetShaderConstB` (no-op, returns `S_OK`)
+Note: shader int/bool constants are cached (Set*/Get* round-trip) but are not
+currently emitted to the AeroGPU command stream.
 - `pfnSetMaterial` / `pfnSetLight` / `pfnLightEnable` (no-op, returns `S_OK`)
 - `pfnSetGammaRamp` (no-op, returns `S_OK`)
 - `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
@@ -273,8 +274,6 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
 - `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
   `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`
-  (returns `D3DERR_NOTAVAILABLE`)
-- `pfnGetShaderConstI/B`
   (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating

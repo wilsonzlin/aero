@@ -534,6 +534,12 @@ struct Device {
   // Shader float constant register caches (float4 registers).
   float vs_consts_f[256 * 4] = {};
   float ps_consts_f[256 * 4] = {};
+  // Shader int constant register caches (int4 registers).
+  int32_t vs_consts_i[256 * 4] = {};
+  int32_t ps_consts_i[256 * 4] = {};
+  // Shader bool constant register caches (scalar bool registers).
+  uint8_t vs_consts_b[256] = {};
+  uint8_t ps_consts_b[256] = {};
 
   // Built-in resources used for blit/copy operations (StretchRect/Blt).
   Shader* builtin_copy_vs = nullptr;

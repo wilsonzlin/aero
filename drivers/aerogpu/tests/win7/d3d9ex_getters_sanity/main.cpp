@@ -479,6 +479,82 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
     }
   }
 
+  // --- Shader int constants ---
+  int vsi[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  hr = dev->SetVertexShaderConstantI(7, vsi, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShaderConstantI", hr);
+  }
+  int got_vsi[8];
+  for (int i = 0; i < 8; ++i) {
+    got_vsi[i] = 0x12345678;
+  }
+  hr = dev->GetVertexShaderConstantI(7, got_vsi, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetVertexShaderConstantI", hr);
+  }
+  for (int i = 0; i < 8; ++i) {
+    if (got_vsi[i] != vsi[i]) {
+      return reporter.Fail("GetVertexShaderConstantI mismatch at idx=%d got=%d expected=%d",
+                           i, got_vsi[i], vsi[i]);
+    }
+  }
+
+  int psi[4] = {9, 10, 11, 12};
+  hr = dev->SetPixelShaderConstantI(0, psi, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantI", hr);
+  }
+  int got_psi[4];
+  for (int i = 0; i < 4; ++i) {
+    got_psi[i] = 0x76543210;
+  }
+  hr = dev->GetPixelShaderConstantI(0, got_psi, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetPixelShaderConstantI", hr);
+  }
+  for (int i = 0; i < 4; ++i) {
+    if (got_psi[i] != psi[i]) {
+      return reporter.Fail("GetPixelShaderConstantI mismatch at idx=%d got=%d expected=%d",
+                           i, got_psi[i], psi[i]);
+    }
+  }
+
+  // --- Shader bool constants ---
+  BOOL vsb[4] = {TRUE, FALSE, TRUE, TRUE};
+  hr = dev->SetVertexShaderConstantB(3, vsb, 4);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShaderConstantB", hr);
+  }
+  BOOL got_vsb[4] = {FALSE, FALSE, FALSE, FALSE};
+  hr = dev->GetVertexShaderConstantB(3, got_vsb, 4);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetVertexShaderConstantB", hr);
+  }
+  for (int i = 0; i < 4; ++i) {
+    if ((got_vsb[i] ? 1 : 0) != (vsb[i] ? 1 : 0)) {
+      return reporter.Fail("GetVertexShaderConstantB mismatch at idx=%d got=%d expected=%d",
+                           i, got_vsb[i] ? 1 : 0, vsb[i] ? 1 : 0);
+    }
+  }
+
+  BOOL psb[2] = {FALSE, TRUE};
+  hr = dev->SetPixelShaderConstantB(0, psb, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantB", hr);
+  }
+  BOOL got_psb[2] = {TRUE, TRUE};
+  hr = dev->GetPixelShaderConstantB(0, got_psb, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetPixelShaderConstantB", hr);
+  }
+  for (int i = 0; i < 2; ++i) {
+    if ((got_psb[i] ? 1 : 0) != (psb[i] ? 1 : 0)) {
+      return reporter.Fail("GetPixelShaderConstantB mismatch at idx=%d got=%d expected=%d",
+                           i, got_psb[i] ? 1 : 0, psb[i] ? 1 : 0);
+    }
+  }
+
   return reporter.Pass();
 }
 
@@ -489,4 +565,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-

@@ -1075,10 +1075,8 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // UMD without crashing. See `drivers/aerogpu/umd/d3d9/README.md`.
 // (Legacy fixed-function Set*/Get* state is cached and implemented elsewhere.)
 
-// Shader constant paths (int/bool) are not implemented yet; treat as a no-op to
-// keep DWM alive while we bring up shader translation.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstI, D3d9TraceFunc::DeviceSetShaderConstI, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstB, D3d9TraceFunc::DeviceSetShaderConstB, S_OK);
+// Shader constant paths (int/bool) are not emitted yet, but some apps query
+// them during initialization. Cache them so Set*/Get* round-trips.
 
 // Fixed-function lighting/material, N-Patch, instancing, and gamma ramp are not
 // supported yet. Treat these as no-ops to avoid Win7 runtime crashes when apps
@@ -1131,8 +1129,7 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLightEnable, D3d9TraceFunc::DeviceGetLightEna
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPaletteEntries, D3d9TraceFunc::DeviceGetPaletteEntries, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(
     pfnGetCurrentTexturePalette, D3d9TraceFunc::DeviceGetCurrentTexturePalette, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstI, D3d9TraceFunc::DeviceGetShaderConstI, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetShaderConstB, D3d9TraceFunc::DeviceGetShaderConstB, D3DERR_NOTAVAILABLE);
+// (Shader bool/int constant getters are implemented and cached elsewhere.)
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 
@@ -10367,6 +10364,182 @@ HRESULT device_get_stream_source_freq_dispatch(Args... args) {
   return D3DERR_NOTAVAILABLE;
 }
 
+template <typename StageT, typename StartT, typename DataT, typename CountT>
+HRESULT device_set_shader_const_i_impl(
+    D3DDDI_HDEVICE hDevice,
+    StageT stage,
+    StartT start_reg,
+    const DataT* pData,
+    CountT vec4_count) {
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t start = d3d9_to_u32(start_reg);
+  const uint32_t count = d3d9_to_u32(vec4_count);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetShaderConstI,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (start >= 256 || count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  int32_t* dst = (st == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
+  const uint32_t base = start * 4u;
+  const uint32_t elems = count * 4u;
+  for (uint32_t i = 0; i < elems; ++i) {
+    dst[base + i] = static_cast<int32_t>(pData[i]);
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_shader_const_i_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 5) {
+    return device_set_shader_const_i_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename StartT, typename DataT, typename CountT>
+HRESULT device_get_shader_const_i_impl(
+    D3DDDI_HDEVICE hDevice,
+    StageT stage,
+    StartT start_reg,
+    DataT* pData,
+    CountT vec4_count) {
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t start = d3d9_to_u32(start_reg);
+  const uint32_t count = d3d9_to_u32(vec4_count);
+  if (pData && count != 0) {
+    const uint32_t init_regs = std::min(count, 256u);
+    std::memset(pData, 0, static_cast<size_t>(init_regs) * 4 * sizeof(*pData));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetShaderConstI,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (start >= 256 || count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const int32_t* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
+  const uint32_t base = start * 4u;
+  const uint32_t elems = count * 4u;
+  for (uint32_t i = 0; i < elems; ++i) {
+    pData[i] = static_cast<DataT>(src[base + i]);
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_shader_const_i_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 5) {
+    return device_get_shader_const_i_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename StartT, typename DataT, typename CountT>
+HRESULT device_set_shader_const_b_impl(
+    D3DDDI_HDEVICE hDevice,
+    StageT stage,
+    StartT start_reg,
+    const DataT* pData,
+    CountT bool_count) {
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t start = d3d9_to_u32(start_reg);
+  const uint32_t count = d3d9_to_u32(bool_count);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetShaderConstB,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (start >= 256 || count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  uint8_t* dst = (st == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
+  for (uint32_t i = 0; i < count; ++i) {
+    dst[start + i] = pData[i] ? 1u : 0u;
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_shader_const_b_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 5) {
+    return device_set_shader_const_b_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename StartT, typename DataT, typename CountT>
+HRESULT device_get_shader_const_b_impl(
+    D3DDDI_HDEVICE hDevice,
+    StageT stage,
+    StartT start_reg,
+    DataT* pData,
+    CountT bool_count) {
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t start = d3d9_to_u32(start_reg);
+  const uint32_t count = d3d9_to_u32(bool_count);
+  if (pData && count != 0) {
+    const uint32_t init = std::min(count, 256u);
+    std::memset(pData, 0, static_cast<size_t>(init) * sizeof(*pData));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetShaderConstB,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (start >= 256 || count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint8_t* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
+  for (uint32_t i = 0; i < count; ++i) {
+    pData[i] = static_cast<DataT>(src[start + i] ? 1u : 0u);
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_shader_const_b_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 5) {
+    return device_get_shader_const_b_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
 template <typename StateT, typename ValueT>
 HRESULT device_get_render_state_impl(D3DDDI_HDEVICE hDevice, StateT state, ValueT* pValue) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetRenderState,
@@ -11140,6 +11313,66 @@ template <typename Ret, typename... Args>
 struct aerogpu_d3d9_impl_pfnGetShaderConstF<Ret(*)(Args...)> {
   static Ret pfnGetShaderConstF(Args... args) {
     return static_cast<Ret>(device_get_shader_const_f_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetShaderConstI;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetShaderConstI<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetShaderConstI(Args... args) {
+    return static_cast<Ret>(device_set_shader_const_i_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetShaderConstI<Ret(*)(Args...)> {
+  static Ret pfnSetShaderConstI(Args... args) {
+    return static_cast<Ret>(device_set_shader_const_i_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetShaderConstI;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShaderConstI<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetShaderConstI(Args... args) {
+    return static_cast<Ret>(device_get_shader_const_i_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShaderConstI<Ret(*)(Args...)> {
+  static Ret pfnGetShaderConstI(Args... args) {
+    return static_cast<Ret>(device_get_shader_const_i_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetShaderConstB;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetShaderConstB<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetShaderConstB(Args... args) {
+    return static_cast<Ret>(device_set_shader_const_b_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetShaderConstB<Ret(*)(Args...)> {
+  static Ret pfnSetShaderConstB(Args... args) {
+    return static_cast<Ret>(device_set_shader_const_b_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetShaderConstB;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShaderConstB<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetShaderConstB(Args... args) {
+    return static_cast<Ret>(device_get_shader_const_b_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShaderConstB<Ret(*)(Args...)> {
+  static Ret pfnGetShaderConstB(Args... args) {
+    return static_cast<Ret>(device_get_shader_const_b_dispatch(args...));
   }
 };
 
@@ -14247,12 +14480,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetShaderConstI<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetShaderConstI,
-        aerogpu_d3d9_stub_pfnSetShaderConstI<decltype(pDeviceFuncs->pfnSetShaderConstI)>::pfnSetShaderConstI);
+        aerogpu_d3d9_impl_pfnSetShaderConstI<decltype(pDeviceFuncs->pfnSetShaderConstI)>::pfnSetShaderConstI);
   }
   if constexpr (aerogpu_has_member_pfnSetShaderConstB<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetShaderConstB,
-        aerogpu_d3d9_stub_pfnSetShaderConstB<decltype(pDeviceFuncs->pfnSetShaderConstB)>::pfnSetShaderConstB);
+        aerogpu_d3d9_impl_pfnSetShaderConstB<decltype(pDeviceFuncs->pfnSetShaderConstB)>::pfnSetShaderConstB);
   }
 
   if constexpr (aerogpu_has_member_pfnCreateStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
@@ -14513,12 +14746,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnGetShaderConstI<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstI,
-                           aerogpu_d3d9_stub_pfnGetShaderConstI<decltype(
+                           aerogpu_d3d9_impl_pfnGetShaderConstI<decltype(
                                pDeviceFuncs->pfnGetShaderConstI)>::pfnGetShaderConstI);
   }
   if constexpr (aerogpu_has_member_pfnGetShaderConstB<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstB,
-                           aerogpu_d3d9_stub_pfnGetShaderConstB<decltype(
+                           aerogpu_d3d9_impl_pfnGetShaderConstB<decltype(
                                pDeviceFuncs->pfnGetShaderConstB)>::pfnGetShaderConstB);
   }
 
