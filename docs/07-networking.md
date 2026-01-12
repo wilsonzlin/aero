@@ -1181,8 +1181,9 @@ filters. Common ones when debugging guest bring-up:
 - `dns` (DNS queries/responses)
 - `tcp` / `udp` / `icmp`
 
-Because the capture uses separate interfaces for `guest_rx` and `guest_tx`, Wireshark may show
-conversations split across interfaces; use “Follow Stream” and per-interface packet lists as needed.
+Because the capture uses a single Ethernet interface (`guest-eth0`) with direction encoded via the
+Enhanced Packet Block `epb_flags` option, both guest TX and RX traffic will appear under the same
+interface. Use Wireshark’s packet direction column/metadata (inbound vs outbound) as needed.
 
 #### Automation API (`window.aero.netTrace`)
 
