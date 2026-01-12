@@ -749,8 +749,11 @@ fn vs_main(in: VSIn) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-  // The tests use a 1x1 texture, so the chosen UV doesn't matter.
-  return textureSample(tex0, samp0, vec2<f32>(0.5, 0.5));
+  // Sample the center of texel (0,0) so tests remain deterministic even when the
+  // source texture is larger than 1x1 and contains non-uniform data.
+  let dims = vec2<f32>(textureDimensions(tex0));
+  let uv = vec2<f32>(0.5, 0.5) / dims;
+  return textureSample(tex0, samp0, uv);
 }
 "#
                 .into(),
