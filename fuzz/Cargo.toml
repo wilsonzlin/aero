@@ -21,6 +21,9 @@ path = "../crates/aero-snapshot"
 [dependencies.aero-devices-storage]
 path = "../crates/aero-devices-storage"
 
+[dependencies.aero-devices]
+path = "../crates/devices"
+
 [dependencies.aero-storage]
 path = "../crates/aero-storage"
 

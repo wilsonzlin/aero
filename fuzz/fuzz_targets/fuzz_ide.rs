@@ -5,14 +5,8 @@ use libfuzzer_sys::fuzz_target;
 
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::ide::{IdeChannelId, IdeController};
-use aero_devices_storage::IrqLine;
+use aero_devices::irq::NoIrq;
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
-
-struct NoIrq;
-
-impl IrqLine for NoIrq {
-    fn set_level(&self, _high: bool) {}
-}
 
 const PRIMARY_BASE: u16 = 0x1F0;
 const PRIMARY_CTRL: u16 = 0x3F6;
@@ -96,4 +90,3 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 });
-

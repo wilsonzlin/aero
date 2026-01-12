@@ -19,15 +19,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-devices"
+version = "0.1.0"
+dependencies = [
+ "aero-devices-input",
+ "aero-interrupts",
+ "aero-io-snapshot",
+ "aero-platform",
+ "aero-storage",
+ "aero-storage-adapters",
+ "memory",
+]
+
+[[package]]
+name = "aero-devices-input"
+version = "0.1.0"
+dependencies = [
+ "aero-io-snapshot",
+]
+
+[[package]]
 name = "aero-devices-storage"
 version = "0.1.0"
 dependencies = [
+ "aero-devices",
+ "aero-io-snapshot",
+ "aero-platform",
  "aero-storage",
+ "memory",
 ]
 
 [[package]]
 name = "aero-http-range"
 version = "0.1.0"
+
+[[package]]
+name = "aero-interrupts"
+version = "0.1.0"
+dependencies = [
+ "aero-io-snapshot",
+]
+
+[[package]]
+name = "aero-io-snapshot"
+version = "0.1.0"
+dependencies = [
+ "aero-storage",
+]
 
 [[package]]
 name = "aero-mmu"
@@ -36,6 +74,17 @@ version = "0.1.0"
 [[package]]
 name = "aero-perf"
 version = "0.1.0"
+
+[[package]]
+name = "aero-platform"
+version = "0.1.0"
+dependencies = [
+ "aero-interrupts",
+ "aero-io-snapshot",
+ "js-sys",
+ "memory",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "aero-snapshot"
@@ -59,6 +108,13 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "aero-storage-adapters"
+version = "0.1.0"
+dependencies = [
+ "aero-storage",
 ]
 
 [[package]]
@@ -655,6 +711,7 @@ version = "0.1.0"
 name = "memory-fuzz"
 version = "0.0.0"
 dependencies = [
+ "aero-devices",
  "aero-devices-storage",
  "aero-http-range",
  "aero-snapshot",

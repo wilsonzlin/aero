@@ -8,7 +8,8 @@ use aero_devices_storage::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
     ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA_EXT,
 };
-use aero_devices_storage::{GuestMemory, GuestMemoryExt, IrqLine};
+use aero_devices::irq::NoIrq;
+use aero_devices_storage::{GuestMemory, GuestMemoryExt};
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
 
 // AHCI register offsets/bits (mirrors `aero-devices-storage/src/ahci.rs`).
@@ -31,12 +32,6 @@ const PORT_CMD_ST: u32 = 1 << 0;
 const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
-
-struct NoIrq;
-
-impl IrqLine for NoIrq {
-    fn set_level(&self, _high: bool) {}
-}
 
 /// Guest memory model for fuzzing:
 /// - A finite backing buffer
