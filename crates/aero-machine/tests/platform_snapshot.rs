@@ -1026,7 +1026,6 @@ fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
             r.read_exact(&mut hdr).unwrap();
             assert_eq!(&hdr[0..4], b"AERO");
             assert_eq!(&hdr[8..12], b"PCIC");
-
             let mut remaining = len.saturating_sub(hdr.len() as u64);
             let mut found_pcpt = false;
             let mut found_intx = false;

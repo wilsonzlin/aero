@@ -763,10 +763,13 @@ impl Machine {
 
     /// Advance deterministic platform time and poll any timer devices.
     ///
-    /// This is primarily a testing/debugging helper. When the PC platform is enabled,
-    /// [`Machine::run_slice`] also advances platform time based on executed cycles so timer
-    /// interrupts can wake a halted CPU.
+    /// This is used by [`Machine::run_slice`] to keep PIT/RTC/HPET/LAPIC timers progressing
+    /// deterministically (including while the CPU is halted), and is also exposed for tests and
+    /// debugging.
     pub fn tick_platform(&mut self, delta_ns: u64) {
+        if delta_ns == 0 {
+            return;
+        }
         if let Some(clock) = &self.platform_clock {
             clock.advance_ns(delta_ns);
         }
@@ -1351,19 +1354,7 @@ impl Machine {
             // cannot cause an unbounded growth of the external interrupt FIFO when the guest has
             // interrupts masked (IF=0) or otherwise cannot accept delivery yet.
             const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
-            if self.cpu.pending.external_interrupts.len() < MAX_QUEUED_EXTERNAL_INTERRUPTS
-                && !self.cpu.pending.has_pending_event()
-                && (self.cpu.state.rflags() & RFLAGS_IF) != 0
-                && self.cpu.pending.interrupt_inhibit() == 0
-            {
-                if let Some(interrupts) = &self.interrupts {
-                    let mut interrupts = interrupts.borrow_mut();
-                    if let Some(vector) = PlatformInterruptController::get_pending(&*interrupts) {
-                        PlatformInterruptController::acknowledge(&mut *interrupts, vector);
-                        self.cpu.pending.inject_external_interrupt(vector);
-                    }
-                }
-            }
+            let _ = self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS);
 
             let remaining = max_insts - executed;
             let mut bus = aero_cpu_core::PagingBus::new_with_io(&mut self.mem, &mut self.io);
@@ -1379,7 +1370,7 @@ impl Machine {
             std::mem::swap(&mut self.mmu, bus.mmu_mut());
             executed = executed.saturating_add(batch.executed);
 
-            // Deterministically advance platform time based on executed cycles.
+            // Deterministically advance platform time based on executed CPU cycles.
             self.tick_platform_from_cycles(batch.executed);
 
             match batch.exit {
@@ -1389,8 +1380,22 @@ impl Machine {
                 }
                 BatchExit::Branch => continue,
                 BatchExit::Halted => {
+                    // After advancing timers, poll again so any newly-due timer interrupts are
+                    // injected into `cpu.pending.external_interrupts`.
+                    //
+                    // Only poll after the batch when we are going to re-enter execution within the
+                    // same `run_slice` call. This avoids acknowledging interrupts at the end of a
+                    // slice boundary (e.g. after an `STI` interrupt shadow expires) when the CPU
+                    // will not execute another instruction until the host calls `run_slice` again.
+                    if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
+                        continue;
+                    }
+
                     // When halted, advance platform time so timer interrupts can wake the CPU.
                     self.idle_tick_platform_1ms();
+                    if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
+                        continue;
+                    }
                     self.flush_serial();
                     return RunExit::Halted { executed };
                 }
@@ -1426,6 +1431,39 @@ impl Machine {
         self.bios
             .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+    }
+
+    fn poll_platform_interrupt(&mut self, max_queued: usize) -> bool {
+        if self.cpu.pending.external_interrupts.len() >= max_queued {
+            return false;
+        }
+
+        // Only acknowledge/present a maskable interrupt to the CPU when it can be delivered.
+        //
+        // The platform interrupt controller (PIC/IOAPIC+LAPIC) latches interrupts until the CPU
+        // performs an acknowledge handshake. If we acknowledge while the CPU is unable to accept
+        // delivery (IF=0, interrupt shadow, pending exception), we could incorrectly clear the
+        // controller and lose the interrupt.
+        if self.cpu.pending.has_pending_event()
+            || (self.cpu.state.rflags() & RFLAGS_IF) == 0
+            || self.cpu.pending.interrupt_inhibit() != 0
+        {
+            return false;
+        }
+
+        let Some(interrupts) = &self.interrupts else {
+            return false;
+        };
+
+        let mut interrupts = interrupts.borrow_mut();
+        let vector = PlatformInterruptController::get_pending(&*interrupts);
+        let Some(vector) = vector else {
+            return false;
+        };
+
+        PlatformInterruptController::acknowledge(&mut *interrupts, vector);
+        self.cpu.pending.inject_external_interrupt(vector);
+        true
     }
 
     fn flush_serial(&mut self) {
@@ -1527,13 +1565,12 @@ impl snapshot::SnapshotSource for Machine {
                 &*rtc.borrow(),
             ));
         }
+        // PCI core state (config ports + INTx router).
+        //
+        // Store this under a single outer `DeviceId::PCI` entry using `PciCoreSnapshot` (inner
+        // `PCIC`) so snapshot consumers only need to look for one device entry.
         if let Some(pci_cfg) = &self.pci_cfg {
             if let Some(pci_intx) = &self.pci_intx {
-                // Store PCI core state under a single outer `DeviceId::PCI` entry to avoid
-                // duplicate `(id, version, flags)` tuples in `aero_snapshot` while still capturing
-                // both:
-                // - PCI config mechanism + config-space/BAR state (`PCPT`)
-                // - PCI INTx routing + asserted level refcounts (`INTX`)
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut pci_intx = pci_intx.borrow_mut();
                 let core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
@@ -1542,7 +1579,7 @@ impl snapshot::SnapshotSource for Machine {
                     &core,
                 ));
             } else {
-                // Fallback: config ports only.
+                // Fallback: config ports only (inner `PCPT`).
                 devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                     snapshot::DeviceId::PCI,
                     &*pci_cfg.borrow(),
@@ -1723,13 +1760,14 @@ impl snapshot::SnapshotTarget for Machine {
         // `DeviceId::PCI_CFG` and INTx routing under `DeviceId::PCI_INTX`.
         let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
         let mut pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
+        let mut pci_intx_state = by_id.remove(&snapshot::DeviceId::PCI_INTX);
 
-            if let Some(state) = pci_state {
-                if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
-                    // Prefer decoding the combined PCI core wrapper (`PCIC`) first. If decoding fails,
-                    // treat `DeviceId::PCI` as the legacy config-ports-only (`PCPT`) payload.
-                    let core_result = {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
+        if let Some(state) = pci_state {
+            if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
+                // Prefer decoding the combined PCI core wrapper (`PCIC`) first. If decoding fails,
+                // treat `DeviceId::PCI` as the legacy config-ports-only (`PCPT`) payload.
+                let core_result = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
                     let mut pci_intx = pci_intx.borrow_mut();
                     let mut core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
                     snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut core)
@@ -1744,20 +1782,19 @@ impl snapshot::SnapshotTarget for Machine {
                         // or `PciIntxRouter` (`INTX`) directly under the historical `DeviceId::PCI`.
                         //
                         // If a dedicated `PCI_CFG` entry is also present, prefer it for config ports.
-                        let cfg_result = if let Some(cfg_state) = pci_cfg_state.take() {
-                            let mut pci_cfg = pci_cfg.borrow_mut();
-                            snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        if let Some(cfg_state) = pci_cfg_state.take() {
+                            let mut cfg_ports = pci_cfg.borrow_mut();
+                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                                 &cfg_state,
-                                &mut *pci_cfg,
-                            )
+                                &mut *cfg_ports,
+                            );
                         } else {
-                            let mut pci_cfg = pci_cfg.borrow_mut();
-                            snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            let mut cfg_ports = pci_cfg.borrow_mut();
+                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                                 &state,
-                                &mut *pci_cfg,
-                            )
-                        };
-                        let _ = cfg_result;
+                                &mut *cfg_ports,
+                            );
+                        }
 
                         let mut pci_intx = pci_intx.borrow_mut();
                         if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
@@ -1772,35 +1809,37 @@ impl snapshot::SnapshotTarget for Machine {
                 }
             } else if let Some(pci_cfg) = &self.pci_cfg {
                 // Config ports only. Prefer the dedicated `PCI_CFG` entry if present.
-                let mut pci_cfg = pci_cfg.borrow_mut();
+                let mut cfg_ports = pci_cfg.borrow_mut();
                 if let Some(cfg_state) = pci_cfg_state.take() {
                     let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                         &cfg_state,
-                        &mut *pci_cfg,
+                        &mut *cfg_ports,
                     );
                 } else {
                     let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                         &state,
-                        &mut *pci_cfg,
+                        &mut *cfg_ports,
                     );
                 }
             }
-        } else if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
-            // Backward compatibility: older snapshots stored only config ports under the
-            // dedicated `PCI_CFG` device id.
-            let mut pci_cfg = pci_cfg.borrow_mut();
-            let _ =
-                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
+        } else {
+            // No core wrapper; fall back to split legacy entries.
+            if let (Some(pci_cfg), Some(cfg_state)) = (&self.pci_cfg, pci_cfg_state.take()) {
+                let mut cfg_ports = pci_cfg.borrow_mut();
+                let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    &cfg_state,
+                    &mut *cfg_ports,
+                );
+            }
         }
 
-        // Backward compatibility: older snapshots stored INTx routing separately.
+        // If the PCI core wrapper did not restore the INTx router, fall back to a split `PCI_INTX`
+        // entry (legacy snapshots).
         if !restored_pci_intx {
-            if let (Some(pci_intx), Some(state)) =
-                (&self.pci_intx, by_id.remove(&snapshot::DeviceId::PCI_INTX))
-            {
+            if let (Some(pci_intx), Some(intx_state)) = (&self.pci_intx, pci_intx_state.take()) {
                 let mut pci_intx = pci_intx.borrow_mut();
                 restored_pci_intx = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                    &state,
+                    &intx_state,
                     &mut *pci_intx,
                 )
                 .is_ok();

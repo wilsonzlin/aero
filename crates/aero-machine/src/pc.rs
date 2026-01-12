@@ -346,7 +346,7 @@ impl PcMachine {
                 backend.transmit(frame);
             }
         }
-
+ 
         // 3) Drain host->guest frames.
         //
         // Only poll the backend when E1000 exists; otherwise we'd drop frames on the floor.
@@ -363,10 +363,10 @@ impl PcMachine {
                 }
             }
         }
-
+ 
         // 4) Flush RX delivery for newly enqueued frames.
         self.bus.platform.process_e1000();
-
+ 
         // 5) Route PCI INTx lines (including E1000) into the platform interrupt controller.
         self.bus.platform.poll_pci_intx_lines();
     }
