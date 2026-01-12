@@ -25,6 +25,21 @@ This document specifies the register layout and the behavioral rules needed to i
 
 ---
 
+## Web runtime selection (virtio-net)
+
+The Aero web runtime defaults to **modern-only** virtio-net (Aero contract v1). To enable compatibility modes for upstream virtio-win bundles, select the transport explicitly:
+
+- **Settings UI:** "Virtio-net mode"
+- **Config:** `virtioNetMode: "modern" | "transitional" | "legacy"`
+- **URL query override:** `?virtioNetMode=modern|transitional|legacy`
+
+Notes:
+
+- Changing `virtioNetMode` changes the guest-visible PCI device ID / BAR layout and requires a VM restart to take effect.
+- `"legacy"` disables modern virtio-pci capabilities and exposes only the legacy I/O port register block.
+
+---
+
 ## PCI Identification (Transitional vs Modern-only)
 
 Virtio PCI functions are typically identified by:
