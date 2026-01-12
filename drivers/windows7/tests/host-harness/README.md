@@ -173,6 +173,17 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Add `--follow-serial` to stream COM1 serial output while waiting.
 
+### Host-harness unit tests (Python)
+
+The Python harness includes a small unit test suite under `host-harness/tests/` that validates helper logic
+without needing QEMU or a guest image (QMP command formatting, deterministic HTTP payloads, wav parsing, etc.).
+
+From the repo root:
+
+```bash
+python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests
+```
+
 ### virtio-snd (audio) device
 
 To attach a virtio-snd device (virtio-sound-pci) during the run, enable it explicitly with `-WithVirtioSnd` / `--with-virtio-snd`.
