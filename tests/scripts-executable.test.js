@@ -175,6 +175,87 @@ test("safe-run.sh respects AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platf
   assert.equal(stdout, "2|2");
 });
 
+test("safe-run.sh defaults RUST_TEST_THREADS for cargo test (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-test-threads-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUST_TEST_THREADS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    delete env.RUST_TEST_THREADS;
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo", "test"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(stdout, "1");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe-run.sh sets RUST_TEST_THREADS based on AERO_CARGO_BUILD_JOBS for cargo test (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-test-threads-jobs-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUST_TEST_THREADS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.RUST_TEST_THREADS;
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo", "test"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(stdout, "2");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe-run.sh preserves explicit RUST_TEST_THREADS for cargo test (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-test-threads-explicit-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUST_TEST_THREADS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    env.RUST_TEST_THREADS = "3";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo", "test"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(stdout, "3");
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh: AERO_CARGO_BUILD_JOBS overrides CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
   const env = { ...process.env };
   env.CARGO_BUILD_JOBS = "4";

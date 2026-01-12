@@ -361,6 +361,76 @@ if [[ "${is_retryable_cmd}" == "true" ]] && [[ "$(uname 2>/dev/null || true)" ==
 fi
 
 if [[ "${is_cargo_cmd}" == "true" ]]; then
+    # Limit Rust test harness parallelism for `cargo test` / `cargo bench` runs.
+    #
+    # The default libtest behavior is to spawn one thread per CPU core, which can exceed per-user
+    # thread limits on contended CI hosts (EAGAIN/"Resource temporarily unavailable"). Tokio tests
+    # can amplify this because each test may create its own runtime thread pool.
+    #
+    # Keep the default aligned with our overall Cargo parallelism (`CARGO_BUILD_JOBS`) for
+    # reliability. Command-line `-- --test-threads=N` still takes precedence.
+    _aero_cargo_subcommand=""
+    _aero_prev_opt=""
+    for arg in "${@:2}"; do
+        # Stop parsing at `--`: subsequent args are forwarded to the invoked binary (e.g. test
+        # harness flags) and must not influence Cargo subcommand detection.
+        if [[ "${arg}" == "--" ]]; then
+            break
+        fi
+
+        # Rustup toolchain override syntax: `cargo +nightly test`.
+        if [[ "${arg}" == +* ]]; then
+            continue
+        fi
+
+        if [[ -n "${_aero_prev_opt}" ]]; then
+            _aero_prev_opt=""
+            continue
+        fi
+
+        case "${arg}" in
+            # Global options that take a value in the following argv slot.
+            --color|--config|--manifest-path|--target|--target-dir|-Z)
+                _aero_prev_opt="${arg}"
+                continue
+                ;;
+            # Global options that inline their value.
+            --color=*|--config=*|--manifest-path=*|--target=*|--target-dir=*)
+                continue
+                ;;
+            # Global flags.
+            -V|--version|--list|-h|--help|-q|--quiet|-v|--verbose|--frozen|--locked|--offline)
+                continue
+                ;;
+            -*)
+                # Unknown flag; assume it is a global option and skip it.
+                continue
+                ;;
+            *)
+                _aero_cargo_subcommand="${arg}"
+                break
+                ;;
+        esac
+    done
+    unset _aero_prev_opt 2>/dev/null || true
+
+    if [[ "${_aero_cargo_subcommand}" == "test" || "${_aero_cargo_subcommand}" == "bench" ]]; then
+        _aero_default_rust_test_threads="${CARGO_BUILD_JOBS:-1}"
+        if ! [[ "${_aero_default_rust_test_threads}" =~ ^[1-9][0-9]*$ ]]; then
+            _aero_default_rust_test_threads=1
+        fi
+
+        if [[ -z "${RUST_TEST_THREADS:-}" ]]; then
+            export RUST_TEST_THREADS="${_aero_default_rust_test_threads}"
+        elif ! [[ "${RUST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "[safe-run] warning: invalid RUST_TEST_THREADS value: ${RUST_TEST_THREADS} (expected positive integer); using ${_aero_default_rust_test_threads}" >&2
+            export RUST_TEST_THREADS="${_aero_default_rust_test_threads}"
+        fi
+
+        unset _aero_default_rust_test_threads 2>/dev/null || true
+    fi
+    unset _aero_cargo_subcommand 2>/dev/null || true
+
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
         # Allow explicit override without requiring users to manually edit RUSTFLAGS.
         # `AERO_CODEGEN_UNITS` is a shorthand alias for `AERO_RUST_CODEGEN_UNITS`.
@@ -461,6 +531,7 @@ if [[ $# -lt 1 ]]; then
     echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
     echo "  RUSTC_WORKER_THREADS=1   rustc internal worker threads (default: CARGO_BUILD_JOBS)" >&2
     echo "  RAYON_NUM_THREADS=1      Rayon global pool size (default: CARGO_BUILD_JOBS)" >&2
+    echo "  RUST_TEST_THREADS=1      Rust test harness parallelism (default: CARGO_BUILD_JOBS for cargo test/bench)" >&2
     echo "  AERO_RUST_CODEGEN_UNITS=<n>  Optional rustc per-crate codegen-units override (alias: AERO_CODEGEN_UNITS)" >&2
     echo "" >&2
     echo "Examples:" >&2
