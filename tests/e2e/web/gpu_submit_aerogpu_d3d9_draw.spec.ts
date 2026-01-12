@@ -14,10 +14,21 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
     join(repoRoot, 'web', 'src', 'wasm', 'pkg-single-gpu-dev', 'aero_gpu_wasm_bg.wasm'),
     join(repoRoot, 'web', 'src', 'wasm', 'pkg-threaded-gpu-dev', 'aero_gpu_wasm_bg.wasm'),
   ];
-  test.skip(
-    !wasmPaths.some((p) => existsSync(p)),
-    'aero-gpu-wasm bundle is missing (run `cd web && npm run wasm:build:single`).',
-  );
+  if (!wasmPaths.some((p) => existsSync(p))) {
+    const message = [
+      'aero-gpu-wasm bundle is missing.',
+      '',
+      'Expected one of:',
+      ...wasmPaths.map((p) => `- ${p}`),
+      '',
+      'Build it with (from the repo root):',
+      '  npm -w web run wasm:build',
+    ].join('\n');
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
 
   const support = await page.evaluate(async () => {
     const withTimeout = async <T>(promise: Promise<T>, ms: number): Promise<T | null> => {

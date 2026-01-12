@@ -9,10 +9,20 @@ test("aero-gpu-wasm: submit_aerogpu decodes alloc_table bytes for backing_alloc_
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = dirname(dirname(dirname(thisDir)));
   const singleGpuWasmPath = join(repoRoot, "web", "src", "wasm", "pkg-single-gpu", "aero_gpu_wasm_bg.wasm");
-  test.skip(
-    !existsSync(singleGpuWasmPath),
-    "Single aero-gpu-wasm bundle is missing (run `cd web && npm run wasm:build:single`).",
-  );
+  if (!existsSync(singleGpuWasmPath)) {
+    const message = [
+      "Single aero-gpu-wasm bundle is missing.",
+      "",
+      `Expected: ${singleGpuWasmPath}`,
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n");
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
 
   await page.setContent(`
     <script type="module">
@@ -89,4 +99,3 @@ test("aero-gpu-wasm: submit_aerogpu decodes alloc_table bytes for backing_alloc_
   expect(result.okResult.completedFence).toBe(2n);
   expect(result.okResult.presentCount).toBe(1n);
 });
-

@@ -14,10 +14,21 @@ test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state",
     join(repoRoot, "web", "src", "wasm", "pkg-single-gpu-dev", "aero_gpu_wasm_bg.wasm"),
     join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu-dev", "aero_gpu_wasm_bg.wasm"),
   ];
-  test.skip(
-    !wasmPaths.some((p) => existsSync(p)),
-    "aero-gpu-wasm bundle is missing (run `cd web && npm run wasm:build:single`).",
-  );
+  if (!wasmPaths.some((p) => existsSync(p))) {
+    const message = [
+      "aero-gpu-wasm bundle is missing.",
+      "",
+      "Expected one of:",
+      ...wasmPaths.map((p) => `- ${p}`),
+      "",
+      "Build it with (from the repo root):",
+      "  npm -w web run wasm:build",
+    ].join("\n");
+    if (process.env.CI) {
+      throw new Error(message);
+    }
+    test.skip(true, message);
+  }
 
   await page.setContent(`
     <script type="module">
@@ -89,4 +100,3 @@ test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state",
   // destroy_gpu() should reset the monotonic present counter for submit_aerogpu().
   expect(result.result1?.presentCount ?? null).toBe(1n);
 });
-
