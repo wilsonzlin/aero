@@ -22,10 +22,10 @@ use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig, ResetEvent};
 use aero_platform::reset::ResetKind;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
-use memory::MapError;
+use memory::{DenseMemory, GuestMemory, MapError, SparseMemory};
 
 use crate::pci_firmware::SharedPciConfigPortsBiosAdapter;
-use crate::{GuestTime, MachineError, RunExit, SharedDisk};
+use crate::{GuestTime, MachineError, RunExit, SharedDisk, SPARSE_RAM_THRESHOLD_BYTES};
 
 /// Configuration for [`PcMachine`].
 #[derive(Debug, Clone)]
@@ -160,11 +160,19 @@ impl PcMachine {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
 
-        let ram_size = usize::try_from(cfg.ram_size_bytes)
-            .map_err(|_| MachineError::GuestMemoryTooLarge(cfg.ram_size_bytes))?;
+        let ram_size_bytes = cfg.ram_size_bytes;
+        let ram: Box<dyn GuestMemory> = if ram_size_bytes <= SPARSE_RAM_THRESHOLD_BYTES {
+            let ram = DenseMemory::new(ram_size_bytes)
+                .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
+            Box::new(ram)
+        } else {
+            let ram = SparseMemory::new(ram_size_bytes)
+                .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
+            Box::new(ram)
+        };
 
-        let platform = PcPlatform::new_with_config(
-            ram_size,
+        let platform = PcPlatform::new_with_config_and_ram(
+            ram,
             PcPlatformConfig {
                 enable_hda: cfg.enable_hda,
                 enable_e1000: cfg.enable_e1000,
