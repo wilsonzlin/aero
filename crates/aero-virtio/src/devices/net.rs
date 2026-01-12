@@ -280,6 +280,18 @@ impl<B: NetBackend> VirtioNet<B> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
+        // Prevent unbounded growth if a corrupted/malicious driver repeatedly publishes RX buffers
+        // (e.g. by moving `avail.idx` far ahead and causing the device to re-consume stale ring
+        // entries). A correct driver cannot have more outstanding RX buffers than the queue size.
+        let max_rx_buffers = queue.size() as usize;
+        if max_rx_buffers != 0 && self.rx_buffers.len() >= max_rx_buffers {
+            let mut need_irq = queue
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError)?;
+            need_irq |= self.flush_rx(queue, mem)?;
+            return Ok(need_irq);
+        }
+
         self.rx_buffers.push_back(chain);
         self.flush_rx(queue, mem)
     }
@@ -387,7 +399,7 @@ impl<B: NetBackend> VirtioNet<B> {
 mod tests {
     use super::*;
     use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
-    use crate::queue::{PoppedDescriptorChain, VirtQueueConfig, VIRTQ_DESC_F_NEXT};
+    use crate::queue::{PoppedDescriptorChain, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
     fn write_desc(
         mem: &mut GuestRam,
@@ -642,5 +654,72 @@ mod tests {
         let irq = dev.flush_rx(&mut queue, &mut mem).unwrap();
         assert!(!irq);
         assert_eq!(dev.backend_mut().polls, MAX_RX_FRAMES_PER_FLUSH);
+    }
+
+    #[test]
+    fn rx_posted_buffer_queue_is_bounded() {
+        // This simulates a malicious guest that bumps `avail.idx` far ahead so the transport keeps
+        // popping descriptor chains for the same handful of ring entries. The device must not grow
+        // `rx_buffers` without bound.
+        let mut dev = VirtioNet::new(LoopbackNet::default(), [0; 6]);
+        dev.set_features(0);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // One write-only descriptor per head index, large enough for hdr+payload.
+        for i in 0..qsize {
+            let buf_addr = 0x4000 + u64::from(i) * 0x100;
+            write_desc(
+                &mut mem,
+                desc_table,
+                i,
+                buf_addr,
+                64,
+                VIRTQ_DESC_F_WRITE,
+                0,
+            );
+        }
+
+        // Malicious: claim there are 1000 available entries, but only provide `qsize` ring slots.
+        let avail_idx = 1000u16;
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, avail_idx).unwrap();
+        for i in 0..qsize {
+            write_u16_le(&mut mem, avail + 4 + u64::from(i) * 2, i).unwrap();
+        }
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        for _ in 0..avail_idx {
+            let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+                PoppedDescriptorChain::Chain(chain) => chain,
+                PoppedDescriptorChain::Invalid { error, .. } => {
+                    panic!("unexpected descriptor chain parse error: {error:?}")
+                }
+            };
+            dev.process_rx(chain, &mut queue, &mut mem).unwrap();
+        }
+
+        assert_eq!(dev.rx_buffers.len(), qsize as usize);
+        assert_eq!(
+            read_u16_le(&mem, used + 2).unwrap(),
+            avail_idx - qsize,
+            "extra RX buffers should be completed with used.len=0 once the internal queue is full"
+        );
     }
 }
