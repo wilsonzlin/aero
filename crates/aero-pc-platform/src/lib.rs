@@ -2143,10 +2143,6 @@ impl PcPlatform {
 
         // Reset optional PCI device models that are part of the platform and do not own external
         // state that needs to survive reset.
-        //
-        // Some devices (e.g. storage controllers) own host-attached backends (disks) that are not
-        // currently exposed for "detach and reattach" during a platform reset, so they are not
-        // reset here. Callers that need a full power-cycle can reconstruct `PcPlatform`.
         if let Some(e1000) = self.e1000.as_ref() {
             let mac = e1000.borrow().mac_addr();
             *e1000.borrow_mut() = E1000Device::new(mac);
