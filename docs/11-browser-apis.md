@@ -1097,14 +1097,18 @@ function runEmulationLoop() {
 > - `overrunCount` (bytes 12..16, total frames dropped by the producer due to buffer full; wraps at 2^32)
 >
 > followed by interleaved `f32` samples at byte 16. See:
-> `web/src/audio/audio_worklet_ring.ts`, `web/src/platform/audio.ts`, and `web/src/platform/audio-worklet-processor.js`.
+> `web/src/audio/audio_worklet_ring.ts`, `web/src/platform/audio_worklet_ring_layout.js`, `web/src/platform/audio.ts`, and `web/src/platform/audio-worklet-processor.js`.
+>
+> Note: In production builds, `audio-worklet-processor.js` is emitted as a standalone asset and imports
+> `./audio_worklet_ring_layout.js` at runtime; see `web/vite.config.ts` for the explicit asset emission
+> workaround (Vite does not automatically follow ESM imports from AudioWorklet modules).
 
 ### Processor Registration
 
 > Note: The code below is illustrative. The canonical implementation lives in:
 >
 > - `web/src/platform/audio.ts` (ring buffer layout + producer)
-> - `web/src/audio/audio_worklet_ring.ts` (ring buffer layout/constants + helper math)
+> - `web/src/audio/audio_worklet_ring.ts` + `web/src/platform/audio_worklet_ring_layout.js` (ring buffer layout/constants + helper math)
 > - `web/src/platform/audio-worklet-processor.js` (AudioWorklet consumer)
 >
 > The playback ring buffer uses a **16-byte header** (`u32[4]`):
