@@ -90,6 +90,16 @@ esac
 export CARGO_BUILD_JOBS=4
 export CARGO_INCREMENTAL=1
 
+# rustc uses Rayon internally for query evaluation and other parallel work.
+# When many agents share the same host, the default Rayon thread count (often `num_cpus`) can
+# exceed per-user thread/process limits, causing rustc to ICE with:
+#   Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+# when creating its global thread pool.
+#
+# Keep the Rayon pool size aligned with our overall Cargo build parallelism so builds remain
+# reliable under contention.
+export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
+
 # Reduce codegen parallelism per crate to limit memory spikes.
 # Keep any existing RUSTFLAGS, but don't re-add codegen-units when sourced twice.
 if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
@@ -129,6 +139,7 @@ ulimit -n 4096 2>/dev/null || true
 
 echo "Aero agent environment configured:"
 echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
+echo "  RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 echo "  RUSTFLAGS=$RUSTFLAGS"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
 if [[ -n "${CARGO_HOME:-}" ]]; then

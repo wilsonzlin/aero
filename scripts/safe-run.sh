@@ -22,6 +22,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMEOUT="${AERO_TIMEOUT:-600}"
 MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 
+# Defensive defaults for shared-host agent execution.
+#
+# These reduce the likelihood of hitting per-user process/thread limits which can cause rustc to
+# ICE when it fails to spawn its internal Rayon thread pool.
+#
+# Callers can always override by setting these variables explicitly.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <command...>" >&2
     echo "" >&2
