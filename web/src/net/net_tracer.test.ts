@@ -104,8 +104,8 @@ describe("NetTracer", () => {
     expect(tx).toBeTruthy();
     expect(rx).toBeTruthy();
 
-    // Interface 0 is guest_rx, 1 is guest_tx.
-    expect(tx!.interfaceId).toBe(1);
+    // Mirror Rust/NetTracer PCAPNG structure: a single Ethernet interface (`guest-eth0`).
+    expect(tx!.interfaceId).toBe(0);
     expect(rx!.interfaceId).toBe(0);
 
     // EPB direction bits: 1=inbound, 2=outbound.
