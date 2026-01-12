@@ -28,6 +28,7 @@ const PID_SETUP: u8 = 0x2d;
 
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
 const TD_STATUS_NAK: u32 = 1 << 19;
+const TD_CTRL_IOC: u32 = 1 << 24;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
 const PORTSC_CSC: u16 = 0x0002;
@@ -960,4 +961,150 @@ fn pc_platform_uhci_interrupt_in_reads_hid_keyboard_reports_via_dma() {
     let st = pc.memory.read_u32(TD0 as u64 + 4);
     assert_ne!(st & TD_STATUS_ACTIVE, 0);
     assert_ne!(st & TD_STATUS_NAK, 0);
+}
+
+#[test]
+fn pc_platform_uhci_ioc_completion_asserts_intx_via_pic() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
+
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe UHCI interrupts through the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(irq, false);
+    }
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io
+        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_IOC));
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // SET_ADDRESS(5).
+    pc.memory.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    // SET_CONFIGURATION(1).
+    pc.memory.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    // Generate an input report and schedule an IOC interrupt-IN TD to fetch it.
+    keyboard.key_event(0x04, true); // 'a'
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true) | TD_CTRL_IOC,
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    assert_ne!(
+        pc.io.read(bar4_base + REG_USBSTS, 2) as u16 & USBSTS_USBINT,
+        0,
+        "UHCI schedule completion should set USBSTS.USBINT when TD has IOC set"
+    );
+
+    // Propagate the asserted INTx line into the PIC and observe the pending vector.
+    pc.poll_pci_intx_lines();
+
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("UHCI IRQ should be pending after IOC TD completion");
+    let pending_irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(pending_irq, irq);
+
+    // Consume + EOI the interrupt so we can observe deassertion cleanly.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+
+    // Clear the status bit (W1C) and ensure the line deasserts.
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_USBINT));
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
