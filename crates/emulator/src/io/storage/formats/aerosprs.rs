@@ -277,17 +277,15 @@ impl<S: ByteStorage> SparseDisk<S> {
         let table_entries_usize: usize = table_entries
             .try_into()
             .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(table_entries_usize)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        table.resize(table_entries_usize, 0);
         Ok(Self {
             storage,
             header,
-            table: {
-                let mut table = Vec::new();
-                table
-                    .try_reserve_exact(table_entries_usize)
-                    .map_err(|_| DiskError::QuotaExceeded)?;
-                table.resize(table_entries_usize, 0);
-                table
-            },
+            table,
         })
     }
 
@@ -376,7 +374,7 @@ impl<S: ByteStorage> SparseDisk<S> {
     }
 
     fn recover_journal(&mut self) -> DiskResult<()> {
-        let mut jbuf = vec![0u8; JOURNAL_SIZE as usize];
+        let mut jbuf = [0u8; JOURNAL_SIZE as usize];
         self.storage
             .read_at(self.header.journal_offset, &mut jbuf)?;
         let record = JournalRecord::decode(&jbuf)?;

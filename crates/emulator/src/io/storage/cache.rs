@@ -35,6 +35,16 @@ impl<B: DiskBackend> CoalescingBackend<B> {
     fn sector_size_usize(&self) -> usize {
         self.backend.sector_size() as usize
     }
+
+    fn ensure_scratch_len(&mut self, len: usize) -> DiskResult<()> {
+        if self.scratch.len() < len {
+            self.scratch
+                .try_reserve_exact(len - self.scratch.len())
+                .map_err(|_| DiskError::QuotaExceeded)?;
+        }
+        self.scratch.resize(len, 0);
+        Ok(())
+    }
 }
 
 /// Coalesce sorted sector ranges into larger contiguous spans.
@@ -44,19 +54,20 @@ pub fn coalesce_ranges(mut ranges: Vec<CoalescedRange>) -> Vec<CoalescedRange> {
     }
     ranges.sort_by_key(|r| r.lba);
 
-    let mut out = Vec::with_capacity(ranges.len());
-    let mut cur = ranges[0];
-    for next in ranges.into_iter().skip(1) {
-        let cur_end = cur.lba.saturating_add(cur.sectors);
+    // Compact in-place to avoid allocating a second vector when `ranges` is already large.
+    let mut write = 0usize;
+    for read in 1..ranges.len() {
+        let next = ranges[read];
+        let cur_end = ranges[write].lba.saturating_add(ranges[write].sectors);
         if next.lba == cur_end {
-            cur.sectors = cur.sectors.saturating_add(next.sectors);
-            continue;
+            ranges[write].sectors = ranges[write].sectors.saturating_add(next.sectors);
+        } else {
+            write += 1;
+            ranges[write] = next;
         }
-        out.push(cur);
-        cur = next;
     }
-    out.push(cur);
-    out
+    ranges.truncate(write + 1);
+    ranges
 }
 
 impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
@@ -137,7 +148,7 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
             if idx - start == 1 {
                 self.backend.read_sectors(lba, bufs[start])?;
             } else if merged_len != 0 {
-                self.scratch.resize(merged_len, 0);
+                self.ensure_scratch_len(merged_len)?;
                 self.backend.read_sectors(lba, &mut self.scratch)?;
                 let mut off = 0usize;
                 for buf in &mut bufs[start..idx] {
@@ -212,7 +223,7 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
             if idx - start == 1 {
                 self.backend.write_sectors(lba, bufs[start])?;
             } else if merged_len != 0 {
-                self.scratch.resize(merged_len, 0);
+                self.ensure_scratch_len(merged_len)?;
                 let mut off = 0usize;
                 for buf in &bufs[start..idx] {
                     let len = buf.len();

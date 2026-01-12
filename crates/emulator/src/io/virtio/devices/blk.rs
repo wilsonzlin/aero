@@ -226,7 +226,9 @@ impl VirtioBlkDevice {
                     .read_sectors(lba, dst)
                     .map_err(|_| ())?;
             } else {
-                let mut tmp = vec![0u8; len];
+                let mut tmp = Vec::new();
+                tmp.try_reserve_exact(len).map_err(|_| ())?;
+                tmp.resize(len, 0);
                 self.drive
                     .backend_mut()
                     .read_sectors(lba, &mut tmp)
@@ -272,7 +274,9 @@ impl VirtioBlkDevice {
                     .write_sectors(lba, src)
                     .map_err(|_| ())?;
             } else {
-                let mut tmp = vec![0u8; len];
+                let mut tmp = Vec::new();
+                tmp.try_reserve_exact(len).map_err(|_| ())?;
+                tmp.resize(len, 0);
                 mem.read_into(desc.addr, &mut tmp).map_err(|_| ())?;
                 self.drive
                     .backend_mut()
