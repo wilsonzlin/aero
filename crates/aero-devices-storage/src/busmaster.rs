@@ -107,16 +107,6 @@ impl BusMasterChannel {
         }
     }
 
-    /// Reset Bus Master IDE register state back to its power-on baseline.
-    ///
-    /// This preserves `drive_dma_capable`, which represents hardware capability derived from the
-    /// currently attached drives.
-    pub fn reset(&mut self) {
-        self.cmd = 0;
-        self.status = 0;
-        self.prd_addr = 0;
-    }
-
     pub fn set_drive_dma_capable(&mut self, drive: usize, capable: bool) {
         if drive < 2 {
             self.drive_dma_capable[drive] = capable;
