@@ -551,6 +551,16 @@ impl<'a> TextureManager<'a> {
                 .get_mut(&key)
                 .ok_or(TextureManagerError::TextureNotFound(key))?;
             entry.last_used = last_used;
+
+            // Treat empty regions as a no-op. WebGPU validation rejects zero-sized copy extents,
+            // so we early-return to keep callers robust against degenerate rectangles (e.g. diff
+            // engines that may occasionally emit 0-width/0-height regions).
+            if region.size.width == 0
+                || region.size.height == 0
+                || region.size.depth_or_array_layers == 0
+            {
+                return Ok(());
+            }
             let mip_level_count = entry.desc.mip_level_count;
             let mip_size = mip_extent(entry.desc.size, entry.desc.dimension, region.mip_level);
             (
@@ -1390,6 +1400,52 @@ mod tests {
             assert_eq!(entry.desc.size.depth_or_array_layers, 1);
             assert_eq!(entry.desc.sample_count, 1);
             assert_eq!(entry.desc.mip_level_count, 1);
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_texture_region_noops_on_zero_sized_extent() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue().await else {
+                return;
+            };
+            let caps = GpuCapabilities::from_device(&device);
+
+            let mut mgr = TextureManager::new(&device, &queue, caps);
+            mgr.create_texture(
+                1,
+                TextureDesc::new_2d(
+                    4,
+                    4,
+                    TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+            );
+
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+            mgr.write_texture_region(
+                1,
+                TextureRegion {
+                    origin: wgpu::Origin3d::ZERO,
+                    size: wgpu::Extent3d {
+                        width: 0,
+                        height: 4,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level: 0,
+                },
+                &[],
+            )
+            .unwrap();
+
+            device.poll(wgpu::Maintain::Wait);
+            let err = device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "expected zero-sized write_texture_region to be a no-op without validation errors, got: {err:?}"
+            );
         });
     }
 }
