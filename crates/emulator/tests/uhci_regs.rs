@@ -18,6 +18,17 @@ const PID_IN: u8 = 0x69;
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
 const TD_CTRL_IOC: u32 = 1 << 24;
 
+const PCI_COMMAND_IO: u32 = 1 << 0;
+const PCI_COMMAND_BME: u32 = 1 << 2;
+
+fn new_test_uhci(io_base: u16) -> UhciPciDevice {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), io_base);
+    // The UHCI PortIO wrapper models PCI COMMAND gating (IO decoding + bus mastering). Real guests
+    // enable these bits before programming the controller; the unit tests should as well.
+    uhci.config_write(0x04, 2, PCI_COMMAND_IO | PCI_COMMAND_BME);
+    uhci
+}
+
 fn td_token(pid: u8, addr: u8, ep: u8, toggle: u8, max_len: usize) -> u32 {
     let max_field = if max_len == 0 {
         0x7ffu32
@@ -57,7 +68,7 @@ fn init_frame_list(mem: &mut Bus, qh_addr: u32) {
 
 #[test]
 fn uhci_usbcmd_roundtrips_extended_bits_and_halted_tracks_rs() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     // Reset state: halted until RS is set.
     assert_ne!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
@@ -89,7 +100,7 @@ fn uhci_usbcmd_roundtrips_extended_bits_and_halted_tracks_rs() {
 
 #[test]
 fn uhci_hcreset_restores_default_register_state() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_CF | USBCMD_MAXP) as u32);
     uhci.port_write(REG_USBINTR, 2, 0x0f);
@@ -110,7 +121,7 @@ fn uhci_hcreset_restores_default_register_state() {
 
 #[test]
 fn uhci_global_reset_resets_state_and_latches_greset_until_cleared() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     uhci.port_write(REG_USBINTR, 2, 0x0f);
     uhci.port_write(REG_FRNUM, 2, 0x0123);
@@ -156,7 +167,7 @@ fn uhci_usbsts_write_1_to_clear_clears_latched_interrupt_bits() {
     );
     write_qh(&mut mem, QH_ADDR, TD0);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
     uhci.port_write(REG_USBINTR, 2, USBINTR_TIMEOUT_CRC as u32);
     uhci.port_write(REG_USBCMD, 2, USBCMD_RS as u32);
@@ -208,7 +219,7 @@ fn uhci_usbint_sets_even_when_interrupts_disabled() {
     );
     write_qh(&mut mem, QH_ADDR, TD0);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyInDevice));
     uhci.controller.hub_mut().force_enable_for_tests(0);
 
@@ -242,7 +253,7 @@ fn uhci_ioc_error_sets_usbint_and_can_irq() {
     );
     write_qh(&mut mem, QH_ADDR, TD0);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
     uhci.port_write(REG_USBINTR, 2, 0);
     uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
@@ -275,7 +286,7 @@ fn uhci_usberrint_sets_even_when_interrupts_disabled() {
     );
     write_qh(&mut mem, QH_ADDR, TD0);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
     uhci.port_write(REG_USBINTR, 2, 0);
     uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
@@ -332,7 +343,7 @@ fn uhci_short_packet_does_not_irq_when_short_interrupt_disabled() {
     );
     write_qh(&mut mem, QH_ADDR, TD0);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(0, Box::new(ShortInDevice));
     uhci.controller.hub_mut().force_enable_for_tests(0);
 
@@ -369,7 +380,7 @@ fn uhci_usbsts_byte_writes_do_not_cross_clear_w1c_bits() {
     );
     write_qh(&mut mem, QH_ADDR, TD0);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
     uhci.port_write(REG_USBINTR, 2, USBINTR_TIMEOUT_CRC as u32);
     uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
@@ -389,7 +400,7 @@ fn uhci_usbsts_byte_writes_do_not_cross_clear_w1c_bits() {
 
 #[test]
 fn uhci_pci_bar_relocation_updates_io_window() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0x1000);
+    let mut uhci = new_test_uhci(0x1000);
 
     uhci.port_write(0x1000 + REG_USBCMD, 2, USBCMD_CF as u32);
     assert_eq!(uhci.port_read(0x1000 + REG_USBCMD, 2) as u16, USBCMD_CF);
@@ -399,7 +410,7 @@ fn uhci_pci_bar_relocation_updates_io_window() {
     assert_eq!(uhci.config_read(0x20, 4), 0x2001);
 
     // Old window is now unmapped.
-    assert_eq!(uhci.port_read(0x1000 + REG_USBCMD, 2), u32::MAX);
+    assert_eq!(uhci.port_read(0x1000 + REG_USBCMD, 2), u32::from(u16::MAX));
 
     // New window works.
     uhci.port_write(0x2000 + REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP) as u32);
@@ -411,7 +422,7 @@ fn uhci_pci_bar_relocation_updates_io_window() {
 
 #[test]
 fn uhci_register_block_supports_byte_accesses() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     // Default USBCMD has MAXP set (bit7, low byte).
     assert_eq!(uhci.port_read(REG_USBCMD, 1) as u8, USBCMD_MAXP as u8);
@@ -432,7 +443,7 @@ fn uhci_register_block_supports_byte_accesses() {
 
 #[test]
 fn uhci_register_block_supports_dword_accesses() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     uhci.port_write(REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP) as u32);
     uhci.controller.set_usbsts_bits(USBSTS_USBERRINT);
@@ -454,7 +465,7 @@ fn uhci_register_block_supports_dword_accesses() {
 
 #[test]
 fn uhci_reserved_register_bytes_read_as_zero() {
-    let uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let uhci = new_test_uhci(0);
 
     // SOFMOD is an 8-bit register at 0x0C. Real drivers may use 16/32-bit I/O; reserved bytes in
     // the decoded 0x20-byte UHCI register window should read back as 0 so wide reads don't return
@@ -465,7 +476,7 @@ fn uhci_reserved_register_bytes_read_as_zero() {
 
 #[test]
 fn uhci_portsc_high_byte_write_does_not_clear_change_bits() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     let keyboard = UsbHidKeyboardHandle::new();
     uhci.controller
         .hub_mut()
@@ -492,7 +503,7 @@ fn uhci_portsc_high_byte_write_does_not_clear_change_bits() {
 
 #[test]
 fn uhci_fgr_latches_resume_detect_and_can_irq() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     // Enable resume interrupts.
     uhci.port_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
@@ -531,7 +542,7 @@ fn uhci_port_resume_detect_latches_resume_sts_and_can_irq() {
     }
 
     let mut mem = Bus::new(0x1000);
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
     // Enable resume interrupts.
@@ -563,7 +574,7 @@ fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
     const PORTSC_SUSP: u16 = 1 << 12;
 
     let mut mem = Bus::new(0x1000);
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     let keyboard = UsbHidKeyboardHandle::new();
     uhci.controller
         .hub_mut()
@@ -622,7 +633,7 @@ fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
     const PORTSC_SUSP: u16 = 1 << 12;
 
     let mut mem = Bus::new(0x1000);
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     let keyboard = UsbHidKeyboardHandle::new();
     uhci.controller
         .hub_mut()
@@ -680,7 +691,7 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
     const PORTSC_SUSP: u16 = 1 << 12;
 
     let mut mem = Bus::new(0x1000);
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     let keyboard = UsbHidKeyboardHandle::new();
     let mut hub = UsbHubDevice::new();
@@ -824,7 +835,7 @@ fn uhci_greset_resets_attached_devices() {
 
     let resets = Rc::new(RefCell::new(0));
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(
         0,
         Box::new(ResetCountingDevice {
@@ -849,7 +860,7 @@ fn uhci_greset_resets_attached_devices() {
 #[test]
 fn uhci_egsm_suspends_frame_counter() {
     let mut mem = Bus::new(0x1000);
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     // Start the controller.
     uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
@@ -897,7 +908,7 @@ fn uhci_portsc_suspend_resume_bits_roundtrip() {
     const PORTSC_SUSP: u16 = 1 << 12;
     const PORTSC_RESUME: u16 = 1 << 13;
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
     // Setting SUSP should latch and be visible on readback.
@@ -939,7 +950,7 @@ fn uhci_portsc_suspend_resume_bits_clear_on_detach() {
     const PORTSC_SUSP: u16 = 1 << 12;
     const PORTSC_RESUME: u16 = 1 << 13;
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
     uhci.port_write(
@@ -978,7 +989,7 @@ fn uhci_greset_clears_portsc_suspend_resume_bits() {
     const PORTSC_SUSP: u16 = 1 << 12;
     const PORTSC_RESUME: u16 = 1 << 13;
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
     uhci.port_write(
@@ -1001,7 +1012,7 @@ fn uhci_greset_clears_portsc_suspend_resume_bits() {
 
 #[test]
 fn uhci_regs_power_on_defaults() {
-    let uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let uhci = new_test_uhci(0);
 
     let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
     assert_eq!(usbcmd, USBCMD_MAXP);
@@ -1025,7 +1036,7 @@ fn uhci_regs_power_on_defaults() {
 
 #[test]
 fn uhci_regs_frnum_flbaseadd_sofmod_masks() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     // FRNUM is 11 bits (0..10).
     uhci.port_write(REG_FRNUM, 2, 0xffff);
@@ -1042,7 +1053,7 @@ fn uhci_regs_frnum_flbaseadd_sofmod_masks() {
 
 #[test]
 fn uhci_regs_w1c_usb_sts() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     uhci.controller.set_usbsts_bits(
         USBSTS_USBINT
@@ -1087,7 +1098,7 @@ fn uhci_regs_w1c_usb_sts() {
 
 #[test]
 fn uhci_regs_hcreset_self_clears_and_resets_registers() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
     let keyboard = UsbHidKeyboardHandle::new();
     uhci.controller
         .hub_mut()
@@ -1132,7 +1143,7 @@ fn uhci_regs_hcreset_self_clears_and_resets_registers() {
 
 #[test]
 fn uhci_regs_irq_gating() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci(0);
 
     // USBINT gating (IOC/short packet).
     uhci.port_write(REG_USBINTR, 2, 0);

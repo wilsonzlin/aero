@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use emulator::io::pci::PciDevice;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use emulator::io::usb::hub::UsbHubDevice;
@@ -29,6 +30,16 @@ const TD_STATUS_STALLED: u32 = 1 << 22;
 const TD_STATUS_NAK: u32 = 1 << 19;
 const TD_STATUS_CRC_TIMEOUT: u32 = 1 << 18;
 const TD_CTRL_IOC: u32 = 1 << 24;
+
+const PCI_COMMAND_IO: u32 = 1 << 0;
+const PCI_COMMAND_BME: u32 = 1 << 2;
+
+fn new_test_uhci() -> UhciPciDevice {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    // The UHCI PortIO wrapper models PCI COMMAND gating (IO decoding + bus mastering).
+    uhci.config_write(0x04, 2, PCI_COMMAND_IO | PCI_COMMAND_BME);
+    uhci
+}
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
 const PORTSC_CSC: u16 = 0x0002;
@@ -371,7 +382,7 @@ fn uhci_external_hub_enumerates_downstream_hid() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci();
 
     // Root port 0 has an external USB hub, with a keyboard on downstream port 1.
     let keyboard = UsbHidKeyboardHandle::new();
@@ -646,7 +657,7 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci();
 
     // Root port 0 has an external hub with 3 keyboards on downstream ports 1..3.
     let keyboard1 = UsbHidKeyboardHandle::new();
@@ -778,7 +789,7 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci();
 
     // A minimal vendor-defined report descriptor producing an 8-byte input report.
     let report_descriptor = vec![
@@ -1010,7 +1021,7 @@ fn uhci_external_hub_enumerates_device_behind_nested_hubs() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = new_test_uhci();
 
     // Root port 0 has hub1 -> hub2 -> keyboard (all full-speed).
     let keyboard = UsbHidKeyboardHandle::new();
