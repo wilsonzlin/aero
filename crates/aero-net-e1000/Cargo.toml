@@ -11,5 +11,6 @@ path = "src/lib.rs"
 default = []
 
 [dependencies]
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
 nt-packetlib = { path = "../nt-packetlib" }

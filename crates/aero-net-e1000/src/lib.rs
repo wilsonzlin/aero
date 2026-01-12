@@ -12,6 +12,10 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use memory::MemoryBus;
 
 mod offload;
@@ -1264,6 +1268,441 @@ impl E1000Device {
             self.icr |= ICR_TXDW;
             self.update_irq_level();
         }
+    }
+}
+
+impl IoSnapshot for E1000Device {
+    const DEVICE_ID: [u8; 4] = *b"E1K0";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_PCI_REGS: u16 = 1;
+        const TAG_PCI_BAR0: u16 = 2;
+        const TAG_PCI_BAR0_PROBE: u16 = 3;
+        const TAG_PCI_BAR1: u16 = 4;
+        const TAG_PCI_BAR1_PROBE: u16 = 5;
+
+        const TAG_CTRL: u16 = 10;
+        const TAG_STATUS: u16 = 11;
+        const TAG_EECD: u16 = 12;
+        const TAG_EERD: u16 = 13;
+        const TAG_CTRL_EXT: u16 = 14;
+        const TAG_MDIC: u16 = 15;
+        const TAG_IO_REG: u16 = 16;
+
+        const TAG_ICR: u16 = 20;
+        const TAG_IMS: u16 = 21;
+        const TAG_IRQ_LEVEL: u16 = 22;
+
+        const TAG_RCTL: u16 = 30;
+        const TAG_TCTL: u16 = 31;
+
+        const TAG_RDBAL: u16 = 40;
+        const TAG_RDBAH: u16 = 41;
+        const TAG_RDLEN: u16 = 42;
+        const TAG_RDH: u16 = 43;
+        const TAG_RDT: u16 = 44;
+
+        const TAG_TDBAL: u16 = 50;
+        const TAG_TDBAH: u16 = 51;
+        const TAG_TDLEN: u16 = 52;
+        const TAG_TDH: u16 = 53;
+        const TAG_TDT: u16 = 54;
+
+        const TAG_TX_PARTIAL: u16 = 60;
+        const TAG_TX_DROP: u16 = 61;
+        const TAG_TX_CTX_IPCSS: u16 = 62;
+        const TAG_TX_CTX_IPCSO: u16 = 63;
+        const TAG_TX_CTX_IPCSE: u16 = 64;
+        const TAG_TX_CTX_TUCSS: u16 = 65;
+        const TAG_TX_CTX_TUCSO: u16 = 66;
+        const TAG_TX_CTX_TUCSE: u16 = 67;
+        const TAG_TX_CTX_MSS: u16 = 68;
+        const TAG_TX_CTX_HDR_LEN: u16 = 69;
+        const TAG_TX_STATE_KIND: u16 = 70;
+        const TAG_TX_STATE_CMD: u16 = 71;
+        const TAG_TX_STATE_CSS: u16 = 72;
+        const TAG_TX_STATE_CSO: u16 = 73;
+        const TAG_TX_STATE_POPTS: u16 = 74;
+
+        const TAG_MAC_ADDR: u16 = 80;
+        const TAG_RA_VALID: u16 = 81;
+        const TAG_EEPROM: u16 = 82;
+        const TAG_PHY: u16 = 83;
+
+        const TAG_OTHER_REGS: u16 = 90;
+        const TAG_RX_PENDING: u16 = 91;
+        const TAG_TX_OUT: u16 = 92;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_bytes(TAG_PCI_REGS, self.pci.regs.to_vec());
+        w.field_u32(TAG_PCI_BAR0, self.pci.bar0);
+        w.field_bool(TAG_PCI_BAR0_PROBE, self.pci.bar0_probe);
+        w.field_u32(TAG_PCI_BAR1, self.pci.bar1);
+        w.field_bool(TAG_PCI_BAR1_PROBE, self.pci.bar1_probe);
+
+        w.field_u32(TAG_CTRL, self.ctrl);
+        w.field_u32(TAG_STATUS, self.status);
+        w.field_u32(TAG_EECD, self.eecd);
+        w.field_u32(TAG_EERD, self.eerd);
+        w.field_u32(TAG_CTRL_EXT, self.ctrl_ext);
+        w.field_u32(TAG_MDIC, self.mdic);
+        w.field_u32(TAG_IO_REG, self.io_reg);
+
+        w.field_u32(TAG_ICR, self.icr);
+        w.field_u32(TAG_IMS, self.ims);
+        w.field_bool(TAG_IRQ_LEVEL, self.irq_level);
+
+        w.field_u32(TAG_RCTL, self.rctl);
+        w.field_u32(TAG_TCTL, self.tctl);
+
+        w.field_u32(TAG_RDBAL, self.rdbal);
+        w.field_u32(TAG_RDBAH, self.rdbah);
+        w.field_u32(TAG_RDLEN, self.rdlen);
+        w.field_u32(TAG_RDH, self.rdh);
+        w.field_u32(TAG_RDT, self.rdt);
+
+        w.field_u32(TAG_TDBAL, self.tdbal);
+        w.field_u32(TAG_TDBAH, self.tdbah);
+        w.field_u32(TAG_TDLEN, self.tdlen);
+        w.field_u32(TAG_TDH, self.tdh);
+        w.field_u32(TAG_TDT, self.tdt);
+
+        w.field_bytes(TAG_TX_PARTIAL, self.tx_partial.clone());
+        w.field_bool(TAG_TX_DROP, self.tx_drop);
+        w.field_u32(TAG_TX_CTX_IPCSS, self.tx_ctx.ipcss as u32);
+        w.field_u32(TAG_TX_CTX_IPCSO, self.tx_ctx.ipcso as u32);
+        w.field_u32(TAG_TX_CTX_IPCSE, self.tx_ctx.ipcse as u32);
+        w.field_u32(TAG_TX_CTX_TUCSS, self.tx_ctx.tucss as u32);
+        w.field_u32(TAG_TX_CTX_TUCSO, self.tx_ctx.tucso as u32);
+        w.field_u32(TAG_TX_CTX_TUCSE, self.tx_ctx.tucse as u32);
+        w.field_u32(TAG_TX_CTX_MSS, self.tx_ctx.mss as u32);
+        w.field_u32(TAG_TX_CTX_HDR_LEN, self.tx_ctx.hdr_len as u32);
+
+        match self.tx_state {
+            None => {
+                w.field_u8(TAG_TX_STATE_KIND, 0);
+            }
+            Some(TxPacketState::Legacy { cmd, css, cso }) => {
+                w.field_u8(TAG_TX_STATE_KIND, 1);
+                w.field_u8(TAG_TX_STATE_CMD, cmd);
+                w.field_u32(TAG_TX_STATE_CSS, css as u32);
+                w.field_u32(TAG_TX_STATE_CSO, cso as u32);
+            }
+            Some(TxPacketState::Advanced { cmd, popts }) => {
+                w.field_u8(TAG_TX_STATE_KIND, 2);
+                w.field_u8(TAG_TX_STATE_CMD, cmd);
+                w.field_u8(TAG_TX_STATE_POPTS, popts);
+            }
+        }
+
+        w.field_bytes(TAG_MAC_ADDR, self.mac_addr.to_vec());
+        w.field_bool(TAG_RA_VALID, self.ra_valid);
+
+        let mut eeprom = Vec::with_capacity(self.eeprom.len() * 2);
+        for v in self.eeprom {
+            eeprom.extend_from_slice(&v.to_le_bytes());
+        }
+        w.field_bytes(TAG_EEPROM, eeprom);
+
+        let mut phy = Vec::with_capacity(self.phy.len() * 2);
+        for v in self.phy {
+            phy.extend_from_slice(&v.to_le_bytes());
+        }
+        w.field_bytes(TAG_PHY, phy);
+
+        let mut other: Vec<(u32, u32)> = self.other_regs.iter().map(|(&k, &v)| (k, v)).collect();
+        other.sort_by_key(|(k, _)| *k);
+        let mut other_enc = Encoder::new().u32(other.len() as u32);
+        for (k, v) in other {
+            other_enc = other_enc.u32(k).u32(v);
+        }
+        w.field_bytes(TAG_OTHER_REGS, other_enc.finish());
+
+        let mut rx_enc = Encoder::new().u32(self.rx_pending.len() as u32);
+        for frame in &self.rx_pending {
+            rx_enc = rx_enc.u32(frame.len() as u32).bytes(frame);
+        }
+        w.field_bytes(TAG_RX_PENDING, rx_enc.finish());
+
+        let mut tx_enc = Encoder::new().u32(self.tx_out.len() as u32);
+        for frame in &self.tx_out {
+            tx_enc = tx_enc.u32(frame.len() as u32).bytes(frame);
+        }
+        w.field_bytes(TAG_TX_OUT, tx_enc.finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_PCI_REGS: u16 = 1;
+        const TAG_PCI_BAR0: u16 = 2;
+        const TAG_PCI_BAR0_PROBE: u16 = 3;
+        const TAG_PCI_BAR1: u16 = 4;
+        const TAG_PCI_BAR1_PROBE: u16 = 5;
+
+        const TAG_CTRL: u16 = 10;
+        const TAG_STATUS: u16 = 11;
+        const TAG_EECD: u16 = 12;
+        const TAG_EERD: u16 = 13;
+        const TAG_CTRL_EXT: u16 = 14;
+        const TAG_MDIC: u16 = 15;
+        const TAG_IO_REG: u16 = 16;
+
+        const TAG_ICR: u16 = 20;
+        const TAG_IMS: u16 = 21;
+        const TAG_IRQ_LEVEL: u16 = 22;
+
+        const TAG_RCTL: u16 = 30;
+        const TAG_TCTL: u16 = 31;
+
+        const TAG_RDBAL: u16 = 40;
+        const TAG_RDBAH: u16 = 41;
+        const TAG_RDLEN: u16 = 42;
+        const TAG_RDH: u16 = 43;
+        const TAG_RDT: u16 = 44;
+
+        const TAG_TDBAL: u16 = 50;
+        const TAG_TDBAH: u16 = 51;
+        const TAG_TDLEN: u16 = 52;
+        const TAG_TDH: u16 = 53;
+        const TAG_TDT: u16 = 54;
+
+        const TAG_TX_PARTIAL: u16 = 60;
+        const TAG_TX_DROP: u16 = 61;
+        const TAG_TX_CTX_IPCSS: u16 = 62;
+        const TAG_TX_CTX_IPCSO: u16 = 63;
+        const TAG_TX_CTX_IPCSE: u16 = 64;
+        const TAG_TX_CTX_TUCSS: u16 = 65;
+        const TAG_TX_CTX_TUCSO: u16 = 66;
+        const TAG_TX_CTX_TUCSE: u16 = 67;
+        const TAG_TX_CTX_MSS: u16 = 68;
+        const TAG_TX_CTX_HDR_LEN: u16 = 69;
+        const TAG_TX_STATE_KIND: u16 = 70;
+        const TAG_TX_STATE_CMD: u16 = 71;
+        const TAG_TX_STATE_CSS: u16 = 72;
+        const TAG_TX_STATE_CSO: u16 = 73;
+        const TAG_TX_STATE_POPTS: u16 = 74;
+
+        const TAG_MAC_ADDR: u16 = 80;
+        const TAG_RA_VALID: u16 = 81;
+        const TAG_EEPROM: u16 = 82;
+        const TAG_PHY: u16 = 83;
+
+        const TAG_OTHER_REGS: u16 = 90;
+        const TAG_RX_PENDING: u16 = 91;
+        const TAG_TX_OUT: u16 = 92;
+
+        const MAX_OTHER_REGS: usize = 65_536;
+        const MAX_RX_PENDING: usize = 256;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        let mut mac_addr = self.mac_addr();
+        if let Some(mac) = r.bytes(TAG_MAC_ADDR) {
+            if mac.len() != mac_addr.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 mac"));
+            }
+            mac_addr.copy_from_slice(mac);
+        }
+
+        let mut dev = E1000Device::new(mac_addr);
+
+        if let Some(pci_regs) = r.bytes(TAG_PCI_REGS) {
+            if pci_regs.len() != dev.pci.regs.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 pci regs"));
+            }
+            dev.pci.regs.copy_from_slice(pci_regs);
+        }
+        dev.pci.bar0 = r.u32(TAG_PCI_BAR0)?.unwrap_or(dev.pci.bar0);
+        dev.pci.bar0_probe = r.bool(TAG_PCI_BAR0_PROBE)?.unwrap_or(dev.pci.bar0_probe);
+        dev.pci.bar1 = r.u32(TAG_PCI_BAR1)?.unwrap_or(dev.pci.bar1);
+        dev.pci.bar1_probe = r.bool(TAG_PCI_BAR1_PROBE)?.unwrap_or(dev.pci.bar1_probe);
+
+        dev.ctrl = r.u32(TAG_CTRL)?.unwrap_or(dev.ctrl);
+        dev.status = r.u32(TAG_STATUS)?.unwrap_or(dev.status);
+        dev.eecd = r.u32(TAG_EECD)?.unwrap_or(dev.eecd);
+        dev.eerd = r.u32(TAG_EERD)?.unwrap_or(dev.eerd);
+        dev.ctrl_ext = r.u32(TAG_CTRL_EXT)?.unwrap_or(dev.ctrl_ext);
+        dev.mdic = r.u32(TAG_MDIC)?.unwrap_or(dev.mdic);
+        dev.io_reg = r.u32(TAG_IO_REG)?.unwrap_or(dev.io_reg);
+
+        dev.icr = r.u32(TAG_ICR)?.unwrap_or(dev.icr);
+        dev.ims = r.u32(TAG_IMS)?.unwrap_or(dev.ims);
+
+        dev.rctl = r.u32(TAG_RCTL)?.unwrap_or(dev.rctl);
+        dev.tctl = r.u32(TAG_TCTL)?.unwrap_or(dev.tctl);
+
+        dev.rdbal = r.u32(TAG_RDBAL)?.unwrap_or(dev.rdbal);
+        dev.rdbah = r.u32(TAG_RDBAH)?.unwrap_or(dev.rdbah);
+        dev.rdlen = r.u32(TAG_RDLEN)?.unwrap_or(dev.rdlen);
+        dev.rdh = r.u32(TAG_RDH)?.unwrap_or(dev.rdh);
+        dev.rdt = r.u32(TAG_RDT)?.unwrap_or(dev.rdt);
+
+        dev.tdbal = r.u32(TAG_TDBAL)?.unwrap_or(dev.tdbal);
+        dev.tdbah = r.u32(TAG_TDBAH)?.unwrap_or(dev.tdbah);
+        dev.tdlen = r.u32(TAG_TDLEN)?.unwrap_or(dev.tdlen);
+        dev.tdh = r.u32(TAG_TDH)?.unwrap_or(dev.tdh);
+        dev.tdt = r.u32(TAG_TDT)?.unwrap_or(dev.tdt);
+
+        if let Some(buf) = r.bytes(TAG_TX_PARTIAL) {
+            if buf.len() > MAX_TX_AGGREGATE_LEN {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_partial"));
+            }
+            dev.tx_partial = buf.to_vec();
+        }
+        dev.tx_drop = r.bool(TAG_TX_DROP)?.unwrap_or(dev.tx_drop);
+
+        let ipcss = r.u32(TAG_TX_CTX_IPCSS)?.unwrap_or(dev.tx_ctx.ipcss as u32) as usize;
+        let ipcso = r.u32(TAG_TX_CTX_IPCSO)?.unwrap_or(dev.tx_ctx.ipcso as u32) as usize;
+        let ipcse = r.u32(TAG_TX_CTX_IPCSE)?.unwrap_or(dev.tx_ctx.ipcse as u32) as usize;
+        let tucss = r.u32(TAG_TX_CTX_TUCSS)?.unwrap_or(dev.tx_ctx.tucss as u32) as usize;
+        let tucso = r.u32(TAG_TX_CTX_TUCSO)?.unwrap_or(dev.tx_ctx.tucso as u32) as usize;
+        let tucse = r.u32(TAG_TX_CTX_TUCSE)?.unwrap_or(dev.tx_ctx.tucse as u32) as usize;
+        let mss = r.u32(TAG_TX_CTX_MSS)?.unwrap_or(dev.tx_ctx.mss as u32) as usize;
+        let hdr_len = r
+            .u32(TAG_TX_CTX_HDR_LEN)?
+            .unwrap_or(dev.tx_ctx.hdr_len as u32) as usize;
+
+        for v in [ipcss, ipcso, ipcse, tucss, tucso, tucse, mss, hdr_len] {
+            if v > MAX_TX_AGGREGATE_LEN {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_ctx"));
+            }
+        }
+
+        dev.tx_ctx = TxOffloadContext {
+            ipcss,
+            ipcso,
+            ipcse,
+            tucss,
+            tucso,
+            tucse,
+            mss,
+            hdr_len,
+        };
+
+        dev.tx_state = match r.u8(TAG_TX_STATE_KIND)?.unwrap_or(0) {
+            0 => None,
+            1 => {
+                let cmd = r.u8(TAG_TX_STATE_CMD)?.unwrap_or(0);
+                let css = r.u32(TAG_TX_STATE_CSS)?.unwrap_or(0) as usize;
+                let cso = r.u32(TAG_TX_STATE_CSO)?.unwrap_or(0) as usize;
+                if css > MAX_TX_AGGREGATE_LEN || cso > MAX_TX_AGGREGATE_LEN {
+                    return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_state"));
+                }
+                Some(TxPacketState::Legacy { cmd, css, cso })
+            }
+            2 => {
+                let cmd = r.u8(TAG_TX_STATE_CMD)?.unwrap_or(0);
+                let popts = r.u8(TAG_TX_STATE_POPTS)?.unwrap_or(0);
+                Some(TxPacketState::Advanced { cmd, popts })
+            }
+            _ => return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_state kind")),
+        };
+
+        dev.ra_valid = r.bool(TAG_RA_VALID)?.unwrap_or(dev.ra_valid);
+
+        if let Some(buf) = r.bytes(TAG_EEPROM) {
+            if buf.len() != dev.eeprom.len() * 2 {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 eeprom"));
+            }
+            for (slot, chunk) in dev.eeprom.iter_mut().zip(buf.chunks_exact(2)) {
+                *slot = u16::from_le_bytes([chunk[0], chunk[1]]);
+            }
+        }
+
+        if let Some(buf) = r.bytes(TAG_PHY) {
+            if buf.len() != dev.phy.len() * 2 {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 phy"));
+            }
+            for (slot, chunk) in dev.phy.iter_mut().zip(buf.chunks_exact(2)) {
+                *slot = u16::from_le_bytes([chunk[0], chunk[1]]);
+            }
+        }
+
+        dev.other_regs.clear();
+        if let Some(buf) = r.bytes(TAG_OTHER_REGS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_OTHER_REGS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "e1000 other_regs count",
+                ));
+            }
+            for _ in 0..count {
+                let key = d.u32()?;
+                let value = d.u32()?;
+                if dev.other_regs.insert(key, value).is_some() {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "e1000 other_regs duplicate key",
+                    ));
+                }
+            }
+            d.finish()?;
+        }
+
+        dev.rx_pending.clear();
+        if let Some(buf) = r.bytes(TAG_RX_PENDING) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_RX_PENDING {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "e1000 rx_pending count",
+                ));
+            }
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&len) {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "e1000 rx_pending frame",
+                    ));
+                }
+                dev.rx_pending.push_back(d.bytes(len)?.to_vec());
+            }
+            d.finish()?;
+        }
+
+        dev.tx_out.clear();
+        if let Some(buf) = r.bytes(TAG_TX_OUT) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_TX_OUT_QUEUE {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_out count"));
+            }
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&len) {
+                    return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_out frame"));
+                }
+                dev.tx_out.push_back(d.bytes(len)?.to_vec());
+            }
+            d.finish()?;
+        }
+
+        // Validate ring indices to avoid getting stuck in `process_tx`/`flush_rx_pending` after
+        // restoring a corrupted snapshot.
+        if let Some(desc_count) = dev.tx_ring_desc_count() {
+            if desc_count == 0 || dev.tdh >= desc_count || dev.tdt >= desc_count {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 tx ring indices"));
+            }
+        }
+        if let Some(desc_count) = dev.rx_ring_desc_count() {
+            if desc_count == 0 || dev.rdh >= desc_count || dev.rdt >= desc_count {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 rx ring indices"));
+            }
+        }
+
+        dev.update_irq_level();
+        if let Some(saved_irq) = r.bool(TAG_IRQ_LEVEL)? {
+            if saved_irq != dev.irq_level {
+                return Err(SnapshotError::InvalidFieldEncoding("e1000 irq_level"));
+            }
+        }
+
+        *self = dev;
+        Ok(())
     }
 }
 
