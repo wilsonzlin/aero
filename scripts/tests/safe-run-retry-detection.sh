@@ -69,6 +69,11 @@ assert_retry "unwrap-eagain-only" <<'EOF'
 called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
 EOF
 
+assert_retry "unwrap-eagain-multiline" <<'EOF'
+called Result::unwrap() on an Err value:
+Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+EOF
+
 assert_no_retry "unwrap-non-eagain-only" <<'EOF'
 called Result::unwrap() on an Err value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
 EOF

@@ -31,8 +31,21 @@ should_retry_rustc_thread_error() {
     #
     # Newer rustc versions can surface this as:
     #   thread 'rustc' panicked at 'called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }'
-    local unwrap_eagain_re='called[[:space:]]+`?Result::unwrap\(\)`?[[:space:]]+on[[:space:]]+an[[:space:]]+`?Err`?[[:space:]]+value:[[:space:]]+Os[[:space:]]+\{[[:space:]]*code:[[:space:]]*11,[[:space:]]*kind:[[:space:]]*WouldBlock'
+    local unwrap_eagain_re='called[[:space:]]+`?Result::unwrap\(\)`?[[:space:]]+on[[:space:]]+an[[:space:]]+`?Err`?[[:space:]]+value:[[:space:]]+Os[[:space:]]*\{[[:space:]]*code:[[:space:]]*11,[[:space:]]*kind:[[:space:]]*WouldBlock'
     if grep -Eq "${unwrap_eagain_re}" "${stderr_log}"; then
+        return 0
+    fi
+    # Some panic renderings wrap/line-wrap the `Os { ... }` struct such that it no longer appears on
+    # the same line as the `called Result::unwrap()` text. Handle this without requiring the more
+    # general "panicked at + EAGAIN marker" fallback by conservatively requiring:
+    # - an unwrap panic header
+    # - the Os { ... } struct with code 11 + WouldBlock
+    local unwrap_header_re='called[[:space:]]+`?Result::unwrap\(\)`?[[:space:]]+on[[:space:]]+an[[:space:]]+`?Err`?[[:space:]]+value:'
+    if grep -Eq "${unwrap_header_re}" "${stderr_log}" \
+        && grep -Eq 'Os[[:space:]]*\{' "${stderr_log}" \
+        && grep -Eq 'code:[[:space:]]*11' "${stderr_log}" \
+        && grep -Eq 'kind:[[:space:]]*WouldBlock' "${stderr_log}"
+    then
         return 0
     fi
     if grep -Eq "thread 'rustc' panicked|panicked at" "${stderr_log}" \
