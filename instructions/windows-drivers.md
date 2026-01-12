@@ -71,10 +71,12 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 - [`docs/16-guest-tools-packaging.md`](../docs/16-guest-tools-packaging.md) — Guest Tools packager specs/inputs/outputs (ISO/zip)
 - [`docs/16-virtio-drivers-win7.md`](../docs/16-virtio-drivers-win7.md) — Virtio driver plumbing notes (transport/virtqueues)
 - [`docs/16-virtio-pci-legacy-transitional.md`](../docs/16-virtio-pci-legacy-transitional.md) — Legacy/transitional virtio-pci notes (compatibility)
+- [`docs/adr/0016-win7-virtio-driver-naming.md`](../docs/adr/0016-win7-virtio-driver-naming.md) — Canonical in-tree Win7 virtio naming scheme (`aero_virtio_*`)
 - [`drivers/README.md`](../drivers/README.md) — What CI actually ships (artifact names, release workflow, Guest Tools media)
 - [`docs/virtio-windows-drivers.md`](../docs/virtio-windows-drivers.md) — Virtio driver packaging options (in-tree vs virtio-win)
 - [`docs/virtio-input.md`](../docs/virtio-input.md) — virtio-input device model notes (keyboard/mouse) + contract mapping
 - [`docs/virtio-snd.md`](../docs/virtio-snd.md) — virtio-snd device model notes + contract mapping (incl. transitional ID notes)
+- [`docs/graphics/win7-aerogpu-validation.md`](../docs/graphics/win7-aerogpu-validation.md) — AeroGPU stability checklist (TDR/vblank/perf debug playbook)
 - [`docs/windows7-guest-tools.md`](../docs/windows7-guest-tools.md) — End-to-end Win7 install + switch to virtio + AeroGPU
 - [`docs/windows7-driver-troubleshooting.md`](../docs/windows7-driver-troubleshooting.md) — Debugging tips
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — AeroGPU VGA compat
