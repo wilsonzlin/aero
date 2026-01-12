@@ -544,3 +544,87 @@ impl PcMachine {
         self.cpu.state.a20_enabled = self.bus.platform.chipset.a20().enabled();
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::PcMachine;
+    use aero_cpu_core::state::RFLAGS_IF;
+    use aero_devices::pci::profile::NIC_E1000_82540EM;
+    use aero_devices::pci::PciInterruptPin;
+    use aero_net_e1000::ICR_TXDW;
+    use aero_platform::interrupts::InterruptController as PlatformInterruptController;
+
+    #[test]
+    fn pc_machine_e1000_intx_is_synced_but_not_acknowledged_when_pending_event() {
+        let mut pc = PcMachine::new_with_e1000(2 * 1024 * 1024, None);
+
+        let bdf = NIC_E1000_82540EM.bdf;
+        let gsi = pc
+            .bus
+            .platform
+            .pci_intx
+            .gsi_for_intx(bdf, PciInterruptPin::IntA);
+        assert!(
+            gsi < 16,
+            "expected E1000 INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
+        );
+        let expected_vector = if gsi < 8 {
+            0x20u8.wrapping_add(gsi as u8)
+        } else {
+            0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+        };
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+        {
+            let mut ints = pc.bus.platform.interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            for irq in 0..16 {
+                ints.pic_mut().set_masked(irq, true);
+            }
+            // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+            ints.pic_mut().set_masked(2, false);
+            if let Ok(irq) = u8::try_from(gsi) {
+                if irq < 16 {
+                    ints.pic_mut().set_masked(irq, false);
+                }
+            }
+        }
+
+        // Assert E1000 INTx level by enabling + setting a cause bit.
+        let e1000 = pc.bus.platform.e1000().expect("e1000 enabled");
+        {
+            let mut dev = e1000.borrow_mut();
+            dev.mmio_write_u32_reg(0x00D0, ICR_TXDW); // IMS
+            dev.mmio_write_u32_reg(0x00C8, ICR_TXDW); // ICS
+            assert!(dev.irq_level());
+        }
+
+        // Prior to syncing/polling, the INTx level should not yet be visible to the interrupt
+        // controller.
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
+            None
+        );
+
+        // Ensure IF=1 so the early-return path is specifically due to the pending event.
+        pc.cpu.state.set_rflags(RFLAGS_IF);
+        pc.cpu.pending.raise_software_interrupt(0x80, 0);
+        assert!(
+            pc.cpu.pending.has_pending_event(),
+            "test setup: expected a pending event to block external interrupt delivery"
+        );
+
+        // Even though a pending event blocks delivery/acknowledge, the machine must still sync PCI
+        // INTx sources so the PIC sees the asserted line.
+        let queued = pc.poll_and_queue_one_external_interrupt();
+        assert!(
+            !queued,
+            "poll_and_queue_one_external_interrupt should not enqueue/ack while a pending event exists"
+        );
+        assert!(pc.cpu.pending.external_interrupts.is_empty());
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
+            Some(expected_vector)
+        );
+    }
+}
