@@ -253,30 +253,65 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             return Err(DiskError::CorruptImage("qcow2 metadata tables overlap"));
         }
 
-        let mut l1_buf = vec![0u8; l1_bytes_usize];
-        match backend.read_at(header.l1_table_offset, &mut l1_buf) {
-            Ok(()) => {}
-            Err(DiskError::OutOfBounds { .. }) => {
-                return Err(DiskError::CorruptImage("qcow2 l1 table truncated"));
+        // Read the L1 table without allocating an additional full-size temporary buffer.
+        let mut l1_table = Vec::new();
+        l1_table
+            .try_reserve_exact(l1_entries)
+            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
+        let mut l1_buf = Vec::new();
+        l1_buf
+            .try_reserve_exact(64 * 1024)
+            .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
+        l1_buf.resize(64 * 1024, 0);
+        let mut remaining = l1_bytes_usize;
+        let mut off = header.l1_table_offset;
+        while remaining > 0 {
+            let read_len = remaining.min(l1_buf.len());
+            match backend.read_at(off, &mut l1_buf[..read_len]) {
+                Ok(()) => {}
+                Err(DiskError::OutOfBounds { .. }) => {
+                    return Err(DiskError::CorruptImage("qcow2 l1 table truncated"));
+                }
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
-        }
-        let mut l1_table = Vec::with_capacity(l1_entries);
-        for chunk in l1_buf.chunks_exact(8) {
-            l1_table.push(be_u64(chunk));
+            for chunk in l1_buf[..read_len].chunks_exact(8) {
+                l1_table.push(be_u64(chunk));
+            }
+            off = off
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            remaining -= read_len;
         }
 
-        let mut refcount_buf = vec![0u8; refcount_bytes_usize];
-        match backend.read_at(header.refcount_table_offset, &mut refcount_buf) {
-            Ok(()) => {}
-            Err(DiskError::OutOfBounds { .. }) => {
-                return Err(DiskError::CorruptImage("qcow2 refcount table truncated"));
+        // ----- Refcount table -----
+        let refcount_entries = refcount_bytes_usize / 8;
+        let mut refcount_table = Vec::new();
+        refcount_table
+            .try_reserve_exact(refcount_entries)
+            .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
+        let mut refcount_buf = Vec::new();
+        refcount_buf
+            .try_reserve_exact(64 * 1024)
+            .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
+        refcount_buf.resize(64 * 1024, 0);
+        let mut remaining = refcount_bytes_usize;
+        let mut off = header.refcount_table_offset;
+        while remaining > 0 {
+            let read_len = remaining.min(refcount_buf.len());
+            match backend.read_at(off, &mut refcount_buf[..read_len]) {
+                Ok(()) => {}
+                Err(DiskError::OutOfBounds { .. }) => {
+                    return Err(DiskError::CorruptImage("qcow2 refcount table truncated"));
+                }
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
-        }
-        let mut refcount_table = Vec::with_capacity(refcount_bytes_usize / 8);
-        for chunk in refcount_buf.chunks_exact(8) {
-            refcount_table.push(be_u64(chunk));
+            for chunk in refcount_buf[..read_len].chunks_exact(8) {
+                refcount_table.push(be_u64(chunk));
+            }
+            off = off
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            remaining -= read_len;
         }
 
         let next_free_offset = align_up_u64(file_len, cluster_size)?;
