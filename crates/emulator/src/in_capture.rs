@@ -1,5 +1,6 @@
-use crate::io::input::ps2_set2_bytes_for_key_event;
-use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
+use aero_devices_input::Ps2MouseButton;
+
+use crate::io::input::i8042::SharedI8042Controller;
 use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use crate::io::usb::hid::gamepad::{GamepadReport, UsbHidGamepadHandle};
 use crate::io::usb::hid::hid_usage_from_js_code;
@@ -18,9 +19,8 @@ pub enum InputRoutingPolicy {
     Auto,
 }
 
-#[derive(Debug)]
 pub struct InputPipeline {
-    pub ps2: Option<Ps2Controller>,
+    pub ps2: Option<SharedI8042Controller>,
     pub virtio: Option<VirtioInputHub>,
     pub usb_keyboard: Option<UsbHidKeyboardHandle>,
     pub usb_mouse: Option<UsbHidMouseHandle>,
@@ -29,9 +29,23 @@ pub struct InputPipeline {
     pub policy: InputRoutingPolicy,
 }
 
+impl std::fmt::Debug for InputPipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputPipeline")
+            .field("ps2", &self.ps2.is_some())
+            .field("virtio", &self.virtio)
+            .field("usb_keyboard", &self.usb_keyboard)
+            .field("usb_mouse", &self.usb_mouse)
+            .field("usb_gamepad", &self.usb_gamepad)
+            .field("usb_composite", &self.usb_composite)
+            .field("policy", &self.policy)
+            .finish()
+    }
+}
+
 impl InputPipeline {
     pub fn new(
-        ps2: Option<Ps2Controller>,
+        ps2: Option<SharedI8042Controller>,
         virtio: Option<VirtioInputHub>,
         policy: InputRoutingPolicy,
     ) -> Self {
@@ -245,13 +259,10 @@ impl InputPipeline {
     }
 
     fn inject_key_ps2(&mut self, code: &str, pressed: bool) {
-        let Some(ps2) = self.ps2.as_mut() else {
+        let Some(i8042) = self.ps2.as_ref() else {
             return;
         };
-        let Some(bytes) = ps2_set2_bytes_for_key_event(code, pressed) else {
-            return;
-        };
-        ps2.keyboard.inject_bytes_set2(&bytes);
+        i8042.borrow_mut().inject_browser_key(code, pressed);
     }
 
     fn inject_key_virtio(
@@ -285,10 +296,10 @@ impl InputPipeline {
     }
 
     fn inject_mouse_move_ps2(&mut self, dx: i32, dy: i32) {
-        let Some(ps2) = self.ps2.as_mut() else {
+        let Some(i8042) = self.ps2.as_ref() else {
             return;
         };
-        ps2.mouse.inject_move(dx, dy);
+        i8042.borrow_mut().inject_mouse_motion(dx, dy, 0);
     }
 
     fn inject_mouse_move_virtio(
@@ -316,10 +327,10 @@ impl InputPipeline {
     }
 
     fn inject_mouse_button_ps2(&mut self, button: Ps2MouseButton, pressed: bool) {
-        let Some(ps2) = self.ps2.as_mut() else {
+        let Some(i8042) = self.ps2.as_ref() else {
             return;
         };
-        ps2.mouse.inject_button(button, pressed);
+        i8042.borrow_mut().inject_mouse_button(button, pressed);
     }
 
     fn inject_mouse_button_virtio(
@@ -357,10 +368,10 @@ impl InputPipeline {
     }
 
     fn inject_mouse_wheel_ps2(&mut self, delta: i32) {
-        let Some(ps2) = self.ps2.as_mut() else {
+        let Some(i8042) = self.ps2.as_ref() else {
             return;
         };
-        ps2.mouse.inject_wheel(delta);
+        i8042.borrow_mut().inject_mouse_motion(0, 0, delta);
     }
 
     fn inject_mouse_wheel_virtio(
@@ -584,7 +595,7 @@ mod tests {
     #[test]
     fn auto_routing_uses_ps2_until_virtio_driver_ok() {
         let mut mem = DenseMemory::new(0x8000).unwrap();
-        let ps2 = Ps2Controller::default();
+        let ps2 = crate::io::input::i8042::new_shared_controller();
 
         let desc_base = 0x1000;
         let avail = 0x2000;
@@ -630,11 +641,16 @@ mod tests {
         );
         let virtio = VirtioInputHub::new(keyboard, mouse);
 
-        let mut pipeline = InputPipeline::new(Some(ps2), Some(virtio), InputRoutingPolicy::Auto);
+        let mut pipeline =
+            InputPipeline::new(Some(ps2.clone()), Some(virtio), InputRoutingPolicy::Auto);
         pipeline.handle_key(&mut mem, "KeyA", true).unwrap();
 
         let ps2 = pipeline.ps2.as_ref().unwrap();
-        assert_eq!(ps2.keyboard.scancodes.len(), 1);
+        {
+            let mut ctrl = ps2.borrow_mut();
+            assert_ne!(ctrl.read_port(0x64) & 0x01, 0);
+            assert_eq!(ctrl.read_port(0x60), 0x1E);
+        }
         assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
 
         pipeline
@@ -657,23 +673,19 @@ mod tests {
     #[test]
     fn ps2_routing_emits_extended_and_sequence_scancodes() {
         let mut mem = DenseMemory::new(0x8000).unwrap();
-        let ps2 = Ps2Controller::default();
+        let ps2 = crate::io::input::i8042::new_shared_controller();
 
-        let mut pipeline = InputPipeline::new(Some(ps2), None, InputRoutingPolicy::Ps2Only);
+        let mut pipeline = InputPipeline::new(Some(ps2.clone()), None, InputRoutingPolicy::Ps2Only);
 
-        // Extended key: ArrowUp is E0 75 / E0 F0 75.
+        // Extended key: ArrowUp is translated to Set-1 bytes (E0 48 / E0 C8).
         pipeline.handle_key(&mut mem, "ArrowUp", true).unwrap();
         pipeline.handle_key(&mut mem, "ArrowUp", false).unwrap();
 
-        let bytes: Vec<u8> = pipeline
-            .ps2
-            .as_mut()
-            .unwrap()
-            .keyboard
-            .scancodes
-            .drain(..)
-            .collect();
-        assert_eq!(bytes, vec![0xE0, 0x75, 0xE0, 0xF0, 0x75]);
+        let bytes: Vec<u8> = {
+            let mut ctrl = ps2.borrow_mut();
+            (0..4).map(|_| ctrl.read_port(0x60)).collect()
+        };
+        assert_eq!(bytes, vec![0xE0, 0x48, 0xE0, 0xC8]);
 
         // Sequence keys: PrintScreen and Pause have multi-byte make/break.
         pipeline.handle_key(&mut mem, "PrintScreen", true).unwrap();
@@ -681,22 +693,18 @@ mod tests {
         pipeline.handle_key(&mut mem, "Pause", true).unwrap();
         pipeline.handle_key(&mut mem, "Pause", false).unwrap();
 
-        let bytes: Vec<u8> = pipeline
-            .ps2
-            .as_mut()
-            .unwrap()
-            .keyboard
-            .scancodes
-            .drain(..)
-            .collect();
+        let bytes: Vec<u8> = {
+            let mut ctrl = ps2.borrow_mut();
+            (0..14).map(|_| ctrl.read_port(0x60)).collect()
+        };
 
         assert_eq!(
             bytes,
             vec![
-                // PrintScreen make/break.
-                0xE0, 0x12, 0xE0, 0x7C, 0xE0, 0xF0, 0x7C, 0xE0, 0xF0, 0x12,
-                // Pause make only.
-                0xE1, 0x14, 0x77, 0xE1, 0xF0, 0x14, 0xF0, 0x77,
+                // PrintScreen make/break (Set-1).
+                0xE0, 0x2A, 0xE0, 0x37, 0xE0, 0xB7, 0xE0, 0xAA,
+                // Pause make only (Set-1).
+                0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5,
             ]
         );
     }

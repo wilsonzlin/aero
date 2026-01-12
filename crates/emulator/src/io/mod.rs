@@ -3,7 +3,6 @@ pub mod audio;
 pub mod input;
 pub mod net;
 pub mod pci;
-pub mod ps2;
 pub mod serial;
 pub mod storage;
 pub mod usb;

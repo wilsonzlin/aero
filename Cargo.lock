@@ -1681,6 +1681,7 @@ version = "0.1.0"
 dependencies = [
  "aero-d3d11",
  "aero-devices",
+ "aero-devices-input",
  "aero-edid",
  "aero-gpu",
  "aero-gpu-trace",
