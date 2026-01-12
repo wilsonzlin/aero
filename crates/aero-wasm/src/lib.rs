@@ -235,6 +235,9 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("cpu_state_align", CPU_STATE_ALIGN as u32);
         set_u32("cpu_rip_off", CPU_RIP_OFF as u32);
         set_u32("cpu_rflags_off", CPU_RFLAGS_OFF as u32);
+        set_u32("jit_ctx_ram_base_offset", JitContext::RAM_BASE_OFFSET);
+        set_u32("jit_ctx_tlb_salt_offset", JitContext::TLB_SALT_OFFSET);
+        set_u32("jit_ctx_tlb_offset", JitContext::TLB_OFFSET);
         set_u32("jit_ctx_header_bytes", JitContext::BYTE_SIZE as u32);
         set_u32("jit_ctx_total_bytes", JitContext::TOTAL_BYTE_SIZE as u32);
         set_u32("jit_tlb_entries", JIT_TLB_ENTRIES as u32);

@@ -96,6 +96,9 @@ export interface WasmApi {
         readonly cpu_rip_off: number;
         readonly cpu_rflags_off: number;
         readonly cpu_gpr_off: Uint32Array;
+        readonly jit_ctx_ram_base_offset?: number;
+        readonly jit_ctx_tlb_salt_offset?: number;
+        readonly jit_ctx_tlb_offset?: number;
         readonly jit_ctx_header_bytes?: number;
         readonly jit_ctx_total_bytes?: number;
         readonly jit_tlb_entries?: number;

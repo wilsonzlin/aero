@@ -306,6 +306,8 @@ async function runTieredVm(iterations: number, threshold: number) {
   // Newer WASM builds expose Tier-1 JIT layout fields directly on `jit_abi_constants()` to avoid
   // JS-side drift. Fall back to the older `tiered_vm_jit_abi_layout()` helper for backwards
   // compatibility with deployed bundles.
+  const jitCtxRamBaseOffset = (readMaybeU32(jitAbi, 'jit_ctx_ram_base_offset') ?? 0) >>> 0;
+  const jitCtxTlbSaltOffset = (readMaybeU32(jitAbi, 'jit_ctx_tlb_salt_offset') ?? 8) >>> 0;
   let jitCtxHeaderBytes = readMaybeU32(jitAbi, 'jit_ctx_header_bytes') ?? 0;
   let jitTlbEntries = readMaybeU32(jitAbi, 'jit_tlb_entries') ?? 0;
   let jitTlbEntryBytes = readMaybeU32(jitAbi, 'jit_tlb_entry_bytes') ?? 0;
@@ -600,7 +602,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       const tlbMaskBig = tlbEntriesBig - 1n;
       const idx = Number((tlbEntriesBig & tlbMaskBig) === 0n ? vpn & tlbMaskBig : vpn % tlbEntriesBig) >>> 0;
 
-      const tlbSalt = dv.getBigUint64(jitCtxPtr + 8, true);
+      const tlbSalt = dv.getBigUint64(jitCtxPtr + jitCtxTlbSaltOffset, true);
       const tag = asU64((vpn ^ tlbSalt) | 1n);
 
       const isRam = vaddrU < BigInt(guest_size);
@@ -652,7 +654,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     return true;
   };
 
-  const runBigIntImportsTest = async (): Promise<boolean> => {
+      const runBigIntImportsTest = async (): Promise<boolean> => {
     try {
       // Pick deterministic addresses in guest RAM that are not touched by the hot-loop code at 0x1000.
       // We use guest RAM as a scratch region for the Tier-1 ABI buffer (CpuState + jit_ctx + tier2_ctx + commit flag).
@@ -661,8 +663,8 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (cpuPtr + commitFlagOffset + 4 > guest_base + guest_size) return false;
 
       // Initialize the minimal JitContext header expected by our `mmu_translate` stub.
-      dv.setBigUint64(jitCtxPtr + 0, BigInt(guest_base), true); // ram_base
-      dv.setBigUint64(jitCtxPtr + 8, 0n, true); // tlb_salt
+      dv.setBigUint64(jitCtxPtr + jitCtxRamBaseOffset, BigInt(guest_base), true); // ram_base
+      dv.setBigUint64(jitCtxPtr + jitCtxTlbSaltOffset, 0n, true); // tlb_salt
 
       const run = async (bytes: Uint8Array<ArrayBuffer>): Promise<boolean> => {
         const module = await WebAssembly.compile(bytes);
