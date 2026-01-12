@@ -96,9 +96,9 @@ fn write_desc(
 }
 
 fn negotiate_features(dev: &mut VirtioPciDevice, mem: &mut GuestRam, caps: &Caps) {
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     bar_write_u8(dev, mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     bar_write_u8(

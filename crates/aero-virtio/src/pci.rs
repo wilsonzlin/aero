@@ -278,6 +278,14 @@ impl VirtioPciDevice {
         (self.command() & (1 << 2)) != 0
     }
 
+    fn mem_enabled(&self) -> bool {
+        (self.command() & (1 << 1)) != 0
+    }
+
+    fn io_enabled(&self) -> bool {
+        (self.command() & (1 << 0)) != 0
+    }
+
     fn intx_disabled(&self) -> bool {
         (self.command() & (1 << 10)) != 0
     }
@@ -287,6 +295,7 @@ impl VirtioPciDevice {
     /// Some platform integrations maintain PCI config space separately from the virtio transport
     /// model; those integrations should call this method whenever the guest updates the PCI
     /// command register so the virtio transport can correctly apply:
+    /// - BAR decoding gating via `COMMAND.IO` (bit 0) and `COMMAND.MEM` (bit 1),
     /// - bus mastering (DMA) gating via `COMMAND.BME` (bit 2), and
     /// - legacy INTx gating via `COMMAND.INTX_DISABLE` (bit 10).
     pub fn set_pci_command(&mut self, command: u16) {
@@ -339,6 +348,11 @@ impl VirtioPciDevice {
     }
 
     pub fn bar0_read(&mut self, offset: u64, data: &mut [u8]) {
+        // PCI command register Memory Space Enable gates BAR MMIO decoding.
+        if !self.mem_enabled() {
+            data.fill(0xFF);
+            return;
+        }
         if !self.modern_enabled {
             data.fill(0);
             return;
@@ -387,6 +401,10 @@ impl VirtioPciDevice {
     /// notifications only mark a queue as needing service. Call [`VirtioPciDevice::process_notified_queues`]
     /// later with access to guest RAM to execute the notified virtqueues.
     pub fn bar0_write(&mut self, offset: u64, data: &[u8]) {
+        // PCI command register Memory Space Enable gates BAR MMIO decoding.
+        if !self.mem_enabled() {
+            return;
+        }
         if !self.modern_enabled {
             return;
         }
@@ -430,6 +448,11 @@ impl VirtioPciDevice {
 
     /// Read from the legacy virtio-pci I/O port register block.
     pub fn legacy_io_read(&mut self, offset: u64, data: &mut [u8]) {
+        // PCI command register I/O Space Enable gates BAR I/O decoding.
+        if !self.io_enabled() {
+            data.fill(0xFF);
+            return;
+        }
         if !self.legacy_io_enabled {
             data.fill(0);
             return;
@@ -473,6 +496,10 @@ impl VirtioPciDevice {
     /// notifications only mark a queue as pending; call [`VirtioPciDevice::process_notified_queues`]
     /// later with access to guest RAM to execute the virtqueue(s).
     pub fn legacy_io_write(&mut self, offset: u64, data: &[u8]) {
+        // PCI command register I/O Space Enable gates BAR I/O decoding.
+        if !self.io_enabled() {
+            return;
+        }
         if !self.legacy_io_enabled {
             return;
         }
@@ -1734,9 +1761,10 @@ mod tests {
             Box::new(NoopInterrupts),
         );
 
-        // Virtio queue processing is gated on PCI COMMAND.BME (bit 2). Enable bus mastering so the
-        // transport is allowed to touch guest memory when polling.
-        pci.set_pci_command(1u16 << 2);
+        // Legacy register access is gated on PCI COMMAND.IO (bit 0) and virtio queue processing is
+        // gated on PCI COMMAND.BME (bit 2). Enable both so the transport can be programmed via the
+        // legacy I/O ports and is allowed to touch guest memory when polling.
+        pci.set_pci_command((1u16 << 0) | (1u16 << 2));
 
         // Enable queue 0 using a legacy PFN at 0x1000.
         pci.legacy_io_write(VIRTIO_PCI_LEGACY_QUEUE_SEL, &0u16.to_le_bytes());

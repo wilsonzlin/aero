@@ -135,9 +135,9 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     let caps = parse_caps(&mut dev);
     assert_eq!(caps.notify_mult, 4);
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let mut mem = WindowedGuestMemory::new(BASE, 0x20000);
 

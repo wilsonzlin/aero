@@ -73,8 +73,10 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     let net_rx_ring = open_ring_by_kind(io_ipc_sab.clone(), NET_RX, 0).expect("open NET_RX ring");
     let mut bridge = VirtioNetPciBridge::new(guest_base, guest_size, io_ipc_sab, None)
         .expect("VirtioNetPciBridge::new");
-    // PCI Bus Master Enable should start disabled to prevent DMA before the guest explicitly
-    // enables it during PCI enumeration.
+    // Enable PCI memory decoding so BAR0 MMIO reads/writes reach the device, but keep Bus Master
+    // Enable disabled so the device cannot DMA until the guest explicitly enables it during PCI
+    // enumeration.
+    bridge.set_pci_command(0x0002);
 
     // Unknown BAR0 reads should return 0.
     assert_eq!(bridge.mmio_read(0x500, 4), 0);
@@ -254,7 +256,7 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     );
 
     // Enable bus mastering and retry: the pending notify should now be processed via DMA.
-    bridge.set_pci_command(0x0004);
+    bridge.set_pci_command(0x0006);
     bridge.poll();
 
     assert_eq!(

@@ -211,9 +211,9 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     // Class code: display controller / other.
     let mut cfg = [0u8; 256];
@@ -426,9 +426,9 @@ fn virtio_gpu_rejects_oversize_request_without_wedging_queue() {
     let gpu = VirtioGpu2d::new(4, 4, SharedScanout(shared_scanout));
     let mut dev = VirtioPciDevice::new(Box::new(gpu), Box::new(InterruptLog::default()));
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x20000);

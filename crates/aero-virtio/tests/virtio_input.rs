@@ -125,9 +125,9 @@ fn virtio_input_posts_buffers_then_delivers_events() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
@@ -225,7 +225,7 @@ fn virtio_input_statusq_buffers_are_consumed() {
 
     // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
     // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
@@ -307,6 +307,8 @@ fn virtio_input_statusq_buffers_are_consumed() {
 fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let keyboard = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(keyboard), Box::new(InterruptLog::default()));
+    // Enable PCI memory decoding so BAR0 MMIO reads/writes reach the transport.
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x10000);
@@ -386,6 +388,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     // Mouse variant exposes a different name and capability bitmap.
     let mouse = VirtioInput::new(VirtioInputDeviceKind::Mouse);
     let mut dev = VirtioPciDevice::new(Box::new(mouse), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
 
     bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_NAME);
@@ -449,7 +452,7 @@ fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
 
     // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
     // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
 
@@ -489,6 +492,7 @@ fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
 fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
@@ -514,6 +518,7 @@ fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes
 fn virtio_pci_queue_notify_off_matches_queue_index() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
@@ -527,6 +532,7 @@ fn virtio_pci_queue_notify_off_matches_queue_index() {
 fn virtio_pci_reserved_feature_select_reads_zero_and_ignores_writes() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
@@ -546,6 +552,7 @@ fn virtio_pci_reserved_feature_select_reads_zero_and_ignores_writes() {
 fn virtio_pci_queue_size_is_read_only() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
@@ -565,7 +572,7 @@ fn virtio_pci_notify_accepts_32bit_writes() {
 
     // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
     // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
@@ -642,6 +649,7 @@ fn virtio_pci_notify_accepts_32bit_writes() {
 fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
@@ -680,6 +688,7 @@ fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
 fn virtio_pci_clears_features_ok_when_driver_omits_version_1_in_modern_mode() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 
@@ -762,7 +771,7 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
 
     // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
     // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
@@ -857,6 +866,7 @@ fn virtio_pci_device_cfg_writes_do_not_raise_config_interrupt() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let (irq, irq_state) = SharedLegacyIrq::new();
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x10000);
 

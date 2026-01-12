@@ -910,12 +910,27 @@ impl NetworkBackend for VirtioNetBackendAdapter {
 }
 
 struct VirtioPciBar0Mmio {
+    pci_cfg: SharedPciConfigPorts,
+    bdf: PciBdf,
     dev: Rc<RefCell<VirtioPciDevice>>,
 }
 
 impl VirtioPciBar0Mmio {
-    fn new(dev: Rc<RefCell<VirtioPciDevice>>) -> Self {
-        Self { dev }
+    fn new(pci_cfg: SharedPciConfigPorts, dev: Rc<RefCell<VirtioPciDevice>>, bdf: PciBdf) -> Self {
+        Self { pci_cfg, bdf, dev }
+    }
+
+    fn sync_pci_command(&mut self) {
+        let command = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(self.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+
+        self.dev.borrow_mut().set_pci_command(command);
     }
 
     fn all_ones(size: usize) -> u64 {
@@ -931,6 +946,7 @@ impl VirtioPciBar0Mmio {
 
 impl PciBarMmioHandler for VirtioPciBar0Mmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_pci_command();
         match size {
             1 | 2 | 4 | 8 => {
                 let mut buf = [0u8; 8];
@@ -945,6 +961,7 @@ impl PciBarMmioHandler for VirtioPciBar0Mmio {
         if !matches!(size, 1 | 2 | 4 | 8) {
             return;
         }
+        self.sync_pci_command();
         let bytes = value.to_le_bytes();
         self.dev.borrow_mut().bar0_write(offset, &bytes[..size]);
     }
@@ -3764,14 +3781,22 @@ impl Machine {
                         router.register_handler(
                             aero_devices::pci::profile::VIRTIO_NET.bdf,
                             0,
-                            VirtioPciBar0Mmio::new(virtio_net),
+                            VirtioPciBar0Mmio::new(
+                                pci_cfg.clone(),
+                                virtio_net,
+                                aero_devices::pci::profile::VIRTIO_NET.bdf,
+                            ),
                         );
                     }
                     if let Some(virtio_blk) = virtio_blk.clone() {
                         router.register_handler(
                             aero_devices::pci::profile::VIRTIO_BLK.bdf,
                             0,
-                            VirtioPciBar0Mmio::new(virtio_blk),
+                            VirtioPciBar0Mmio::new(
+                                pci_cfg.clone(),
+                                virtio_blk,
+                                aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                            ),
                         );
                     }
                     Box::new(router)
@@ -5903,7 +5928,9 @@ mod tests {
             Box::new(NoopVirtioInterruptSink),
         )));
 
-        let mut mmio = VirtioPciBar0Mmio::new(dev);
+        let pci_cfg: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+        let mut mmio =
+            VirtioPciBar0Mmio::new(pci_cfg, dev, aero_devices::pci::profile::VIRTIO_NET.bdf);
 
         assert_eq!(PciBarMmioHandler::read(&mut mmio, 0, 0), 0);
         PciBarMmioHandler::write(&mut mmio, 0, 0, 0xDEAD_BEEF);

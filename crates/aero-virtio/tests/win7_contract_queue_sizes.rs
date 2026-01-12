@@ -53,6 +53,8 @@ fn assert_queue_layout(
     expected_num_queues: u16,
     expected_sizes: &[u16],
 ) {
+    // Enable PCI memory decoding so BAR0 MMIO reads/writes reach the transport.
+    dev.set_pci_command(0x0002);
     let caps = parse_caps(dev);
 
     // Common cfg: num_queues.

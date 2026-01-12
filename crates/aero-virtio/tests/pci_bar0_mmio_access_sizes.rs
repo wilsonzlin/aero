@@ -7,7 +7,9 @@ use aero_virtio::pci::{InterruptLog, VirtioPciDevice, VIRTIO_STATUS_ACKNOWLEDGE}
 #[test]
 fn virtio_bar0_mmio_supports_common_cfg_access_sizes() {
     let blk = VirtioBlk::new(MemDisk::new(1024 * 1024));
-    let pci = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+    let mut pci = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+    // Enable PCI memory decoding so BAR0 MMIO reads/writes reach the transport.
+    pci.set_pci_command(0x0002);
     let mem = GuestRam::new(64 * 1024);
 
     let mut bar0 = VirtioBar0Mmio::new(pci, mem);

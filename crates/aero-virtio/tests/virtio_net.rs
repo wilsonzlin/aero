@@ -131,9 +131,9 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
@@ -316,9 +316,9 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
     let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
     let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x20000);

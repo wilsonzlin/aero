@@ -82,9 +82,9 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
     let mut mem = GuestRam::new(0x20000);
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2), including legacy virtqueue processing.
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI I/O decoding (legacy BAR2) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2), including legacy virtqueue processing.
+    dev.config_write(0x04, &0x0005u16.to_le_bytes());
 
     // 1) Read device features and accept them (legacy path exposes only low 32 bits).
     let mut f = [0u8; 4];
@@ -187,8 +187,10 @@ fn virtio_pci_legacy_dma_is_gated_on_pci_bus_master_enable() {
     let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
     let mut mem = GuestRam::new(0x20000);
 
-    // Intentionally do *not* enable PCI bus mastering yet. The virtio-pci transport must not touch
-    // guest memory (virtqueue structures + buffers) until the guest sets `PCI COMMAND.BME`.
+    // Enable PCI I/O decoding so legacy port accesses reach the device, but intentionally do *not*
+    // enable PCI bus mastering yet. The virtio-pci transport must not touch guest memory
+    // (virtqueue structures + buffers) until the guest sets `PCI COMMAND.BME`.
+    dev.config_write(0x04, &0x0001u16.to_le_bytes());
 
     // 1) Read device features and accept them (legacy path exposes only low 32 bits).
     let mut f = [0u8; 4];
@@ -253,7 +255,7 @@ fn virtio_pci_legacy_dma_is_gated_on_pci_bus_master_enable() {
     assert_eq!(irq_state.borrow().raises, 0);
 
     // Enabling PCI bus mastering should allow the pending notify to be processed.
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0005u16.to_le_bytes());
     dev.process_notified_queues(&mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
@@ -272,9 +274,10 @@ fn virtio_pci_legacy_intx_disable_suppresses_line_but_retains_pending() {
     let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
     let mut mem = GuestRam::new(0x20000);
 
-    // Enable PCI bus mastering (DMA) but disable legacy INTx delivery. The device should retain
-    // the internal pending latch and reassert the line if the guest later re-enables INTx.
-    dev.config_write(0x04, &0x0404u16.to_le_bytes());
+    // Enable PCI I/O decoding + bus mastering (DMA) but disable legacy INTx delivery. The device
+    // should retain the internal pending latch and reassert the line if the guest later re-enables
+    // INTx.
+    dev.config_write(0x04, &0x0405u16.to_le_bytes());
 
     // 1) Read device features and accept them (legacy path exposes only low 32 bits).
     let mut f = [0u8; 4];
@@ -341,7 +344,7 @@ fn virtio_pci_legacy_intx_disable_suppresses_line_but_retains_pending() {
 
     // Re-enable legacy INTx (keep BME set) and ensure the pending interrupt is delivered without
     // additional device work.
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0005u16.to_le_bytes());
     assert!(irq_state.borrow().asserted);
     assert_eq!(irq_state.borrow().raises, 1);
     assert!(dev.irq_level());

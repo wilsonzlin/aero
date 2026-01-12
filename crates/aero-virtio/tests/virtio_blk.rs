@@ -233,9 +233,9 @@ fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRa
     dev.config_read(0x14, &mut bar);
     assert_eq!(u32::from_le_bytes(bar), 0);
 
-    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
-    // `PCI COMMAND.BME` (bit 2).
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     // `common` may legitimately be at BAR offset 0; the rest should be mapped.
@@ -746,7 +746,9 @@ fn virtio_pci_modern_dma_is_gated_on_pci_bus_master_enable() {
     // Disable bus mastering after the driver has set up the virtqueue. The guest should still be
     // able to interact with BAR0 MMIO, but the transport must not touch guest memory until BME is
     // re-enabled.
-    dev.config_write(0x04, &0x0000u16.to_le_bytes());
+    // Keep memory decoding enabled so BAR0 notify writes still reach the device, but disable bus
+    // mastering so DMA is blocked.
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
 
     // Build a FLUSH request.
     let header = 0x7000;
@@ -775,7 +777,7 @@ fn virtio_pci_modern_dma_is_gated_on_pci_bus_master_enable() {
     assert!(!irq.legacy_level());
 
     // Re-enable bus mastering and ensure the pending notify is processed.
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
     dev.process_notified_queues(&mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
@@ -790,7 +792,7 @@ fn virtio_pci_modern_intx_disable_suppresses_line_but_retains_pending() {
     let (mut dev, caps, mut mem, _backing, _flushes, irq) = setup_with_irq(irq);
 
     // Enable bus mastering but disable INTx delivery.
-    dev.config_write(0x04, &0x0404u16.to_le_bytes());
+    dev.config_write(0x04, &0x0406u16.to_le_bytes());
 
     // Build a FLUSH request.
     let header = 0x7000;
@@ -820,7 +822,7 @@ fn virtio_pci_modern_intx_disable_suppresses_line_but_retains_pending() {
     assert!(!dev.irq_level());
 
     // Re-enable INTx and ensure the pending latch reasserts the line without additional work.
-    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
     assert_eq!(irq.legacy_count(), 1);
     assert!(irq.legacy_level());
     assert!(dev.irq_level());
@@ -864,7 +866,7 @@ fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
     assert!(irq0.legacy_level());
 
     // Disable INTx delivery but *do not* read ISR (so the internal pending latch remains set).
-    dev.config_write(0x04, &0x0404u16.to_le_bytes()); // BME + INTX_DISABLE
+    dev.config_write(0x04, &0x0406u16.to_le_bytes()); // MEM + BME + INTX_DISABLE
     assert!(
         !irq0.legacy_level(),
         "INTx line should be deasserted when disabled"
@@ -895,7 +897,7 @@ fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
     assert!(!restored.irq_level());
 
     // Re-enable INTx and confirm the pending interrupt is delivered without additional queue work.
-    restored.config_write(0x04, &0x0004u16.to_le_bytes()); // BME only
+    restored.config_write(0x04, &0x0006u16.to_le_bytes()); // MEM + BME
     assert_eq!(irq1.legacy_count(), 1);
     assert!(irq1.legacy_level());
     assert!(restored.irq_level());

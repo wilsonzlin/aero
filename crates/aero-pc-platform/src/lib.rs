@@ -694,11 +694,28 @@ fn all_ones(size: usize) -> u64 {
 }
 
 struct VirtioPciBar0Mmio {
+    pci_cfg: SharedPciConfigPorts,
+    bdf: PciBdf,
     dev: Rc<RefCell<VirtioPciDevice>>,
+}
+
+impl VirtioPciBar0Mmio {
+    fn sync_pci_command(&mut self) {
+        let command = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(self.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+        self.dev.borrow_mut().set_pci_command(command);
+    }
 }
 
 impl PciBarMmioHandler for VirtioPciBar0Mmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_pci_command();
         let mut dev = self.dev.borrow_mut();
         match size {
             1 | 2 | 4 | 8 => {
@@ -711,6 +728,7 @@ impl PciBarMmioHandler for VirtioPciBar0Mmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.sync_pci_command();
         let mut dev = self.dev.borrow_mut();
         match size {
             1 | 2 | 4 | 8 => {
@@ -1760,7 +1778,11 @@ impl PcPlatform {
                 router.register_handler(
                     aero_devices::pci::profile::VIRTIO_BLK.bdf,
                     0,
-                    VirtioPciBar0Mmio { dev: virtio_blk },
+                    VirtioPciBar0Mmio {
+                        pci_cfg: pci_cfg.clone(),
+                        bdf: aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                        dev: virtio_blk,
+                    },
                 );
             }
             if let Some(nvme) = nvme.clone() {
