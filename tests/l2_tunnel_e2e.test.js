@@ -4,6 +4,7 @@ import net from "node:net";
 
 import { runL2TunnelProbe } from "./helpers/l2_probe.js";
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
+import { L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD } from "../web/src/shared/l2TunnelProtocol.ts";
 
 async function startTcpEchoServer() {
   const server = net.createServer((socket) => {
@@ -67,11 +68,11 @@ test(
           url: proxy.url,
           dnsName: "echo.local",
           echoPort: echo.port,
-          // Keep payload small enough to fit within the default L2 tunnel max frame size (2048).
+          // Keep payload small enough to fit within the default L2 tunnel max frame payload size.
           // `aero-l2-proxy` reads from the forwarded TCP socket in 16KiB chunks; if we ask for a
           // large echo, the stack may attempt to emit a single oversized Ethernet frame which the
           // tunnel encoder will drop.
-          throughputBytes: 1800,
+          throughputBytes: Math.min(1800, Math.max(1, L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD - 200)),
         });
 
         assert.equal(result.dns.name, "echo.local");
