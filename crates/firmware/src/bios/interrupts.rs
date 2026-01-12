@@ -351,6 +351,20 @@ fn handle_int13(
             cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | transferred;
             let _ = drive;
         }
+        0x03 => {
+            // Write sectors (CHS).
+            //
+            // The BIOS disk interface is currently backed by a read-only [`BlockDevice`]. Report
+            // write-protect rather than "function unsupported" so DOS-era software can degrade
+            // gracefully.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            bios.last_int13_status = 0x03; // write protected
+            cpu.rflags |= FLAG_CF;
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
+        }
         0x04 => {
             // Verify sectors (CHS).
             //
@@ -574,6 +588,25 @@ fn handle_int13(
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
+        }
+        0x43 => {
+            // Extended write via Disk Address Packet (EDD).
+            //
+            // Not supported with the current read-only [`BlockDevice`] implementation.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
+            if drive < 0x80 {
+                bios.last_int13_status = 0x01;
+                cpu.rflags |= FLAG_CF;
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                return;
+            }
+
+            bios.last_int13_status = 0x03; // write protected
+            cpu.rflags |= FLAG_CF;
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x03u64 << 8);
         }
         0x48 => {
             // Extended get drive parameters (EDD).
@@ -1302,6 +1335,58 @@ mod tests {
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
         assert_eq!(mem.read_u8(0x1000), 0xAA);
+    }
+
+    #[test]
+    fn int13_chs_write_reports_write_protected() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 4];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        cpu.gpr[gpr::RBX] = 0x1000;
+        cpu.gpr[gpr::RAX] = 0x0301; // AH=03h write, AL=1 sector
+        cpu.gpr[gpr::RCX] = 0x0001; // CH=0, CL=1
+        cpu.gpr[gpr::RDX] = 0x0080; // DH=0, DL=0x80 (HDD0)
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+        mem.write_u8(0x1000, 0xCC);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
+    }
+
+    #[test]
+    fn int13_ext_write_reports_write_protected() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 4];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0x80; // DL = HDD0
+        cpu.gpr[gpr::RAX] = 0x4300; // AH=43h extended write
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+        cpu.a20_enabled = mem.a20_enabled();
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count
+        mem.write_u16(dap_addr + 4, 0x1000); // offset
+        mem.write_u16(dap_addr + 6, 0x0000); // segment
+        mem.write_u64(dap_addr + 8, 0); // LBA
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
     }
 
     #[test]
