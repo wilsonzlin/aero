@@ -2030,8 +2030,8 @@ function maybeInitVirtioSndDevice(): void {
   if (!hdaDevice) {
     if (micRingBuffer) {
       try {
-        dev.setMicRingBuffer(micRingBuffer);
         if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
+        dev.setMicRingBuffer(micRingBuffer);
       } catch {
         // ignore
       }
@@ -2572,10 +2572,10 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
       }
     }
   } else if (snd) {
-    snd.setMicRingBuffer(ringBuffer);
     if (ringBuffer && micSampleRate > 0) {
       snd.setCaptureSampleRateHz(micSampleRate);
     }
+    snd.setMicRingBuffer(ringBuffer);
   }
 }
 
