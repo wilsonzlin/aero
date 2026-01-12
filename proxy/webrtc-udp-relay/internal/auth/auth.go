@@ -65,13 +65,13 @@ func CredentialFromHeaders(mode config.AuthMode, h http.Header) string {
 		scheme, token := parseAuthHeader(h.Get("Authorization"))
 		// Support common variations for API-key auth so clients don't have to know
 		// the server's auth mode a priori.
-		if (scheme == "apikey" || scheme == "bearer") && token != "" {
+		if (strings.EqualFold(scheme, "apikey") || strings.EqualFold(scheme, "bearer")) && token != "" {
 			return token
 		}
 		return ""
 	case config.AuthModeJWT:
 		scheme, token := parseAuthHeader(h.Get("Authorization"))
-		if (scheme == "bearer" || scheme == "apikey") && token != "" {
+		if (strings.EqualFold(scheme, "bearer") || strings.EqualFold(scheme, "apikey")) && token != "" {
 			return token
 		}
 		// Forward/compat: accept X-API-Key as a token carrier for mode-agnostic
@@ -90,11 +90,16 @@ func parseAuthHeader(v string) (scheme, token string) {
 	if v == "" {
 		return "", ""
 	}
-	parts := strings.SplitN(v, " ", 2)
-	if len(parts) != 2 {
+	sep := strings.IndexByte(v, ' ')
+	if sep == -1 {
 		return "", ""
 	}
-	return strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
+	scheme = strings.TrimSpace(v[:sep])
+	token = strings.TrimSpace(v[sep+1:])
+	if scheme == "" || token == "" {
+		return "", ""
+	}
+	return scheme, token
 }
 
 func CredentialFromQuery(mode config.AuthMode, q url.Values) (string, error) {
