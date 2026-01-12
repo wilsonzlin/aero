@@ -524,13 +524,13 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     if (delta & 0x02) changes.push({ code: BTN_RIGHT, pressed: (next & 0x02) !== 0 });
     if (delta & 0x04) changes.push({ code: BTN_MIDDLE, pressed: (next & 0x04) !== 0 });
 
-      for (const ch of changes) {
-        try {
-          this.#dev.inject_button(ch.code >>> 0, ch.pressed);
-        } catch {
-          // ignore
-        }
+    for (const ch of changes) {
+      try {
+        this.#dev.inject_button(ch.code >>> 0, ch.pressed);
+      } catch {
+        // ignore
       }
+    }
 
     this.#mouseButtons = next;
     this.#syncIrq();
