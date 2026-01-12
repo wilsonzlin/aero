@@ -121,6 +121,12 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
             }
         }
     }
+
+    // Exercise the "collect into Vec" helper too (different allocation patterns / code paths).
+    // Cap size to avoid creating huge vectors for pathological inputs.
+    if cmd_bytes.len() <= 64 * 1024 {
+        let _ = cmd::AerogpuCmdStreamView::decode_from_le_bytes(cmd_bytes);
+    }
 }
 
 fn fuzz_alloc_table(alloc_bytes: &[u8]) {
@@ -176,6 +182,13 @@ fn fuzz_ring_layouts(ring_bytes: &[u8]) {
     }
     if let Ok(page) = ring::AerogpuFencePage::decode_from_le_bytes(ring_bytes) {
         let _ = page.validate_prefix();
+    }
+
+    // Also exercise the fence-page writer helper (encode path).
+    if ring_bytes.len() >= ring::AerogpuFencePage::SIZE_BYTES {
+        let mut tmp = [0u8; ring::AerogpuFencePage::SIZE_BYTES];
+        tmp.copy_from_slice(&ring_bytes[..ring::AerogpuFencePage::SIZE_BYTES]);
+        let _ = ring::write_fence_page_completed_fence_le(&mut tmp, 0xDEAD_BEEF);
     }
 }
 
