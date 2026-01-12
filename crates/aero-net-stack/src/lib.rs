@@ -19,11 +19,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod backend;
 pub mod packet;
 mod policy;
 pub mod snapshot;
 mod stack;
 
+pub use backend::NetStackBackend;
 pub use policy::{HostPolicy, IpCidr};
 pub use snapshot::{
     DnsCacheEntrySnapshot, NetworkStackSnapshotState, TcpConnectionSnapshot, TcpConnectionStatus,

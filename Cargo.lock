@@ -443,6 +443,7 @@ name = "aero-net-stack"
 version = "0.1.0"
 dependencies = [
  "aero-io-snapshot",
+ "aero-net-backend",
  "futures-util",
  "nt-packetlib",
  "tokio",
