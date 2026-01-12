@@ -55,12 +55,23 @@ const GHC_HR: u32 = 1 << 0;
 const GHC_IE: u32 = 1 << 1;
 const GHC_AE: u32 = 1 << 31;
 
+// CAP2 bits.
+const CAP2_BOH: u32 = 1 << 0;
+
+// BOHC bits (subset).
+const BOHC_BOS: u32 = 1 << 0;
+const BOHC_OOS: u32 = 1 << 1;
+const BOHC_SOOE: u32 = 1 << 2;
+const BOHC_OOC: u32 = 1 << 3;
+const _BOHC_BB: u32 = 1 << 4;
+
 const PORT_CMD_ST: u32 = 1 << 0;
 const PORT_CMD_FRE: u32 = 1 << 4;
 const PORT_CMD_FR: u32 = 1 << 14;
 const PORT_CMD_CR: u32 = 1 << 15;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
+const PORT_IS_TFES: u32 = 1 << 30;
 
 /// SATA drive signature (PxSIG) for an ATA device.
 const SATA_SIG_ATA: u32 = 0x0000_0101;
@@ -84,15 +95,18 @@ impl HbaRegs {
         let s64a = 1u32 << 31;
         Self {
             cap: np | ncs | s64a,
-            ghc: 0,
-            cap2: 0,
+            // QEMU/ICH9-style: controller comes up in AHCI mode with AE set.
+            ghc: GHC_AE,
+            // Advertise BIOS/OS handoff (BOHC) capability since we expose the register.
+            cap2: CAP2_BOH,
             bohc: 0,
             vs: 0x0001_0300, // AHCI 1.3
         }
     }
 
     fn reset(&mut self) {
-        self.ghc = 0;
+        // Preserve ICH9/QEMU behaviour: stay in AHCI mode (AE=1) while clearing IE.
+        self.ghc = GHC_AE;
         self.bohc = 0;
     }
 }
@@ -296,11 +310,46 @@ impl AhciController {
         match offset {
             HBA_REG_GHC => self.write_ghc(val),
             HBA_REG_IS => self.write_hba_is(val),
-            HBA_REG_BOHC => self.hba.bohc = val,
+            HBA_REG_BOHC => self.write_bohc(val),
             _ if offset >= PORT_BASE => self.write_port_u32(offset, val),
             _ => {}
         }
         self.update_irq();
+    }
+
+    fn write_bohc(&mut self, val: u32) {
+        // BIOS/OS handoff is (largely) a firmware concern, but some guests probe BOHC when
+        // CAP2.BOH is set. We implement a small subset of the AHCI semantics to avoid wedging:
+        // - BOS/OOS/SOOE are treated as simple R/W bits.
+        // - OOC is treated as W1C (write-1-to-clear).
+        // - When OOS transitions from 0->1, we immediately clear BOS (there is no BIOS) and set
+        //   OOC to indicate the ownership change event.
+        //
+        // Bits outside this subset are ignored/read-as-zero.
+        let old = self.hba.bohc;
+        let old_oos = old & BOHC_OOS != 0;
+
+        // Apply W1C for OOC first.
+        let mut next = old;
+        if val & BOHC_OOC != 0 {
+            next &= !BOHC_OOC;
+        }
+
+        // Update writable bits.
+        next &= !(BOHC_BOS | BOHC_OOS | BOHC_SOOE);
+        next |= val & (BOHC_BOS | BOHC_OOS | BOHC_SOOE);
+
+        // No BIOS exists in this emulation; if the OS claims ownership, immediately grant it.
+        let new_oos = next & BOHC_OOS != 0;
+        if !old_oos && new_oos {
+            next &= !BOHC_BOS;
+            next |= BOHC_OOC;
+        }
+
+        // Always report BIOS busy as 0 (not modelled).
+        next &= !_BOHC_BB;
+
+        self.hba.bohc = next;
     }
 
     fn write_ghc(&mut self, val: u32) {
@@ -403,10 +452,10 @@ impl AhciController {
                 Ok(()) => {}
                 Err(_) => {
                     // Report an aborted command via task file status/error.
-                    let status = ATA_STATUS_DRDY | ATA_STATUS_ERR;
+                    let status = ATA_STATUS_DRDY | ATA_STATUS_DSC | ATA_STATUS_ERR;
                     port.regs.tfd = (status as u32) | ((ATA_ERROR_ABRT as u32) << 8);
                     write_d2h_fis(mem, port.regs.fb, status, ATA_ERROR_ABRT);
-                    port.regs.is |= PORT_IS_DHRS;
+                    port.regs.is |= PORT_IS_DHRS | PORT_IS_TFES;
                 }
             }
 
@@ -905,5 +954,72 @@ mod tests {
         mem.read(verify_buf, &mut verify);
         assert_eq!(verify, [1, 2, 3, 4]);
         assert!(irq.level());
+    }
+
+    #[test]
+    fn pi_reports_all_ports_implemented_even_without_drives() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq), 4);
+
+        assert_eq!(ctl.read_u32(HBA_REG_PI), 0b1111);
+    }
+
+    #[test]
+    fn cap2_boh_and_bohc_reads_writes_are_stable() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq), 1);
+
+        // CAP2.BOH must be set if BOHC is exposed.
+        assert_ne!(ctl.read_u32(HBA_REG_CAP2) & CAP2_BOH, 0);
+
+        // Claim OS ownership; emulation should immediately clear BOS.
+        ctl.write_u32(HBA_REG_BOHC, BOHC_OOS);
+        let bohc = ctl.read_u32(HBA_REG_BOHC);
+        assert_ne!(bohc & BOHC_OOS, 0);
+        assert_eq!(bohc & BOHC_BOS, 0);
+
+        // OOC is W1C and should be safe to clear even if set.
+        ctl.write_u32(HBA_REG_BOHC, BOHC_OOC);
+        assert_eq!(ctl.read_u32(HBA_REG_BOHC) & BOHC_OOC, 0);
+    }
+
+    #[test]
+    fn unsupported_command_sets_tfes_and_dhrs_and_clears_irq() {
+        let (mut ctl, irq, mut mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        // Program HBA and port.
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CLBU, 0);
+        ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_FBU, 0);
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS | PORT_IS_TFES);
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+        // Issue an unsupported command (0x00).
+        write_cmd_header(&mut mem, clb, 0, ctba, 0, false);
+        write_cfis(&mut mem, ctba, 0x00, 0, 0);
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        assert!(irq.level());
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_IS) & (PORT_IS_DHRS | PORT_IS_TFES),
+            PORT_IS_DHRS | PORT_IS_TFES
+        );
+
+        let tfd = ctl.read_u32(PORT_BASE + PORT_REG_TFD);
+        assert_ne!(tfd & (ATA_STATUS_ERR as u32), 0);
+        assert_eq!(((tfd >> 8) & 0xFF) as u8, ATA_ERROR_ABRT);
+
+        // Clearing interrupt bits should deassert the IRQ line.
+        ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS | PORT_IS_TFES);
+        assert!(!irq.level());
     }
 }
