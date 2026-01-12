@@ -6,6 +6,12 @@ type MessageListener = (event: { data: unknown }) => void;
 
 const messageListeners = new Set<MessageListener>();
 
+let messageSeq = 0;
+
+function postToParent(msg: unknown): void {
+  parentPort?.postMessage({ ...(msg as Record<string, unknown>), seq: ++messageSeq });
+}
+
 function dispatchMessage(data: unknown): void {
   const event = { data };
   const g = globalThis as unknown as { onmessage?: ((ev: { data: unknown }) => void) | null };
@@ -26,28 +32,6 @@ function dispatchMessage(data: unknown): void {
 // Provide a stable location.href so the worker code can resolve same-origin
 // `/path` proxyUrl values via `new URL(path, location.href)`.
 (globalThis as unknown as { location?: unknown }).location = { href: "https://gateway.example.com/app/index.html" };
-
-// ---------------------------------------------------------------------------
-// Fake fetch for worker_threads tests (session bootstrap).
-// ---------------------------------------------------------------------------
-
-(globalThis as unknown as { fetch?: unknown }).fetch = async (url: unknown, init?: unknown) => {
-  const href = url instanceof URL ? url.toString() : typeof url === "string" ? url : String(url);
-  parentPort?.postMessage({ type: "fetch.called", url: href, init });
-
-  const body = JSON.stringify({});
-  if (typeof Response !== "undefined") {
-    return new Response(body, { status: 201, headers: { "content-type": "application/json" } });
-  }
-
-  // Fallback minimal Response-like object for environments without WHATWG fetch.
-  return {
-    ok: true,
-    status: 201,
-    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
-    text: async () => body,
-  } as unknown as Response;
-};
 
 (globalThis as unknown as { addEventListener?: unknown }).addEventListener = (type: string, listener: MessageListener) => {
   if (type !== "message") return;
@@ -97,7 +81,7 @@ class FakeWebSocket {
     this.protocol = typeof protocols === "string" ? protocols : Array.isArray(protocols) ? protocols[0] ?? "" : "";
     FakeWebSocket.last = this;
 
-    parentPort?.postMessage({
+    postToParent({
       type: "ws.created",
       url,
       protocol: this.protocol,
@@ -127,7 +111,7 @@ class FakeWebSocket {
 
     // Copy to avoid aliasing.
     const copy = view.slice();
-    parentPort?.postMessage({ type: "ws.sent", data: copy } satisfies WebSocketSentMessage);
+    postToParent({ type: "ws.sent", data: copy } satisfies WebSocketSentMessage);
   }
 
   close(code?: number, reason?: string): void {
@@ -157,3 +141,79 @@ parentPort?.on("message", (msg) => {
   const reason = typeof data.reason === "string" ? data.reason : undefined;
   FakeWebSocket.last?.close(code, reason);
 });
+
+// ---------------------------------------------------------------------------
+// Fake fetch for worker_threads tests (gateway session bootstrap).
+// ---------------------------------------------------------------------------
+
+type FetchMode = "ok" | "404" | "throw";
+let fetchMode: FetchMode = "ok";
+
+parentPort?.on("message", (msg) => {
+  const data = msg as { type?: unknown; mode?: unknown };
+  if (data?.type !== "fetch.mode") return;
+  if (data.mode === "ok" || data.mode === "404" || data.mode === "throw") {
+    fetchMode = data.mode;
+  }
+});
+
+type FakeFetchCalledMessage = { type: "fetch.called"; url: string; init?: unknown };
+
+function normalizeFetchUrl(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  if (typeof input === "object" && input !== null && "url" in input && typeof (input as any).url === "string") {
+    return (input as any).url;
+  }
+  return String(input);
+}
+
+function makeFakeResponse(args: { ok: boolean; status: number; bodyText: string; bodyJson?: unknown }): Response {
+  // Use the built-in Node Response when available (Node 18+), otherwise fall back
+  // to a minimal shim object.
+  const Res = (globalThis as unknown as { Response?: typeof Response }).Response;
+  if (typeof Res === "function") {
+    return new Res(args.bodyText, {
+      status: args.status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  return {
+    ok: args.ok,
+    status: args.status,
+    async json() {
+      if (args.bodyJson !== undefined) return args.bodyJson;
+      return JSON.parse(args.bodyText);
+    },
+    async text() {
+      return args.bodyText;
+    },
+  } as unknown as Response;
+}
+
+(globalThis as unknown as { fetch?: unknown }).fetch = async (input: unknown, init?: RequestInit): Promise<Response> => {
+  const url = normalizeFetchUrl(input);
+  const method = typeof init?.method === "string" ? init.method : undefined;
+  postToParent({ type: "fetch.called", url, init } satisfies FakeFetchCalledMessage);
+
+  if (fetchMode === "throw") {
+    throw new Error("Fake fetch: simulated network error");
+  }
+
+  // Only allow the gateway session bootstrap URLs used by the unit tests.
+  const allowedUrls = new Set(["https://gateway.example.com/session", "https://gateway.example.com/base/session"]);
+
+  if (!allowedUrls.has(url) || method !== "POST") {
+    return makeFakeResponse({ ok: false, status: 404, bodyText: "not found" });
+  }
+
+  if (fetchMode === "404") {
+    return makeFakeResponse({ ok: false, status: 404, bodyText: "not found" });
+  }
+
+  const body = {
+    endpoints: { l2: "/l2" },
+    limits: { l2: { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 } },
+  };
+  return makeFakeResponse({ ok: true, status: 201, bodyText: JSON.stringify(body), bodyJson: body });
+};

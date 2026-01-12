@@ -65,8 +65,8 @@ type GatewaySessionResponse = Readonly<{
   }>;
   limits?: Readonly<{
     l2?: Readonly<{
-      maxFramePayloadBytes: number;
-      maxControlPayloadBytes: number;
+      maxFramePayloadBytes?: number;
+      maxControlPayloadBytes?: number;
     }>;
   }>;
 }>;
@@ -299,7 +299,17 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
   if (l2TunnelClient) return;
 
   const endpoint = session?.endpoints?.l2;
-  const wsBaseUrl = typeof endpoint === "string" && endpoint.length > 0 ? buildWebSocketUrlFromEndpoint(proxyUrl, endpoint) : proxyUrl;
+  let wsBaseUrl = proxyUrl;
+  if (typeof endpoint === "string" && endpoint.trim().length > 0) {
+    const trimmedEndpoint = endpoint.trim();
+    try {
+      // Absolute endpoint (includes scheme) should be honored as-is.
+      wsBaseUrl = new URL(trimmedEndpoint).toString();
+    } catch {
+      // Relative endpoint: resolve against the configured gateway base.
+      wsBaseUrl = buildWebSocketUrlFromEndpoint(proxyUrl, trimmedEndpoint);
+    }
+  }
 
   const maxFramePayloadBytes = session?.limits?.l2?.maxFramePayloadBytes;
   const tunnelOpts =
