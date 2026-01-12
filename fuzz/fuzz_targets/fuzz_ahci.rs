@@ -170,10 +170,12 @@ fuzz_target!(|data: &[u8]| {
     // Command synthesis controls.
     let synthesize: bool = u.arbitrary().unwrap_or(true);
     let cmd_sel: u8 = u.arbitrary().unwrap_or(0);
+    let slot_seed: u8 = u.arbitrary().unwrap_or(0);
     let lba_seed2: u64 = u.arbitrary().unwrap_or(0);
     let sector_count_seed: u8 = u.arbitrary().unwrap_or(1);
     let prdtl_seed: u8 = u.arbitrary().unwrap_or(1);
     let set_features_subcmd: u8 = u.arbitrary().unwrap_or(0);
+    let wild_after: bool = u.arbitrary().unwrap_or(false);
 
     let ops_len: usize = u.int_in_range(0usize..=64).unwrap_or(0);
     let mut ops = Vec::with_capacity(ops_len);
@@ -227,7 +229,8 @@ fuzz_target!(|data: &[u8]| {
 
     let port_base = PORT_BASE;
 
-    // Program registers with fuzz-controlled values (kept within our guest memory blob).
+    // Program registers with fuzz-controlled values (kept within our guest memory blob) so we can
+    // reach deeper parsing logic.
     let clb = place_region(clb_seed, mem_size, 1024, 1024);
     let fb = place_region(fb_seed, mem_size, 256, 256);
 
@@ -256,6 +259,7 @@ fuzz_target!(|data: &[u8]| {
     // Optionally overlay a minimally well-formed command list/table so we exercise deeper parsing.
     if synthesize {
         let prdtl = (prdtl_seed as u16 % 8).max(1);
+        let slot: u32 = (slot_seed % 32) as u32;
 
         let cmd = match cmd_sel % 6 {
             0 => ATA_CMD_IDENTIFY,
@@ -275,7 +279,7 @@ fuzz_target!(|data: &[u8]| {
         let data_base = place_region(data_seed, mem_size, 4, byte_len);
 
         let is_write = cmd == ATA_CMD_WRITE_DMA_EXT;
-        write_cmd_header(&mut mem, clb, 0, ctba, prdtl, is_write);
+        write_cmd_header(&mut mem, clb, slot as usize, ctba, prdtl, is_write);
 
         let mut cfis = [0u8; 64];
         cfis[0] = 0x27; // FIS_TYPE_REG_H2D
@@ -316,7 +320,7 @@ fuzz_target!(|data: &[u8]| {
         }
 
         // Ensure at least one command is issued.
-        dev.mmio_write(port_base + PORT_REG_CI, 4, 1);
+        dev.mmio_write(port_base + PORT_REG_CI, 4, (1u32 << slot) as u64);
     } else {
         dev.mmio_write(port_base + PORT_REG_CI, 4, (port_ci_seed & 0xF) as u64);
     }
@@ -334,6 +338,32 @@ fuzz_target!(|data: &[u8]| {
             } => dev.mmio_write(offset, size, value),
             MmioOp::Process => dev.process(&mut mem),
         }
+    }
+
+    // Optionally reprogram CLB/FB to arbitrary (potentially hostile) addresses and issue a command
+    // in a random slot, to stress address arithmetic/overflow paths without sacrificing the deep
+    // "in-range" command parsing coverage from the earlier synthesis.
+    if wild_after {
+        let wild_slot: u32 = (slot_seed.rotate_left(1) % 32) as u32;
+        let wild_ci: u32 = port_ci_seed | (1u32 << wild_slot) | 1;
+
+        dev.mmio_write(port_base + PORT_REG_CLB, 4, clb_seed);
+        dev.mmio_write(port_base + PORT_REG_CLBU, 4, (clb_seed >> 32) as u64);
+        dev.mmio_write(port_base + PORT_REG_FB, 4, fb_seed);
+        dev.mmio_write(port_base + PORT_REG_FBU, 4, (fb_seed >> 32) as u64);
+
+        // Ensure the command engine is enabled when we tick.
+        dev.mmio_write(
+            HBA_REG_GHC,
+            4,
+            ((ghc_seed & (GHC_IE | GHC_AE)) | GHC_AE) as u64,
+        );
+        dev.mmio_write(
+            port_base + PORT_REG_CMD,
+            4,
+            (port_cmd_seed | PORT_CMD_ST | PORT_CMD_FRE) as u64,
+        );
+        dev.mmio_write(port_base + PORT_REG_CI, 4, wild_ci as u64);
     }
 
     // Always process at least once so a synthesized command can't be "optimized away".

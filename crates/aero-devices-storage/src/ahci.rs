@@ -578,7 +578,9 @@ fn process_command_slot(
     slot: usize,
     mem: &mut dyn MemoryBus,
 ) -> io::Result<()> {
-    let header_addr = port_regs.clb + (slot as u64) * 32;
+    // Guest-controlled DMA base addresses can be arbitrary; use wrapping arithmetic so malformed
+    // values cannot trigger an overflow panic when fuzzing/debug overflow checks are enabled.
+    let header_addr = port_regs.clb.wrapping_add((slot as u64).wrapping_mul(32));
     let header = CommandHeader::read(mem, header_addr);
 
     // Command table always contains the command FIS at offset 0.
@@ -671,8 +673,8 @@ struct CommandHeader {
 impl CommandHeader {
     fn read(mem: &mut dyn MemoryBus, addr: u64) -> Self {
         let flags = mem.read_u32(addr);
-        let ctba_lo = mem.read_u32(addr + 8) as u64;
-        let ctba_hi = mem.read_u32(addr + 12) as u64;
+        let ctba_lo = mem.read_u32(addr.wrapping_add(8)) as u64;
+        let ctba_hi = mem.read_u32(addr.wrapping_add(12)) as u64;
         let ctba = ctba_lo | (ctba_hi << 32);
         // AHCI command header DW0 bits 16..31 hold the PRDT length (entry count).
         let prdtl = ((flags >> 16) & 0xFFFF) as u16;
@@ -694,9 +696,9 @@ struct PrdtEntry {
 impl PrdtEntry {
     fn read(mem: &mut dyn MemoryBus, addr: u64) -> Self {
         let dba_lo = mem.read_u32(addr) as u64;
-        let dba_hi = mem.read_u32(addr + 4) as u64;
+        let dba_hi = mem.read_u32(addr.wrapping_add(4)) as u64;
         let dba = dba_lo | (dba_hi << 32);
-        let dbc_ioc = mem.read_u32(addr + 12);
+        let dbc_ioc = mem.read_u32(addr.wrapping_add(12));
         let dbc = (dbc_ioc & 0x003F_FFFF) + 1;
         Self { dba, dbc }
     }
@@ -713,7 +715,10 @@ fn dma_write_from_host_buffer(
         if remaining.is_empty() {
             break;
         }
-        let prd_addr = header.ctba + 0x80 + i * 16;
+        let prd_addr = header
+            .ctba
+            .wrapping_add(0x80)
+            .wrapping_add(i.wrapping_mul(16));
         let prd = PrdtEntry::read(mem, prd_addr);
         let chunk_len = prd.dbc.min(remaining.len() as u32) as usize;
 
@@ -743,7 +748,10 @@ fn dma_read_into_host_buffer(
         if written >= out.len() {
             break;
         }
-        let prd_addr = header.ctba + 0x80 + i * 16;
+        let prd_addr = header
+            .ctba
+            .wrapping_add(0x80)
+            .wrapping_add(i.wrapping_mul(16));
         let prd = PrdtEntry::read(mem, prd_addr);
         let chunk_len = prd.dbc.min((out.len() - written) as u32) as usize;
 
@@ -768,8 +776,8 @@ fn complete_command(
     bytes_transferred: u32,
 ) {
     // Update PRDBC (DW1).
-    let header_addr = port_regs.clb + (slot as u64) * 32;
-    mem.write_u32(header_addr + 4, bytes_transferred);
+    let header_addr = port_regs.clb.wrapping_add((slot as u64).wrapping_mul(32));
+    mem.write_u32(header_addr.wrapping_add(4), bytes_transferred);
 
     let status = ATA_STATUS_DRDY | ATA_STATUS_DSC;
     port_regs.tfd = u32::from(status);
@@ -787,7 +795,7 @@ fn write_d2h_fis(mem: &mut dyn MemoryBus, fb: u64, status: u8, error: u8) {
     fis[1] = 1 << 6; // I bit (interrupt)
     fis[2] = status;
     fis[3] = error;
-    mem.write_physical(fb + 0x40, &fis);
+    mem.write_physical(fb.wrapping_add(0x40), &fis);
 }
 
 #[cfg(test)]
