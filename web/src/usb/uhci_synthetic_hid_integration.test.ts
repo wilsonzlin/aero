@@ -854,4 +854,35 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     const st = portStatus[0]! | (portStatus[1]! << 8);
     expect(st & 0x0001).toBe(0);
   });
+
+  it("rejects nested USB topology paths for UhciRuntime.attach_usb_hid_passthrough_device", async () => {
+    const desiredGuestBytes = 2 * 1024 * 1024;
+    const layoutHint = computeGuestRamLayout(desiredGuestBytes);
+    const memory = new WebAssembly.Memory({ initial: layoutHint.wasm_pages, maximum: layoutHint.wasm_pages });
+
+    let api: Awaited<ReturnType<typeof initWasm>>["api"];
+    try {
+      ({ api } = await initWasm({ variant: "single", memory }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Missing single-thread WASM package")) return;
+      throw err;
+    }
+
+    assertWasmMemoryWiring({ api, memory, context: "uhci_synthetic_hid_integration.test (nested path)" });
+    if (!api.UhciRuntime) return;
+    if (!api.UsbHidPassthroughBridge) return;
+
+    const layout = api.guest_ram_layout(desiredGuestBytes);
+    const guestBase = layout.guest_base >>> 0;
+    const guestSize = layout.guest_size >>> 0;
+
+    const runtime = new api.UhciRuntime(guestBase, guestSize);
+    if (typeof runtime.attach_usb_hid_passthrough_device !== "function") return;
+
+    const HidBridge = api.UsbHidPassthroughBridge;
+    const dev = new HidBridge(0x1234, 0x0004, "Aero", "Nested", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+
+    expect(() => runtime.attach_usb_hid_passthrough_device([0, 1, 1], dev)).toThrow();
+  });
 });
