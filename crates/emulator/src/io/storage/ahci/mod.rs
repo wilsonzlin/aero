@@ -26,6 +26,16 @@ const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
 const ATA_CMD_FLUSH_CACHE: u8 = 0xe7;
 const ATA_CMD_FLUSH_CACHE_EXT: u8 = 0xea;
 
+// Avoid unbounded allocations and extremely long synchronous DMA loops caused by hostile guests.
+const MAX_PRDT_ENTRIES_PER_COMMAND: u16 = 32_768;
+
+// Maximum scratch buffer size used when streaming DMA to/from a PRDT scatter/gather list.
+//
+// This must be reasonably small to avoid OOM, but large enough to keep disk I/O efficient.
+// It must remain a multiple of 512 so it is always compatible with 512/4096 sector sizes.
+const MAX_DMA_CHUNK_BYTES: usize = 256 * 1024;
+const _: () = assert!(MAX_DMA_CHUNK_BYTES % 512 == 0);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AhciError {
     Disk(DiskError),
@@ -37,6 +47,108 @@ pub enum AhciError {
 impl From<DiskError> for AhciError {
     fn from(value: DiskError) -> Self {
         Self::Disk(value)
+    }
+}
+
+fn prdt_covers_len(prdt: &[PrdEntry], needed: usize) -> Result<bool, AhciError> {
+    if needed == 0 {
+        return Ok(true);
+    }
+    let mut total = 0usize;
+    for prd in prdt {
+        total = total
+            .checked_add(prd.byte_count())
+            .ok_or(AhciError::InvalidPrdt)?;
+        if total >= needed {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PrdtCursor {
+    idx: usize,
+    seg_off: usize,
+}
+
+impl PrdtCursor {
+    fn new() -> Self {
+        Self { idx: 0, seg_off: 0 }
+    }
+
+    fn write_to_guest(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        prdt: &[PrdEntry],
+        src: &[u8],
+    ) -> Result<(), AhciError> {
+        let mut pos = 0usize;
+        while pos < src.len() {
+            let prd = prdt.get(self.idx).ok_or(AhciError::InvalidPrdt)?;
+            let seg_len = prd.byte_count();
+            if self.seg_off > seg_len {
+                return Err(AhciError::InvalidPrdt);
+            }
+            let avail = seg_len - self.seg_off;
+            if avail == 0 {
+                self.idx += 1;
+                self.seg_off = 0;
+                continue;
+            }
+
+            let to_copy = avail.min(src.len() - pos);
+            let addr = prd
+                .dba
+                .checked_add(self.seg_off as u64)
+                .ok_or(AhciError::InvalidPrdt)?;
+            mem.write_physical(addr, &src[pos..pos + to_copy]);
+
+            pos += to_copy;
+            self.seg_off += to_copy;
+            if self.seg_off == seg_len {
+                self.idx += 1;
+                self.seg_off = 0;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_from_guest(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        prdt: &[PrdEntry],
+        dst: &mut [u8],
+    ) -> Result<(), AhciError> {
+        let mut pos = 0usize;
+        while pos < dst.len() {
+            let prd = prdt.get(self.idx).ok_or(AhciError::InvalidPrdt)?;
+            let seg_len = prd.byte_count();
+            if self.seg_off > seg_len {
+                return Err(AhciError::InvalidPrdt);
+            }
+            let avail = seg_len - self.seg_off;
+            if avail == 0 {
+                self.idx += 1;
+                self.seg_off = 0;
+                continue;
+            }
+
+            let to_copy = avail.min(dst.len() - pos);
+            let addr = prd
+                .dba
+                .checked_add(self.seg_off as u64)
+                .ok_or(AhciError::InvalidPrdt)?;
+            mem.read_physical(addr, &mut dst[pos..pos + to_copy]);
+
+            pos += to_copy;
+            self.seg_off += to_copy;
+            if self.seg_off == seg_len {
+                self.idx += 1;
+                self.seg_off = 0;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -266,7 +378,7 @@ impl AhciController {
         mem: &mut dyn MemoryBus,
         header: &CommandHeader,
     ) -> Result<Vec<PrdEntry>, AhciError> {
-        if header.prdt_len == 0 {
+        if header.prdt_len == 0 || header.prdt_len > MAX_PRDT_ENTRIES_PER_COMMAND {
             return Err(AhciError::InvalidPrdt);
         }
         let prdt_len = header.prdt_len as usize;
@@ -302,27 +414,6 @@ impl AhciController {
         Ok(offset)
     }
 
-    fn dma_read_from_guest(
-        &self,
-        mem: &mut dyn MemoryBus,
-        prdt: &[PrdEntry],
-        dst: &mut [u8],
-    ) -> Result<usize, AhciError> {
-        let mut offset = 0usize;
-        for prd in prdt {
-            if offset >= dst.len() {
-                break;
-            }
-            let len = prd.byte_count().min(dst.len() - offset);
-            mem.read_physical(prd.dba, &mut dst[offset..offset + len]);
-            offset += len;
-        }
-        if offset != dst.len() {
-            return Err(AhciError::InvalidPrdt);
-        }
-        Ok(offset)
-    }
-
     fn cmd_identify(
         &mut self,
         mem: &mut dyn MemoryBus,
@@ -344,7 +435,13 @@ impl AhciController {
         header: &CommandHeader,
         fis: RegH2dFis,
     ) -> Result<(), AhciError> {
-        let sector_size = self.disk.sector_size() as usize;
+        let sector_size_u32 = self.disk.sector_size();
+        let sector_size: usize = sector_size_u32
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("sector size too large"))?;
+        if sector_size == 0 {
+            return Err(DiskError::Unsupported("sector size must be non-zero").into());
+        }
         let sectors = if fis.sector_count == 0 {
             65_536u32
         } else {
@@ -354,15 +451,42 @@ impl AhciController {
             .checked_mul(sectors)
             .ok_or(AhciError::InvalidPrdt)?;
 
-        let mut buf = Vec::new();
-        buf.try_reserve_exact(byte_len)
-            .map_err(|_| DiskError::QuotaExceeded)?;
-        buf.resize(byte_len, 0);
-        self.disk.read_sectors(fis.lba, &mut buf)?;
-
         let prdt = self.read_prdt(mem, header)?;
-        let transferred = self.dma_write_to_guest(mem, &prdt, &buf)?;
-        CommandHeader::write_prdbc(mem, header_addr, transferred as u32);
+
+        // Validate PRDT length up front so a malformed guest PRDT doesn't trigger partial DMA.
+        if !prdt_covers_len(&prdt, byte_len)? {
+            return Err(AhciError::InvalidPrdt);
+        }
+
+        if sector_size > MAX_DMA_CHUNK_BYTES {
+            return Err(DiskError::Unsupported("sector size too large").into());
+        }
+        let scratch_len = (MAX_DMA_CHUNK_BYTES / sector_size).max(1) * sector_size;
+        let mut scratch = Vec::new();
+        scratch
+            .try_reserve_exact(scratch_len)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        scratch.resize(scratch_len, 0);
+
+        let prdbc: u32 =
+            byte_len
+                .try_into()
+                .map_err(|_| DiskError::Unsupported("transfer too large"))?;
+
+        let mut cursor = PrdtCursor::new();
+        let mut remaining = byte_len;
+        let mut lba = fis.lba;
+        while remaining > 0 {
+            let chunk_len = remaining.min(scratch_len);
+            self.disk.read_sectors(lba, &mut scratch[..chunk_len])?;
+            cursor.write_to_guest(mem, &prdt, &scratch[..chunk_len])?;
+
+            let chunk_sectors = (chunk_len / sector_size) as u64;
+            lba = lba.checked_add(chunk_sectors).ok_or(AhciError::InvalidPrdt)?;
+            remaining -= chunk_len;
+        }
+
+        CommandHeader::write_prdbc(mem, header_addr, prdbc);
         Ok(())
     }
 
@@ -373,7 +497,13 @@ impl AhciController {
         header: &CommandHeader,
         fis: RegH2dFis,
     ) -> Result<(), AhciError> {
-        let sector_size = self.disk.sector_size() as usize;
+        let sector_size_u32 = self.disk.sector_size();
+        let sector_size: usize = sector_size_u32
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("sector size too large"))?;
+        if sector_size == 0 {
+            return Err(DiskError::Unsupported("sector size must be non-zero").into());
+        }
         let sectors = if fis.sector_count == 0 {
             65_536u32
         } else {
@@ -383,15 +513,43 @@ impl AhciController {
             .checked_mul(sectors)
             .ok_or(AhciError::InvalidPrdt)?;
 
-        let mut buf = Vec::new();
-        buf.try_reserve_exact(byte_len)
-            .map_err(|_| DiskError::QuotaExceeded)?;
-        buf.resize(byte_len, 0);
         let prdt = self.read_prdt(mem, header)?;
-        let transferred = self.dma_read_from_guest(mem, &prdt, &mut buf)?;
-        CommandHeader::write_prdbc(mem, header_addr, transferred as u32);
 
-        self.disk.write_sectors(fis.lba, &buf)?;
+        // Validate PRDT length up front so a malformed guest PRDT doesn't trigger partial disk
+        // writes.
+        if !prdt_covers_len(&prdt, byte_len)? {
+            return Err(AhciError::InvalidPrdt);
+        }
+
+        if sector_size > MAX_DMA_CHUNK_BYTES {
+            return Err(DiskError::Unsupported("sector size too large").into());
+        }
+        let scratch_len = (MAX_DMA_CHUNK_BYTES / sector_size).max(1) * sector_size;
+        let mut scratch = Vec::new();
+        scratch
+            .try_reserve_exact(scratch_len)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        scratch.resize(scratch_len, 0);
+
+        let prdbc: u32 =
+            byte_len
+                .try_into()
+                .map_err(|_| DiskError::Unsupported("transfer too large"))?;
+
+        let mut cursor = PrdtCursor::new();
+        let mut remaining = byte_len;
+        let mut lba = fis.lba;
+        while remaining > 0 {
+            let chunk_len = remaining.min(scratch_len);
+            cursor.read_from_guest(mem, &prdt, &mut scratch[..chunk_len])?;
+            self.disk.write_sectors(lba, &scratch[..chunk_len])?;
+
+            let chunk_sectors = (chunk_len / sector_size) as u64;
+            lba = lba.checked_add(chunk_sectors).ok_or(AhciError::InvalidPrdt)?;
+            remaining -= chunk_len;
+        }
+
+        CommandHeader::write_prdbc(mem, header_addr, prdbc);
         Ok(())
     }
 
@@ -1036,6 +1194,25 @@ mod tests {
         mem.write_u32(addr, dba as u32);
         mem.write_u32(addr + 4, (dba >> 32) as u32);
         mem.write_u32(addr + 12, dbc);
+    }
+
+    #[test]
+    fn prdt_entry_count_cap_rejects_pathological_lists() {
+        // The PRDT entry count is guest-controlled. Ensure we reject absurd values early instead
+        // of attempting to allocate/iterate over a huge list.
+        let disk = Box::new(MemDisk::new(1));
+        let controller = AhciController::new(disk);
+        let mut mem = VecMemory::new(0x1000);
+        let header = CommandHeader {
+            cfl_bytes: 0,
+            write: false,
+            prdt_len: MAX_PRDT_ENTRIES_PER_COMMAND + 1,
+            prdbc: 0,
+            ctba: 0,
+        };
+
+        let err = controller.read_prdt(&mut mem, &header).unwrap_err();
+        assert_eq!(err, AhciError::InvalidPrdt);
     }
 
     #[test]
