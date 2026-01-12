@@ -1,4 +1,6 @@
-use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1, PciPlatform};
+use aero_devices::pci::{
+    PciBdf, PciBus, PciConfigMechanism1, PciPlatform, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -15,8 +17,8 @@ fn enumerate_bus0(cfg: &mut PciConfigMechanism1, bus: &mut PciBus) -> Vec<(PciBd
         for function in 0u8..8 {
             let addr = cfg_addr(0, device, function, 0);
 
-            cfg.io_write(bus, 0xCF8, 4, addr);
-            let id = cfg.io_read(bus, 0xCFC, 4);
+            cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, addr);
+            let id = cfg.io_read(bus, PCI_CFG_DATA_PORT, 4);
             let vendor = (id & 0xFFFF) as u16;
             if vendor == 0xFFFF {
                 // If function 0 is absent, functions 1..7 are guaranteed absent too.

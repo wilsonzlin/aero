@@ -9,7 +9,7 @@ use aero_devices::irq::IrqLine;
 use aero_devices::pci::{
     GsiLevelSink, MsiCapability, PciBarDefinition, PciBdf, PciBus, PciBusSnapshot,
     PciConfigMechanism1, PciConfigSpace, PciDevice, PciInterruptPin, PciIntxRouter,
-    PciIntxRouterConfig,
+    PciIntxRouterConfig, PCI_CFG_ADDR_PORT,
 };
 use aero_devices::pit8254::{Pit8254, PIT_CH0, PIT_CMD};
 use aero_devices::rtc_cmos::RtcCmos;
@@ -117,7 +117,7 @@ fn snapshot_bytes_are_deterministic() {
     assert_eq!(bus_snapshot.save_state(), bus_snapshot.save_state());
 
     let mut cfg = PciConfigMechanism1::new();
-    cfg.io_write(&mut bus, 0xCF8, 4, 0x8000_1234);
+    cfg.io_write(&mut bus, PCI_CFG_ADDR_PORT, 4, 0x8000_1234);
     assert_eq!(cfg.save_state(), cfg.save_state());
 
     let mut router = PciIntxRouter::new(PciIntxRouterConfig::default());

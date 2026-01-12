@@ -4,6 +4,7 @@ use std::io::Cursor;
 use aero_devices::pci::{
     GsiLevelSink, MsiCapability, PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace,
     PciCoreSnapshot, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
@@ -22,13 +23,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn cfg_read(ports: &mut PciConfigPorts, bdf: PciBdf, offset: u16, size: u8) -> u32 {
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    ports.io_read(0xCFC + (offset & 3), size)
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    ports.io_read(PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn cfg_write(ports: &mut PciConfigPorts, bdf: PciBdf, offset: u16, size: u8, value: u32) {
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    ports.io_write(0xCFC + (offset & 3), size, value);
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    ports.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 struct TestDevice {
@@ -275,8 +276,8 @@ fn pci_io_snapshot_roundtrips_through_aero_snapshot_file() {
     cfg_write(&mut pci_cfg, bdf, 0x04, 2, 0x0003);
 
     // Leave the config address latch on an arbitrary register so we can validate it restores.
-    pci_cfg.io_write(0xCF8, 4, cfg_addr(bdf, 0x3c));
-    let expected_latch = pci_cfg.io_read(0xCF8, 4);
+    pci_cfg.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, 0x3c));
+    let expected_latch = pci_cfg.io_read(PCI_CFG_ADDR_PORT, 4);
 
     let expected_cfg: Vec<u32> = (0..256u16)
         .step_by(4)
@@ -317,7 +318,7 @@ fn pci_io_snapshot_roundtrips_through_aero_snapshot_file() {
 
     restore_snapshot(&mut Cursor::new(&snap1), &mut target).unwrap();
 
-    assert_eq!(target.pci_cfg.io_read(0xCF8, 4), expected_latch);
+    assert_eq!(target.pci_cfg.io_read(PCI_CFG_ADDR_PORT, 4), expected_latch);
     for (idx, offset) in (0..256u16).step_by(4).enumerate() {
         assert_eq!(
             target.pci_cfg.bus_mut().read_config(bdf, offset, 4),
@@ -357,8 +358,8 @@ fn split_roundtrip(cfg_id: DeviceId) {
     cfg_write(&mut pci_cfg, bdf, 0x04, 2, 0x0003);
 
     // Leave the config address latch on an arbitrary register so we can validate it restores.
-    pci_cfg.io_write(0xCF8, 4, cfg_addr(bdf, 0x3c));
-    let expected_latch = pci_cfg.io_read(0xCF8, 4);
+    pci_cfg.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, 0x3c));
+    let expected_latch = pci_cfg.io_read(PCI_CFG_ADDR_PORT, 4);
 
     let expected_cfg: Vec<u32> = (0..256u16)
         .step_by(4)
@@ -407,7 +408,7 @@ fn split_roundtrip(cfg_id: DeviceId) {
 
     restore_snapshot(&mut Cursor::new(&snap1), &mut target).unwrap();
 
-    assert_eq!(target.pci_cfg.io_read(0xCF8, 4), expected_latch);
+    assert_eq!(target.pci_cfg.io_read(PCI_CFG_ADDR_PORT, 4), expected_latch);
     for (idx, offset) in (0..256u16).step_by(4).enumerate() {
         assert_eq!(
             target.pci_cfg.bus_mut().read_config(bdf, offset, 4),

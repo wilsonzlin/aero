@@ -1,5 +1,6 @@
 use aero_devices::pci::{
     MsiCapability, PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace, PciDevice,
+    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
@@ -13,13 +14,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn cfg_read(ports: &mut PciConfigPorts, bdf: PciBdf, offset: u16, size: u8) -> u32 {
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    ports.io_read(0xCFC + (offset & 3), size)
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    ports.io_read(PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn cfg_write(ports: &mut PciConfigPorts, bdf: PciBdf, offset: u16, size: u8, value: u32) {
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    ports.io_write(0xCFC + (offset & 3), size, value);
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    ports.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 #[derive(Default)]
@@ -130,8 +131,8 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
     assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0xFFFF_F000);
 
     // Ensure the 0xCF8 address latch is restored.
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, 0x3c));
-    let latch = ports.io_read(0xCF8, 4);
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, 0x3c));
+    let latch = ports.io_read(PCI_CFG_ADDR_PORT, 4);
 
     let bytes = ports.save_state();
     let bytes2 = ports.save_state();
@@ -141,7 +142,7 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
     let mut ports2 = PciConfigPorts::with_bus(bus2);
     ports2.load_state(&bytes).unwrap();
 
-    assert_eq!(ports2.io_read(0xCF8, 4), latch);
+    assert_eq!(ports2.io_read(PCI_CFG_ADDR_PORT, 4), latch);
 
     // Compare guest-visible config reads (DWORD granularity).
     for offset in (0..256u16).step_by(4) {

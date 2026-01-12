@@ -1,6 +1,7 @@
 use aero_devices::pci::{
     GsiLevelSink, PciBarDefinition, PciBdf, PciBus, PciConfigPorts, PciConfigSpace, PciCoreSnapshot,
-    PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PCI_CFG_ADDR_PORT,
+    PCI_CFG_DATA_PORT,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 
@@ -13,13 +14,13 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn cfg_read(ports: &mut PciConfigPorts, bdf: PciBdf, offset: u16, size: u8) -> u32 {
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    ports.io_read(0xCFC + (offset & 3), size)
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    ports.io_read(PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn cfg_write(ports: &mut PciConfigPorts, bdf: PciBdf, offset: u16, size: u8, value: u32) {
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, offset));
-    ports.io_write(0xCFC + (offset & 3), size, value);
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    ports.io_write(PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 struct TestDev {
@@ -91,8 +92,8 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
     assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0xFFFF_F000);
 
     // Leave the config address latch at a recognizable value.
-    ports.io_write(0xCF8, 4, cfg_addr(bdf, 0x3c));
-    let expected_latch = ports.io_read(0xCF8, 4);
+    ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, 0x3c));
+    let expected_latch = ports.io_read(PCI_CFG_ADDR_PORT, 4);
 
     // INTx: assert multiple sources (including a shared GSI) so refcounts are non-trivial.
     let mut router = PciIntxRouter::new(PciIntxRouterConfig::default());
@@ -125,7 +126,7 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
     }
 
     // CF8 latch should roundtrip.
-    assert_eq!(ports2.io_read(0xCF8, 4), expected_latch);
+    assert_eq!(ports2.io_read(PCI_CFG_ADDR_PORT, 4), expected_latch);
 
     // Vendor/device should be readable and match.
     let id2 = cfg_read(&mut ports2, bdf, 0x00, 4);
@@ -176,4 +177,3 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
         ]
     );
 }
-

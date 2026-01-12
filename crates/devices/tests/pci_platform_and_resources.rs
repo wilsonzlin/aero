@@ -1,6 +1,6 @@
 use aero_devices::pci::{
     PciBarDefinition, PciBdf, PciBus, PciConfigMechanism1, PciConfigSpace, PciDevice, PciPlatform,
-    PciResourceAllocator, PciResourceAllocatorConfig,
+    PciResourceAllocator, PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -54,27 +54,27 @@ fn platform_devices_enumerate_via_config_mechanism_1() {
     let mut cfg = PciConfigMechanism1::new();
 
     // Read vendor/device of host bridge 00:00.0.
-    cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 0, 0, 0));
-    let id = cfg.io_read(&mut bus, 0xCFC, 4);
+    cfg.io_write(&mut bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 0, 0, 0));
+    let id = cfg.io_read(&mut bus, PCI_CFG_DATA_PORT, 4);
     // Note: low 16 bits are vendor, high 16 bits are device.
     assert_eq!(id & 0xFFFF, 0x8086);
     assert_ne!((id >> 16) & 0xFFFF, 0xFFFF);
 
     // Class code at 0x08: revision/prog_if/subclass/class.
-    cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 0, 0, 0x08));
-    let class = cfg.io_read(&mut bus, 0xCFC, 4);
+    cfg.io_write(&mut bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 0, 0, 0x08));
+    let class = cfg.io_read(&mut bus, PCI_CFG_DATA_PORT, 4);
     let class_code = (class >> 24) as u8;
     let subclass = (class >> 16) as u8;
     assert_eq!(class_code, 0x06);
     assert_eq!(subclass, 0x00);
 
     // ISA/LPC bridge at 00:1f.0.
-    cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 0x1f, 0, 0));
-    let id = cfg.io_read(&mut bus, 0xCFC, 4);
+    cfg.io_write(&mut bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 0x1f, 0, 0));
+    let id = cfg.io_read(&mut bus, PCI_CFG_DATA_PORT, 4);
     assert_eq!(id & 0xFFFF, 0x8086);
 
-    cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 0x1f, 0, 0x08));
-    let class = cfg.io_read(&mut bus, 0xCFC, 4);
+    cfg.io_write(&mut bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 0x1f, 0, 0x08));
+    let class = cfg.io_read(&mut bus, PCI_CFG_DATA_PORT, 4);
     let class_code = (class >> 24) as u8;
     let subclass = (class >> 16) as u8;
     assert_eq!(class_code, 0x06);

@@ -1,4 +1,7 @@
-use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1, PciConfigSpace, PciDevice};
+use aero_devices::pci::{
+    PciBdf, PciBus, PciConfigMechanism1, PciConfigSpace, PciDevice, PCI_CFG_ADDR_PORT,
+    PCI_CFG_DATA_PORT,
+};
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -16,8 +19,8 @@ fn read_dword(
     f: u8,
     offset: u8,
 ) -> u32 {
-    cfg.io_write(bus, 0xCF8, 4, cfg_addr(b, d, f, offset));
-    cfg.io_read(bus, 0xCFC, 4)
+    cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(b, d, f, offset));
+    cfg.io_read(bus, PCI_CFG_DATA_PORT, 4)
 }
 
 #[test]

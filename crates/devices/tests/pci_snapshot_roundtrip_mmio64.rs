@@ -1,6 +1,6 @@
 use aero_devices::pci::{
     PciBarDefinition, PciBdf, PciBus, PciBusSnapshot, PciConfigMechanism1, PciConfigSpace,
-    PciDevice,
+    PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 
@@ -19,8 +19,8 @@ fn cfg_read(
     offset: u16,
     size: u8,
 ) -> u32 {
-    cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
-    cfg.io_read(bus, 0xCFC + (offset & 3), size)
+    cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    cfg.io_read(bus, PCI_CFG_DATA_PORT + (offset & 3), size)
 }
 
 fn cfg_write(
@@ -31,8 +31,8 @@ fn cfg_write(
     size: u8,
     value: u32,
 ) {
-    cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
-    cfg.io_write(bus, 0xCFC + (offset & 3), size, value);
+    cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    cfg.io_write(bus, PCI_CFG_DATA_PORT + (offset & 3), size, value);
 }
 
 struct Mmio64Device {

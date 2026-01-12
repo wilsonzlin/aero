@@ -1,6 +1,6 @@
 use aero_devices::pci::{
     MsiCapability, PciBarDefinition, PciBdf, PciBus, PciBusSnapshot, PciConfigMechanism1,
-    PciConfigSpace, PciDevice,
+    PciConfigSpace, PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
@@ -20,8 +20,8 @@ fn cfg_read(
     offset: u16,
     size: u8,
 ) -> u32 {
-    cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
-    let port = 0xCFC + (offset & 3);
+    cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    let port = PCI_CFG_DATA_PORT + (offset & 3);
     cfg.io_read(bus, port, size)
 }
 
@@ -33,8 +33,8 @@ fn cfg_write(
     size: u8,
     value: u32,
 ) {
-    cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
-    let port = 0xCFC + (offset & 3);
+    cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    let port = PCI_CFG_DATA_PORT + (offset & 3);
     cfg.io_write(bus, port, size, value);
 }
 
@@ -198,7 +198,7 @@ fn pci_snapshot_roundtrip_preserves_config_bars_and_msi_state() {
 
     // Config address latch should roundtrip as well.
     assert_eq!(
-        cfg.io_read(&mut bus, 0xCF8, 4),
-        cfg2.io_read(&mut bus2, 0xCF8, 4)
+        cfg.io_read(&mut bus, PCI_CFG_ADDR_PORT, 4),
+        cfg2.io_read(&mut bus2, PCI_CFG_ADDR_PORT, 4)
     );
 }

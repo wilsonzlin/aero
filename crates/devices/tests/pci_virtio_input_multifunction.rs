@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::build_canonical_io_bus;
-use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1};
+use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 
 const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
 const PCI_DEVICE_ID_VIRTIO_INPUT_MODERN: u16 = 0x1052;
@@ -17,8 +17,8 @@ fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
 }
 
 fn read_dword(cfg: &mut PciConfigMechanism1, bus: &mut PciBus, bdf: PciBdf, offset: u16) -> u32 {
-    cfg.io_write(bus, 0xCF8, 4, cfg_addr(bdf, offset));
-    cfg.io_read(bus, 0xCFC, 4)
+    cfg.io_write(bus, PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
+    cfg.io_read(bus, PCI_CFG_DATA_PORT, 4)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
