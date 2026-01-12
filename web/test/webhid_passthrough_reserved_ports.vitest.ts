@@ -50,17 +50,9 @@ describe("webhid passthrough reserved external hub ports", () => {
     await manager.detachDevice(devA);
     await manager.attachKnownDevice(devC);
 
-    // Port 0.4 should have been freed and then reused.
-    expect(
-      target.messages.some(
-        (m) => m.type === "hid:detach" && (m as any).guestPath?.[1] === UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
-      ),
-    ).toBe(true);
-    expect(
-      target.messages.some(
-        (m) => m.type === "hid:attach" && (m as any).guestPath?.[1] === UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
-      ),
-    ).toBe(true);
+    // The first dynamic hub port should have been freed and then reused.
+    expect(target.messages.some((m) => m.type === "hid:detach" && (m as any).guestPath?.[1] === UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT)).toBe(true);
+    expect(target.messages.some((m) => m.type === "hid:attach" && (m as any).guestPath?.[1] === UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT)).toBe(true);
     expect(manager.getState().attachedDevices.map((d) => d.guestPath)).toEqual([
       [EXTERNAL_HUB_ROOT_PORT, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
       [EXTERNAL_HUB_ROOT_PORT, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT + 1],
