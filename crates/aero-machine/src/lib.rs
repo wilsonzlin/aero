@@ -33,8 +33,8 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    register_pci_config_ports, PciConfigPorts, PciIntxRouter, PciIntxRouterConfig,
-    SharedPciConfigPorts,
+    register_pci_config_ports, PciConfigPorts, PciCoreSnapshot, PciIntxRouter,
+    PciIntxRouterConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -1026,25 +1026,26 @@ impl snapshot::SnapshotSource for Machine {
             ));
         }
         if let Some(pci_cfg) = &self.pci_cfg {
-            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                // Canonical outer ID for legacy PCI config mechanism #1 ports (`0xCF8/0xCFC`) and
-                // PCI bus config-space state.
-                //
-                // NOTE: `PciConfigPorts` snapshots cover both the config mechanism #1 address
-                // latch and the per-device config space/BAR state, so this one entry is
-                // sufficient to restore guest-programmed BARs and command bits.
-                //
-                // Older snapshots may have stored this under the legacy `DeviceId::PCI` outer ID;
-                // restore accepts both.
-                snapshot::DeviceId::PCI_CFG,
-                &*pci_cfg.borrow(),
-            ));
-        }
-        if let Some(pci_intx) = &self.pci_intx {
-            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                snapshot::DeviceId::PCI_INTX,
-                &*pci_intx.borrow(),
-            ));
+            if let Some(pci_intx) = &self.pci_intx {
+                // Store PCI core state under a single outer `DeviceId::PCI` entry to avoid
+                // duplicate `(id, version, flags)` tuples in `aero_snapshot` while still capturing
+                // both:
+                // - PCI config mechanism + config-space/BAR state (`PCPT`)
+                // - PCI INTx routing + asserted level refcounts (`INTX`)
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let mut pci_intx = pci_intx.borrow_mut();
+                let core = PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+                devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                    snapshot::DeviceId::PCI,
+                    &core,
+                ));
+            } else {
+                // Fallback: config ports only.
+                devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                    snapshot::DeviceId::PCI,
+                    &*pci_cfg.borrow(),
+                ));
+            }
         }
         if let Some(acpi_pm) = &self.acpi_pm {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -1199,25 +1200,56 @@ impl snapshot::SnapshotTarget for Machine {
             restored_interrupts = true;
         }
 
+        let mut restored_pci_intx = false;
         // 2) Restore PCI devices (config ports + INTx router).
-        // Prefer the canonical `PCI_CFG` outer ID, but accept legacy snapshots that used `PCI`.
-        let pci_cfg_state = by_id
-            .remove(&snapshot::DeviceId::PCI_CFG)
-            .or_else(|| by_id.remove(&snapshot::DeviceId::PCI));
-        if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
+        //
+        // Newer snapshots store both under a single `DeviceId::PCI` entry using
+        // `aero_devices::pci::PciCoreSnapshot`.
+        let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
+        let pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
+
+        if let Some(state) = pci_state {
+            if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let mut pci_intx = pci_intx.borrow_mut();
+                let mut core = PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+                match snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut core) {
+                    Ok(()) => {
+                        restored_pci_intx = true;
+                    }
+                    Err(_) => {
+                        // Backward compatibility: older snapshots stored only `PciConfigPorts`
+                        // (`PCPT`) under `DeviceId::PCI`.
+                        let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            &state,
+                            &mut *pci_cfg,
+                        );
+                    }
+                }
+            } else if let Some(pci_cfg) = &self.pci_cfg {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let _ =
+                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
+            }
+        } else if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
+            // Older snapshots used a dedicated `DeviceId::PCI_CFG` entry for config ports.
             let mut pci_cfg = pci_cfg.borrow_mut();
             let _ =
                 snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
         }
 
-        let mut restored_pci_intx = false;
-        if let (Some(pci_intx), Some(state)) =
-            (&self.pci_intx, by_id.remove(&snapshot::DeviceId::PCI_INTX))
-        {
-            let mut pci_intx = pci_intx.borrow_mut();
-            let _ =
-                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_intx);
-            restored_pci_intx = true;
+        // Backward compatibility: older snapshots stored INTx routing separately.
+        if !restored_pci_intx {
+            if let (Some(pci_intx), Some(state)) =
+                (&self.pci_intx, by_id.remove(&snapshot::DeviceId::PCI_INTX))
+            {
+                let mut pci_intx = pci_intx.borrow_mut();
+                let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    &state,
+                    &mut *pci_intx,
+                );
+                restored_pci_intx = true;
+            }
         }
 
         // 3) After restoring both the interrupt controller and the PCI INTx router, re-drive any

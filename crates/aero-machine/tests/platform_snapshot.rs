@@ -2,7 +2,7 @@ use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use aero_devices::acpi_pm::{
     DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
@@ -789,4 +789,81 @@ fn snapshot_restore_polls_hpet_once_to_reassert_level_lines() {
     }
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x61));
+}
+
+fn read_u32_le<R: Read>(r: &mut R) -> u32 {
+    let mut buf = [0u8; 4];
+    r.read_exact(&mut buf).unwrap();
+    u32::from_le_bytes(buf)
+}
+
+fn read_u16_le<R: Read>(r: &mut R) -> u16 {
+    let mut buf = [0u8; 2];
+    r.read_exact(&mut buf).unwrap();
+    u16::from_le_bytes(buf)
+}
+
+fn read_u64_le<R: Read>(r: &mut R) -> u64 {
+    let mut buf = [0u8; 8];
+    r.read_exact(&mut buf).unwrap();
+    u64::from_le_bytes(buf)
+}
+
+fn skip_exact<R: Read>(r: &mut R, mut len: u64) {
+    let mut buf = [0u8; 1024];
+    while len > 0 {
+        let chunk = (len as usize).min(buf.len());
+        r.read_exact(&mut buf[..chunk]).unwrap();
+        len -= chunk as u64;
+    }
+}
+
+#[test]
+fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
+    let mut m = Machine::new(pc_machine_config()).unwrap();
+    assert!(m.pci_config_ports().is_some());
+    assert!(m.pci_intx_router().is_some());
+
+    let snap = m.take_snapshot_full().unwrap();
+
+    // Find the DEVICES section and scan the entry headers without allocating device payloads.
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snap)).unwrap();
+    let devices_section = index
+        .sections
+        .iter()
+        .find(|s| s.id == aero_snapshot::SectionId::DEVICES)
+        .expect("missing DEVICES section");
+
+    let mut cursor = Cursor::new(&snap);
+    cursor.seek(SeekFrom::Start(devices_section.offset)).unwrap();
+    let mut r = cursor.take(devices_section.len);
+
+    let count = read_u32_le(&mut r) as usize;
+    let mut pci_entries = 0usize;
+    let mut pci_intx_entries = 0usize;
+
+    for _ in 0..count {
+        let id = aero_snapshot::DeviceId(read_u32_le(&mut r));
+        let _version = read_u16_le(&mut r);
+        let _flags = read_u16_le(&mut r);
+        let len = read_u64_le(&mut r);
+
+        if id == aero_snapshot::DeviceId::PCI {
+            pci_entries += 1;
+            // `aero-io-snapshot` header is 16 bytes. Verify this is the PCI core wrapper (`PCIC`).
+            let mut hdr = [0u8; 16];
+            r.read_exact(&mut hdr).unwrap();
+            assert_eq!(&hdr[0..4], b"AERO");
+            assert_eq!(&hdr[8..12], b"PCIC");
+            skip_exact(&mut r, len.saturating_sub(hdr.len() as u64));
+        } else {
+            if id == aero_snapshot::DeviceId::PCI_INTX {
+                pci_intx_entries += 1;
+            }
+            skip_exact(&mut r, len);
+        }
+    }
+
+    assert_eq!(pci_entries, 1);
+    assert_eq!(pci_intx_entries, 0);
 }
