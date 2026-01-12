@@ -78,3 +78,52 @@ impl<B: NetworkBackend> NetworkBackend for Option<B> {
         self.as_ref().and_then(|backend| backend.l2_ring_stats())
     }
 }
+
+impl<T: NetworkBackend + ?Sized> NetworkBackend for std::rc::Rc<std::cell::RefCell<T>> {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        self.borrow_mut().transmit(frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        self.borrow_mut().poll_receive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NetworkBackend;
+
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
+    #[test]
+    fn network_backend_is_implemented_for_rc_refcell() {
+        #[derive(Default)]
+        struct Backend {
+            tx: Vec<Vec<u8>>,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetworkBackend for Backend {
+            fn transmit(&mut self, frame: Vec<u8>) {
+                self.tx.push(frame);
+            }
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.rx.pop_front()
+            }
+        }
+
+        let inner = Rc::new(RefCell::new(Backend::default()));
+        inner.borrow_mut().rx.push_back(vec![9, 9, 9]);
+
+        let mut backend = inner.clone();
+        backend.transmit(vec![1, 2, 3]);
+
+        assert_eq!(backend.poll_receive(), Some(vec![9, 9, 9]));
+        assert_eq!(backend.poll_receive(), None);
+
+        assert_eq!(inner.borrow().tx, vec![vec![1, 2, 3]]);
+    }
+}
