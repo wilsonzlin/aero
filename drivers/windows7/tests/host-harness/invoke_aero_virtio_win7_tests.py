@@ -1176,6 +1176,28 @@ def main() -> int:
                     ):
                         saw_virtio_input_events_skip = True
 
+                    # If input events are required, fail fast when the guest reports SKIP/FAIL for
+                    # virtio-input-events. This saves CI time when the guest image was provisioned
+                    # without `--test-input-events`, or when the end-to-end input path is broken.
+                    if need_input_events:
+                        if saw_virtio_input_events_skip:
+                            print(
+                                "FAIL: virtio-input-events test was skipped (flag_not_set) but "
+                                "--with-input-events was enabled (provision the guest with --test-input-events)",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if saw_virtio_input_events_fail:
+                            print(
+                                "FAIL: virtio-input-events test reported FAIL while --with-input-events was enabled",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+
                     if need_input_events and saw_virtio_input_events_ready and not injected_virtio_input_events:
                         injected_virtio_input_events = True
                         if qmp_endpoint is None:

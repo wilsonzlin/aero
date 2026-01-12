@@ -410,6 +410,14 @@ function Wait-AeroSelftestResult {
           return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
         }
       }
+
+      # If input events are required, fail fast when the guest reports SKIP/FAIL for virtio-input-events.
+      # This saves time when the guest image was provisioned without `--test-input-events`, or when the
+      # end-to-end input report delivery path is broken.
+      if ($RequireVirtioInputEventsPass) {
+        if ($sawVirtioInputEventsSkip) { return @{ Result = "VIRTIO_INPUT_EVENTS_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioInputEventsFail) { return @{ Result = "VIRTIO_INPUT_EVENTS_FAILED"; Tail = $tail } }
+      }
       if (-not $sawVirtioSndPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|PASS") {
         $sawVirtioSndPass = $true
       }
