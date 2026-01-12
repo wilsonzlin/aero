@@ -685,6 +685,27 @@ fn qcow2_rejects_invalid_zero_cluster_entry() {
 }
 
 #[test]
+fn qcow2_rejects_zero_cluster_entry_with_offset_bits_set() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+    let data_cluster_offset = cluster_size * 5;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_zero_entry = data_cluster_offset | QCOW2_OFLAG_ZERO;
+    backend
+        .write_at(l2_table_offset, &bad_zero_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 invalid zero cluster entry")
+    ));
+}
+
+#[test]
 fn qcow2_v2_open_write_and_reopen_roundtrip() {
     let backend = make_qcow2_v2_empty(64 * 1024);
     let mut disk = Qcow2Disk::open(backend).unwrap();

@@ -383,6 +383,9 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             if (l2_entry & low_mask) != QCOW2_OFLAG_ZERO {
                 return Err(DiskError::CorruptImage("qcow2 invalid zero cluster entry"));
             }
+            if self.mask_offset(l2_entry) != 0 {
+                return Err(DiskError::CorruptImage("qcow2 invalid zero cluster entry"));
+            }
             return Ok(None);
         }
         if (l2_entry & low_mask) != 0 {
