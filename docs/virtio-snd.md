@@ -166,7 +166,10 @@ The AudioWorklet ring buffer used by the AU-WORKLET path uses **frame indices** 
 The canonical layout is defined in:
 
 - Rust: `crates/platform/src/audio/worklet_bridge.rs` (`aero_platform::audio::worklet_bridge`, re-exported by `aero_audio::worklet_bridge`)
-- JS: `web/src/platform/audio.ts` + `web/src/platform/audio-worklet-processor.js`
+- JS:
+  - `web/src/audio/audio_worklet_ring.ts` + `web/src/platform/audio_worklet_ring_layout.js` (layout constants + helper math)
+  - `web/src/platform/audio.ts` (main-thread ring producer helpers + AudioWorkletNode wiring)
+  - `web/src/platform/audio-worklet-processor.js` (AudioWorklet consumer)
 
 Layout (little-endian):
 
