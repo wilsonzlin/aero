@@ -288,7 +288,7 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 
 ### Bring-up no-op DDIs
 
-These DDIs are treated as benign no-ops for bring-up (returning `S_OK`) and are **not** tagged as stubs in the trace output:
+These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They are still tagged as `(stub)` in the trace output so tracing can quickly reveal when the runtime exercises them (see `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`):
 
 - `pfnSetConvolutionMonoKernel`
 - `pfnGenerateMipSubLevels`
