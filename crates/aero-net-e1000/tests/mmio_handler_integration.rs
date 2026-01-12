@@ -66,39 +66,12 @@ struct SharedE1000Mmio {
 impl MmioHandler for SharedE1000Mmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
         let mut dev = self.dev.borrow_mut();
-        match size {
-            1 | 2 | 4 => dev.mmio_read(offset, size) as u64,
-            8 => {
-                let lo = dev.mmio_read(offset, 4) as u64;
-                let hi = dev.mmio_read(offset + 4, 4) as u64;
-                lo | (hi << 32)
-            }
-            _ => {
-                let mut out = 0u64;
-                for i in 0..size.min(8) {
-                    let byte = dev.mmio_read(offset + i as u64, 1) as u64 & 0xff;
-                    out |= byte << (i * 8);
-                }
-                out
-            }
-        }
+        MmioHandler::read(&mut *dev, offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
         let mut dev = self.dev.borrow_mut();
-        match size {
-            1 | 2 | 4 => dev.mmio_write_reg(offset, size, value as u32),
-            8 => {
-                dev.mmio_write_reg(offset, 4, value as u32);
-                dev.mmio_write_reg(offset + 4, 4, (value >> 32) as u32);
-            }
-            _ => {
-                for i in 0..size.min(8) {
-                    let byte = ((value >> (i * 8)) & 0xff) as u32;
-                    dev.mmio_write_reg(offset + i as u64, 1, byte);
-                }
-            }
-        }
+        MmioHandler::write(&mut *dev, offset, size, value)
     }
 }
 
@@ -190,4 +163,3 @@ fn physical_memory_bus_mmio_defers_dma_until_poll() {
     assert_eq!(causes & ICR_RXT0, ICR_RXT0);
     assert!(!dev.borrow().irq_level());
 }
-
