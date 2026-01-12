@@ -173,11 +173,11 @@ describe("WebSocketUdpProxyClient", () => {
     (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
 
     try {
-      const client = new WebSocketUdpProxyClient("/gw", () => {});
+      const client = new WebSocketUdpProxyClient("/base", () => {});
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("wss://example.com/gw/udp");
+      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
 
       lastSocket!.triggerOpen();
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));

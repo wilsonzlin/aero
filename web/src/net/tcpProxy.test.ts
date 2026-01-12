@@ -144,15 +144,15 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
 
     try {
-      const client = new WebSocketTcpProxyClient("/gw", () => {});
+      const client = new WebSocketTcpProxyClient("/base", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toContain("wss://example.com/gw/tcp");
+      expect(FakeWebSocket.last!.url).toContain("wss://example.com/base/tcp");
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("wss:");
       expect(url.hostname).toBe("example.com");
-      expect(url.pathname).toBe("/gw/tcp");
+      expect(url.pathname).toBe("/base/tcp");
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
       else g.WebSocket = originalWebSocket;

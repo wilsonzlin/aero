@@ -138,9 +138,9 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
 
     try {
-      const client = new WebSocketTcpMuxProxyClient("/gw");
+      const client = new WebSocketTcpMuxProxyClient("/base");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("wss://example.com/gw/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("wss://example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
