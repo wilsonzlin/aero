@@ -14,16 +14,21 @@
 // The incremental writer supports writing an `epb_flags` option for packet
 // direction.
 
-export enum LinkType {
-  Ethernet = 1,
-  User0 = 147,
-  User1 = 148,
-}
+// Avoid TypeScript `enum` declarations so this module can be executed directly
+// under Node with `--experimental-strip-types` (strip-only mode does not
+// transform enums).
+export const LinkType = {
+  Ethernet: 1,
+  User0: 147,
+  User1: 148,
+} as const;
+export type LinkType = (typeof LinkType)[keyof typeof LinkType];
 
-export enum PacketDirection {
-  Inbound,
-  Outbound,
-}
+export const PacketDirection = {
+  Inbound: 0,
+  Outbound: 1,
+} as const;
+export type PacketDirection = (typeof PacketDirection)[keyof typeof PacketDirection];
 
 const textEncoder = new TextEncoder();
 

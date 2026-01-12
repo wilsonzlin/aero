@@ -232,11 +232,10 @@ export class NetTracer {
     const hasTcpProxy = this.records.some((r) => r.type === "tcp_proxy");
     const hasUdpProxy = this.records.some((r) => r.type === "udp_proxy");
 
-    // Keep guest RX/TX split across two interfaces for compatibility with
-    // existing tooling/tests (and because it makes capture triage easier).
+    // Mirror the Rust tracer: a single Ethernet interface with direction encoded
+    // via `epb_flags`, plus optional pseudo-interfaces for proxy traffic.
     const interfaces: PcapngInterfaceDescription[] = [
-      { linkType: PCAPNG_LINKTYPE_ETHERNET, snapLen: 0xffff, name: "guest_rx", tsResolPower10: 9 },
-      { linkType: PCAPNG_LINKTYPE_ETHERNET, snapLen: 0xffff, name: "guest_tx", tsResolPower10: 9 },
+      { linkType: PCAPNG_LINKTYPE_ETHERNET, snapLen: 0xffff, name: "guest-eth0", tsResolPower10: 9 },
     ];
 
     const tcpProxyInterfaceId = hasTcpProxy ? interfaces.length : null;
@@ -254,7 +253,7 @@ export class NetTracer {
       switch (rec.type) {
         case "ethernet":
           packets.push({
-            interfaceId: rec.direction === "guest_rx" ? 0 : 1,
+            interfaceId: 0,
             timestamp: rec.timestampNs,
             packet: rec.frame,
             // Also set EPB direction flags for compatibility with readers that use

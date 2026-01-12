@@ -454,10 +454,8 @@ describe("workers/net.worker (worker_threads)", () => {
       expect(pcapngMsg.bytes).toBeInstanceOf(ArrayBuffer);
 
       const parsed = parsePcapng(new Uint8Array(pcapngMsg.bytes));
-      const guestRxId = parsed.interfaces.findIndex((iface) => iface.name === "guest_rx");
-      const guestTxId = parsed.interfaces.findIndex((iface) => iface.name === "guest_tx");
-      expect(guestRxId).toBeGreaterThanOrEqual(0);
-      expect(guestTxId).toBeGreaterThanOrEqual(0);
+      const guestEthId = parsed.interfaces.findIndex((iface) => iface.name === "guest-eth0");
+      expect(guestEthId).toBeGreaterThanOrEqual(0);
 
       const tx = parsed.packets.find((p) => arraysEqual(p.payload, txFrame));
       const rx = parsed.packets.find((p) => arraysEqual(p.payload, rxFrame));
@@ -465,9 +463,9 @@ describe("workers/net.worker (worker_threads)", () => {
       expect(tx).toBeTruthy();
       expect(rx).toBeTruthy();
 
-      // Direction is encoded as distinct PCAPNG interfaces.
-      expect(tx!.interfaceId).toBe(guestTxId);
-      expect(rx!.interfaceId).toBe(guestRxId);
+      // Direction is encoded via `epb_flags` on a single Ethernet interface.
+      expect(tx!.interfaceId).toBe(guestEthId);
+      expect(rx!.interfaceId).toBe(guestEthId);
 
       // Also ensure `epb_flags` direction bits are set:
       // - 1 = inbound
