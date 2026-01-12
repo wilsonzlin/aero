@@ -53,6 +53,32 @@ pub struct AeroGpuAcmdExecutor {
 
 impl AeroGpuAcmdExecutor {
     pub async fn new_headless() -> Result<Self, GpuError> {
+        // When using the GL backend on Linux, wgpu can emit noisy warnings if `XDG_RUNTIME_DIR` is
+        // unset or points at a directory with unsafe permissions (e.g. `/tmp` is typically `1777`).
+        // Create a per-process temp dir so headless callers don't need to care about display-server
+        // environment details.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
+                Ok(dir) if !dir.is_empty() => match std::fs::metadata(&dir) {
+                    Ok(meta) => !meta.is_dir() || (meta.permissions().mode() & 0o077) != 0,
+                    Err(_) => true,
+                },
+                _ => true,
+            };
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir().join(format!(
+                    "aero-wgpu-xdg-runtime-{}-acmd-executor",
+                    std::process::id()
+                ));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
         // On Linux CI we prefer the GL backend first to avoid crashes seen with some Vulkan
         // software adapters (lavapipe/llvmpipe). If no GL adapter is available, fall back to
         // the native backends.
