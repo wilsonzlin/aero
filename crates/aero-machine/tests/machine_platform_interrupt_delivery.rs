@@ -506,3 +506,112 @@ fn machine_i8042_mouse_motion_delivers_via_ioapic_in_apic_mode() {
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
+
+#[test]
+fn machine_i8042_keyboard_irq1_is_gated_by_i8042_command_byte() {
+    let vector = 0x21u8; // IRQ1 with PIC base 0x20.
+    let flag_addr = 0x0506u16;
+    let flag_value = 0x11u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Configure PIC offsets and unmask IRQ1 so delivery would be possible if i8042 asserted it.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(1, false);
+    }
+
+    // Disable i8042 IRQ1 generation (command byte bit 0).
+    m.io_write(0x64, 1, 0x60);
+    m.io_write(0x60, 1, 0x44); // 0x45 default with IRQ1 cleared.
+
+    m.inject_browser_key("KeyA", true);
+
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ1 should not be latched when i8042 command byte has IRQ1 disabled"
+        );
+    }
+
+    // The scancode should still be present in the output buffer even if no interrupt is generated.
+    assert_eq!(m.io_read(0x60, 1) as u8, 0x1E); // Set-1 'A' make code.
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        assert_ne!(
+            m.read_physical_u8(u64::from(flag_addr)),
+            flag_value,
+            "interrupt handler ran unexpectedly while IRQ1 was disabled in i8042 command byte"
+        );
+    }
+}
+
+#[test]
+fn machine_i8042_mouse_irq12_is_gated_by_i8042_command_byte() {
+    // IRQ12 with PIC base 0x28 => vector 0x2C.
+    let vector = 0x2Cu8;
+    let flag_addr = 0x0507u16;
+    let flag_value = 0x22u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Configure PIC offsets and unmask cascade + IRQ12.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(12, false);
+    }
+
+    // Enable PS/2 mouse reporting; this produces an ACK byte (0xFA) but should not generate IRQ12
+    // because the i8042 command byte has IRQ12 disabled by default (bit 1 = 0).
+    m.io_write(0x64, 1, 0xD4);
+    m.io_write(0x60, 1, 0xF4);
+    let ack = m.io_read(0x60, 1) as u8;
+    assert_eq!(ack, 0xFA);
+
+    m.inject_mouse_motion(1, 1, 0);
+
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "IRQ12 should not be latched when i8042 command byte has IRQ12 disabled"
+        );
+    }
+
+    // A mouse packet should still be available in the output buffer.
+    let _ = m.io_read(0x60, 1);
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        assert_ne!(
+            m.read_physical_u8(u64::from(flag_addr)),
+            flag_value,
+            "interrupt handler ran unexpectedly while IRQ12 was disabled in i8042 command byte"
+        );
+    }
+}
