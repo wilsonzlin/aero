@@ -855,11 +855,24 @@ static int RunProducer(int argc, char** argv) {
   }
 
   ResumeThread(pi.hThread);
-  CloseHandle(pi.hThread);
 
-  WaitForSingleObject(pi.hProcess, INFINITE);
+  DWORD wait = WaitForSingleObject(pi.hProcess, 20000);
+  if (wait != WAIT_OBJECT_0) {
+    TerminateProcess(pi.hProcess, 124);
+    WaitForSingleObject(pi.hProcess, 2000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (job) {
+      CloseHandle(job);
+    }
+    return reporter.Fail("consumer timed out");
+  }
+
   DWORD exit_code = 1;
-  GetExitCodeProcess(pi.hProcess, &exit_code);
+  if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+    exit_code = 1;
+  }
+  CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
   if (job) {
     CloseHandle(job);
