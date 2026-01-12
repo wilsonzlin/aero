@@ -370,7 +370,7 @@ If the guest was not provisioned with `--test-input-events`, the guest will emit
 
 If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events` marker at all
 (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early with a `MISSING_VIRTIO_INPUT_EVENTS`
-reason (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`). Update/re-provision the guest selftest binary.
+failure (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints an error message). Update/re-provision the guest selftest binary.
 
 ---
 

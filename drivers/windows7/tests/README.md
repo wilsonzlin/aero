@@ -115,8 +115,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
     - Note: this requires a guest image provisioned with `--test-input-events` so the guest selftest enables the
       `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
     - Note: if the guest selftest does not emit any `virtio-input-events` marker at all (READY/SKIP/PASS/FAIL) after
-      completing `virtio-input`, the harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`). Update/re-provision
-      the guest selftest binary.
+      completing `virtio-input`, the harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints an
+      error message). Update/re-provision the guest selftest binary.
     - The harness also emits a host marker for the injection step itself:
       `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|...`
       - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
