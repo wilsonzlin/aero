@@ -182,7 +182,7 @@ fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
     HeaderValue::from_str(etag).map_err(|err| ManifestError::InvalidEtag {
         id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
         etag: super::truncate_for_error(etag, 512),
-        reason: err.to_string(),
+        reason: format!("invalid HTTP header value: {err}"),
     })?;
 
     // Enforce HTTP entity-tag format (RFC 9110 § 8.8.3). We validate this separately from
@@ -213,7 +213,7 @@ fn parse_last_modified_rfc3339(id: &str, last_modified: &str) -> Result<SystemTi
     .map_err(|err| ManifestError::InvalidLastModified {
         id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
         last_modified: super::truncate_for_error(last_modified, 256),
-        reason: err.to_string(),
+        reason: format!("must be RFC3339 (e.g. 2026-01-10T00:00:00Z): {err}"),
     })?;
 
     let nanos = dt.unix_timestamp_nanos();
