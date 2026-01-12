@@ -5564,8 +5564,6 @@ mod tests {
         // PCI INTx sources so the interrupt controller sees the asserted line.
         const ENTRY_IP: u16 = 0x1000;
         m.mem
-            .inner
-            .borrow_mut()
             .write_physical(u64::from(ENTRY_IP), &[0x90, 0x90, 0x90, 0x90]);
         init_real_mode_cpu(&mut m, ENTRY_IP, 0);
         m.cpu.state.halted = true;
