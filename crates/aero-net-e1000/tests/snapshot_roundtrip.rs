@@ -179,31 +179,31 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
     dev0.pci_write_u32(0x14, 0xC000);
 
     // Enable interrupts (stored in IMS + ICR/irq_level).
-    dev0.mmio_write_u32(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
-    dev0.mmio_write_u32(0x00C8, ICR_TXDW); // ICS
+    dev0.mmio_write_u32_reg(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
+    dev0.mmio_write_u32_reg(0x00C8, ICR_TXDW); // ICS
 
     // Program a few registers, including an "unknown" one stored in `other_regs`.
-    dev0.mmio_write_u32(0x0018, 0xDEAD_BEEF); // CTRL_EXT
-    dev0.mmio_write_u32(0x9000, 0x1122_3344); // other_regs
-    dev0.io_write(0x0, 4, 0x1234_5678); // IOADDR shadow (io_reg)
+    dev0.mmio_write_u32_reg(0x0018, 0xDEAD_BEEF); // CTRL_EXT
+    dev0.mmio_write_u32_reg(0x9000, 0x1122_3344); // other_regs
+    dev0.io_write_reg(0x0, 4, 0x1234_5678); // IOADDR shadow (io_reg)
 
     // Change MAC and RA valid bit; also mutates EEPROM words 0..2.
-    dev0.mmio_write_u32(0x5400, u32::from_le_bytes([0x10, 0x20, 0x30, 0x40]));
-    dev0.mmio_write_u32(0x5404, u32::from_le_bytes([0x50, 0x60, 0x00, 0x00])); // AV=0
+    dev0.mmio_write_u32_reg(0x5400, u32::from_le_bytes([0x10, 0x20, 0x30, 0x40]));
+    dev0.mmio_write_u32_reg(0x5404, u32::from_le_bytes([0x50, 0x60, 0x00, 0x00])); // AV=0
 
     // Seed EERD/EEPROM state.
-    dev0.mmio_write_u32(0x0014, 1 | (0 << 8)); // START + word 0
+    dev0.mmio_write_u32_reg(0x0014, 1 | (0 << 8)); // START + word 0
 
     // Seed PHY state via MDIC write.
-    dev0.mmio_write_u32(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0400_0000 | 0xBEEF);
+    dev0.mmio_write_u32_reg(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0400_0000 | 0xBEEF);
 
     // Configure TX ring at 0x1000 with 8 descriptors.
-    dev0.mmio_write_u32(0x3800, 0x1000); // TDBAL
-    dev0.mmio_write_u32(0x3804, 0); // TDBAH
-    dev0.mmio_write_u32(0x3808, 8 * 16); // TDLEN
-    dev0.mmio_write_u32(0x3810, 0); // TDH
-    dev0.mmio_write_u32(0x3818, 0); // TDT
-    dev0.mmio_write_u32(0x0400, 1 << 1); // TCTL.EN
+    dev0.mmio_write_u32_reg(0x3800, 0x1000); // TDBAL
+    dev0.mmio_write_u32_reg(0x3804, 0); // TDBAH
+    dev0.mmio_write_u32_reg(0x3808, 8 * 16); // TDLEN
+    dev0.mmio_write_u32_reg(0x3810, 0); // TDH
+    dev0.mmio_write_u32_reg(0x3818, 0); // TDT
+    dev0.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
 
     // Descriptor 0: advanced context descriptor to make tx_ctx non-default.
     write_tx_ctx_desc(
@@ -244,10 +244,10 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
     );
 
     // Process descriptor 0 (context) + descriptor 1 (frame1).
-    dev0.mmio_write_u32(0x3818, 2);
+    dev0.mmio_write_u32_reg(0x3818, 2);
     dev0.poll(&mut mem0);
     // Process descriptor 2 only (partial legacy packet).
-    dev0.mmio_write_u32(0x3818, 3);
+    dev0.mmio_write_u32_reg(0x3818, 3);
     dev0.poll(&mut mem0);
 
     // Queue an RX frame but keep RX disabled so it stays in rx_pending.
@@ -282,16 +282,16 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
     assert!(!dev1.irq_level());
 
     // Verify EEPROM and PHY arrays affect subsequent reads (not just EERD/MDIC registers).
-    dev0.mmio_write_u32(0x0014, 1 | (2 << 8));
-    dev1.mmio_write_u32(0x0014, 1 | (2 << 8));
+    dev0.mmio_write_u32_reg(0x0014, 1 | (2 << 8));
+    dev1.mmio_write_u32_reg(0x0014, 1 | (2 << 8));
     let eerd0 = dev0.mmio_read_u32(0x0014);
     let eerd1 = dev1.mmio_read_u32(0x0014);
     assert_eq!(eerd0, eerd1);
     let eeprom_word2 = (eerd0 >> 16) as u16;
     assert_eq!(eeprom_word2, u16::from_le_bytes([0x50, 0x60]));
 
-    dev0.mmio_write_u32(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0800_0000);
-    dev1.mmio_write_u32(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0800_0000);
+    dev0.mmio_write_u32_reg(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0800_0000);
+    dev1.mmio_write_u32_reg(0x0020, (4u32 << 16) | (1u32 << 21) | 0x0800_0000);
     let mdic0 = dev0.mmio_read_u32(0x0020);
     let mdic1 = dev1.mmio_read_u32(0x0020);
     assert_eq!(mdic0 & 0xFFFF, 0xBEEF);
@@ -320,8 +320,8 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
         0b0000_1001, // EOP|RS
     );
 
-    dev0.mmio_write_u32(0x3818, 4);
-    dev1.mmio_write_u32(0x3818, 4);
+    dev0.mmio_write_u32_reg(0x3818, 4);
+    dev1.mmio_write_u32_reg(0x3818, 4);
     dev0.poll(&mut mem0);
     dev1.poll(&mut mem1);
 
@@ -350,8 +350,8 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
         0x03,
     );
 
-    dev0.mmio_write_u32(0x3818, 5);
-    dev1.mmio_write_u32(0x3818, 5);
+    dev0.mmio_write_u32_reg(0x3818, 5);
+    dev1.mmio_write_u32_reg(0x3818, 5);
     dev0.poll(&mut mem0);
     dev1.poll(&mut mem1);
 
@@ -373,12 +373,12 @@ fn snapshot_roundtrip_preserves_in_flight_device_state() {
     write_rx_desc(&mut mem1, 0xA010, 0xB800);
 
     for (dev, mem) in [(&mut dev0, &mut mem0), (&mut dev1, &mut mem1)] {
-        dev.mmio_write_u32(0x2800, 0xA000); // RDBAL
-        dev.mmio_write_u32(0x2804, 0); // RDBAH
-        dev.mmio_write_u32(0x2808, 2 * 16); // RDLEN
-        dev.mmio_write_u32(0x2810, 0); // RDH
-        dev.mmio_write_u32(0x2818, 1); // RDT
-        dev.mmio_write_u32(0x0100, 1 << 1); // RCTL.EN
+        dev.mmio_write_u32_reg(0x2800, 0xA000); // RDBAL
+        dev.mmio_write_u32_reg(0x2804, 0); // RDBAH
+        dev.mmio_write_u32_reg(0x2808, 2 * 16); // RDLEN
+        dev.mmio_write_u32_reg(0x2810, 0); // RDH
+        dev.mmio_write_u32_reg(0x2818, 1); // RDT
+        dev.mmio_write_u32_reg(0x0100, 1 << 1); // RCTL.EN
         dev.poll(mem);
     }
 
@@ -400,34 +400,34 @@ fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
     dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
     // Program a few non-default guest-visible registers.
-    dev.mmio_write_u32(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
-    dev.mmio_write_u32(0x0018, 0x1234_5678); // CTRL_EXT
-    dev.mmio_write_u32(0x1234, 0xDEAD_BEEF); // other_regs
+    dev.mmio_write_u32_reg(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
+    dev.mmio_write_u32_reg(0x0018, 0x1234_5678); // CTRL_EXT
+    dev.mmio_write_u32_reg(0x1234, 0xDEAD_BEEF); // other_regs
 
     // Change MAC + set AV.
-    dev.mmio_write_u32(0x5400, u32::from_le_bytes([0x10, 0x11, 0x12, 0x13]));
-    dev.mmio_write_u32(0x5404, u32::from_le_bytes([0x14, 0x15, 0, 0]) | (1u32 << 31));
+    dev.mmio_write_u32_reg(0x5400, u32::from_le_bytes([0x10, 0x11, 0x12, 0x13]));
+    dev.mmio_write_u32_reg(0x5404, u32::from_le_bytes([0x14, 0x15, 0, 0]) | (1u32 << 31));
 
     // Exercise IOADDR shadow state.
-    dev.io_write(0x0, 4, 0x0400); // select TCTL
+    dev.io_write_reg(0x0, 4, 0x0400); // select TCTL
 
     // Configure RX ring: 2 descriptors at 0x2000.
-    dev.mmio_write_u32(0x2800, 0x2000); // RDBAL
-    dev.mmio_write_u32(0x2804, 0); // RDBAH
-    dev.mmio_write_u32(0x2808, 2 * 16); // RDLEN
-    dev.mmio_write_u32(0x2810, 0); // RDH
-    dev.mmio_write_u32(0x2818, 1); // RDT
-    dev.mmio_write_u32(0x0100, 1 << 1); // RCTL.EN
+    dev.mmio_write_u32_reg(0x2800, 0x2000); // RDBAL
+    dev.mmio_write_u32_reg(0x2804, 0); // RDBAH
+    dev.mmio_write_u32_reg(0x2808, 2 * 16); // RDLEN
+    dev.mmio_write_u32_reg(0x2810, 0); // RDH
+    dev.mmio_write_u32_reg(0x2818, 1); // RDT
+    dev.mmio_write_u32_reg(0x0100, 1 << 1); // RCTL.EN
     write_rx_desc(&mut mem, 0x2000, 0x3000);
     write_rx_desc(&mut mem, 0x2010, 0x3400);
 
     // Configure TX ring: 4 descriptors at 0x1000.
-    dev.mmio_write_u32(0x3800, 0x1000); // TDBAL
-    dev.mmio_write_u32(0x3804, 0); // TDBAH
-    dev.mmio_write_u32(0x3808, 4 * 16); // TDLEN
-    dev.mmio_write_u32(0x3810, 0); // TDH
-    dev.mmio_write_u32(0x3818, 0); // TDT
-    dev.mmio_write_u32(0x0400, 1 << 1); // TCTL.EN
+    dev.mmio_write_u32_reg(0x3800, 0x1000); // TDBAL
+    dev.mmio_write_u32_reg(0x3804, 0); // TDBAH
+    dev.mmio_write_u32_reg(0x3808, 4 * 16); // TDLEN
+    dev.mmio_write_u32_reg(0x3810, 0); // TDH
+    dev.mmio_write_u32_reg(0x3818, 0); // TDT
+    dev.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
 
     // Descriptor 0: a complete packet that ends up in tx_out.
     let tx_frame_a = build_test_frame(b"tx-a");
@@ -455,11 +455,11 @@ fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
     );
 
     // Process desc0+desc1, leaving desc2 pending.
-    dev.mmio_write_u32(0x3818, 2);
+    dev.mmio_write_u32_reg(0x3818, 2);
     dev.poll(&mut mem);
 
     // Disable TX before advertising the final descriptor.
-    dev.mmio_write_u32(0x0400, 0);
+    dev.mmio_write_u32_reg(0x0400, 0);
     write_tx_desc(
         &mut mem,
         0x1020,
@@ -467,7 +467,7 @@ fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
         tx_b1.len() as u16,
         0b0000_1001, // EOP|RS
     );
-    dev.mmio_write_u32(0x3818, 3);
+    dev.mmio_write_u32_reg(0x3818, 3);
 
     // Queue an RX frame but don't flush it yet.
     let rx_frame = build_test_frame(b"rx-pending");
@@ -500,7 +500,7 @@ fn snapshot_state_restore_state_roundtrip_preserves_state_and_continues_dma() {
     let run_to_completion =
         |dev: &mut E1000Device, mem: &mut TestDma| -> (Vec<Vec<u8>>, Vec<u8>) {
             // Re-enable TX and let poll process TX + flush RX.
-            dev.mmio_write_u32(0x0400, 1 << 1); // TCTL.EN
+            dev.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
             dev.poll(mem);
 
             let mut tx_frames = Vec::new();

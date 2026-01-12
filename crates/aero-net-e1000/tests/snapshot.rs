@@ -301,11 +301,11 @@ fn snapshot_roundtrip_restores_advanced_tx_state() {
 
     // Configure TX ring.
     let tx_ring = 0x1000u64;
-    dev.mmio_write_u32(REG_TDBAL, tx_ring as u32);
-    dev.mmio_write_u32(REG_TDLEN, 4 * 16);
-    dev.mmio_write_u32(REG_TDH, 0);
-    dev.mmio_write_u32(REG_TDT, 0);
-    dev.mmio_write_u32(REG_TCTL, TCTL_EN);
+    dev.mmio_write_u32_reg(REG_TDBAL, tx_ring as u32);
+    dev.mmio_write_u32_reg(REG_TDLEN, 4 * 16);
+    dev.mmio_write_u32_reg(REG_TDH, 0);
+    dev.mmio_write_u32_reg(REG_TDT, 0);
+    dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
 
     // Build a minimal Ethernet+IPv4 packet; checksum field initially zero.
     let payload = [0x01, 0x02, 0x03, 0x04];
@@ -372,7 +372,7 @@ fn snapshot_roundtrip_restores_advanced_tx_state() {
     );
 
     // Process context + first data descriptor (leave the packet incomplete).
-    dev.mmio_write_u32(REG_TDT, 2);
+    dev.mmio_write_u32_reg(REG_TDT, 2);
     dev.poll(&mut dma);
 
     let snapshot = dev.save_state();
@@ -381,7 +381,7 @@ fn snapshot_roundtrip_restores_advanced_tx_state() {
     restored.load_state(&snapshot).expect("load_state");
 
     // Complete the packet after restore.
-    restored.mmio_write_u32(REG_TDT, 3);
+    restored.mmio_write_u32_reg(REG_TDT, 3);
     restored.poll(&mut dma);
     let out = restored.pop_tx_frame().expect("expected a TX frame");
     assert_eq!(out.len(), frame.len());

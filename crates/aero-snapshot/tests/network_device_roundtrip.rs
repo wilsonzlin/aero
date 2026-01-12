@@ -136,11 +136,11 @@ fn snapshot_bytes<S: SnapshotSource>(source: &mut S, opts: SaveOptions) -> Vec<u
 fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     // Build an E1000 with some non-default state.
     let mut e1000 = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-    e1000.mmio_write_u32(REG_IMS, 0x1234_5678);
-    e1000.mmio_write_u32(REG_RCTL, 0xA5A5_A5A5);
+    e1000.mmio_write_u32_reg(REG_IMS, 0x1234_5678);
+    e1000.mmio_write_u32_reg(REG_RCTL, 0xA5A5_A5A5);
     // Keep TCTL_EN clear to avoid starting TX processing (we just want a non-default register
     // value that should survive snapshotting).
-    e1000.mmio_write_u32(REG_TCTL, 0x5A5A_5A58);
+    e1000.mmio_write_u32_reg(REG_TCTL, 0x5A5A_5A58);
     e1000.enqueue_rx_frame(vec![0x11u8; MIN_L2_FRAME_LEN]);
 
     let expected_e1000_mac = e1000.mac_addr();
