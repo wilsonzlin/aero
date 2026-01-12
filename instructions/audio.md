@@ -154,6 +154,7 @@ Canonical implementation:
 - Output setup (main thread): `web/src/platform/audio.ts` (`createAudioOutput`)
 - Ring consumer (AudioWorklet): `web/src/platform/audio-worklet-processor.js`
 - Ring layout/constants + helper math (TS): `web/src/audio/audio_worklet_ring.ts`
+- Ring layout/constants + helper math (layout-only, importable by AudioWorklet): `web/src/platform/audio_worklet_ring_layout.js`
 - Ring layout/constants + WASM producer bridge: `crates/platform/src/audio/worklet_bridge.rs`
 
 ```typescript
@@ -164,6 +165,9 @@ Canonical implementation:
 // - Samples are interleaved f32: [L0, R0, L1, R1, ...].
 // - The consumer (AudioWorklet) increments the underrun counter by the number of
 //   missing frames it had to render as silence.
+// The canonical implementation imports these from:
+// - `web/src/platform/audio_worklet_ring_layout.js` (layout-only, safe for AudioWorklet)
+// - `web/src/audio/audio_worklet_ring.ts` (TS helpers used by producers; re-exports the same constants)
 const READ_FRAME_INDEX = 0;
 const WRITE_FRAME_INDEX = 1;
 const UNDERRUN_COUNT_INDEX = 2;
