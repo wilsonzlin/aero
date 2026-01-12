@@ -1100,7 +1100,8 @@ static int send_keyboard_led_report_ioctl_set_output(const SELECTED_DEVICE *dev,
     } HID_XFER_PACKET_MIN;
 
     BYTE report[2];
-    HID_XFER_PACKET_MIN pkt;
+    ULONG_PTR inbuf[16];
+    HID_XFER_PACKET_MIN *pkt;
     DWORD bytes = 0;
     BOOL ok;
 
@@ -1121,16 +1122,17 @@ static int send_keyboard_led_report_ioctl_set_output(const SELECTED_DEVICE *dev,
     report[0] = 1; // ReportID=1 (keyboard)
     report[1] = led_mask;
 
-    ZeroMemory(&pkt, sizeof(pkt));
-    pkt.reportId = 1;
-    pkt.reportBuffer = report;
-    pkt.reportBufferLen = (ULONG)sizeof(report);
+    ZeroMemory(inbuf, sizeof(inbuf));
+    pkt = (HID_XFER_PACKET_MIN *)inbuf;
+    pkt->reportId = 1;
+    pkt->reportBuffer = report;
+    pkt->reportBufferLen = (ULONG)sizeof(report);
 
     wprintf(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT) keyboard LEDs: ");
     dump_hex(report, (DWORD)sizeof(report));
     wprintf(L"\n");
 
-    ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, &pkt, (DWORD)sizeof(pkt), NULL, 0, &bytes, NULL);
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
     if (!ok) {
         print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)");
         return 0;
