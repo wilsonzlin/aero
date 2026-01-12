@@ -33,16 +33,26 @@ fn env_var_truthy(name: &str) -> bool {
 /// request only the subset that is supported to keep device creation robust across platforms.
 fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
+    let backend_is_gl = adapter.get_info().backend == wgpu::Backend::Gl;
+
+    negotiated_features_for_available(
+        available,
+        backend_is_gl,
+        wgpu_texture_compression_disabled(),
+    )
+}
+
+fn negotiated_features_for_available(
+    available: wgpu::Features,
+    backend_is_gl: bool,
+    disable_texture_compression: bool,
+) -> wgpu::Features {
     let mut requested = wgpu::Features::empty();
 
-    // wgpu's GL backend has historically had shaky support for some texture compression workflows
-    // (notably BC copy paths). Since we prefer GL on Linux for CI stability, keep compression
-    // features disabled on GL unless explicitly requested via a different device creation path.
-    if matches!(adapter.get_info().backend, wgpu::Backend::Gl) {
-        return requested;
-    }
-
-    if !wgpu_texture_compression_disabled() {
+    // wgpu's GL backend has had correctness issues with native block-compressed texture paths on
+    // some platforms (notably Linux CI software adapters). Treat compression as disabled
+    // regardless of adapter feature bits to keep tests deterministic.
+    if !disable_texture_compression && !backend_is_gl {
         // Texture compression is optional but beneficial (guest textures, DDS, etc).
         // Request only features the adapter advertises, otherwise `request_device` will fail.
         for feature in [
@@ -57,4 +67,22 @@ fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     }
 
     requested
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negotiated_features_disables_compression_on_gl_backend() {
+        let compression = wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR;
+
+        let requested = negotiated_features_for_available(compression, true, false);
+        assert!(
+            !requested.intersects(compression),
+            "compression features must not be requested on the wgpu GL backend"
+        );
+    }
 }

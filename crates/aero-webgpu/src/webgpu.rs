@@ -209,21 +209,28 @@ async fn request_adapter_robust<'a>(
 
 fn negotiated_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
+    let backend_is_gl = adapter.get_info().backend == wgpu::Backend::Gl;
 
     negotiated_features_for_available(
         available,
+        backend_is_gl,
         env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION"),
     )
 }
 
 fn negotiated_features_for_available(
     available: wgpu::Features,
+    backend_is_gl: bool,
     disable_texture_compression: bool,
 ) -> wgpu::Features {
     let mut requested = wgpu::Features::empty();
 
     // Texture compression is optional but beneficial (guest textures, DDS, etc).
-    if !disable_texture_compression {
+    //
+    // Note: on the wgpu GL backend, block-compressed texture paths have proven unreliable on some
+    // platforms (notably Linux CI adapters). Treat compression as disabled regardless of adapter
+    // feature bits to keep behavior deterministic.
+    if !disable_texture_compression && !backend_is_gl {
         for feature in [
             wgpu::Features::TEXTURE_COMPRESSION_BC,
             wgpu::Features::TEXTURE_COMPRESSION_ETC2,
@@ -291,18 +298,19 @@ mod tests {
 
         let available = compression | timestamps;
 
-        let requested = negotiated_features_for_available(available, false);
+        let requested = negotiated_features_for_available(available, false, false);
         assert!(requested.contains(compression));
         assert!(requested.contains(timestamps));
 
-        let requested = negotiated_features_for_available(available, true);
+        let requested = negotiated_features_for_available(available, false, true);
         assert!(!requested.intersects(compression));
         assert!(requested.contains(timestamps));
     }
 
     #[test]
     fn negotiated_features_requires_timestamp_inside_encoders() {
-        let requested = negotiated_features_for_available(wgpu::Features::TIMESTAMP_QUERY, false);
+        let requested =
+            negotiated_features_for_available(wgpu::Features::TIMESTAMP_QUERY, false, false);
         assert!(
             !requested.contains(wgpu::Features::TIMESTAMP_QUERY),
             "should not request TIMESTAMP_QUERY unless TIMESTAMP_QUERY_INSIDE_ENCODERS is also available"
@@ -311,8 +319,28 @@ mod tests {
         let requested = negotiated_features_for_available(
             wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
             false,
+            false,
         );
         assert!(requested.contains(wgpu::Features::TIMESTAMP_QUERY));
         assert!(requested.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS));
+    }
+
+    #[test]
+    fn negotiated_features_disables_compression_on_gl_backend() {
+        let compression = wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR;
+
+        let timestamps =
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+
+        let available = compression | timestamps;
+
+        let requested = negotiated_features_for_available(available, true, false);
+        assert!(
+            !requested.intersects(compression),
+            "compression features must not be requested on the wgpu GL backend"
+        );
+        assert!(requested.contains(timestamps));
     }
 }

@@ -255,11 +255,15 @@ fn env_var_truthy(name: &str) -> bool {
 
 fn negotiated_features_for_available(
     available: wgpu::Features,
+    backend_is_gl: bool,
     disable_texture_compression: bool,
 ) -> wgpu::Features {
     let mut requested = wgpu::Features::empty();
 
-    if !disable_texture_compression {
+    // wgpu's GL backend has had correctness issues with native BC textures on some platforms
+    // (notably Linux CI software adapters). Treat compression as disabled regardless of adapter
+    // feature bits to keep tests deterministic.
+    if !disable_texture_compression && !backend_is_gl {
         // Texture compression is optional but beneficial (guest textures, DDS, etc).
         for feature in [
             wgpu::Features::TEXTURE_COMPRESSION_BC,
@@ -392,18 +396,23 @@ impl D3D9Runtime {
 
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
+        let backend_is_gl = adapter.get_info().backend == wgpu::Backend::Gl;
+
         let adapter_features = adapter.features();
-        let texture_compression_disabled =
+        let texture_compression_disabled_by_env =
             env_var_truthy(DISABLE_WGPU_TEXTURE_COMPRESSION_ENV);
+        let texture_compression_disabled = texture_compression_disabled_by_env || backend_is_gl;
         let required_features = negotiated_features_for_available(
             adapter_features,
-            texture_compression_disabled,
+            backend_is_gl,
+            texture_compression_disabled_by_env,
         );
 
         debug!(
             ?adapter_features,
             ?required_features,
             texture_compression_disabled,
+            backend_is_gl,
             "aero-d3d9 negotiated wgpu features"
         );
 
@@ -2611,25 +2620,38 @@ mod tests {
 
         let available = compression;
 
-        let requested = negotiated_features_for_available(available, false);
+        let requested = negotiated_features_for_available(available, false, false);
         assert!(requested.contains(compression));
 
-        let requested = negotiated_features_for_available(available, true);
+        let requested = negotiated_features_for_available(available, false, true);
         assert!(!requested.intersects(compression));
     }
 
     #[test]
     fn negotiated_features_only_requests_adapter_supported_bits() {
-        let requested = negotiated_features_for_available(wgpu::Features::empty(), false);
+        let requested = negotiated_features_for_available(wgpu::Features::empty(), false, false);
         assert!(requested.is_empty());
     }
 
     #[test]
     fn negotiated_features_only_requests_supported_compression_features() {
         let available = wgpu::Features::TEXTURE_COMPRESSION_BC;
-        let requested = negotiated_features_for_available(available, false);
+        let requested = negotiated_features_for_available(available, false, false);
         assert!(requested.contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
         assert!(!requested.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2));
         assert!(!requested.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR));
+    }
+
+    #[test]
+    fn negotiated_features_disables_compression_on_gl_backend() {
+        let compression = wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR;
+
+        let requested = negotiated_features_for_available(compression, true, false);
+        assert!(
+            !requested.intersects(compression),
+            "compression features must not be requested on the wgpu GL backend"
+        );
     }
 }

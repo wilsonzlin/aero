@@ -460,7 +460,7 @@ The WebGL2 fallback is intentionally limited. The renderer must assume:
   - fewer bind groups / binding slots
 - **Reduced texture/format support**:
   - many DXGI formats have no direct WebGL2 equivalent
-  - compressed textures require extensions and vary by platform
+  - compressed textures require extensions and vary by platform; Aero does not request BC/ETC2/ASTC compression features on wgpu's GL backend by default (CPU decompression fallbacks are used instead)
   - render-to-float requires extensions and is inconsistent
 - **Shader translation constraints**:
   - WGSL features that can’t be lowered to GLSL ES 3.0 must be avoided in the shared shader library
