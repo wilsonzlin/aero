@@ -154,6 +154,7 @@ Playback uses a `SharedArrayBuffer` ring buffer consumed by an `AudioWorkletProc
 Canonical semantics live in:
 
 - `crates/platform/src/audio/worklet_bridge.rs` (WASM producer)
+  - Re-exported from `crates/aero-audio/src/lib.rs` as `aero_audio::worklet_bridge`.
 - `web/src/platform/audio.ts` (JS producer used by demos/fallbacks)
 - `web/src/platform/audio-worklet-processor.js` (consumer)
 
@@ -189,6 +190,9 @@ Microphone capture is bridged from the browser to the guest via a `SharedArrayBu
 - **Main thread**: requests permission on explicit user action and manages lifecycle/UI state (`web/src/audio/mic_capture.ts`).
 - **AudioWorklet** (preferred): pulls mic PCM frames with low latency and writes them into the ring (`web/src/audio/mic-worklet-processor.js`).
 - **IO worker**: reads from the ring and feeds the guest capture device (HDA input pin or virtio-snd capture stream).
+
+Rust bridge helpers live in `crates/platform/src/audio/mic_bridge.rs` and are re-exported as `aero_audio::mic_bridge`
+(via `crates/aero-audio/src/lib.rs`).
 
 ### Microphone ring buffer layout
 
