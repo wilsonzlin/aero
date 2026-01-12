@@ -748,7 +748,9 @@ impl CommandProcessor {
 
                 let mut floats = Vec::new();
                 floats.try_reserve_exact(float_count).map_err(|_| {
-                    format!("SetConstantsF32 payload too large to allocate (float_count={float_count})")
+                    format!(
+                        "SetConstantsF32 payload too large to allocate (float_count={float_count})"
+                    )
                 })?;
                 for _ in 0..float_count {
                     floats.push(f32::from_bits(p.read_u32_le().map_err(|e| e.message)?));

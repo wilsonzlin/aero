@@ -1718,7 +1718,10 @@ export function installAeroTieredMmioTestShims() {
 
         let mut drained: Vec<(u64, usize)> = Vec::new();
         bus.drain_write_log_to(|paddr, len| drained.push((paddr, len)));
-        assert!(!drained.is_empty(), "expected at least one invalidation range");
+        assert!(
+            !drained.is_empty(),
+            "expected at least one invalidation range"
+        );
 
         let mut max_end = 0u64;
         for (paddr, len) in drained {

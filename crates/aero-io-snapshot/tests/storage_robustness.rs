@@ -121,7 +121,10 @@ fn nvme_snapshot_rejects_admin_sq_head_out_of_bounds() {
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject out-of-bounds admin SQ head");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme sq head/tail"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("nvme sq head/tail")
+    );
 }
 
 #[test]
@@ -148,7 +151,10 @@ fn nvme_snapshot_rejects_admin_cq_tail_out_of_bounds() {
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject out-of-bounds admin CQ tail");
-    assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme cq head/tail"));
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("nvme cq head/tail")
+    );
 }
 
 #[test]

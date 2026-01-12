@@ -91,9 +91,9 @@ fn snapshot_restore_roundtrips_nvme_state_and_redrives_intx_level() {
         // synthetic pending completion for INTx-level testing.
         controller_state.acq = 0x1000;
         controller_state.intms = 0; // unmask interrupts
-        // NVMe queue base addresses must be non-zero and 4KiB-aligned.
-        // The controller's reset state has ACQ=0, so choose a deterministic aligned base for this
-        // synthetic pending-completion setup.
+                                    // NVMe queue base addresses must be non-zero and 4KiB-aligned.
+                                    // The controller's reset state has ACQ=0, so choose a deterministic aligned base for this
+                                    // synthetic pending-completion setup.
         controller_state.acq = 0x10_000;
         controller_state.admin_cq = Some(NvmeCompletionQueueState {
             qid: 0,
