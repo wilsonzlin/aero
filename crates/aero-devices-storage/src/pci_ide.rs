@@ -594,7 +594,6 @@ impl IdeController {
             chan.reset();
         }
     }
-
     pub fn bus_master_base(&self) -> u16 {
         self.bus_master_base
     }

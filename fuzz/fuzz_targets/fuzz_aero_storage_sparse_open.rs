@@ -36,6 +36,16 @@ fuzz_target!(|data: &[u8]| {
     let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     let touched_cap = cap.min(MAX_TOUCHED_CAP_BYTES);
     let mut io_buf = [0u8; MAX_IO_BYTES];
+
+    // Deterministic tiny I/O so we exercise the core read/write logic even if the fuzzer chooses
+    // 0 randomized ops.
+    if touched_cap > 0 {
+        let _ = disk.read_at(0, &mut io_buf[..1]);
+        io_buf[0] = data.first().copied().unwrap_or(0).wrapping_add(1);
+        let _ = disk.write_at(0, &io_buf[..1]);
+        let _ = disk.read_at(touched_cap - 1, &mut io_buf[..1]);
+    }
+
     for _ in 0..ops {
         let is_write: bool = u.arbitrary().unwrap_or(false);
         let len: usize = u.int_in_range(0usize..=MAX_IO_BYTES).unwrap_or(0);
@@ -77,6 +87,14 @@ fuzz_target!(|data: &[u8]| {
             let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
             let touched_cap = cap.min(MAX_TOUCHED_CAP_BYTES);
             let mut io_buf = [0u8; MAX_IO_BYTES];
+
+            if touched_cap > 0 {
+                let _ = reopened.read_at(0, &mut io_buf[..1]);
+                io_buf[0] = data.first().copied().unwrap_or(0).wrapping_add(2);
+                let _ = reopened.write_at(0, &io_buf[..1]);
+                let _ = reopened.read_at(touched_cap - 1, &mut io_buf[..1]);
+            }
+
             for _ in 0..ops {
                 let is_write: bool = u.arbitrary().unwrap_or(false);
                 let len: usize = u.int_in_range(0usize..=MAX_IO_BYTES).unwrap_or(0);

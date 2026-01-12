@@ -116,7 +116,6 @@ impl BusMasterChannel {
         self.status = 0;
         self.prd_addr = 0;
     }
-
     pub fn set_drive_dma_capable(&mut self, drive: usize, capable: bool) {
         if drive < 2 {
             self.drive_dma_capable[drive] = capable;
