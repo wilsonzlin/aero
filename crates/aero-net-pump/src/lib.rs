@@ -118,6 +118,7 @@ mod tests {
     use super::*;
 
     use aero_net_backend::L2TunnelBackend;
+    use std::collections::VecDeque;
 
     struct TestMem {
         mem: Vec<u8>,
@@ -210,6 +211,7 @@ mod tests {
         let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
         let backend = L2TunnelBackend::new();
         let mut pump = E1000Pump::new(nic, backend);
+        pump.nic_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         configure_tx_ring(pump.nic_mut(), 0x1000, 4);
 
@@ -236,6 +238,7 @@ mod tests {
         let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
         let backend = L2TunnelBackend::new();
         let mut pump = E1000Pump::new(nic, backend);
+        pump.nic_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         configure_rx_ring(pump.nic_mut(), 0x2000, 2, 1);
         write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
@@ -255,6 +258,7 @@ mod tests {
         let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
         let backend = L2TunnelBackend::new();
         let mut pump = E1000Pump::with_budgets(nic, backend, 1, DEFAULT_MAX_FRAMES_PER_POLL);
+        pump.nic_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // Ring of 4 descriptors with tail=3 -> 3 frames in a single guest TX batch.
         configure_tx_ring(pump.nic_mut(), 0x1000, 4);
@@ -296,6 +300,7 @@ mod tests {
         let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
         let backend = L2TunnelBackend::new();
         let mut pump = E1000Pump::with_budgets(nic, backend, DEFAULT_MAX_FRAMES_PER_POLL, 1);
+        pump.nic_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
         // RX rings keep one descriptor unused to distinguish full/empty conditions.
         // desc_count=4, tail=3 gives us 3 usable RX descriptors (indices 0..2).
@@ -327,5 +332,66 @@ mod tests {
         pump.poll(&mut mem);
         assert_eq!(mem.read_vec(bufs[2], frames[2].len()), frames[2]);
     }
-}
 
+    #[test]
+    fn same_poll_backend_response_is_delivered_to_guest() {
+        #[derive(Default)]
+        struct EchoBackend {
+            tx: Vec<Vec<u8>>,
+            rx: VecDeque<Vec<u8>>,
+        }
+
+        impl NetworkBackend for EchoBackend {
+            fn transmit(&mut self, frame: Vec<u8>) {
+                // Record the outbound frame.
+                self.tx.push(frame.clone());
+
+                // Immediately enqueue a response frame so the pump can deliver it within the same
+                // poll iteration.
+                let mut resp = frame;
+                if let Some(last) = resp.last_mut() {
+                    *last ^= 0xFF;
+                }
+                self.rx.push_back(resp);
+            }
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.rx.pop_front()
+            }
+        }
+
+        let mut mem = TestMem::new(0x40_000);
+        let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let backend = EchoBackend::default();
+        let mut pump = E1000Pump::with_budgets(nic, backend, 1, 1);
+        pump.nic_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        // Set up a single TX descriptor and a single usable RX descriptor.
+        configure_tx_ring(pump.nic_mut(), 0x1000, 4);
+        configure_rx_ring(pump.nic_mut(), 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+
+        let pkt_out = build_test_frame(b"ping");
+        mem.write(0x4000, &pkt_out);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            pkt_out.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        pump.nic_mut().mmio_write_u32_reg(0x3818, 1); // TDT
+
+        pump.poll(&mut mem);
+
+        // Verify TX reached the backend.
+        assert_eq!(pump.backend().tx, vec![pkt_out.clone()]);
+
+        // Verify the response was written into the guest RX buffer within the same poll.
+        let mut expected = pkt_out;
+        *expected.last_mut().unwrap() ^= 0xFF;
+        assert_eq!(mem.read_vec(0x3000, expected.len()), expected);
+    }
+}
