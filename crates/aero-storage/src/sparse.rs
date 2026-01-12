@@ -243,14 +243,25 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         }
 
         // Read allocation table.
-        let mut table_bytes = vec![0u8; expected_table_bytes_usize];
-        backend.read_at(HEADER_SIZE as u64, &mut table_bytes)?;
+        //
+        // IMPORTANT: Don't allocate a single `Vec<u8>` for the full table.
+        // The table itself (as `Vec<u64>`) can already be large, and allocating an
+        // additional equally-large temporary buffer would double peak memory usage.
         let mut table = Vec::with_capacity(table_entries_usize);
-        for chunk in table_bytes.chunks_exact(8) {
-            table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        let mut buf = vec![0u8; 64 * 1024]; // must be a multiple of 8
+        let mut offset = HEADER_SIZE as u64;
+        let mut remaining = expected_table_bytes_usize;
+        while remaining > 0 {
+            let read_len = remaining.min(buf.len());
+            backend.read_at(offset, &mut buf[..read_len])?;
+            for chunk in buf[..read_len].chunks_exact(8) {
+                table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+            }
+            offset = offset
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            remaining -= read_len;
         }
-        // Drop the raw bytes buffer early to keep peak memory usage bounded (important on wasm32).
-        drop(table_bytes);
 
         // Validate allocation table consistency and physical offsets.
         let mut actual_allocated_blocks = 0u64;
