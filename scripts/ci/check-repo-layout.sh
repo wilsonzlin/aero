@@ -60,6 +60,24 @@ if git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >
   exit 1
 fi
 
+# Keep the canonical docs in sync with the `emulator` crate `[[test]]` registration model.
+# These are the primary human-facing entrypoints for running the QEMU boot tests, and they should
+# explicitly mention `crates/emulator/Cargo.toml` `[[test]]` to prevent future drift.
+qemu_boot_test_docs=(
+  "docs/TESTING.md"
+  "instructions/integration.md"
+  "instructions/io-storage.md"
+)
+for doc in "${qemu_boot_test_docs[@]}"; do
+  if [[ ! -f "${doc}" ]]; then
+    die "expected QEMU boot test doc '${doc}' to exist"
+  fi
+  if ! grep -q "crates/emulator/Cargo.toml" "${doc}" || ! grep -q "\\[\\[test\\]\\]" "${doc}"; then
+    die "${doc}: expected to mention crates/emulator/Cargo.toml [[test]] registration for QEMU boot tests"
+  fi
+done
+unset qemu_boot_test_docs
+
 # Doc-referenced scripts should always exist in-tree.
 #
 # Additionally, shell scripts (`.sh`) referenced directly in docs should be
