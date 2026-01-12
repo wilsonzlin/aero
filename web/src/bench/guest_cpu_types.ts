@@ -17,7 +17,27 @@ export type GuestCpuBenchVariant =
 export type GuestCpuBenchOpts = {
   variant: GuestCpuBenchVariant;
   mode: GuestCpuMode;
+
+  /**
+   * Time-budget mode. The harness repeats deterministic invocations using the
+   * canonical `iters_per_run = 10_000` until the budget is reached.
+   *
+   * Mutually exclusive with `iters`.
+   *
+   * Must be a finite number > 0.
+   */
   seconds?: number;
+
+  /**
+   * Fixed-iteration debug mode. The harness sets `iters_per_run = iters` and:
+   * 1) runs an unmeasured "reference run" to derive `expected_checksum`
+   * 2) runs a measured run, then asserts checksum determinism by comparing the
+   *    measured checksum against the reference checksum.
+   *
+   * Mutually exclusive with `seconds`.
+   *
+   * Must be an integer in the u32 range (> 0).
+   */
   iters?: number;
 };
 
@@ -29,7 +49,18 @@ export type GuestCpuBenchRun = {
   warmup_runs: number;
   measured_runs: number;
 
+  /**
+   * Expected checksum for this run.
+   *
+   * - `seconds` mode: the doc-provided canonical checksum for iters=10_000.
+   * - `iters` mode: the checksum produced by the unmeasured reference run
+   *   (same variant/mode/iters).
+   */
   expected_checksum: string;
+  /**
+   * Checksum produced by the measured run (or, in `seconds` mode, the last
+   * measured run).
+   */
   observed_checksum: string;
 
   total_instructions: number;
@@ -60,4 +91,3 @@ export type GuestCpuBenchPerfExport = {
     observed_checksum: string;
   }>;
 };
-

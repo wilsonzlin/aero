@@ -48,7 +48,9 @@ type GuestCpuBenchOpts = {
   // Preferred: run until seconds budget is reached (multiple runs).
   seconds?: number;
 
-  // Optional: run a single payload invocation for N iterations.
+  // Optional: run a single *measured* payload invocation for N iterations.
+  // The harness will also perform an unmeasured "reference run" (same variant/iters)
+  // to derive `expected_checksum` and assert determinism.
   // This is mainly for debugging; the main suite uses `seconds`.
   iters?: number;
 };
@@ -751,4 +753,3 @@ The guest CPU bench **must fail on checksum mismatches**:
    - a short hint (likely an emulator correctness regression)
 
 This prevents “fast but wrong” changes (especially in JIT) from silently improving benchmark numbers.
-
