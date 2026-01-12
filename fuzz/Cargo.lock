@@ -88,6 +88,7 @@ dependencies = [
  "futures-intrusive",
  "lru",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tracing",
  "wgpu",
