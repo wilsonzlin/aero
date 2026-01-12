@@ -76,3 +76,34 @@ fn snapshot_roundtrip_preserves_high_memory_contents() {
         pattern
     );
 }
+
+#[test]
+fn dirty_pages_for_remapped_high_ram_are_reported_in_ram_offset_space() {
+    let cfg = MachineConfig {
+        ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Machine::new performs a reset which clears dirty pages.
+    assert_eq!(
+        snapshot::SnapshotSource::take_dirty_pages(&mut m).unwrap(),
+        Vec::<u64>::new()
+    );
+
+    // Write into the remapped high-memory region (>= 4GiB).
+    m.write_physical_u8(0x1_0000_0000, 0xAA);
+
+    // Dirty pages must be indexed in contiguous RAM-offset space, so this should correspond to the
+    // page containing `PCIE_ECAM_BASE`.
+    let expected = firmware::bios::PCIE_ECAM_BASE / u64::from(snapshot::SnapshotSource::dirty_page_size(&m));
+    assert_eq!(
+        snapshot::SnapshotSource::take_dirty_pages(&mut m).unwrap(),
+        vec![expected]
+    );
+}
