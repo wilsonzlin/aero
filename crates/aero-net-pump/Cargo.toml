@@ -8,3 +8,6 @@ license = "MIT OR Apache-2.0"
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 memory = { path = "../memory" }
+
+[dev-dependencies]
+aero-net-stack = { path = "../aero-net-stack" }

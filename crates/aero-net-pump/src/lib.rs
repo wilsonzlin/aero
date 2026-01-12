@@ -292,6 +292,9 @@ mod tests {
     use super::*;
 
     use aero_net_backend::L2TunnelBackend;
+    use aero_net_stack::packet::*;
+    use aero_net_stack::{NetStackBackend, StackConfig};
+    use core::net::Ipv4Addr;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::rc::Rc;
@@ -1011,5 +1014,298 @@ mod tests {
         let mut expected = pkt_out;
         *expected.last_mut().unwrap() ^= 0xFF;
         assert_eq!(mem.read_vec(0x3000, expected.len()), expected);
+    }
+
+    struct DeterministicNetStackBackend {
+        inner: NetStackBackend,
+        now_ms: u64,
+    }
+
+    impl DeterministicNetStackBackend {
+        fn new(cfg: StackConfig) -> Self {
+            Self {
+                inner: NetStackBackend::new(cfg),
+                now_ms: 0,
+            }
+        }
+
+        fn stack(&self) -> &aero_net_stack::NetworkStack {
+            self.inner.stack()
+        }
+    }
+
+    impl NetworkBackend for DeterministicNetStackBackend {
+        fn transmit(&mut self, frame: Vec<u8>) {
+            // Drive the stack with a deterministic monotonically increasing clock so this test does
+            // not rely on wall-clock time.
+            self.now_ms = self.now_ms.saturating_add(1);
+            self.inner.transmit_at(frame, self.now_ms);
+        }
+
+        fn poll_receive(&mut self) -> Option<Vec<u8>> {
+            self.inner.poll_receive()
+        }
+    }
+
+    fn wrap_udp_ipv4_eth(
+        src_mac: MacAddr,
+        dst_mac: MacAddr,
+        src_ip: Ipv4Addr,
+        dst_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let udp = UdpPacketBuilder {
+            src_port,
+            dst_port,
+            payload,
+        }
+        .build_vec(src_ip, dst_ip)
+        .expect("build UDP packet");
+        let ip = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: 1,
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::UDP,
+            src_ip,
+            dst_ip,
+            options: &[],
+            payload: &udp,
+        }
+        .build_vec()
+        .expect("build IPv4 packet");
+        EthernetFrameBuilder {
+            dest_mac: dst_mac,
+            src_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec()
+        .expect("build Ethernet frame")
+    }
+
+    fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
+        let mut out = vec![0u8; 240];
+        out[0] = 1; // BOOTREQUEST
+        out[1] = 1; // Ethernet
+        out[2] = 6; // MAC len
+        out[4..8].copy_from_slice(&xid.to_be_bytes());
+        out[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // broadcast
+        out[28..34].copy_from_slice(&mac.0);
+        out[236..240].copy_from_slice(&[99, 130, 83, 99]); // DHCP magic cookie
+        out.extend_from_slice(&[53, 1, 1]); // DHCPDISCOVER
+        out.push(255); // end
+        out
+    }
+
+    fn build_dhcp_request(
+        xid: u32,
+        mac: MacAddr,
+        requested_ip: Ipv4Addr,
+        server_id: Ipv4Addr,
+    ) -> Vec<u8> {
+        let mut out = vec![0u8; 240];
+        out[0] = 1; // BOOTREQUEST
+        out[1] = 1;
+        out[2] = 6;
+        out[4..8].copy_from_slice(&xid.to_be_bytes());
+        out[10..12].copy_from_slice(&0x8000u16.to_be_bytes());
+        out[28..34].copy_from_slice(&mac.0);
+        out[236..240].copy_from_slice(&[99, 130, 83, 99]);
+        out.extend_from_slice(&[53, 1, 3]); // DHCPREQUEST
+        out.extend_from_slice(&[50, 4]); // requested IP
+        out.extend_from_slice(&requested_ip.octets());
+        out.extend_from_slice(&[54, 4]); // server identifier
+        out.extend_from_slice(&server_id.octets());
+        out.push(255);
+        out
+    }
+
+    fn parse_dhcp_from_frame(frame: &[u8]) -> DhcpMessage {
+        let eth = EthernetFrame::parse(frame).expect("parse Ethernet frame");
+        assert_eq!(
+            eth.ethertype(),
+            EtherType::IPV4,
+            "expected IPv4 ethertype"
+        );
+        let ip = Ipv4Packet::parse(eth.payload()).expect("parse IPv4 packet");
+        assert_eq!(ip.protocol(), Ipv4Protocol::UDP, "expected UDP protocol");
+        let udp = UdpPacket::parse(ip.payload()).expect("parse UDP packet");
+        assert_eq!(udp.src_port(), 67, "expected DHCP server src port");
+        assert_eq!(udp.dst_port(), 68, "expected DHCP client dst port");
+        DhcpMessage::parse(udp.payload()).expect("parse DHCP message")
+    }
+
+    fn read_rx_desc_len_status(mem: &TestMem, addr: u64) -> (u16, u8) {
+        let len_bytes = mem.read_vec(addr + 8, 2);
+        let len = u16::from_le_bytes([len_bytes[0], len_bytes[1]]);
+        let status = mem.read_vec(addr + 12, 1)[0];
+        (len, status)
+    }
+
+    #[test]
+    fn net_test_e1000_netstack_dhcp_001() {
+        let mut mem = TestMem::new(0x20_000);
+
+        let guest_mac_bytes = [0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee];
+        let guest_mac = MacAddr(guest_mac_bytes);
+
+        let mut nic = E1000Device::new(guest_mac_bytes);
+        // The E1000 model gates all DMA on PCI COMMAND.BME (bit 2).
+        nic.pci_config_write(0x04, 2, 0x4);
+
+        configure_tx_ring(&mut nic, 0x1000, 4);
+
+        // RX rings keep one descriptor unused to distinguish full/empty conditions.
+        // desc_count=8, tail=7 gives us 7 usable RX descriptors (indices 0..6).
+        let rx_desc_count = 8u32;
+        configure_rx_ring(&mut nic, 0x2000, rx_desc_count, rx_desc_count - 1);
+
+        let rx_bufs: Vec<u64> = (0..rx_desc_count)
+            .map(|i| 0x3000u64 + (i as u64) * 0x800) // 2048 bytes per buffer
+            .collect();
+        for (i, buf) in rx_bufs.iter().enumerate() {
+            write_rx_desc(&mut mem, 0x2000 + (i as u64) * 16, *buf, 0);
+        }
+
+        let mut backend = DeterministicNetStackBackend::new(StackConfig::default());
+
+        // --- DHCP DISCOVER → OFFER ---
+        let xid = 0x1020_3040;
+        let discover = build_dhcp_discover(xid, guest_mac);
+        let discover_frame = wrap_udp_ipv4_eth(
+            guest_mac,
+            MacAddr::BROADCAST,
+            Ipv4Addr::UNSPECIFIED,
+            Ipv4Addr::BROADCAST,
+            68,
+            67,
+            &discover,
+        );
+
+        mem.write(0x10_000, &discover_frame);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x10_000,
+            discover_frame.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        nic.mmio_write_u32_reg(0x3818, 1); // TDT
+
+        let counts0 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 16, 16);
+        assert_eq!(counts0.tx_frames, 1, "expected 1 guest TX frame to backend");
+        assert_eq!(
+            counts0.rx_frames, 2,
+            "expected 2 backend RX frames (broadcast + unicast DHCP OFFER)"
+        );
+
+        const DD_EOP: u8 = 0b0000_0011;
+        let (rx0_len, rx0_status) = read_rx_desc_len_status(&mem, 0x2000);
+        let (rx1_len, rx1_status) = read_rx_desc_len_status(&mem, 0x2010);
+        assert!(
+            rx0_len > 0,
+            "RX desc 0 should have non-zero length after DMA (got {rx0_len})"
+        );
+        assert!(
+            rx1_len > 0,
+            "RX desc 1 should have non-zero length after DMA (got {rx1_len})"
+        );
+        assert_eq!(
+            rx0_status & DD_EOP,
+            DD_EOP,
+            "RX desc 0 should have DD|EOP set (status={rx0_status:#04x})"
+        );
+        assert_eq!(
+            rx1_status & DD_EOP,
+            DD_EOP,
+            "RX desc 1 should have DD|EOP set (status={rx1_status:#04x})"
+        );
+
+        let offer0_frame = mem.read_vec(rx_bufs[0], rx0_len as usize);
+        let offer1_frame = mem.read_vec(rx_bufs[1], rx1_len as usize);
+        let offer0 = parse_dhcp_from_frame(&offer0_frame);
+        let offer1 = parse_dhcp_from_frame(&offer1_frame);
+        assert_eq!(offer0.transaction_id, xid, "offer0 XID mismatch");
+        assert_eq!(offer1.transaction_id, xid, "offer1 XID mismatch");
+        assert!(
+            offer0.message_type == DhcpMessageType::Offer
+                || offer1.message_type == DhcpMessageType::Offer,
+            "expected DHCP OFFER, got offer0={:?} offer1={:?}",
+            offer0.message_type,
+            offer1.message_type
+        );
+
+        // --- DHCP REQUEST → ACK ---
+        let request = build_dhcp_request(
+            xid,
+            guest_mac,
+            backend.stack().config().guest_ip,
+            backend.stack().config().gateway_ip,
+        );
+        let request_frame = wrap_udp_ipv4_eth(
+            guest_mac,
+            MacAddr::BROADCAST,
+            Ipv4Addr::UNSPECIFIED,
+            Ipv4Addr::BROADCAST,
+            68,
+            67,
+            &request,
+        );
+
+        mem.write(0x11_000, &request_frame);
+        write_tx_desc(
+            &mut mem,
+            0x1010,
+            0x11_000,
+            request_frame.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        nic.mmio_write_u32_reg(0x3818, 2); // TDT
+
+        let counts1 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 16, 16);
+        assert_eq!(counts1.tx_frames, 1, "expected 1 guest TX frame to backend");
+        assert_eq!(
+            counts1.rx_frames, 2,
+            "expected 2 backend RX frames (broadcast + unicast DHCP ACK)"
+        );
+
+        let (rx2_len, rx2_status) = read_rx_desc_len_status(&mem, 0x2020);
+        let (rx3_len, rx3_status) = read_rx_desc_len_status(&mem, 0x2030);
+        assert!(
+            rx2_len > 0,
+            "RX desc 2 should have non-zero length after DMA (got {rx2_len})"
+        );
+        assert!(
+            rx3_len > 0,
+            "RX desc 3 should have non-zero length after DMA (got {rx3_len})"
+        );
+        assert_eq!(
+            rx2_status & DD_EOP,
+            DD_EOP,
+            "RX desc 2 should have DD|EOP set (status={rx2_status:#04x})"
+        );
+        assert_eq!(
+            rx3_status & DD_EOP,
+            DD_EOP,
+            "RX desc 3 should have DD|EOP set (status={rx3_status:#04x})"
+        );
+
+        let ack0_frame = mem.read_vec(rx_bufs[2], rx2_len as usize);
+        let ack1_frame = mem.read_vec(rx_bufs[3], rx3_len as usize);
+        let ack0 = parse_dhcp_from_frame(&ack0_frame);
+        let ack1 = parse_dhcp_from_frame(&ack1_frame);
+        assert_eq!(ack0.transaction_id, xid, "ack0 XID mismatch");
+        assert_eq!(ack1.transaction_id, xid, "ack1 XID mismatch");
+        assert_eq!(ack0.message_type, DhcpMessageType::Ack);
+        assert_eq!(ack1.message_type, DhcpMessageType::Ack);
+        assert!(
+            backend.stack().is_ip_assigned(),
+            "expected backend stack to mark IP assigned after DHCP ACK"
+        );
     }
 }

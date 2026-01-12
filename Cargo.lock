@@ -455,6 +455,7 @@ version = "0.1.0"
 dependencies = [
  "aero-net-backend",
  "aero-net-e1000",
+ "aero-net-stack",
  "memory",
 ]
 
