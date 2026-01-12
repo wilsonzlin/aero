@@ -3,6 +3,10 @@
 This is a small **Windows 7 user-mode console tool** intended to run inside the guest at boot and report
 virtio driver health via **COM1 serial** (host-captured), stdout, and a log file on `C:\`.
 
+For the consolidated virtio-input end-to-end validation plan (device model + driver + web runtime), see:
+
+- [`docs/virtio-input-test-plan.md`](../../../../docs/virtio-input-test-plan.md)
+
 ## What it tests
 
 - **virtio-blk**

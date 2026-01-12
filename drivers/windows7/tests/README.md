@@ -13,6 +13,10 @@ Goals:
 Non-goals:
 - No Windows images are committed (see [Image strategy](#image-strategy-no-redistribution)).
 
+See also:
+
+- virtio-input end-to-end test plan (device model + driver + web runtime): [`docs/virtio-input-test-plan.md`](../../../docs/virtio-input-test-plan.md)
+
 ## Layout
 
 ```
