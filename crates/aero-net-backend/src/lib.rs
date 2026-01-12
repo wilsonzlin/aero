@@ -25,7 +25,6 @@ pub trait NetworkBackend {
     /// Best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`].
     ///
     /// Most backends do not provide these stats; the default implementation returns `None`.
-    /// This is primarily used for debugging/instrumentation in host glue.
     fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
         None
     }
