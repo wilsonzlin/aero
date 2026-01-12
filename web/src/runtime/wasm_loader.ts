@@ -619,6 +619,15 @@ export interface WasmApi {
          */
         drain_compile_requests(): bigint[] | Uint32Array;
         /**
+         * Notify the embedded JIT runtime that the guest wrote to memory.
+         *
+         * This is used by Tier-1 store helpers (when inline-TLB store fast-path is disabled) to
+         * invalidate cached blocks/traces for self-modifying code correctness.
+         *
+         * Optional for older WASM builds.
+         */
+        on_guest_write?(paddr: bigint | number, len: number): void;
+        /**
          * Install a compiled Tier-1 block into the runtime cache.
          */
         install_tier1_block(

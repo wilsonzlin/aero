@@ -170,6 +170,15 @@ pub fn compile_tier1_block(
 
     let mut options = Tier1WasmOptions::default();
     options.inline_tlb = inline_tlb;
+    if inline_tlb {
+        // Browser tiered execution relies on the host-side runtime to observe guest stores (for
+        // MMIO classification + self-modifying code invalidation via `jit.on_guest_write(..)`).
+        //
+        // Inline-TLB stores emit direct `i64.store*` operations into guest RAM, bypassing those
+        // hooks. Disable the store fast-path for now so stores go through the imported
+        // `env.mem_write_*` helpers.
+        options.inline_tlb_stores = false;
+    }
     options.memory_shared = memory_shared;
 
     let compilation =
