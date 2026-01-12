@@ -9,8 +9,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
     AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
@@ -2511,8 +2510,8 @@ fn aerogpu_cmd_rebinds_allocation_backed_index_buffer_between_draws_does_not_res
 }
 
 #[test]
-fn aerogpu_cmd_rebinds_allocation_backed_constant_buffer_between_draws_does_not_restart_render_pass()
-{
+fn aerogpu_cmd_rebinds_allocation_backed_constant_buffer_between_draws_does_not_restart_render_pass(
+) {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
