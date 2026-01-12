@@ -294,6 +294,20 @@ fn vhd_fixed_sector0_that_looks_like_footer_is_not_treated_as_footer_copy() {
 }
 
 #[test]
+fn detect_fixed_vhd_footer_at_offset0_without_eof_footer_is_raw() {
+    // A file that begins with bytes resembling a fixed VHD footer should not be treated as VHD
+    // unless it is large enough to plausibly contain both the optional footer copy and the
+    // required EOF footer.
+    let current_size = 512u64;
+    let footer = make_vhd_footer(current_size, 2, u64::MAX);
+
+    // footer at offset 0 + 512 bytes of data, but no EOF footer.
+    let mut backend = MemBackend::with_len(current_size + 512).unwrap();
+    backend.write_at(0, &footer).unwrap();
+    assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
 fn detect_format_does_not_misclassify_vhd_cookie_without_valid_footer_fields() {
     // A random file that happens to contain "conectix" should not be treated as a VHD unless
     // the surrounding footer fields are also plausible.
