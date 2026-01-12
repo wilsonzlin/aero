@@ -1533,6 +1533,73 @@ fn pc_platform_uhci_usb_err_int_asserts_intx_on_crc_timeout() {
 }
 
 #[test]
+fn pc_platform_uhci_force_global_resume_sets_resume_detect_and_asserts_intx() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
+
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe UHCI interrupts through the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(irq, false);
+    }
+
+    // Enable RESUME interrupts.
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_RESUME));
+
+    // Pulse USBCMD.FGR (Force Global Resume): should latch USBSTS.RESUMEDETECT.
+    let usbcmd = pc.io.read(bar4_base + REG_USBCMD, 2) as u16;
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(usbcmd | USBCMD_FGR),
+    );
+
+    assert_ne!(
+        pc.io.read(bar4_base + REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0,
+        "expected USBCMD.FGR to latch USBSTS.RESUMEDETECT"
+    );
+
+    // Propagate INTx and observe the pending IRQ.
+    pc.poll_pci_intx_lines();
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("UHCI IRQ should be pending after RESUMEDETECT");
+    let pending_irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(pending_irq, irq);
+
+    // Consume + EOI the interrupt.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+
+    // Clear RESUMEDETECT (W1C) and ensure the line deasserts.
+    pc.io.write(
+        bar4_base + REG_USBSTS,
+        2,
+        u32::from(USBSTS_RESUMEDETECT),
+    );
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
 fn pc_platform_uhci_interrupt_in_reads_hid_mouse_reports_via_dma() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bdf = USB_UHCI_PIIX3.bdf;
