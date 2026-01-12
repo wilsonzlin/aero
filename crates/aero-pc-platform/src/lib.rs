@@ -21,6 +21,7 @@ use aero_devices::{hpet, i8042};
 use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
+use aero_devices_storage::pci_ahci::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE};
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
@@ -153,9 +154,9 @@ impl AhciPciConfigDevice {
     fn new() -> Self {
         let mut config = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
         config.set_bar_definition(
-            5,
+            AHCI_ABAR_BAR_INDEX,
             PciBarDefinition::Mmio32 {
-                size: 0x2000,
+                size: u32::try_from(AHCI_ABAR_SIZE).expect("AHCI ABAR size must fit in u32"),
                 prefetchable: false,
             },
         );
@@ -1727,8 +1728,8 @@ impl PcPlatform {
                 let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
                 router.register_handler(
                     bdf,
-                    5,
-                    PciConfigSyncedMmioBar::new(pci_cfg.clone(), ahci, bdf, 5),
+                    AHCI_ABAR_BAR_INDEX,
+                    PciConfigSyncedMmioBar::new(pci_cfg.clone(), ahci, bdf, AHCI_ABAR_BAR_INDEX),
                 );
             }
             if let Some(e1000) = e1000.clone() {
