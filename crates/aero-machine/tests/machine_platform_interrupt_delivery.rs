@@ -354,3 +354,111 @@ fn machine_i8042_mouse_motion_raises_irq12_and_wakes_hlt_cpu() {
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
+
+#[test]
+fn machine_i8042_keyboard_input_delivers_via_ioapic_in_apic_mode() {
+    let vector = 0x61u8;
+    let flag_addr = 0x0504u16;
+    let flag_value = 0xEEu8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Route ISA IRQ1 through the IOAPIC/LAPIC path.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // ISA IRQ1 maps to GSI1 by default.
+        program_ioapic_entry(&mut ints, 1, u32::from(vector), 0);
+    }
+
+    m.inject_browser_key("KeyA", true);
+
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(vector),
+            "i8042 keyboard input did not latch IRQ1 into the LAPIC in APIC mode"
+        );
+    }
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "i8042 IRQ1 handler did not run in APIC mode (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn machine_i8042_mouse_motion_delivers_via_ioapic_in_apic_mode() {
+    let vector = 0x62u8;
+    let flag_addr = 0x0505u16;
+    let flag_value = 0xEFu8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Switch to APIC mode and program GSI12 (ISA IRQ12) to a deterministic vector.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_entry(&mut ints, 12, u32::from(vector), 0);
+    }
+
+    // Enable PS/2 mouse reporting while IRQ12 is still disabled (avoid waking on the ACK).
+    m.io_write(0x64, 1, 0xD4);
+    m.io_write(0x60, 1, 0xF4);
+    let ack = m.io_read(0x60, 1) as u8;
+    assert_eq!(ack, 0xFA, "expected mouse ACK after enabling data reporting");
+
+    // Enable i8042 IRQ12 generation.
+    m.io_write(0x64, 1, 0x60);
+    m.io_write(0x60, 1, 0x47);
+
+    m.inject_mouse_motion(1, 1, 0);
+
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(vector),
+            "i8042 mouse motion did not latch IRQ12 into the LAPIC in APIC mode"
+        );
+    }
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "i8042 IRQ12 handler did not run in APIC mode (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
