@@ -188,6 +188,53 @@ class SetupInfAddServiceTests(unittest.TestCase):
                 msg=f"expected validation to succeed (exit 0), got {result.returncode}. Output:\n{result.stdout}",
             )
 
+    @unittest.skipUnless(os.name == "nt", "requires Windows cmd.exe")
+    def test_validate_storage_service_infs_ignores_commented_utf16_addservice(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        setup_cmd = repo_root / "guest-tools" / "setup.cmd"
+        self.assertTrue(setup_cmd.exists(), f"missing setup.cmd at: {setup_cmd}")
+
+        service = "viostor"
+
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-inf-validate-") as tmp:
+            tmp_path = Path(tmp)
+
+            # UTF-16 INF containing only a commented AddService mention.
+            commented_inf = tmp_path / "commented.inf"
+            commented_inf.write_bytes(
+                (
+                    "\r\n".join(
+                        [
+                            "; UTF-16LE INF fixture",
+                            "[DefaultInstall.NT]",
+                            f'   ; AddService = "{service}", 0x00000002, Service_Inst',
+                        ]
+                    )
+                    + "\r\n"
+                ).encode("utf-16")
+            )
+
+            # Extra noise INFs.
+            for i in range(5):
+                (tmp_path / f"noop-{i}.inf").write_text(
+                    "\r\n".join(
+                        [
+                            "; ASCII INF fixture",
+                            "[Version]",
+                            'Signature="$Windows NT$"',
+                        ]
+                    )
+                    + "\r\n",
+                    encoding="utf-8",
+                )
+
+            result = self._run_validate_selftest(setup_cmd, tmp_path, service)
+            self.assertEqual(
+                result.returncode,
+                13,
+                msg=f"expected validation to fail with EC_STORAGE_SERVICE_MISMATCH=13, got {result.returncode}. Output:\n{result.stdout}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
