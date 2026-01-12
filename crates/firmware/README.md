@@ -54,3 +54,17 @@ handles this automatically by dispatching BIOS interrupts when Tier-0 reports a 
 exit.
 
 For a minimal, older reference wiring, see `crates/legacy/vm` (formerly `crates/vm`).
+
+## ACPI DSDT fixture (`crates/firmware/acpi/dsdt.aml`)
+
+This repo keeps a checked-in DSDT AML blob at `crates/firmware/acpi/dsdt.aml` for:
+
+- ACPICA `iasl` decompile/recompile validation in CI (`scripts/validate-acpi.sh`)
+- quick manual inspection / diffing
+
+The canonical source of truth is the `aero-acpi` Rust generator. To regenerate the
+fixture after AML changes:
+
+```bash
+cargo run -p firmware --bin gen_dsdt
+```
