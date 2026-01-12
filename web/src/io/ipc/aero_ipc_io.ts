@@ -21,6 +21,16 @@ export type A20Callback = (enabled: boolean) => void;
 export type ResetCallback = () => void;
 export type SerialOutputCallback = (port: number, data: Uint8Array) => void;
 
+/**
+ * AIPC I/O server dispatch interface.
+ *
+ * This interface belongs to the **inter-worker I/O RPC layer** (AIPC ring buffers) and is not the
+ * repo's canonical disk abstraction. Disk images and controller/device models should converge on
+ * the canonical traits described in:
+ *
+ * - `docs/20-storage-trait-consolidation.md`
+ * - `docs/19-indexeddb-storage-story.md` (Option C discussion: using a separate worker + sync RPC)
+ */
 export interface AeroIpcIoDispatchTarget {
   portRead(port: number, size: number): number;
   portWrite(port: number, size: number, value: number): void;

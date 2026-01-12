@@ -83,6 +83,8 @@ See also:
   Defined in: [`web/src/storage/remote_cache_manager.ts`](../web/src/storage/remote_cache_manager.ts)
 - `RemoteChunkCacheBackend` (async, chunk cache backend interface for OPFS LRU chunk caches)\
   Defined in: [`web/src/storage/remote/opfs_lru_chunk_cache.ts`](../web/src/storage/remote/opfs_lru_chunk_cache.ts)
+- `AeroIpcIoDispatchTarget` (AIPC I/O server dispatch interface; includes optional disk read/write RPC hooks)\
+  Defined in: [`web/src/io/ipc/aero_ipc_io.ts`](../web/src/io/ipc/aero_ipc_io.ts)
 
 ---
 
@@ -204,6 +206,10 @@ viable approach is Option C:
 
 - Run IndexedDB I/O on a **separate worker** (async)
 - Expose a synchronous facade to the controller worker via a shared-memory RPC protocol
+
+This repo already has building blocks for such shared-memory “sync RPC” in the web runtime (AIPC
+ring buffers + `Atomics.wait`), e.g. `web/src/io/ipc/aero_ipc_io.ts`. Option C should reuse those
+primitives rather than introducing a new parallel IPC mechanism.
 
 Under Option C, the end goal is still to implement the **canonical sync traits**
 (`aero_storage::StorageBackend` / `aero_storage::VirtualDisk`) on top of the RPC client.
