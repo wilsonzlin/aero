@@ -6,6 +6,7 @@ use aero_devices::pci::profile::{
 };
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
+use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig, ResetEvent};
@@ -344,6 +345,89 @@ fn pc_platform_reset_preserves_nvme_disk_backend() {
     assert!(
         dropped.load(Ordering::SeqCst),
         "dropping the platform should drop the NVMe disk backend"
+    );
+}
+
+#[test]
+fn pc_platform_reset_preserves_ide_disk_backend() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_hda: false,
+            enable_nvme: false,
+            enable_ahci: false,
+            enable_ide: true,
+            enable_e1000: false,
+            mac_addr: None,
+            enable_uhci: false,
+            enable_virtio_blk: false,
+        },
+    );
+
+    pc.attach_ide_primary_master_drive(AtaDrive::new(Box::new(disk)).unwrap());
+    pc.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "platform reset dropped the IDE disk backend"
+    );
+
+    // Replacing the drive should drop the previous backend (sanity check that it was attached).
+    let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    pc.attach_ide_primary_master_drive(AtaDrive::new(Box::new(replacement)).unwrap());
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "replacing the IDE drive should drop the previous disk backend"
+    );
+}
+
+#[test]
+fn pc_platform_reset_preserves_ide_iso_backend() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    // ATAPI uses 2048-byte sectors, so ensure capacity is 2048-aligned.
+    let capacity = 16 * SECTOR_SIZE as u64;
+    assert_eq!(capacity % 2048, 0);
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_hda: false,
+            enable_nvme: false,
+            enable_ahci: false,
+            enable_ide: true,
+            enable_e1000: false,
+            mac_addr: None,
+            enable_uhci: false,
+            enable_virtio_blk: false,
+        },
+    );
+
+    pc.attach_ide_secondary_master_iso(Box::new(disk)).unwrap();
+    pc.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "platform reset dropped the IDE ISO backend"
+    );
+
+    // Replacing the ISO should drop the previous backend (sanity check that it was attached).
+    let replacement = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(replacement))
+        .unwrap();
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "replacing the IDE ISO should drop the previous backend"
     );
 }
 
