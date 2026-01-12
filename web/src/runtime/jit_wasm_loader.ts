@@ -185,3 +185,17 @@ export async function initJitWasm(options: { module?: WebAssembly.Module } = {})
     throw err;
   }
 }
+
+/**
+ * Initialize the JIT compiler WASM package in whichever JS context we are running in
+ * (main thread or DedicatedWorkerGlobalScope).
+ *
+ * This mirrors the naming convention of {@link initWasmForContext} and exists for
+ * symmetry/ergonomics: the JIT compiler is context-local anyway, so this currently
+ * forwards to {@link initJitWasm}.
+ */
+export async function initJitWasmForContext(
+  options: { module?: WebAssembly.Module } = {},
+): Promise<{ api: JitWasmApi }> {
+  return await initJitWasm(options);
+}

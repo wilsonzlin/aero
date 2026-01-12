@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import type { CompileBlockRequest, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
-import { initJitWasm, type JitWasmApi, type Tier1BlockCompilation } from '../../web/src/runtime/jit_wasm_loader';
+import { initJitWasmForContext, type JitWasmApi, type Tier1BlockCompilation } from '../../web/src/runtime/jit_wasm_loader';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -32,7 +32,7 @@ function postMessageToCpu(msg: JitToCpuMessage, transfer?: Transferable[]) {
 
 async function loadJitWasmApi(): Promise<JitWasmApi> {
   if (!jitWasmApiPromise) {
-    jitWasmApiPromise = initJitWasm().then(({ api }) => api);
+    jitWasmApiPromise = initJitWasmForContext().then(({ api }) => api);
   }
   try {
     return await jitWasmApiPromise;
