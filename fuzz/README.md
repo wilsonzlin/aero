@@ -106,6 +106,9 @@ cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_aerosparse_open -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000
 
+# Allow larger generated inputs (the target itself caps at 1MiB)
+cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000 -max_len=1048576
+
 # Auto-detect + open (raw/aerosparse/qcow2/vhd) + bounded IO
 cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
