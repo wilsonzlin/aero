@@ -297,6 +297,26 @@ impl UhciRuntime {
         }
     }
 
+    fn sanitize_usb_string_owned(mut s: String) -> String {
+        let mut units = 0usize;
+        let mut end = 0usize;
+        for (idx, ch) in s.char_indices() {
+            let next_units = units + ch.len_utf16();
+            if next_units > MAX_USB_STRING_DESCRIPTOR_UTF16_UNITS {
+                break;
+            }
+            units = next_units;
+            end = idx + ch.len_utf8();
+        }
+        if end < s.len() {
+            s.truncate(end);
+            // `truncate` preserves capacity; ensure we don't keep the original allocation if a host
+            // integration passes a very large product string.
+            s.shrink_to_fit();
+        }
+        s
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
         let mem = LinearGuestMemory::new(guest_base, guest_size)?;
@@ -372,8 +392,9 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
-        let product =
-            Self::sanitize_usb_string(product_name.as_deref().unwrap_or("WebHID HID Device"));
+        let product = Self::sanitize_usb_string_owned(
+            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
+        );
 
         let device = UsbHidPassthrough::new(
             vendor_id,
@@ -447,8 +468,9 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
-        let product =
-            Self::sanitize_usb_string(product_name.as_deref().unwrap_or("WebHID HID Device"));
+        let product = Self::sanitize_usb_string_owned(
+            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
+        );
 
         let device = UsbHidPassthrough::new(
             vendor_id,
