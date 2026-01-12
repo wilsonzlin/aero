@@ -26,6 +26,7 @@ MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 #
 # In constrained agent sandboxes we intermittently hit rustc panics like:
 #   "failed to spawn helper thread (WouldBlock)"
+#   "Unable to install ctrlc handler: ... WouldBlock (Resource temporarily unavailable)"
 # when Cargo/rustc try to create too many threads/processes in parallel.
 #
 # Prefer reliability over speed: default to -j1 unless overridden.
