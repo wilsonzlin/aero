@@ -406,6 +406,7 @@ impl HdaControllerBridge {
 mod tests {
     use super::*;
 
+    use aero_audio::capture::SilenceCaptureSource;
     use aero_audio::mem::MemoryAccess;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -479,10 +480,11 @@ mod tests {
     #[wasm_bindgen_test]
     fn hda_guest_memory_zero_fills_on_addr_len_overflow() {
         let mut guest = vec![0u8; 16];
+        guest[0] = 0xAB;
         let guest_base = guest.as_mut_ptr() as u32;
 
         // Construct the memory adapter directly so we can exercise the `addr+len` overflow path.
-        let mem = crate::HdaGuestMemory {
+        let mut mem = crate::HdaGuestMemory {
             guest_base,
             // Allow almost any `addr` through the `end > guest_size` check so we can hit the
             // `checked_add` overflow path for `addr + len`.
@@ -494,6 +496,51 @@ mod tests {
         let mut buf = [0xAAu8; 8];
         mem.read_physical(u64::MAX - 1, &mut buf);
         assert_eq!(buf, [0u8; 8]);
+
+        // Writes must also treat `addr+len` overflow as out-of-bounds and be ignored.
+        mem.write_physical(u64::MAX - 1, &[0xCC; 8]);
+        assert_eq!(guest[0], 0xAB);
+    }
+
+    #[wasm_bindgen_test]
+    fn capture_process_completes_on_oob_dma_pointer() {
+        let mut guest = vec![0u8; 0x4000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+
+        // Bring controller out of reset.
+        bridge.hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+        // Configure the input converter to use stream ID 2, channel 0.
+        // SET_STREAM_CHANNEL: verb 0x706, payload = stream<<4 | channel
+        let set_stream_ch = (0x706u32 << 8) | 0x20;
+        bridge.hda.codec_mut().execute_verb(4, set_stream_ch);
+
+        // Guest buffer layout: BDL is in-bounds, but it points at an out-of-bounds destination.
+        let bdl_base = 0x1000u64;
+        let buf_len = 0x1000u32;
+        let oob_dst = u64::from(guest_size) + 0x1000;
+
+        bridge.mem.write_u64(bdl_base, oob_dst);
+        bridge.mem.write_u32(bdl_base + 8, buf_len);
+        bridge.mem.write_u32(bdl_base + 12, 0);
+
+        // Configure capture stream descriptor 1.
+        {
+            let sd = bridge.hda.stream_mut(1);
+            sd.bdpl = bdl_base as u32;
+            sd.bdpu = 0;
+            sd.cbl = buf_len;
+            sd.lvi = 0;
+            sd.fmt = 0x0010; // 48kHz, 16-bit, mono
+            // SRST | RUN | stream number 2.
+            sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
+        }
+
+        let mut capture = SilenceCaptureSource;
+        bridge.hda.process_with_capture(&mut bridge.mem, 128, &mut capture);
     }
 
     #[wasm_bindgen_test]
