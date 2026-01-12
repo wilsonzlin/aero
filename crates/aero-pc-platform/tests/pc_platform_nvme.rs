@@ -1085,6 +1085,138 @@ fn pc_platform_nvme_snapshot_restore_processes_pending_io_without_renotify() {
 }
 
 #[test]
+fn pc_platform_nvme_snapshot_restore_processes_pending_write_without_renotify() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    const DISK_SECTORS: u64 = 16;
+
+    let disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
+        .expect("failed to allocate in-memory NVMe disk");
+    let mut pc = PcPlatform::new_with_nvme_disk(RAM_SIZE, Box::new(disk));
+    let bdf = NVME_CONTROLLER.bdf;
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let io_cq = 0x40000u64;
+    let io_sq = 0x50000u64;
+    let write_buf = 0x60000u64;
+    let read_buf = 0x61000u64;
+
+    // Ensure guest buffers are deterministic.
+    pc.memory.write_physical(io_cq, &[0u8; 64]);
+    pc.memory.write_physical(io_sq, &[0u8; 64]);
+    pc.memory.write_physical(write_buf, &[0u8; SECTOR_SIZE]);
+    pc.memory.write_physical(read_buf, &[0u8; SECTOR_SIZE]);
+
+    // Admin SQ/CQ setup and enable.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // 16/16 queues
+    pc.memory.write_u64(bar0_base + 0x0028, asq);
+    pc.memory.write_u64(bar0_base + 0x0030, acq);
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x001c) & 1, 1);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    pc.memory.write_physical(asq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 1); // SQ0 tail = 1
+    pc.process_nvme();
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    pc.memory.write_physical(asq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 2); // SQ0 tail = 2
+    pc.process_nvme();
+
+    // Consume admin CQ completions so INTx reflects the I/O queue only.
+    pc.memory.write_u32(bar0_base + 0x1004, 2); // CQ0 head = 2
+
+    // Post a WRITE to IO SQ1, but snapshot before the platform processes it.
+    let payload: Vec<u8> = (0..SECTOR_SIZE).map(|v| (v & 0xff) as u8).collect();
+    pc.memory.write_physical(write_buf, &payload);
+
+    let cid: u16 = 0x44;
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, cid);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0); // nlb=0 (1 sector)
+    pc.memory.write_physical(io_sq, &cmd);
+
+    // Ring doorbell but do not call `process_nvme()` yet.
+    pc.memory.write_u32(bar0_base + 0x1008, 1); // SQ1 tail = 1
+
+    // Sanity-check preconditions: no completion and read buffer still zeroed.
+    let mut first4 = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut first4);
+    assert_eq!(first4, [0, 0, 0, 0]);
+    assert_eq!(read_cqe(&mut pc, io_cq).cid, 0);
+
+    let dev_snap = pc.nvme.as_ref().unwrap().borrow().save_state();
+    let pci_snap = pc.pci_cfg.borrow().save_state();
+    let mut ram_img = vec![0u8; RAM_SIZE];
+    pc.memory.read_physical(0, &mut ram_img);
+
+    // Restore into a fresh platform, re-attaching the host disk backend at construction time.
+    let disk2 = RawDisk::create(MemBackend::new(), DISK_SECTORS * SECTOR_SIZE as u64)
+        .expect("failed to allocate in-memory NVMe disk");
+    let mut restored = PcPlatform::new_with_nvme_disk(RAM_SIZE, Box::new(disk2));
+    restored.memory.write_physical(0, &ram_img);
+    restored.pci_cfg.borrow_mut().load_state(&pci_snap).unwrap();
+    restored
+        .nvme
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .load_state(&dev_snap)
+        .unwrap();
+
+    // Without re-notifying, the platform should still process the pending SQ entry.
+    restored.process_nvme();
+
+    let cqe = read_cqe(&mut restored, io_cq);
+    assert_eq!(cqe.cid, cid);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    // Calling `process_nvme()` again without a new doorbell must not duplicate the completion.
+    assert_eq!(read_cqe(&mut restored, io_cq + 16).cid, 0);
+    restored.process_nvme();
+    assert_eq!(read_cqe(&mut restored, io_cq + 16).cid, 0);
+
+    // READ back and ensure the disk observed the write.
+    restored.memory.write_physical(read_buf, &[0u8; SECTOR_SIZE]);
+    let mut cmd = build_command(0x02);
+    set_cid(&mut cmd, cid.wrapping_add(1));
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    restored.memory.write_physical(io_sq + 64, &cmd);
+    restored.memory.write_u32(bar0_base + 0x1008, 2); // SQ1 tail = 2
+    restored.process_nvme();
+
+    let cqe = read_cqe(&mut restored, io_cq + 16);
+    assert_eq!(cqe.cid, cid.wrapping_add(1));
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; payload.len()];
+    restored.memory.read_physical(read_buf, &mut out);
+    assert_eq!(out, payload);
+}
+
+#[test]
 fn pc_platform_nvme_bar0_rw_flush_roundtrip() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
     let bdf = NVME_CONTROLLER.bdf;
