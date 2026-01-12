@@ -62,6 +62,35 @@ class SetupInfAddServiceTests(unittest.TestCase):
                 ).encode("utf-16")
             )
 
+            ansi_ok_inf = tmp_path / "ok-ansi.inf"
+            ansi_ok_inf.write_text(
+                "\r\n".join(
+                    [
+                        "; UTF-8/ANSI INF fixture",
+                        "[Version]",
+                        'Signature="$Windows NT$"',
+                        "[DefaultInstall.NT]",
+                        f"AddService = {service}, 0x00000002, Service_Inst",
+                    ]
+                )
+                + "\r\n",
+                encoding="utf-8",
+            )
+
+            ansi_commented_inf = tmp_path / "commented-ansi.inf"
+            ansi_commented_inf.write_text(
+                "\r\n".join(
+                    [
+                        "; UTF-8/ANSI INF fixture",
+                        "[DefaultInstall.NT]",
+                        f"   ; AddService = {service}, 0x00000002, Service_Inst",
+                        "; No real AddService assignment in this file.",
+                    ]
+                )
+                + "\r\n",
+                encoding="utf-8",
+            )
+
             ok = self._run_selftest(setup_cmd, ok_inf, service)
             self.assertEqual(
                 ok.returncode,
@@ -76,6 +105,23 @@ class SetupInfAddServiceTests(unittest.TestCase):
                 msg=(
                     f"expected commented.inf to NOT match AddService={service} (exit 1), got {commented.returncode}. "
                     f"Output:\n{commented.stdout}"
+                ),
+            )
+
+            ansi_ok = self._run_selftest(setup_cmd, ansi_ok_inf, service)
+            self.assertEqual(
+                ansi_ok.returncode,
+                0,
+                msg=f"expected ok-ansi.inf to match AddService={service} (exit 0), got {ansi_ok.returncode}. Output:\n{ansi_ok.stdout}",
+            )
+
+            ansi_commented = self._run_selftest(setup_cmd, ansi_commented_inf, service)
+            self.assertEqual(
+                ansi_commented.returncode,
+                1,
+                msg=(
+                    f"expected commented-ansi.inf to NOT match AddService={service} (exit 1), got {ansi_commented.returncode}. "
+                    f"Output:\n{ansi_commented.stdout}"
                 ),
             )
 
