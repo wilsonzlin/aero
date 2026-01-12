@@ -294,6 +294,23 @@ impl PendingEventState {
         self.interrupt_inhibit = 1;
     }
 
+    /// Return the current interrupt-inhibit ("interrupt shadow") counter.
+    ///
+    /// The Tier-0 model currently only uses values `0` and `1`:
+    /// - `0`: interrupts are not inhibited by STI/MOV SS/POP SS shadowing.
+    /// - `1`: inhibit maskable interrupts for the next instruction.
+    pub fn interrupt_inhibit(&self) -> u8 {
+        self.interrupt_inhibit
+    }
+
+    /// Restore the interrupt-inhibit ("interrupt shadow") counter.
+    ///
+    /// The current implementation only supports `0` and `1`; any non-zero value
+    /// is clamped to `1` to keep invariants stable across snapshot restores.
+    pub fn set_interrupt_inhibit(&mut self, v: u8) {
+        self.interrupt_inhibit = (v != 0) as u8;
+    }
+
     /// Call after each successfully executed instruction to update the interrupt
     /// shadow state.
     pub fn retire_instruction(&mut self) {
@@ -313,25 +330,55 @@ impl PendingEventState {
         self.interrupt_inhibit -= dec;
     }
 
-    /// Current interrupt inhibition/shadow counter.
-    ///
-    /// This is non-architectural Tier-0 bookkeeping that must be preserved across
-    /// snapshot/restore for deterministic resumption.
-    pub fn interrupt_inhibit(&self) -> u8 {
-        self.interrupt_inhibit
-    }
-
-    /// Set interrupt inhibition/shadow counter (snapshot/restore).
-    pub fn set_interrupt_inhibit(&mut self, value: u8) {
-        self.interrupt_inhibit = value;
-    }
-
     /// Whether there is a pending exception/interrupt waiting to be delivered.
     ///
     /// This is primarily used by execution glue (`exec::Vcpu`) to decide whether
     /// calling [`deliver_pending_event`] will actually deliver anything.
     pub fn has_pending_event(&self) -> bool {
         self.pending_event.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PendingEventState;
+
+    #[test]
+    fn interrupt_inhibit_defaults_to_zero() {
+        let pending = PendingEventState::default();
+        assert_eq!(pending.interrupt_inhibit(), 0);
+    }
+
+    #[test]
+    fn inhibit_interrupts_for_one_instruction_sets_shadow_to_one() {
+        let mut pending = PendingEventState::default();
+        pending.inhibit_interrupts_for_one_instruction();
+        assert_eq!(pending.interrupt_inhibit(), 1);
+    }
+
+    #[test]
+    fn retire_instruction_decrements_interrupt_shadow_to_zero() {
+        let mut pending = PendingEventState::default();
+        pending.inhibit_interrupts_for_one_instruction();
+        pending.retire_instruction();
+        assert_eq!(pending.interrupt_inhibit(), 0);
+    }
+
+    #[test]
+    fn set_interrupt_inhibit_restores_and_clamps() {
+        let mut pending = PendingEventState::default();
+
+        pending.set_interrupt_inhibit(1);
+        assert_eq!(pending.interrupt_inhibit(), 1);
+
+        pending.set_interrupt_inhibit(0);
+        assert_eq!(pending.interrupt_inhibit(), 0);
+
+        // Any non-zero value is clamped to 1.
+        pending.set_interrupt_inhibit(2);
+        assert_eq!(pending.interrupt_inhibit(), 1);
+        pending.set_interrupt_inhibit(u8::MAX);
+        assert_eq!(pending.interrupt_inhibit(), 1);
     }
 }
 

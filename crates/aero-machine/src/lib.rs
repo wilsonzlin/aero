@@ -59,6 +59,7 @@ pub use pci_firmware::{
 
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
+const SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS: usize = 1024 * 1024;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pc;
@@ -761,6 +762,7 @@ impl Machine {
         }
         self.serial_log.clear();
         self.reset_latch.clear();
+        self.restored_cpu_internal = None;
 
         let expected_parent_snapshot_id = self.last_snapshot_id;
         snapshot::restore_snapshot_with_options(
@@ -1124,12 +1126,19 @@ impl snapshot::SnapshotSource for Machine {
                 .external_interrupts
                 .iter()
                 .copied()
+                .take(SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS)
                 .collect(),
         };
         devices.push(
             cpu_internal
                 .to_device_state()
-                .expect("CpuInternalState encode cannot fail"),
+                .unwrap_or_else(|_| snapshot::DeviceState {
+                    id: snapshot::DeviceId::CPU_INTERNAL,
+                    version: snapshot::CpuInternalState::VERSION,
+                    flags: 0,
+                    // `CpuInternalState::encode` for a default/empty state.
+                    data: vec![0, 0, 0, 0, 0],
+                }),
         );
         devices
     }
@@ -1183,6 +1192,9 @@ impl snapshot::SnapshotTarget for Machine {
 
     fn restore_device_states(&mut self, states: Vec<snapshot::DeviceState>) {
         use std::collections::HashMap;
+
+        // Clear any stale restore-only state before applying new snapshot sections.
+        self.restored_cpu_internal = None;
 
         // Restore ordering must be explicit and independent of snapshot file ordering so device
         // state is deterministic (especially for interrupt lines and PCI INTx routing).
@@ -1436,19 +1448,19 @@ mod tests {
         };
 
         let mut src = Machine::new(cfg.clone()).unwrap();
-        src.cpu.pending.set_interrupt_inhibit(7);
+        src.cpu.pending.inhibit_interrupts_for_one_instruction();
         src.cpu.pending.inject_external_interrupt(0x20);
         src.cpu.pending.inject_external_interrupt(0x21);
         let snap = src.take_snapshot_full().unwrap();
 
         let mut restored = Machine::new(cfg).unwrap();
-        restored.cpu.pending.set_interrupt_inhibit(1);
+        restored.cpu.pending.set_interrupt_inhibit(0);
         restored.cpu.pending.inject_external_interrupt(0x33);
         restored.cpu.pending.raise_software_interrupt(0x80, 0);
         restored.restore_snapshot_bytes(&snap).unwrap();
 
         assert!(!restored.cpu.pending.has_pending_event());
-        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 7);
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 1);
         assert_eq!(
             restored
                 .cpu
@@ -1574,6 +1586,39 @@ mod tests {
         assert!(!restored.cpu.pending.has_pending_event());
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), 0);
         assert!(restored.cpu.pending.external_interrupts.is_empty());
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 0);
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_cpu_internal_interrupt_state() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        src.cpu.pending.inject_external_interrupt(0x20);
+        src.cpu.pending.inject_external_interrupt(0x21);
+        src.cpu.pending.inhibit_interrupts_for_one_instruction();
+
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        // Ensure restore does not merge with pre-existing state.
+        restored.cpu.pending.inject_external_interrupt(0x99);
+        restored.cpu.pending.set_interrupt_inhibit(0);
+
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        let restored_irqs: Vec<u8> = restored
+            .cpu
+            .pending
+            .external_interrupts
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(restored_irqs, vec![0x20, 0x21]);
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 1);
     }
 
     #[test]
