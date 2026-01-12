@@ -197,6 +197,17 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
 
     // The above access should have resynchronized the device model's command register.
     assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
+
+    // Now toggle COMMAND.MEMORY through the guest-facing config space, and ensure MMIO still works
+    // immediately after re-enabling decode (without waiting for `process_ahci()` to sync the
+    // device model command register).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    pc.process_ahci();
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0xFFFF_FFFF);
+    assert_eq!(pc.memory.read_u32(bar5_base + 0x10), 0x0001_0300);
+    assert_eq!(ahci.borrow_mut().mmio_read(0x10, 4) as u32, 0x0001_0300);
 }
 
 #[test]
