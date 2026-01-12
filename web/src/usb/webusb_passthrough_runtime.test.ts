@@ -495,6 +495,28 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(runtime.getMetrics().lastError).toMatch(/invalid id/);
   });
 
+  it("pushes an error completion when WASM emits a bulkIn action with an excessive length", async () => {
+    const port = new FakePort();
+    const rawAction = { kind: "bulkIn", id: 3, endpoint: 0x81, length: 10 * 1024 * 1024 };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
+    expect(reset).not.toHaveBeenCalled();
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    expect(push_completion.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 3, status: "error" });
+  });
+
   it("ignores usb.ringDetach when the runtime never attached rings (postMessage path remains active)", async () => {
     const port = new FakePort();
 

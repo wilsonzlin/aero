@@ -90,13 +90,23 @@ function ensureTransferableBytes(bytes: Uint8Array): Uint8Array {
   return out;
 }
 
+const MAX_USB_PROXY_BYTES = 4 * 1024 * 1024;
+
 function normalizeBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) return ensureTransferableBytes(value);
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (value instanceof Uint8Array) {
+    if (value.byteLength > MAX_USB_PROXY_BYTES) return null;
+    return ensureTransferableBytes(value);
+  }
+  if (value instanceof ArrayBuffer) {
+    if (value.byteLength > MAX_USB_PROXY_BYTES) return null;
+    return new Uint8Array(value);
+  }
   if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    if (value.byteLength > MAX_USB_PROXY_BYTES) return null;
     return ensureTransferableBytes(new Uint8Array(value));
   }
   if (Array.isArray(value)) {
+    if (value.length > MAX_USB_PROXY_BYTES) return null;
     if (!value.every((v) => typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && v >= 0 && v <= 0xff)) return null;
     return Uint8Array.from(value as number[]);
   }
@@ -131,6 +141,7 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction | null {
       const endpoint = normalizeU8(obj.endpoint);
       const length = normalizeU32(obj.length);
       if (endpoint === null || length === null) return null;
+      if (length > MAX_USB_PROXY_BYTES) return null;
       if ((endpoint & 0x80) === 0 || !isUsbEndpointAddress(endpoint)) return null;
       return { kind: "bulkIn", id, endpoint, length };
     }
@@ -138,6 +149,7 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction | null {
       const endpoint = normalizeU8(obj.endpoint);
       const data = normalizeBytes(obj.data);
       if (endpoint === null || !data) return null;
+      if (data.byteLength > MAX_USB_PROXY_BYTES) return null;
       if ((endpoint & 0x80) !== 0 || !isUsbEndpointAddress(endpoint)) return null;
       return { kind: "bulkOut", id, endpoint, data };
     }
