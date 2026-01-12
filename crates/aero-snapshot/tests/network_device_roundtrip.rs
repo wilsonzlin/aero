@@ -21,6 +21,54 @@ const REG_RCTL: u32 = 0x0100;
 const REG_TCTL: u32 = 0x0400;
 const REG_IMS: u32 = 0x00D0;
 
+#[derive(Clone)]
+struct DeviceStateSource {
+    devices: Vec<DeviceState>,
+    ram: Vec<u8>,
+    meta: SnapshotMeta,
+}
+
+impl SnapshotSource for DeviceStateSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        self.meta.clone()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        self.devices.clone()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+        if offset + buf.len() > self.ram.len() {
+            return Err(SnapshotError::Corrupt("ram read out of bounds"));
+        }
+        buf.copy_from_slice(&self.ram[offset..offset + buf.len()]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
 struct TestSource {
     e1000: E1000Device,
     net_stack: aero_io_snapshot::io::network::state::NetworkStackState,
@@ -215,6 +263,21 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     let bytes1 = snapshot_bytes(&mut source, opts);
     let bytes2 = snapshot_bytes(&mut source, opts);
     assert_eq!(bytes1, bytes2);
+
+    // Determinism across device order: `save_snapshot` must canonicalize `DEVICES` ordering so the
+    // outer container bytes are stable even if the source returns devices in a different order.
+    let bytes_reversed_devices = snapshot_bytes(
+        &mut DeviceStateSource {
+            devices: vec![
+                expected_net_stack_state.clone(),
+                expected_e1000_state.clone(),
+            ],
+            ram: vec![0u8; RAM_LEN],
+            meta: SnapshotMeta::default(),
+        },
+        opts,
+    );
+    assert_eq!(bytes_reversed_devices, bytes1);
 
     let mut target = TestTarget::new(RAM_LEN);
     restore_snapshot(&mut Cursor::new(bytes1.as_slice()), &mut target).unwrap();
