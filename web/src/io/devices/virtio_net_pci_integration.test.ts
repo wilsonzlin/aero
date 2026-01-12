@@ -336,6 +336,16 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect((featuresLo & VIRTIO_NET_F_CSUM) !== 0).toBe(false);
       expect((featuresLo & VIRTIO_NET_F_MRG_RXBUF) !== 0).toBe(false);
 
+      // Common config readback sanity:
+      // - device_feature_select/driver_feature_select should reflect the last written selector (1)
+      // - driver_feature should read back the value for the currently selected selector.
+      expect(mmioReadU32(commonBase + 0x00n)).toBe(1);
+      expect(mmioReadU32(commonBase + 0x08n)).toBe(1);
+      expect(mmioReadU32(commonBase + 0x0cn)).toBe(featuresHi);
+      mmioWriteU32(commonBase + 0x08n, 0);
+      expect(mmioReadU32(commonBase + 0x0cn)).toBe(featuresLo);
+      mmioWriteU32(commonBase + 0x08n, 1);
+
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
       expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_FEATURES_OK).not.toBe(0);
       mmioWriteU8(
@@ -409,6 +419,9 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // Contract v1: link is always up.
       expect((linkStatus & 1) !== 0).toBe(true);
       expect(maxVirtqueuePairs).toBe(1);
+
+      // Notify region is write-only in virtio-pci; reads should return 0.
+      expect(mmioReadU32(notifyBase)).toBe(0);
 
       // -----------------------------------------------------------------------------------------
       // TX: post a descriptor chain (virtio_net_hdr + Ethernet payload) and expect NET_TX output.
