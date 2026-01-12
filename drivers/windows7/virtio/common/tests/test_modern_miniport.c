@@ -1896,9 +1896,12 @@ static void test_reset_device_times_out_dispatch_level(void)
     assert(sim.status_writes[0] == 0);
     assert(WdkTestGetDbgPrintExCount() == 1);
     assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
-    assert(WdkTestGetKeStallExecutionProcessorCount() != 0);
-    /* Ensure the "high IRQL budget" stays small (should be ~100 stalls today). */
-    assert(WdkTestGetKeStallExecutionProcessorCount() <= 200);
+    /*
+     * High-IRQL reset polling is capped to a small budget to avoid long DPC/dirql stalls.
+     *
+     * Current implementation: 10ms total, 100us poll delay => 100 stalls.
+     */
+    assert(WdkTestGetKeStallExecutionProcessorCount() == 100);
 
     WdkTestSetCurrentIrql(PASSIVE_LEVEL);
     VirtioPciModernMmioSimUninstall();
