@@ -1229,7 +1229,7 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
     free(buf);
 }
 
-static void ioctl_bad_write_report(const SELECTED_DEVICE *dev)
+static int ioctl_bad_write_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
         PUCHAR reportBuffer;
@@ -1244,12 +1244,12 @@ static void ioctl_bad_write_report(const SELECTED_DEVICE *dev)
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
         wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_WRITE_REPORT\n");
-        return;
+        return 1;
     }
 
     ZeroMemory(inbuf, sizeof(inbuf));
@@ -1262,63 +1262,66 @@ static void ioctl_bad_write_report(const SELECTED_DEVICE *dev)
     ok = DeviceIoControl(dev->handle, IOCTL_HID_WRITE_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_WRITE_REPORT bad reportBuffer)");
+    return 0;
 }
 
-static void ioctl_bad_xfer_packet(const SELECTED_DEVICE *dev)
+static int ioctl_bad_xfer_packet(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
         wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_WRITE_REPORT\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_WRITE_REPORT with invalid HID_XFER_PACKET pointer...\n");
     ok = DeviceIoControl(dev->handle, IOCTL_HID_WRITE_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_WRITE_REPORT bad HID_XFER_PACKET)");
+    return 0;
 }
 
-static void ioctl_bad_set_output_xfer_packet(const SELECTED_DEVICE *dev)
+static int ioctl_bad_set_output_xfer_packet(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
         wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_SET_OUTPUT_REPORT\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_SET_OUTPUT_REPORT with invalid HID_XFER_PACKET pointer...\n");
     ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, (PVOID)(ULONG_PTR)0x1, 64, NULL, 0, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT bad HID_XFER_PACKET)");
+    return 0;
 }
 
-static void ioctl_bad_set_output_report(const SELECTED_DEVICE *dev)
+static int ioctl_bad_set_output_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
         PUCHAR reportBuffer;
@@ -1333,12 +1336,12 @@ static void ioctl_bad_set_output_report(const SELECTED_DEVICE *dev)
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
         wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_SET_OUTPUT_REPORT\n");
-        return;
+        return 1;
     }
 
     ZeroMemory(inbuf, sizeof(inbuf));
@@ -1351,20 +1354,21 @@ static void ioctl_bad_set_output_report(const SELECTED_DEVICE *dev)
     ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT bad reportBuffer)");
+    return 0;
 }
 
-static void ioctl_bad_get_report_descriptor(const SELECTED_DEVICE *dev)
+static int ioctl_bad_get_report_descriptor(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_GET_REPORT_DESCRIPTOR with invalid output buffer pointer...\n");
@@ -1379,73 +1383,77 @@ static void ioctl_bad_get_report_descriptor(const SELECTED_DEVICE *dev)
         NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_REPORT_DESCRIPTOR bad output buffer)");
+    return 0;
 }
 
-static void ioctl_bad_get_device_descriptor(const SELECTED_DEVICE *dev)
+static int ioctl_bad_get_device_descriptor(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_GET_DEVICE_DESCRIPTOR with invalid output buffer pointer...\n");
     ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_DEVICE_DESCRIPTOR, NULL, 0, (PVOID)(ULONG_PTR)0x1, 256, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_DEVICE_DESCRIPTOR bad output buffer)");
+    return 0;
 }
 
-static void ioctl_bad_get_string(const SELECTED_DEVICE *dev)
+static int ioctl_bad_get_string(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_GET_STRING with invalid input buffer pointer...\n");
     ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_STRING, (PVOID)(ULONG_PTR)0x1, sizeof(ULONG), NULL, 0, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_STRING bad input buffer)");
+    return 0;
 }
 
-static void ioctl_bad_get_indexed_string(const SELECTED_DEVICE *dev)
+static int ioctl_bad_get_indexed_string(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_GET_INDEXED_STRING with invalid input buffer pointer...\n");
     ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_INDEXED_STRING, (PVOID)(ULONG_PTR)0x1, sizeof(ULONG), NULL, 0, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_INDEXED_STRING bad input buffer)");
+    return 0;
 }
 
-static void ioctl_bad_get_string_out(const SELECTED_DEVICE *dev)
+static int ioctl_bad_get_string_out(const SELECTED_DEVICE *dev)
 {
     ULONG stringId = 1; // HID_STRING_ID_IMANUFACTURER
     DWORD bytes = 0;
@@ -1453,20 +1461,21 @@ static void ioctl_bad_get_string_out(const SELECTED_DEVICE *dev)
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_GET_STRING with invalid output buffer pointer...\n");
     ok = DeviceIoControl(dev->handle, IOCTL_HID_GET_STRING, &stringId, (DWORD)sizeof(stringId), (PVOID)(ULONG_PTR)0x1, 256, &bytes, NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_STRING bad output buffer)");
+    return 0;
 }
 
-static void ioctl_bad_get_indexed_string_out(const SELECTED_DEVICE *dev)
+static int ioctl_bad_get_indexed_string_out(const SELECTED_DEVICE *dev)
 {
     ULONG stringIndex = 1;
     DWORD bytes = 0;
@@ -1474,7 +1483,7 @@ static void ioctl_bad_get_indexed_string_out(const SELECTED_DEVICE *dev)
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nIssuing IOCTL_HID_GET_INDEXED_STRING with invalid output buffer pointer...\n");
@@ -1489,34 +1498,36 @@ static void ioctl_bad_get_indexed_string_out(const SELECTED_DEVICE *dev)
         NULL);
     if (ok) {
         wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
-        return;
+        return 1;
     }
 
     print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_INDEXED_STRING bad output buffer)");
+    return 0;
 }
 
-static void hidd_bad_set_output_report(const SELECTED_DEVICE *dev)
+static int hidd_bad_set_output_report(const SELECTED_DEVICE *dev)
 {
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
-        return;
+        return 1;
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
         wprintf(L"Device was not opened with GENERIC_WRITE; cannot call HidD_SetOutputReport\n");
-        return;
+        return 1;
     }
 
     wprintf(L"\nCalling HidD_SetOutputReport with invalid buffer pointer...\n");
     ok = HidD_SetOutputReport(dev->handle, (PVOID)(ULONG_PTR)0x1, 2);
     if (ok) {
         wprintf(L"Unexpected success\n");
-        return;
+        return 1;
     }
 
     print_last_error_w(L"HidD_SetOutputReport (bad buffer)");
+    return 0;
 }
 
 int wmain(int argc, wchar_t **argv)
@@ -1880,60 +1891,60 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.ioctl_bad_write_report) {
-        ioctl_bad_write_report(&dev);
+        int rc = ioctl_bad_write_report(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
 
     if (opt.hidd_bad_set_output_report) {
-        hidd_bad_set_output_report(&dev);
+        int rc = hidd_bad_set_output_report(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_xfer_packet) {
-        ioctl_bad_xfer_packet(&dev);
+        int rc = ioctl_bad_xfer_packet(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_set_output_xfer_packet) {
-        ioctl_bad_set_output_xfer_packet(&dev);
+        int rc = ioctl_bad_set_output_xfer_packet(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_set_output_report) {
-        ioctl_bad_set_output_report(&dev);
+        int rc = ioctl_bad_set_output_report(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_get_report_descriptor) {
-        ioctl_bad_get_report_descriptor(&dev);
+        int rc = ioctl_bad_get_report_descriptor(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_get_device_descriptor) {
-        ioctl_bad_get_device_descriptor(&dev);
+        int rc = ioctl_bad_get_device_descriptor(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_get_string) {
-        ioctl_bad_get_string(&dev);
+        int rc = ioctl_bad_get_string(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_get_indexed_string) {
-        ioctl_bad_get_indexed_string(&dev);
+        int rc = ioctl_bad_get_indexed_string(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_get_string_out) {
-        ioctl_bad_get_string_out(&dev);
+        int rc = ioctl_bad_get_string_out(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
     if (opt.ioctl_bad_get_indexed_string_out) {
-        ioctl_bad_get_indexed_string_out(&dev);
+        int rc = ioctl_bad_get_indexed_string_out(&dev);
         free_selected_device(&dev);
-        return 0;
+        return rc;
     }
 
     read_reports_loop(&dev);
