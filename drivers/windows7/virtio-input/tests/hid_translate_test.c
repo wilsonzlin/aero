@@ -96,6 +96,9 @@ static void test_linux_keycode_abi_values(void) {
    */
   assert(VIRTIO_INPUT_KEY_ESC == 1);
   assert(VIRTIO_INPUT_KEY_ENTER == 28);
+  assert(VIRTIO_INPUT_KEY_BACKSPACE == 14);
+  assert(VIRTIO_INPUT_KEY_TAB == 15);
+  assert(VIRTIO_INPUT_KEY_SPACE == 57);
   assert(VIRTIO_INPUT_KEY_A == 30);
   assert(VIRTIO_INPUT_KEY_Z == 44);
   assert(VIRTIO_INPUT_KEY_0 == 11);
@@ -140,6 +143,7 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_0) == 0x27);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_ENTER) == 0x28);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_ESC) == 0x29);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_BACKSPACE) == 0x2A);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_TAB) == 0x2B);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_SPACE) == 0x2C);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_CAPSLOCK) == 0x39);
@@ -255,6 +259,38 @@ static void test_keyboard_all_modifier_bits_report(void) {
 
   uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0x00, 0, 0, 0, 0, 0, 0, 0};
   expect_report(&cap, 1, expect2, sizeof(expect2));
+}
+
+static void test_keyboard_ctrl_alt_delete_report(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Press Ctrl+Alt+Delete, flush. */
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTALT, 1);
+  send_key(&t, VIRTIO_INPUT_KEY_DELETE, 1);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0x05, 0, 0x4C, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Release Delete, flush. */
+  send_key(&t, VIRTIO_INPUT_KEY_DELETE, 0);
+  send_syn(&t);
+
+  uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0x05, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Release Ctrl+Alt, flush. */
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTCTRL, 0);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTALT, 0);
+  send_syn(&t);
+
+  uint8_t expect3[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0x00, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
 }
 
 static void test_keyboard_reports(void) {
@@ -510,6 +546,7 @@ int main(void) {
   test_mapping();
   test_keyboard_modifier_reports();
   test_keyboard_all_modifier_bits_report();
+  test_keyboard_ctrl_alt_delete_report();
   test_keyboard_reports();
   test_keyboard_function_key_reports();
   test_keyboard_function_key_reports_le();
