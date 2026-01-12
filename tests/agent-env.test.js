@@ -58,6 +58,32 @@ test("agent-env: AERO_ISOLATE_CARGO_HOME accepts a custom path value", { skip: p
   }
 });
 
+test("agent-env: AERO_ISOLATE_CARGO_HOME expands ~ using HOME", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-agent-env-home-"));
+  try {
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_HOME"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        AERO_ISOLATE_CARGO_HOME: "~/my-cargo-home",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, path.join(homeDir, "my-cargo-home"));
+    assert.ok(fs.existsSync(stdout), `expected expanded cargo home directory to exist: ${stdout}`);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: clears sccache rustc wrapper variables", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {

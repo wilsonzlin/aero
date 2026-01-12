@@ -374,6 +374,37 @@ test("safe-run.sh: AERO_ISOLATE_CARGO_HOME accepts a custom path value (Linux)",
   }
 });
 
+test("safe-run.sh: AERO_ISOLATE_CARGO_HOME expands ~ using HOME (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-tilde-cargo-home-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$CARGO_HOME"\n', { mode: 0o755 });
+
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    const env = { ...process.env };
+    delete env.CARGO_HOME;
+    env.HOME = homeDir;
+    env.AERO_ISOLATE_CARGO_HOME = "~/my-cargo-home";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, path.join(homeDir, "my-cargo-home"));
+    assert.ok(fs.existsSync(stdout), `expected expanded cargo home directory to exist: ${stdout}`);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh auto-uses .cargo-home when present and CARGO_HOME is default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-auto-cargo-home-"));
   try {
