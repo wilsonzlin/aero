@@ -282,7 +282,14 @@ impl BiosSnapshot {
 
         r.read_exact(&mut buf4)?;
         let tty_len = u32::from_le_bytes(buf4).min(MAX_TTY_OUTPUT) as usize;
-        let mut tty_output = vec![0u8; tty_len];
+        let mut tty_output = Vec::new();
+        tty_output.try_reserve_exact(tty_len).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                "failed to allocate BIOS TTY output buffer",
+            )
+        })?;
+        tty_output.resize(tty_len, 0);
         r.read_exact(&mut tty_output)?;
 
         r.read_exact(&mut b)?;
