@@ -16,6 +16,7 @@ test("GPU worker: contextId isolates AeroGPU per-context state across submission
 
       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
       const H = 64;
+      const fmt = AerogpuFormat.R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
 
       (async () => {
         try {
@@ -90,7 +91,7 @@ test("GPU worker: contextId isolates AeroGPU per-context state across submission
             writer.createTexture2d(
               /* textureHandle */ handle,
               AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
-              AerogpuFormat.R8G8B8A8Unorm,
+              fmt,
               w >>> 0,
               h >>> 0,
               /* mipLevels */ 1,

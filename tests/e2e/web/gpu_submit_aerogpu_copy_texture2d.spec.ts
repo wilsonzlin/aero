@@ -76,7 +76,7 @@ test('GPU worker: submit_aerogpu COPY_TEXTURE2D copies sub-rects (with BGRX uplo
 
           // Use BGRX to exercise format conversion in UPLOAD_RESOURCE. The browser executor stores
           // textures internally as tight RGBA for presentation.
-          const fmt = AerogpuFormat.B8G8R8X8Unorm;
+          const fmt = AerogpuFormat.B8G8R8X8UnormSrgb ?? AerogpuFormat.B8G8R8X8Unorm;
           const usage = AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT;
 
           writer.createTexture2d(srcHandle, usage, fmt, w >>> 0, h >>> 0, 1, 1, (w * 4) >>> 0, 0, 0);

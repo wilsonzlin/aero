@@ -25,6 +25,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
         const W = 64;
         const H = 64;
         const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+        const fmt = AerogpuFormat.R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
 
         function triangleRgba(w, h) {
           const out = new Uint8Array(w * h * 4);
@@ -56,7 +57,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
           writer.createTexture2d(
             texHandle,
             AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
-            AerogpuFormat.R8G8B8A8Unorm,
+            fmt,
             w >>> 0,
             h >>> 0,
             1,
@@ -77,7 +78,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
           writer.createTexture2d(
             texHandle,
             AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
-            AerogpuFormat.R8G8B8A8Unorm,
+            fmt,
             32,
             H >>> 0,
             1,
