@@ -32,7 +32,8 @@ For auth/CORS/COOP/COEP guidance that also applies to chunk manifests and chunk 
 - This format does **not** support remote writes. Writes still go to a local overlay
   (typically an OPFS-backed sparse file). IndexedDB-based caches are async-only and do not
   currently back the synchronous Rust disk/controller path; see
-  [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+  [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and the canonical trait mapping
+  in [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 - This format does **not** attempt to deduplicate across images (that is a separate concern).
 
 ---

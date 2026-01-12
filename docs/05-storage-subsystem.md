@@ -294,7 +294,8 @@ In the repo, the OPFS backend is implemented in Rust/wasm32 in `crates/aero-opfs
 For the Rust controller path, **OPFS SyncAccessHandle is the expected backend** because it is
 actually synchronous inside a Worker and can implement `aero_storage::StorageBackend` /
 `aero_storage::VirtualDisk`. IndexedDB is async-only; see:
-[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 The snippet below is illustrative; see `crates/aero-opfs` for the current implementation.
 
@@ -348,7 +349,8 @@ impl DiskBackend for OpfsBackend {
 
 IndexedDB can still be useful for *async* host-layer caching and disk management, but it is not a
 drop-in backend for the synchronous Rust controller stack. See:
-[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+[`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) and
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 In this repo, the Rust async IndexedDB block store lives in `crates/st-idb`, and the TypeScript
 host-side storage utilities (disk manager/import/export, remote disk caching) live under
