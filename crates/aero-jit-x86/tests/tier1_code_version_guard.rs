@@ -53,7 +53,7 @@ fn tier1_code_version_guard_ignores_trailing_invalid_page() {
         cache_max_bytes: 0,
     };
     let mut jit: JitRuntime<DummyBackend, Tier1CompileQueue> =
-        JitRuntime::new(config, DummyBackend::default(), queue.clone());
+        JitRuntime::new(config, DummyBackend, queue.clone());
 
     let mut compiler = Tier1Compiler::new(bus.clone(), NoopRegistry).with_limits(BlockLimits {
         max_insts: 16,

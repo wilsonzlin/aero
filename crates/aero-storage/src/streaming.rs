@@ -42,14 +42,16 @@ const MAX_STREAMING_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
 // We cap both the number of chunks and the total prefetched byte volume to keep the work bounded
 // even when `chunk_size` is very small.
 const MAX_STREAMING_READ_AHEAD_CHUNKS: u64 = 1024;
-const MAX_STREAMING_READ_AHEAD_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
-                                                               // Bound retry and concurrency knobs for untrusted config. Very large values can cause pathological
-                                                               // background work, extremely long retry loops, or large in-flight allocations.
+// 512 MiB.
+const MAX_STREAMING_READ_AHEAD_BYTES: u64 = 512 * 1024 * 1024;
+// Bound retry and concurrency knobs for untrusted config. Very large values can cause pathological
+// background work, extremely long retry loops, or large in-flight allocations.
 const MAX_STREAMING_MAX_RETRIES: usize = 32;
 const MAX_STREAMING_MAX_CONCURRENT_FETCHES: usize = 128;
 // Upper bound on total in-flight bytes across concurrent chunk downloads:
 // `max_concurrent_fetches * min(chunk_size, total_size)`.
-const MAX_STREAMING_INFLIGHT_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
+// 512 MiB.
+const MAX_STREAMING_INFLIGHT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Error, Clone)]
 pub enum StreamingDiskError {

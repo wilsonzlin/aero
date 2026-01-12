@@ -78,7 +78,7 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
         let bus = pci_cfg.bus_mut();
         (bus.read_config(bdf, 0x10, 4), bus.read_config(bdf, 0x14, 4))
     };
-    let bar0_base = ((u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xFFFF_FFF0)) as u64;
+    let bar0_base = (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xFFFF_FFF0);
     assert_ne!(bar0_base, 0, "BAR0 must be assigned by platform PCI POST");
 
     // Ensure memory decoding is enabled so BAR0 MMIO accesses are routed, but keep Bus Master
@@ -108,12 +108,12 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
     );
 
     // Accept all features the device offers.
-    m.write_physical_u32(bar0_base + COMMON + 0x00, 0);
+    m.write_physical_u32(bar0_base + COMMON, 0);
     let f0 = m.read_physical_u32(bar0_base + COMMON + 0x04);
     m.write_physical_u32(bar0_base + COMMON + 0x08, 0);
     m.write_physical_u32(bar0_base + COMMON + 0x0c, f0);
 
-    m.write_physical_u32(bar0_base + COMMON + 0x00, 1);
+    m.write_physical_u32(bar0_base + COMMON, 1);
     let f1 = m.read_physical_u32(bar0_base + COMMON + 0x04);
     m.write_physical_u32(bar0_base + COMMON + 0x08, 1);
     m.write_physical_u32(bar0_base + COMMON + 0x0c, f1);

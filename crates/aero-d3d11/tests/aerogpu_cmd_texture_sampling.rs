@@ -1007,7 +1007,8 @@ fn aerogpu_cmd_clear_srgb_render_target_encodes_linear_values() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap();
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .unwrap();
         exec.poll_wait();
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();

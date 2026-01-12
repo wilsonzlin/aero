@@ -44,12 +44,15 @@ struct BufferResource {
 
 #[derive(Clone, Debug)]
 struct Texture2DSubresource {
+    #[allow(dead_code)]
     mip_level: u32,
+    #[allow(dead_code)]
     array_layer: u32,
     width: u32,
     height: u32,
     row_pitch_bytes: u32,
     offset_bytes: u64,
+    #[allow(dead_code)]
     size_bytes: u64,
 }
 
@@ -82,6 +85,7 @@ struct Texture2DLinearLayout {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 struct Texture2DSubresourceLayout {
     mip_w: u32,
     mip_h: u32,
@@ -852,6 +856,7 @@ impl AeroGpuSoftwareExecutor {
         })
     }
 
+    #[allow(dead_code)]
     fn texture_2d_subresource_layout(
         tex: &Texture2DResource,
         mip: u32,

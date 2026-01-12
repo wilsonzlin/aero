@@ -47,7 +47,7 @@ impl SnapshotMeta {
         match &self.label {
             Some(label) => {
                 w.write_u8(1)?;
-                if label.as_bytes().len() > MAX_LABEL_LEN as usize {
+                if label.len() > MAX_LABEL_LEN as usize {
                     return Err(SnapshotError::Corrupt("label too long"));
                 }
                 w.write_string_u32(label)?;
@@ -949,11 +949,11 @@ pub struct DiskOverlayRef {
 impl DiskOverlayRef {
     pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
         w.write_u32_le(self.disk_id)?;
-        if self.base_image.as_bytes().len() > MAX_DISK_PATH_LEN as usize {
+        if self.base_image.len() > MAX_DISK_PATH_LEN as usize {
             return Err(SnapshotError::Corrupt("disk base_image too long"));
         }
         w.write_string_u32(&self.base_image)?;
-        if self.overlay_image.as_bytes().len() > MAX_DISK_PATH_LEN as usize {
+        if self.overlay_image.len() > MAX_DISK_PATH_LEN as usize {
             return Err(SnapshotError::Corrupt("disk overlay_image too long"));
         }
         w.write_string_u32(&self.overlay_image)?;

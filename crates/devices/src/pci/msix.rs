@@ -49,7 +49,7 @@ impl MsixCapability {
         );
 
         let table_bytes = usize::from(table_size) * MSIX_TABLE_ENTRY_SIZE;
-        let pba_words = (usize::from(table_size) + 63) / 64;
+        let pba_words = usize::from(table_size).div_ceil(64);
         Self {
             offset: 0,
             table_size,
@@ -429,8 +429,8 @@ mod tests {
         // Program table entry 1.
         {
             let msix = config.capability_mut::<MsixCapability>().unwrap();
-            let base = 1u64 * 16;
-            msix.table_write(base + 0x0, &0xfee0_0000u32.to_le_bytes());
+            let base = super::MSIX_TABLE_ENTRY_SIZE as u64;
+            msix.table_write(base, &0xfee0_0000u32.to_le_bytes());
             msix.table_write(base + 0x4, &0u32.to_le_bytes());
             msix.table_write(base + 0x8, &0x0045u32.to_le_bytes());
             msix.table_write(base + 0xc, &0u32.to_le_bytes()); // unmasked
@@ -457,8 +457,8 @@ mod tests {
         {
             let msix = config.capability_mut::<MsixCapability>().unwrap();
             // Program table entry 1 with mask bit set in vector control.
-            let base = 1u64 * 16;
-            msix.table_write(base + 0x0, &0xfee0_0000u32.to_le_bytes());
+            let base = super::MSIX_TABLE_ENTRY_SIZE as u64;
+            msix.table_write(base, &0xfee0_0000u32.to_le_bytes());
             msix.table_write(base + 0x4, &0u32.to_le_bytes());
             msix.table_write(base + 0x8, &0x0045u32.to_le_bytes());
             msix.table_write(base + 0xc, &1u32.to_le_bytes()); // masked

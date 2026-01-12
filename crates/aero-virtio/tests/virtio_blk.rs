@@ -547,7 +547,7 @@ fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallb
 
     // Program table entry 1 (queue 0 vector: index 1 because index 0 is the config vector).
     let entry = table_offset + 16;
-    bar_write_u32(&mut dev, entry + 0x00, 0xfee0_0000);
+    bar_write_u32(&mut dev, entry, 0xfee0_0000);
     bar_write_u32(&mut dev, entry + 0x04, 0);
     bar_write_u32(&mut dev, entry + 0x08, 0x0045);
     bar_write_u32(&mut dev, entry + 0x0c, 0); // unmasked
@@ -639,7 +639,7 @@ fn virtio_blk_snapshot_restore_preserves_msix_table_and_interrupt_delivery() {
 
     // Program table entry 1 (queue 0 vector: index 1 because index 0 is the config vector).
     let entry = table_offset + 16;
-    bar_write_u32(&mut dev, entry + 0x00, 0xfee0_0000);
+    bar_write_u32(&mut dev, entry, 0xfee0_0000);
     bar_write_u32(&mut dev, entry + 0x04, 0);
     bar_write_u32(&mut dev, entry + 0x08, 0x0045);
     bar_write_u32(&mut dev, entry + 0x0c, 0); // unmasked
@@ -692,7 +692,7 @@ fn virtio_blk_snapshot_restore_preserves_msix_table_and_interrupt_delivery() {
     );
     let table_offset2 = (table2 & !0x7) as u64;
     let entry2 = table_offset2 + 16;
-    assert_eq!(bar_read_u32(&mut restored, entry2 + 0x00), 0xfee0_0000);
+    assert_eq!(bar_read_u32(&mut restored, entry2), 0xfee0_0000);
     assert_eq!(bar_read_u32(&mut restored, entry2 + 0x04), 0);
     assert_eq!(bar_read_u32(&mut restored, entry2 + 0x08), 0x0045);
     assert_eq!(bar_read_u32(&mut restored, entry2 + 0x0c), 0);

@@ -226,10 +226,7 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
     }
 
     fn is_ascii_tag_byte(b: u8) -> bool {
-        (b'0'..=b'9').contains(&b)
-            || (b'A'..=b'Z').contains(&b)
-            || (b'a'..=b'z').contains(&b)
-            || b == b'_'
+        b.is_ascii_alphanumeric() || b == b'_'
     }
 
     fn format_fourcc(id: [u8; 4]) -> String {
