@@ -71,10 +71,11 @@ mod platform_handle {
         use crate::DiskError;
 
         match err {
-            DiskError::NotSupported(_)
-            | DiskError::Unsupported(_)
-            | DiskError::BackendUnavailable => {
+            DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
                 io::Error::new(io::ErrorKind::Unsupported, err.to_string())
+            }
+            DiskError::BackendUnavailable => {
+                io::Error::new(io::ErrorKind::NotConnected, err.to_string())
             }
             DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
             DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err.to_string()),
