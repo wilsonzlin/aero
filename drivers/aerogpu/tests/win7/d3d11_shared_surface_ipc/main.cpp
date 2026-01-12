@@ -667,8 +667,13 @@ static int RunConsumer(int argc, char** argv) {
     return reporter.Fail("OpenSharedResource returned NULL texture");
   }
 
-  // Once the resource is opened, the shared handle can be closed.
-  CloseHandle(shared_handle);
+  // Only close the shared handle when we are confident it's a real NT handle.
+  // Some non-AeroGPU implementations may use token-style shared handles; closing a token value
+  // risks closing an unrelated handle if it happens to collide with a valid value in this process.
+  const bool strict_mode = (require_umd || (!allow_microsoft && !allow_non_aerogpu));
+  if (strict_mode || has_expected_debug_token) {
+    CloseHandle(shared_handle);
+  }
 
   uint32_t pixel = 0;
   rc = ReadbackExpectedPixel(&reporter, kTestName, device.get(), context.get(), shared_tex.get(), dump, dump_bmp_path, &pixel);
