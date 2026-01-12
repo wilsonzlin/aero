@@ -409,6 +409,57 @@ mod tests {
     }
 
     #[test]
+    fn owning_pump_poll_with_counts_reports_progress() {
+        let mut mem = TestMem::new(0x80_000);
+        let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let backend = L2TunnelBackend::new();
+        let mut pump = E1000Pump::with_budgets(nic, backend, 8, 8);
+        pump.nic_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        // One TX frame.
+        configure_tx_ring(pump.nic_mut(), 0x1000, 4);
+        let tx_frame = build_test_frame(b"tx");
+        mem.write(0x4000, &tx_frame);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            tx_frame.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        pump.nic_mut().mmio_write_u32_reg(0x3818, 1); // TDT
+
+        // One RX frame.
+        configure_rx_ring(pump.nic_mut(), 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+        let rx_frame = build_test_frame(b"rx");
+        pump.backend_mut().push_rx_frame(rx_frame.clone());
+
+        let counts0 = pump.poll_with_counts(&mut mem);
+        assert_eq!(
+            counts0,
+            PumpCounts {
+                tx_frames: 1,
+                rx_frames: 1,
+            }
+        );
+        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![tx_frame]);
+        assert_eq!(mem.read_vec(0x3000, rx_frame.len()), rx_frame);
+
+        // Second poll should have nothing left to do.
+        let counts1 = pump.poll_with_counts(&mut mem);
+        assert_eq!(
+            counts1,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 0,
+            }
+        );
+    }
+
+    #[test]
     fn tick_function_supports_trait_object_backend() {
         let mut mem = TestMem::new(0x40_000);
         let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
