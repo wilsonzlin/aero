@@ -47,6 +47,14 @@ export type GuestCpuBenchHarnessHandle = {
     free(): void;
 };
 
+export type VirtioNetPciBridgeHandle = {
+    mmio_read(offset: number, size: number): number;
+    mmio_write(offset: number, size: number, value: number): void;
+    poll(): void;
+    irq_asserted(): boolean;
+    free(): void;
+};
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -207,6 +215,17 @@ export interface WasmApi {
         mac_addr?(): Uint8Array;
         free(): void;
     };
+
+    /**
+     * Guest-visible virtio-net device (virtio-pci, modern BAR0 MMIO).
+     *
+     * Optional while older wasm builds are still in circulation.
+     */
+    VirtioNetPciBridge?: new (
+        guestBase: number,
+        guestSize: number,
+        ioIpcSab: SharedArrayBuffer,
+    ) => VirtioNetPciBridgeHandle;
 
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
@@ -860,6 +879,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UhciControllerBridge: mod.UhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
+        VirtioNetPciBridge: mod.VirtioNetPciBridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
         GuestCpuBenchHarness: mod.GuestCpuBenchHarness,
         UsbPassthroughDemo: mod.UsbPassthroughDemo,

@@ -77,6 +77,11 @@ pub use virtio_input_bridge::VirtioInputPciDeviceCore;
 pub use virtio_input_bridge::VirtioInputPciDevice;
 
 #[cfg(target_arch = "wasm32")]
+mod virtio_net_pci_bridge;
+#[cfg(target_arch = "wasm32")]
+pub use virtio_net_pci_bridge::VirtioNetPciBridge;
+
+#[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
