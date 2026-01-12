@@ -66,9 +66,9 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
 
-      const preferredPort = normalizePreferredPort(msg.guestPath, msg.guestPort);
-      try {
-        if (typeof this.#uhci.webhid_attach_at_path === "function") {
+    const preferredPort = normalizePreferredPort(msg.guestPath, msg.guestPort);
+    try {
+      if (typeof this.#uhci.webhid_attach_at_path === "function") {
         const normalizedPath = normalizeExternalHubGuestPath(msg.guestPath, msg.guestPort);
         if (normalizedPath) {
           this.#uhci.webhid_attach_at_path(
