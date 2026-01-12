@@ -123,6 +123,30 @@ fn pci_bar_partial_writes_update_decoded_bar_fields() {
 }
 
 #[test]
+fn pci_bar_cross_boundary_accesses_are_coherent() {
+    // Regression test: reads/writes that straddle the BAR0/BAR1 boundary (e.g. 16-bit at 0x13)
+    // should still observe probe masks and keep decoded BAR fields coherent.
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    // Probe BAR0, then perform a cross-boundary read that includes BAR0 high byte (0x13) and BAR1
+    // low byte (0x14). BAR0 probe mask is 0xFFFE_0000, whose high byte is 0xFF; BAR1 default low
+    // byte is 0x01.
+    dev.pci_write_u32(0x10, 0xFFFF_FFFF);
+    assert_eq!(dev.pci_config_read(0x13, 2), 0x01FF);
+
+    // Program BAR0, then update BAR0 high byte + BAR1 low byte with a single 16-bit config write.
+    dev.pci_write_u32(0x10, 0xFEBF_0000);
+    dev.pci_config_write(0x13, 2, 0xA55A);
+
+    // BAR0 bytes 0..2 remain from 0xFEBF_0000; high byte is updated to 0x5A.
+    assert_eq!(dev.pci_read_u32(0x10), 0x5ABF_0000);
+    // BAR1 low byte updated to 0xA5 (bit0 is already set, bit1 clear).
+    assert_eq!(dev.pci_read_u32(0x14), 0x0000_00A5);
+    // Cross-boundary read should observe the same bytes.
+    assert_eq!(dev.pci_config_read(0x13, 2), 0xA55A);
+}
+
+#[test]
 fn eeprom_read_returns_mac_words() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);

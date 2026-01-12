@@ -404,51 +404,74 @@ impl PciConfig {
 
     pub fn read(&self, offset: u16, size: usize) -> u32 {
         let offset = offset as usize;
+        if offset.checked_add(size).is_none_or(|end| end > self.regs.len()) {
+            return 0;
+        }
+
         // BAR0/BAR1 are defined as full 32-bit registers in PCI config space, but some access
-        // mechanisms perform byte/word reads. The device model stores BAR values in both decoded
-        // fields (`bar0`/`bar1` + probe flags) and the raw `regs` array; ensure the probe behavior
-        // and decoded BAR values are observable regardless of access width.
-        if offset >= 0x10 && offset + size <= 0x14 {
-            let full = if self.bar0_probe {
-                (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
+        // mechanisms perform byte/word reads (including unaligned reads that may straddle the
+        // BAR0/BAR1 boundary). The device model stores BAR values in both decoded fields
+        // (`bar0`/`bar1` + probe flags) and the raw `regs` array; ensure probe behavior and decoded
+        // BAR values are observable regardless of access width or alignment.
+        let read_byte = |off: usize| -> u8 {
+            if (0x10..0x14).contains(&off) {
+                let full = if self.bar0_probe {
+                    (!(E1000_MMIO_SIZE - 1)) & 0xffff_fff0
+                } else {
+                    self.bar0
+                };
+                let shift = ((off - 0x10) * 8) as u32;
+                ((full >> shift) & 0xff) as u8
+            } else if (0x14..0x18).contains(&off) {
+                let full = if self.bar1_probe {
+                    // I/O BAR: bit0 must remain set.
+                    (!(E1000_IO_SIZE - 1) & 0xffff_fffc) | 0x1
+                } else {
+                    self.bar1
+                };
+                let shift = ((off - 0x14) * 8) as u32;
+                ((full >> shift) & 0xff) as u8
             } else {
-                self.bar0
-            };
-            let shift = ((offset - 0x10) * 8) as u32;
-            return match size {
-                4 => full,
-                2 => (full >> shift) & 0xffff,
-                1 => (full >> shift) & 0xff,
-                _ => 0,
-            };
-        }
-        if offset >= 0x14 && offset + size <= 0x18 {
-            let full = if self.bar1_probe {
-                // I/O BAR: bit0 must remain set.
-                (!(E1000_IO_SIZE - 1) & 0xffff_fffc) | 0x1
-            } else {
-                self.bar1
-            };
-            let shift = ((offset - 0x14) * 8) as u32;
-            return match size {
-                4 => full,
-                2 => (full >> shift) & 0xffff,
-                1 => (full >> shift) & 0xff,
-                _ => 0,
-            };
-        }
-        match size {
-            1 => self.regs[offset] as u32,
-            2 => u16::from_le_bytes(self.regs[offset..offset + 2].try_into().unwrap()) as u32,
-            4 => {
-                self.read_u32_raw(offset)
+                self.regs[off]
             }
+        };
+
+        match size {
+            1 => read_byte(offset) as u32,
+            2 => u16::from_le_bytes([read_byte(offset), read_byte(offset + 1)]) as u32,
+            4 => u32::from_le_bytes([
+                read_byte(offset),
+                read_byte(offset + 1),
+                read_byte(offset + 2),
+                read_byte(offset + 3),
+            ]),
             _ => 0,
         }
     }
 
     pub fn write(&mut self, offset: u16, size: usize, value: u32) {
         let offset = offset as usize;
+        if offset.checked_add(size).is_none_or(|end| end > self.regs.len()) {
+            return;
+        }
+
+        // If a multi-byte write overlaps the BAR0/BAR1 dwords but isn't fully contained within a
+        // single BAR, split into byte writes so both decoded BAR fields remain coherent.
+        //
+        // This matters for edge-case unaligned config space writes (e.g. 16-bit at 0x13, which
+        // touches BAR0 high byte + BAR1 low byte).
+        if (size == 2 || size == 4) && offset < 0x18 && offset + size > 0x10 {
+            let within_bar0 = offset >= 0x10 && offset + size <= 0x14;
+            let within_bar1 = offset >= 0x14 && offset + size <= 0x18;
+            if !within_bar0 && !within_bar1 {
+                for i in 0..size {
+                    let byte = (value >> (i * 8)) & 0xff;
+                    self.write((offset + i) as u16, 1, byte);
+                }
+                return;
+            }
+        }
+
         match size {
             1 | 2 => {
                 // BARs are conceptually 32-bit registers, but some guests may perform byte/word
