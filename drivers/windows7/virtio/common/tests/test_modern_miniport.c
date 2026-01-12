@@ -709,6 +709,49 @@ static void test_setup_queue_programs_addresses_and_enables(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_setup_queue_is_per_queue(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 2;
+    sim.queues[0].queue_size = 8;
+    sim.queues[1].queue_size = 16;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetupQueue(&dev, 0, 0x11110000ull, 0x22220000ull, 0x33330000ull);
+    assert(st == STATUS_SUCCESS);
+    st = VirtioPciSetupQueue(&dev, 1, 0xaaaa0000ull, 0xbbbb0000ull, 0xcccc0000ull);
+    assert(st == STATUS_SUCCESS);
+
+    assert(sim.queues[0].queue_desc == 0x11110000ull);
+    assert(sim.queues[0].queue_avail == 0x22220000ull);
+    assert(sim.queues[0].queue_used == 0x33330000ull);
+    assert(sim.queues[0].queue_enable == 1);
+
+    assert(sim.queues[1].queue_desc == 0xaaaa0000ull);
+    assert(sim.queues[1].queue_avail == 0xbbbb0000ull);
+    assert(sim.queues[1].queue_used == 0xcccc0000ull);
+    assert(sim.queues[1].queue_enable == 1);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_setup_queue_enable_readback_failure(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1041,6 +1084,49 @@ static void test_get_queue_notify_address_respects_multiplier(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_get_queue_notify_address_per_queue(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile uint16_t* addr0;
+    volatile uint16_t* addr1;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 2;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_notify_off = 1;
+    sim.queues[1].queue_size = 8;
+    sim.queues[1].queue_notify_off = 2;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    addr0 = NULL;
+    addr1 = NULL;
+    st = VirtioPciGetQueueNotifyAddress(&dev, 0, &addr0);
+    assert(st == STATUS_SUCCESS);
+    st = VirtioPciGetQueueNotifyAddress(&dev, 1, &addr1);
+    assert(st == STATUS_SUCCESS);
+
+    assert(addr0 == (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (1u * TEST_NOTIFY_OFF_MULT)));
+    assert(addr1 == (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (2u * TEST_NOTIFY_OFF_MULT)));
+    assert(addr0 != addr1);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_get_queue_notify_address_errors(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1162,6 +1248,58 @@ static void test_notify_queue_populates_and_uses_cache(void)
     VirtioPciNotifyQueue(&dev, 1);
     assert(*addr_a == 1);
     assert(*addr_b == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_notify_queue_cache_bounds(void)
+{
+    typedef struct cache_guard {
+        volatile UINT16* cache[1];
+        volatile UINT16* sentinel;
+    } cache_guard_t;
+
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    cache_guard_t guard;
+    volatile uint16_t* addr1;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    guard.cache[0] = (volatile UINT16*)0x11111111u;
+    guard.sentinel = (volatile UINT16*)0x22222222u;
+
+    dev.QueueNotifyAddrCache = (volatile UINT16**)guard.cache;
+    dev.QueueNotifyAddrCacheCount = 1; /* cache only queue 0 */
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 2;
+    sim.queues[1].queue_size = 8;
+    sim.queues[1].queue_notify_off = 5;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    addr1 = (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (5u * TEST_NOTIFY_OFF_MULT));
+    *addr1 = 0;
+
+    VirtioPciNotifyQueue(&dev, 1);
+
+    /* Cache should not be touched for queue index >= cache count. */
+    assert(guard.cache[0] == (volatile UINT16*)0x11111111u);
+    assert(guard.sentinel == (volatile UINT16*)0x22222222u);
+
+    /* Notify must still be performed. */
+    assert(*addr1 == 1);
 
     VirtioPciModernMmioSimUninstall();
 }
@@ -1437,6 +1575,7 @@ int main(void)
     test_negotiate_features_success_and_status_sequence();
     test_negotiate_features_device_rejects_features_ok();
     test_setup_queue_programs_addresses_and_enables();
+    test_setup_queue_is_per_queue();
     test_setup_queue_enable_readback_failure();
     test_get_num_queues_and_queue_size();
     test_setup_queue_not_found_when_size_zero();
@@ -1446,9 +1585,11 @@ int main(void)
     test_read_device_config_invalid_range();
     test_read_device_config_generation_mismatch_times_out();
     test_get_queue_notify_address_respects_multiplier();
+    test_get_queue_notify_address_per_queue();
     test_get_queue_notify_address_errors();
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
+    test_notify_queue_cache_bounds();
     test_notify_queue_does_not_write_when_queue_missing();
     test_reset_device_fast_path();
     test_reset_device_clears_after_delay_passive_level();
