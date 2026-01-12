@@ -8,7 +8,8 @@ pub const VGA_PCI_CLASS_CODE: u8 = 0x03;
 pub const VGA_PCI_SUBCLASS: u8 = 0x00;
 pub const VGA_PCI_PROG_IF: u8 = 0x00;
 
-pub const VGA_LEGACY_IO_START: u16 = 0x3C0;
+// Full legacy VGA decode range, including the mono+color CRTC aliasing ranges.
+pub const VGA_LEGACY_IO_START: u16 = 0x3B0;
 pub const VGA_LEGACY_IO_END: u16 = 0x3DF;
 
 pub const VGA_LEGACY_MEM_START: u32 = 0xA0000;
