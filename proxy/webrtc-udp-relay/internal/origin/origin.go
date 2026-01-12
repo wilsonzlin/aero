@@ -43,17 +43,17 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 	if strings.Contains(trimmed, "?") || strings.Contains(trimmed, "#") {
 		return "", "", false
 	}
-	lower := strings.ToLower(trimmed)
 	schemePrefix := ""
 	switch {
-	case strings.HasPrefix(lower, "http://"):
+	case asciiHasPrefixFold(trimmed, "http://"):
 		schemePrefix = "http://"
-	case strings.HasPrefix(lower, "https://"):
+	case asciiHasPrefixFold(trimmed, "https://"):
 		schemePrefix = "https://"
 	default:
 		return "", "", false
 	}
-	if strings.HasPrefix(lower, schemePrefix+"/") {
+	// Reject `http:///` / `https:///` (extra slash after the authority prefix).
+	if len(trimmed) > len(schemePrefix) && trimmed[len(schemePrefix)] == '/' {
 		return "", "", false
 	}
 	if strings.Contains(trimmed, "\\") {
@@ -71,8 +71,13 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 		return "", "", false
 	}
 
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
+	scheme := ""
+	switch {
+	case strings.EqualFold(u.Scheme, "http"):
+		scheme = "http"
+	case strings.EqualFold(u.Scheme, "https"):
+		scheme = "https"
+	default:
 		return "", "", false
 	}
 
@@ -81,7 +86,7 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 		return "", "", false
 	}
 
-	hostname, ok := canonicalizeHostname(strings.ToLower(rawHostname))
+	hostname, ok := canonicalizeHostname(rawHostname)
 	if !ok {
 		return "", "", false
 	}
@@ -153,7 +158,7 @@ func IsAllowed(normalizedOrigin, originHost, requestHost string, allowedOrigins 
 }
 
 func normalizeRequestHost(requestHost, scheme string) (string, bool) {
-	trimmed := strings.ToLower(strings.TrimSpace(requestHost))
+	trimmed := strings.TrimSpace(requestHost)
 	if trimmed == "" {
 		return "", false
 	}
@@ -181,7 +186,7 @@ func normalizeRequestHost(requestHost, scheme string) (string, bool) {
 		return "", false
 	}
 
-	hostname, ok := canonicalizeHostname(strings.ToLower(rawHostname))
+	hostname, ok := canonicalizeHostname(rawHostname)
 	if !ok {
 		return "", false
 	}
@@ -257,7 +262,41 @@ func canonicalizeHostname(hostname string) (string, bool) {
 		return serializeIPv4(addr), true
 	}
 
-	return hostname, true
+	// Domain name: normalize to lowercase. (IP-literals are already in their canonical form above.)
+	return asciiLowerIfNeeded(hostname), true
+}
+
+func asciiHasPrefixFold(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c = c + ('a' - 'A')
+		}
+		if c != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLowerIfNeeded(s string) string {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				c := b[j]
+				if c >= 'A' && c <= 'Z' {
+					b[j] = c + ('a' - 'A')
+				}
+			}
+			return string(b)
+		}
+	}
+	return s
 }
 
 func endsInIPv4Number(host string) bool {
