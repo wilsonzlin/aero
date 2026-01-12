@@ -607,17 +607,14 @@ fn process_command_slot(
             let lba = extract_lba48(&cfis);
             let sector_count = extract_sector_count(&cfis);
             let byte_len = sector_count as usize * SECTOR_SIZE;
-            let mut data = vec![0u8; byte_len];
-            drive.read_sectors(lba, &mut data)?;
-            dma_write_from_host_buffer(mem, &header, &data)?;
+            dma_read_sectors_into_guest(mem, &header, drive, lba, byte_len)?;
             complete_command(mem, port_regs, slot, byte_len as u32);
         }
         ATA_CMD_WRITE_DMA_EXT => {
             let lba = extract_lba48(&cfis);
             let sector_count = extract_sector_count(&cfis);
             let byte_len = sector_count as usize * SECTOR_SIZE;
-            let data = dma_read_into_host_buffer(mem, &header, byte_len)?;
-            drive.write_sectors(lba, &data)?;
+            dma_write_sectors_from_guest(mem, &header, drive, lba, byte_len)?;
             complete_command(mem, port_regs, slot, byte_len as u32);
         }
         ATA_CMD_FLUSH_CACHE | ATA_CMD_FLUSH_CACHE_EXT => {
@@ -705,6 +702,100 @@ impl PrdtEntry {
     }
 }
 
+fn dma_read_sectors_into_guest(
+    mem: &mut dyn MemoryBus,
+    header: &CommandHeader,
+    drive: &mut AtaDrive,
+    mut lba: u64,
+    byte_len: usize,
+) -> io::Result<()> {
+    // Avoid allocating a potentially huge contiguous buffer for the full transfer. Instead, stream
+    // through the PRDT scatter/gather list one entry at a time.
+    let mut remaining = byte_len;
+
+    for i in 0..header.prdt_entries() as u64 {
+        if remaining == 0 {
+            break;
+        }
+        let prd_addr = header
+            .ctba
+            .wrapping_add(0x80)
+            .wrapping_add(i.wrapping_mul(16));
+        let prd = PrdtEntry::read(mem, prd_addr);
+        let chunk_len = (prd.dbc as usize).min(remaining);
+
+        if chunk_len % SECTOR_SIZE != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unaligned PRDT length for ATA read DMA",
+            ));
+        }
+
+        let mut buf = vec![0u8; chunk_len];
+        drive.read_sectors(lba, &mut buf)?;
+        mem.write_physical(prd.dba, &buf);
+
+        lba = lba.wrapping_add((chunk_len / SECTOR_SIZE) as u64);
+        remaining -= chunk_len;
+    }
+
+    if remaining != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "PRDT too small for DMA write",
+        ));
+    }
+
+    Ok(())
+}
+
+fn dma_write_sectors_from_guest(
+    mem: &mut dyn MemoryBus,
+    header: &CommandHeader,
+    drive: &mut AtaDrive,
+    mut lba: u64,
+    byte_len: usize,
+) -> io::Result<()> {
+    // Avoid allocating a potentially huge contiguous buffer for the full transfer. Instead, stream
+    // through the PRDT scatter/gather list one entry at a time.
+    let mut remaining = byte_len;
+
+    for i in 0..header.prdt_entries() as u64 {
+        if remaining == 0 {
+            break;
+        }
+        let prd_addr = header
+            .ctba
+            .wrapping_add(0x80)
+            .wrapping_add(i.wrapping_mul(16));
+        let prd = PrdtEntry::read(mem, prd_addr);
+        let chunk_len = (prd.dbc as usize).min(remaining);
+
+        if chunk_len % SECTOR_SIZE != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unaligned PRDT length for ATA write DMA",
+            ));
+        }
+
+        let mut buf = vec![0u8; chunk_len];
+        mem.read_physical(prd.dba, &mut buf);
+        drive.write_sectors(lba, &buf)?;
+
+        lba = lba.wrapping_add((chunk_len / SECTOR_SIZE) as u64);
+        remaining -= chunk_len;
+    }
+
+    if remaining != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "PRDT too small for DMA read",
+        ));
+    }
+
+    Ok(())
+}
+
 fn dma_write_from_host_buffer(
     mem: &mut dyn MemoryBus,
     header: &CommandHeader,
@@ -735,39 +826,6 @@ fn dma_write_from_host_buffer(
     }
 
     Ok(())
-}
-
-fn dma_read_into_host_buffer(
-    mem: &mut dyn MemoryBus,
-    header: &CommandHeader,
-    byte_len: usize,
-) -> io::Result<Vec<u8>> {
-    let mut out = vec![0u8; byte_len];
-    let mut written = 0usize;
-
-    for i in 0..header.prdt_entries() as u64 {
-        if written >= out.len() {
-            break;
-        }
-        let prd_addr = header
-            .ctba
-            .wrapping_add(0x80)
-            .wrapping_add(i.wrapping_mul(16));
-        let prd = PrdtEntry::read(mem, prd_addr);
-        let chunk_len = prd.dbc.min((out.len() - written) as u32) as usize;
-
-        mem.read_physical(prd.dba, &mut out[written..written + chunk_len]);
-        written += chunk_len;
-    }
-
-    if written != out.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "PRDT too small for DMA read",
-        ));
-    }
-
-    Ok(out)
 }
 
 fn complete_command(
