@@ -347,10 +347,17 @@ mod tests {
         }
 
         let too_long = "a".repeat(crate::store::MAX_IMAGE_ID_LEN + 1);
-        assert!(
-            validate_image_id(&too_long).is_err(),
-            "expected invalid image_id: {too_long:?}"
-        );
+        let err = validate_image_id(&too_long).unwrap_err();
+        match err {
+            StoreError::InvalidImageId { image_id } => {
+                assert!(
+                    image_id.len() <= crate::store::MAX_IMAGE_ID_LEN,
+                    "expected truncated image_id, got len={}",
+                    image_id.len()
+                );
+            }
+            other => panic!("expected InvalidImageId, got {other:?}"),
+        }
 
         let valid = ["a", "test.img", "ABC_123-foo.bar", "a..b"];
         for image_id in valid {
