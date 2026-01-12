@@ -77,9 +77,19 @@ deterministically.
 
 1. Build and run the probe for **both architectures** (x86 and x64) in a WDK build
    environment (see the build steps above).
-2. Copy the reported values into:
+   * Save the output (for example: `out_x86.txt` and `out_x64.txt`).
+2. (Optional) Regenerate the expected header automatically:
+
+```cmd
+python3 drivers/aerogpu/umd/d3d10_11/tools/wdk_abi_probe/gen_expected_header.py ^
+  --x86 out_x86.txt ^
+  --x64 out_x64.txt ^
+  --out drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h
+```
+
+3. If you prefer, you can also copy the reported values manually into:
    - `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h`
-3. Rebuild the UMD with `AeroGpuUseWdkHeaders=1` and ensure the build passes without
+4. Rebuild the UMD with `AeroGpuUseWdkHeaders=1` and ensure the build passes without
    any ABI assertion failures.
 
 If the ABI assertions fail unexpectedly, common root causes are:
