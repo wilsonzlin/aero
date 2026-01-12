@@ -16,6 +16,12 @@ pub const SCANOUT_SOURCE_WDDM: u32 = 2;
 
 pub const SCANOUT_FORMAT_B8G8R8X8: u32 = 0;
 
+/// Internal bit used to mark `generation` as "being updated".
+///
+/// The published generation value (the one returned from [`ScanoutState::snapshot`]) never has
+/// this bit set and increments by 1 per completed update.
+pub const SCANOUT_STATE_GENERATION_BUSY_BIT: u32 = 1 << 31;
+
 /// The scanout state is an array of 32-bit words to keep it trivially shareable
 /// with JS as an `Int32Array`.
 pub const SCANOUT_STATE_U32_LEN: usize = 8;
@@ -66,8 +72,8 @@ impl ScanoutStateSnapshot {
 pub struct ScanoutState {
     /// Sequence counter used to publish updates.
     ///
-    /// Stable snapshots always have an even `generation`. Writers make the
-    /// counter odd while updating, then increment it again to publish.
+    /// The high bit ([`SCANOUT_STATE_GENERATION_BUSY_BIT`]) is used internally to mark an
+    /// in-progress update; published generations always have the bit cleared.
     pub generation: AtomicU32,
 
     pub source: AtomicU32,
@@ -96,13 +102,29 @@ impl ScanoutState {
     /// Publish a complete scanout update.
     ///
     /// Protocol:
-    /// 1) Mark the state as "in progress" by making `generation` odd.
+    /// 1) Mark the state as "in progress" by setting [`SCANOUT_STATE_GENERATION_BUSY_BIT`].
     /// 2) Store all non-generation fields.
-    /// 3) Increment `generation` again (even) as the final publish step.
+    /// 3) Increment `generation` (busy bit cleared) as the final publish step.
     pub fn publish(&self, update: ScanoutStateUpdate) -> u32 {
-        // Make generation odd to indicate an update is in progress.
-        let start = self.generation.fetch_add(1, Ordering::SeqCst);
-        debug_assert!(start & 1 == 0, "generation should be even before publish");
+        // Acquire the write lock by setting the busy bit.
+        let mut start = self.generation.load(Ordering::SeqCst);
+        loop {
+            if start & SCANOUT_STATE_GENERATION_BUSY_BIT != 0 {
+                std::hint::spin_loop();
+                start = self.generation.load(Ordering::SeqCst);
+                continue;
+            }
+
+            match self.generation.compare_exchange_weak(
+                start,
+                start | SCANOUT_STATE_GENERATION_BUSY_BIT,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(actual) => start = actual,
+            }
+        }
 
         test_yield();
 
@@ -123,16 +145,17 @@ impl ScanoutState {
 
         test_yield();
 
-        // Final publish step: make generation even again.
-        let prev = self.generation.fetch_add(1, Ordering::SeqCst);
-        debug_assert!(prev & 1 == 1, "generation should be odd during publish");
-        prev.wrapping_add(1)
+        // Final publish step: increment generation and clear the busy bit.
+        let new_generation =
+            start.wrapping_add(1) & !SCANOUT_STATE_GENERATION_BUSY_BIT;
+        self.generation.store(new_generation, Ordering::SeqCst);
+        new_generation
     }
 
     pub fn snapshot(&self) -> ScanoutStateSnapshot {
         loop {
             let gen0 = self.generation.load(Ordering::SeqCst);
-            if gen0 & 1 != 0 {
+            if gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT != 0 {
                 // Writer in progress.
                 std::hint::spin_loop();
                 continue;
@@ -204,6 +227,36 @@ mod tests {
     }
 
     #[test]
+    fn generation_increments_by_one_per_completed_publish() {
+        let state = ScanoutState::new();
+
+        let g0 = state.snapshot().generation;
+        state.publish(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 1,
+            height: 2,
+            pitch_bytes: 3,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
+        let g1 = state.snapshot().generation;
+        state.publish(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 4,
+            height: 5,
+            pitch_bytes: 6,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
+        let g2 = state.snapshot().generation;
+
+        assert_eq!(g1, g0.wrapping_add(1));
+        assert_eq!(g2, g1.wrapping_add(1));
+    }
+
+    #[test]
     fn snapshot_is_coherent_across_concurrent_updates() {
         let state = Arc::new(ScanoutState::new());
 
@@ -271,4 +324,3 @@ mod tests {
         reader.join().unwrap();
     }
 }
-
