@@ -275,6 +275,10 @@ while true; do
         continue
     fi
 
+    if [[ "${is_cargo_cmd}" == "true" ]] && should_retry_rustc_thread_error "${stderr_log}"; then
+        echo "[safe-run] note: rustc hit an OS resource limit (EAGAIN/WouldBlock). If this persists, try raising AERO_MEM_LIMIT (e.g. 32G or unlimited) or lowering parallelism (AERO_CARGO_BUILD_JOBS=1, RAYON_NUM_THREADS=1)." >&2
+    fi
+
     rm -f "${stderr_log}"
     exit "${status}"
 done
