@@ -1083,6 +1083,48 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(0x8000_0000n, 4)).toBe(0xdead_beef);
   });
 
+  it("skips restoring config space entries when the PCI identity differs (vendor/device mismatch)", () => {
+    // Snapshot a function at 00:00.0 with a guest-programmed interrupt line value.
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const devA: PciDevice = {
+      name: "snap_id_a",
+      vendorId: 0x1111,
+      deviceId: 0x2222,
+      classCode: 0,
+    };
+    pciBus.registerDevice(devA, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+    cfg.writeU8(0, 0, 0x3c, 0x33);
+    const snapshot = pciBus.saveState();
+
+    // Restore into a bus where the same BDF is occupied by a different device identity.
+    const portBus2 = new PortIoBus();
+    const mmioBus2 = new MmioBus();
+    const pciBus2 = new PciBus(portBus2, mmioBus2);
+    pciBus2.registerToPortBus();
+
+    const devB: PciDevice = {
+      name: "snap_id_b",
+      vendorId: 0xaaaa,
+      deviceId: 0xbbbb,
+      classCode: 0,
+      irqLine: 0x11,
+    };
+    pciBus2.registerDevice(devB, { device: 0, function: 0 });
+    const cfg2 = makeCfgIo(portBus2);
+    // Ensure we can observe if loadState incorrectly applies the snapshot's writable fields.
+    cfg2.writeU8(0, 0, 0x3c, 0x44);
+    expect(cfg2.readU8(0, 0, 0x3c)).toBe(0x44);
+
+    expect(() => pciBus2.loadState(snapshot)).not.toThrow();
+    // The interrupt line should remain the value programmed for devB, not the snapshot's devA.
+    expect(cfg2.readU8(0, 0, 0x3c)).toBe(0x44);
+  });
+
   it("restores without transient BAR overlap when devices are registered in a different order", () => {
     // Snapshot bus: register dev0 then dev1.
     const portBus = new PortIoBus();

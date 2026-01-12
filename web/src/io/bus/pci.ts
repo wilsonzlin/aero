@@ -1256,6 +1256,16 @@ export class PciBus implements PortIoHandler {
         // Unknown function in this runtime; ignore (forward compatibility).
         continue;
       }
+      // Forward compatibility: only apply config space images when the PCI identity matches.
+      // This avoids replaying guest-programmed BAR/command state onto a different device that
+      // happens to occupy the same BDF in a newer runtime build.
+      const curVendorId = (fn.config[0x00]! | (fn.config[0x01]! << 8)) >>> 0;
+      const curDeviceId = (fn.config[0x02]! | (fn.config[0x03]! << 8)) >>> 0;
+      const snapVendorId = (cfg[0x00]! | (cfg[0x01]! << 8)) >>> 0;
+      const snapDeviceId = (cfg[0x02]! | (cfg[0x03]! << 8)) >>> 0;
+      if (curVendorId !== snapVendorId || curDeviceId !== snapDeviceId) {
+        continue;
+      }
 
       // Apply config space image as a sequence of aligned dword writes so BAR mapping invariants
       // and device hooks (`onPciCommandWrite`, `pciConfigWrite`) are respected.
