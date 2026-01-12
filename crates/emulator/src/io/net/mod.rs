@@ -6,6 +6,6 @@ pub mod trace;
 pub mod tunnel_backend;
 
 pub use aero_net_backend::NetworkBackend;
+pub use aero_net_backend::FrameRing;
 pub use ring_backend::{L2TunnelRingBackend, L2TunnelRingBackendStats};
 pub use tunnel_backend::{L2TunnelBackend, L2TunnelBackendStats};
-
