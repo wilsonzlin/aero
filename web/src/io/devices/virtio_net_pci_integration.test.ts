@@ -351,6 +351,41 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(mmioReadU32(commonBase + 0x0cn)).toBe(featuresLo);
       mmioWriteU32(commonBase + 0x08n, 1);
 
+      // Negative feature negotiation coverage: reject invalid feature bits and missing VERSION_1.
+      {
+        // 1) Invalid (unoffered) feature bit -> FEATURES_OK must be cleared.
+        mmioWriteU32(commonBase + 0x08n, 0);
+        mmioWriteU32(commonBase + 0x0cn, (featuresLo | VIRTIO_NET_F_CSUM) >>> 0);
+        mmioWriteU32(commonBase + 0x08n, 1);
+        mmioWriteU32(commonBase + 0x0cn, featuresHi);
+        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+        expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_FEATURES_OK).toBe(0);
+
+        // Reset and re-enter driver init.
+        mmioWriteU8(commonBase + 0x14n, 0);
+        expect(mmioReadU8(commonBase + 0x14n)).toBe(0);
+        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE);
+        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+
+        // 2) Missing VERSION_1 bit for modern transport -> FEATURES_OK must be cleared.
+        mmioWriteU32(commonBase + 0x08n, 0);
+        mmioWriteU32(commonBase + 0x0cn, featuresLo);
+        mmioWriteU32(commonBase + 0x08n, 1);
+        mmioWriteU32(commonBase + 0x0cn, (featuresHi & ~VIRTIO_F_VERSION_1_SEL1_BIT) >>> 0);
+        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+        expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_FEATURES_OK).toBe(0);
+
+        // Reset and proceed with the correct feature set.
+        mmioWriteU8(commonBase + 0x14n, 0);
+        expect(mmioReadU8(commonBase + 0x14n)).toBe(0);
+        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE);
+        mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+        mmioWriteU32(commonBase + 0x08n, 0);
+        mmioWriteU32(commonBase + 0x0cn, featuresLo);
+        mmioWriteU32(commonBase + 0x08n, 1);
+        mmioWriteU32(commonBase + 0x0cn, featuresHi);
+      }
+
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
       expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_FEATURES_OK).not.toBe(0);
       mmioWriteU8(
