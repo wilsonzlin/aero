@@ -340,6 +340,38 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
 }
 
 #[test]
+fn virtio_blk_config_read_out_of_range_offsets_return_zeroes() {
+    let cfg = aero_virtio::devices::blk::VirtioBlkConfig {
+        capacity: 8,
+        size_max: 0,
+        seg_max: 126,
+        blk_size: 512,
+    };
+
+    let mut buf = [0xa5u8; 16];
+    cfg.read(u64::MAX, &mut buf);
+    assert!(buf.iter().all(|&b| b == 0));
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn virtio_blk_config_read_does_not_truncate_large_offsets_on_32bit() {
+    let cfg = aero_virtio::devices::blk::VirtioBlkConfig {
+        capacity: 8,
+        size_max: 0,
+        seg_max: 126,
+        blk_size: 512,
+    };
+
+    // On 32-bit targets, `u64 as usize` truncates. Ensure out-of-range offsets never alias within
+    // the config struct.
+    let big_offset = u64::from(u32::MAX) + 1;
+    let mut buf = [0xa5u8; 8];
+    cfg.read(big_offset, &mut buf);
+    assert!(buf.iter().all(|&b| b == 0));
+}
+
+#[test]
 fn virtio_blk_processes_multi_segment_write_then_read() {
     let (mut dev, caps, mut mem, backing, _flushes) = setup();
 

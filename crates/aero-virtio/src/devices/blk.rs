@@ -59,12 +59,23 @@ impl VirtioBlkConfig {
         // geometry is zeroed.
         cfg[20..24].copy_from_slice(&self.blk_size.to_le_bytes());
 
-        let start = offset as usize;
+        // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
+        // small fixed-size array.
+        let start: usize = match offset.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                data.fill(0);
+                return;
+            }
+        };
         if start >= cfg.len() {
             data.fill(0);
             return;
         }
-        let end = usize::min(cfg.len(), start + data.len());
+        let end = start
+            .checked_add(data.len())
+            .unwrap_or(cfg.len())
+            .min(cfg.len());
         data[..end - start].copy_from_slice(&cfg[start..end]);
         if end - start < data.len() {
             data[end - start..].fill(0);
@@ -390,7 +401,13 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break;
                                     }
-                                    offset = offset.saturating_add(*seg_len as u64);
+                                    offset = match offset.checked_add(*seg_len as u64) {
+                                        Some(v) => v,
+                                        None => {
+                                            status = VIRTIO_BLK_S_IOERR;
+                                            break;
+                                        }
+                                    };
                                 }
                             }
                         } else {
@@ -427,7 +444,13 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break;
                                     }
-                                    offset = offset.saturating_add(*seg_len as u64);
+                                    offset = match offset.checked_add(*seg_len as u64) {
+                                        Some(v) => v,
+                                        None => {
+                                            status = VIRTIO_BLK_S_IOERR;
+                                            break;
+                                        }
+                                    };
                                 }
                             }
                         } else {
