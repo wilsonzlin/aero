@@ -62,7 +62,6 @@ import {
   framesAvailableClamped as audioFramesAvailableClamped,
   framesFree as audioFramesFree,
   getRingBufferLevelFrames as getAudioRingBufferLevelFrames,
-  requiredBytes as audioRingRequiredBytes,
   wrapRingBuffer as wrapAudioRingBuffer,
 } from "../audio/audio_worklet_ring";
 import {
@@ -572,11 +571,6 @@ class JsWorkletBridge {
   constructor(sab: SharedArrayBuffer, capacityFrames: number, channelCount: number) {
     this.capacity_frames = capacityFrames;
     this.channel_count = channelCount;
-
-    const requiredBytes = audioRingRequiredBytes(capacityFrames, channelCount);
-    if (sab.byteLength < requiredBytes) {
-      throw new Error(`audio ring buffer is too small: need ${requiredBytes} bytes, got ${sab.byteLength} bytes`);
-    }
 
     const views = wrapAudioRingBuffer(sab, capacityFrames, channelCount);
     this.header = views.header;

@@ -1,9 +1,5 @@
 import {
   HEADER_BYTES as AUDIO_WORKLET_RING_HEADER_BYTES,
-  OVERRUN_COUNT_INDEX,
-  READ_FRAME_INDEX,
-  UNDERRUN_COUNT_INDEX,
-  WRITE_FRAME_INDEX,
   framesFree,
   getRingBufferLevelFrames as getAudioWorkletRingLevelFrames,
   requiredBytes as audioWorkletRingRequiredBytes,
@@ -275,10 +271,10 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
   const buffer = new SharedArrayBuffer(audioWorkletRingRequiredBytes(ringBufferFrames, channelCount));
   const views = wrapAudioWorkletRingBuffer(buffer, ringBufferFrames, channelCount);
 
-  Atomics.store(views.header, READ_FRAME_INDEX, 0);
-  Atomics.store(views.header, WRITE_FRAME_INDEX, 0);
-  Atomics.store(views.header, UNDERRUN_COUNT_INDEX, 0);
-  Atomics.store(views.header, OVERRUN_COUNT_INDEX, 0);
+  Atomics.store(views.readIndex, 0, 0);
+  Atomics.store(views.writeIndex, 0, 0);
+  Atomics.store(views.underrunCount, 0, 0);
+  Atomics.store(views.overrunCount, 0, 0);
 
   return {
     buffer,
@@ -316,11 +312,11 @@ export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): num
 }
 
 export function getRingBufferUnderrunCount(ringBuffer: AudioRingBufferLayout): number {
-  return Atomics.load(ringBuffer.header, UNDERRUN_COUNT_INDEX) >>> 0;
+  return Atomics.load(ringBuffer.underrunCount, 0) >>> 0;
 }
 
 export function getRingBufferOverrunCount(ringBuffer: AudioRingBufferLayout): number {
-  return Atomics.load(ringBuffer.header, OVERRUN_COUNT_INDEX) >>> 0;
+  return Atomics.load(ringBuffer.overrunCount, 0) >>> 0;
 }
 
 export function resampleLinearInterleaved(
@@ -371,13 +367,13 @@ export function writeRingBufferInterleaved(
   const requestedFrames = Math.floor(samples.length / ringBuffer.channelCount);
   if (requestedFrames === 0) return 0;
 
-  const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
-  const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
+  const read = Atomics.load(ringBuffer.readIndex, 0) >>> 0;
+  const write = Atomics.load(ringBuffer.writeIndex, 0) >>> 0;
 
   const free = framesFree(read, write, ringBuffer.capacityFrames);
   const framesToWrite = Math.min(requestedFrames, free);
   const droppedFrames = requestedFrames - framesToWrite;
-  if (droppedFrames > 0) Atomics.add(ringBuffer.header, OVERRUN_COUNT_INDEX, droppedFrames);
+  if (droppedFrames > 0) Atomics.add(ringBuffer.overrunCount, 0, droppedFrames);
   if (framesToWrite === 0) return 0;
 
   const writePos = write % ringBuffer.capacityFrames;
@@ -393,15 +389,15 @@ export function writeRingBufferInterleaved(
     ringBuffer.samples.set(samples.subarray(firstSamples, firstSamples + secondSamples), 0);
   }
 
-  Atomics.store(ringBuffer.header, WRITE_FRAME_INDEX, write + framesToWrite);
+  Atomics.store(ringBuffer.writeIndex, 0, write + framesToWrite);
   return framesToWrite;
 }
 
 function prefillSilenceIfEmpty(ringBuffer: AudioRingBufferLayout, frames: number): void {
   if (frames <= 0) return;
 
-  const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
-  const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
+  const read = Atomics.load(ringBuffer.readIndex, 0) >>> 0;
+  const write = Atomics.load(ringBuffer.writeIndex, 0) >>> 0;
   if (read !== write) return;
 
   const framesToWrite = Math.min(frames, ringBuffer.capacityFrames);
@@ -415,7 +411,7 @@ function prefillSilenceIfEmpty(ringBuffer: AudioRingBufferLayout, frames: number
     ringBuffer.samples.fill(0, 0, secondFrames * cc);
   }
 
-  Atomics.store(ringBuffer.header, WRITE_FRAME_INDEX, write + framesToWrite);
+  Atomics.store(ringBuffer.writeIndex, 0, write + framesToWrite);
 }
 
 /**

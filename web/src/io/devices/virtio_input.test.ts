@@ -87,7 +87,7 @@ describe("io/devices/virtio_input", () => {
     expect(cfg.readU32(0, 0, 0x10) & 0xf).toBe(0x4);
     expect(cfg.readU32(0, 0, 0x14)).toBe(0x0000_0000);
 
-    // Cap list must be present and start at 0x40 (PCI bus auto-built capability list).
+    // Cap list must be present and start at 0x40 (PCI bus auto-built capability list; Aero virtio contract v1).
     expect(cfg.readU16(0, 0, 0x06) & 0x0010).toBe(0x0010);
     expect(cfg.readU8(0, 0, 0x34)).toBe(0x40);
 
