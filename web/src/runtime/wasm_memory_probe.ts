@@ -28,6 +28,17 @@ function writeU32LE(u8: Uint8Array, offset: number, value: number): void {
   u8[offset + 3] = (v >>> 24) & 0xff;
 }
 
+function hashStringFNV1a32(text: string): number {
+  // 32-bit FNV-1a.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i) & 0xff;
+    // hash *= 16777619 (with 32-bit overflow)
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
 export function computeDefaultWasmMemoryProbeOffset(opts: {
   api: Pick<WasmApi, "guest_ram_layout">;
   memory: WebAssembly.Memory;
@@ -68,7 +79,20 @@ export function assertWasmMemoryWiring(opts: {
   const { api, memory, context } = opts;
 
   const memBytes = memory.buffer.byteLength;
-  const linearOffset = opts.linearOffset ?? computeDefaultWasmMemoryProbeOffset({ api, memory });
+  const linearOffset =
+    opts.linearOffset ??
+    (() => {
+      const base = computeDefaultWasmMemoryProbeOffset({ api, memory });
+      // Avoid cross-context races when multiple workers probe the same shared memory
+      // concurrently by spreading the default probe offset across a small window.
+      //
+      // Callers can always pass an explicit `linearOffset` to probe a known guest RAM
+      // address, but making the default context-sensitive helps keep ad-hoc probes
+      // deterministic while reducing flakiness.
+      const spreadWords = 16; // 64 bytes window
+      const delta = (hashStringFNV1a32(context) % spreadWords) * 4;
+      return base >= delta ? base - delta : base;
+    })();
 
   if (!Number.isSafeInteger(linearOffset) || linearOffset < 0 || linearOffset + 4 > memBytes) {
     throw new WasmMemoryWiringError(
