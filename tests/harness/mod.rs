@@ -294,7 +294,7 @@ impl QemuVm {
         let qmp_path = temp_dir.path().join("qmp.sock");
         let serial_path = temp_dir.path().join("serial.log");
 
-        let mut cmd = Command::new(qemu);
+        let mut cmd = Command::new(&qemu);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -342,7 +342,9 @@ impl QemuVm {
             cmd.arg(arg);
         }
 
-        let mut child = cmd.spawn().context("spawn qemu-system-i386")?;
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("spawn {}", qemu.display()))?;
 
         let stderr = LogCapture::default();
 
