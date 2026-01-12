@@ -16,6 +16,16 @@ document.querySelector("#origin").textContent = location.origin;
 // it treats `https://example.com/aero` (no trailing slash) as a "file" URL and
 // resolves `"."` to `/`, dropping the `/aero` prefix.
 function computeBasePath() {
+  // Prefer deriving the base path from the URL of this script itself, because the
+  // document can be served at arbitrary client-routed paths (SPA-style rewrites)
+  // while the gateway still lives under the static asset prefix.
+  try {
+    const scriptDir = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
+    if (scriptDir !== "" && scriptDir !== "/") return scriptDir;
+  } catch {
+    // Ignore and fall back to location-based heuristics.
+  }
+
   let pathname = location.pathname;
 
   // If we were served from a directory URL (`/aero/`), strip the trailing `/`.
