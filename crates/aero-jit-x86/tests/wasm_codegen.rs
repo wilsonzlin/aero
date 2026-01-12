@@ -746,6 +746,87 @@ fn wasm_codegen_cross_page_store_uses_slow_helper() {
 }
 
 #[test]
+fn wasm_codegen_high_ram_remap_uses_contiguous_ram_offset() {
+    // Q35 layout:
+    // - low RAM:  [0x0000_0000 .. 0xB000_0000)
+    // - hole:     [0xB000_0000 .. 0x1_0000_0000)
+    // - high RAM: [0x1_0000_0000 .. ...] remapped to start at 0xB000_0000 in the contiguous RAM
+    //             backing store.
+    const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+
+    // We'll point `CpuState.ram_base` at a value that causes the correct high-RAM remap to wrap the
+    // final wasm32 address into a small in-bounds offset, while the buggy identity-mapped
+    // computation stays huge and traps.
+    //
+    // With the expected remap:
+    //   wasm_addr = (ram_base + 0xB000_0000 + (paddr - 4GiB)) mod 2^32
+    // For paddr == 4GiB, this becomes:
+    //   wasm_addr = (ram_base + 0xB000_0000) mod 2^32
+    //
+    // Choose ram_base = 0x5000_0000 + desired_offset, so:
+    //   (ram_base + 0xB000_0000) mod 2^32 == desired_offset
+    //   (ram_base + 4GiB)        mod 2^32 == 0x5000_0000 + desired_offset   (OOB)
+    let desired_offset: usize = 0x10000;
+    let ram_base: u64 = 0x5000_0000 + desired_offset as u64;
+
+    let block = IrBlock::new(vec![
+        IrOp::Store {
+            addr: Operand::Imm(i64::try_from(HIGH_RAM_BASE).unwrap()),
+            value: Operand::Imm(0xAB),
+            size: MemSize::U8,
+        },
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rax),
+            addr: Operand::Imm(i64::try_from(HIGH_RAM_BASE).unwrap()),
+            size: MemSize::U8,
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x3000),
+        },
+    ]);
+
+    let mut cpu = CpuState::default();
+    cpu.rip = 0x1000;
+    cpu.ram_base = ram_base;
+
+    let wasm = WasmCodegen::new().compile_block(&block);
+    validate_wasm(&wasm);
+
+    // Memory layout: keep it tiny, but large enough to hold CpuState + the desired test byte at
+    // `desired_offset`.
+    let mem_len = CpuState::TOTAL_BYTE_SIZE.max(desired_offset + 16);
+    let mut mem = vec![0u8; mem_len];
+    cpu.write_to_mem(&mut mem, 0);
+
+    // Seed the target location; the store should overwrite it.
+    mem[desired_offset] = 0x7f;
+
+    let pages = mem.len().div_ceil(65_536) as u32;
+    // Make `mmu_translate` classify 4GiB as RAM so the fast-path is taken.
+    let ram_size = HIGH_RAM_BASE + 0x1000;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let got_rip = func.call(&mut store, 0).unwrap() as u64;
+
+    let mut got_mem = vec![0u8; mem.len()];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+    let got_cpu = CpuState::read_from_mem(&got_mem, 0);
+    let host_state = *store.data();
+
+    assert_eq!(got_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.get_reg(Reg::Rax) & 0xff, 0xAB);
+    assert_eq!(got_mem[desired_offset], 0xAB);
+
+    // The store/load are same-page, so we should see one translation miss and no slow helpers.
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn wasm_codegen_exit_if_matches_interpreter() {
     let t_cond = Temp(0);
     let block = IrBlock::new(vec![
