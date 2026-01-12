@@ -151,30 +151,159 @@ impl GsiLevelSink for RecordingSink {
     }
 }
 
+fn snapshot_devices(bytes: &[u8]) -> Vec<snapshot::DeviceState> {
+    const FILE_HEADER_LEN: usize = 16;
+    const SECTION_HEADER_LEN: usize = 16;
+
+    let mut r = Cursor::new(bytes);
+    let mut file_header = [0u8; FILE_HEADER_LEN];
+    r.read_exact(&mut file_header).unwrap();
+
+    while (r.position() as usize) < bytes.len() {
+        let mut section_header = [0u8; SECTION_HEADER_LEN];
+        // Valid snapshots end cleanly at EOF.
+        if let Err(e) = r.read_exact(&mut section_header) {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                break;
+            }
+            panic!("failed to read section header: {e}");
+        }
+
+        let id = u32::from_le_bytes(section_header[0..4].try_into().unwrap());
+        let len = u64::from_le_bytes(section_header[8..16].try_into().unwrap());
+
+        let mut payload = vec![0u8; len as usize];
+        r.read_exact(&mut payload).unwrap();
+
+        if id != snapshot::SectionId::DEVICES.0 {
+            continue;
+        }
+
+        let mut pr = Cursor::new(&payload);
+        let mut count_bytes = [0u8; 4];
+        pr.read_exact(&mut count_bytes).unwrap();
+        let count = u32::from_le_bytes(count_bytes) as usize;
+
+        let mut devices = Vec::with_capacity(count);
+        for _ in 0..count {
+            devices.push(snapshot::DeviceState::decode(&mut pr, 64 * 1024 * 1024).unwrap());
+        }
+
+        assert_eq!(
+            pr.position() as usize,
+            payload.len(),
+            "devices section parse did not consume full payload"
+        );
+
+        return devices;
+    }
+
+    panic!("snapshot did not contain a DEVICES section");
+}
+
+fn rewrite_pci_cfg_device_id_to_legacy_pci(bytes: &[u8]) -> Vec<u8> {
+    const FILE_HEADER_LEN: usize = 16;
+    const SECTION_HEADER_LEN: usize = 16;
+
+    let mut r = Cursor::new(bytes);
+    let mut file_header = [0u8; FILE_HEADER_LEN];
+    r.read_exact(&mut file_header).unwrap();
+
+    let mut out = Vec::with_capacity(bytes.len());
+    out.extend_from_slice(&file_header);
+
+    while (r.position() as usize) < bytes.len() {
+        let mut section_header = [0u8; SECTION_HEADER_LEN];
+        // Valid snapshots end cleanly at EOF.
+        if let Err(e) = r.read_exact(&mut section_header) {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                break;
+            }
+            panic!("failed to read section header: {e}");
+        }
+
+        let id = u32::from_le_bytes(section_header[0..4].try_into().unwrap());
+        let version = u16::from_le_bytes(section_header[4..6].try_into().unwrap());
+        let flags = u16::from_le_bytes(section_header[6..8].try_into().unwrap());
+        let len = u64::from_le_bytes(section_header[8..16].try_into().unwrap());
+
+        let mut payload = vec![0u8; len as usize];
+        r.read_exact(&mut payload).unwrap();
+
+        if id != snapshot::SectionId::DEVICES.0 {
+            out.extend_from_slice(&section_header);
+            out.extend_from_slice(&payload);
+            continue;
+        }
+
+        let mut pr = Cursor::new(&payload);
+        let mut count_bytes = [0u8; 4];
+        pr.read_exact(&mut count_bytes).unwrap();
+        let count = u32::from_le_bytes(count_bytes) as usize;
+
+        let mut entries = Vec::with_capacity(count);
+        let mut rewritten = 0usize;
+        for _ in 0..count {
+            let mut dev_header = [0u8; 16];
+            pr.read_exact(&mut dev_header).unwrap();
+            let dev_len = u64::from_le_bytes(dev_header[8..16].try_into().unwrap());
+            let mut dev_data = vec![0u8; dev_len as usize];
+            pr.read_exact(&mut dev_data).unwrap();
+
+            let dev_id = u32::from_le_bytes(dev_header[0..4].try_into().unwrap());
+            if dev_id == snapshot::DeviceId::PCI_CFG.0 {
+                dev_header[0..4].copy_from_slice(&snapshot::DeviceId::PCI.0.to_le_bytes());
+                rewritten += 1;
+            }
+
+            let mut entry = Vec::with_capacity(dev_header.len() + dev_data.len());
+            entry.extend_from_slice(&dev_header);
+            entry.extend_from_slice(&dev_data);
+            entries.push(entry);
+        }
+
+        assert_eq!(
+            pr.position() as usize,
+            payload.len(),
+            "devices section parse did not consume full payload"
+        );
+        assert_eq!(rewritten, 1, "expected exactly one PCI_CFG entry to rewrite");
+
+        let mut new_payload = Vec::with_capacity(payload.len());
+        let new_count: u32 = entries.len().try_into().unwrap();
+        new_payload.extend_from_slice(&new_count.to_le_bytes());
+        for entry in entries {
+            new_payload.extend_from_slice(&entry);
+        }
+        let new_len: u64 = new_payload.len().try_into().unwrap();
+
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&version.to_le_bytes());
+        out.extend_from_slice(&flags.to_le_bytes());
+        out.extend_from_slice(&new_len.to_le_bytes());
+        out.extend_from_slice(&new_payload);
+    }
+
+    out
+}
+
 #[test]
-fn snapshot_source_emits_single_pci_entry_for_pci_core() {
+fn snapshot_source_emits_pci_cfg_device_id_for_config_ports() {
     let m = Machine::new(pc_machine_config()).unwrap();
     let devices = snapshot::SnapshotSource::device_states(&m);
 
-    let pci = devices
-        .iter()
-        .find(|d| d.id == snapshot::DeviceId::PCI)
-        .expect("machine snapshot should include a PCI entry when pc platform is enabled");
-
-    // The PCI device entry should be the combined PCI core snapshot (inner `PCIC`).
     assert!(
-        pci.data.len() >= 12,
-        "PCI device state too short for io-snapshot header"
+        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_CFG),
+        "machine snapshot should include a PCI_CFG entry when pc platform is enabled"
     );
-    assert_eq!(
-        &pci.data[8..12],
-        b"PCIC",
-        "expected PCI device entry to be a combined PciCoreSnapshot (inner PCIC)"
+    assert!(
+        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_INTX),
+        "machine snapshot should include a PCI_INTX entry when pc platform is enabled"
     );
-
-    // We should not emit the optional split-out entries when using the core wrapper.
-    assert!(!devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_CFG));
-    assert!(!devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_INTX));
+    assert!(
+        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI),
+        "machine snapshot should not use legacy PCI id for canonical PCI config ports state"
+    );
 }
 
 #[test]
@@ -529,7 +658,6 @@ fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
         .bus_mut()
         .add_device(bdf, Box::new(TestDev { cfg }));
 
-    // Canonical state: BAR0 = 0x8000_0000 stored under the dedicated `PCI_CFG` device id.
     cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
     let canonical_state = {
         let pci_cfg = pci_cfg.borrow();
@@ -544,7 +672,7 @@ fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
     let legacy_state = {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let mut pci_intx = pci_intx.borrow_mut();
-        let core = aero_devices::pci::PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
+        let core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
         snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &core)
     };
 
@@ -711,6 +839,94 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_combined_pci_core_snap
     };
 
     assert_eq!(restored_intx_events, expected_intx_events);
+}
+
+#[test]
+fn snapshot_uses_pci_cfg_device_id_and_restore_accepts_legacy_device_id() {
+    let cfg = pc_machine_config();
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+    let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+
+    struct TestDev {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for TestDev {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    let bdf = PciBdf::new(0, 1, 0);
+    let mut cfg_space = PciConfigSpace::new(0x1234, 0x5678);
+    cfg_space.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg: cfg_space }));
+
+    // Program BAR0 via the standard PCI config mechanism #1 ports.
+    cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
+    assert_eq!(cfg_read(&mut src, bdf, 0x10, 4), 0x8000_0000);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    // New snapshots should use the canonical `DeviceId::PCI_CFG` outer id for `PciConfigPorts`.
+    let devices = snapshot_devices(&snap);
+    assert!(
+        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_CFG),
+        "snapshot DEVICES section missing PCI_CFG entry"
+    );
+    assert!(
+        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI),
+        "snapshot DEVICES section should not use legacy PCI id for config ports"
+    );
+
+    // Legacy snapshots used `DeviceId::PCI` for `PciConfigPorts`; restore should remain compatible.
+    let legacy_snap = rewrite_pci_cfg_device_id_to_legacy_pci(&snap);
+    let legacy_devices = snapshot_devices(&legacy_snap);
+    assert!(
+        legacy_devices
+            .iter()
+            .any(|d| d.id == snapshot::DeviceId::PCI),
+        "rewritten snapshot missing legacy PCI entry"
+    );
+    assert!(
+        legacy_devices
+            .iter()
+            .all(|d| d.id != snapshot::DeviceId::PCI_CFG),
+        "rewritten snapshot should no longer contain PCI_CFG entry"
+    );
+
+    let mut restored = Machine::new(cfg).unwrap();
+    let pci_cfg = restored.pci_config_ports().expect("pc platform enabled");
+
+    let mut cfg_space = PciConfigSpace::new(0x1234, 0x5678);
+    cfg_space.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg: cfg_space }));
+
+    restored.restore_snapshot_bytes(&legacy_snap).unwrap();
+    assert_eq!(cfg_read(&mut restored, bdf, 0x10, 4), 0x8000_0000);
 }
 
 #[test]
@@ -1006,7 +1222,7 @@ fn skip_exact<R: Read>(r: &mut R, mut len: u64) {
 }
 
 #[test]
-fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
+fn snapshot_stores_pci_core_under_split_device_ids() {
     let mut m = Machine::new(pc_machine_config()).unwrap();
     assert!(m.pci_config_ports().is_some());
     assert!(m.pci_intx_router().is_some());
@@ -1026,9 +1242,9 @@ fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
     let mut r = cursor.take(devices_section.len);
 
     let count = read_u32_le(&mut r) as usize;
-    let mut pci_entries = 0usize;
     let mut pci_cfg_entries = 0usize;
     let mut pci_intx_entries = 0usize;
+    let mut pci_entries = 0usize;
 
     for _ in 0..count {
         let id = aero_snapshot::DeviceId(read_u32_le(&mut r));
@@ -1036,58 +1252,36 @@ fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
         let _flags = read_u16_le(&mut r);
         let len = read_u64_le(&mut r);
 
-        if id == aero_snapshot::DeviceId::PCI {
-            pci_entries += 1;
-            // `aero-io-snapshot` header is 16 bytes. Verify this is the PCI core wrapper (`PCIC`)
-            // and that it contains both:
-            // - tag 1: `PCPT` (PciConfigPorts)
-            // - tag 2: `INTX` (PciIntxRouter)
-            let mut hdr = [0u8; 16];
-            r.read_exact(&mut hdr).unwrap();
-            assert_eq!(&hdr[0..4], b"AERO");
-            assert_eq!(&hdr[8..12], b"PCIC");
-            let mut remaining = len.saturating_sub(hdr.len() as u64);
-            let mut found_pcpt = false;
-            let mut found_intx = false;
-            while remaining > 0 {
-                let tag = read_u16_le(&mut r);
-                let field_len = u64::from(read_u32_le(&mut r));
-                remaining = remaining.saturating_sub(2 + 4);
-
-                if tag == 1 || tag == 2 {
-                    let mut inner_hdr = [0u8; 16];
-                    r.read_exact(&mut inner_hdr).unwrap();
-                    assert_eq!(&inner_hdr[0..4], b"AERO");
-                    assert_eq!(
-                        &inner_hdr[8..12],
-                        if tag == 1 { b"PCPT" } else { b"INTX" }
-                    );
-                    skip_exact(&mut r, field_len.saturating_sub(inner_hdr.len() as u64));
-                    if tag == 1 {
-                        found_pcpt = true;
-                    } else {
-                        found_intx = true;
-                    }
-                } else {
-                    skip_exact(&mut r, field_len);
-                }
-                remaining = remaining.saturating_sub(field_len);
+        match id {
+            aero_snapshot::DeviceId::PCI_CFG => {
+                pci_cfg_entries += 1;
+                // `aero-io-snapshot` header is 16 bytes. Verify `PciConfigPorts` (`PCPT`).
+                let mut hdr = [0u8; 16];
+                r.read_exact(&mut hdr).unwrap();
+                assert_eq!(&hdr[0..4], b"AERO");
+                assert_eq!(&hdr[8..12], b"PCPT");
+                skip_exact(&mut r, len.saturating_sub(hdr.len() as u64));
             }
-
-            assert!(found_pcpt, "PCIC snapshot missing PCPT field");
-            assert!(found_intx, "PCIC snapshot missing INTX field");
-        } else if id == aero_snapshot::DeviceId::PCI_CFG {
-            pci_cfg_entries += 1;
-            skip_exact(&mut r, len);
-        } else if id == aero_snapshot::DeviceId::PCI_INTX {
-            pci_intx_entries += 1;
-            skip_exact(&mut r, len);
-        } else {
-            skip_exact(&mut r, len);
+            aero_snapshot::DeviceId::PCI_INTX => {
+                pci_intx_entries += 1;
+                // Verify `PciIntxRouter` (`INTX`).
+                let mut hdr = [0u8; 16];
+                r.read_exact(&mut hdr).unwrap();
+                assert_eq!(&hdr[0..4], b"AERO");
+                assert_eq!(&hdr[8..12], b"INTX");
+                skip_exact(&mut r, len.saturating_sub(hdr.len() as u64));
+            }
+            aero_snapshot::DeviceId::PCI => {
+                // Legacy combined PCI snapshots may exist, but canonical machine snapshots
+                // should not emit them.
+                pci_entries += 1;
+                skip_exact(&mut r, len);
+            }
+            _ => skip_exact(&mut r, len),
         }
     }
 
-    assert_eq!(pci_entries, 1);
-    assert_eq!(pci_cfg_entries, 0);
-    assert_eq!(pci_intx_entries, 0);
+    assert_eq!(pci_cfg_entries, 1);
+    assert_eq!(pci_intx_entries, 1);
+    assert_eq!(pci_entries, 0);
 }

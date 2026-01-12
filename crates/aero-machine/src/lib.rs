@@ -1812,24 +1812,27 @@ impl snapshot::SnapshotSource for Machine {
         }
         // PCI core state (config ports + INTx router).
         //
-        // Store this under a single outer `DeviceId::PCI` entry using `PciCoreSnapshot` (inner
-        // `PCIC`) so snapshot consumers only need to look for one device entry.
+        // Canonical full-machine snapshots store these as separate outer device entries to avoid
+        // `DEVICES` duplicate `(id, version, flags)` collisions:
+        // - `DeviceId::PCI_CFG` for `PciConfigPorts` (`PCPT`)
+        // - `DeviceId::PCI_INTX` for `PciIntxRouter` (`INTX`)
         if let Some(pci_cfg) = &self.pci_cfg {
-            if let Some(pci_intx) = &self.pci_intx {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let mut pci_intx = pci_intx.borrow_mut();
-                let core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
-                devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                    snapshot::DeviceId::PCI,
-                    &core,
-                ));
-            } else {
-                // Fallback: config ports only (inner `PCPT`).
-                devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                    snapshot::DeviceId::PCI,
-                    &*pci_cfg.borrow(),
-                ));
-            }
+            // Canonical outer ID for legacy PCI config mechanism #1 ports (`0xCF8/0xCFC`) and
+            // PCI bus config-space state.
+            //
+            // NOTE: `PciConfigPorts` snapshots cover both the config mechanism #1 address latch
+            // and the per-device config space/BAR state, so this one entry is sufficient to
+            // restore guest-programmed BARs and command bits.
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::PCI_CFG,
+                &*pci_cfg.borrow(),
+            ));
+        }
+        if let Some(pci_intx) = &self.pci_intx {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::PCI_INTX,
+                &*pci_intx.borrow(),
+            ));
         }
         if let Some(e1000) = &self.e1000 {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -1996,9 +1999,15 @@ impl snapshot::SnapshotTarget for Machine {
         let mut restored_pci_intx = false;
         // 2) Restore PCI devices (config ports + INTx router).
         //
-        // Prefer restoring from the combined `DeviceId::PCI` entry (`PCIC`) when present. For
-        // backward compatibility, also accept older snapshots that stored config ports under
-        // `DeviceId::PCI_CFG` and INTx routing under `DeviceId::PCI_INTX`.
+        // Canonical full-machine snapshots store these as separate outer device entries:
+        // - `DeviceId::PCI_CFG` for `PciConfigPorts` (`PCPT`)
+        // - `DeviceId::PCI_INTX` for `PciIntxRouter` (`INTX`)
+        //
+        // Backward compatibility: older snapshots stored one or both of these under the historical
+        // `DeviceId::PCI` entry, either:
+        // - as a combined `PciCoreSnapshot` wrapper (`PCIC`) containing both `PCPT` + `INTX`, or
+        // - as a single `PCPT` (`PciConfigPorts`) payload, or
+        // - as a single `INTX` (`PciIntxRouter`) payload.
         let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
         let mut pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
         let mut pci_intx_state = by_id.remove(&snapshot::DeviceId::PCI_INTX);
@@ -2006,7 +2015,7 @@ impl snapshot::SnapshotTarget for Machine {
         if let Some(state) = pci_state {
             if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
                 // Prefer decoding the combined PCI core wrapper (`PCIC`) first. If decoding fails,
-                // treat `DeviceId::PCI` as the legacy config-ports-only (`PCPT`) payload.
+                // treat `DeviceId::PCI` as the legacy `PCPT`/`INTX` payload.
                 let core_result = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let mut pci_intx = pci_intx.borrow_mut();
@@ -2017,9 +2026,8 @@ impl snapshot::SnapshotTarget for Machine {
                 match core_result {
                     Ok(()) => {
                         restored_pci_intx = true;
-                        // Forward compatibility: if a dedicated `PCI_CFG` entry is also present,
-                        // prefer it for config ports even if the combined core wrapper applied
-                        // successfully.
+                        // If a dedicated `PCI_CFG` entry is also present, prefer it for config ports
+                        // even if the combined core wrapper applied successfully.
                         if let Some(cfg_state) = pci_cfg_state.take() {
                             let mut cfg_ports = pci_cfg.borrow_mut();
                             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
@@ -2029,10 +2037,7 @@ impl snapshot::SnapshotTarget for Machine {
                         }
                     }
                     Err(_) => {
-                        // Backward compatibility: some snapshots stored `PciConfigPorts` (`PCPT`)
-                        // or `PciIntxRouter` (`INTX`) directly under the historical `DeviceId::PCI`.
-                        //
-                        // If a dedicated `PCI_CFG` entry is also present, prefer it for config ports.
+                        // If a dedicated `PCI_CFG` entry is present, prefer it for config ports.
                         if let Some(cfg_state) = pci_cfg_state.take() {
                             let mut cfg_ports = pci_cfg.borrow_mut();
                             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
@@ -2047,6 +2052,8 @@ impl snapshot::SnapshotTarget for Machine {
                             );
                         }
 
+                        // Backward compatibility: some snapshots stored `PciIntxRouter` (`INTX`)
+                        // directly under the historical `DeviceId::PCI`.
                         let mut pci_intx = pci_intx.borrow_mut();
                         if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                             &state,
@@ -2074,7 +2081,7 @@ impl snapshot::SnapshotTarget for Machine {
                 }
             }
         } else {
-            // No core wrapper; fall back to split legacy entries.
+            // No legacy PCI entry; restore config ports from the canonical `PCI_CFG` entry.
             if let (Some(pci_cfg), Some(cfg_state)) = (&self.pci_cfg, pci_cfg_state.take()) {
                 let mut cfg_ports = pci_cfg.borrow_mut();
                 let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
@@ -2084,8 +2091,8 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // If the PCI core wrapper did not restore the INTx router, fall back to a split `PCI_INTX`
-        // entry (legacy snapshots).
+        // If we haven't restored the INTx router yet, fall back to a canonical/legacy `PCI_INTX`
+        // entry.
         if !restored_pci_intx {
             if let (Some(pci_intx), Some(intx_state)) = (&self.pci_intx, pci_intx_state.take()) {
                 let mut pci_intx = pci_intx.borrow_mut();
