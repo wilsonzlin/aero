@@ -151,9 +151,11 @@ impl<'a> Iterator for CmdStream<'a> {
             return None;
         }
         if self.cursor + 2 > self.words.len() {
-            return Some(Err(CmdParseError::TruncatedHeader {
-                at_word: self.cursor,
-            }));
+            let at_word = self.cursor;
+            // Treat parse errors as terminal so callers that continue after an error can't get
+            // stuck in an infinite error loop.
+            self.cursor = self.words.len();
+            return Some(Err(CmdParseError::TruncatedHeader { at_word }));
         }
 
         let opcode_word = self.words[self.cursor];
@@ -161,10 +163,12 @@ impl<'a> Iterator for CmdStream<'a> {
         let opcode = match D3D11Opcode::from_word(opcode_word) {
             Some(op) => op,
             None => {
+                let at_word = self.cursor;
+                self.cursor = self.words.len();
                 return Some(Err(CmdParseError::UnknownOpcode {
                     opcode: opcode_word,
-                    at_word: self.cursor,
-                }))
+                    at_word,
+                }));
             }
         };
 
@@ -172,21 +176,25 @@ impl<'a> Iterator for CmdStream<'a> {
         let payload_end = match payload_start.checked_add(payload_words) {
             Some(end) => end,
             None => {
+                let at_word = self.cursor;
+                self.cursor = self.words.len();
                 // Defensive: on 32-bit targets a u32 payload_words can overflow usize arithmetic.
                 return Some(Err(CmdParseError::TruncatedPayload {
                     opcode,
                     expected_words: payload_words,
                     remaining_words: self.words.len().saturating_sub(payload_start),
-                    at_word: self.cursor,
+                    at_word,
                 }));
             }
         };
         if payload_end > self.words.len() {
+            let at_word = self.cursor;
+            self.cursor = self.words.len();
             return Some(Err(CmdParseError::TruncatedPayload {
                 opcode,
                 expected_words: payload_words,
                 remaining_words: self.words.len().saturating_sub(payload_start),
-                at_word: self.cursor,
+                at_word,
             }));
         }
 
@@ -198,6 +206,43 @@ impl<'a> Iterator for CmdStream<'a> {
             },
             payload: &self.words[payload_start..payload_end],
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmd_stream_errors_are_terminal() {
+        // Truncated header.
+        let mut stream = CmdStream::new(&[D3D11Opcode::CreateBuffer as u32]);
+        assert!(matches!(
+            stream.next(),
+            Some(Err(CmdParseError::TruncatedHeader { .. }))
+        ));
+        assert!(stream.next().is_none());
+
+        // Unknown opcode.
+        let mut stream = CmdStream::new(&[0xFFFF_FFFF, 0]);
+        assert!(matches!(
+            stream.next(),
+            Some(Err(CmdParseError::UnknownOpcode { .. }))
+        ));
+        assert!(stream.next().is_none());
+
+        // Truncated payload.
+        let mut stream = CmdStream::new(&[
+            D3D11Opcode::CreateBuffer as u32,
+            4, // payload_words
+            1,
+            2, // only 2 words present -> truncated
+        ]);
+        assert!(matches!(
+            stream.next(),
+            Some(Err(CmdParseError::TruncatedPayload { .. }))
+        ));
+        assert!(stream.next().is_none());
     }
 }
 

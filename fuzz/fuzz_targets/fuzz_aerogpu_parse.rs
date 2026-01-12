@@ -248,8 +248,7 @@ fn fuzz_d3d11_cmd_stream(bytes: &[u8]) {
     for pkt in d3d11::CmdStream::new(&words).take(1024) {
         let pkt = match pkt {
             Ok(pkt) => pkt,
-            // `CmdStream` does not advance its cursor on parse errors, so continuing would just
-            // re-yield the same error repeatedly.
+            // Errors are acceptable fuzz outcomes; treat them as terminal for this stream.
             Err(_) => break,
         };
         // Touch a few payload fields to exercise enum/bitflag decoding logic without assuming
