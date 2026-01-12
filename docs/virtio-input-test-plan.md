@@ -480,6 +480,14 @@ In the **web runtime**, input auto-routing is implemented by the IO worker:
   - `maybeUpdateKeyboardInputBackend` / `maybeUpdateMouseInputBackend`
   - It prefers virtio-input only when `virtioInputKeyboard?.driverOk()` / `virtioInputMouse?.driverOk()` becomes true.
 
+The backend selection policy is factored into a small pure helper (with unit tests), which is useful when refactoring routing behavior:
+
+- [`web/src/input/input_backend_selection.ts`](../web/src/input/input_backend_selection.ts)
+- Unit test:
+  ```bash
+  npm -w web run test:unit -- src/input/input_backend_selection.test.ts
+  ```
+
 The `driverOk()` signal is derived from the virtio status register:
 
 - [`web/src/io/devices/virtio_input.ts`](../web/src/io/devices/virtio_input.ts) (`VirtioInputPciFunction::driverOk`)
