@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aero_ipc::ring::{PopError, PushError};
 
@@ -83,6 +83,26 @@ impl FrameRing for aero_ipc::ring::RingBuffer {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         aero_ipc::ring::RingBuffer::try_pop(self)
+    }
+}
+
+impl<T: FrameRing + ?Sized> FrameRing for Mutex<T> {
+    fn capacity_bytes(&self) -> usize {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .capacity_bytes()
+    }
+
+    fn try_push(&self, payload: &[u8]) -> Result<(), PushError> {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_push(payload)
+    }
+
+    fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_pop_vec()
     }
 }
 
@@ -253,7 +273,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use aero_ipc::ring::{PopError, RingBuffer};
 
@@ -553,5 +573,18 @@ mod tests {
 
         rx.try_push(&[8]).unwrap();
         assert_eq!(backend.poll_receive(), Some(vec![8]));
+    }
+
+    #[test]
+    fn backend_works_with_mutex_rings_via_frame_ring_impl() {
+        let tx = Arc::new(Mutex::new(RingBuffer::new(64)));
+        let rx = Arc::new(Mutex::new(RingBuffer::new(64)));
+        let mut backend = L2TunnelRingBackend::new(tx, rx);
+
+        backend.transmit(vec![1, 2, 3]);
+        assert_eq!(backend.tx_ring().try_pop_vec(), Ok(vec![1, 2, 3]));
+
+        backend.rx_ring().try_push(&[9]).unwrap();
+        assert_eq!(backend.poll_receive(), Some(vec![9]));
     }
 }
