@@ -393,6 +393,19 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
 
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
     let nextReqId = 1;
+    let cpuWorkerFatal: Error | null = null;
+
+    const rejectAllPending = (err: Error): void => {
+      cpuWorkerFatal = err;
+      for (const [, entry] of pending) {
+        try {
+          entry.reject(err);
+        } catch {
+          // ignore
+        }
+      }
+      pending.clear();
+    };
 
     cpuWorker.onmessage = (ev: MessageEvent) => {
       const data = ev.data as { reqId?: unknown; ok?: unknown; result?: unknown; error?: unknown };
@@ -406,10 +419,21 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
         entry.reject(new Error(typeof data.error === "string" ? data.error : "CPU worker error"));
       }
     };
+    cpuWorker.addEventListener("error", (ev) => {
+      const msg = (ev as ErrorEvent).message || "CPU worker error";
+      rejectAllPending(new Error(msg));
+    });
+    cpuWorker.addEventListener("messageerror", () => {
+      rejectAllPending(new Error("CPU worker messageerror"));
+    });
 
     const callCpu = (cmd: string, payload: Record<string, unknown> = {}, timeoutMs = 2000): Promise<unknown> => {
       const reqId = nextReqId++;
       return new Promise((resolve, reject) => {
+        if (cpuWorkerFatal) {
+          reject(cpuWorkerFatal);
+          return;
+        }
         const timer = setTimeout(() => {
           pending.delete(reqId);
           reject(new Error(`Timed out waiting for CPU worker response to ${cmd} after ${timeoutMs}ms.`));
