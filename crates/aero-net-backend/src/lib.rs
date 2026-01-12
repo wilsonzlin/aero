@@ -22,20 +22,20 @@ pub trait NetworkBackend {
     /// Transmit a guest → host Ethernet frame.
     fn transmit(&mut self, frame: Vec<u8>);
 
-    /// Best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`]
-    /// (`NET_TX`/`NET_RX` rings).
-    ///
-    /// Most backends do not expose ring stats (and return `None`). This is primarily used for
-    /// debugging/instrumentation in host glue.
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        None
-    }
-
     /// Poll for a host → guest Ethernet frame.
     ///
     /// Backends may return immediate responses (ARP/DHCP/DNS, etc.) when the guest transmits,
     /// allowing round-trips within a single emulation tick when used by a pump.
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Best-effort stats for the ring-buffer-backed [`L2TunnelRingBackend`] (`NET_TX`/`NET_RX`
+    /// rings).
+    ///
+    /// Most backends do not expose ring stats (and return `None`). This is primarily used for
+    /// debugging/instrumentation in host glue.
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
         None
     }
 }
