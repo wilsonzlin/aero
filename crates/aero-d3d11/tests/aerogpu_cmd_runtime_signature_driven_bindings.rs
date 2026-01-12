@@ -7,6 +7,8 @@ use aero_d3d11::runtime::aerogpu_state::{PrimitiveTopology, RasterizerState, Ver
 const DXBC_VS_MATRIX: &[u8] = include_bytes!("fixtures/vs_matrix.dxbc");
 const DXBC_VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const DXBC_VS_PASSTHROUGH_TEXCOORD: &[u8] = include_bytes!("fixtures/vs_passthrough_texcoord.dxbc");
+const DXBC_PS_ADD: &[u8] = include_bytes!("fixtures/ps_add.dxbc");
+const DXBC_PS_LD: &[u8] = include_bytes!("fixtures/ps_ld.dxbc");
 const DXBC_PS_SAMPLE: &[u8] = include_bytes!("fixtures/ps_sample.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 const ILAY_POS3_TEX2: &[u8] = include_bytes!("fixtures/ilay_pos3_tex2.bin");
@@ -1920,6 +1922,93 @@ fn aerogpu_cmd_runtime_signature_driven_vs_two_constant_buffers_sm5() {
 }
 
 #[test]
+fn aerogpu_cmd_runtime_signature_driven_ps_add_sat_fixture() {
+    // End-to-end test for the checked-in SM4 `ps_add.dxbc` fixture (`add_sat o0, v1, v1`).
+    //
+    // This exercises ALU translation + saturate handling (clamp to [0,1]) in the signature-driven
+    // SM4→WGSL path.
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const RTEX: u32 = 5;
+
+        rt.create_shader_dxbc(VS, DXBC_VS_PASSTHROUGH).unwrap();
+        rt.create_shader_dxbc(PS, DXBC_PS_ADD).unwrap();
+        rt.create_input_layout(IL, ILAY_POS3_COLOR).unwrap();
+
+        // Input color is 0.75; add_sat doubles it to 1.5 and clamps to 1.0 (full red).
+        let vertices: [VertexPos3Color4; 3] = [
+            VertexPos3Color4 {
+                pos: [-1.0, -1.0, 0.0],
+                color: [0.75, 0.0, 0.0, 1.0],
+            },
+            VertexPos3Color4 {
+                pos: [3.0, -1.0, 0.0],
+                color: [0.75, 0.0, 0.0, 1.0],
+            },
+            VertexPos3Color4 {
+                pos: [-1.0, 3.0, 0.0],
+                color: [0.75, 0.0, 0.0, 1.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            4,
+            4,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3Color4>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels.len(), 4 * 4 * 4);
+        for (i, px) in pixels.chunks_exact(4).enumerate() {
+            assert_eq!(px, &[255, 0, 0, 255], "pixel index {i}");
+        }
+    });
+}
+
+#[test]
 fn aerogpu_cmd_runtime_signature_driven_vs_sig_v1_position_binding() {
     // End-to-end regression test for parsing signature-v1 (`ISG1`/`OSG1`) chunks in a vertex shader
     // and using the resulting signature for input-layout mapping.
@@ -2934,6 +3023,110 @@ fn aerogpu_cmd_runtime_signature_driven_texture_load_binding_sm5() {
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(pixels, vec![0, 255, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_texture_load_binding_sm4() {
+    // Same as `*_sm5`, but uses the checked-in SM4 DXBC fixture (`ps_ld.dxbc`).
+    //
+    // Also verifies that unbound textures fall back to the dummy texture for textureLoad.
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const TEX: u32 = 5;
+        const RTEX: u32 = 6;
+
+        // `ps_ld.dxbc` includes a COLOR0 input in its signature (unused by the shader body) to keep
+        // stage-interface validation happy when paired with `vs_passthrough.dxbc`, so use the
+        // passthrough VS + POS3+COLOR input layout here.
+        rt.create_shader_dxbc(VS, DXBC_VS_PASSTHROUGH).unwrap();
+        rt.create_shader_dxbc(PS, DXBC_PS_LD).unwrap();
+        rt.create_input_layout(IL, ILAY_POS3_COLOR).unwrap();
+
+        let vertices: [VertexPos3Color4; 3] = [
+            VertexPos3Color4 {
+                pos: [-1.0, -1.0, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+            },
+            VertexPos3Color4 {
+                pos: [3.0, -1.0, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+            },
+            VertexPos3Color4 {
+                pos: [-1.0, 3.0, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            TEX,
+            2,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let tex_data: [[u8; 4]; 2] = [[255, 0, 0, 255], [0, 255, 0, 255]];
+        rt.write_texture_rgba8(TEX, 2, 1, 2 * 4, bytemuck::bytes_of(&tex_data))
+            .unwrap();
+        rt.set_ps_texture(0, Some(TEX));
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3Color4>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![255, 0, 0, 255], "bound texture");
+
+        rt.set_ps_texture(0, None);
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 0, 0, 255], "dummy texture fallback");
     });
 }
 
