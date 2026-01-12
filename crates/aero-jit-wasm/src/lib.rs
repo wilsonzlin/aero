@@ -16,9 +16,9 @@ use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 use aero_jit_x86::{
+    Tier1Bus,
     compiler::tier1::compile_tier1_block_with_options,
     tier1::{BlockLimits, Tier1WasmOptions},
-    Tier1Bus,
 };
 
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
@@ -197,16 +197,21 @@ pub fn compile_tier1_block(
     }
     options.memory_shared = memory_shared;
 
-    let compilation =
-        compile_tier1_block_with_options(&bus, entry_rip, limits, options).map_err(|e| {
+    // The standalone browser tier-1 compiler currently targets 64-bit decoding.
+    // (The Tier-1 compiler supports 16/32/64-bit bitness via `discover_block_mode`, but this
+    // wasm-bindgen surface does not yet expose a bitness argument.)
+    let compilation = compile_tier1_block_with_options(&bus, entry_rip, 64, limits, options)
+        .map_err(|e| {
             js_error(format!(
                 "compile_tier1_block: Tier-1 compilation failed: {e}"
             ))
         })?;
 
-    let block_end = entry_rip.checked_add(compilation.byte_len as u64).ok_or_else(|| {
-        js_error("compile_tier1_block: entry_rip + compiled block length overflowed u64")
-    })?;
+    let block_end = entry_rip
+        .checked_add(compilation.byte_len as u64)
+        .ok_or_else(|| {
+            js_error("compile_tier1_block: entry_rip + compiled block length overflowed u64")
+        })?;
     if block_end > code_end {
         // Note: Tier-1's decoder always reads a 15-byte window per instruction, so out-of-bounds
         // reads can occur even when the *decoded* instruction stream stays within the provided
