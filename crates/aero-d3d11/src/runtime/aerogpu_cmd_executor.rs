@@ -1778,8 +1778,7 @@ impl AerogpuD3d11Executor {
                 let handle = read_u32_le(cmd_bytes, 8)?;
                 let mut needs_break = false;
 
-                if render_targets.iter().any(|&rt| rt == handle)
-                    || depth_stencil.is_some_and(|ds| ds == handle)
+                if render_targets.contains(&handle) || depth_stencil.is_some_and(|ds| ds == handle)
                 {
                     needs_break = true;
                 }
