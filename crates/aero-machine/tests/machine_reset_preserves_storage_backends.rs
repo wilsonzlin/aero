@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use aero_devices_storage::ata::AtaDrive;
+use aero_devices_nvme::NvmePciDevice;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 
@@ -161,6 +162,58 @@ fn machine_reset_does_not_detach_ide_secondary_master_iso_backend() {
     assert!(
         dropped.load(Ordering::SeqCst),
         "replacing the IDE ISO should drop the previous backend"
+    );
+}
+
+#[test]
+fn machine_reset_does_not_detach_nvme_disk_backend() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_nvme: true,
+        enable_ahci: false,
+        enable_ide: false,
+        enable_virtio_blk: false,
+        enable_uhci: false,
+        // Keep the machine minimal for deterministic reset behavior.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let nvme = m.nvme().expect("NVMe should be enabled");
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    // Replace the default empty disk with a drop-detecting backend so we can assert reset preserves
+    // it. The machine should keep the same shared `Rc` identity, so this remains attached across
+    // subsequent `Machine::reset()` calls.
+    *nvme.borrow_mut() = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk)).unwrap();
+
+    m.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "machine reset dropped the attached NVMe disk backend"
+    );
+
+    // Dropping the machine should drop the backend (sanity check that it was attached).
+    drop(nvme);
+    drop(m);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "dropping the machine should drop the NVMe disk backend"
     );
 }
 
