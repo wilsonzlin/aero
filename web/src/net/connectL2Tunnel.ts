@@ -98,8 +98,31 @@ type GatewaySessionResponse = Readonly<{
 
 const DEFAULT_KEEPALIVE_MAX_MS = 15_000;
 
+function parseGatewayBaseUrl(gatewayBaseUrl: string): URL {
+  // `AeroConfig.proxyUrl` (and other web runtime entrypoints) allow same-origin
+  // relative URLs like "/base". `connectL2Tunnel()` should accept the same.
+  if (gatewayBaseUrl.startsWith("/")) {
+    const baseHref = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
+    if (typeof baseHref !== "string" || baseHref.trim().length === 0) {
+      throw new Error(
+        `gatewayBaseUrl is a relative path (${JSON.stringify(gatewayBaseUrl)}) but globalThis.location.href is unavailable; ` +
+          `pass an absolute gateway URL instead`,
+      );
+    }
+    try {
+      return new URL(gatewayBaseUrl, baseHref);
+    } catch (err) {
+      throw new Error(
+        `gatewayBaseUrl is a relative path (${JSON.stringify(gatewayBaseUrl)}) but could not be resolved against location.href (${JSON.stringify(baseHref)}): ${(err as Error).message}`,
+      );
+    }
+  }
+
+  return new URL(gatewayBaseUrl);
+}
+
 function buildSessionUrl(gatewayBaseUrl: string): string {
-  const url = new URL(gatewayBaseUrl);
+  const url = parseGatewayBaseUrl(gatewayBaseUrl);
 
   // `fetch()` does not support ws(s) schemes. If the caller passed a WebSocket
   // URL (explicit `/l2`), map it back to the HTTP origin for session bootstrap.
@@ -122,7 +145,7 @@ function buildSessionUrl(gatewayBaseUrl: string): string {
 }
 
 function buildWebSocketUrlFromEndpoint(gatewayBaseUrl: string, endpoint: string): string {
-  const url = new URL(gatewayBaseUrl);
+  const url = parseGatewayBaseUrl(gatewayBaseUrl);
   if (url.protocol === "http:") url.protocol = "ws:";
   if (url.protocol === "https:") url.protocol = "wss:";
   url.search = "";
