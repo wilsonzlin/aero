@@ -77,6 +77,44 @@ fn pc_platform_sets_virtio_blk_intx_line_and_pin_registers() {
 }
 
 #[test]
+fn pc_platform_virtio_blk_bar0_is_mmio64_and_probes_return_size_mask() {
+    let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
+    let bdf = VIRTIO_BLK.bdf;
+
+    // BAR0 is a 64-bit MMIO BAR.
+    let bar0_lo = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    assert_eq!(bar0_lo & 0x7, 0x4);
+
+    let bar0_orig_lo = bar0_lo;
+    let bar0_orig_hi = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
+
+    // Probe BAR0 size mask.
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, 0xFFFF_FFFF);
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, 0xFFFF_FFFF);
+
+    let bar0_probe_lo = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    let bar0_probe_hi = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    assert_eq!(
+        bar0_probe_lo,
+        0xFFFF_C004,
+        "BAR0 probe should return size mask for 0x4000-byte MMIO64 BAR"
+    );
+    assert_eq!(bar0_probe_hi, 0xFFFF_FFFF);
+
+    // Restore the BAR.
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, bar0_orig_lo);
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, bar0_orig_hi);
+    assert_eq!(
+        read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10),
+        bar0_orig_lo
+    );
+    assert_eq!(
+        read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14),
+        bar0_orig_hi
+    );
+}
+
+#[test]
 fn pc_platform_gates_virtio_blk_mmio_on_pci_command_register() {
     let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
     let bdf = VIRTIO_BLK.bdf;
