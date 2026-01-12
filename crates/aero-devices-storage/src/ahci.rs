@@ -967,6 +967,62 @@ mod tests {
     }
 
     #[test]
+    fn reset_preserves_attached_drive() {
+        let (mut ctl, irq, mut mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+        let data_buf = 0x4000;
+
+        let program_regs = |ctl: &mut AhciController| {
+            ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+            ctl.write_u32(PORT_BASE + PORT_REG_CLBU, 0);
+            ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+            ctl.write_u32(PORT_BASE + PORT_REG_FBU, 0);
+            ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+            ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+            ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+        };
+
+        let run_identify = |ctl: &mut AhciController, mem: &mut TestMemory| {
+            write_cmd_header(mem, clb, 0, ctba, 1, false);
+            write_cfis(mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+            write_prdt(mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
+
+            ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+            ctl.process(mem);
+
+            assert!(irq.level(), "IDENTIFY should assert IRQ");
+            assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
+            assert_ne!(ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS, 0);
+
+            let mut out = [0u8; SECTOR_SIZE];
+            mem.read_physical(data_buf, &mut out);
+            assert_eq!(out[0], 0x40);
+
+            // Clear the interrupt so we can observe the post-reset behavior cleanly.
+            ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+            assert!(!irq.level());
+        };
+
+        program_regs(&mut ctl);
+        run_identify(&mut ctl, &mut mem);
+
+        ctl.reset();
+        assert!(
+            !irq.level(),
+            "reset should clear pending interrupt level even with a drive attached"
+        );
+
+        // After reset, registers must be reprogrammed, but the attached drive should still be
+        // present and respond to IDENTIFY.
+        program_regs(&mut ctl);
+        run_identify(&mut ctl, &mut mem);
+    }
+
+    #[test]
     fn ports_implemented_reflects_hba_port_count_not_drive_presence() {
         let irq = TestIrqLine::default();
         let mut ctl = AhciController::new(Box::new(irq), 1);
