@@ -901,7 +901,6 @@ mod tests {
 
     #[test]
     fn zero_budgets_do_not_call_backend() {
-        #[derive(Default)]
         struct PanicBackend;
 
         impl NetworkBackend for PanicBackend {
@@ -937,7 +936,7 @@ mod tests {
         write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
         write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
 
-        let mut backend = PanicBackend::default();
+        let mut backend = PanicBackend;
         let counts = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 0, 0);
         assert_eq!(
             counts,
