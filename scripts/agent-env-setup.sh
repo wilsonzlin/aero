@@ -223,6 +223,8 @@ done
 for rel in \
   "tools/disk-streaming-browser-e2e/fixtures/win7.img" \
   "tools/disk-streaming-browser-e2e/fixtures/secret.img" \
+  "tools/packaging/aero_packager/testdata/drivers/amd64/testdrv/test.sys" \
+  "tools/packaging/aero_packager/testdata/drivers/x86/testdrv/test.sys" \
   "tools/packaging/aero_packager/testdata/drivers-aero-virtio/amd64/aero_virtio_blk/aero_virtio_blk.sys" \
   "tools/packaging/aero_packager/testdata/drivers-aero-virtio/amd64/aero_virtio_net/aero_virtio_net.sys" \
   "tools/packaging/aero_packager/testdata/drivers-aero-virtio/x86/aero_virtio_blk/aero_virtio_blk.sys" \
