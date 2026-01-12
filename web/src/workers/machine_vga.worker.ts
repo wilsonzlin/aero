@@ -11,9 +11,9 @@ import {
   HEADER_INDEX_HEIGHT,
   HEADER_INDEX_STRIDE_BYTES,
   HEADER_INDEX_WIDTH,
+  HEADER_BYTE_LENGTH,
   addHeaderI32,
   initFramebufferHeader,
-  requiredFramebufferBytes,
   storeHeaderI32,
   type FramebufferCopyMessageV1,
   wrapSharedFramebuffer,
@@ -216,13 +216,22 @@ function ensureSharedFramebuffer(): ReturnType<typeof wrapSharedFramebuffer> | n
   const Sab = globalThis.SharedArrayBuffer;
   if (typeof Sab === "undefined") return null;
 
-  // Size for a modest SVGA mode. Real mode changes are communicated via the header.
-  const maxWidth = 1024;
-  const maxHeight = 768;
-  const maxStrideBytes = maxWidth * 4;
-  const bytes = requiredFramebufferBytes(maxWidth, maxHeight, maxStrideBytes);
-  const sab = new SharedArrayBuffer(bytes);
-  const fb = wrapSharedFramebuffer(sab, 0);
+  // Allocate a single SharedArrayBuffer large enough for any mode up to `MAX_VGA_FRAME_BYTES`.
+  // The active width/height/stride are communicated via the framebuffer protocol header.
+  const bytes = HEADER_BYTE_LENGTH + MAX_VGA_FRAME_BYTES;
+  let sab: SharedArrayBuffer;
+  try {
+    sab = new SharedArrayBuffer(bytes);
+  } catch {
+    return null;
+  }
+
+  let fb: ReturnType<typeof wrapSharedFramebuffer>;
+  try {
+    fb = wrapSharedFramebuffer(sab, 0);
+  } catch {
+    return null;
+  }
   initFramebufferHeader(fb.header, { width: 1, height: 1, strideBytes: 4, format: FRAMEBUFFER_FORMAT_RGBA8888 });
   sharedSab = sab;
   sharedFb = fb;
