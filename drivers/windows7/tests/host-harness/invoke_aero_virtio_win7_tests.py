@@ -90,6 +90,9 @@ def _append_suffix_before_query_fragment(path: str, suffix: str) -> str:
 
 
 class _QuietHandler(http.server.BaseHTTPRequestHandler):
+    # Use HTTP/1.1 so the built-in `Expect: 100-continue` handling can run for large POST uploads
+    # (WinHTTP may send this header; without a 100 response the client and server can deadlock).
+    protocol_version = "HTTP/1.1"
     expected_path: str = "/aero-virtio-selftest"
     http_log_path: Optional[Path] = None
     large_body: bytes = bytes(range(256)) * (1024 * 1024 // 256)
@@ -105,6 +108,16 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
             self.connection.settimeout(self.socket_timeout_seconds)
         except Exception:
             pass
+
+    def handle_expect_100(self) -> bool:  # noqa: N802
+        # Ensure the interim 100 Continue is flushed immediately so clients that
+        # wait for it (e.g. WinHTTP) do not deadlock with the server's body read.
+        ok = super().handle_expect_100()
+        try:
+            self.wfile.flush()
+        except Exception:
+            pass
+        return ok
 
     def do_GET(self) -> None:  # noqa: N802
         self._handle_request(send_body=True)

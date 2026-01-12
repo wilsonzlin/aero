@@ -239,6 +239,57 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 httpd.shutdown()
                 thread.join(timeout=2)
 
+    def test_large_post_expect_100_continue(self) -> None:
+        # Regression test: WinHTTP can send `Expect: 100-continue` for large POST uploads.
+        # The server should reply with an interim 100 response so the client does not deadlock
+        # waiting before sending the body.
+        httpd, thread, port = self._start_server("/aero-virtio-selftest")
+        with httpd:
+            try:
+                payload = bytes(range(256)) * (1024 * 1024 // 256)
+                s = socket.create_connection(("127.0.0.1", port), timeout=2)
+                try:
+                    req = (
+                        "POST /aero-virtio-selftest-large HTTP/1.1\r\n"
+                        "Host: localhost\r\n"
+                        "Content-Type: application/octet-stream\r\n"
+                        f"Content-Length: {len(payload)}\r\n"
+                        "Expect: 100-continue\r\n"
+                        "\r\n"
+                    ).encode("ascii")
+                    s.sendall(req)
+
+                    # We should see the interim 100 Continue before sending the body.
+                    s.settimeout(2)
+                    data = b""
+                    while b"\r\n\r\n" not in data and len(data) < 8192:
+                        chunk = s.recv(1024)
+                        if not chunk:
+                            break
+                        data += chunk
+                    self.assertIn(b" 100 ", data)
+
+                    # Now send the actual body and read the final response.
+                    s.sendall(payload)
+                    s.shutdown(socket.SHUT_WR)
+
+                    resp = b""
+                    while True:
+                        try:
+                            chunk = s.recv(4096)
+                        except socket.timeout:
+                            break
+                        if not chunk:
+                            break
+                        resp += chunk
+                    self.assertIn(b" 200 ", resp)
+                    self.assertIn(b"OK\n", resp)
+                finally:
+                    s.close()
+            finally:
+                httpd.shutdown()
+                thread.join(timeout=2)
+
     def test_large_transfer_does_not_block_other_requests(self) -> None:
         # Ensure that a stalled large transfer cannot prevent the server from servicing
         # other requests (ThreadingMixIn).
