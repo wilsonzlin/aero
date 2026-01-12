@@ -37,8 +37,9 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    register_pci_config_ports, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice, PciInterruptPin,
-    PciIntxRouter, PciIntxRouterConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -49,6 +50,7 @@ pub use aero_devices_input::Ps2MouseButton;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
+use aero_pc_platform::{PciBarMmioRouter, PciIoBarHandler, PciIoBarRouter};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterrupts,
@@ -525,6 +527,57 @@ impl MmioHandler for HpetMmio {
         let mut hpet = self.hpet.borrow_mut();
         let mut interrupts = self.interrupts.borrow_mut();
         hpet.mmio_write(offset, size, value, &mut *interrupts);
+    }
+}
+
+struct E1000PciIoBar {
+    dev: Rc<RefCell<E1000Device>>,
+}
+
+impl PciIoBarHandler for E1000PciIoBar {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
+        let offset = u32::try_from(offset).unwrap_or(0);
+        self.dev.borrow_mut().io_read(offset, size)
+    }
+
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+        let offset = u32::try_from(offset).unwrap_or(0);
+        self.dev.borrow_mut().io_write_reg(offset, size, value);
+    }
+}
+
+struct PciIoBarWindow {
+    router: PciIoBarRouter,
+}
+
+impl PciIoBarWindow {
+    fn read_all_ones(size: u8) -> u32 {
+        match size {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+}
+
+impl aero_platform::io::PortIoDevice for PciIoBarWindow {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        let size_usize = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return Self::read_all_ones(size),
+        };
+        self.router
+            .dispatch_read(port, size_usize)
+            .unwrap_or_else(|| Self::read_all_ones(size))
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        let size_usize = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
+        let _ = self.router.dispatch_write(port, size_usize, value);
     }
 }
 
@@ -1236,6 +1289,50 @@ impl Machine {
                 None
             };
 
+            // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
+            // immediately after reset (without requiring the guest OS to assign BARs first).
+            let pci_allocator_cfg = PciResourceAllocatorConfig::default();
+            {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let mut allocator = PciResourceAllocator::new(pci_allocator_cfg.clone());
+                // `bios_post` is deterministic and keeps existing fixed BAR bases intact.
+                bios_post(pci_cfg.bus_mut(), &mut allocator)
+                    .expect("PCI BIOS POST resource assignment should succeed");
+            }
+
+            // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
+            // immediately without needing dynamic MMIO unmap/remap support in `PhysicalMemoryBus`.
+            self.mem
+                .map_mmio_once(pci_allocator_cfg.mmio_base, pci_allocator_cfg.mmio_size, || {
+                    let mut router = PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
+                    if let Some(e1000) = e1000.clone() {
+                        router.register_shared_handler(
+                            aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                            0,
+                            e1000,
+                        );
+                    }
+                    Box::new(router)
+                });
+
+            // Register a dispatcher for the PCI I/O window used by `PciResourceAllocator`.
+            //
+            // The router consults the live PCI config space on each access, so BAR programming and
+            // command register gating take effect immediately.
+            let io_base = u16::try_from(pci_allocator_cfg.io_base)
+                .expect("PCI IO window base must fit in u16");
+            let io_size = u16::try_from(pci_allocator_cfg.io_size)
+                .expect("PCI IO window size must fit in u16");
+            let mut io_router = PciIoBarRouter::new(pci_cfg.clone());
+            if let Some(e1000) = e1000.clone() {
+                io_router.register_handler(
+                    aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                    1,
+                    E1000PciIoBar { dev: e1000 },
+                );
+            }
+            self.io.register_range(io_base, io_size, Box::new(PciIoBarWindow { router: io_router }));
+
             // Ensure options stay populated (for the first reset).
             self.platform_clock = Some(clock);
             self.interrupts = Some(interrupts);
@@ -1323,6 +1420,72 @@ impl Machine {
         self.mem.clear_dirty();
     }
 
+    /// Poll the E1000 + network backend bridge once.
+    ///
+    /// This is safe to call even when E1000 is disabled; it will no-op.
+    pub fn poll_network(&mut self) {
+        let Some(e1000) = &self.e1000 else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let command = self
+            .pci_cfg
+            .as_ref()
+            .and_then(|pci_cfg| {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg.bus_mut().device_config(bdf).map(|cfg| cfg.command())
+            })
+            .unwrap_or(0);
+
+        // Keep the device model's internal PCI command register in sync with the platform PCI bus.
+        //
+        // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
+        // while the machine maintains a separate canonical config space for enumeration.
+        e1000
+            .borrow_mut()
+            .pci_config_write(0x04, 2, u32::from(command));
+
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+        if bus_master_enabled {
+            e1000.borrow_mut().poll(&mut self.mem);
+        }
+
+        // Drain guest->host frames.
+        const MAX_TX_FRAMES_PER_POLL: usize = 256;
+        let mut tx_budget = MAX_TX_FRAMES_PER_POLL;
+        while tx_budget != 0 {
+            let Some(frame) = e1000.borrow_mut().pop_tx_frame() else {
+                break;
+            };
+            tx_budget -= 1;
+
+            if let Some(backend) = self.network_backend.as_mut() {
+                backend.transmit(frame);
+            }
+        }
+
+        // Drain host->guest frames.
+        //
+        // Only poll the backend when E1000 exists; otherwise we'd drop frames on the floor.
+        if let Some(backend) = self.network_backend.as_mut() {
+            const MAX_RX_FRAMES_PER_POLL: usize = 256;
+            let mut rx_budget = MAX_RX_FRAMES_PER_POLL;
+            while rx_budget != 0 {
+                let Some(frame) = backend.poll_receive() else {
+                    break;
+                };
+                rx_budget -= 1;
+                e1000.borrow_mut().enqueue_rx_frame(frame);
+            }
+        }
+
+        // Flush RX delivery for newly enqueued frames.
+        if bus_master_enabled {
+            e1000.borrow_mut().poll(&mut self.mem);
+        }
+    }
+
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
         let mut executed = 0u64;
@@ -1337,6 +1500,8 @@ impl Machine {
 
             // Keep the core's A20 view coherent with the chipset latch.
             self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+
+            self.poll_network();
 
             // Synchronize PCI INTx sources (e.g. E1000) into the platform interrupt controller
             // *before* we poll for pending vectors. This must happen even when the guest cannot
@@ -3404,5 +3569,113 @@ mod tests {
             !m.cpu.state.halted,
             "CPU should wake from HLT once PCI INTx is delivered"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn machine_e1000_tx_ring_requires_bus_master_and_transmits_to_ring_backend() {
+        use aero_ipc::ring::RingBuffer;
+        use memory::MemoryBus as _;
+        use std::sync::Arc;
+
+        // Host rings (NET_TX is guest->host).
+        let tx_ring = Arc::new(RingBuffer::new(16 * 1024));
+        let rx_ring = Arc::new(RingBuffer::new(16 * 1024));
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        m.attach_l2_tunnel_rings(tx_ring.clone(), rx_ring);
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+
+        // BAR0 should be assigned by the machine's PCI BIOS POST helper.
+        let bar0_base = {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .and_then(|cfg| cfg.bar_range(0))
+                .expect("missing E1000 BAR0")
+                .base
+        };
+
+        // Guest memory layout.
+        let tx_ring_base = 0x1000u64;
+        let pkt_base = 0x2000u64;
+
+        // Minimum Ethernet frame length: dst MAC (6) + src MAC (6) + ethertype (2).
+        const MIN_L2_FRAME_LEN: usize = 14;
+        let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+
+        // Write packet bytes into guest RAM.
+        m.mem.inner.borrow_mut().write_physical(pkt_base, &frame);
+
+        // Legacy TX descriptor: buffer_addr + length + cmd(EOP|RS).
+        let mut desc = [0u8; 16];
+        desc[0..8].copy_from_slice(&pkt_base.to_le_bytes());
+        desc[8..10].copy_from_slice(&(frame.len() as u16).to_le_bytes());
+        desc[10] = 0; // CSO
+        desc[11] = (1 << 0) | (1 << 3); // EOP|RS
+        desc[12] = 0; // status
+        desc[13] = 0; // CSS
+        desc[14..16].copy_from_slice(&0u16.to_le_bytes());
+        m.mem.inner.borrow_mut().write_physical(tx_ring_base, &desc);
+
+        // Program E1000 TX registers over MMIO (BAR0).
+        {
+            let mem = &mut *m.mem.inner.borrow_mut();
+            mem.write_u32(bar0_base + 0x3800, tx_ring_base as u32); // TDBAL
+            mem.write_u32(bar0_base + 0x3804, 0); // TDBAH
+            mem.write_u32(bar0_base + 0x3808, 16 * 4); // TDLEN (4 descriptors)
+            mem.write_u32(bar0_base + 0x3810, 0); // TDH
+            mem.write_u32(bar0_base + 0x3818, 0); // TDT
+            mem.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
+
+            // Doorbell: advance tail to include descriptor 0.
+            mem.write_u32(bar0_base + 0x3818, 1); // TDT = 1
+        }
+
+        // Enable PCI decoding but keep bus mastering disabled.
+        {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("E1000 device missing from PCI bus");
+            // bit0 = IO space, bit1 = memory space
+            cfg.set_command(0x3);
+        }
+
+        // Poll once: without BME, the E1000 model must not DMA, so no frame should appear.
+        m.poll_network();
+        assert!(tx_ring.try_pop().is_err(), "unexpected TX frame without bus mastering enabled");
+
+        // Now enable Bus Mastering and poll again; the descriptor should be processed and the
+        // resulting frame should appear on NET_TX.
+        {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("E1000 device missing from PCI bus");
+            // bit0 = IO space, bit1 = memory space, bit2 = bus master
+            cfg.set_command(0x7);
+        }
+
+        m.poll_network();
+        assert_eq!(tx_ring.try_pop(), Ok(frame));
     }
 }
