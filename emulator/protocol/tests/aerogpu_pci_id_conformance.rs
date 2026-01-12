@@ -396,3 +396,20 @@ fn aerogpu_ci_package_manifest_stages_only_dx11_inf_at_package_root() {
         path = manifest_path.display()
     );
 }
+
+#[test]
+fn aerogpu_install_script_prefers_dx11_inf_in_ci_layout() {
+    let repo_root = repo_root();
+
+    // `install.cmd` is shipped in CI packages under packaging\win7\ but should default to the
+    // DX11-capable INF at the *package root* (two levels above the script) when it is present.
+    //
+    // This keeps the default install path unambiguous for anyone copying `out/packages/aerogpu/<arch>/`
+    // into a Win7 VM.
+    let install_cmd = repo_root.join("drivers/aerogpu/packaging/win7/install.cmd");
+    assert_file_contains_noncomment_line(
+        &install_cmd,
+        r#"set "INF_FILE=aerogpu_dx11.inf""#,
+    );
+    assert_file_contains_noncomment_line(&install_cmd, r"..\..\aerogpu_dx11.inf");
+}
