@@ -3011,6 +3011,26 @@ fn rust_layout_matches_c_headers() {
     );
     check_const(
         &mut pci_consts_seen,
+        "AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB",
+        AerogpuFormat::B8G8R8A8UnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB",
+        AerogpuFormat::B8G8R8X8UnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB",
+        AerogpuFormat::R8G8B8A8UnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB",
+        AerogpuFormat::R8G8B8X8UnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
         "AEROGPU_FORMAT_D24_UNORM_S8_UINT",
         AerogpuFormat::D24UnormS8Uint as u64,
     );
@@ -3018,6 +3038,46 @@ fn rust_layout_matches_c_headers() {
         &mut pci_consts_seen,
         "AEROGPU_FORMAT_D32_FLOAT",
         AerogpuFormat::D32Float as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC1_RGBA_UNORM",
+        AerogpuFormat::BC1RgbaUnorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB",
+        AerogpuFormat::BC1RgbaUnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC2_RGBA_UNORM",
+        AerogpuFormat::BC2RgbaUnorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB",
+        AerogpuFormat::BC2RgbaUnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC3_RGBA_UNORM",
+        AerogpuFormat::BC3RgbaUnorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB",
+        AerogpuFormat::BC3RgbaUnormSrgb as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC7_RGBA_UNORM",
+        AerogpuFormat::BC7RgbaUnorm as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB",
+        AerogpuFormat::BC7RgbaUnormSrgb as u64,
     );
 
     assert_name_set_eq(

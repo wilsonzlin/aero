@@ -5,7 +5,7 @@
 /// ABI major version (breaking changes).
 pub const AEROGPU_ABI_MAJOR: u32 = 1;
 /// ABI minor version (backwards-compatible extensions).
-pub const AEROGPU_ABI_MINOR: u32 = 1;
+pub const AEROGPU_ABI_MINOR: u32 = 2;
 
 pub const AEROGPU_ABI_VERSION_U32: u32 = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
 
@@ -138,6 +138,20 @@ pub enum AerogpuFormat {
     B5G6R5Unorm = 5,
     B5G5R5A1Unorm = 6,
 
+    B8G8R8A8UnormSrgb = 7,
+    B8G8R8X8UnormSrgb = 8,
+    R8G8B8A8UnormSrgb = 9,
+    R8G8B8X8UnormSrgb = 10,
+
     D24UnormS8Uint = 32,
     D32Float = 33,
+
+    BC1RgbaUnorm = 64,
+    BC1RgbaUnormSrgb = 65,
+    BC2RgbaUnorm = 66,
+    BC2RgbaUnormSrgb = 67,
+    BC3RgbaUnorm = 68,
+    BC3RgbaUnormSrgb = 69,
+    BC7RgbaUnorm = 70,
+    BC7RgbaUnormSrgb = 71,
 }

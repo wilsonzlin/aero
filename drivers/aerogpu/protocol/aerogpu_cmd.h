@@ -254,6 +254,10 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_buffer) == 40);
  * CREATE_TEXTURE2D
  * - Textures are linear in guest memory when backed by an allocation.
  * - `row_pitch_bytes` is required when `backing_alloc_id != 0`.
+ * - For block-compressed (BC*) formats, `row_pitch_bytes` is measured in bytes
+ *   per row of blocks (not per row of pixels). I.e. it is the stride between
+ *   consecutive rows of 4x4 blocks in the backing allocation.
+ * - Unknown `format` values MUST be treated as invalid.
  * - `backing_alloc_id` follows the same `alloc_id` resolution rules as
  *   CREATE_BUFFER.
  */
