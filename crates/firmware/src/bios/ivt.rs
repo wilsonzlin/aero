@@ -37,11 +37,11 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     // minimal, PC-compatible configuration:
     // - COM1 present at 0x3F8
     // - no LPT ports
-    bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 0, 0x03F8); // COM1
+    bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET, 0x03F8); // COM1
     bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 2, 0x0000); // COM2
     bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 4, 0x0000); // COM3
     bus.write_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 6, 0x0000); // COM4
-    bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 0, 0x0000); // LPT1
+    bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET, 0x0000); // LPT1
     bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 2, 0x0000); // LPT2
     bus.write_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 4, 0x0000); // LPT3
 

@@ -46,9 +46,10 @@ impl SnapshotSource for PcPlatformSnapshotHarness<'_> {
     }
 
     fn cpu_state(&self) -> CpuState {
-        let mut cpu = CpuState::default();
-        cpu.a20_enabled = self.pc.memory.a20().enabled();
-        cpu
+        CpuState {
+            a20_enabled: self.pc.memory.a20().enabled(),
+            ..Default::default()
+        }
     }
 
     fn mmu_state(&self) -> MmuState {

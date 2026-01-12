@@ -10,7 +10,7 @@ use crate::{MachineError, VecBlockDevice};
 /// This adapter is intentionally defined in `aero-machine` so both:
 /// - firmware BIOS INT13 (`firmware::bios::BlockDevice`), and
 /// - PCI storage controllers (AHCI/NVMe/virtio-blk; `aero_storage::VirtualDisk`)
-/// can operate on the *same* disk image when a guest transitions between them.
+///   can operate on the *same* disk image when a guest transitions between them.
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
 #[derive(Clone)]

@@ -727,7 +727,7 @@ fn dma_read_sectors_into_guest(
         let prd = PrdtEntry::read(mem, prd_addr);
         let chunk_len = (prd.dbc as usize).min(remaining);
 
-        if chunk_len % SECTOR_SIZE != 0 {
+        if !chunk_len.is_multiple_of(SECTOR_SIZE) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unaligned PRDT length for ATA read DMA",
@@ -774,7 +774,7 @@ fn dma_write_sectors_from_guest(
         let prd = PrdtEntry::read(mem, prd_addr);
         let chunk_len = (prd.dbc as usize).min(remaining);
 
-        if chunk_len % SECTOR_SIZE != 0 {
+        if !chunk_len.is_multiple_of(SECTOR_SIZE) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unaligned PRDT length for ATA write DMA",

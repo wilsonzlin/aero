@@ -128,7 +128,7 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
 
     // Mutate PCI config space through the standard 0xCF8/0xCFC config ports. Use the host bridge
     // at 00:00.0 and change the COMMAND register (offset 0x04).
-    let cfg_addr = 0x8000_0000u32 | (0u32 << 16) | (0u32 << 11) | (0u32 << 8) | (0x04u32 & 0xFC);
+    let cfg_addr = 0x8000_0000u32 | (0x04u32 & 0xFC);
     let command: u16 = 0x0007;
     src.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr);
     src.io_write(PCI_CFG_DATA_PORT, 2, u32::from(command));

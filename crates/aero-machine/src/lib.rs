@@ -2905,8 +2905,8 @@ impl Machine {
         let pos = self.mem.read_u16(BDA_CURSOR_POS_PAGE0_ADDR);
         let shape = self.mem.read_u16(BDA_CURSOR_SHAPE_ADDR);
 
-        let row = (pos >> 8) as u16;
-        let col = (pos & 0x00FF) as u16;
+        let row = pos >> 8;
+        let col = pos & 0x00FF;
         let cell_index = row
             .saturating_mul(cols)
             .saturating_add(col);
@@ -2979,7 +2979,7 @@ impl Machine {
                         // MMIO writes may have been ignored. If the guest did not set the VBE "no
                         // clear" bit, perform an efficient host-side clear after enabling the mode.
                         if ax_before == 0x4F02 && (bx_before & 0x8000) == 0 {
-                            let bytes_per_pixel = ((bpp as usize) + 7) / 8;
+                            let bytes_per_pixel = (bpp as usize).div_ceil(8);
                             let clear_len = (width as usize)
                                 .saturating_mul(height as usize)
                                 .saturating_mul(bytes_per_pixel.max(1));
@@ -3607,13 +3607,11 @@ impl snapshot::SnapshotTarget for Machine {
                                 &mut *pci_intx,
                             )
                             .is_ok()
-                            {
-                                restored_pci_intx = true;
-                            } else if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                                &state,
-                                &mut *pci_intx,
-                            )
-                            .is_ok()
+                                || snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                    &state,
+                                    &mut *pci_intx,
+                                )
+                                .is_ok()
                             {
                                 restored_pci_intx = true;
                             }

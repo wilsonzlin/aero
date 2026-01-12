@@ -49,7 +49,7 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
 
     // Write a few pixels (packed 32bpp BGRX).
     let base = u64::from(SVGA_LFB_BASE);
-    vm.write_physical_u32(base + 0, 0x00FF_0000); // (0,0) red
+    vm.write_physical_u32(base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(base + 8, 0x0000_00FF); // (2,0) blue
     vm.write_physical_u32(base + 12, 0x00FF_FFFF); // (3,0) white
