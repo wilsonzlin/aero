@@ -307,6 +307,10 @@ Example desired optional feature set:
 - `TEXTURE_COMPRESSION_BC` (if we have BCn assets or want to avoid CPU decompression)
 - `TIMESTAMP_QUERY` (profiling builds)
 
+Note: for native/headless runs (CI, tests), texture compression feature requests can be force-disabled
+globally via `AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1` to validate CPU decompression fallbacks or
+work around flaky driver/software-adapter compression paths.
+
 In wgpu terms:
 
 ```rust
