@@ -6,6 +6,10 @@
 #include <string>
  
 #include "aerogpu_trace.h"
+
+#if !defined(_WIN32)
+  #include <unistd.h>
+#endif
  
 namespace {
  
@@ -37,6 +41,20 @@ std::string slurp_file(const std::string& path) {
   ss << in.rdbuf();
   return ss.str();
 }
+
+std::string make_unique_log_path(const char* stem) {
+  if (!stem) {
+    stem = "aerogpu_d3d9_trace_test";
+  }
+#if defined(_WIN32)
+  const unsigned long pid = GetCurrentProcessId();
+#else
+  const unsigned long pid = static_cast<unsigned long>(getpid());
+#endif
+  char buf[256];
+  std::snprintf(buf, sizeof(buf), "%s.%lu.log", stem, pid);
+  return std::string(buf);
+}
  
 } // namespace
  
@@ -47,7 +65,7 @@ int main() {
 }
 #else
 int main() {
-  const std::string out_path = "aerogpu_d3d9_trace_dump_on_fail_tests.log";
+  const std::string out_path = make_unique_log_path("aerogpu_d3d9_trace_dump_on_fail_tests");
   assert(std::freopen(out_path.c_str(), "w", stderr) != nullptr);
  
   // Exercise dump-on-fail in TRACE_MODE=unique. The second call to the same
