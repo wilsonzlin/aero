@@ -462,3 +462,28 @@ fn int10_get_font_info_returns_8x8_font_pointer_for_bh03() {
     assert_eq!(cpu.cx(), 8);
     assert_eq!(cpu.dl(), 24);
 }
+
+#[test]
+fn int10_get_ega_information_reports_vga_color_and_256k() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    cpu.rax = 0x1234_5678_0000_0000;
+    cpu.rbx = 0xFEDC_BA98_0000_0000;
+    cpu.rcx = 0x1111_2222_0000_0000;
+
+    cpu.set_ax(0x1200); // AH=12h
+    cpu.set_bx(0x0010); // BL=10h subfunction "get EGA info"
+
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(cpu.bh(), 0x00);
+    assert_eq!(cpu.bl(), 0x03); // 256 KiB
+    assert_eq!(cpu.cx(), 0x0000);
+
+    // Upper bits preserved.
+    assert_eq!(cpu.rax & !0xFFFF, 0x1234_5678_0000_0000);
+    assert_eq!(cpu.rbx & !0xFFFF, 0xFEDC_BA98_0000_0000);
+    assert_eq!(cpu.rcx & !0xFFFF, 0x1111_2222_0000_0000);
+}

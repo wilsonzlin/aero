@@ -194,6 +194,26 @@ impl Bios {
                     }
                 }
             }
+            0x12 => {
+                // Alternate select (EGA/VGA).
+                //
+                // Many DOS programs use AH=12h/BL=10h to detect EGA/VGA capabilities and video RAM
+                // size.
+                match cpu.bl() {
+                    0x10 => {
+                        // Get EGA information.
+                        //
+                        // Return a VGA-compatible, color adapter with 256KiB of video RAM.
+                        // (BL reports memory in 64KiB increments for this call.)
+                        cpu.set_bh(0x00); // color display
+                        cpu.set_bl(0x03); // 256 KiB
+                        cpu.set_cx(0x0000);
+                    }
+                    _ => {
+                        // Unhandled subfunction.
+                    }
+                }
+            }
             0x13 => {
                 // Write String
                 //
