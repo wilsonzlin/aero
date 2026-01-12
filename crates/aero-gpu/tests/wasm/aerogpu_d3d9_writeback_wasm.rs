@@ -6,10 +6,11 @@ use aero_gpu::{AerogpuD3d9Executor, GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_MAJOR;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -254,4 +255,91 @@ async fn aerogpu_d3d9_writeback_dst_updates_guest_memory_on_wasm() {
             .copy_from_slice(&src_tex[base..base + TEX_UNPADDED_BPR]);
     }
     assert_eq!(out_tex, expected);
+}
+
+#[wasm_bindgen_test(async)]
+async fn aerogpu_d3d9_sync_rejects_writeback_before_executing_any_cmds_on_wasm() {
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    const SCANOUT_ID: u32 = 7;
+    const RT1: u32 = 100;
+    const RT2: u32 = 200;
+    let format = AerogpuFormat::R8G8B8A8Unorm as u32;
+
+    // First submission: present a 1x1 render target to establish baseline state.
+    let stream1 = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_texture2d(
+            RT1,
+            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            format,
+            1,
+            1,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        writer.set_render_targets(&[RT1], 0);
+        writer.present(SCANOUT_ID, 0);
+        writer.finish()
+    };
+    exec.execute_cmd_stream_for_context(0, &stream1).unwrap();
+    {
+        let scanout = exec
+            .presented_scanout(SCANOUT_ID)
+            .expect("first present should register scanout");
+        assert_eq!(scanout.width, 1);
+        assert_eq!(scanout.height, 1);
+    }
+
+    // Second submission: if this stream were partially executed, the PRESENT would replace the
+    // presented scanout with a 2x2 render target. The sync executor must reject WRITEBACK_DST on
+    // wasm before executing any commands, so the presented scanout should remain 1x1.
+    let stream2 = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_texture2d(
+            RT2,
+            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            format,
+            2,
+            2,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        writer.set_render_targets(&[RT2], 0);
+        writer.present(SCANOUT_ID, 0);
+        writer.copy_buffer_writeback_dst(2, 1, 0, 0, 4);
+        writer.finish()
+    };
+
+    let err = exec
+        .execute_cmd_stream_for_context(0, &stream2)
+        .expect_err("sync execution must reject WRITEBACK_DST on wasm");
+    assert!(
+        err.to_string()
+            .contains("WRITEBACK_DST requires async execution on wasm"),
+        "unexpected error: {err}"
+    );
+
+    {
+        let scanout = exec
+            .presented_scanout(SCANOUT_ID)
+            .expect("WRITEBACK_DST rejection should not clear scanout state");
+        assert_eq!(
+            scanout.width, 1,
+            "WRITEBACK_DST should be rejected before PRESENT executes"
+        );
+        assert_eq!(scanout.height, 1);
+    }
 }
