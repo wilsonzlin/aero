@@ -260,6 +260,17 @@ function Try-HandleAeroHttpRequest {
             $uploadOk = $false
             $uploadSha256 = ""
             if ($cl -eq $expectedLen) {
+              if ($headers.ContainsKey("expect")) {
+                $expectValue = $headers["expect"]
+                if (-not [string]::IsNullOrEmpty($expectValue) -and $expectValue.ToLowerInvariant().Contains("100-continue")) {
+                  # Some HTTP clients (including WinHTTP) may send `Expect: 100-continue` for large uploads.
+                  # Reply with an interim 100 so the client proceeds to send the request body.
+                  $continueBytes = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 100 Continue`r`n`r`n")
+                  $stream.Write($continueBytes, 0, $continueBytes.Length)
+                  $stream.Flush()
+                }
+              }
+
               $sha = [System.Security.Cryptography.SHA256]::Create()
               $emptyBytes = New-Object byte[] 0
               $charBuf = New-Object char[] 8192

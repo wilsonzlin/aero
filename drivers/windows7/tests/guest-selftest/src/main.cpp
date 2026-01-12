@@ -3014,7 +3014,7 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url, uint
   if (fnv1a64_out) *fnv1a64_out = hash;
   if (mbps_out) *mbps_out = mbps;
   log.Logf("virtio-net: HTTP GET large done url=%s status=%lu bytes_read=%llu sec=%.2f mbps=%.2f "
-           "fnv1a64=0x%016llx%s",
+           "fnv1a64=0x%016I64x%s",
            WideToUtf8(url).c_str(), status, static_cast<unsigned long long>(total_read), sec, mbps,
            static_cast<unsigned long long>(hash),
            has_content_len ? "" : " (missing Content-Length)");
@@ -3040,8 +3040,8 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url, uint
   if (!read_ok) return false;
   if (!header_ok) return false;
   if (total_read != kExpectedBytes || hash != kExpectedHash) {
-    log.Logf("virtio-net: HTTP GET large body mismatch bytes_read=%llu expected_bytes=%llu hash=0x%016llx "
-             "expected_hash=0x%016llx",
+    log.Logf("virtio-net: HTTP GET large body mismatch bytes_read=%llu expected_bytes=%llu hash=0x%016I64x "
+             "expected_hash=0x%016I64x",
              static_cast<unsigned long long>(total_read), static_cast<unsigned long long>(kExpectedBytes),
              static_cast<unsigned long long>(hash), static_cast<unsigned long long>(kExpectedHash));
     return false;
@@ -6485,7 +6485,7 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     const auto net = VirtioNetTest(log, opt);
     log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016llx|large_mbps=%.2f|"
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
         "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f",
         net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
         static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
