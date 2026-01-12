@@ -1715,7 +1715,25 @@ impl Machine {
         // Keep storage controllers that are backed by the shared disk (e.g. AHCI) in sync with the
         // new disk geometry. In particular, the ATA IDENTIFY sector is derived from disk capacity,
         // so swapping in a new-sized image requires rebuilding the attached drive.
-        self.attach_shared_disk_to_storage_controllers();
+        self.attach_shared_disk_to_storage_controllers()?;
+        Ok(())
+    }
+
+    /// Replace the machine's canonical disk backend (BIOS + storage controllers).
+    ///
+    /// This is the preferred API for non-`Vec<u8>` disk backends (OPFS, streaming, sparse formats,
+    /// etc.). The same disk contents are visible to:
+    /// - BIOS POST / INT 13h (`firmware::bios::BlockDevice`), and
+    /// - storage controllers (AHCI/IDE) attached by this machine.
+    ///
+    /// Note: if the new backend has a different capacity, this call rebuilds any ATA drives that
+    /// were derived from the shared disk so IDENTIFY geometry remains coherent.
+    pub fn set_disk_backend(
+        &mut self,
+        backend: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> Result<(), MachineError> {
+        self.disk.set_backend(backend);
+        self.attach_shared_disk_to_storage_controllers()?;
         Ok(())
     }
 
@@ -1727,15 +1745,16 @@ impl Machine {
         self.disk.clone()
     }
 
-    fn attach_shared_disk_to_storage_controllers(&mut self) {
+    fn attach_shared_disk_to_storage_controllers(&mut self) -> Result<(), MachineError> {
         // Canonical AHCI port 0.
         if let Some(ahci) = self.ahci.as_ref() {
             if self.ahci_port0_auto_attach_shared_disk {
                 let drive = AtaDrive::new(Box::new(self.disk.clone()))
-                    .expect("machine disk should be 512-byte aligned");
+                    .map_err(|e| MachineError::DiskBackend(e.to_string()))?;
                 ahci.borrow_mut().attach_drive(0, drive);
             }
         }
+        Ok(())
     }
 
     // ---------------------------------------------------------------------
