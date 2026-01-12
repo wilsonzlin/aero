@@ -1179,15 +1179,17 @@ export class WorkerCoordinator {
     const ioResume = this.snapshotRpc<VmSnapshotResumedMessage>(io, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
       timeoutMs: 5_000,
     });
-    const netResume = net
-      ? this.snapshotRpc<VmSnapshotResumedMessage>(net, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
-          timeoutMs: 5_000,
-        })
-      : null;
 
     // Best-effort: resume even if one worker fails to respond; we don't want a
     // snapshot error to strand a running VM forever.
-    await Promise.allSettled(netResume ? [cpuResume, ioResume, netResume] : [cpuResume, ioResume]);
+    await Promise.allSettled([cpuResume, ioResume]);
+
+    // Resume net after the guest/device side is back up (CPU + IO).
+    if (!net) return;
+    const netResume = this.snapshotRpc<VmSnapshotResumedMessage>(net, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
+      timeoutMs: 5_000,
+    });
+    await Promise.allSettled([netResume]);
   }
 
   private resetNetRingsForSnapshot(): void {

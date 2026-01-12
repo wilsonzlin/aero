@@ -100,10 +100,13 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
     expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
-    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
 
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
     net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
 
     await expect(promise).resolves.toBeUndefined();
@@ -149,13 +152,16 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     // Even though save failed, the coordinator must attempt to resume all paused workers.
     expect(cpu.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(true);
     expect(io.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(true);
-    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(true);
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
 
     const cpuResume = cpu.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
     const ioResume = io.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
-    const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpuResume.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: ioResume.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    // Net resumes after CPU/IO resume (best-effort ordering).
+    const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
     net.emitMessage({ kind: "vm.snapshot.resumed", requestId: netResume.message.requestId, ok: true });
 
     await expect(promise).rejects.toThrow(/saveToOpfs/i);
@@ -215,9 +221,12 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
     expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
-    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
     net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
 
     await expect(promise).resolves.toBeUndefined();
