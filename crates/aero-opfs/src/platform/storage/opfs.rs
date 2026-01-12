@@ -140,8 +140,6 @@ mod wasm {
         use wasm_bindgen::JsValue;
         use wasm_bindgen_test::wasm_bindgen_test;
 
-        wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
         fn dom_exception(name: &str, message: &str) -> JsValue {
             // `new DOMException(message, name)`
             let ctor = Reflect::get(&js_sys::global(), &JsValue::from_str("DOMException"))

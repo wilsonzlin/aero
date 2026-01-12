@@ -36,3 +36,8 @@ pub use crate::io::snapshot_file::OpfsSyncFile;
 pub use crate::io::storage::backends::opfs::{
     OpfsBackend, OpfsBackendMode, OpfsByteStorage, OpfsStorage,
 };
+
+// wasm-bindgen-test defaults to running under Node. OPFS requires a browser environment,
+// so configure wasm-only tests to run in a browser once per crate.
+#[cfg(all(test, target_arch = "wasm32"))]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
