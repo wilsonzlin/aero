@@ -246,7 +246,13 @@ function Try-HandleAeroHttpRequest {
       $hdrBytes = [System.Text.Encoding]::ASCII.GetBytes($hdr)
       $stream.Write($hdrBytes, 0, $hdrBytes.Length)
       if (-not ($requestLine -like "HEAD *")) {
-        $stream.Write($bodyBytes, 0, $bodyBytes.Length)
+        # Write in chunks so a large body (1 MiB) can't block forever behind a single large write
+        # if the guest stalls mid-transfer. Socket/stream timeouts are still enforced.
+        $chunkSize = 65536
+        for ($offset = 0; $offset -lt $bodyBytes.Length; $offset += $chunkSize) {
+          $count = [Math]::Min($chunkSize, $bodyBytes.Length - $offset)
+          $stream.Write($bodyBytes, $offset, $count)
+        }
       }
       $stream.Flush()
       return $true
