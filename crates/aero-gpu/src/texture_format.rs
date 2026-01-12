@@ -247,6 +247,7 @@ mod tests {
 
     #[test]
     fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
+        assert!(!wgpu_bc_texture_dimensions_compatible(1, 1, 1));
         assert!(!wgpu_bc_texture_dimensions_compatible(9, 9, 1));
         assert!(!wgpu_bc_texture_dimensions_compatible(2, 2, 1));
         assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 1));
@@ -267,6 +268,13 @@ mod tests {
             supports_bc_texture_compression: true,
             ..Default::default()
         };
+
+        let selection = select_texture_format(TextureFormat::Bc1RgbaUnorm, caps, 1, 1, 1);
+        assert_eq!(selection.actual, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(
+            selection.upload_transform,
+            TextureUploadTransform::Bc1ToRgba8
+        );
 
         let selection = select_texture_format(TextureFormat::Bc1RgbaUnorm, caps, 9, 9, 1);
         assert_eq!(selection.actual, wgpu::TextureFormat::Rgba8Unorm);
