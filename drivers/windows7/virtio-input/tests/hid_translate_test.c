@@ -42,6 +42,38 @@ static void send_rel(struct hid_translate *t, uint16_t code, int32_t delta) {
   hid_translate_handle_event(t, &ev);
 }
 
+static uint16_t to_le16(uint16_t v) {
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  return (uint16_t)((v >> 8) | (v << 8));
+#else
+  return v;
+#endif
+}
+
+static uint32_t to_le32(uint32_t v) {
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  return ((v & 0x000000FFu) << 24) | ((v & 0x0000FF00u) << 8) | ((v & 0x00FF0000u) >> 8) | ((v & 0xFF000000u) >> 24);
+#else
+  return v;
+#endif
+}
+
+static void send_key_le(struct hid_translate *t, uint16_t code, uint32_t value) {
+  struct virtio_input_event_le ev;
+  ev.type = to_le16(VIRTIO_INPUT_EV_KEY);
+  ev.code = to_le16(code);
+  ev.value = to_le32(value);
+  hid_translate_handle_event_le(t, &ev);
+}
+
+static void send_syn_le(struct hid_translate *t) {
+  struct virtio_input_event_le ev;
+  ev.type = to_le16(VIRTIO_INPUT_EV_SYN);
+  ev.code = to_le16(VIRTIO_INPUT_SYN_REPORT);
+  ev.value = to_le32(0);
+  hid_translate_handle_event_le(t, &ev);
+}
+
 static void send_syn(struct hid_translate *t) {
   struct virtio_input_event ev;
   ev.type = VIRTIO_INPUT_EV_SYN;
@@ -305,6 +337,27 @@ static void test_keyboard_function_key_reports(void) {
   expect_report(&cap, 3, expect4, sizeof(expect4));
 }
 
+static void test_keyboard_function_key_reports_le(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Press+release F12, delivered in little-endian wire format. */
+  send_key_le(&t, VIRTIO_INPUT_KEY_F12, 1);
+  send_syn_le(&t);
+
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x45, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  send_key_le(&t, VIRTIO_INPUT_KEY_F12, 0);
+  send_syn_le(&t);
+
+  uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+}
+
 static void test_keyboard_overflow_queue(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -459,6 +512,7 @@ int main(void) {
   test_keyboard_all_modifier_bits_report();
   test_keyboard_reports();
   test_keyboard_function_key_reports();
+  test_keyboard_function_key_reports_le();
   test_keyboard_overflow_queue();
   test_mouse_reports();
   test_reset_emits_release_reports();
