@@ -24,7 +24,7 @@ fn canonical_ids_and_class_codes() {
     // Lock in AHCI ABAR (BAR5) contract details so refactors that de-duplicate constants do not
     // silently change the guest-visible PCI profile.
     assert_eq!(AHCI_ABAR_BAR_INDEX, 5);
-    assert_eq!(AHCI_ABAR_CFG_OFFSET, 0x24);
+    assert_eq!(AHCI_ABAR_CFG_OFFSET, 0x10 + 4 * AHCI_ABAR_BAR_INDEX);
     assert_eq!(AHCI_ABAR_SIZE_U32, 0x2000);
     assert_eq!(AHCI_ABAR_SIZE, 0x2000);
 
