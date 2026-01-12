@@ -1098,7 +1098,7 @@ class Qcow2 {
     // Parse the refcount table to record refcount block cluster offsets (even though conversion
     // doesn't currently interpret refcount contents). This matches Rust's corruption hardening and
     // prevents treating refcount blocks as guest data when images are malformed.
-    const refcountChunkSize = 64 * 1024;
+    const refcountChunkSize = 8 * 1024 * 1024; // 8 MiB
     const refcountBufLen = Math.min(refcountChunkSize, refcountTableBytes);
     let refcountRemaining = refcountTableBytes;
     let refcountOff = refcountTableOffset;
