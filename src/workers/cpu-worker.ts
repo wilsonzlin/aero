@@ -241,17 +241,23 @@ async function runTieredVm(iterations: number, threshold: number) {
   //
   // IMPORTANT: wasm `i64` values are represented as JS `bigint`, so `__aero_mmio_*` must use
   // `bigint` for the address parameter.
-  if (typeof globalThis.__aero_io_port_read !== 'function') {
-    globalThis.__aero_io_port_read = (_port: number, _size: number) => 0;
+  const aeroPortShims = globalThis as unknown as {
+    __aero_io_port_read?: (port: number, size: number) => number;
+    __aero_io_port_write?: (port: number, size: number, value: number) => void;
+    __aero_mmio_read?: (addr: bigint, size: number) => number;
+    __aero_mmio_write?: (addr: bigint, size: number, value: number) => void;
+  };
+  if (typeof aeroPortShims.__aero_io_port_read !== 'function') {
+    aeroPortShims.__aero_io_port_read = (_port: number, _size: number) => 0;
   }
-  if (typeof globalThis.__aero_io_port_write !== 'function') {
-    globalThis.__aero_io_port_write = (_port: number, _size: number, _value: number) => {};
+  if (typeof aeroPortShims.__aero_io_port_write !== 'function') {
+    aeroPortShims.__aero_io_port_write = (_port: number, _size: number, _value: number) => {};
   }
-  if (typeof globalThis.__aero_mmio_read !== 'function') {
-    globalThis.__aero_mmio_read = (_addr: bigint, _size: number) => 0;
+  if (typeof aeroPortShims.__aero_mmio_read !== 'function') {
+    aeroPortShims.__aero_mmio_read = (_addr: bigint, _size: number) => 0;
   }
-  if (typeof globalThis.__aero_mmio_write !== 'function') {
-    globalThis.__aero_mmio_write = (_addr: bigint, _size: number, _value: number) => {};
+  if (typeof aeroPortShims.__aero_mmio_write !== 'function') {
+    aeroPortShims.__aero_mmio_write = (_addr: bigint, _size: number, _value: number) => {};
   }
 
   let api: WasmApi;
