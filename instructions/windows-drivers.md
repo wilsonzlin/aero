@@ -28,12 +28,15 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 | `drivers/aerogpu/` | AeroGPU WDDM driver (KMD + UMD) |
 | `drivers/aerogpu/kmd/` | Kernel-mode driver |
 | `drivers/aerogpu/umd/` | User-mode driver (D3D9/D3D10/D3D11 DDI) |
+| `drivers/aerogpu/tests/win7/` | Guest-side AeroGPU validation suite (D3D9/D3D10/D3D11) |
 | `drivers/windows7/` | Virtio drivers for Windows 7 |
 | `drivers/windows7/virtio/common/` | Shared Win7 virtio glue (WDM/NDIS/StorPort shims + split virtqueue impl) |
 | `drivers/windows7/virtio-blk/` | Block device driver |
 | `drivers/windows7/virtio-net/` | Network driver |
 | `drivers/windows7/virtio-input/` | HID input driver |
 | `drivers/windows7/virtio-snd/` | Audio driver |
+| `drivers/virtio/` | Virtio driver-pack/ISO layout surface (virtio-win compatibility tooling; `sample/` placeholders) |
+| `drivers/scripts/` | Driver-pack + Guest Tools build/install scripts (`make-guest-tools-from-ci.ps1`, `make-driver-pack.ps1`, etc.) |
 | `drivers/windows/virtio/` | Portable virtio helpers (shared with Win7 drivers; host-side tests build on Linux) |
 | `drivers/windows7/tests/guest-selftest/` | `aero-virtio-selftest.exe` (runs inside Win7 guest; emits serial markers) |
 | `drivers/windows7/tests/host-harness/` | QEMU host harness that runs the guest selftest and returns a deterministic PASS/FAIL |
@@ -106,6 +109,7 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - virtio-win packaging smoke tests (optional flow, upstream virtio-win bundles): [`.github/workflows/virtio-win-packaging-smoke.yml`](../.github/workflows/virtio-win-packaging-smoke.yml)
 - Sample virtio driver ISO build + smoke tests: [`.github/workflows/virtio-driver-iso.yml`](../.github/workflows/virtio-driver-iso.yml)
 - Tagged release pipeline (publishes signed driver bundles + Guest Tools as GitHub Release assets): [`.github/workflows/release-drivers-win7.yml`](../.github/workflows/release-drivers-win7.yml)
+- Docs lint + contract/link checks (includes virtio contract consistency + share-token checks): [`.github/workflows/docs.yml`](../.github/workflows/docs.yml)
 
 Local equivalents for fast iteration:
 
@@ -141,6 +145,7 @@ cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
 # Guest Tools packager tests + spec/config validation
 cargo test --locked --manifest-path tools/packaging/aero_packager/Cargo.toml
 python3 tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-signed.json
+python3 scripts/ci/check-virtio-win-guest-tools-docs.py
 
 # Host-harness Python unit tests (wav verification + QEMU arg quoting)
 python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
@@ -179,6 +184,7 @@ Legend:
 | VIO-002 | Implemented | Split-ring virtqueue + SG helpers (portable) | [`drivers/windows/virtio/common/README.md`](../drivers/windows/virtio/common/README.md) | [`drivers-win7.yml`](../.github/workflows/drivers-win7.yml) (virtio host tests), [`check-win7-virtio-header-collisions.py`](../scripts/ci/check-win7-virtio-header-collisions.py) |
 | VIO-003 | Implemented | Win7 virtio common glue (WDM/NDIS/StorPort shims + INTx) | [`drivers/windows7/virtio/common/README.md`](../drivers/windows7/virtio/common/README.md) | [`drivers-win7.yml`](../.github/workflows/drivers-win7.yml) (guardrails + host tests) |
 | VIO-004 | Implemented | Rust virtio protocol definitions + tests | [`drivers/protocol/virtio/README.md`](../drivers/protocol/virtio/README.md) | [`virtio-protocol.yml`](../.github/workflows/virtio-protocol.yml) |
+| VIO-005 | Implemented | Win7 KMDF `virtio-core` transport (portable virtio PCI cap parser + optional Aero MMIO layout enforcement) | [`drivers/win7/virtio/virtio-core/README.md`](../drivers/win7/virtio/virtio-core/README.md), [`drivers/win7/virtio/tests/README.md`](../drivers/win7/virtio/tests/README.md) | [`drivers-win7.yml`](../.github/workflows/drivers-win7.yml) (virtio host tests) |
 
 ### Virtio Device Drivers
 
