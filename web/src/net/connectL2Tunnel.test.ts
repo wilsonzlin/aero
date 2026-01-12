@@ -5,6 +5,68 @@ import { connectL2Tunnel } from "./connectL2Tunnel";
 
 type WebSocketConstructor = new (url: string, protocols?: string | string[]) => WebSocket;
 
+class FakeRtcDataChannel {
+  label = "";
+  readyState: RTCDataChannelState = "open";
+  ordered = true;
+  maxRetransmits: number | null = null;
+  maxPacketLifeTime: number | null = null;
+
+  binaryType: BinaryType = "arraybuffer";
+  bufferedAmount = 0;
+  bufferedAmountLowThreshold = 0;
+
+  onopen: ((ev: Event) => void) | null = null;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
+  onclose: ((ev: Event) => void) | null = null;
+  onbufferedamountlow: ((ev: Event) => void) | null = null;
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  send(_data: string | ArrayBuffer | ArrayBufferView | Blob): void {
+    // Intentionally empty for tests.
+  }
+
+  close(): void {
+    this.readyState = "closed";
+    this.onclose?.(new Event("close"));
+  }
+}
+
+class FakePeerConnection {
+  static last: FakePeerConnection | null = null;
+
+  iceGatheringState: RTCIceGatheringState = "complete";
+  localDescription: RTCSessionDescriptionInit | null = null;
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  constructor(_config: RTCConfiguration) {
+    FakePeerConnection.last = this;
+  }
+
+  createDataChannel(label: string, init?: RTCDataChannelInit): RTCDataChannel {
+    const dc = new FakeRtcDataChannel();
+    dc.label = label;
+    dc.ordered = init?.ordered ?? true;
+    dc.maxRetransmits = init?.maxRetransmits ?? null;
+    dc.maxPacketLifeTime = init?.maxPacketLifeTime ?? null;
+    return dc as unknown as RTCDataChannel;
+  }
+
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    return { type: "offer", sdp: "fake-offer" };
+  }
+
+  async setLocalDescription(desc: RTCSessionDescriptionInit): Promise<void> {
+    this.localDescription = desc;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async setRemoteDescription(_desc: RTCSessionDescriptionInit): Promise<void> {}
+
+  close(): void {}
+}
+
 class FakeWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -386,6 +448,67 @@ describe("net/connectL2Tunnel", () => {
       ).rejects.toThrow(/udpRelay/i);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("webrtc mode supports ws(s) UDP relay base URLs from the session response", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalFetch = globalThis.fetch;
+    const originalPc = g.RTCPeerConnection;
+
+    g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
+
+    const fetchUrls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      fetchUrls.push(url.toString());
+
+      if (url.pathname.endsWith("/session")) {
+        return new Response(
+          JSON.stringify({
+            udpRelay: { baseUrl: "wss://relay.example.com/base", token: "sekrit" },
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname.endsWith("/webrtc/ice")) {
+        return new Response(JSON.stringify({ iceServers: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url.pathname.endsWith("/webrtc/offer")) {
+        return new Response(JSON.stringify({ sdp: { type: "answer", sdp: "fake-answer" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      throw new Error(`unexpected fetch url: ${url.toString()}`);
+    }) as unknown as typeof fetch;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("https://gateway.example.com", {
+      mode: "webrtc",
+      sink: (ev) => events.push(ev),
+      relaySignalingMode: "http-offer",
+      // Avoid keepalive timers during the test.
+      tunnelOptions: { keepaliveMinMs: 0, keepaliveMaxMs: 0 },
+    });
+
+    try {
+      expect(fetchUrls).toContain("https://gateway.example.com/session");
+      expect(fetchUrls).toContain("https://relay.example.com/base/webrtc/ice");
+      expect(fetchUrls).toContain("https://relay.example.com/base/webrtc/offer");
+      // Guard against regressions where we accidentally call fetch() with a ws(s) URL.
+      expect(fetchUrls.some((u) => u.startsWith("ws:") || u.startsWith("wss:"))).toBe(false);
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalPc === undefined) delete g.RTCPeerConnection;
+      else g.RTCPeerConnection = originalPc;
     }
   });
 
