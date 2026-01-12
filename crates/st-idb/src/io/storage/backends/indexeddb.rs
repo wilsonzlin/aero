@@ -209,11 +209,7 @@ impl IndexedDbBackend {
         let val = idb::get_value(&self.db, BLOCKS_STORE, &key).await?;
         let mut data = vec![0u8; self.cache.block_size()];
         if let Some(val) = val {
-            let bytes = idb::js_value_to_bytes(&val)?;
-            if bytes.len() != data.len() {
-                return Err(StorageError::Corrupt("stored block size mismatch"));
-            }
-            data.copy_from_slice(&bytes);
+            idb::js_value_copy_to_bytes(&val, &mut data)?;
         }
 
         self.ensure_space_for_block().await?;
