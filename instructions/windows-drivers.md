@@ -390,6 +390,16 @@ For virtio end-to-end regression testing (recommended):
   - Supports virtio-snd wav capture + non-silence verification when enabled.
   - See: [`drivers/windows7/tests/README.md`](../drivers/windows7/tests/README.md)
 
+Example (Linux/macOS/Windows host; Python harness):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --timeout-seconds 600
+```
+
 ---
 
 ## Quick Start Checklist
