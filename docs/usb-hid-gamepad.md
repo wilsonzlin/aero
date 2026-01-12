@@ -27,8 +27,8 @@ behind an external USB hub device).
 - Each HID interface binds via the in-box HID stack (`hidusb.sys` + `hidclass.sys`)
   and then the appropriate client driver (e.g. `kbdhid.sys` / `mouhid.sys`)
 
-Reference implementation (browser/WASM): `crates/aero-usb/src/hid.rs` (`UsbHidCompositeInput`).
-(A legacy native emulator harness keeps an older equivalent in `crates/emulator` (`emulator::io::usb`).)
+Reference implementation (browser/WASM): `aero_usb::hid::composite::UsbCompositeHidInput`
+(`crates/aero-usb/src/hid/composite.rs`).
 
 ---
 
@@ -77,8 +77,8 @@ Notes:
 
 - The hat switch uses HID “Null state” (`Input (… Null)`) so the centered value
   is represented by `8` (outside the logical range `0..=7`).
-- The canonical report struct is `crates/aero-usb/src/hid.rs::GamepadReport`.
-  (A legacy native emulator harness uses the same layout under `crates/emulator`.)
+- The canonical report struct is `aero_usb::hid::GamepadReport`
+  (`crates/aero-usb/src/hid/gamepad.rs`).
 - The browser-side pack/unpack helpers live in `web/src/input/gamepad.ts`.
 
 ### Button bitfield mapping (browser host)

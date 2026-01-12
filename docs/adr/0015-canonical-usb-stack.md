@@ -10,8 +10,8 @@ The repository historically accumulated multiple overlapping USB/UHCI implementa
   - Host integration (WebHID/WebUSB broker/executor, worker proxying): `web/`
 - **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
   - Generic main-thread broker + worker client: `src/platform/webusb_{broker,client,protocol}.ts`
-- **Legacy/native/test path (parallel):**
-  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator` (`emulator::io::usb` module)
+- **Native emulator integration (consumer):**
+  - PCI/PortIO wiring + compatibility re-exports: `crates/emulator` (`emulator::io::usb` module)
 - **Legacy prototype (duplicate wire contract; removed):**
   - Early WebUSB passthrough bridge/types previously lived in `crates/aero-wasm/src/usb_passthrough.rs`
     (now deleted; do not reintroduce).
@@ -57,15 +57,15 @@ The Rust↔TypeScript WebUSB passthrough “host action/completion” contract i
 Any change to the wire contract must update **all three** in a single change set and keep both the
 Rust and TS tests passing.
 
-### 3) Status of the legacy emulator USB stack (`crates/emulator`, `emulator::io::usb`)
+### 3) Status of the emulator USB module (`crates/emulator`, `emulator::io::usb`)
 
-The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **legacy/native-only**:
+`crates/emulator` exposes `emulator::io::usb` primarily for:
 
-- It may remain temporarily for native bring-up and as a reference implementation.
-- It is **not** the canonical implementation for the browser runtime.
-- New USB work should land in `crates/aero-usb` first. If the native emulator needs the same
-  feature, prefer **moving shared code into `aero-usb`** and having the emulator consume it, rather
-  than evolving two independent USB stacks.
+- **PCI/PortIO device integration** (UHCI as a PCI device in the native emulator)
+- **Backwards-compatible import paths** for tests and callers
+
+The underlying USB/UHCI implementation is owned by `crates/aero-usb`. The emulator should **not**
+reintroduce an independent USB stack.
 
 ### 4) Where UHCI lives long-term, and how it connects to `aero_machine::Machine`
 
@@ -155,9 +155,9 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
    - Deletion target (once demos migrate or become redundant): `src/platform/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
-   - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
-      device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
-   - Deletion target: legacy USB stack in `crates/emulator` (`emulator::io::usb`) once unused.
+   - The native emulator consumes `aero-usb` for USB device models + UHCI behavior.
+   - Keep `emulator::io::usb` as a thin integration/re-export layer; do not add new standalone USB
+     implementations under `crates/emulator`.
 
 ### Testing strategy
 

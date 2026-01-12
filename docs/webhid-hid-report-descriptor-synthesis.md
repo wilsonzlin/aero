@@ -37,8 +37,8 @@ Implementation references:
     - JSON schema roundtrip + synthesis smoke: `crates/aero-usb/tests/webhid_passthrough.rs`
     - Descriptor bytes regression: `crates/aero-wasm/tests/webhid_report_descriptor_synthesis.rs`
 
-(A legacy native emulator harness also has an older copy in `crates/emulator` (`emulator::io::usb`),
-but `crates/aero-usb` is the primary reference for the browser/WASM path.)
+(`crates/emulator` re-exports the same synthesis code via `emulator::io::usb`, but `crates/aero-usb`
+is the implementation source of truth.)
 
 TypeScript/WebHID types:
 
