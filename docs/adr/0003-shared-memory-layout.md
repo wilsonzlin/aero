@@ -88,6 +88,8 @@ Contract:
 - The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
 - The WASM build uses a **bounded global allocator** so Rust heap allocations cannot grow past `runtime_reserved` and silently corrupt guest RAM.
 - The WASM build links with `wasm-ld --stack-first` so the stack stays at low addresses; the stack must fit within `runtime_reserved`.
+- The WASM build reserves a tiny tail guard at the *end* of the runtime-reserved region so the web runtime can safely use a deterministic scratch word for JS↔WASM memory wiring probes (without overlapping real Rust heap allocations).
+  - See `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`) and `web/src/runtime/wasm_memory_probe.ts`.
 
 Reference implementation:
 
