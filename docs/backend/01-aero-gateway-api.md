@@ -186,7 +186,12 @@ Some gateway deployments expose `POST /udp-relay/token`, which returns a fresh s
 Call `/session` once during app startup **before** opening any TCP WebSockets or sending DoH requests:
 
 ```ts
-await fetch(`${gatewayOrigin}/session`, {
+const url = new URL(gatewayBaseUrl);
+url.pathname = `${url.pathname.replace(/\/$/, "")}/session`;
+url.search = "";
+url.hash = "";
+
+await fetch(url.toString(), {
   method: 'POST',
   credentials: 'include', // critical: persist aero_session cookie
   headers: { 'content-type': 'application/json' },
@@ -600,9 +605,13 @@ When limits are exceeded:
 ### 6.1 WebSocket creation & readiness
 
 ```ts
-async function openTcpProxySocket(gatewayOrigin: string, host: string, port: number): Promise<WebSocket> {
-  const wsOrigin = gatewayOrigin.replace(/^http/, 'ws');
-  const url = new URL('/tcp', wsOrigin);
+async function openTcpProxySocket(gatewayBaseUrl: string, host: string, port: number): Promise<WebSocket> {
+  const url = new URL(gatewayBaseUrl);
+  if (url.protocol === "http:") url.protocol = "ws:";
+  if (url.protocol === "https:") url.protocol = "wss:";
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/tcp`;
+  url.search = "";
+  url.hash = "";
   url.searchParams.set('v', '1');
   url.searchParams.set('host', host);
   url.searchParams.set('port', String(port));
