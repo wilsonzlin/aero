@@ -204,6 +204,13 @@ async function main(): Promise<void> {
     throw new Error("Canvas element #frame not found");
   }
 
+  const qs = new URLSearchParams(globalThis.location?.search ?? "");
+  const requestedBackend = (qs.get("backend") ?? qs.get("forceBackend") ?? "").trim();
+  const forceBackend =
+    requestedBackend === "webgpu" || requestedBackend === "webgl2_wgpu" || requestedBackend === "webgl2_raw"
+      ? requestedBackend
+      : "webgl2_wgpu";
+
   const cssWidth = 4;
   const cssHeight = 4;
   const devicePixelRatio = 1;
@@ -236,10 +243,13 @@ async function main(): Promise<void> {
     height: cssHeight,
     devicePixelRatio,
     gpuOptions: {
-      // Force the wgpu-backed WebGL2 backend so:
+      // Force a backend so:
       // - the aero-gpu wasm module is loaded (real D3D9 executor path)
       // - wasm stats are forwarded via GpuRuntimeStatsMessage.wasm
-      forceBackend: "webgl2_wgpu",
+      //
+      // Default: webgl2_wgpu (most deterministic + widely available).
+      // Override via `?backend=webgpu|webgl2_wgpu|webgl2_raw` for debugging.
+      forceBackend,
     },
     onError: (msg) => {
       rejectCounters(new Error(msg.message));
