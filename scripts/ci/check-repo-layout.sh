@@ -279,6 +279,19 @@ else
   echo "warning: python3 not found; skipping AeroGPU D3D9 .def stdcall decoration check" >&2
 fi
 
+# AeroGPU D3D10/11 UMD x86 ABI guardrails: ensure `.def` export decoration stays
+# in sync with the expected WDK ABI stack byte counts. This is the equivalent of
+# the D3D9 check above, but for the `OpenAdapter10/OpenAdapter10_2/OpenAdapter11`
+# exports used by the Win7 D3D10/D3D11 runtimes.
+need_file "drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_x86.def"
+need_file "drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_x64.def"
+need_file "drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h"
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/ci/check-aerogpu-d3d10-def-stdcall.py
+else
+  echo "warning: python3 not found; skipping AeroGPU D3D10/11 .def stdcall decoration check" >&2
+fi
+
 # Guardrail: the repo must not reintroduce the deprecated
 # `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h` header (the removed
 # "KMD→UMD ShareToken" model). The canonical cross-process token is stored in
