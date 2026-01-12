@@ -1417,6 +1417,15 @@ impl E1000Device {
             phy: self.phy,
 
             other_regs,
+            // Snapshot the internal host-facing frame queues.
+            //
+            // These queues are part of the *device model* (frames that have entered the emulator
+            // from the host network stack but have not yet been DMA'd into guest memory, and
+            // frames that the guest has produced but the host has not yet drained).
+            //
+            // This intentionally does **not** attempt to snapshot/restore external host networking
+            // (socket connections, NAT state, etc); it only preserves the deterministic byte
+            // buffers currently queued at the device boundary.
             rx_pending: self.rx_pending.iter().cloned().collect(),
             tx_out: self.tx_out.iter().cloned().collect(),
         }
