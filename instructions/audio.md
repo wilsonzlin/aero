@@ -58,6 +58,11 @@ Audio is important for user experience but not on the critical boot path.
 | AU-007 | Audio input (microphone) | P2 | AU-004 | Medium |
 | AU-008 | Audio test suite | P0 | AU-001 | Medium |
 
+**Status (AU-004 / AU-008)**
+
+- **AU-004 (AudioWorklet integration)**: AudioWorklet + SharedArrayBuffer rings exist (`web/src/platform/audio.ts`, `web/src/platform/audio-worklet-processor.js`, `crates/platform/src/audio/worklet_bridge.rs`). The HDA model exists (`crates/aero-audio/src/hda.rs`), but the remaining work is wiring the guest device into the PCI/MMIO device stack in the worker runtime.
+- **AU-008 (Audio test suite)**: E2E coverage exists for the AudioWorklet + HDA demo (`tests/e2e/audio-worklet-hda-demo.spec.ts`). Remaining work is adding coverage for the full guest-driven PCI/MMIO device path once it is integrated.
+
 ---
 
 ## Audio Architecture
