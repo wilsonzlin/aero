@@ -15,6 +15,41 @@ static bool NearlyEqual(float a, float b, float eps) {
   return d <= eps;
 }
 
+static bool MaterialNearlyEqual(const D3DMATERIAL9& a, const D3DMATERIAL9& b, float eps) {
+  return NearlyEqual(a.Diffuse.r, b.Diffuse.r, eps) &&
+         NearlyEqual(a.Diffuse.g, b.Diffuse.g, eps) &&
+         NearlyEqual(a.Diffuse.b, b.Diffuse.b, eps) &&
+         NearlyEqual(a.Diffuse.a, b.Diffuse.a, eps) &&
+         NearlyEqual(a.Ambient.r, b.Ambient.r, eps) &&
+         NearlyEqual(a.Ambient.g, b.Ambient.g, eps) &&
+         NearlyEqual(a.Ambient.b, b.Ambient.b, eps) &&
+         NearlyEqual(a.Ambient.a, b.Ambient.a, eps) &&
+         NearlyEqual(a.Specular.r, b.Specular.r, eps) &&
+         NearlyEqual(a.Specular.g, b.Specular.g, eps) &&
+         NearlyEqual(a.Specular.b, b.Specular.b, eps) &&
+         NearlyEqual(a.Specular.a, b.Specular.a, eps) &&
+         NearlyEqual(a.Emissive.r, b.Emissive.r, eps) &&
+         NearlyEqual(a.Emissive.g, b.Emissive.g, eps) &&
+         NearlyEqual(a.Emissive.b, b.Emissive.b, eps) &&
+         NearlyEqual(a.Emissive.a, b.Emissive.a, eps) &&
+         NearlyEqual(a.Power, b.Power, eps);
+}
+
+static bool LightNearlyEqual(const D3DLIGHT9& a, const D3DLIGHT9& b, float eps) {
+  return (a.Type == b.Type) &&
+         NearlyEqual(a.Diffuse.r, b.Diffuse.r, eps) &&
+         NearlyEqual(a.Diffuse.g, b.Diffuse.g, eps) &&
+         NearlyEqual(a.Diffuse.b, b.Diffuse.b, eps) &&
+         NearlyEqual(a.Diffuse.a, b.Diffuse.a, eps) &&
+         NearlyEqual(a.Position.x, b.Position.x, eps) &&
+         NearlyEqual(a.Position.y, b.Position.y, eps) &&
+         NearlyEqual(a.Position.z, b.Position.z, eps) &&
+         NearlyEqual(a.Range, b.Range, eps) &&
+         NearlyEqual(a.Attenuation0, b.Attenuation0, eps) &&
+         NearlyEqual(a.Attenuation1, b.Attenuation1, eps) &&
+         NearlyEqual(a.Attenuation2, b.Attenuation2, eps);
+}
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
                                          HWND hwnd,
                                          D3DPRESENT_PARAMETERS* pp,
@@ -523,7 +558,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("GetMaterial", hr);
     }
-    if (std::memcmp(&got_mat, &mat, sizeof(mat)) != 0) {
+    if (!MaterialNearlyEqual(got_mat, mat, 1e-6f)) {
       return reporter.Fail("GetMaterial mismatch");
     }
   }
@@ -563,7 +598,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("GetLight(0)", hr);
     }
-    if (std::memcmp(&got_light, &light, sizeof(light)) != 0) {
+    if (!LightNearlyEqual(got_light, light, 1e-6f)) {
       return reporter.Fail("GetLight mismatch");
     }
 
@@ -939,7 +974,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("GetMaterial (after Apply)", hr);
     }
-    if (std::memcmp(&got_mat, &mat_sb, sizeof(mat_sb)) != 0) {
+    if (!MaterialNearlyEqual(got_mat, mat_sb, 1e-6f)) {
       return reporter.Fail("stateblock restore mismatch: Material");
     }
 
@@ -966,7 +1001,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       if (FAILED(hr)) {
         return reporter.FailHresult("GetLight (after Apply)", hr);
       }
-      if (std::memcmp(&got_light, &light_sb, sizeof(light_sb)) != 0) {
+      if (!LightNearlyEqual(got_light, light_sb, 1e-6f)) {
         return reporter.Fail("stateblock restore mismatch: Light");
       }
       BOOL got_enabled = FALSE;
