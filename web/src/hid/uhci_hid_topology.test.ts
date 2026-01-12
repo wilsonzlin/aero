@@ -82,7 +82,7 @@ describe("hid/UhciHidTopologyManager", () => {
 
     mgr.attachDevice(1, [0, firstDynamicPort + 1], "webhid", dev2);
 
-    // Detach old path (0.1) first, then clear/attach the new path (0.2).
+    // Detach the old path first, then clear/attach the new path.
     expect(uhci.detach_at_path).toHaveBeenCalledWith([0, firstDynamicPort]);
     expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, firstDynamicPort + 1], dev2);
   });
