@@ -145,6 +145,8 @@ cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
 # Guest Tools packager tests + spec/config validation
 cargo test --locked --manifest-path tools/packaging/aero_packager/Cargo.toml
 python3 tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-signed.json
+
+# Ensure virtio-win Guest Tools docs + wrapper defaults stay in sync
 python3 scripts/ci/check-virtio-win-guest-tools-docs.py
 
 # Host-harness Python unit tests (wav verification + QEMU arg quoting)
