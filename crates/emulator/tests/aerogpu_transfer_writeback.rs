@@ -12,7 +12,7 @@ use emulator::devices::aerogpu_ring::{AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RI
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
-use emulator::io::pci::MmioDevice;
+use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::Bus;
 use memory::MemoryBus;
 
@@ -25,6 +25,12 @@ fn test_device_config() -> AeroGpuDeviceConfig {
         },
         ..Default::default()
     }
+}
+
+fn new_test_device() -> AeroGpuPciDevice {
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+    dev
 }
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
@@ -83,7 +89,7 @@ fn drive_until_fence(mem: &mut Bus, dev: &mut AeroGpuPciDevice, fence: u64) {
 fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = new_test_device();
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -262,7 +268,7 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = new_test_device();
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -405,7 +411,7 @@ fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_respects_offsets() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = new_test_device();
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -568,7 +574,7 @@ fn aerogpu_copy_buffer_writeback_respects_offsets() {
 fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = new_test_device();
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -774,7 +780,7 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = new_test_device();
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -890,7 +896,7 @@ fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
 fn aerogpu_copy_texture2d_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = new_test_device();
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));

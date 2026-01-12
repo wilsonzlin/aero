@@ -11,6 +11,13 @@ fn read_u8(dev: &dyn PciDevice, offset: u16) -> u8 {
     dev.config_read(offset, 1) as u8
 }
 
+fn new_test_device(cfg: AeroGpuLegacyDeviceConfig) -> AeroGpuLegacyPciDevice {
+    let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
+    // Enable PCI MMIO decode + bus mastering so MMIO/DMA paths behave like real PCI hardware.
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+    dev
+}
+
 #[derive(Clone, Debug)]
 struct VecMemory {
     data: Vec<u8>,
@@ -90,7 +97,7 @@ fn pci_identity_class_codes_match_aero_protocol() {
 #[test]
 fn doorbell_updates_ring_head_and_fence_irq() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuLegacyPciDevice::new(AeroGpuLegacyDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuLegacyDeviceConfig::default());
 
     // Ring in guest memory.
     let ring_gpa = 0x1000u64;
@@ -137,7 +144,7 @@ fn doorbell_updates_ring_head_and_fence_irq() {
 #[test]
 fn scanout_x8r8g8b8_converts_to_rgba() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuLegacyPciDevice::new(AeroGpuLegacyDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuLegacyDeviceConfig::default());
 
     let fb_gpa = 0x3000u64;
     // 2x1 pixels, X8R8G8B8 (little-endian bytes = B,G,R,X).
@@ -162,7 +169,7 @@ fn vblank_tick_updates_counters_and_latches_irq_status() {
         ..Default::default()
     };
     let mut mem = VecMemory::new(0x1000);
-    let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     const IRQ_SCANOUT_VBLANK: u32 = 1 << 1;
 
@@ -217,7 +224,7 @@ fn vblank_tick_updates_counters_and_latches_irq_status() {
 #[test]
 fn features_regs_advertise_vblank_when_enabled() {
     let mut mem = VecMemory::new(0x1000);
-    let mut dev = AeroGpuLegacyPciDevice::new(AeroGpuLegacyDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuLegacyDeviceConfig::default());
 
     let features_lo = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_LO as u64, 4) as u64;
     let features_hi = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_HI as u64, 4) as u64;
@@ -241,7 +248,7 @@ fn features_regs_clear_vblank_when_disabled() {
         vblank_hz: None,
         ..Default::default()
     };
-    let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     let features_lo = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_LO as u64, 4) as u64;
     let features_hi = dev.mmio_read(&mut mem, proto::AEROGPU_MMIO_REG_FEATURES_HI as u64, 4) as u64;

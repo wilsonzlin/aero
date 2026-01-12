@@ -21,7 +21,7 @@ use emulator::devices::aerogpu_ring::{
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
-use emulator::io::pci::MmioDevice;
+use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::Bus;
 use memory::MemoryBus;
 
@@ -108,6 +108,7 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     };
 
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {

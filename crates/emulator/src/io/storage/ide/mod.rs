@@ -592,6 +592,18 @@ impl IdeController {
         }
     }
 
+    fn command(&self) -> u16 {
+        u16::from_le_bytes(self.pci_regs[0x04..0x06].try_into().unwrap())
+    }
+
+    fn io_space_enabled(&self) -> bool {
+        (self.command() & (1 << 0)) != 0
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
     pub fn attach_primary_master_ata(&mut self, dev: AtaDevice) {
         let capable = dev.supports_dma();
         self.primary.devices[0] = Some(IdeDevice::Ata(dev));
@@ -642,6 +654,15 @@ impl IdeController {
 
     /// Read an I/O port (8/16/32-bit).
     pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
+        // Gate port I/O decoding on PCI command I/O Space Enable (bit 0).
+        if !self.io_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => 0xffff_ffff,
+                _ => 0xffff_ffff,
+            };
+        }
         if let Some((chan_idx, off)) = self.decode_bus_master(port) {
             return self.bus_master[chan_idx].read(off, size);
         }
@@ -672,6 +693,10 @@ impl IdeController {
 
     /// Write an I/O port (8/16/32-bit).
     pub fn io_write(&mut self, port: u16, size: u8, val: u32) {
+        // Gate port I/O decoding on PCI command I/O Space Enable (bit 0).
+        if !self.io_space_enabled() {
+            return;
+        }
         if let Some((chan_idx, off)) = self.decode_bus_master(port) {
             self.bus_master[chan_idx].write(off, size, val);
             return;
@@ -1157,8 +1182,7 @@ impl IdeController {
         // This matches the platform-backed `Piix3IdePciDevice` behavior and real PCI semantics:
         // when the guest clears COMMAND.BME, the device must not perform bus-master DMA even if
         // the Bus Master IDE engine is started.
-        let command = u16::from_le_bytes(self.pci_regs[0x04..0x06].try_into().unwrap());
-        if (command & (1 << 2)) == 0 {
+        if !self.bus_master_enabled() {
             return;
         }
         Self::tick_channel(&mut self.bus_master[0], &mut self.primary, mem);

@@ -234,7 +234,26 @@ impl AeroGpuLegacyPciDevice {
         }
     }
 
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn mem_space_enabled(&self) -> bool {
+        (self.command() & (1 << 1)) != 0
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
     pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
         self.irq_level
     }
 
@@ -243,6 +262,9 @@ impl AeroGpuLegacyPciDevice {
     }
 
     pub fn read_scanout_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
+        if !self.bus_master_enabled() {
+            return None;
+        }
         self.regs.scanout.read_rgba(mem)
     }
 
@@ -420,7 +442,11 @@ impl AeroGpuLegacyPciDevice {
             mmio::RING_TAIL => {
                 self.regs.ring_tail = value;
             }
-            mmio::RING_DOORBELL => self.process_doorbell(mem),
+            mmio::RING_DOORBELL => {
+                if self.bus_master_enabled() {
+                    self.process_doorbell(mem)
+                }
+            }
 
             mmio::INT_ACK => {
                 self.regs.int_status &= !value;
@@ -493,6 +519,15 @@ impl PciDevice for AeroGpuLegacyPciDevice {
 
 impl MmioDevice for AeroGpuLegacyPciDevice {
     fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => u32::MAX,
+            };
+        }
         if offset >= AEROGPU_LEGACY_BAR0_SIZE_BYTES {
             return 0;
         }
@@ -510,6 +545,10 @@ impl MmioDevice for AeroGpuLegacyPciDevice {
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return;
+        }
         if offset >= AEROGPU_LEGACY_BAR0_SIZE_BYTES {
             return;
         }

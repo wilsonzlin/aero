@@ -24,7 +24,7 @@ use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::gpu_worker::aerogpu_backend::ImmediateAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
-use emulator::io::pci::MmioDevice;
+use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::MemoryBus;
 
 const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
@@ -105,10 +105,131 @@ impl MemoryBus for VecMemory {
     }
 }
 
+fn new_test_device(cfg: AeroGpuDeviceConfig) -> AeroGpuPciDevice {
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    // Enable PCI MMIO decode + bus mastering so MMIO and DMA paths behave like a real enumerated
+    // device (guests must set COMMAND.MEM/BME before touching BARs).
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+    dev
+}
+
+#[test]
+fn pci_wrapper_gates_aerogpu_mmio_on_pci_command_mem_bit() {
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    // With COMMAND.MEM clear, reads float high and writes are ignored.
+    assert_eq!(dev.mmio_read(&mut mem, mmio::MAGIC, 4), u32::MAX);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, 0xdead_beef);
+    assert_eq!(dev.regs.ring_gpa, 0);
+
+    // Enable MMIO decoding and verify the device responds.
+    dev.config_write(0x04, 2, 1 << 1);
+    assert_eq!(dev.mmio_read(&mut mem, mmio::MAGIC, 4), AEROGPU_MMIO_MAGIC);
+}
+
+#[test]
+fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+
+    // Enable MMIO decode but leave bus mastering disabled.
+    dev.config_write(0x04, 2, 1 << 1);
+
+    // Ring layout in guest memory (one no-op submission that signals fence=42).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
+
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
+
+    // With COMMAND.BME clear, DMA must not run.
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
+
+    // Once bus mastering is enabled, the same doorbell should process.
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    assert_eq!(dev.regs.completed_fence, 42);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+}
+
+#[test]
+fn pci_wrapper_gates_aerogpu_intx_on_pci_command_intx_disable_bit() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    // Minimal ring submission that signals a fence and raises IRQ.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    assert!(dev.irq_level());
+
+    // INTX_DISABLE suppresses the external interrupt line, but does not clear internal state.
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2) | (1 << 10));
+    assert!(!dev.irq_level());
+
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+    assert!(dev.irq_level());
+}
+
 #[test]
 fn doorbell_updates_ring_head_fence_page_and_irq() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     assert_eq!(dev.mmio_read(&mut mem, mmio::MAGIC, 4), AEROGPU_MMIO_MAGIC);
     assert_eq!(
@@ -185,7 +306,7 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
 #[test]
 fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     assert_eq!(
         dev.mmio_read(&mut mem, mmio::ABI_VERSION, 4),
@@ -207,7 +328,7 @@ fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
 #[test]
 fn doorbell_accepts_newer_minor_abi_version() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -278,7 +399,7 @@ fn doorbell_accepts_newer_minor_abi_version() {
 #[test]
 fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -322,7 +443,7 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
 #[test]
 fn doorbell_rejects_unknown_major_abi_version() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -424,7 +545,7 @@ fn ring_header_validation_checks_magic_and_abi_version() {
 #[test]
 fn scanout_bgra_converts_to_rgba() {
     let mut mem = VecMemory::new(0x20_000);
-    let dev = &mut AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     let fb_gpa = 0x5000u64;
     // 2x1 pixels, BGRA: (R=1,G=2,B=3,A=4), (R=10,G=20,B=30,A=40).
@@ -454,7 +575,7 @@ fn vblank_tick_sets_irq_status() {
         ..Default::default()
     };
     let mut mem = VecMemory::new(0x1000);
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
@@ -475,7 +596,7 @@ fn enabling_vblank_irq_does_not_immediately_fire_on_catchup_ticks() {
         ..Default::default()
     };
     let mut mem = VecMemory::new(0x1000);
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
 
@@ -506,7 +627,7 @@ fn vsynced_present_fence_completes_on_vblank() {
     };
 
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     // Enable scanout so vblank ticks run.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
@@ -626,7 +747,7 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
     };
 
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
     dev.set_backend(Box::new(ImmediateAeroGpuBackend::new()));
 
     // Enable scanout so vblank ticks run.
@@ -744,7 +865,7 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     };
 
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     // Enable scanout so vblank ticks run.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
@@ -849,7 +970,7 @@ fn scanout_disable_stops_vblank_and_clears_pending_irq() {
         ..Default::default()
     };
     let mut mem = VecMemory::new(0x1000);
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = new_test_device(cfg);
 
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
@@ -921,7 +1042,7 @@ fn read_pixel_bgra(
 #[test]
 fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1136,7 +1257,7 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
 #[test]
 fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1377,7 +1498,7 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
 #[test]
 fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1506,7 +1627,7 @@ fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
 #[test]
 fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1745,7 +1866,7 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
 #[test]
 fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -2008,7 +2129,7 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
 #[test]
 fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -2258,7 +2379,7 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
 #[test]
 fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -2507,7 +2628,7 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
 #[test]
 fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -2801,7 +2922,7 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
 
 fn exec_d3d11_fullscreen_triangle_center_pixel(push_blend_state: impl FnOnce(&mut Vec<u8>)) -> u32 {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -3174,7 +3295,7 @@ fn cmd_exec_d3d11_legacy_blend_state_packet_still_works() {
 #[test]
 fn cmd_exec_d3d11_depth_test_rejects_farther_triangle() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -3464,7 +3585,7 @@ fn cmd_exec_d3d11_texture_sampling_point_clamp_matches_expected_texels() {
     }
 
     let mut mem = VecMemory::new(0x40_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;

@@ -701,3 +701,26 @@ fn pci_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     assert_eq!(ide.io_read(0xC000, 1), 0xffff_ffff);
     assert_eq!(ide.io_read(0xD000, 1), 0);
 }
+
+#[test]
+fn pci_wrapper_gates_ide_ports_on_pci_command_io_bit() {
+    let mut ide = IdeController::new(0xC000);
+
+    // Sanity: with COMMAND.IO set by default, primary status is visible.
+    assert_eq!(
+        ide.io_read(PRIMARY_PORTS.cmd_base + 7, 1) as u8,
+        0x40,
+        "DRDY should be set after reset"
+    );
+
+    // Disable I/O space decode.
+    ide.pci_config_write(0x04, 2, 0);
+
+    // Reads float high and writes are ignored.
+    assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 7, 1), 0xff);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xe0);
+
+    // Re-enable I/O decode and verify that the ignored write didn't latch.
+    ide.pci_config_write(0x04, 2, 1);
+    assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 6, 1) as u8, 0x00);
+}

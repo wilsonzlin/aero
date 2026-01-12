@@ -94,7 +94,26 @@ impl AeroGpuPciDevice {
         }
     }
 
+    fn command(&self) -> u16 {
+        self.config.read(0x04, 2) as u16
+    }
+
+    fn mem_space_enabled(&self) -> bool {
+        (self.command() & (1 << 1)) != 0
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
     pub fn irq_level(&self) -> bool {
+        if self.intx_disabled() {
+            return false;
+        }
         self.irq_level
     }
 
@@ -103,13 +122,19 @@ impl AeroGpuPciDevice {
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant) {
-        self.executor.poll_backend_completions(&mut self.regs, mem);
+        let dma_enabled = self.bus_master_enabled();
+
+        // Polling completions and flushing fences may write guest memory (fence page / writeback).
+        // When PCI bus mastering is disabled (COMMAND.BME=0), the device must not perform DMA.
+        if dma_enabled {
+            self.executor.poll_backend_completions(&mut self.regs, mem);
+        }
         // `tick` has early-return paths (no vblank yet); update IRQ after polling completions.
         self.update_irq_level();
 
         // If vblank pacing is disabled (by config or by disabling the scanout), do not allow any
         // vsync-delayed fences to remain queued forever.
-        if self.vblank_interval.is_none() || !self.regs.scanout0.enable {
+        if dma_enabled && (self.vblank_interval.is_none() || !self.regs.scanout0.enable) {
             self.executor.flush_pending_fences(&mut self.regs, mem);
             self.update_irq_level();
         }
@@ -139,7 +164,9 @@ impl AeroGpuPciDevice {
                 self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
             }
 
-            self.executor.process_vblank_tick(&mut self.regs, mem);
+            if dma_enabled {
+                self.executor.process_vblank_tick(&mut self.regs, mem);
+            }
 
             next += interval;
             ticks += 1;
@@ -155,14 +182,23 @@ impl AeroGpuPciDevice {
     }
 
     pub fn read_scanout0_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
+        if !self.bus_master_enabled() {
+            return None;
+        }
         self.regs.scanout0.read_rgba(mem)
     }
 
     pub fn read_cursor_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
+        if !self.bus_master_enabled() {
+            return None;
+        }
         self.regs.cursor.read_rgba(mem)
     }
 
     pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
+        if !self.bus_master_enabled() {
+            return;
+        }
         self.executor.complete_fence(&mut self.regs, mem, fence);
         self.update_irq_level();
     }
@@ -181,13 +217,14 @@ impl AeroGpuPciDevice {
     }
 
     fn reset_ring(&mut self, mem: &mut dyn MemoryBus) {
-        if self.regs.ring_gpa != 0 {
+        let dma_enabled = self.bus_master_enabled();
+        if dma_enabled && self.regs.ring_gpa != 0 {
             let tail = mem.read_u32(self.regs.ring_gpa + RING_TAIL_OFFSET);
             AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
         }
         self.executor.reset();
         self.regs.completed_fence = 0;
-        if self.regs.fence_gpa != 0 {
+        if dma_enabled && self.regs.fence_gpa != 0 {
             write_fence_page(
                 mem,
                 self.regs.fence_gpa,
@@ -283,8 +320,10 @@ impl AeroGpuPciDevice {
                 // this, a vsynced PRESENT submitted just after a vblank deadline (but before the
                 // next `tick()` call) could complete on that already-elapsed vblank edge.
                 self.tick(mem, Instant::now());
-                self.executor.process_doorbell(&mut self.regs, mem);
-                self.update_irq_level();
+                if self.bus_master_enabled() {
+                    self.executor.process_doorbell(&mut self.regs, mem);
+                    self.update_irq_level();
+                }
             }
             mmio::IRQ_ENABLE => {
                 // Keep the vblank clock caught up before enabling vblank delivery. Without this,
@@ -316,8 +355,10 @@ impl AeroGpuPciDevice {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
                     self.next_vblank = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
-                    self.executor.flush_pending_fences(&mut self.regs, mem);
-                    self.update_irq_level();
+                    if self.bus_master_enabled() {
+                        self.executor.flush_pending_fences(&mut self.regs, mem);
+                        self.update_irq_level();
+                    }
                 }
                 self.regs.scanout0.enable = new_enable;
             }
@@ -389,6 +430,15 @@ impl PciDevice for AeroGpuPciDevice {
 
 impl MmioDevice for AeroGpuPciDevice {
     fn mmio_read(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return match size {
+                1 => 0xff,
+                2 => 0xffff,
+                4 => u32::MAX,
+                _ => u32::MAX,
+            };
+        }
         if offset >= AEROGPU_PCI_BAR0_SIZE_BYTES {
             return 0;
         }
@@ -404,6 +454,10 @@ impl MmioDevice for AeroGpuPciDevice {
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        // Gate MMIO decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return;
+        }
         if offset >= AEROGPU_PCI_BAR0_SIZE_BYTES {
             return;
         }
