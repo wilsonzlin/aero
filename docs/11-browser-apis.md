@@ -1294,6 +1294,14 @@ function setupKeyboard(canvas) {
 
 ## Network APIs
 
+### Network tracing (PCAPNG export)
+
+For packet-level debugging (capturing the guest↔tunnel Ethernet frames and exporting a `.pcapng`
+file for Wireshark), see:
+
+- [`07-networking.md`](./07-networking.md#network-tracing-pcappcapng-export) – **Network Tracing (PCAP/PCAPNG Export)**
+  - Includes the browser UI panel and `window.aero.netTrace` automation API.
+
 ### WebSocket
 
 All TCP egress uses the **Aero Gateway** backend (see `backend/aero-gateway`):
