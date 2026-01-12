@@ -3,10 +3,12 @@
 //! If you update any of these values, also update:
 //! - `docs/05-storage-topology-win7.md`
 //! - `crates/devices/tests/win7_storage_topology.rs`
+//! - `crates/aero-machine/tests/machine_win7_storage_topology.rs`
 //! - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs`
+//! - `crates/aero-pc-platform/tests/windows7_storage_topology.rs`
 
 use aero_devices::pci::profile::{
-    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32, IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9,
+    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32, IDE_PIIX3, ISA_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9,
 };
 use aero_devices::pci::{
     PciBarDefinition, PciBarKind, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
@@ -168,4 +170,50 @@ fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
             "SATA_AHCI_ICH9 BAR5 definition drifted"
         );
     }
+}
+
+#[test]
+fn machine_win7_storage_topology_nvme_enabled_has_canonical_bdf_and_interrupt_line() {
+    // NVMe is off by default for Win7 (no inbox NVMe driver), but the BDF is reserved and must be
+    // stable when the controller is explicitly enabled.
+    const NVME_BDF: PciBdf = PciBdf::new(0, 3, 0);
+    assert_eq!(NVME_CONTROLLER.bdf, NVME_BDF, "NVME_CONTROLLER BDF drifted");
+
+    let mut cfg = MachineConfig::win7_storage_defaults(2 * 1024 * 1024);
+    cfg.enable_nvme = true;
+    // Keep this test focused on PCI topology and avoid unrelated devices.
+    cfg.enable_vga = false;
+    cfg.enable_serial = false;
+    cfg.enable_i8042 = false;
+    cfg.enable_a20_gate = false;
+    cfg.enable_reset_ctrl = false;
+
+    let m = Machine::new(cfg).unwrap();
+
+    let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+    let mut pci_cfg = pci_cfg.borrow_mut();
+    let bus = pci_cfg.bus_mut();
+
+    // Under `PciIntxRouterConfig::default()`:
+    // - PIRQ[A-D] -> GSI[10,11,12,13]
+    // - Root-bus swizzle: PIRQ = (INTx + device_number) mod 4
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+
+    let cfg = bus
+        .device_config_mut(NVME_BDF)
+        .expect("NVME_CONTROLLER config function missing from PCI bus");
+
+    // NVMe 00:03.0 INTA -> GSI 13.
+    let expected_gsi = router.gsi_for_intx(NVME_BDF, PciInterruptPin::IntA);
+    assert_eq!(expected_gsi, 13, "NVMe expected GSI drifted");
+    assert_eq!(
+        cfg.interrupt_line(),
+        expected_gsi as u8,
+        "NVMe PCI Interrupt Line does not match router swizzle"
+    );
+    assert_eq!(
+        cfg.interrupt_pin(),
+        1,
+        "NVMe PCI Interrupt Pin drifted (expected INTA#)"
+    );
 }
