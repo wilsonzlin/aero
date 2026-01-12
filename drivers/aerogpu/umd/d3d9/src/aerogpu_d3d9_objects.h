@@ -3,6 +3,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -461,6 +462,23 @@ struct Device {
       m[10] = 1.0f;
       m[15] = 1.0f;
     }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    // Default fixed-function material is white.
+    std::memset(&material, 0, sizeof(material));
+    material.Diffuse.r = 1.0f;
+    material.Diffuse.g = 1.0f;
+    material.Diffuse.b = 1.0f;
+    material.Diffuse.a = 1.0f;
+    material.Ambient = material.Diffuse;
+    material_valid = true;
+
+    for (uint32_t i = 0; i < kMaxLights; ++i) {
+      std::memset(&lights[i], 0, sizeof(lights[i]));
+      light_valid[i] = false;
+      light_enabled[i] = FALSE;
+    }
+#endif
   }
 
   Adapter* adapter = nullptr;
@@ -578,6 +596,16 @@ struct Device {
   // Shader bool constant register caches (scalar bool registers).
   uint8_t vs_consts_b[256] = {};
   uint8_t ps_consts_b[256] = {};
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // Fixed-function lighting/material state (cached only).
+  D3DMATERIAL9 material = {};
+  bool material_valid = false;
+  static constexpr uint32_t kMaxLights = 16u;
+  D3DLIGHT9 lights[kMaxLights] = {};
+  bool light_valid[kMaxLights] = {};
+  BOOL light_enabled[kMaxLights] = {};
+#endif
 
   // Built-in resources used for blit/copy operations (StretchRect/Blt).
   Shader* builtin_copy_vs = nullptr;

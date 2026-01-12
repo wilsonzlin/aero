@@ -555,6 +555,129 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
     }
   }
 
+  // --- Fixed-function material ---
+  D3DMATERIAL9 mat;
+  ZeroMemory(&mat, sizeof(mat));
+  mat.Diffuse.r = 0.1f;
+  mat.Diffuse.g = 0.2f;
+  mat.Diffuse.b = 0.3f;
+  mat.Diffuse.a = 0.4f;
+  mat.Ambient.r = 0.5f;
+  mat.Ambient.g = 0.6f;
+  mat.Ambient.b = 0.7f;
+  mat.Ambient.a = 0.8f;
+  mat.Specular.r = 0.9f;
+  mat.Specular.g = 0.25f;
+  mat.Specular.b = 0.75f;
+  mat.Specular.a = 1.0f;
+  mat.Emissive.r = 0.0f;
+  mat.Emissive.g = 0.125f;
+  mat.Emissive.b = 0.25f;
+  mat.Emissive.a = 0.375f;
+  mat.Power = 3.5f;
+
+  hr = dev->SetMaterial(&mat);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetMaterial", hr);
+  }
+
+  D3DMATERIAL9 got_mat;
+  ZeroMemory(&got_mat, sizeof(got_mat));
+  hr = dev->GetMaterial(&got_mat);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetMaterial", hr);
+  }
+
+  const float kMatEps = 1e-6f;
+  if (!NearlyEqual(got_mat.Diffuse.r, mat.Diffuse.r, kMatEps) ||
+      !NearlyEqual(got_mat.Diffuse.g, mat.Diffuse.g, kMatEps) ||
+      !NearlyEqual(got_mat.Diffuse.b, mat.Diffuse.b, kMatEps) ||
+      !NearlyEqual(got_mat.Diffuse.a, mat.Diffuse.a, kMatEps) ||
+      !NearlyEqual(got_mat.Ambient.r, mat.Ambient.r, kMatEps) ||
+      !NearlyEqual(got_mat.Ambient.g, mat.Ambient.g, kMatEps) ||
+      !NearlyEqual(got_mat.Ambient.b, mat.Ambient.b, kMatEps) ||
+      !NearlyEqual(got_mat.Ambient.a, mat.Ambient.a, kMatEps) ||
+      !NearlyEqual(got_mat.Specular.r, mat.Specular.r, kMatEps) ||
+      !NearlyEqual(got_mat.Specular.g, mat.Specular.g, kMatEps) ||
+      !NearlyEqual(got_mat.Specular.b, mat.Specular.b, kMatEps) ||
+      !NearlyEqual(got_mat.Specular.a, mat.Specular.a, kMatEps) ||
+      !NearlyEqual(got_mat.Emissive.r, mat.Emissive.r, kMatEps) ||
+      !NearlyEqual(got_mat.Emissive.g, mat.Emissive.g, kMatEps) ||
+      !NearlyEqual(got_mat.Emissive.b, mat.Emissive.b, kMatEps) ||
+      !NearlyEqual(got_mat.Emissive.a, mat.Emissive.a, kMatEps) ||
+      !NearlyEqual(got_mat.Power, mat.Power, kMatEps)) {
+    return reporter.Fail("GetMaterial mismatch");
+  }
+
+  // --- Fixed-function lights ---
+  D3DLIGHT9 light;
+  ZeroMemory(&light, sizeof(light));
+  light.Type = D3DLIGHT_POINT;
+  light.Diffuse.r = 0.25f;
+  light.Diffuse.g = 0.5f;
+  light.Diffuse.b = 0.75f;
+  light.Diffuse.a = 1.0f;
+  light.Position.x = 1.0f;
+  light.Position.y = 2.0f;
+  light.Position.z = 3.0f;
+  light.Range = 100.0f;
+  light.Attenuation0 = 1.0f;
+  light.Attenuation1 = 0.0f;
+  light.Attenuation2 = 0.0f;
+
+  hr = dev->SetLight(0, &light);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetLight(0)", hr);
+  }
+
+  D3DLIGHT9 got_light;
+  ZeroMemory(&got_light, sizeof(got_light));
+  hr = dev->GetLight(0, &got_light);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetLight(0)", hr);
+  }
+
+  if (got_light.Type != light.Type ||
+      !NearlyEqual(got_light.Diffuse.r, light.Diffuse.r, kMatEps) ||
+      !NearlyEqual(got_light.Diffuse.g, light.Diffuse.g, kMatEps) ||
+      !NearlyEqual(got_light.Diffuse.b, light.Diffuse.b, kMatEps) ||
+      !NearlyEqual(got_light.Diffuse.a, light.Diffuse.a, kMatEps) ||
+      !NearlyEqual(got_light.Position.x, light.Position.x, kMatEps) ||
+      !NearlyEqual(got_light.Position.y, light.Position.y, kMatEps) ||
+      !NearlyEqual(got_light.Position.z, light.Position.z, kMatEps) ||
+      !NearlyEqual(got_light.Range, light.Range, kMatEps) ||
+      !NearlyEqual(got_light.Attenuation0, light.Attenuation0, kMatEps) ||
+      !NearlyEqual(got_light.Attenuation1, light.Attenuation1, kMatEps) ||
+      !NearlyEqual(got_light.Attenuation2, light.Attenuation2, kMatEps)) {
+    return reporter.Fail("GetLight mismatch");
+  }
+
+  hr = dev->LightEnable(0, TRUE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("LightEnable(0, TRUE)", hr);
+  }
+  BOOL got_light_en = FALSE;
+  hr = dev->GetLightEnable(0, &got_light_en);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetLightEnable(0)", hr);
+  }
+  if (!got_light_en) {
+    return reporter.Fail("GetLightEnable(0) expected TRUE");
+  }
+
+  hr = dev->LightEnable(0, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("LightEnable(0, FALSE)", hr);
+  }
+  got_light_en = TRUE;
+  hr = dev->GetLightEnable(0, &got_light_en);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetLightEnable(0) after disable", hr);
+  }
+  if (got_light_en) {
+    return reporter.Fail("GetLightEnable(0) expected FALSE after disable");
+  }
+
   return reporter.Pass();
 }
 

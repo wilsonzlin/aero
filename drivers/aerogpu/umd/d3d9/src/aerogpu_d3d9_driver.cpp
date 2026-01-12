@@ -1084,12 +1084,8 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // Shader constant paths (int/bool) are not emitted yet, but some apps query
 // them during initialization. Cache them so Set*/Get* round-trips.
 
-// Fixed-function lighting/material, N-Patch, instancing, and gamma ramp are not
-// supported yet. Treat these as no-ops to avoid Win7 runtime crashes when apps
-// use legacy state paths.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetMaterial, D3d9TraceFunc::DeviceSetMaterial, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetLight, D3d9TraceFunc::DeviceSetLight, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnLightEnable, D3d9TraceFunc::DeviceLightEnable, S_OK);
+// Fixed-function gamma ramp is not supported yet. Treat this as a no-op to avoid
+// Win7 runtime crashes when apps use legacy state paths.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetGammaRamp, D3d9TraceFunc::DeviceSetGammaRamp, S_OK);
 
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
@@ -1129,9 +1125,6 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialog
 // Various state "getters" (largely used by legacy apps). These have output
 // parameters; return a clean failure so callers don't consume uninitialized
 // memory.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetMaterial, D3d9TraceFunc::DeviceGetMaterial, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLight, D3d9TraceFunc::DeviceGetLight, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetLightEnable, D3d9TraceFunc::DeviceGetLightEnable, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPaletteEntries, D3d9TraceFunc::DeviceGetPaletteEntries, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(
     pfnGetCurrentTexturePalette, D3d9TraceFunc::DeviceGetCurrentTexturePalette, D3DERR_NOTAVAILABLE);
@@ -10366,6 +10359,179 @@ HRESULT device_get_clip_plane_dispatch(Args... args) {
   return D3DERR_NOTAVAILABLE;
 }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+HRESULT device_set_material_impl(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMaterial) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetMaterial,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pMaterial),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pMaterial) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->material = *pMaterial;
+  dev->material_valid = true;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_material_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_set_material_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+HRESULT device_get_material_impl(D3DDDI_HDEVICE hDevice, D3DMATERIAL9* pMaterial) {
+  if (pMaterial) {
+    std::memset(pMaterial, 0, sizeof(*pMaterial));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetMaterial,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pMaterial),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pMaterial) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (dev->material_valid) {
+    *pMaterial = dev->material;
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_material_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_material_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename IndexT, typename LightT>
+HRESULT device_set_light_impl(D3DDDI_HDEVICE hDevice, IndexT index, const LightT* pLight) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetLight,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(index)),
+                      d3d9_trace_arg_ptr(pLight),
+                      0);
+  if (!hDevice.pDrvPrivate || !pLight) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(index);
+  if (idx >= Device::kMaxLights) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(&dev->lights[idx], pLight, sizeof(dev->lights[idx]));
+  dev->light_valid[idx] = true;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_set_light_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_light_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename IndexT, typename LightT>
+HRESULT device_get_light_impl(D3DDDI_HDEVICE hDevice, IndexT index, LightT* pLight) {
+  if (pLight) {
+    std::memset(pLight, 0, sizeof(*pLight));
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetLight,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(index)),
+                      d3d9_trace_arg_ptr(pLight),
+                      0);
+  if (!hDevice.pDrvPrivate || !pLight) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(index);
+  if (idx >= Device::kMaxLights) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (dev->light_valid[idx]) {
+    std::memcpy(pLight, &dev->lights[idx], sizeof(dev->lights[idx]));
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_light_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_light_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename IndexT, typename BoolT>
+HRESULT device_light_enable_impl(D3DDDI_HDEVICE hDevice, IndexT index, BoolT enabled) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceLightEnable,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(index)),
+                      static_cast<uint64_t>(d3d9_to_u32(enabled)),
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(index);
+  if (idx >= Device::kMaxLights) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->light_enabled[idx] = d3d9_to_u32(enabled) ? TRUE : FALSE;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_light_enable_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_light_enable_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename IndexT, typename BoolT>
+HRESULT device_get_light_enable_impl(D3DDDI_HDEVICE hDevice, IndexT index, BoolT* pEnabled) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetLightEnable,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(index)),
+                      d3d9_trace_arg_ptr(pEnabled),
+                      0);
+  d3d9_write_u32(pEnabled, 0u);
+  if (!hDevice.pDrvPrivate || !pEnabled) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(index);
+  if (idx >= Device::kMaxLights) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pEnabled, dev->light_enabled[idx] ? 1u : 0u);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_light_enable_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_light_enable_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+#endif
+
 template <typename ValueT>
 HRESULT device_set_software_vertex_processing_impl(D3DDDI_HDEVICE hDevice, ValueT enabled) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetSoftwareVertexProcessing,
@@ -11217,6 +11383,96 @@ template <typename Ret, typename... Args>
 struct aerogpu_d3d9_impl_pfnGetClipPlane<Ret(*)(Args...)> {
   static Ret pfnGetClipPlane(Args... args) {
     return static_cast<Ret>(device_get_clip_plane_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetMaterial;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetMaterial<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetMaterial(Args... args) {
+    return static_cast<Ret>(device_set_material_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetMaterial<Ret(*)(Args...)> {
+  static Ret pfnSetMaterial(Args... args) {
+    return static_cast<Ret>(device_set_material_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetMaterial;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetMaterial<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetMaterial(Args... args) {
+    return static_cast<Ret>(device_get_material_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetMaterial<Ret(*)(Args...)> {
+  static Ret pfnGetMaterial(Args... args) {
+    return static_cast<Ret>(device_get_material_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetLight;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetLight<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetLight(Args... args) {
+    return static_cast<Ret>(device_set_light_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetLight<Ret(*)(Args...)> {
+  static Ret pfnSetLight(Args... args) {
+    return static_cast<Ret>(device_set_light_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetLight;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetLight<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetLight(Args... args) {
+    return static_cast<Ret>(device_get_light_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetLight<Ret(*)(Args...)> {
+  static Ret pfnGetLight(Args... args) {
+    return static_cast<Ret>(device_get_light_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnLightEnable;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnLightEnable<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnLightEnable(Args... args) {
+    return static_cast<Ret>(device_light_enable_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnLightEnable<Ret(*)(Args...)> {
+  static Ret pfnLightEnable(Args... args) {
+    return static_cast<Ret>(device_light_enable_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetLightEnable;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetLightEnable<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetLightEnable(Args... args) {
+    return static_cast<Ret>(device_get_light_enable_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetLightEnable<Ret(*)(Args...)> {
+  static Ret pfnGetLightEnable(Args... args) {
+    return static_cast<Ret>(device_get_light_enable_dispatch(args...));
   }
 };
 
@@ -14588,16 +14844,17 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnSetSamplerState, device_set_sampler_state);
   AEROGPU_SET_D3D9DDI_FN(pfnSetRenderState, device_set_render_state);
   if constexpr (aerogpu_has_member_pfnSetMaterial<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnSetMaterial,
-                           aerogpu_d3d9_stub_pfnSetMaterial<decltype(pDeviceFuncs->pfnSetMaterial)>::pfnSetMaterial);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetMaterial,
+        aerogpu_d3d9_impl_pfnSetMaterial<decltype(pDeviceFuncs->pfnSetMaterial)>::pfnSetMaterial);
   }
   if constexpr (aerogpu_has_member_pfnSetLight<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnSetLight, aerogpu_d3d9_stub_pfnSetLight<decltype(pDeviceFuncs->pfnSetLight)>::pfnSetLight);
+    AEROGPU_SET_D3D9DDI_FN(pfnSetLight, aerogpu_d3d9_impl_pfnSetLight<decltype(pDeviceFuncs->pfnSetLight)>::pfnSetLight);
   }
   if constexpr (aerogpu_has_member_pfnLightEnable<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnLightEnable,
-        aerogpu_d3d9_stub_pfnLightEnable<decltype(pDeviceFuncs->pfnLightEnable)>::pfnLightEnable);
+        aerogpu_d3d9_impl_pfnLightEnable<decltype(pDeviceFuncs->pfnLightEnable)>::pfnLightEnable);
   }
   if constexpr (aerogpu_has_member_pfnSetNPatchMode<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -14813,15 +15070,16 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
         aerogpu_d3d9_impl_pfnEndStateBlock<decltype(pDeviceFuncs->pfnEndStateBlock)>::pfnEndStateBlock);
   }
   if constexpr (aerogpu_has_member_pfnGetMaterial<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetMaterial,
-                           aerogpu_d3d9_stub_pfnGetMaterial<decltype(pDeviceFuncs->pfnGetMaterial)>::pfnGetMaterial);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetMaterial,
+        aerogpu_d3d9_impl_pfnGetMaterial<decltype(pDeviceFuncs->pfnGetMaterial)>::pfnGetMaterial);
   }
   if constexpr (aerogpu_has_member_pfnGetLight<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetLight, aerogpu_d3d9_stub_pfnGetLight<decltype(pDeviceFuncs->pfnGetLight)>::pfnGetLight);
+    AEROGPU_SET_D3D9DDI_FN(pfnGetLight, aerogpu_d3d9_impl_pfnGetLight<decltype(pDeviceFuncs->pfnGetLight)>::pfnGetLight);
   }
   if constexpr (aerogpu_has_member_pfnGetLightEnable<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetLightEnable,
-                           aerogpu_d3d9_stub_pfnGetLightEnable<decltype(
+                           aerogpu_d3d9_impl_pfnGetLightEnable<decltype(
                                pDeviceFuncs->pfnGetLightEnable)>::pfnGetLightEnable);
   }
   if constexpr (aerogpu_has_member_pfnGetRenderTarget<D3D9DDI_DEVICEFUNCS>::value) {
