@@ -686,6 +686,7 @@ fn upload_rgba8(
         ctx,
         texture,
         region,
+        region.size,
         data,
         unpadded_bpr,
         padded_bpr,
@@ -742,6 +743,14 @@ fn upload_bc(
         });
     }
 
+    // WebGPU validates BC uploads/copies against the physical (block-rounded) extent. This means
+    // small mips such as 2x2 are uploaded as a 4x4 block.
+    let copy_size = wgpu::Extent3d {
+        width: blocks_w * 4,
+        height: blocks_h * 4,
+        depth_or_array_layers: region.size.depth_or_array_layers,
+    };
+
     let padded_bpr = align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let layout_rows = blocks_h;
 
@@ -749,6 +758,7 @@ fn upload_bc(
         ctx,
         texture,
         region,
+        copy_size,
         data,
         unpadded_bpr,
         padded_bpr,
@@ -762,6 +772,7 @@ fn upload_with_alignment(
     ctx: &mut UploadContext<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
+    copy_size: wgpu::Extent3d,
     data: &[u8],
     unpadded_bpr: u32,
     padded_bpr: u32,
@@ -802,7 +813,7 @@ fn upload_with_alignment(
                 bytes_per_row,
                 rows_per_image,
             },
-            region.size,
+            copy_size,
         );
         return;
     }
@@ -836,7 +847,7 @@ fn upload_with_alignment(
             origin: region.origin,
             aspect: wgpu::TextureAspect::All,
         },
-        region.size,
+        copy_size,
     );
     ctx.queue.submit([encoder.finish()]);
 }
