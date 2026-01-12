@@ -228,6 +228,8 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   }
 
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
+  // Use a non-symmetric vertex color so we catch D3DCOLOR channel-ordering regressions
+  // (e.g. BGRA-in-memory vs RGBA-in-shader).
   const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
   const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
 
@@ -281,7 +283,9 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   for (uint32_t frame = 0; frame < frames; ++frame) {
     PumpMessages();
 
-    const DWORD tri_color = (frame & 1) ? kBlue : kGreen;
+    // Alternate between blue and red. (Green is symmetric under BGRA<->RGBA swaps, so it would
+    // not catch channel-order regressions.)
+    const DWORD tri_color = (frame & 1) ? kRed : kBlue;
 
     // Update VB contents.
     void* data = NULL;
@@ -359,9 +363,9 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
     }
   }
 
-  // Validate that the center pixel changes across frames (green on frame 0, blue on frame 1).
-  const uint32_t expected0 = 0xFF00FF00u;  // BGRA = (0, 255, 0, 255)
-  const uint32_t expected1 = 0xFF0000FFu;  // BGRA = (255, 0, 0, 255) = blue
+  // Validate that the center pixel changes across frames (blue on frame 0, red on frame 1).
+  const uint32_t expected0 = 0xFF0000FFu;  // BGRA = (255, 0, 0, 255) = blue
+  const uint32_t expected1 = 0xFFFF0000u;  // BGRA = (0, 0, 255, 255) = red
   if ((first_center & 0x00FFFFFFu) != (expected0 & 0x00FFFFFFu) ||
       (second_center & 0x00FFFFFFu) != (expected1 & 0x00FFFFFFu)) {
     if (dump) {
