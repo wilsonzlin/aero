@@ -224,6 +224,7 @@ static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_rea
 static BOOLEAN AerovNetExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR* Desc, _Out_ PHYSICAL_ADDRESS* Start,
                                             _Out_ ULONG* Length) {
   USHORT Large;
+  ULONGLONG Len;
 
   if (Start) {
     Start->QuadPart = 0;
@@ -236,6 +237,8 @@ static BOOLEAN AerovNetExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESC
     return FALSE;
   }
 
+  Len = 0;
+
   switch (Desc->Type) {
     case CmResourceTypeMemory:
       *Start = Desc->u.Memory.Start;
@@ -247,21 +250,29 @@ static BOOLEAN AerovNetExtractMemoryResource(_In_ const CM_PARTIAL_RESOURCE_DESC
        * PCI MMIO above 4GiB may be reported as CmResourceTypeMemoryLarge.
        * The active union member depends on Desc->Flags.
        */
-      *Start = Desc->u.Memory.Start;
       Large = Desc->Flags & (CM_RESOURCE_MEMORY_LARGE_40 | CM_RESOURCE_MEMORY_LARGE_48 | CM_RESOURCE_MEMORY_LARGE_64);
       switch (Large) {
         case CM_RESOURCE_MEMORY_LARGE_40:
-          *Length = Desc->u.Memory40.Length40;
-          return TRUE;
+          *Start = Desc->u.Memory40.Start;
+          Len = ((ULONGLONG)Desc->u.Memory40.Length40) << 8;
+          break;
         case CM_RESOURCE_MEMORY_LARGE_48:
-          *Length = Desc->u.Memory48.Length48;
-          return TRUE;
+          *Start = Desc->u.Memory48.Start;
+          Len = ((ULONGLONG)Desc->u.Memory48.Length48) << 16;
+          break;
         case CM_RESOURCE_MEMORY_LARGE_64:
-          *Length = Desc->u.Memory64.Length64;
-          return TRUE;
+          *Start = Desc->u.Memory64.Start;
+          Len = ((ULONGLONG)Desc->u.Memory64.Length64) << 32;
+          break;
         default:
           return FALSE;
       }
+
+      if (Len > 0xFFFFFFFFull) {
+        return FALSE;
+      }
+      *Length = (ULONG)Len;
+      return TRUE;
 
     default:
       return FALSE;
