@@ -63,6 +63,10 @@ npm ci
 # - web/src/wasm/pkg-threaded/
 # - web/src/wasm/pkg-*-gpu/
 npm -w web run wasm:build
+#
+# If this fails due to missing toolchains (wasm-pack / pinned nightly / rust-src), run:
+#   just setup
+# …then retry the build.
 
 # Start the web UI (served from web/):
 npm run dev:web
