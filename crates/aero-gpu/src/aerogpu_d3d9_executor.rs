@@ -1106,6 +1106,12 @@ impl AerogpuD3d9Executor {
         #[cfg(target_arch = "wasm32")]
         {
             self.persistent_shader_cache = aero_d3d9::runtime::ShaderCache::new();
+            // Reset clears the per-session persistence disable flag. If persistence is still
+            // unavailable (missing APIs, quota issues, etc) it will be re-disabled on the next
+            // lookup.
+            self.stats.set_d3d9_shader_cache_disabled(
+                self.persistent_shader_cache.is_persistent_disabled(),
+            );
         }
         self.resources.clear();
         self.resource_handles.clear();
