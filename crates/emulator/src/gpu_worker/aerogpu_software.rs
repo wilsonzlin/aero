@@ -2807,9 +2807,12 @@ impl AeroGpuSoftwareExecutor {
                         dirty: false,
                     },
                 );
-                // Track live references so shared-surface aliases can keep the
-                // underlying texture alive after the original handle is destroyed.
+                // Track live references so shared-surface aliases can keep the underlying texture
+                // alive after the original handle is destroyed.
                 self.texture_refcounts.insert(handle, 1);
+                // Track original handles in the alias table so `DESTROY_RESOURCE` is idempotent
+                // (duplicate destroys of the same handle must not double-decrement refcounts).
+                self.resource_aliases.insert(handle, handle);
             }
             cmd::AerogpuCmdOpcode::DestroyResource => {
                 let packet_cmd =
@@ -2823,22 +2826,35 @@ impl AeroGpuSoftwareExecutor {
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let resolved = self.resolve_handle(handle);
                 self.buffers.remove(&resolved);
-                self.resource_aliases.remove(&handle);
+
+                // Remove handle tracking first so `resolve_handle` no longer maps it. If the handle
+                // was already destroyed, `remove` returns `None`.
+                let tracked_underlying = self.resource_aliases.remove(&handle);
 
                 let mut destroyed_underlying = false;
-                if let Some(count) = self.texture_refcounts.get_mut(&resolved) {
-                    *count = count.saturating_sub(1);
-                    if *count == 0 {
-                        destroyed_underlying = true;
-                        self.texture_refcounts.remove(&resolved);
-                        self.textures.remove(&resolved);
+                if let Some(underlying) = tracked_underlying {
+                    // Only decrement refcounts when destroying a live handle. Duplicate destroys of
+                    // already-destroyed handles must not double-decrement.
+                    if let Some(count) = self.texture_refcounts.get_mut(&underlying) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            destroyed_underlying = true;
+                            self.texture_refcounts.remove(&underlying);
+                            self.textures.remove(&underlying);
+                            self.retire_shared_surface_tokens_for_resource(underlying);
+                            self.resource_aliases.retain(|_, v| *v != underlying);
+                        }
+                    }
+                } else if self.texture_refcounts.contains_key(&resolved) {
+                    // The handle is no longer live, but the underlying texture is still alive due
+                    // to shared-surface aliases keeping its refcount > 0. Treat duplicate destroys
+                    // of the original handle as an idempotent no-op.
+                } else {
+                    destroyed_underlying = self.textures.remove(&resolved).is_some();
+                    if destroyed_underlying {
                         self.retire_shared_surface_tokens_for_resource(resolved);
                         self.resource_aliases.retain(|_, v| *v != resolved);
                     }
-                } else {
-                    destroyed_underlying = self.textures.remove(&resolved).is_some();
-                    self.retire_shared_surface_tokens_for_resource(resolved);
-                    self.resource_aliases.retain(|_, v| *v != resolved);
                 }
                 self.state.render_targets.iter_mut().for_each(|rt| {
                     if *rt == handle || (destroyed_underlying && *rt == resolved) {
@@ -3989,6 +4005,11 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return true;
                 }
+                // EXPORT requires a live handle (original or alias).
+                if !self.resource_aliases.contains_key(&handle) {
+                    Self::record_error(regs);
+                    return true;
+                }
                 let underlying = self.resolve_handle(handle);
                 if !self.texture_refcounts.contains_key(&underlying) {
                     Self::record_error(regs);
@@ -4027,14 +4048,6 @@ impl AeroGpuSoftwareExecutor {
                 };
                 if let Some(&existing) = self.resource_aliases.get(&out_handle) {
                     if existing != src_handle {
-                        Self::record_error(regs);
-                    }
-                    return true;
-                }
-                if out_handle == src_handle {
-                    // Import is idempotent if the output handle is already bound to the underlying
-                    // resource (the host tracks a per-handle refcount).
-                    if !self.texture_refcounts.contains_key(&src_handle) {
                         Self::record_error(regs);
                     }
                     return true;
