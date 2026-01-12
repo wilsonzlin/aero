@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage::{
-    detect_format, AeroSparseConfig, AeroSparseDisk, DiskError, DiskFormat, DiskImage, MemBackend,
-    Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk,
+    detect_format, AeroSparseConfig, AeroSparseDisk, AeroSparseHeader, DiskError, DiskFormat,
+    DiskImage, MemBackend, Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk,
 };
 use proptest::prelude::*;
 
@@ -343,6 +343,35 @@ fn aerosparse_rejects_table_entry_pointing_past_allocated_region() {
         Err(err) => assert!(matches!(
             err,
             DiskError::CorruptSparseImage("data block offset out of bounds")
+        )),
+    }
+}
+
+#[test]
+fn aerosparse_rejects_absurd_allocation_table_sizes() {
+    // Trigger the hard cap in `AeroSparseDisk::open` without allocating huge memory.
+    let table_entries: u64 = (128 * 1024 * 1024 / 8) + 1;
+    let block_size_bytes: u32 = 512;
+    let disk_size_bytes = table_entries * block_size_bytes as u64;
+
+    let header = AeroSparseHeader {
+        version: 1,
+        block_size_bytes,
+        disk_size_bytes,
+        table_entries,
+        // Invalid, but `open()` must reject based on table size before validating data_offset.
+        data_offset: 0,
+        allocated_blocks: 0,
+    };
+
+    let mut backend = MemBackend::with_len(AEROSPAR_HEADER_SIZE).unwrap();
+    backend.write_at(0, &header.encode()).unwrap();
+
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::Unsupported("aerosparse allocation table too large")
         )),
     }
 }
