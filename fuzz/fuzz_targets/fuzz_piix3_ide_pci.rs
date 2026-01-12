@@ -201,6 +201,7 @@ fuzz_target!(|data: &[u8]| {
     // Attach either an ATA disk or an ATAPI CDROM so we cover both ATA DMA and ATAPI PACKET+DMA
     // paths through the PCI wrapper.
     let attach_atapi: bool = u.arbitrary().unwrap_or(false);
+    let attach_secondary: bool = u.arbitrary().unwrap_or(false);
     let iso_sectors: u32 = (u.arbitrary::<u8>().unwrap_or(32) as u32 % 128).max(1);
 
     // PCI command register seed; we selectively force IO decode / bus mastering for better
@@ -217,8 +218,12 @@ fuzz_target!(|data: &[u8]| {
     let capacity = 64 * SECTOR_SIZE as u64;
     if attach_atapi {
         let backend = MemIso::new(iso_sectors, init);
-        dev.controller
-            .attach_primary_master_atapi(AtapiCdrom::new(Some(Box::new(backend))));
+        let cd = AtapiCdrom::new(Some(Box::new(backend)));
+        if attach_secondary {
+            dev.controller.attach_secondary_master_atapi(cd);
+        } else {
+            dev.controller.attach_primary_master_atapi(cd);
+        }
     } else {
         // Keep the disk small so fuzz runs stay fast.
         let disk = match RawDisk::create(MemBackend::new(), capacity) {
@@ -229,7 +234,11 @@ fuzz_target!(|data: &[u8]| {
             Ok(d) => d,
             Err(_) => return,
         };
-        dev.controller.attach_primary_master_ata(drive);
+        if attach_secondary {
+            dev.controller.attach_secondary_master_ata(drive);
+        } else {
+            dev.controller.attach_primary_master_ata(drive);
+        }
     }
 
     // Program BAR4 via a realistic config write (this applies PCI masking semantics).
@@ -250,6 +259,12 @@ fuzz_target!(|data: &[u8]| {
     // Optional "DMA seed" to reach deeper BMIDE parsing early.
     let seed_dma: bool = u.arbitrary().unwrap_or(true);
     if seed_dma {
+        let cmd_base = if attach_secondary {
+            SECONDARY_BASE
+        } else {
+            PRIMARY_BASE
+        };
+        let bm_chan_off: u16 = if attach_secondary { 8 } else { 0 };
         let prd_seed: u64 = u.arbitrary().unwrap_or(0);
         let buf_seed: u64 = u.arbitrary().unwrap_or(0);
 
@@ -268,14 +283,14 @@ fuzz_target!(|data: &[u8]| {
             mem.write_u16(prd_addr as u64 + 4, byte_len as u16);
             mem.write_u16(prd_addr as u64 + 6, 0x8000);
 
-            // Program Bus Master PRD base (primary channel, reg 4).
-            dev.io_write(bm_base + 4, 4, prd_addr);
+            // Program Bus Master PRD base for the selected channel.
+            dev.io_write(bm_base + bm_chan_off + 4, 4, prd_addr);
 
             // Request DMA via Features bit0.
-            dev.io_write(PRIMARY_BASE + 1, 1, 1);
+            dev.io_write(cmd_base + 1, 1, 1);
 
             // Issue PACKET command.
-            dev.io_write(PRIMARY_BASE + 7, 1, 0xA0);
+            dev.io_write(cmd_base + 7, 1, 0xA0);
 
             // READ(10) packet, with bounded blocks count.
             let max_lba = iso_sectors.saturating_sub(blocks as u32).saturating_sub(1);
@@ -292,11 +307,11 @@ fuzz_target!(|data: &[u8]| {
             // Write packet as 6 words to the data register (little-endian words).
             for chunk in packet.chunks_exact(2) {
                 let word = u16::from_le_bytes([chunk[0], chunk[1]]);
-                dev.io_write(PRIMARY_BASE + 0, 2, word as u32);
+                dev.io_write(cmd_base + 0, 2, word as u32);
             }
 
             // Start Bus Master engine (device -> memory).
-            dev.io_write(bm_base + 0, 1, 0x09);
+            dev.io_write(bm_base + bm_chan_off + 0, 1, 0x09);
 
             dev.tick(&mut mem);
         } else {
@@ -314,10 +329,10 @@ fuzz_target!(|data: &[u8]| {
             mem.write_u16(prd_addr as u64 + 4, byte_len as u16);
             mem.write_u16(prd_addr as u64 + 6, 0x8000);
 
-            // Program Bus Master PRD base (primary channel, reg 4).
-            dev.io_write(bm_base + 4, 4, prd_addr);
+            // Program Bus Master PRD base for the selected channel.
+            dev.io_write(bm_base + bm_chan_off + 4, 4, prd_addr);
 
-            // Program ATA registers for a 28-bit DMA command (primary master, LBA mode).
+            // Program ATA registers for a 28-bit DMA command (master, LBA mode).
             let lba_max = (capacity / SECTOR_SIZE as u64).saturating_sub(sectors as u64);
             let lba: u32 = if lba_max == 0 {
                 0
@@ -327,21 +342,21 @@ fuzz_target!(|data: &[u8]| {
 
             // Drive/head: master + LBA bit set.
             let dev_sel = 0xE0u8 | ((lba >> 24) as u8 & 0x0F);
-            dev.io_write(PRIMARY_BASE + 6, 1, dev_sel as u32);
-            dev.io_write(PRIMARY_BASE + 2, 1, sectors as u32);
-            dev.io_write(PRIMARY_BASE + 3, 1, (lba & 0xFF) as u32);
-            dev.io_write(PRIMARY_BASE + 4, 1, ((lba >> 8) & 0xFF) as u32);
-            dev.io_write(PRIMARY_BASE + 5, 1, ((lba >> 16) & 0xFF) as u32);
+            dev.io_write(cmd_base + 6, 1, dev_sel as u32);
+            dev.io_write(cmd_base + 2, 1, sectors as u32);
+            dev.io_write(cmd_base + 3, 1, (lba & 0xFF) as u32);
+            dev.io_write(cmd_base + 4, 1, ((lba >> 8) & 0xFF) as u32);
+            dev.io_write(cmd_base + 5, 1, ((lba >> 16) & 0xFF) as u32);
 
             // Issue ATA DMA command: READ DMA (0xC8) or WRITE DMA (0xCA).
             let cmd = if dma_write { 0xCAu8 } else { 0xC8u8 };
-            dev.io_write(PRIMARY_BASE + 7, 1, cmd as u32);
+            dev.io_write(cmd_base + 7, 1, cmd as u32);
 
             // Start Bus Master engine (primary channel). Direction bit:
             // - 1 => device -> memory (read)
             // - 0 => memory -> device (write)
             let bm_cmd = if dma_write { 0x01u32 } else { 0x09u32 };
-            dev.io_write(bm_base + 0, 1, bm_cmd);
+            dev.io_write(bm_base + bm_chan_off + 0, 1, bm_cmd);
 
             // Complete DMA synchronously.
             dev.tick(&mut mem);
