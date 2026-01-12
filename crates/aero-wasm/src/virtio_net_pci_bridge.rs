@@ -112,9 +112,9 @@ struct AipcNetBackend {
 }
 
 impl NetBackend for AipcNetBackend {
-    fn transmit(&mut self, packet: &[u8]) {
+    fn transmit(&mut self, packet: Vec<u8>) {
         // Best-effort: drop when full / oversized.
-        let _ = self.net_tx.try_push(packet);
+        let _ = self.net_tx.try_push(&packet);
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
@@ -228,8 +228,7 @@ impl VirtioNetPciBridge {
         };
 
         let bytes = value.to_le_bytes();
-        self.dev
-            .bar0_write(offset as u64, &bytes[..size], &mut self.mem);
+        self.dev.bar0_write(offset as u64, &bytes[..size]);
     }
 
     /// Process any pending queue work and host-driven events (e.g. `NET_RX` packets).
