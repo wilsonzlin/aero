@@ -65,3 +65,73 @@ fn disk_controllers_snapshot_rejects_duplicate_bdf() {
     );
 }
 
+#[test]
+fn disk_controllers_snapshot_rejects_excessive_controller_count() {
+    const TAG_CONTROLLERS: u16 = 1;
+
+    // Keep in sync with `MAX_DISK_CONTROLLER_COUNT` in `aero-io-snapshot`.
+    let controllers = Encoder::new().u32(257).finish();
+
+    let mut w = SnapshotWriter::new(
+        DiskControllersSnapshot::DEVICE_ID,
+        DiskControllersSnapshot::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_CONTROLLERS, controllers);
+
+    let mut state = DiskControllersSnapshot::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject excessive disk controller count");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("disk controller count")
+    );
+}
+
+#[test]
+fn disk_controllers_snapshot_rejects_entry_too_short() {
+    const TAG_CONTROLLERS: u16 = 1;
+
+    // One entry, declared length=1 (<2), and no payload bytes (should fail on the length check
+    // before attempting to read the entry data).
+    let controllers = Encoder::new().u32(1).u32(1).finish();
+
+    let mut w = SnapshotWriter::new(
+        DiskControllersSnapshot::DEVICE_ID,
+        DiskControllersSnapshot::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_CONTROLLERS, controllers);
+
+    let mut state = DiskControllersSnapshot::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject disk controller entry that is too short");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("disk controller entry too short")
+    );
+}
+
+#[test]
+fn disk_controllers_snapshot_rejects_excessive_nested_snapshot_size() {
+    const TAG_CONTROLLERS: u16 = 1;
+
+    // Declare a single entry with an absurd length, which implies a nested snapshot larger than
+    // `MAX_DISK_CONTROLLER_SNAPSHOT_BYTES`. This should be rejected without allocating.
+    let controllers = Encoder::new().u32(1).u32(u32::MAX).finish();
+
+    let mut w = SnapshotWriter::new(
+        DiskControllersSnapshot::DEVICE_ID,
+        DiskControllersSnapshot::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_CONTROLLERS, controllers);
+
+    let mut state = DiskControllersSnapshot::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject excessive disk controller snapshot size");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("disk controller snapshot too large")
+    );
+}
