@@ -653,6 +653,12 @@ let audioHdaBridge: AudioHdaSnapshotBridgeLike | null = null;
 function resolveAudioHdaSnapshotBridge(): AudioHdaSnapshotBridgeLike | null {
   if (audioHdaBridge) return audioHdaBridge;
 
+  // Default to the guest-visible HDA controller bridge if present. This keeps snapshot
+  // save/restore working in the canonical IO-worker path without requiring additional
+  // wiring (older builds may not expose save/load exports; those are treated as absent).
+  const hda = hdaControllerBridge as unknown as AudioHdaSnapshotBridgeLike | null;
+  if (hda) return hda;
+
   // Allow other runtimes/experiments to attach an HDA bridge via a well-known global.
   // This is intentionally best-effort so snapshots can still be loaded in environments
   // without audio support.
