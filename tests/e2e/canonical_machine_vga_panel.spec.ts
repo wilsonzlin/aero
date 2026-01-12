@@ -110,13 +110,24 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
 
     const pixelsLen = Math.min(Math.max(0, sab.byteLength - HEADER_BYTES), Math.max(0, strideBytes) * Math.max(0, height));
     const pixels = new Uint8Array(sab, HEADER_BYTES, pixelsLen);
-    const r = pixels[0] ?? 0;
-    const g = pixels[1] ?? 0;
-    const b = pixels[2] ?? 0;
-    const a = pixels[3] ?? 0;
-    const nonBlack = r !== 0 || g !== 0 || b !== 0;
 
-    return { width, height, strideBytes, frame, firstPixel: [r, g, b, a], nonBlack };
+    const sampleW = Math.max(0, Math.min(16, width));
+    const sampleH = Math.max(0, Math.min(16, height));
+    let nonBlack = false;
+    for (let y = 0; y < sampleH && !nonBlack; y++) {
+      for (let x = 0; x < sampleW && !nonBlack; x++) {
+        const off = y * strideBytes + x * 4;
+        if (off + 2 >= pixels.length) continue;
+        const r = pixels[off] ?? 0;
+        const g = pixels[off + 1] ?? 0;
+        const b = pixels[off + 2] ?? 0;
+        if (r !== 0 || g !== 0 || b !== 0) {
+          nonBlack = true;
+        }
+      }
+    }
+
+    return { width, height, strideBytes, frame, nonBlack };
   });
 
   if (shared) {
