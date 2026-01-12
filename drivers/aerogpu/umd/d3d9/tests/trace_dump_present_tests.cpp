@@ -14,7 +14,8 @@ int main() {
   set_env("AEROGPU_D3D9_TRACE_MODE", "all");
   set_env("AEROGPU_D3D9_TRACE_MAX", "64");
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "2");
-  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "0");
+  // Also enable dump-on-detach; the present-count dump should win (dump is one-shot).
+  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "0");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_STUB", "0");
   set_env("AEROGPU_D3D9_TRACE_FILTER", nullptr);
@@ -37,6 +38,9 @@ int main() {
     trace.ret(S_OK);
     trace.maybe_dump_on_present(2);
   }
+
+  // Ensure dump-on-detach does not produce a second dump after dump-on-present.
+  aerogpu::d3d9_trace_on_process_detach();
 
   const std::string output = slurp_file_after_closing_stderr(out_path);
   int dump_count = 0;
