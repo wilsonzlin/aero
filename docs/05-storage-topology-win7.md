@@ -9,7 +9,8 @@ backends** all agree on:
 - which controllers exist,
 - where they live on the PCI bus (**BDF**),
 - how media is attached (AHCI **port** / IDE **channel+drive**),
-- which interrupt line they raise (**GSI** under Aero’s `PciIntxRouterConfig`).
+- how interrupts are routed (PCI **INTx → GSI** under Aero’s `PciIntxRouterConfig`, plus legacy
+  **IDE channel IRQ14/IRQ15** for ATA/ATAPI).
 
 If you change this topology (BDFs, attachment points, or INTx routing), you must update this doc
 and the corresponding unit test (`crates/devices/tests/win7_storage_topology.rs`).
@@ -78,6 +79,8 @@ This matches the explicit attachment API in the IDE model:
 
 ## Interrupt routing expectations (normative)
 
+### PCI INTx routing (AHCI / NVMe)
+
 Aero’s canonical PCI INTx routing uses:
 
 - `aero_devices::pci::irq_router::PciIntxRouterConfig::default()`
@@ -85,14 +88,30 @@ Aero’s canonical PCI INTx routing uses:
 - Root bus swizzle:
   - `PIRQ = (INTx + device_number) mod 4`
 
-Since the canonical storage controllers use `INTA#`, their routed GSIs are determined purely by the
+Since the PCI INTx storage controllers use `INTA#`, their routed GSIs are determined purely by the
 PCI **device number**:
 
 | Device | BDF | INTx pin | PIRQ | GSI |
 |---|---:|---:|---:|---:|
-| PIIX3 IDE | `00:01.1` | INTA | B | **11** |
 | ICH9 AHCI | `00:02.0` | INTA | C | **12** |
 | NVMe (optional) | `00:03.0` | INTA | D | **13** |
 
 This table is validated by `crates/devices/tests/win7_storage_topology.rs`.
 
+### Legacy IDE channel interrupts (ATA/ATAPI)
+
+Even though PIIX3 IDE is a PCI function (`00:01.1`), the **data-plane** interrupts for legacy
+IDE/ATAPI are the traditional ISA IRQs:
+
+- **Primary channel:** ISA IRQ **14**
+- **Secondary channel:** ISA IRQ **15**
+
+In Aero’s platform interrupt controller (`aero_platform::interrupts::PlatformInterrupts`), ISA IRQs
+map to GSIs of the same number by default (except IRQ0 → GSI2), so these correspond to:
+
+- primary IDE: **GSI 14**
+- secondary IDE: **GSI 15**
+
+Note: `IDE_PIIX3.build_config_space()` still exposes a PCI `Interrupt Pin` (`INTA#`) and an
+`Interrupt Line` consistent with `PciIntxRouterConfig::default()` (currently **11**), but the
+canonical IDE/ATAPI completion interrupts that software relies on are IRQ14/IRQ15.
