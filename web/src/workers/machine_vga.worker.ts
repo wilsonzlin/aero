@@ -198,7 +198,12 @@ function buildSerialBootSector(message: string): Uint8Array {
   sector.set([0xba, 0xf8, 0x03], off);
   off += 3;
 
+  // Reserve enough room for the fixed tail instructions (sti + hlt/jmp) plus the 0x55AA boot
+  // signature at bytes 510..511. We will truncate overly-long messages rather than throwing.
+  const FOOTER_BYTES = 4;
   for (const b of msgBytes) {
+    // Per-byte encoding: mov al, imm8 (2 bytes) + out dx, al (1 byte).
+    if (off + 3 > 510 - FOOTER_BYTES) break;
     // mov al, imm8
     sector.set([0xb0, b], off);
     off += 2;
@@ -223,8 +228,8 @@ function buildSerialBootSector(message: string): Uint8Array {
 
 function buildVbeBootSector(opts: { message: string; width: number; height: number }): Uint8Array {
   const msgBytes = encoder.encode(opts.message);
-  const width = Math.max(1, Math.min(0xffff, opts.width | 0));
-  const height = Math.max(1, Math.min(0xffff, opts.height | 0));
+  const width = Math.max(1, Math.min(0xffff, Math.trunc(opts.width)));
+  const height = Math.max(1, Math.min(0xffff, Math.trunc(opts.height)));
   const sector = new Uint8Array(512);
   let off = 0;
 
@@ -277,7 +282,10 @@ function buildVbeBootSector(opts: { message: string; width: number; height: numb
   // mov dx, 0x3f8
   sector.set([0xba, 0xf8, 0x03], off);
   off += 3;
+  const FOOTER_BYTES = 4;
   for (const b of msgBytes) {
+    // Per-byte encoding: mov al, imm8 (2 bytes) + out dx, al (1 byte).
+    if (off + 3 > 510 - FOOTER_BYTES) break;
     sector.set([0xb0, b, 0xee], off); // mov al, imm8 ; out dx, al
     off += 3;
   }
@@ -286,6 +294,7 @@ function buildVbeBootSector(opts: { message: string; width: number; height: numb
   sector[off++] = 0xfa;
   sector[off++] = 0xf4;
   sector.set([0xeb, 0xfe], off);
+  off += 2;
 
   // Boot signature.
   sector[510] = 0x55;
@@ -589,10 +598,27 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   machine = new api.Machine(ramSizeBytes >>> 0);
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
   const vbeMode = msg.vbeMode;
-  const diskImage =
-    vbeMode && typeof vbeMode === "object" && typeof vbeMode.width === "number" && typeof vbeMode.height === "number"
-      ? buildVbeBootSector({ message: bootMessage, width: vbeMode.width, height: vbeMode.height })
-      : buildSerialBootSector(bootMessage);
+  let diskImage: Uint8Array;
+  if (vbeMode && typeof vbeMode === "object" && typeof vbeMode.width === "number" && typeof vbeMode.height === "number") {
+    const width = Math.trunc(vbeMode.width);
+    const height = Math.trunc(vbeMode.height);
+    const requiredBytes = width * height * 4;
+    if (
+      Number.isFinite(width) &&
+      Number.isFinite(height) &&
+      width > 0 &&
+      height > 0 &&
+      Number.isFinite(requiredBytes) &&
+      requiredBytes > 0 &&
+      requiredBytes <= MAX_VGA_FRAME_BYTES
+    ) {
+      diskImage = buildVbeBootSector({ message: bootMessage, width, height });
+    } else {
+      diskImage = buildSerialBootSector(bootMessage);
+    }
+  } else {
+    diskImage = buildSerialBootSector(bootMessage);
+  }
   machine.set_disk_image(diskImage);
   machine.reset();
 
