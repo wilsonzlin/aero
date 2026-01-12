@@ -99,15 +99,20 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Win7 virtio guest selftest build (x86 + x64 EXEs): [`.github/workflows/win7-virtio-selftest.yml`](../.github/workflows/win7-virtio-selftest.yml)
 - Win7 virtio QEMU harness (self-hosted; end-to-end guest run, incl. virtio-snd wav capture): [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml)
 - Guest Tools packager + spec/config validation: [`.github/workflows/guest-tools-packager.yml`](../.github/workflows/guest-tools-packager.yml)
+- Guest Tools `devices.cmd` regeneration check (must match contract JSON): [`.github/workflows/guest-tools-devices-cmd.yml`](../.github/workflows/guest-tools-devices-cmd.yml)
+- Win7 toolchain smoke (WDK provisioning + `Inf2Cat /os:7_X86,7_X64`): [`.github/workflows/toolchain-win7-smoke.yml`](../.github/workflows/toolchain-win7-smoke.yml)
 - virtio-win packaging smoke tests (optional flow, upstream virtio-win bundles): [`.github/workflows/virtio-win-packaging-smoke.yml`](../.github/workflows/virtio-win-packaging-smoke.yml)
 - Sample virtio driver ISO build + smoke tests: [`.github/workflows/virtio-driver-iso.yml`](../.github/workflows/virtio-driver-iso.yml)
 
-Local equivalents for fast iteration (Linux/macOS host):
+Local equivalents for fast iteration:
 
 ```bash
 # Virtio contract drift checks (docs ↔ INFs ↔ emulator PCI profiles + guest-tools specs)
 python3 scripts/ci/check-windows7-virtio-contract-consistency.py
 python3 scripts/ci/check-windows-virtio-contract.py --check
+
+# Ensure `guest-tools/config/devices.cmd` matches the contract JSON + generator
+python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
 
 # Additional Win7 driver guardrails (fast, no VM required)
 python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
@@ -145,6 +150,9 @@ ctest --test-dir build-virtio-host-tests --output-on-failure
 cmake -S . -B build-aerogpu-host-tests -DAERO_AEROGPU_BUILD_TESTS=ON -DAERO_VIRTIO_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build-aerogpu-host-tests
 ctest --test-dir build-aerogpu-host-tests --output-on-failure --no-tests=error
+
+# Windows-only: validate the installed WDK toolchain can generate Win7 catalogs
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/validate-toolchain.ps1
 ```
 
 ---
