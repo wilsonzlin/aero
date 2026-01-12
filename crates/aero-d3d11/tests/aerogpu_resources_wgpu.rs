@@ -188,9 +188,102 @@ async fn read_texture_rgba8(
     Ok(out)
 }
 
+async fn read_texture_bc(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>> {
+    let (bytes_per_block, block_width, block_height) = match format {
+        wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
+            (8u32, 4u32, 4u32)
+        }
+        wgpu::TextureFormat::Bc2RgbaUnorm
+        | wgpu::TextureFormat::Bc2RgbaUnormSrgb
+        | wgpu::TextureFormat::Bc3RgbaUnorm
+        | wgpu::TextureFormat::Bc3RgbaUnormSrgb
+        | wgpu::TextureFormat::Bc7RgbaUnorm
+        | wgpu::TextureFormat::Bc7RgbaUnormSrgb => (16u32, 4u32, 4u32),
+        other => return Err(anyhow!("read_texture_bc: unsupported format {other:?}")),
+    };
+
+    let blocks_w = width.div_ceil(block_width);
+    let blocks_h = height.div_ceil(block_height);
+    let unpadded_bytes_per_row = blocks_w
+        .checked_mul(bytes_per_block)
+        .ok_or_else(|| anyhow!("read_texture_bc: bytes_per_row overflow"))?;
+
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+    let buffer_size = padded_bytes_per_row as u64 * blocks_h as u64;
+
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("aerogpu_resources read_texture_bc staging"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("aerogpu_resources read_texture_bc encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &staging,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                // For block-compressed formats, WebGPU expresses row counts in block rows.
+                rows_per_image: Some(blocks_h),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+
+    let slice = staging.slice(..);
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    slice.map_async(wgpu::MapMode::Read, move |v| {
+        sender.send(v).ok();
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
+    receiver
+        .receive()
+        .await
+        .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+        .context("wgpu: map_async failed")?;
+
+    let mapped = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((unpadded_bytes_per_row * blocks_h) as usize);
+    for row in 0..blocks_h as usize {
+        let start = row * padded_bytes_per_row as usize;
+        out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
+    }
+    drop(mapped);
+    staging.unmap();
+
+    Ok(out)
+}
+
 async fn create_device_queue_with_features(
     required_features: wgpu::Features,
-) -> Result<(wgpu::Device, wgpu::Queue)> {
+) -> Result<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -238,6 +331,7 @@ async fn create_device_queue_with_features(
             .filter(|a| a.features().contains(required_features)),
     }
     .ok_or_else(|| anyhow!("wgpu: no suitable adapter found for required_features={required_features:?}"))?;
+    let info = adapter.get_info();
 
     let (device, queue) = adapter
         .request_device(
@@ -251,7 +345,7 @@ async fn create_device_queue_with_features(
         .await
         .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
-    Ok((device, queue))
+    Ok((device, queue, info))
 }
 
 #[test]
@@ -452,7 +546,7 @@ fn upload_resource_bc1_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc1_direct_when_bc_feature_enabled() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue) =
+        let (device, queue, _info) =
             match create_device_queue_with_features(wgpu::Features::TEXTURE_COMPRESSION_BC).await {
                 Ok(v) => v,
                 // Optional: only run when BC compression is available and can be enabled.
@@ -497,6 +591,121 @@ fn upload_resource_bc1_direct_when_bc_feature_enabled() -> Result<()> {
         let tex = resources.texture2d(tex_handle)?;
         assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
         assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Bc1RgbaUnorm);
+
+        Ok(())
+    })
+}
+
+#[test]
+fn upload_resource_bc_srgb_direct_roundtrip_when_bc_feature_enabled() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue, info) =
+            match create_device_queue_with_features(wgpu::Features::TEXTURE_COMPRESSION_BC).await {
+                Ok(v) => v,
+                // Optional: only run when BC compression is available and can be enabled.
+                Err(err) => {
+                    eprintln!("skipping {}: {err:#}", module_path!());
+                    return Ok(());
+                }
+            };
+
+        if info.backend == wgpu::Backend::Gl {
+            // `AerogpuD3d11Executor::new_for_tests` disables texture compression on the GL backend
+            // because wgpu's GL compression workflows have been flaky. This test is intended to
+            // validate the "real" compressed path, so skip it on GL.
+            eprintln!(
+                "skipping {}: texture compression is unreliable on wgpu GL backend",
+                module_path!()
+            );
+            return Ok(());
+        }
+
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        // Use two block rows so the resource manager must align bytes_per_row for WebGPU's 256-byte
+        // copy constraint when uploading/copying block-compressed textures.
+        let width = 4;
+        let height = 8;
+
+        struct Case {
+            handle: u32,
+            aerogpu_format: AerogpuFormat,
+            wgpu_format: wgpu::TextureFormat,
+            row_pitch_bytes: u32,
+            data: Vec<u8>,
+        }
+
+        let cases = [
+            Case {
+                handle: 30,
+                aerogpu_format: AerogpuFormat::BC1RgbaUnormSrgb,
+                wgpu_format: wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+                row_pitch_bytes: 8,
+                data: (0u8..16u8).collect(),
+            },
+            Case {
+                handle: 31,
+                aerogpu_format: AerogpuFormat::BC2RgbaUnormSrgb,
+                wgpu_format: wgpu::TextureFormat::Bc2RgbaUnormSrgb,
+                row_pitch_bytes: 16,
+                data: (16u8..48u8).collect(),
+            },
+            Case {
+                handle: 32,
+                aerogpu_format: AerogpuFormat::BC3RgbaUnormSrgb,
+                wgpu_format: wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+                row_pitch_bytes: 16,
+                data: (48u8..80u8).collect(),
+            },
+            Case {
+                handle: 33,
+                aerogpu_format: AerogpuFormat::BC7RgbaUnormSrgb,
+                wgpu_format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                row_pitch_bytes: 16,
+                data: (80u8..112u8).collect(),
+            },
+        ];
+
+        for case in cases {
+            resources.create_texture2d(
+                case.handle,
+                Texture2dCreateDesc {
+                    usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: case.aerogpu_format as u32,
+                    width,
+                    height,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes: case.row_pitch_bytes,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+            )?;
+
+            resources.upload_resource(
+                case.handle,
+                DirtyRange {
+                    offset_bytes: 0,
+                    size_bytes: case.data.len() as u64,
+                },
+                &case.data,
+            )?;
+
+            let tex = resources.texture2d(case.handle)?;
+            assert_eq!(tex.desc.format, case.wgpu_format);
+            assert_eq!(tex.desc.texture_format, case.wgpu_format);
+
+            let readback = read_texture_bc(
+                resources.device(),
+                resources.queue(),
+                &tex.texture,
+                case.wgpu_format,
+                width,
+                height,
+            )
+            .await?;
+            assert_eq!(readback, case.data);
+        }
 
         Ok(())
     })
