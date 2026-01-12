@@ -325,6 +325,9 @@ export function resampleLinearInterleaved(
   srcRate: number,
   dstRate: number,
 ): Float32Array {
+  if (!Number.isFinite(channelCount) || channelCount <= 0) {
+    return new Float32Array();
+  }
   if (!Number.isFinite(srcRate) || !Number.isFinite(dstRate) || srcRate <= 0 || dstRate <= 0) {
     return new Float32Array();
   }
@@ -334,7 +337,53 @@ export function resampleLinearInterleaved(
   if (srcFrames === 0) return new Float32Array();
 
   const ratio = dstRate / srcRate;
+  if (!Number.isFinite(ratio) || ratio <= 0) return new Float32Array();
   const dstFrames = Math.floor(srcFrames * ratio);
+  const out = new Float32Array(dstFrames * channelCount);
+
+  for (let dstI = 0; dstI < dstFrames; dstI++) {
+    const srcPos = dstI / ratio;
+    const srcI0 = Math.floor(srcPos);
+    const frac = srcPos - srcI0;
+    const srcI1 = Math.min(srcI0 + 1, srcFrames - 1);
+
+    for (let c = 0; c < channelCount; c++) {
+      const v0 = input[srcI0 * channelCount + c];
+      const v1 = input[srcI1 * channelCount + c];
+      out[dstI * channelCount + c] = v0 + (v1 - v0) * frac;
+    }
+  }
+
+  return out;
+}
+
+function resampleLinearInterleavedCapped(
+  input: Float32Array,
+  channelCount: number,
+  srcRate: number,
+  dstRate: number,
+  maxDstFrames: number,
+): Float32Array {
+  if (!Number.isFinite(channelCount) || channelCount <= 0) {
+    return new Float32Array();
+  }
+  if (!Number.isFinite(srcRate) || !Number.isFinite(dstRate) || srcRate <= 0 || dstRate <= 0) {
+    return new Float32Array();
+  }
+  if (!Number.isFinite(maxDstFrames) || maxDstFrames <= 0) {
+    return new Float32Array();
+  }
+  if (srcRate === dstRate) return input;
+
+  const srcFrames = Math.floor(input.length / channelCount);
+  if (srcFrames === 0) return new Float32Array();
+
+  const ratio = dstRate / srcRate;
+  if (!Number.isFinite(ratio) || ratio <= 0) return new Float32Array();
+
+  const dstFrames = Math.min(Math.floor(srcFrames * ratio), Math.floor(maxDstFrames));
+  if (dstFrames <= 0) return new Float32Array();
+
   const out = new Float32Array(dstFrames * channelCount);
 
   for (let dstI = 0; dstI < dstFrames; dstI++) {
@@ -359,12 +408,28 @@ export function writeRingBufferInterleaved(
   srcSampleRate: number,
   dstSampleRate: number,
 ): number {
-  const samples =
-    srcSampleRate === dstSampleRate
-      ? input
-      : resampleLinearInterleaved(input, ringBuffer.channelCount, srcSampleRate, dstSampleRate);
+  const cc = ringBuffer.channelCount;
+  if (!Number.isFinite(cc) || cc <= 0) return 0;
 
-  const requestedFrames = Math.floor(samples.length / ringBuffer.channelCount);
+  let requestedFrames = 0;
+  if (srcSampleRate === dstSampleRate) {
+    requestedFrames = Math.floor(input.length / cc);
+  } else if (
+    Number.isFinite(srcSampleRate) &&
+    Number.isFinite(dstSampleRate) &&
+    srcSampleRate > 0 &&
+    dstSampleRate > 0 &&
+    srcSampleRate !== dstSampleRate
+  ) {
+    const srcFrames = Math.floor(input.length / cc);
+    const ratio = dstSampleRate / srcSampleRate;
+    if (srcFrames > 0 && Number.isFinite(ratio) && ratio > 0) {
+      const dstFrames = Math.floor(srcFrames * ratio);
+      if (Number.isFinite(dstFrames) && dstFrames > 0) {
+        requestedFrames = dstFrames;
+      }
+    }
+  }
   if (requestedFrames === 0) return 0;
 
   const read = Atomics.load(ringBuffer.readIndex, 0) >>> 0;
@@ -380,9 +445,13 @@ export function writeRingBufferInterleaved(
   const firstFrames = Math.min(framesToWrite, ringBuffer.capacityFrames - writePos);
   const secondFrames = framesToWrite - firstFrames;
 
-  const cc = ringBuffer.channelCount;
   const firstSamples = firstFrames * cc;
   const secondSamples = secondFrames * cc;
+
+  const samples =
+    srcSampleRate === dstSampleRate
+      ? input
+      : resampleLinearInterleavedCapped(input, cc, srcSampleRate, dstSampleRate, framesToWrite);
 
   ringBuffer.samples.set(samples.subarray(0, firstSamples), writePos * cc);
   if (secondFrames > 0) {

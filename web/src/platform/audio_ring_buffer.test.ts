@@ -87,4 +87,21 @@ describe("writeRingBufferInterleaved overrun telemetry", () => {
 
     expect(ring.samples).toEqual(Float32Array.from([102, 103, 104, 105, 4, 5, 100, 101]));
   });
+
+  it("resamples before writing but caps work to the available ring space", () => {
+    const ring = createTestRingBuffer(1, 4);
+
+    // 4 input frames at 48k -> 8 output frames at 96k.
+    const input = Float32Array.from([0, 1, 2, 3]);
+    expect(writeRingBufferInterleaved(ring, input, 48_000, 96_000)).toBe(4);
+    // 4 frames written, 4 dropped.
+    expect(getRingBufferOverrunCount(ring)).toBe(4);
+    // Verify we wrote the *first* part of the resampled stream.
+    expect(ring.samples).toEqual(Float32Array.from([0, 0.5, 1, 1.5]));
+
+    // Now the ring is full; a resampled write should still bump the overrun counter
+    // but must not allocate/copy an 8-frame resample buffer just to drop it.
+    expect(writeRingBufferInterleaved(ring, input, 48_000, 96_000)).toBe(0);
+    expect(getRingBufferOverrunCount(ring)).toBe(12);
+  });
 });
