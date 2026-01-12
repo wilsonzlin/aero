@@ -114,7 +114,6 @@ pub struct PcMachine {
     mapped_roms: HashMap<u64, usize>,
 
     network_backend: Option<PcNetworkBackend>,
-    e1000_mac_addr: Option<[u8; 6]>,
 }
 
 type DynFrameRing = Box<dyn FrameRing>;
@@ -214,7 +213,6 @@ impl PcMachine {
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             mapped_roms: HashMap::new(),
             network_backend: None,
-            e1000_mac_addr,
         };
 
         machine.reset();
@@ -311,7 +309,10 @@ impl PcMachine {
 
         let platform = &mut self.bus.platform;
         let mapped_roms = &mut self.mapped_roms;
-        let mut bus = PlatformBiosBus { platform, mapped_roms };
+        let mut bus = PlatformBiosBus {
+            platform,
+            mapped_roms,
+        };
         let bios_bus: &mut dyn BiosBus = &mut bus;
         self.bios.post_with_pci(
             &mut self.cpu.state,
@@ -556,7 +557,10 @@ impl PcMachine {
 
         let platform = &mut self.bus.platform;
         let mapped_roms = &mut self.mapped_roms;
-        let mut bus = PlatformBiosBus { platform, mapped_roms };
+        let mut bus = PlatformBiosBus {
+            platform,
+            mapped_roms,
+        };
         let bios_bus: &mut dyn BiosBus = &mut bus;
         self.bios
             .dispatch_interrupt(vector, &mut self.cpu.state, bios_bus, &mut self.disk);
