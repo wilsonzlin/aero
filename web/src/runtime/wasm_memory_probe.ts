@@ -47,8 +47,11 @@ export function computeDefaultWasmMemoryProbeOffset(opts: {
 
   // Probe immediately below the guest RAM base so we don't mutate guest state. In the normal
   // worker configuration this is within the runtime-reserved region and is extremely unlikely to
-  // overlap live Rust/WASM runtime allocations (heap is bounded away from guest RAM by the wasm-side
-  // runtime allocator).
+  // overlap live Rust/WASM runtime allocations.
+  //
+  // Note: the wasm-side runtime allocator (`crates/aero-wasm/src/runtime_alloc.rs`) leaves a small
+  // tail guard at the end of the runtime heap specifically so this probe can use a deterministic
+  // word immediately below guest RAM without overlapping real allocations.
   const layout = opts.api.guest_ram_layout(0);
   const runtimeReserved =
     (typeof layout.runtime_reserved === "number" ? layout.runtime_reserved : layout.guest_base) >>> 0;

@@ -24,6 +24,13 @@ use linked_list_allocator::LockedHeap;
 
 use crate::guest_layout::{RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES};
 
+// Reserve a tiny tail region at the end of the runtime heap so JS/WASM can safely use a
+// deterministic scratch word for linear-memory wiring probes (and other tiny out-of-band
+// instrumentation) without risking clobbering a real Rust allocation.
+//
+// This is intentionally small (<< 1 page) so it doesn't materially reduce available heap.
+const HEAP_TAIL_GUARD_BYTES: usize = 64;
+
 unsafe extern "C" {
     static __heap_base: u8;
 }
@@ -97,7 +104,10 @@ impl RuntimeAllocator {
         // runtime allocations to `[heap_base, runtime_reserved)`.
         let pages = core::arch::wasm32::memory_size(0) as usize;
         let mem_bytes = pages.saturating_mul(page_bytes);
-        let heap_end = min(mem_bytes, reserved_bytes);
+        // Keep a small guard at the end so probes can safely touch e.g. the last 4 bytes
+        // of the runtime-reserved region (immediately below guest RAM) without overlapping
+        // the Rust allocator's usable heap range.
+        let heap_end = min(mem_bytes, reserved_bytes).saturating_sub(HEAP_TAIL_GUARD_BYTES);
 
         if heap_end <= heap_base {
             // No heap available; leave uninitialized. Allocation will fail and
