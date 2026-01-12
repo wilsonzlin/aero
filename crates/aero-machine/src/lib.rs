@@ -3544,9 +3544,18 @@ impl snapshot::SnapshotTarget for Machine {
                     firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data))
                 {
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
-                    // Keep the BIOS VBE LFB base pinned to the emulated VGA device mapping even
-                    // when restoring snapshots that may have captured the legacy in-RAM default.
-                    self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
+                    // Keep the BIOS VBE LFB base coherent with the machine's VGA wiring.
+                    //
+                    // When VGA is enabled, the machine exposes the SVGA linear framebuffer (LFB)
+                    // at the fixed MMIO address `SVGA_LFB_BASE`.
+                    //
+                    // When VGA is disabled, avoid reporting `SVGA_LFB_BASE` since it overlaps the
+                    // canonical PCI MMIO window (0xE0000000).
+                    self.bios.video.vbe.lfb_base = if self.cfg.enable_vga {
+                        aero_gpu_vga::SVGA_LFB_BASE
+                    } else {
+                        firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+                    };
                 }
             }
         }
@@ -3572,57 +3581,68 @@ impl snapshot::SnapshotTarget for Machine {
 
         // VGA/VBE.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::VGA) {
-            // Ensure a VGA device exists before restoring.
-            let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
-                Some(vga) => vga.clone(),
-                None => {
-                    let vga = Rc::new(RefCell::new(VgaDevice::new()));
-                    self.vga = Some(vga.clone());
+            // When VGA is disabled, ignore any VGA snapshot payloads.
+            //
+            // The machine's physical memory bus persists across `reset()` and does not support
+            // unmapping MMIO regions. When VGA is disabled we map the canonical PCI MMIO window at
+            // 0xE0000000, which overlaps `SVGA_LFB_BASE`. Attempting to restore a VGA snapshot would
+            // therefore panic due to MMIO overlap.
+            if !self.cfg.enable_vga {
+                // Treat this as a config mismatch (snapshot taken with VGA enabled, restored into a
+                // headless machine).
+            } else {
+                // Ensure a VGA device exists before restoring.
+                let vga: Rc<RefCell<VgaDevice>> = match &self.vga {
+                    Some(vga) => vga.clone(),
+                    None => {
+                        let vga = Rc::new(RefCell::new(VgaDevice::new()));
+                        self.vga = Some(vga.clone());
 
-                    // Port mappings are part of machine wiring, not the snapshot payload, so
-                    // install the default VGA port ranges now.
-                    self.io
-                        .register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
-                    self.io.register_shared_range(0x01CE, 2, {
-                        let vga = vga.clone();
-                        move |_port| Box::new(VgaPortIo { dev: vga.clone() })
-                    });
+                        // Port mappings are part of machine wiring, not the snapshot payload, so
+                        // install the default VGA port ranges now.
+                        self.io
+                            .register_range(0x3C0, 0x20, Box::new(VgaPortIo { dev: vga.clone() }));
+                        self.io.register_shared_range(0x01CE, 2, {
+                            let vga = vga.clone();
+                            move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                        });
 
-                    // MMIO mappings persist in the physical bus; install legacy + LFB.
-                    self.mem.map_mmio_once(0xA0000, 0x20000, {
-                        let vga = vga.clone();
-                        move || {
-                            Box::new(VgaMmio {
-                                base: 0xA0000,
-                                dev: vga,
-                            })
-                        }
-                    });
-                    let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
-                    let lfb_len = vga.borrow().vram().len() as u64;
-                    self.mem.map_mmio_once(lfb_base, lfb_len, {
-                        let vga = vga.clone();
-                        move || {
-                            Box::new(VgaMmio {
-                                base: lfb_base,
-                                dev: vga,
-                            })
-                        }
-                    });
+                        // MMIO mappings persist in the physical bus; install legacy + LFB.
+                        self.mem.map_mmio_once(0xA0000, 0x20000, {
+                            let vga = vga.clone();
+                            move || {
+                                Box::new(VgaMmio {
+                                    base: 0xA0000,
+                                    dev: vga,
+                                })
+                            }
+                        });
+                        let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
+                        let lfb_len = vga.borrow().vram().len() as u64;
+                        self.mem.map_mmio_once(lfb_base, lfb_len, {
+                            let vga = vga.clone();
+                            move || {
+                                Box::new(VgaMmio {
+                                    base: lfb_base,
+                                    dev: vga,
+                                })
+                            }
+                        });
 
-                    vga
-                }
-            };
+                        vga
+                    }
+                };
 
-            // Prefer the io-snapshot (`VGAD`) encoding; fall back to the legacy `VgaSnapshotV1`
-            // payload for backward compatibility.
-            let io_result = {
-                let mut vga_mut = vga.borrow_mut();
-                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *vga_mut)
-            };
-            if io_result.is_err() && state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
-                if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
-                    vga.borrow_mut().restore_snapshot_v1(&vga_snap);
+                // Prefer the io-snapshot (`VGAD`) encoding; fall back to the legacy `VgaSnapshotV1`
+                // payload for backward compatibility.
+                let io_result = {
+                    let mut vga_mut = vga.borrow_mut();
+                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *vga_mut)
+                };
+                if io_result.is_err() && state.version == aero_gpu_vga::VgaSnapshotV1::VERSION {
+                    if let Ok(vga_snap) = aero_gpu_vga::VgaSnapshotV1::decode(&state.data) {
+                        vga.borrow_mut().restore_snapshot_v1(&vga_snap);
+                    }
                 }
             }
         }
@@ -6349,6 +6369,45 @@ mod tests {
         })
         .unwrap();
         assert_eq!(vga.bios.video.vbe.lfb_base, aero_gpu_vga::SVGA_LFB_BASE);
+    }
+
+    #[test]
+    fn restore_snapshot_ignores_vga_state_when_vga_is_disabled() {
+        // Restoring a VGA-enabled snapshot into a headless machine should not panic due to MMIO
+        // overlap (the headless PC platform maps its PCI MMIO window at 0xE0000000, which overlaps
+        // `SVGA_LFB_BASE`).
+        let mut src = Machine::new(MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut dst = Machine::new(MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: false,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        dst.restore_snapshot_bytes(&snap).unwrap();
+
+        assert!(dst.vga.is_none(), "headless restore should not create a VGA device");
+        assert_eq!(
+            dst.bios.video.vbe.lfb_base,
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+        );
     }
 
     #[test]
