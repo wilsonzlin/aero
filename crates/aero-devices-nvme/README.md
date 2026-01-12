@@ -21,6 +21,15 @@ The controller is intentionally implemented against two small traits:
 - `DiskBackend` (block storage backend)
 - `memory::MemoryBus` (guest physical memory DMA access)
 
+## Using `aero-storage` disks as the backend
+
+Many Aero disk image formats are implemented in the [`aero-storage`](../aero-storage/) crate
+behind the [`aero_storage::VirtualDisk`] trait.
+
+To use an `aero-storage` disk with the NVMe controller without duplicating disk abstractions,
+wrap it with [`aero_storage_adapters::AeroVirtualDiskAsNvmeBackend`] (or the convenience helper
+[`aero_devices_nvme::from_virtual_disk`]).
+
 ## Interrupts
 
 Only legacy INTx signalling is modelled (`NvmeController::intx_level`). MSI/MSI-X is not yet

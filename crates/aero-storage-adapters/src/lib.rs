@@ -9,6 +9,32 @@
 //! The concrete `DiskBackend` implementations live in the crates that define those
 //! traits (Rust orphan rules), but using a shared wrapper type avoids duplicating the
 //! underlying disk abstraction.
+//!
+//! ## Usage (examples)
+//!
+//! Wrap an [`aero_storage::VirtualDisk`] for use with the NVMe device model:
+//!
+//! ```rust,ignore
+//! use aero_devices_nvme::NvmeController;
+//! use aero_storage::{MemBackend, RawDisk};
+//! use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
+//!
+//! let disk = RawDisk::create(MemBackend::new(), 1024 * 512).unwrap();
+//! let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+//! let mut ctrl = NvmeController::new(Box::new(backend));
+//! ```
+//!
+//! Wrap an [`aero_storage::VirtualDisk`] for use with `aero-devices` virtio-blk:
+//!
+//! ```rust,ignore
+//! use aero_devices::storage::VirtualDrive;
+//! use aero_storage::{MemBackend, RawDisk};
+//! use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
+//!
+//! let disk = RawDisk::create(MemBackend::new(), 1024 * 512).unwrap();
+//! let backend = AeroVirtualDiskAsDeviceBackend::new(Box::new(disk));
+//! let drive = VirtualDrive::new(512, Box::new(backend));
+//! ```
 
 use std::io;
 use std::sync::Mutex;

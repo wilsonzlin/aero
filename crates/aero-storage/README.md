@@ -5,6 +5,16 @@ This crate contains Aero’s virtual disk abstractions and pure Rust disk image 
 Browser persistence backends (OPFS + IndexedDB) live in the TypeScript host layer, but
 the formats here are designed to be used directly with those backends.
 
+## Using `aero-storage` disks with device models
+
+Device models such as NVMe and virtio-blk live in separate crates and generally use their own
+disk traits. To avoid duplicating disk abstractions, the workspace provides adapters in
+`crates/aero-storage-adapters/` so an [`aero_storage::VirtualDisk`] can be used as a backend for:
+
+- `aero-devices-nvme` (`DiskBackend`)
+- `aero-devices` virtio-blk (`storage::DiskBackend`)
+- legacy `emulator` storage models (`io::storage::disk::DiskBackend`)
+
 ## Aero Sparse (`AEROSPAR`) format (v1)
 
 The sparse format is optimized for representing *huge* virtual disks (20–40GB+) while
@@ -31,4 +41,3 @@ load eagerly.
 `AeroCowDisk` composes a read-only base disk with a writable sparse overlay. Reads hit
 the overlay when the block is allocated, otherwise fall back to the base. Writes always
 go to the overlay.
-
