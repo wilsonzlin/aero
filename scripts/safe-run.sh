@@ -14,6 +14,155 @@
 # Override example:
 #   AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
 
+should_retry_rustc_thread_error() {
+    local stderr_log="${1:-}"
+    if [[ -z "${stderr_log}" || ! -f "${stderr_log}" ]]; then
+        return 1
+    fi
+
+    local eagain_re="Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN"
+
+    # In shared agent sandboxes we intermittently hit rustc panics when it cannot spawn internal
+    # helper threads/processes due to OS thread limits (EAGAIN/WouldBlock). These failures are
+    # transient and typically succeed after a short backoff.
+    #
+    # Keep matching conservative: require either an exact/near-exact unwrap signature, or a rustc
+    # panic context plus an EAGAIN/WouldBlock marker.
+    #
+    # Newer rustc versions can surface this as:
+    #   thread 'rustc' panicked at 'called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }'
+    local unwrap_eagain_re='called[[:space:]]+`?Result::unwrap\(\)`?[[:space:]]+on[[:space:]]+an[[:space:]]+`?Err`?[[:space:]]+value:[[:space:]]+Os[[:space:]]+\{[[:space:]]*code:[[:space:]]*11,[[:space:]]*kind:[[:space:]]*WouldBlock'
+    if grep -Eq "${unwrap_eagain_re}" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -Eq "thread 'rustc' panicked|panicked at" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Example signatures:
+    # - "failed to create helper thread: ... Resource temporarily unavailable"
+    # - "failed to spawn helper thread: ... Resource temporarily unavailable"
+    # - "failed to spawn work thread: ... Resource temporarily unavailable"
+    # - "failed to spawn coordinator thread: ... Resource temporarily unavailable"
+    # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
+    # - "fork: retry: Resource temporarily unavailable"
+    # - "failed to fork: Resource temporarily unavailable" (observed from some native tools)
+    # - "could not exec the linker `cc`: ... Resource temporarily unavailable"
+    # - "ThreadPoolBuildError { ... Resource temporarily unavailable }" (Rayon thread pool init)
+    # - "std::system_error: Resource temporarily unavailable" (observed from linkers like lld)
+    if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -q "failed to create helper thread" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -q "fork: retry: Resource temporarily unavailable" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -qi "failed to fork" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Cargo can also surface EAGAIN process spawn failures as a generic "could not execute process"
+    # error (e.g. failing to spawn rustc at all).
+    if grep -q "could not execute process" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Some build scripts (notably `autocfg`) collapse process-spawn failures into a generic
+    # "could not execute rustc" error without preserving the underlying OS errno. This is
+    # frequently transient under shared-host contention, so treat it as retryable.
+    if grep -q "could not execute rustc" "${stderr_log}"; then
+        return 0
+    fi
+
+    if grep -q "failed to spawn" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Cargo occasionally fails very early while probing the compiler for target-specific
+    # information (e.g. `rustc - --print=cfg ...`) and reports it as:
+    #
+    #   error: failed to run `rustc` to learn about target-specific information
+    #
+    # When this is caused by transient OS resource limits (EAGAIN/WouldBlock), retry/backoff is
+    # effective.
+    if grep -q 'failed to run `rustc` to learn about target-specific information' "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # rustc can also panic inside `rustc_interface` when it fails to spawn threads / enter its
+    # internal thread pool. Depending on where this happens, Cargo may not emit the usual
+    # "failed to spawn helper thread" signature; it may only include the panic location.
+    # Treat these as retryable when they are clearly caused by EAGAIN/WouldBlock.
+    if grep -q "rustc_interface/src/util.rs" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # As a catch-all: rustc reports internal compiler errors (ICEs) with a generic banner.
+    # If the ICE clearly stems from OS resource limits (EAGAIN/WouldBlock), retry/backoff is
+    # usually sufficient.
+    if grep -q "error: the compiler unexpectedly panicked" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Some environments hit transient EAGAIN failures inside `git` itself (e.g. when Cargo fetches
+    # git dependencies), which surface as:
+    #
+    #   fatal: unable to create threaded lstat: Resource temporarily unavailable
+    #
+    # This is also fixed by retry/backoff.
+    if grep -q "unable to create threaded lstat" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Some failures show up wrapped as a thread pool build error rather than the direct rustc
+    # "failed to spawn helper thread" signature (e.g. Rayon global pool init).
+    if grep -q "ThreadPoolBuildError" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Some native tools (e.g. LLVM lld) report EAGAIN thread failures as a C++ std::system_error.
+    if grep -q "std::system_error" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    # Cargo/rustc can also surface transient EAGAIN process limits as an inability to exec the
+    # system linker (commonly `cc`). This is typically transient on shared/limited sandboxes.
+    #
+    # Example signatures:
+    # - "error: could not exec the linker `cc`: Resource temporarily unavailable (os error 11)"
+    # - "error: could not execute process `cc` ...: Resource temporarily unavailable (os error 11)"
+    if grep -Eq "could not exec|could not execute process" "${stderr_log}" \
+        && grep -Eq "${eagain_re}" "${stderr_log}"
+    then
+        return 0
+    fi
+
+    return 1
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -344,144 +493,6 @@ fi
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 
 
-should_retry_rustc_thread_error() {
-    local stderr_log="${1:-}"
-    if [[ -z "${stderr_log}" || ! -f "${stderr_log}" ]]; then
-        return 1
-    fi
-
-    # In shared agent sandboxes we intermittently hit rustc panics when it cannot spawn internal
-    # helper threads due to OS thread limits (EAGAIN/WouldBlock). These failures are transient and
-    # typically succeed after a short backoff.
-    #
-    # Example signatures:
-    # - "failed to create helper thread: ... Resource temporarily unavailable"
-    # - "failed to spawn helper thread: ... Resource temporarily unavailable"
-    # - "failed to spawn work thread: ... Resource temporarily unavailable"
-    # - "failed to spawn coordinator thread: ... Resource temporarily unavailable"
-    # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
-    # - "fork: retry: Resource temporarily unavailable"
-    # - "failed to fork: Resource temporarily unavailable" (observed from some native tools)
-    # - "could not exec the linker `cc`: ... Resource temporarily unavailable"
-    # - "ThreadPoolBuildError { ... Resource temporarily unavailable }" (Rayon thread pool init)
-    # - "std::system_error: Resource temporarily unavailable" (observed from linkers like lld)
-    if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
-        return 0
-    fi
-    if grep -q "failed to create helper thread" "${stderr_log}"; then
-        return 0
-    fi
-    if grep -q "fork: retry: Resource temporarily unavailable" "${stderr_log}"; then
-        return 0
-    fi
-    if grep -qi "failed to fork" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-    # Cargo can also surface EAGAIN process spawn failures as a generic "could not execute process"
-    # error (e.g. failing to spawn rustc at all):
-    #
-    #   error: could not compile `foo` (lib)
-    #
-    #   Caused by:
-    #     could not execute process `rustc ...` (never executed)
-    #
-    #   Caused by:
-    #     Resource temporarily unavailable (os error 11)
-    #
-    # This is also transient under shared-host contention and benefits from retry/backoff.
-    if grep -q "could not execute process" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-    # Some build scripts (notably `autocfg`) collapse process-spawn failures into a generic
-    # "could not execute rustc" error without preserving the underlying OS errno. This is
-    # frequently transient under shared-host contention, so treat it as retryable.
-    if grep -q "could not execute rustc" "${stderr_log}"; then
-        return 0
-    fi
-    if grep -q "failed to spawn" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # Cargo occasionally fails very early while probing the compiler for target-specific
-    # information (e.g. `rustc - --print=cfg ...`) and reports it as:
-    #
-    #   error: failed to run `rustc` to learn about target-specific information
-    #
-    # When this is caused by transient OS resource limits (EAGAIN/WouldBlock), retry/backoff is
-    # effective.
-    if grep -q 'failed to run `rustc` to learn about target-specific information' "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # rustc can also panic inside `rustc_interface` when it fails to spawn threads / enter its
-    # internal thread pool. Depending on where this happens, Cargo may not emit the usual
-    # "failed to spawn helper thread" signature; it may only include the panic location.
-    # Treat these as retryable when they are clearly caused by EAGAIN/WouldBlock.
-    if grep -q "rustc_interface/src/util.rs" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # As a catch-all: rustc reports internal compiler errors (ICEs) with a generic banner.
-    # If the ICE clearly stems from OS resource limits (EAGAIN/WouldBlock), retry/backoff is
-    # usually sufficient.
-    if grep -q "error: the compiler unexpectedly panicked" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # Some environments hit transient EAGAIN failures inside `git` itself (e.g. when Cargo fetches
-    # git dependencies), which surface as:
-    #
-    #   fatal: unable to create threaded lstat: Resource temporarily unavailable
-    #
-    # This is also fixed by retry/backoff.
-    if grep -q "unable to create threaded lstat" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # Some failures show up wrapped as a thread pool build error rather than the direct rustc
-    # "failed to spawn helper thread" signature (e.g. Rayon global pool init).
-    if grep -q "ThreadPoolBuildError" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # Some native tools (e.g. LLVM lld) report EAGAIN thread failures as a C++ std::system_error.
-    if grep -q "std::system_error" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    # Cargo/rustc can also surface transient EAGAIN process limits as an inability to exec the
-    # system linker (commonly `cc`). This is typically transient on shared/limited sandboxes.
-    #
-    # Example signatures:
-    # - "error: could not exec the linker `cc`: Resource temporarily unavailable (os error 11)"
-    # - "error: could not execute process `cc` ...: Resource temporarily unavailable (os error 11)"
-    if grep -Eq "could not exec|could not execute process" "${stderr_log}" \
-        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
-    then
-        return 0
-    fi
-
-    return 1
-}
-
 run_once() {
     local stderr_log="${1}"
     shift
@@ -590,3 +601,4 @@ while true; do
     rm -f "${stderr_log}"
     exit "${status}"
 done
+fi
