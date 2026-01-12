@@ -81,7 +81,7 @@ The exact names vary by Aero version/UI, but the mapping is typically:
 | Network | Intel e1000 | virtio-net | If networking breaks, switch back to e1000 and boot. |
 | Graphics | VGA | Aero GPU | If you get a black screen, switch back to VGA and recover. |
 | Input | PS/2 keyboard + mouse | virtio-input | Optional; switch last. If input breaks, switch back to PS/2. |
-| Audio | HDA (Intel HD Audio) | virtio-snd | Optional; does not affect boot. If audio breaks, keep HDA. For baseline HDA validation, see [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md). |
+| Audio | HDA (Intel HD Audio) | virtio-snd *(when supported)* | Optional; does not affect boot. If audio breaks (or virtio-snd is unavailable in your runtime), keep HDA. For baseline HDA validation, see [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md). |
 
 ### Why Windows 7 SP1 matters
 
@@ -465,6 +465,8 @@ Virtio audio does not affect boot, so treat it as an optional final step:
 3. Boot Windows and test audio:
    - Control Panel → **Sound** → **Playback** tab: confirm the virtio-snd output endpoint exists.
    - Control Panel → **Sound** → **Recording** tab: confirm the virtio-snd capture endpoint exists.
+
+Note: this step depends on your VM/runtime actually exposing a virtio-snd device. If your current runtime does not support virtio-snd yet (for example, some browser/IO-worker configurations), keep **HDA** enabled and skip this step.
 
 ## Step 6: Run `verify.cmd` and interpret `report.txt`
 
