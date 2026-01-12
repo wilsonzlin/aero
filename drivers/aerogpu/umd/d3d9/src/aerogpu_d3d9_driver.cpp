@@ -12168,21 +12168,22 @@ HRESULT device_set_shader_const_i_impl(
   if (!hDevice.pDrvPrivate || !pData || count == 0) {
     return trace.ret(E_INVALIDARG);
   }
-  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  // Be permissive: some header/runtime combinations may not use the exact {0,1}
+  // encoding at the DDI boundary. Match the shader binding path, which treats
+  // any non-VS stage as PS.
+  const uint32_t stage_norm = (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
   if (start >= 256 || count > 256u - start) {
     return trace.ret(kD3DErrInvalidCall);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  int32_t* dst = (st == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
+  int32_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
   const uint32_t base = start * 4u;
   const uint32_t elems = count * 4u;
   for (uint32_t i = 0; i < elems; ++i) {
     dst[base + i] = static_cast<int32_t>(pData[i]);
   }
-  stateblock_record_shader_const_i_locked(dev, st, start, dst + base, count);
+  stateblock_record_shader_const_i_locked(dev, stage_norm, start, dst + base, count);
   return trace.ret(S_OK);
 }
 
@@ -12216,15 +12217,13 @@ HRESULT device_get_shader_const_i_impl(
   if (!hDevice.pDrvPrivate || !pData || count == 0) {
     return trace.ret(E_INVALIDARG);
   }
-  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  const uint32_t stage_norm = (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
   if (start >= 256 || count > 256u - start) {
     return trace.ret(kD3DErrInvalidCall);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const int32_t* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
+  const int32_t* src = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
   const uint32_t base = start * 4u;
   const uint32_t elems = count * 4u;
   for (uint32_t i = 0; i < elems; ++i) {
@@ -12259,19 +12258,17 @@ HRESULT device_set_shader_const_b_impl(
   if (!hDevice.pDrvPrivate || !pData || count == 0) {
     return trace.ret(E_INVALIDARG);
   }
-  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  const uint32_t stage_norm = (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
   if (start >= 256 || count > 256u - start) {
     return trace.ret(kD3DErrInvalidCall);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  uint8_t* dst = (st == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
+  uint8_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
   for (uint32_t i = 0; i < count; ++i) {
     dst[start + i] = pData[i] ? 1u : 0u;
   }
-  stateblock_record_shader_const_b_locked(dev, st, start, dst + start, count);
+  stateblock_record_shader_const_b_locked(dev, stage_norm, start, dst + start, count);
   return trace.ret(S_OK);
 }
 
@@ -12305,15 +12302,13 @@ HRESULT device_get_shader_const_b_impl(
   if (!hDevice.pDrvPrivate || !pData || count == 0) {
     return trace.ret(E_INVALIDARG);
   }
-  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  const uint32_t stage_norm = (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
   if (start >= 256 || count > 256u - start) {
     return trace.ret(kD3DErrInvalidCall);
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const uint8_t* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
+  const uint8_t* src = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
   for (uint32_t i = 0; i < count; ++i) {
     pData[i] = static_cast<DataT>(src[start + i] ? 1u : 0u);
   }
@@ -12634,12 +12629,10 @@ HRESULT device_get_shader_impl(D3DDDI_HDEVICE hDevice, StageT stage, HandleT* ph
     return trace.ret(E_INVALIDARG);
   }
   const uint32_t st = d3d9_to_u32(stage);
-  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  const uint32_t stage_norm = (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  Shader* sh = (st == kD3d9ShaderStageVs) ? dev->user_vs : dev->user_ps;
+  Shader* sh = (stage_norm == kD3d9ShaderStageVs) ? dev->user_vs : dev->user_ps;
   d3d9_write_handle(phShader, sh);
   return trace.ret(S_OK);
 }
@@ -12676,9 +12669,7 @@ HRESULT device_get_shader_const_f_impl(
   if (!hDevice.pDrvPrivate || !pData || count == 0) {
     return trace.ret(E_INVALIDARG);
   }
-  if (st != kD3d9ShaderStageVs && st != kD3d9ShaderStagePs) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  const uint32_t stage_norm = (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
   if (start >= 256) {
     return trace.ret(kD3DErrInvalidCall);
   }
@@ -12687,7 +12678,7 @@ HRESULT device_get_shader_const_f_impl(
   }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const float* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
+  const float* src = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
   std::memcpy(pData, src + start * 4, static_cast<size_t>(count) * 4 * sizeof(float));
   return trace.ret(S_OK);
 }
