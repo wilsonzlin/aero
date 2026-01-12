@@ -1510,7 +1510,11 @@ function maybeInitHdaDevice(): void {
     const canLoad = typeof anyBridge.load_state === "function" || typeof anyBridge.restore_state === "function";
     audioHdaBridge = canSave && canLoad ? (bridge as AudioHdaSnapshotBridgeLike) : null;
     hdaDevice = dev;
-    mgr.registerPciDevice(dev);
+    try {
+      mgr.registerPciDevice(dev, { device: 4, function: 0 });
+    } catch {
+      mgr.registerPciDevice(dev);
+    }
     mgr.addTickable(dev);
 
     // Apply any existing microphone ring-buffer attachment.
