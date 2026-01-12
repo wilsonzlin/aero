@@ -78,6 +78,10 @@ pub enum ResetEvent {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PcPlatformConfig {
+    /// Enable the Intel HDA controller (ICH6 model).
+    ///
+    /// Note: the actual HDA device integration is feature-gated behind the crate feature `hda`.
+    /// When `hda` is disabled, this flag is ignored (no HDA device will be instantiated).
     pub enable_hda: bool,
     pub enable_nvme: bool,
     pub enable_ahci: bool,
@@ -914,6 +918,7 @@ impl PcPlatform {
     }
 
     pub fn new_with_hda(ram_size: usize) -> Self {
+        // Note: the HDA device itself is only included when the crate feature `hda` is enabled.
         Self::new_with_config(
             ram_size,
             PcPlatformConfig {
@@ -924,6 +929,7 @@ impl PcPlatform {
     }
 
     pub fn new_with_hda_dirty_tracking(ram_size: usize) -> Self {
+        // Note: the HDA device itself is only included when the crate feature `hda` is enabled.
         Self::new_with_config_dirty_tracking(
             ram_size,
             PcPlatformConfig {
