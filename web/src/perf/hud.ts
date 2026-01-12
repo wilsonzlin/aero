@@ -472,6 +472,9 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
   window.addEventListener('keydown', (ev) => {
     if (ev.repeat) return;
     if (isTextInput(ev.target)) return;
+    // If another layer (e.g. VM input capture) already consumed the keystroke, do not
+    // trigger HUD hotkeys.
+    if (ev.defaultPrevented) return;
 
     if (ev.key === 'F2' || (ev.ctrlKey && ev.shiftKey && (ev.code === 'KeyP' || ev.key.toLowerCase() === 'p'))) {
       ev.preventDefault();
