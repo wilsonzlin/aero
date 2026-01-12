@@ -454,15 +454,15 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceSetConvolutionMonoKernel:
       return "Device::SetConvolutionMonoKernel (stub)";
     case D3d9TraceFunc::DeviceSetAutoGenFilterType:
-      return "Device::SetAutoGenFilterType (stub)";
+      return "Device::SetAutoGenFilterType";
     case D3d9TraceFunc::DeviceGetAutoGenFilterType:
-      return "Device::GetAutoGenFilterType (stub)";
+      return "Device::GetAutoGenFilterType";
     case D3d9TraceFunc::DeviceGenerateMipSubLevels:
       return "Device::GenerateMipSubLevels (stub)";
     case D3d9TraceFunc::DeviceSetPriority:
-      return "Device::SetPriority (stub)";
+      return "Device::SetPriority";
     case D3d9TraceFunc::DeviceGetPriority:
-      return "Device::GetPriority (stub)";
+      return "Device::GetPriority";
     case D3d9TraceFunc::kCount:
       break;
   }
