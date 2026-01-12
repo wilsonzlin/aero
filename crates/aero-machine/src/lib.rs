@@ -447,6 +447,11 @@ pub struct Machine {
 
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
+
+    // Temporary storage used during snapshot restore: `restore_device_states` decodes
+    // CPU_INTERNAL but `post_restore` resets `cpu.pending` to a baseline default before
+    // applying this machine-defined state back on top.
+    restored_cpu_internal: Option<snapshot::CpuInternalState>,
 }
 
 impl Machine {
@@ -473,6 +478,7 @@ impl Machine {
             serial_log: Vec::new(),
             next_snapshot_id: 1,
             last_snapshot_id: None,
+            restored_cpu_internal: None,
         };
 
         machine.reset();
@@ -862,6 +868,23 @@ impl snapshot::SnapshotSource for Machine {
             ));
         }
 
+        // CPU_INTERNAL: non-architectural Tier-0 bookkeeping required for deterministic resume.
+        let cpu_internal = snapshot::CpuInternalState {
+            interrupt_inhibit: self.cpu.pending.interrupt_inhibit(),
+            pending_external_interrupts: self
+                .cpu
+                .pending
+                .external_interrupts
+                .iter()
+                .copied()
+                .collect(),
+        };
+        devices.push(
+            cpu_internal
+                .to_device_state()
+                .expect("CpuInternalState encode cannot fail"),
+        );
+
         devices
     }
 
@@ -902,6 +925,8 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn restore_cpu_state(&mut self, state: snapshot::CpuState) {
+        // Clear any stale restore-only state before applying new snapshot sections.
+        self.restored_cpu_internal = None;
         snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
     }
 
@@ -950,6 +975,11 @@ impl snapshot::SnapshotTarget for Machine {
                         &mut *ctrl.borrow_mut(),
                     );
                 }
+                snapshot::DeviceId::CPU_INTERNAL => {
+                    if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
+                        self.restored_cpu_internal = Some(decoded);
+                    }
+                }
                 _ => {}
             }
         }
@@ -975,7 +1005,16 @@ impl snapshot::SnapshotTarget for Machine {
     fn post_restore(&mut self) -> snapshot::Result<()> {
         self.reset_latch.clear();
         self.assist = AssistContext::default();
+        // Reset non-architectural interrupt bookkeeping to a deterministic baseline. If the
+        // snapshot contains a CPU_INTERNAL device entry, apply its fields back on top.
+        let cpu_internal = self.restored_cpu_internal.take();
         self.cpu.pending = Default::default();
+        if let Some(cpu_internal) = cpu_internal {
+            self.cpu
+                .pending
+                .set_interrupt_inhibit(cpu_internal.interrupt_inhibit);
+            self.cpu.pending.external_interrupts = cpu_internal.pending_external_interrupts.into();
+        }
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         Ok(())
@@ -986,6 +1025,7 @@ impl snapshot::SnapshotTarget for Machine {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::io::{Cursor, Read};
 
     fn build_serial_boot_sector(message: &[u8]) -> [u8; 512] {
         let mut sector = [0u8; 512];
@@ -1056,24 +1096,150 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_restore_clears_cpu_pending_state() {
+    fn snapshot_restore_roundtrips_cpu_internal_state() {
         let cfg = MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
             ..Default::default()
         };
 
         let mut src = Machine::new(cfg.clone()).unwrap();
+        src.cpu.pending.set_interrupt_inhibit(7);
+        src.cpu.pending.inject_external_interrupt(0x20);
+        src.cpu.pending.inject_external_interrupt(0x21);
         let snap = src.take_snapshot_full().unwrap();
 
         let mut restored = Machine::new(cfg).unwrap();
+        restored.cpu.pending.set_interrupt_inhibit(1);
+        restored.cpu.pending.inject_external_interrupt(0x33);
         restored.cpu.pending.raise_software_interrupt(0x80, 0);
-        restored.cpu.pending.inject_external_interrupt(0x20);
-        assert!(restored.cpu.pending.has_pending_event());
-        assert!(!restored.cpu.pending.external_interrupts.is_empty());
-
         restored.restore_snapshot_bytes(&snap).unwrap();
 
         assert!(!restored.cpu.pending.has_pending_event());
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 7);
+        assert_eq!(
+            restored
+                .cpu
+                .pending
+                .external_interrupts
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0x20, 0x21]
+        );
+    }
+
+    fn strip_cpu_internal_device_state(bytes: &[u8]) -> Vec<u8> {
+        const FILE_HEADER_LEN: usize = 16;
+        const SECTION_HEADER_LEN: usize = 16;
+
+        let mut r = Cursor::new(bytes);
+        let mut file_header = [0u8; FILE_HEADER_LEN];
+        r.read_exact(&mut file_header).unwrap();
+
+        let mut out = Vec::with_capacity(bytes.len());
+        out.extend_from_slice(&file_header);
+
+        let mut removed = 0usize;
+
+        while (r.position() as usize) < bytes.len() {
+            let mut section_header = [0u8; SECTION_HEADER_LEN];
+            // Valid snapshots end cleanly at EOF.
+            if let Err(e) = r.read_exact(&mut section_header) {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    break;
+                }
+                panic!("failed to read section header: {e}");
+            }
+
+            let id = u32::from_le_bytes(section_header[0..4].try_into().unwrap());
+            let version = u16::from_le_bytes(section_header[4..6].try_into().unwrap());
+            let flags = u16::from_le_bytes(section_header[6..8].try_into().unwrap());
+            let len = u64::from_le_bytes(section_header[8..16].try_into().unwrap());
+
+            let mut payload = vec![0u8; len as usize];
+            r.read_exact(&mut payload).unwrap();
+
+            if id != snapshot::SectionId::DEVICES.0 {
+                out.extend_from_slice(&section_header);
+                out.extend_from_slice(&payload);
+                continue;
+            }
+
+            let mut pr = Cursor::new(&payload);
+            let mut count_bytes = [0u8; 4];
+            pr.read_exact(&mut count_bytes).unwrap();
+            let count = u32::from_le_bytes(count_bytes) as usize;
+
+            let mut kept = Vec::new();
+            for _ in 0..count {
+                let mut dev_header = [0u8; 16];
+                pr.read_exact(&mut dev_header).unwrap();
+                let dev_id = u32::from_le_bytes(dev_header[0..4].try_into().unwrap());
+                let dev_len = u64::from_le_bytes(dev_header[8..16].try_into().unwrap());
+                let mut dev_data = vec![0u8; dev_len as usize];
+                pr.read_exact(&mut dev_data).unwrap();
+
+                if dev_id == snapshot::DeviceId::CPU_INTERNAL.0 {
+                    removed += 1;
+                    continue;
+                }
+
+                let mut bytes = Vec::with_capacity(dev_header.len() + dev_data.len());
+                bytes.extend_from_slice(&dev_header);
+                bytes.extend_from_slice(&dev_data);
+                kept.push(bytes);
+            }
+
+            assert_eq!(
+                pr.position() as usize,
+                payload.len(),
+                "devices section parse did not consume full payload"
+            );
+
+            let mut new_payload = Vec::new();
+            let new_count: u32 = kept.len().try_into().unwrap();
+            new_payload.extend_from_slice(&new_count.to_le_bytes());
+            for dev in kept {
+                new_payload.extend_from_slice(&dev);
+            }
+            let new_len: u64 = new_payload.len().try_into().unwrap();
+
+            out.extend_from_slice(&id.to_le_bytes());
+            out.extend_from_slice(&version.to_le_bytes());
+            out.extend_from_slice(&flags.to_le_bytes());
+            out.extend_from_slice(&new_len.to_le_bytes());
+            out.extend_from_slice(&new_payload);
+        }
+
+        assert!(removed > 0, "snapshot did not contain a CPU_INTERNAL entry");
+        out
+    }
+
+    #[test]
+    fn restore_snapshot_without_cpu_internal_clears_pending_state() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        src.cpu.pending.set_interrupt_inhibit(7);
+        src.cpu.pending.inject_external_interrupt(0x20);
+        src.cpu.pending.inject_external_interrupt(0x21);
+        let snap = src.take_snapshot_full().unwrap();
+        let snap_without_cpu_internal = strip_cpu_internal_device_state(&snap);
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.cpu.pending.set_interrupt_inhibit(1);
+        restored.cpu.pending.inject_external_interrupt(0x33);
+        restored.cpu.pending.raise_software_interrupt(0x80, 0);
+
+        restored
+            .restore_snapshot_bytes(&snap_without_cpu_internal)
+            .unwrap();
+
+        assert!(!restored.cpu.pending.has_pending_event());
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), 0);
         assert!(restored.cpu.pending.external_interrupts.is_empty());
     }
 

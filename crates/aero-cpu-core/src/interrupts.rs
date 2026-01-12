@@ -302,6 +302,19 @@ impl PendingEventState {
         }
     }
 
+    /// Current interrupt inhibition/shadow counter.
+    ///
+    /// This is non-architectural Tier-0 bookkeeping that must be preserved across
+    /// snapshot/restore for deterministic resumption.
+    pub fn interrupt_inhibit(&self) -> u8 {
+        self.interrupt_inhibit
+    }
+
+    /// Set interrupt inhibition/shadow counter (snapshot/restore).
+    pub fn set_interrupt_inhibit(&mut self, value: u8) {
+        self.interrupt_inhibit = value;
+    }
+
     /// Whether there is a pending exception/interrupt waiting to be delivered.
     ///
     /// This is primarily used by execution glue (`exec::Vcpu`) to decide whether
