@@ -416,6 +416,13 @@ Mitigations:
   CARGO_HOME="$PWD/.cargo-home" cargo build --locked
   ```
 
+  If you are running via `safe-run.sh`, you can opt into the same behavior without
+  sourcing `scripts/agent-env.sh`:
+
+  ```bash
+  AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh cargo build --locked
+  ```
+
   If you are using the agent env helper, you can opt into the same behavior:
 
   ```bash
