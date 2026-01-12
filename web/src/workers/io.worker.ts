@@ -2560,7 +2560,21 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         // Use a distinct offset from the CPU worker probe so concurrent init cannot race on the
         // same 32-bit word and trigger false-negative wiring failures.
         const memProbeGuestOffset = 0x104;
-        const guestBaseBytes = api.guest_ram_layout(0).guest_base >>> 0;
+        // Prefer the coordinator-provided guest RAM base from the shared status SAB so we
+        // validate the exact same address mapping used by the JS device models.
+        //
+        // (We fall back to the WASM-exported `guest_ram_layout()` contract if the status view
+        // isn't readable for some reason.)
+        let guestBaseBytes = 0;
+        try {
+          const statusView = new Int32Array(init.controlSab, 0, 64);
+          guestBaseBytes = Atomics.load(statusView, StatusIndex.GuestBase) >>> 0;
+        } catch {
+          guestBaseBytes = 0;
+        }
+        if (guestBaseBytes === 0) {
+          guestBaseBytes = api.guest_ram_layout(0).guest_base >>> 0;
+        }
         assertWasmMemoryWiring({
           api,
           memory: init.guestMemory,
