@@ -633,18 +633,68 @@ describe("runtime/coordinator", () => {
     const micSab = new SharedArrayBuffer(16);
     coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
-    // Clear any initial attachment messages so we only observe READY-triggered behaviour.
-    cpuWorker.posted.length = 0;
+    // Simulate the CPU worker being restarted. The replacement instance should inherit the
+    // stored SAB attachments when it reports READY, but other workers should not.
+    (coordinator as any).terminateWorker("cpu");
+    (coordinator as any).spawnWorker("cpu", segments);
+
+    const restartedCpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+
+    // Clear any prior messages so we only observe READY-triggered behaviour.
+    restartedCpuWorker.posted.length = 0;
     ioWorker.posted.length = 0;
 
-    cpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "cpu" } } as MessageEvent);
+    restartedCpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "cpu" } } as MessageEvent);
 
-    // Default demo-mode owner is CPU, so it should receive the SAB attachments when it reports READY.
-    expect(cpuWorker.posted.some((m) => m.message?.type === "setAudioRingBuffer" && m.message?.ringBuffer === audioSab)).toBe(true);
-    expect(cpuWorker.posted.some((m) => m.message?.type === "setMicrophoneRingBuffer" && m.message?.ringBuffer === micSab)).toBe(true);
+    // Default demo-mode owner is CPU, so the restarted worker should receive the SAB attachments.
+    expect(restartedCpuWorker.posted.some((m) => m.message?.type === "setAudioRingBuffer" && m.message?.ringBuffer === audioSab)).toBe(
+      true,
+    );
+    expect(
+      restartedCpuWorker.posted.some((m) => m.message?.type === "setMicrophoneRingBuffer" && m.message?.ringBuffer === micSab),
+    ).toBe(true);
 
     // The IO worker did not report READY, so it should not receive redundant attachments.
     expect(ioWorker.posted).toEqual([]);
+  });
+
+  it("does not re-send audio/mic ring attachments on unrelated config updates", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    const baseConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info" as const,
+    };
+    (coordinator as any).activeConfig = baseConfig;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+
+    const audioSab = new SharedArrayBuffer(16);
+    coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
+    const micSab = new SharedArrayBuffer(16);
+    coordinator.setMicrophoneRingBuffer(micSab, 48_000);
+
+    // Clear the initial attachment messages and then apply an unrelated config change.
+    // The coordinator should not re-send the ring attachments (which can cause device
+    // models to reattach + flush/discard microphone samples).
+    cpuWorker.posted.length = 0;
+    ioWorker.posted.length = 0;
+
+    coordinator.updateConfig({ ...baseConfig, logLevel: "debug" });
+
+    const isRingMsg = (m: { message?: any }) =>
+      m.message?.type === "setAudioRingBuffer" || m.message?.type === "setMicrophoneRingBuffer";
+    expect(cpuWorker.posted.some(isRingMsg)).toBe(false);
+    expect(ioWorker.posted.some(isRingMsg)).toBe(false);
   });
 
   it("resets scanoutState back to legacy on VM reset (shared memory preserved)", () => {

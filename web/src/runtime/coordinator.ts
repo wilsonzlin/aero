@@ -176,6 +176,20 @@ type PendingNetTraceStatusRequest = {
   timeout: number;
 };
 
+type LastSentAudioRingAttachment = {
+  instanceId: number;
+  ringBuffer: SharedArrayBuffer | null;
+  capacityFrames: number;
+  channelCount: number;
+  dstSampleRate: number;
+};
+
+type LastSentMicRingAttachment = {
+  instanceId: number;
+  ringBuffer: SharedArrayBuffer | null;
+  sampleRate: number;
+};
+
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
@@ -298,6 +312,14 @@ export class WorkerCoordinator {
   // before attach new owner" regardless of worker ordering.
   private audioRingProducerOwner: AudioRingWorkerRole | null = null;
   private micRingConsumerOwner: AudioRingWorkerRole | null = null;
+  // Track the last audio/mic ring-buffer attachment messages sent to each *worker instance*.
+  //
+  // These SharedArrayBuffer rings are SPSC, and some device wrappers (e.g. HDA mic) will
+  // re-attach + flush the ring on every `set*RingBuffer` message even when the attachment
+  // is unchanged. Avoid re-sending identical attachments on unrelated config updates or
+  // duplicate READY events so we don't discard live microphone samples.
+  private lastSentAudioRingAttachments: Partial<Record<AudioRingWorkerRole, LastSentAudioRingAttachment>> = {};
+  private lastSentMicRingAttachments: Partial<Record<AudioRingWorkerRole, LastSentMicRingAttachment>> = {};
   // Explicit forwarding policies to avoid accidental multi-producer/multi-consumer bugs
   // as real devices move between workers (e.g. HDA in the IO worker).
   //
@@ -1011,6 +1033,41 @@ export class WorkerCoordinator {
     return this.micRingBufferOwnerOverride ?? this.defaultMicrophoneRingBufferOwner();
   }
 
+  private postAudioRingBufferIfChanged(role: AudioRingWorkerRole, info: WorkerInfo, msg: SetAudioRingBufferMessage): void {
+    const prev = this.lastSentAudioRingAttachments[role];
+    if (
+      prev &&
+      prev.instanceId === info.instanceId &&
+      prev.ringBuffer === msg.ringBuffer &&
+      prev.capacityFrames === msg.capacityFrames &&
+      prev.channelCount === msg.channelCount &&
+      prev.dstSampleRate === msg.dstSampleRate
+    ) {
+      return;
+    }
+    info.worker.postMessage(msg);
+    this.lastSentAudioRingAttachments[role] = {
+      instanceId: info.instanceId,
+      ringBuffer: msg.ringBuffer,
+      capacityFrames: msg.capacityFrames,
+      channelCount: msg.channelCount,
+      dstSampleRate: msg.dstSampleRate,
+    };
+  }
+
+  private postMicRingBufferIfChanged(role: AudioRingWorkerRole, info: WorkerInfo, msg: SetMicrophoneRingBufferMessage): void {
+    const prev = this.lastSentMicRingAttachments[role];
+    if (prev && prev.instanceId === info.instanceId && prev.ringBuffer === msg.ringBuffer && prev.sampleRate === msg.sampleRate) {
+      return;
+    }
+    info.worker.postMessage(msg);
+    this.lastSentMicRingAttachments[role] = {
+      instanceId: info.instanceId,
+      ringBuffer: msg.ringBuffer,
+      sampleRate: msg.sampleRate,
+    };
+  }
+
   private syncAudioRingBufferAttachments(): void {
     const ringBuffer = this.audioRingBuffer;
     const owner = this.effectiveAudioRingBufferOwner();
@@ -1028,7 +1085,7 @@ export class WorkerCoordinator {
     if (prevOwner && prevOwner !== nextOwner) {
       const info = this.workers[prevOwner];
       if (info) {
-        info.worker.postMessage({
+        this.postAudioRingBufferIfChanged(prevOwner, info, {
           type: "setAudioRingBuffer",
           ringBuffer: null,
           capacityFrames: 0,
@@ -1042,7 +1099,7 @@ export class WorkerCoordinator {
       const info = this.workers[role];
       if (!info) continue;
       const attach = role === nextOwner;
-      info.worker.postMessage({
+      this.postAudioRingBufferIfChanged(role, info, {
         type: "setAudioRingBuffer",
         ringBuffer: attach ? ringBuffer : null,
         capacityFrames: attach ? this.audioCapacityFrames : 0,
@@ -1069,7 +1126,7 @@ export class WorkerCoordinator {
       nextOwner = owner;
     }
     const attach = role === nextOwner;
-    info.worker.postMessage({
+    this.postAudioRingBufferIfChanged(role, info, {
       type: "setAudioRingBuffer",
       ringBuffer: attach ? ringBuffer : null,
       capacityFrames: attach ? this.audioCapacityFrames : 0,
@@ -1097,7 +1154,7 @@ export class WorkerCoordinator {
     if (prevOwner && prevOwner !== nextOwner) {
       const info = this.workers[prevOwner];
       if (info) {
-        info.worker.postMessage({
+        this.postMicRingBufferIfChanged(prevOwner, info, {
           type: "setMicrophoneRingBuffer",
           ringBuffer: null,
           sampleRate: 0,
@@ -1109,7 +1166,7 @@ export class WorkerCoordinator {
       const info = this.workers[role];
       if (!info) continue;
       const attach = role === nextOwner;
-      info.worker.postMessage({
+      this.postMicRingBufferIfChanged(role, info, {
         type: "setMicrophoneRingBuffer",
         ringBuffer: attach ? ringBuffer : null,
         sampleRate: attach ? this.micSampleRate : 0,
@@ -1138,7 +1195,7 @@ export class WorkerCoordinator {
     }
 
     const attach = role === nextOwner;
-    info.worker.postMessage({
+    this.postMicRingBufferIfChanged(role, info, {
       type: "setMicrophoneRingBuffer",
       ringBuffer: attach ? ringBuffer : null,
       sampleRate: attach ? this.micSampleRate : 0,
