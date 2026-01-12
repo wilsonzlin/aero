@@ -358,6 +358,14 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
                     .borrow_mut()
                     .sync_levels_to_sink(&mut *interrupts);
             }
+
+            // Convert restored baseline GSI levels into ref-counted assertions once all devices
+            // have re-driven their own interrupt outputs.
+            interrupts.finalize_restore();
+        } else if self.restored_interrupts {
+            // Even if no post-restore device sync is required, clear any baseline line level state
+            // so future callers can deassert lines normally.
+            self.pc.interrupts.borrow_mut().finalize_restore();
         }
 
         Ok(())

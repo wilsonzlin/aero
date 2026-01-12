@@ -4,7 +4,7 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode, PlatformInterrupts};
+use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 
 use super::{PciBdf, PciConfigSpace, PciInterruptPin};
 use crate::apic::IoApic;
@@ -40,27 +40,10 @@ impl PicIrqLevelSink for DualPic8259 {
 
 impl GsiLevelSink for PlatformInterrupts {
     fn set_gsi_level(&mut self, gsi: u32, level: bool) {
-        // Keep the IOAPIC line state updated regardless of the active interrupt mode so we
-        // can cleanly switch to APIC mode later via the IMCR.
         if level {
             self.raise_irq(InterruptInput::Gsi(gsi));
         } else {
             self.lower_irq(InterruptInput::Gsi(gsi));
-        }
-
-        // In legacy PIC mode, PCI INTx lines are commonly routed to ISA IRQs (e.g. IRQ10-13).
-        // Mirror those into the PIC so early bring-up can still receive interrupts before the
-        // guest switches to APIC mode.
-        if self.mode() == PlatformInterruptMode::LegacyPic {
-            if let Ok(irq) = u8::try_from(gsi) {
-                if irq < 16 {
-                    if level {
-                        self.pic_mut().raise_irq(irq);
-                    } else {
-                        self.pic_mut().lower_irq(irq);
-                    }
-                }
-            }
         }
     }
 }

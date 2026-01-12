@@ -40,9 +40,9 @@ use aero_devices::acpi_pm::{
 use aero_devices::clock::ManualClock;
 use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
-use aero_devices::irq::PlatformIrqLine;
+use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBarMmioHandler,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler,
     PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
     PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
@@ -1648,6 +1648,10 @@ pub struct Machine {
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
     virtio_blk: Option<Rc<RefCell<VirtioPciDevice>>>,
     uhci: Option<Rc<RefCell<UhciPciDevice>>>,
+    /// ISA IRQ line handles used to deliver legacy IDE interrupts (IRQ14/15) without over/under-
+    /// counting assertions when the machine polls device state.
+    ide_irq14_line: Option<PlatformIrqLine>,
+    ide_irq15_line: Option<PlatformIrqLine>,
     uhci_ns_remainder: u64,
     bios: Bios,
     disk: SharedDisk,
@@ -1765,6 +1769,8 @@ impl Machine {
             ide: None,
             virtio_blk: None,
             uhci: None,
+            ide_irq14_line: None,
+            ide_irq15_line: None,
             uhci_ns_remainder: 0,
             bios: Bios::new(BiosConfig::default()),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
@@ -2730,16 +2736,26 @@ impl Machine {
                     ide.controller.secondary_irq_pending(),
                 )
             };
-            let mut interrupts = interrupts.borrow_mut();
-            if irq14 {
-                interrupts.raise_irq(InterruptInput::IsaIrq(14));
+            if let (Some(irq14_line), Some(irq15_line)) =
+                (self.ide_irq14_line.as_ref(), self.ide_irq15_line.as_ref())
+            {
+                irq14_line.set_level(irq14);
+                irq15_line.set_level(irq15);
             } else {
-                interrupts.lower_irq(InterruptInput::IsaIrq(14));
-            }
-            if irq15 {
-                interrupts.raise_irq(InterruptInput::IsaIrq(15));
-            } else {
-                interrupts.lower_irq(InterruptInput::IsaIrq(15));
+                // Fall back to direct interrupt router manipulation for non-standard machine
+                // wiring. Prefer `PlatformIrqLine` when possible so repeated polling does not
+                // over/under-count assertions in `PlatformInterrupts`.
+                let mut interrupts = interrupts.borrow_mut();
+                if irq14 {
+                    interrupts.raise_irq(InterruptInput::IsaIrq(14));
+                } else {
+                    interrupts.lower_irq(InterruptInput::IsaIrq(14));
+                }
+                if irq15 {
+                    interrupts.raise_irq(InterruptInput::IsaIrq(15));
+                } else {
+                    interrupts.lower_irq(InterruptInput::IsaIrq(15));
+                }
             }
         }
 
@@ -2983,6 +2999,8 @@ impl Machine {
         self.display_fb.clear();
         self.display_width = 0;
         self.display_height = 0;
+        self.ide_irq14_line = None;
+        self.ide_irq15_line = None;
 
         // Reset chipset lines.
         self.chipset.a20().set_enabled(false);
@@ -3076,6 +3094,15 @@ impl Machine {
                     ints
                 }
             };
+
+            if self.cfg.enable_ide {
+                // IDE legacy compatibility mode uses ISA IRQ14/IRQ15 rather than PCI INTx.
+                //
+                // Drive these lines through `PlatformIrqLine` so repeated polling does not
+                // over/under-count assertions in the ref-counted `PlatformInterrupts` sink.
+                self.ide_irq14_line = Some(PlatformIrqLine::isa(interrupts.clone(), 14));
+                self.ide_irq15_line = Some(PlatformIrqLine::isa(interrupts.clone(), 15));
+            }
 
             PlatformInterrupts::register_imcr_ports(&mut self.io, interrupts.clone());
             register_pic8259_on_platform_interrupts(&mut self.io, interrupts.clone());
@@ -5250,11 +5277,6 @@ impl snapshot::SnapshotTarget for Machine {
 
         // 3) After restoring both the interrupt controller and the PCI INTx router, re-drive any
         // asserted level-triggered GSIs into the interrupt sink.
-        //
-        // NOTE: Other restored devices may also touch shared GSIs (e.g. HPET can be configured to
-        // route a timer to IRQ10), so we reassert PCI INTx levels again at the end of device state
-        // restore to avoid losing an asserted PCI line due to another device deasserting the same
-        // GSI while its own interrupt is inactive.
         if restored_interrupts && restored_pci_intx {
             if let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) {
                 let pci_intx = pci_intx.borrow();
@@ -5453,32 +5475,10 @@ impl snapshot::SnapshotTarget for Machine {
         // the router snapshot.
         self.sync_pci_intx_sources_to_interrupts();
 
-        // Reassert PCI INTx levels after restoring other devices that may have modified shared GSI
-        // lines during `load_state()` or their own sync fixups (e.g. HPET).
-        //
-        // We intentionally only *raise* asserted lines here (and never lower) so this fixup cannot
-        // clobber another device's asserted level on a shared GSI.
-        if restored_interrupts && restored_pci_intx {
-            if let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) {
-                struct AssertOnlySink<'a, T: GsiLevelSink + ?Sized> {
-                    inner: &'a mut T,
-                }
-
-                impl<T: GsiLevelSink + ?Sized> GsiLevelSink for AssertOnlySink<'_, T> {
-                    fn set_gsi_level(&mut self, gsi: u32, level: bool) {
-                        if level {
-                            self.inner.set_gsi_level(gsi, true);
-                        }
-                    }
-                }
-
-                let pci_intx = pci_intx.borrow();
-                let mut interrupts = interrupts.borrow_mut();
-                let mut sink = AssertOnlySink {
-                    inner: &mut *interrupts,
-                };
-                pci_intx.sync_levels_to_sink(&mut sink);
-            }
+        // Adopt any restored baseline GSI levels once all devices have had a chance to re-drive
+        // their own interrupt outputs.
+        if let Some(interrupts) = &self.interrupts {
+            interrupts.borrow_mut().finalize_restore();
         }
 
         // CPU_INTERNAL: machine-defined CPU bookkeeping (interrupt shadow + external interrupt FIFO).

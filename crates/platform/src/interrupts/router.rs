@@ -76,7 +76,29 @@ impl LapicInterruptSink for RoutedLapicSink {
 pub struct PlatformInterrupts {
     mode: PlatformInterruptMode,
     isa_irq_to_gsi: [u32; 16],
+    /// Effective asserted level for each platform GSI (after aggregating all sources).
     gsi_level: Vec<bool>,
+    /// Baseline line levels restored from snapshots.
+    ///
+    /// `IoSnapshot::load_state()` restores the interrupt controller complex (PIC/IOAPIC/LAPIC) and
+    /// records the last observed electrical line levels (`TAG_GSI_LEVEL`), but that snapshot level
+    /// is not attributable to a specific device.
+    ///
+    /// Device models (e.g. PCI INTx router, HPET) re-drive their own line outputs after restore
+    /// using `sync_levels_to_sink()` style fixups. To avoid double-counting those reassertions, we
+    /// treat the snapshot line levels as a temporary baseline and aggregate runtime assertions on
+    /// top via `gsi_assert_count`.
+    ///
+    /// Snapshot consumers must call [`PlatformInterrupts::finalize_restore`] once all device line
+    /// levels have been re-driven so the baseline can be converted into ref-counted state.
+    gsi_restore_baseline: Vec<bool>,
+    /// Reference count of active assertions for each GSI (excluding `gsi_restore_baseline`).
+    gsi_assert_count: Vec<u32>,
+    /// Generation counter used to invalidate cached `PlatformIrqLine` state across reset/restore.
+    ///
+    /// This is shared with `PlatformIrqLine` so devices can safely cache their last-driven level
+    /// without being confused by snapshot restore (which rewinds device state).
+    irq_line_generation: Arc<AtomicU64>,
 
     pic: Pic8259,
     ioapic: Arc<Mutex<IoApic>>,
@@ -197,6 +219,9 @@ impl PlatformInterrupts {
             mode: PlatformInterruptMode::LegacyPic,
             isa_irq_to_gsi,
             gsi_level: vec![false; num_gsis],
+            gsi_restore_baseline: vec![false; num_gsis],
+            gsi_assert_count: vec![0; num_gsis],
+            irq_line_generation: Arc::new(AtomicU64::new(0)),
 
             pic,
             ioapic,
@@ -211,7 +236,12 @@ impl PlatformInterrupts {
 
     /// Reset the interrupt controller complex back to its power-on state.
     pub fn reset(&mut self) {
+        // Preserve the shared IRQ line generation counter so existing `PlatformIrqLine` handles
+        // observe the reset and invalidate their cached level.
+        let gen = self.irq_line_generation.clone();
+        gen.fetch_add(1, Ordering::SeqCst);
         *self = Self::new();
+        self.irq_line_generation = gen;
     }
 
     pub fn mode(&self) -> PlatformInterruptMode {
@@ -253,61 +283,27 @@ impl PlatformInterrupts {
     }
 
     pub fn raise_irq(&mut self, input: InterruptInput) {
-        match input {
-            InterruptInput::IsaIrq(irq) => {
-                let gsi = self
-                    .isa_irq_to_gsi
-                    .get(irq as usize)
-                    .copied()
-                    .unwrap_or(irq as u32);
-
-                self.set_gsi_level(gsi, true);
-
-                match self.mode {
-                    PlatformInterruptMode::LegacyPic => {
-                        self.pic.raise_irq(irq);
-                    }
-                    PlatformInterruptMode::Apic => {
-                        self.ioapic.lock().unwrap().set_irq_level(gsi, true);
-                    }
-                }
-            }
-            InterruptInput::Gsi(gsi) => {
-                self.set_gsi_level(gsi, true);
-                if self.mode == PlatformInterruptMode::Apic {
-                    self.ioapic.lock().unwrap().set_irq_level(gsi, true);
-                }
-            }
-        }
+        let gsi = match input {
+            InterruptInput::IsaIrq(irq) => self
+                .isa_irq_to_gsi
+                .get(irq as usize)
+                .copied()
+                .unwrap_or(irq as u32),
+            InterruptInput::Gsi(gsi) => gsi,
+        };
+        self.update_gsi_assert_count(gsi, true);
     }
 
     pub fn lower_irq(&mut self, input: InterruptInput) {
-        match input {
-            InterruptInput::IsaIrq(irq) => {
-                let gsi = self
-                    .isa_irq_to_gsi
-                    .get(irq as usize)
-                    .copied()
-                    .unwrap_or(irq as u32);
-
-                self.set_gsi_level(gsi, false);
-
-                match self.mode {
-                    PlatformInterruptMode::LegacyPic => {
-                        self.pic.lower_irq(irq);
-                    }
-                    PlatformInterruptMode::Apic => {
-                        self.ioapic.lock().unwrap().set_irq_level(gsi, false);
-                    }
-                }
-            }
-            InterruptInput::Gsi(gsi) => {
-                self.set_gsi_level(gsi, false);
-                if self.mode == PlatformInterruptMode::Apic {
-                    self.ioapic.lock().unwrap().set_irq_level(gsi, false);
-                }
-            }
-        }
+        let gsi = match input {
+            InterruptInput::IsaIrq(irq) => self
+                .isa_irq_to_gsi
+                .get(irq as usize)
+                .copied()
+                .unwrap_or(irq as u32),
+            InterruptInput::Gsi(gsi) => gsi,
+        };
+        self.update_gsi_assert_count(gsi, false);
     }
 
     /// Returns the current electrical "asserted" level for a given platform GSI.
@@ -317,6 +313,49 @@ impl PlatformInterrupts {
     /// (e.g. `PciIntxRouter`).
     pub fn gsi_level(&self, gsi: u32) -> bool {
         self.gsi_level.get(gsi as usize).copied().unwrap_or(false)
+    }
+
+    /// Returns the current IRQ line generation.
+    ///
+    /// `PlatformIrqLine` uses this to invalidate cached line levels across reset and snapshot
+    /// restore.
+    pub fn irq_line_generation(&self) -> u64 {
+        self.irq_line_generation.load(Ordering::SeqCst)
+    }
+
+    /// Finalize a snapshot restore by converting `gsi_restore_baseline` into ref-counted GSI
+    /// assertions.
+    ///
+    /// Snapshot restore loads the platform interrupt controller complex (PIC/IOAPIC/LAPIC) and
+    /// restores the last known electrical levels for each GSI, but those levels are not attributable
+    /// to individual device models. Restored device state is subsequently re-driven into the sink
+    /// via explicit sync steps (e.g. PCI INTx router, HPET).
+    ///
+    /// This method must be called after all such device sync steps to:
+    /// - adopt any still-asserted baseline lines as a single anonymous assertion (so lines restored
+    ///   asserted remain asserted even if no device reasserted them), and
+    /// - clear the baseline so future deassertions are governed purely by `gsi_assert_count`.
+    pub fn finalize_restore(&mut self) {
+        for idx in 0..self.gsi_level.len() {
+            if *self.gsi_restore_baseline.get(idx).unwrap_or(&false)
+                && self.gsi_assert_count.get(idx).copied().unwrap_or(0) == 0
+            {
+                if let Some(slot) = self.gsi_assert_count.get_mut(idx) {
+                    *slot = 1;
+                }
+            }
+        }
+
+        // Clearing the baseline may change the effective line level for GSIs that were asserted in
+        // the snapshot but were not claimed by any device model during restore.
+        self.gsi_restore_baseline.fill(false);
+        for gsi in 0..self.gsi_level.len() {
+            let desired = self.gsi_assert_count[gsi] > 0;
+            if self.gsi_level[gsi] != desired {
+                self.gsi_level[gsi] = desired;
+                self.drive_gsi_effective_level(gsi as u32, desired);
+            }
+        }
     }
 
     pub fn ioapic_mmio_read(&self, offset: u64) -> u32 {
@@ -402,10 +441,70 @@ impl PlatformInterrupts {
         self.lapic.inject_fixed_interrupt(vector);
     }
 
-    fn set_gsi_level(&mut self, gsi: u32, level: bool) {
+    fn set_gsi_level_internal(&mut self, gsi: u32, level: bool) {
         if let Some(slot) = self.gsi_level.get_mut(gsi as usize) {
             *slot = level;
         }
+    }
+
+    fn legacy_pic_irq_for_gsi(&self, gsi: u32) -> Option<u8> {
+        if gsi >= 16 {
+            return None;
+        }
+
+        // Prefer any ISA IRQ that is explicitly mapped to this GSI (via ISO overrides).
+        for (irq, mapped) in self.isa_irq_to_gsi.iter().enumerate() {
+            if *mapped == gsi {
+                return Some(irq as u8);
+            }
+        }
+
+        // Fall back to identity mapping for GSIs 0-15.
+        u8::try_from(gsi).ok()
+    }
+
+    fn drive_gsi_effective_level(&mut self, gsi: u32, level: bool) {
+        match self.mode {
+            PlatformInterruptMode::LegacyPic => {
+                if let Some(irq) = self.legacy_pic_irq_for_gsi(gsi) {
+                    if level {
+                        self.pic.raise_irq(irq);
+                    } else {
+                        self.pic.lower_irq(irq);
+                    }
+                }
+            }
+            PlatformInterruptMode::Apic => {
+                self.ioapic.lock().unwrap().set_irq_level(gsi, level);
+            }
+        }
+    }
+
+    fn update_gsi_assert_count(&mut self, gsi: u32, asserted: bool) {
+        let idx = gsi as usize;
+        let Some(count_slot) = self.gsi_assert_count.get_mut(idx) else {
+            return;
+        };
+
+        if asserted {
+            *count_slot = count_slot.saturating_add(1);
+        } else if *count_slot > 0 {
+            *count_slot -= 1;
+        } else {
+            // Unbalanced deassert: ignore. This can happen if a device attempts to deassert a line
+            // that it never asserted (e.g. during restore fixups). Maintaining correctness for
+            // shared GSIs relies on well-behaved sources only lowering after raising.
+            return;
+        }
+
+        let baseline = self.gsi_restore_baseline.get(idx).copied().unwrap_or(false);
+        let desired_level = baseline || *count_slot > 0;
+        let prev = self.gsi_level.get(idx).copied().unwrap_or(false);
+        if desired_level == prev {
+            return;
+        }
+        self.set_gsi_level_internal(gsi, desired_level);
+        self.drive_gsi_effective_level(gsi, desired_level);
     }
 }
 
@@ -509,6 +608,13 @@ impl IoSnapshot for PlatformInterrupts {
         self.apic_enabled
             .store(mode == PlatformInterruptMode::Apic, Ordering::SeqCst);
 
+        // Reset line-level tracking while keeping the restored PIC/IOAPIC/LAPIC state intact.
+        //
+        // `TAG_GSI_LEVEL` (decoded below) will repopulate `gsi_restore_baseline`/`gsi_level`.
+        self.gsi_level.fill(false);
+        self.gsi_restore_baseline.fill(false);
+        self.gsi_assert_count.fill(0);
+
         if let Some(buf) = r.bytes(TAG_ISA_IRQ_TO_GSI) {
             let mut d = Decoder::new(buf);
             for slot in &mut self.isa_irq_to_gsi {
@@ -534,7 +640,7 @@ impl IoSnapshot for PlatformInterrupts {
             }
             let levels = d.bytes(count)?;
             d.finish()?;
-            self.gsi_level = levels
+            let decoded: Vec<bool> = levels
                 .iter()
                 .map(|v| match *v {
                     0 => Ok(false),
@@ -546,6 +652,14 @@ impl IoSnapshot for PlatformInterrupts {
                     ),
                 })
                 .collect::<SnapshotResult<Vec<bool>>>()?;
+
+            // Treat the snapshotted line levels as a temporary baseline. Restored devices will
+            // re-drive their own assertions into `gsi_assert_count`; snapshot consumers must call
+            // `finalize_restore()` after those sync steps to convert the baseline into ref-counted
+            // state.
+            self.gsi_restore_baseline = decoded.clone();
+            self.gsi_level = decoded;
+            self.gsi_assert_count.clear();
         }
 
         if let Some(now) = r.u64(TAG_LAPIC_CLOCK_NOW_NS)? {
@@ -564,6 +678,8 @@ impl IoSnapshot for PlatformInterrupts {
 
         let num_gsis = self.ioapic.lock().unwrap().num_redirection_entries();
         self.gsi_level.resize(num_gsis, false);
+        self.gsi_restore_baseline.resize(num_gsis, false);
+        self.gsi_assert_count.resize(num_gsis, 0);
 
         if self.mode == PlatformInterruptMode::Apic {
             // Re-synchronize asserted level-triggered IOAPIC lines into the LAPIC.
@@ -572,6 +688,10 @@ impl IoSnapshot for PlatformInterrupts {
             // implementation gates level-triggered delivery on Remote-IRR.
             self.ioapic.lock().unwrap().sync_level_triggered();
         }
+
+        // Invalidate cached `PlatformIrqLine` state. Restored devices will re-drive their own line
+        // levels after restore.
+        self.irq_line_generation.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }

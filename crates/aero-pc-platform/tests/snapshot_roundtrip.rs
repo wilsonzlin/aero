@@ -167,6 +167,12 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
         hpet.sync_levels_to_sink(&mut *ints);
     }
 
+    // Snapshot restore captures electrical line levels in the interrupt controller snapshot, but
+    // those levels are not attributable to a specific device model. Once all devices have been
+    // restored and have re-driven their own interrupt outputs, convert the baseline into
+    // ref-counted assertions so future deassertions work correctly.
+    pc2.interrupts.borrow_mut().finalize_restore();
+
     // --- Assertions after restore.
     assert_eq!(
         pc2.io.read(PCI_CFG_ADDR_PORT, 4),
@@ -477,6 +483,7 @@ fn pc_platform_snapshot_roundtrip_preserves_rtc_irq8_and_requires_status_c_clear
         .load_state(&interrupts_state)
         .unwrap();
     pc2.rtc().borrow_mut().load_state(&rtc_state).unwrap();
+    pc2.interrupts.borrow_mut().finalize_restore();
 
     // Pending vector should survive restore.
     assert_eq!(pc2.interrupts.borrow().get_pending(), Some(RTC_VECTOR));
@@ -905,6 +912,11 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         .borrow_mut()
         .load_state(&ide_state)
         .unwrap();
+
+    // Re-drive polled interrupt outputs (AHCI INTx + IDE ISA IRQs) and adopt the interrupt
+    // controller snapshot's baseline GSI levels.
+    pc2.poll_pci_intx_lines();
+    pc2.interrupts.borrow_mut().finalize_restore();
 
     let ahci_abar2 = {
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();

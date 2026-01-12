@@ -38,6 +38,7 @@ fn snapshot_round_trip_legacy_pic_preserves_pending_and_eoi_flow() {
 
     let mut restored = PlatformInterrupts::new();
     restored.load_state(&bytes).unwrap();
+    restored.finalize_restore();
 
     assert_eq!(restored.get_pending(), Some(0x21));
 
@@ -66,6 +67,7 @@ fn snapshot_round_trip_apic_edge_preserves_pending_vector() {
 
     let mut restored = PlatformInterrupts::new();
     restored.load_state(&bytes).unwrap();
+    restored.finalize_restore();
 
     assert_eq!(restored.get_pending(), Some(vector));
 
@@ -96,6 +98,7 @@ fn snapshot_round_trip_apic_level_preserves_remote_irr_semantics() {
 
     let mut restored = PlatformInterrupts::new();
     restored.load_state(&bytes).unwrap();
+    restored.finalize_restore();
 
     // EOI while still asserted should re-deliver (Remote-IRR gating survives snapshot).
     let mut expected = expected;

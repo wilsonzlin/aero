@@ -6,7 +6,7 @@ use aero_devices::a20_gate::A20Gate;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
 use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
-use aero_devices::irq::PlatformIrqLine;
+use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBarDefinition, PciBdf, PciConfigPorts, PciDevice,
     PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
@@ -29,7 +29,7 @@ use aero_net_e1000::E1000Device;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
-use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
+use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -896,6 +896,8 @@ pub struct PcPlatform {
     pub nvme: Option<Rc<RefCell<NvmePciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
+    ide_irq14_line: PlatformIrqLine,
+    ide_irq15_line: PlatformIrqLine,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     pub uhci: Option<Rc<RefCell<UhciPciDevice>>>,
     pub virtio_blk: Option<Rc<RefCell<VirtioPciDevice>>>,
@@ -1200,6 +1202,8 @@ impl PcPlatform {
         };
 
         let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+        let ide_irq14_line = PlatformIrqLine::isa(interrupts.clone(), 14);
+        let ide_irq15_line = PlatformIrqLine::isa(interrupts.clone(), 15);
 
         let clock = ManualClock::new();
 
@@ -1826,6 +1830,8 @@ impl PcPlatform {
             nvme,
             ahci,
             ide,
+            ide_irq14_line,
+            ide_irq15_line,
             e1000,
             uhci,
             virtio_blk,
@@ -2393,17 +2399,8 @@ impl PcPlatform {
                     ide.controller.secondary_irq_pending(),
                 )
             };
-            let mut interrupts = self.interrupts.borrow_mut();
-            if irq14 {
-                interrupts.raise_irq(InterruptInput::IsaIrq(14));
-            } else {
-                interrupts.lower_irq(InterruptInput::IsaIrq(14));
-            }
-            if irq15 {
-                interrupts.raise_irq(InterruptInput::IsaIrq(15));
-            } else {
-                interrupts.lower_irq(InterruptInput::IsaIrq(15));
-            }
+            self.ide_irq14_line.set_level(irq14);
+            self.ide_irq15_line.set_level(irq15);
         }
     }
 
