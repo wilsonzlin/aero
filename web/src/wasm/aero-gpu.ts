@@ -1,5 +1,9 @@
 import type { BackendKind, FrameTimingsReport, GpuAdapterInfo, GpuWorkerInitOptions } from "../ipc/gpu-protocol";
 
+// Ensure the persistent GPU cache API is installed on `globalThis` before any WASM code tries to
+// open it (used for D3D9 DXBC->WGSL shader translation caching).
+import "../../gpu-cache/persistent_cache.ts";
+
 type WasmVariant = "threaded" | "single";
 
 interface ThreadSupport {

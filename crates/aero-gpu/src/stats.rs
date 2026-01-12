@@ -45,6 +45,7 @@ pub struct GpuStats {
 impl GpuStats {
     pub fn new() -> Self {
         let stats = Self::default();
+
         // Persistent caching is only supported in the browser/WASM build; native builds always
         // report `disabled=1`.
         #[cfg(not(target_arch = "wasm32"))]
@@ -101,6 +102,15 @@ impl GpuStats {
             .store(disabled as u64, Ordering::Relaxed);
     }
 
+    // Compatibility aliases (older call sites).
+    pub fn inc_d3d9_shader_persistent_hits(&self) {
+        self.inc_d3d9_shader_cache_persistent_hits();
+    }
+
+    pub fn inc_d3d9_shader_persistent_misses(&self) {
+        self.inc_d3d9_shader_cache_persistent_misses();
+    }
+
     pub fn snapshot(&self) -> GpuStatsSnapshot {
         GpuStatsSnapshot {
             presents_attempted: self.presents_attempted.load(Ordering::Relaxed),
@@ -108,6 +118,7 @@ impl GpuStats {
             recoveries_attempted: self.recoveries_attempted.load(Ordering::Relaxed),
             recoveries_succeeded: self.recoveries_succeeded.load(Ordering::Relaxed),
             surface_reconfigures: self.surface_reconfigures.load(Ordering::Relaxed),
+
             d3d9_shader_translate_calls: self.d3d9_shader_translate_calls.load(Ordering::Relaxed),
             d3d9_shader_cache_persistent_hits: self
                 .d3d9_shader_cache_persistent_hits
@@ -150,8 +161,9 @@ pub struct GpuStatsSnapshot {
 
 impl GpuStatsSnapshot {
     pub fn to_json(self) -> String {
+        // Note: This is hand-built JSON for speed/alloc avoidance on the render thread.
         format!(
-            "{{\"presents_attempted\":{},\"presents_succeeded\":{},\"recoveries_attempted\":{},\"recoveries_succeeded\":{},\"surface_reconfigures\":{},\"d3d9_shader_translate_calls\":{},\"d3d9_shader_cache_persistent_hits\":{},\"d3d9_shader_cache_persistent_misses\":{},\"d3d9_shader_cache_memory_hits\":{},\"d3d9_shader_cache_disabled\":{}}}",
+            "{{\"presents_attempted\":{},\"presents_succeeded\":{},\"recoveries_attempted\":{},\"recoveries_succeeded\":{},\"surface_reconfigures\":{},\"d3d9_shader_translate_calls\":{},\"d3d9_shader_cache_persistent_hits\":{},\"d3d9_shader_cache_persistent_misses\":{},\"d3d9_shader_cache_memory_hits\":{},\"d3d9_shader_cache_disabled\":{},\"d3d9_shader_cache\":{{\"translate_calls\":{},\"persistent_hits\":{},\"persistent_misses\":{},\"memory_hits\":{},\"disabled\":{}}}}}",
             self.presents_attempted,
             self.presents_succeeded,
             self.recoveries_attempted,
@@ -161,7 +173,12 @@ impl GpuStatsSnapshot {
             self.d3d9_shader_cache_persistent_hits,
             self.d3d9_shader_cache_persistent_misses,
             self.d3d9_shader_cache_memory_hits,
-            self.d3d9_shader_cache_disabled
+            self.d3d9_shader_cache_disabled,
+            self.d3d9_shader_translate_calls,
+            self.d3d9_shader_cache_persistent_hits,
+            self.d3d9_shader_cache_persistent_misses,
+            self.d3d9_shader_cache_memory_hits,
+            self.d3d9_shader_cache_disabled,
         )
     }
 }
@@ -174,13 +191,17 @@ mod tests {
     fn stats_json_contains_counters() {
         let stats = GpuStats::new();
         stats.inc_presents_attempted();
+        stats.inc_d3d9_shader_translate_calls();
         stats.inc_surface_reconfigures();
         stats.inc_d3d9_shader_translate_calls();
         stats.inc_d3d9_shader_cache_memory_hits();
         let json = stats.to_json();
         assert!(json.contains("\"presents_attempted\":1"));
         assert!(json.contains("\"surface_reconfigures\":1"));
-        assert!(json.contains("\"d3d9_shader_translate_calls\":1"));
+        assert!(json.contains("\"d3d9_shader_translate_calls\":2"));
         assert!(json.contains("\"d3d9_shader_cache_memory_hits\":1"));
+        // Nested object (used by browser E2E harnesses).
+        assert!(json.contains("\"translate_calls\":2"));
+        assert!(json.contains("\"memory_hits\":1"));
     }
 }

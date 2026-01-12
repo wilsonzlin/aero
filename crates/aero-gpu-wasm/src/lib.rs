@@ -12,14 +12,14 @@ mod wasm {
     use std::sync::{Arc, OnceLock};
 
     use crate::drain_queue::DrainQueue;
+    use aero_gpu::GpuErrorEvent;
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
+    use aero_gpu::stats::GpuStats;
     use aero_gpu::{
         AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, AerogpuD3d9Executor,
         FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory, GuestMemoryError,
     };
-    use aero_gpu::GpuErrorEvent;
-    use aero_gpu::stats::GpuStats;
     use aero_protocol::aerogpu::aerogpu_cmd as cmd;
     use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
@@ -680,6 +680,7 @@ mod wasm {
             })?;
 
         let mut d3d9_state = d3d9_state;
+
         let exec_result: Result<(), JsValue> = match (alloc_table.as_ref(), guest_memory.as_mut()) {
             (Some(_), None) => Err(JsValue::from_str(
                 "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
@@ -2612,7 +2613,11 @@ mod wasm {
                 .await
                 .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
 
-            aero_gpu::register_wgpu_uncaptured_error_handler(&device, GpuBackendKind::WebGpu, push_gpu_event);
+            aero_gpu::register_wgpu_uncaptured_error_handler(
+                &device,
+                GpuBackendKind::WebGpu,
+                push_gpu_event,
+            );
 
             let info = adapter.get_info();
             let downlevel_flags = adapter.get_downlevel_capabilities().flags;
