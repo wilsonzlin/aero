@@ -2195,14 +2195,10 @@ impl PcPlatform {
         let mut dev = e1000.borrow_mut();
         dev.pci_config_write(0x04, 2, u32::from(command));
         if let Ok(bar0_base) = u32::try_from(bar0_base) {
-            if bar0_base != 0 {
-                dev.pci_config_write(0x10, 4, bar0_base);
-            }
+            dev.pci_config_write(0x10, 4, bar0_base);
         }
         if let Ok(bar1_base) = u32::try_from(bar1_base) {
-            if bar1_base != 0 {
-                dev.pci_config_write(0x14, 4, bar1_base);
-            }
+            dev.pci_config_write(0x14, 4, bar1_base);
         }
 
         if bus_master_enabled {
