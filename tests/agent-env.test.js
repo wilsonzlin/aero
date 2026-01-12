@@ -118,3 +118,41 @@ test(
     }
   },
 );
+
+test("agent-env: AERO_CARGO_BUILD_JOBS controls CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_BUILD_JOBS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AERO_CARGO_BUILD_JOBS: "2",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, "2");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const proc = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_BUILD_JOBS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AERO_CARGO_BUILD_JOBS: "nope",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(proc, "1");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});

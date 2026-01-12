@@ -111,7 +111,7 @@ This approach:
 These don't enforce hard limits but reduce memory spikes:
 
 ```bash
-export CARGO_BUILD_JOBS=4       # Limit parallel rustc (default: num_cpus)
+export CARGO_BUILD_JOBS=1       # Limit parallel rustc (agent default; raise if your sandbox allows)
 export RUSTFLAGS="-C codegen-units=4"  # Reduce per-crate parallelism
 ```
 
@@ -131,7 +131,9 @@ Recommended memory-friendly Cargo settings live in environment variables (next s
 
 ```bash
 # Rust
-export CARGO_BUILD_JOBS=4
+# Cargo parallelism is defaulted to `-j1` for reliability in constrained sandboxes.
+# Override by setting `AERO_CARGO_BUILD_JOBS` before sourcing `scripts/agent-env.sh`.
+export CARGO_BUILD_JOBS=1
 export RUSTFLAGS="-C codegen-units=4"
 export CARGO_INCREMENTAL=1
 
@@ -278,7 +280,7 @@ fi
 
 ## What NOT to Worry About
 
-- **CPU contention**: The scheduler handles this. Don't use `-j1` out of excessive caution.
+- **CPU contention**: The scheduler handles this. Don't reduce parallelism purely due to CPU contention — but note some agent sandboxes have low thread/process limits; `scripts/agent-env.sh` defaults to `CARGO_BUILD_JOBS=1` for stability (override via `AERO_CARGO_BUILD_JOBS`).
 - **Disk I/O**: NVMe + Linux I/O scheduler handles contention fine. No need for `ionice` or I/O limits.
 - **Disk space**: 110 TB is plenty. Clean up your target dirs occasionally but don't stress.
 - **Network**: Not a factor for local development.
@@ -292,7 +294,7 @@ Common memory-hungry operations:
 
 | Operation               | Typical Peak | Mitigation                          |
 | ----------------------- | ------------ | ----------------------------------- |
-| `cargo build --release --locked` | 8-16 GB      | `CARGO_BUILD_JOBS=4` + memory limit |
+| `cargo build --release --locked` | 8-16 GB      | cap Cargo parallelism (agent default: `CARGO_BUILD_JOBS=1`) + memory limit |
 | `cargo build --locked` (debug)   | 4-8 GB       | Usually fine                        |
 | `wasm-pack build`       | 4-8 GB       | Usually fine                        |
 | Playwright + Chrome     | 2-4 GB       | `PW_TEST_WORKERS=1`                 |
@@ -426,10 +428,12 @@ Notes:
 
 ### Build is very slow
 
-You might be over-constrained. Check if you're accidentally running with `-j1`:
+You might be over-constrained. `scripts/agent-env.sh` defaults to `-j1` for reliability in constrained sandboxes; if your environment can handle more parallelism, override it:
 
 ```bash
-echo $CARGO_BUILD_JOBS  # Should be 4 or unset, not 1
+export AERO_CARGO_BUILD_JOBS=2  # or 4, etc
+source scripts/agent-env.sh
+echo $CARGO_BUILD_JOBS
 ```
 
 ### "Too many open files"
@@ -641,5 +645,5 @@ Use this for integration testing once the emulator can boot. Do not redistribute
 3. **Timeouts are mandatory** — no command runs without a deadline
 4. **Verify outputs** — exit code 0 doesn't mean success
 5. **Kill aggressively** — SIGTERM, wait, SIGKILL; clean up orphans
-6. **Don't over-constrain** — `-j4` is fine, `-j1` is too conservative
+6. **Tune parallelism intentionally** — agent-env defaults to `-j1` for stability; increase via `AERO_CARGO_BUILD_JOBS` if your sandbox allows it
 7. **GPU-less is fine** — WebGPU tests skip gracefully, WebGL2 works via software
