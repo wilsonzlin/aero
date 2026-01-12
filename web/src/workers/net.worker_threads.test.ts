@@ -229,6 +229,59 @@ describe("workers/net.worker (worker_threads)", () => {
     }
   }, 20000);
 
+  it("falls back to /l2 derived from base proxyUrl when POST /session is unavailable", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      worker.postMessage({ type: "fetch.mode", mode: "404" });
+
+      const fetchCalled = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown }).type === "fetch.called" &&
+          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session",
+        10000,
+      ) as Promise<{ url?: string; init?: unknown }>;
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+      }>;
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com/base") });
+      worker.postMessage(makeInit(segments));
+
+      const first = await Promise.race([
+        fetchCalled.then((msg) => ({ kind: "fetch" as const, msg })),
+        wsCreated.then((msg) => ({ kind: "ws" as const, msg })),
+      ]);
+      expect(first.kind).toBe("fetch");
+
+      const fetchMsg = first.msg as { url?: string; init?: unknown };
+      expect(fetchMsg.url).toBe("https://gateway.example.com/base/session");
+      const fetchInit = fetchMsg.init as { method?: unknown; credentials?: unknown } | undefined;
+      expect(fetchInit?.method).toBe("POST");
+      expect(fetchInit?.credentials).toBe("include");
+
+      const createdMsg = await wsCreated;
+      expect(createdMsg.url).toBe("wss://gateway.example.com/base/l2");
+
+      await workerReady;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
   it("forwards NET_TX frames over the L2 tunnel and delivers inbound frames to NET_RX", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
 
