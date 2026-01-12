@@ -3388,21 +3388,18 @@ impl Machine {
                     Box::new(VirtioBlkPciConfigDevice::new()),
                 );
 
-                let mk = || {
-                    VirtioPciDevice::new(
-                        Box::new(VirtioBlk::new(VirtioMemDisk::new(512))),
-                        Box::new(NoopVirtioInterruptSink),
-                    )
-                };
-
                 match &self.virtio_blk {
                     Some(dev) => {
                         // Reset in-place while keeping `Rc` identity stable for persistent MMIO
-                        // mappings.
-                        *dev.borrow_mut() = mk();
+                        // mappings. This intentionally preserves any host-attached disk backend
+                        // owned by the inner virtio-blk device.
+                        dev.borrow_mut().reset();
                         Some(dev.clone())
                     }
-                    None => Some(Rc::new(RefCell::new(mk()))),
+                    None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
+                        Box::new(VirtioBlk::new(VirtioMemDisk::new(512))),
+                        Box::new(NoopVirtioInterruptSink),
+                    )))),
                 }
             } else {
                 None
