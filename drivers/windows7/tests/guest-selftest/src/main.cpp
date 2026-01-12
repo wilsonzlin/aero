@@ -172,6 +172,23 @@ static size_t BoundedWcsLen(const wchar_t* s, size_t max_len) {
   return i;
 }
 
+static uint32_t ReadBe32(const uint8_t* p) {
+  return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+         (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+}
+
+static std::string HexDump(const uint8_t* p, size_t len) {
+  std::string out;
+  out.reserve(len * 3);
+  for (size_t i = 0; i < len; i++) {
+    char b[4];
+    snprintf(b, sizeof(b), "%02x", static_cast<unsigned int>(p[i]));
+    out.append(b);
+    if (i + 1 != len) out.push_back(' ');
+  }
+  return out;
+}
+
 template <typename T>
 class ComPtr {
  public:
@@ -1488,26 +1505,7 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
     return false;
   }
 
-  // Query the SCSI address for this physical drive so PathId/TargetId/Lun are correct.
-  // Some stacks require these fields to be populated for pass-through IOCTLs.
-  SCSI_ADDRESS addr{};
-  DWORD addr_bytes = 0;
-  if (DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_GET_ADDRESS, nullptr, 0, &addr, sizeof(addr), &addr_bytes,
-                      nullptr)) {
-    log.Logf("virtio-blk: REPORT_LUNS scsi_address port=%u path=%u target=%u lun=%u",
-             static_cast<unsigned>(addr.PortNumber), static_cast<unsigned>(addr.PathId),
-             static_cast<unsigned>(addr.TargetId), static_cast<unsigned>(addr.Lun));
-  } else {
-    // Not fatal; the values default to 0.
-    log.Logf("virtio-blk: REPORT_LUNS warning: IOCTL_SCSI_GET_ADDRESS failed err=%lu (using 0/0/0)",
-             GetLastError());
-    addr.PortNumber = 0;
-    addr.PathId = 0;
-    addr.TargetId = 0;
-    addr.Lun = 0;
-  }
-
-  constexpr uint32_t kAllocLen = 64;
+  constexpr uint32_t kAllocLen = 16;
   std::vector<uint8_t> resp(kAllocLen, 0);
 
   // SPC REPORT LUNS (0xA0) CDB is 12 bytes. Allocation length is a big-endian u32 at CDB[6..9].
@@ -1520,16 +1518,17 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
 
   ScsiPassThroughDirectWithSense pkt{};
   pkt.sptd.Length = sizeof(pkt.sptd);
-  pkt.sptd.PathId = addr.PathId;
-  pkt.sptd.TargetId = addr.TargetId;
-  pkt.sptd.Lun = addr.Lun;
+  // Virtio-blk is a single-target virtual device; use 0/0/0 for addressing.
+  pkt.sptd.PathId = 0;
+  pkt.sptd.TargetId = 0;
+  pkt.sptd.Lun = 0;
   pkt.sptd.CdbLength = sizeof(cdb);
   pkt.sptd.SenseInfoLength = sizeof(pkt.sense);
   pkt.sptd.DataIn = SCSI_IOCTL_DATA_IN;
   pkt.sptd.DataTransferLength = kAllocLen;
-  pkt.sptd.TimeOutValue = 5;
+  pkt.sptd.TimeOutValue = 10;
   pkt.sptd.DataBuffer = resp.data();
-  pkt.sptd.SenseInfoOffset = static_cast<ULONG>(offsetof(ScsiPassThroughDirectWithSense, sense));
+  pkt.sptd.SenseInfoOffset = static_cast<ULONG>(FIELD_OFFSET(ScsiPassThroughDirectWithSense, sense));
   memcpy(pkt.sptd.Cdb, cdb, sizeof(cdb));
 
   DWORD returned = 0;
@@ -1540,45 +1539,33 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   if (!ok) {
     log.Logf("virtio-blk: REPORT_LUNS FAIL DeviceIoControl(IOCTL_SCSI_PASS_THROUGH_DIRECT) err=%lu",
              static_cast<unsigned long>(err));
+    log.Logf("virtio-blk: REPORT_LUNS payload[16]=%s", HexDump(resp.data(), resp.size()).c_str());
+    log.Logf("virtio-blk: REPORT_LUNS sense[32]=%s",
+             HexDump(reinterpret_cast<const uint8_t*>(pkt.sense), sizeof(pkt.sense)).c_str());
     return false;
   }
 
   if (pkt.sptd.ScsiStatus != 0) {
-    const uint8_t sk = (sizeof(pkt.sense) >= 3) ? (pkt.sense[2] & 0x0F) : 0;
-    const uint8_t asc = (sizeof(pkt.sense) >= 13) ? pkt.sense[12] : 0;
-    const uint8_t ascq = (sizeof(pkt.sense) >= 14) ? pkt.sense[13] : 0;
-    log.Logf("virtio-blk: REPORT_LUNS FAIL scsi_status=0x%02x sense_key=0x%02x asc=0x%02x ascq=0x%02x",
-             static_cast<unsigned>(pkt.sptd.ScsiStatus), static_cast<unsigned>(sk),
-             static_cast<unsigned>(asc), static_cast<unsigned>(ascq));
+    log.Logf("virtio-blk: REPORT_LUNS FAIL (SCSI status=0x%02x)", static_cast<unsigned>(pkt.sptd.ScsiStatus));
+    log.Logf("virtio-blk: REPORT_LUNS payload[16]=%s", HexDump(resp.data(), resp.size()).c_str());
+    log.Logf("virtio-blk: REPORT_LUNS sense[32]=%s",
+             HexDump(reinterpret_cast<const uint8_t*>(pkt.sense), sizeof(pkt.sense)).c_str());
     return false;
   }
 
-  auto read_be_u32 = [](const uint8_t* p) -> uint32_t {
-    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-           (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
-  };
-
-  const uint32_t list_len = read_be_u32(resp.data());
-  const uint32_t reserved = read_be_u32(resp.data() + 4);
-  if (list_len != 8) {
-    log.Logf("virtio-blk: REPORT_LUNS FAIL unexpected list_length=%lu (expected 8)",
-             static_cast<unsigned long>(list_len));
-    return false;
-  }
-  if (reserved != 0) {
-    log.Logf("virtio-blk: REPORT_LUNS FAIL nonzero reserved=0x%08lx", static_cast<unsigned long>(reserved));
-    return false;
-  }
-
+  const uint32_t list_len = ReadBe32(resp.data());
+  const uint32_t reserved = ReadBe32(resp.data() + 4);
   bool lun0_all_zero = true;
   for (size_t i = 8; i < 16; i++) {
     if (resp[i] != 0) lun0_all_zero = false;
   }
-  if (!lun0_all_zero) {
-    log.Logf("virtio-blk: REPORT_LUNS FAIL LUN0 entry not all zeros: %02x %02x %02x %02x %02x %02x %02x %02x",
-             static_cast<unsigned>(resp[8]), static_cast<unsigned>(resp[9]), static_cast<unsigned>(resp[10]),
-             static_cast<unsigned>(resp[11]), static_cast<unsigned>(resp[12]), static_cast<unsigned>(resp[13]),
-             static_cast<unsigned>(resp[14]), static_cast<unsigned>(resp[15]));
+
+  if (list_len != 8 || reserved != 0 || !lun0_all_zero) {
+    log.Logf("virtio-blk: REPORT_LUNS FAIL (invalid payload list_len=%lu reserved=%lu lun0_all_zero=%d)",
+             static_cast<unsigned long>(list_len), static_cast<unsigned long>(reserved), lun0_all_zero ? 1 : 0);
+    log.Logf("virtio-blk: REPORT_LUNS payload[16]=%s", HexDump(resp.data(), resp.size()).c_str());
+    log.Logf("virtio-blk: REPORT_LUNS sense[32]=%s",
+             HexDump(reinterpret_cast<const uint8_t*>(pkt.sense), sizeof(pkt.sense)).c_str());
     return false;
   }
 
@@ -1657,7 +1644,6 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
     }
 
     const bool report_luns_ok = VirtioBlkReportLuns(log, pd);
-
     CloseHandle(pd);
 
     if (!query_ok) return false;
