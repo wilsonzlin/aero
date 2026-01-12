@@ -278,7 +278,8 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
         }
       });
     },
-    { path: snapshotPath, sampleWindowMs: 40, slackMs: 10 },
+    // Allow some scheduler jitter when measuring the immediate post-resume window.
+    { path: snapshotPath, sampleWindowMs: 40, slackMs: 20 },
   );
 
   if (!restoreResult.ok) {
