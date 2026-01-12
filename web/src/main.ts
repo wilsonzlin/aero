@@ -1104,9 +1104,22 @@ function renderMachinePanel(): HTMLElement {
         const exitExecuted = exit.executed;
         const exitDetail = exit.detail;
 
-        const bytes = machine.serial_output();
-        if (bytes.byteLength) {
-          output.textContent = `${output.textContent ?? ""}${decoder.decode(bytes)}`;
+        // Avoid copying serial output into JS when empty.
+        const serialLenFn = (machine as unknown as { serial_output_len?: unknown }).serial_output_len;
+        const shouldReadSerial = (() => {
+          if (typeof serialLenFn !== "function") return true;
+          try {
+            const n = (serialLenFn as () => number).call(machine);
+            return typeof n === "number" && Number.isFinite(n) && n > 0;
+          } catch {
+            return true;
+          }
+        })();
+        if (shouldReadSerial) {
+          const bytes = machine.serial_output();
+          if (bytes.byteLength) {
+            output.textContent = `${output.textContent ?? ""}${decoder.decode(bytes)}`;
+          }
         }
 
         presentVgaFrame();
