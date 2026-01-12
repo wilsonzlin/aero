@@ -1412,6 +1412,10 @@ function maybeInitHdaDevice(): void {
     }
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
+    // Use the live HDA controller as the snapshot bridge when it supports snapshot exports.
+    // Older WASM builds may lack `save_state`/`load_state`; snapshot helpers will gracefully
+    // treat it as unavailable.
+    audioHdaBridge = bridge;
     hdaDevice = dev;
     mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
@@ -1439,6 +1443,7 @@ function maybeInitHdaDevice(): void {
       // ignore
     }
     hdaControllerBridge = null;
+    audioHdaBridge = null;
     hdaDevice = null;
   }
 }
@@ -3927,6 +3932,7 @@ function shutdown(): void {
       hdaDevice?.destroy();
       hdaDevice = null;
       hdaControllerBridge = null;
+      audioHdaBridge = null;
       try {
         usbDemoApi?.free();
       } catch {
