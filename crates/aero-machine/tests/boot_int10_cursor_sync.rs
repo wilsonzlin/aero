@@ -30,6 +30,33 @@ fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
     sector
 }
 
+fn build_int10_set_cursor_pos_on_page_boot_sector(page: u8, row: u8, col: u8) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x02]);
+    i += 2;
+    // mov bh, page
+    sector[i..i + 2].copy_from_slice(&[0xB7, page]);
+    i += 2;
+    // mov dh, row
+    sector[i..i + 2].copy_from_slice(&[0xB6, row]);
+    i += 2;
+    // mov dl, col
+    sector[i..i + 2].copy_from_slice(&[0xB2, col]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
@@ -348,6 +375,36 @@ fn int10_cursor_updates_sync_to_vga_crtc() {
     assert_eq!(start, 0x06);
     assert_eq!(end, 0x07);
     assert_eq!(pos, expected_pos);
+}
+
+#[test]
+fn int10_set_cursor_pos_non_active_page_does_not_move_vga_cursor() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let row = 5u8;
+    let col = 10u8;
+    let boot = build_int10_set_cursor_pos_on_page_boot_sector(1, row, col);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Guest updated the cursor position for page 1, but did not change the active page (default is
+    // page 0). The VGA cursor overlay should remain at the active page's cursor position.
+    assert_eq!(m.read_physical_u8(BDA_ACTIVE_PAGE_ADDR), 0);
+    let page1_word = m.read_physical_u16(BDA_CURSOR_POS_PAGE0_ADDR + 2);
+    assert_eq!(page1_word, (u16::from(row) << 8) | u16::from(col));
+
+    let expected_pos = read_crtc_start_addr(&mut m) & 0x3FFF;
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos & 0x3FFF, expected_pos);
 }
 
 #[test]
