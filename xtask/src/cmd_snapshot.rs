@@ -303,10 +303,19 @@ fn print_disks_section_summary(file: &mut fs::File, section: &SnapshotSectionInf
         return;
     }
     let mut limited = file.take(section.len);
-    let Ok(disks) = DiskOverlayRefs::decode(&mut limited) else {
+    let Ok(mut disks) = DiskOverlayRefs::decode(&mut limited) else {
         println!("  <failed to decode DISKS payload>");
         return;
     };
+
+    let already_sorted = disks.disks.windows(2).all(|w| w[0].disk_id <= w[1].disk_id);
+    disks.disks.sort_by_key(|disk| disk.disk_id);
+    if !already_sorted {
+        println!("  note: DISKS entries are not sorted by disk_id; displaying sorted order");
+    }
+    if disks.disks.windows(2).any(|w| w[0].disk_id == w[1].disk_id) {
+        println!("  warning: duplicate disk_id entries (snapshot restore would reject this file)");
+    }
 
     println!("  count: {}", disks.disks.len());
     for (idx, disk) in disks.disks.iter().take(MAX_PRINT_DISKS).enumerate() {
