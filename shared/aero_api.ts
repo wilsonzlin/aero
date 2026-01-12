@@ -58,9 +58,19 @@ export interface AeroBenchApi {
   runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
 }
 
+export interface AeroNetTraceApi {
+  isEnabled: () => boolean;
+  enable: () => void;
+  disable: () => void;
+  downloadPcapng: () => Promise<Uint8Array>;
+  clear?: () => void | Promise<void>;
+  getStats?: () => unknown | Promise<unknown>;
+}
+
 export interface AeroGlobalApi {
   perf?: AeroPerfApi;
   bench?: AeroBenchApi;
+  netTrace?: AeroNetTraceApi;
 
   /**
    * Host-visible status that macrobench scenarios can wait on.
