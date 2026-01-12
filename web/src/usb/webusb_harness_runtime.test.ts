@@ -285,6 +285,36 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     expect(snapshot.lastError).toMatch(/uint32/i);
   });
 
+  it("stops when the harness emits an oversized bulkIn length", () => {
+    const port = new FakePort();
+
+    const action: unknown = {
+      kind: "bulkIn",
+      id: 1,
+      endpoint: 0x81,
+      length: 10 * 1024 * 1024,
+    };
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => [action]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+    runtime.start();
+    runtime.pollOnce();
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.enabled).toBe(false);
+    expect(snapshot.lastError).toMatch(/length/i);
+  });
+
   it("validates usb.harness.status messages with a strict type guard", () => {
     const msg = {
       type: "usb.harness.status",

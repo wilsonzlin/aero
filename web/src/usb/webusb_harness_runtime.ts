@@ -191,6 +191,8 @@ function assertUsbOutEndpointAddress(value: number): void {
   }
 }
 
+const MAX_USB_PROXY_BYTES = 4 * 1024 * 1024;
+
 function normalizeBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) {
     // Avoid leaking (or copying) more than intended across postMessage:
@@ -198,6 +200,10 @@ function normalizeBytes(value: unknown): Uint8Array {
     //   implicitly share the entire underlying SAB.
     // - If the bytes are a subview of a larger ArrayBuffer (e.g. WebAssembly.Memory.buffer),
     //   copy so structured-cloning doesn't duplicate the entire underlying buffer.
+    if (value.byteLength > MAX_USB_PROXY_BYTES) {
+      throw new Error(`Expected byte payload <= ${MAX_USB_PROXY_BYTES} bytes, got ${value.byteLength}`);
+    }
+
     if (
       value.buffer instanceof ArrayBuffer &&
       value.byteOffset === 0 &&
@@ -209,14 +215,25 @@ function normalizeBytes(value: unknown): Uint8Array {
     out.set(value);
     return out;
   }
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (value instanceof ArrayBuffer) {
+    if (value.byteLength > MAX_USB_PROXY_BYTES) {
+      throw new Error(`Expected byte payload <= ${MAX_USB_PROXY_BYTES} bytes, got ${value.byteLength}`);
+    }
+    return new Uint8Array(value);
+  }
   if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    if (value.byteLength > MAX_USB_PROXY_BYTES) {
+      throw new Error(`Expected byte payload <= ${MAX_USB_PROXY_BYTES} bytes, got ${value.byteLength}`);
+    }
     // See above: copy into an ArrayBuffer-backed Uint8Array so we don't share the whole SAB.
     const out = new Uint8Array(value.byteLength);
     out.set(new Uint8Array(value));
     return out;
   }
   if (Array.isArray(value)) {
+    if (value.length > MAX_USB_PROXY_BYTES) {
+      throw new Error(`Expected byte payload <= ${MAX_USB_PROXY_BYTES} bytes, got ${value.length}`);
+    }
     if (
       !value.every(
         (v) => typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && v >= 0 && v <= 0xff,
@@ -252,7 +269,11 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction {
     case "bulkIn": {
       const endpoint = normalizeU8(obj.endpoint);
       assertUsbInEndpointAddress(endpoint);
-      return { kind: "bulkIn", id, endpoint, length: normalizeU32(obj.length) };
+      const length = normalizeU32(obj.length);
+      if (length > MAX_USB_PROXY_BYTES) {
+        throw new Error(`bulkIn length too large: ${length}`);
+      }
+      return { kind: "bulkIn", id, endpoint, length };
     }
     case "bulkOut": {
       const endpoint = normalizeU8(obj.endpoint);
