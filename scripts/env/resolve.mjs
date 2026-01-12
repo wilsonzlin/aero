@@ -360,6 +360,11 @@ const args = parseArgs(process.argv);
 
 const requireWebgpu =
   args.requireWebgpuOverride ?? parseBoolean("AERO_REQUIRE_WEBGPU", process.env.AERO_REQUIRE_WEBGPU, false);
+const disableWgpuTextureCompression = parseBoolean(
+  "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION",
+  process.env.AERO_DISABLE_WGPU_TEXTURE_COMPRESSION,
+  false,
+);
 const viteDisableCoopCoep = parseBoolean(
   "VITE_DISABLE_COOP_COEP",
   process.env.VITE_DISABLE_COOP_COEP,
@@ -393,6 +398,7 @@ const resolved = {
   repoRoot,
 
   AERO_REQUIRE_WEBGPU: requireWebgpu ? "1" : "0",
+  AERO_DISABLE_WGPU_TEXTURE_COMPRESSION: disableWgpuTextureCompression ? "1" : "0",
   VITE_DISABLE_COOP_COEP: viteDisableCoopCoep ? "1" : "0",
 
   AERO_NODE_DIR: nodeDir.abs ?? "",

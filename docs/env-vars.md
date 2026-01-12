@@ -21,6 +21,9 @@ node scripts/env/resolve.mjs --format json
 It validates and normalizes inputs (paths, booleans, URLs) and uses the same path
 resolution logic as CI (`scripts/ci/detect-node-dir.mjs`, `scripts/ci/detect-wasm-crate.mjs`).
 
+It also normalizes a few commonly-propagated boolean knobs (e.g. `AERO_REQUIRE_WEBGPU`,
+`AERO_DISABLE_WGPU_TEXTURE_COMPRESSION`, `VITE_DISABLE_COOP_COEP`) to `0`/`1`.
+
 It can also print shell assignments:
 
 ```bash
