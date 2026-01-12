@@ -14,9 +14,11 @@ export function installNetTraceBackendOnAeroGlobal(coordinator: WorkerCoordinato
 
   // Be defensive: other tooling might set `window.aero` to a non-object value.
   // Align with `web/src/api/status.ts` which repairs the global in that case.
-  const existing = (window as unknown as { aero?: unknown }).aero;
-  const aero: Record<string, unknown> =
-    existing && typeof existing === "object" ? (existing as Record<string, unknown>) : ((window as unknown as any).aero = {});
+  const win = window as unknown as { aero?: unknown };
+  if (!win.aero || typeof win.aero !== "object") {
+    win.aero = {};
+  }
+  const aero = win.aero as Record<string, unknown>;
 
   const backend: NetTraceBackend = {
     isEnabled: () => coordinator.isNetTraceEnabled(),
