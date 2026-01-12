@@ -346,7 +346,7 @@ fn tier0_cpu_core_runner_delivers_external_interrupt_after_sti_shadow() {
     let cfg = Tier0Config::default();
     let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
 
-    assert_eq!(res.exit, BatchExit::Halted);
+    assert_eq!(res.exit, BatchExit::BiosInterrupt(0x20));
     assert_eq!(res.executed, 3);
     assert_eq!(cpu.state.rip(), HANDLER_BASE + 1);
 
@@ -392,7 +392,7 @@ fn tier0_cpu_core_runner_delivers_external_interrupt_after_mov_ss_shadow() {
 
     // NOP executes, then the interrupt is delivered before the final HLT.
     let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
-    assert_eq!(res.exit, BatchExit::Halted);
+    assert_eq!(res.exit, BatchExit::BiosInterrupt(0x20));
     assert_eq!(res.executed, 2);
     assert_eq!(cpu.state.rip(), HANDLER_BASE + 1);
 

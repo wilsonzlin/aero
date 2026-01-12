@@ -606,6 +606,16 @@ pub fn deliver_external_interrupt<B: CpuBus>(
         return Ok(());
     };
 
+    // Tier-0 treats `HLT` as a BIOS interrupt hypercall only when
+    // `pending_bios_int_valid` is set. Software `INT n` assists already set this
+    // in real/v8086 mode, but externally injected interrupts (PIC/APIC) can also
+    // vector into BIOS ROM stubs that begin with `HLT; IRET`. Record the vector
+    // here so the Tier-0 interpreter exits with `BiosInterrupt(vector)` instead
+    // of permanently halting the VM.
+    if matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+        state.set_pending_bios_int(vector);
+    }
+
     // Maskable interrupts wake the CPU from `HLT` when they are actually delivered.
     state.halted = false;
 
