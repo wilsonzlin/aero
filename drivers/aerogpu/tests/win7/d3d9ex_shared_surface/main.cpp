@@ -462,7 +462,9 @@ static int RenderTriangleToSurface(aerogpu_test::TestReporter* reporter,
   }
 
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
-  const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
+  // Use a non-symmetric vertex color so we catch D3DCOLOR channel-ordering regressions
+  // (e.g. BGRA-in-memory vs RGBA-in-shader).
+  const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
 
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
   if (FAILED(hr)) {
@@ -479,17 +481,17 @@ static int RenderTriangleToSurface(aerogpu_test::TestReporter* reporter,
   verts[0].y = (float)height * 0.25f;
   verts[0].z = 0.5f;
   verts[0].rhw = 1.0f;
-  verts[0].color = kGreen;
+  verts[0].color = kBlue;
   verts[1].x = (float)width * 0.75f;
   verts[1].y = (float)height * 0.25f;
   verts[1].z = 0.5f;
   verts[1].rhw = 1.0f;
-  verts[1].color = kGreen;
+  verts[1].color = kBlue;
   verts[2].x = (float)width * 0.5f;
   verts[2].y = (float)height * 0.75f;
   verts[2].z = 0.5f;
   verts[2].rhw = 1.0f;
-  verts[2].color = kGreen;
+  verts[2].color = kBlue;
 
   hr = dev->BeginScene();
   if (FAILED(hr)) {
@@ -625,7 +627,7 @@ static int ValidateSurfacePixels(aerogpu_test::TestReporter* reporter,
 
   sysmem->UnlockRect();
 
-  const uint32_t expected_center = 0xFF00FF00u;  // BGRA = (0, 255, 0, 255).
+  const uint32_t expected_center = 0xFF0000FFu;  // BGRA = (255, 0, 0, 255) = blue.
   const uint32_t expected_corner = 0xFFFF0000u;  // BGRA = (0, 0, 255, 255).
 
   if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu) ||
