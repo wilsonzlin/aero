@@ -30,6 +30,8 @@ const VIRTIO_INPUT_MMIO_BAR_SIZE = 0x4000;
 
 // IRQ5 is unused by the other built-in devices (i8042=IRQ1/12, UART=IRQ4, UHCI=IRQ11, E1000=IRQ10).
 const VIRTIO_INPUT_IRQ_LINE = 0x05;
+// Canonical multifunction virtio-input device location (keyboard=fn0, mouse=fn1).
+const VIRTIO_INPUT_PCI_DEVICE = 10;
 
 // Virtio input event codes we need on the host side.
 const BTN_LEFT = 0x110;
@@ -336,6 +338,7 @@ export class VirtioInputPciFunction implements PciDevice {
   readonly headerType: number;
   readonly irqLine = VIRTIO_INPUT_IRQ_LINE;
   readonly interruptPin = 1 as const;
+  readonly bdf: PciAddress;
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_INPUT_MMIO_BAR_SIZE }, null, null, null, null, null];
 
@@ -355,6 +358,7 @@ export class VirtioInputPciFunction implements PciDevice {
     this.name = `virtio_input_${opts.kind}`;
     this.subsystemId = opts.kind === "keyboard" ? VIRTIO_INPUT_SUBSYSTEM_KEYBOARD : VIRTIO_INPUT_SUBSYSTEM_MOUSE;
     this.headerType = opts.kind === "keyboard" ? 0x80 : 0x00;
+    this.bdf = { bus: 0, device: VIRTIO_INPUT_PCI_DEVICE, function: opts.kind === "keyboard" ? 0 : 1 };
   }
 
   initConfigSpace(config: Uint8Array, _addr: PciAddress): void {

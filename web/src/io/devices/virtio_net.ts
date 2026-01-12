@@ -86,6 +86,7 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly classCode = VIRTIO_NET_CLASS_CODE;
   readonly revisionId = VIRTIO_CONTRACT_REVISION_ID;
   readonly irqLine = VIRTIO_NET_IRQ_LINE;
+  readonly bdf = { bus: 0, device: 8, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null];
 

@@ -52,6 +52,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
   readonly classCode = UHCI_CLASS_CODE;
   readonly revisionId = 0x01;
   readonly irqLine = UHCI_IRQ_LINE;
+  readonly bdf = { bus: 0, device: 1, function: 0 };
 
   // Intel PIIX3/4 place the UHCI I/O register window in BAR4 (offset 0x20).
   // Keep that layout so Windows' in-box UHCI driver can find the registers.

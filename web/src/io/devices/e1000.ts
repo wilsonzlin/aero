@@ -47,6 +47,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   readonly classCode = E1000_CLASS_CODE;
   readonly revisionId = 0x00;
   readonly irqLine = E1000_IRQ_LINE;
+  readonly bdf = { bus: 0, device: 5, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [
     { kind: "mmio32", size: E1000_MMIO_BAR_SIZE },
