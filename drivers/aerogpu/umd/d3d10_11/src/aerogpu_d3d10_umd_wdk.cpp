@@ -2476,6 +2476,26 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   res->is_shared = true;
   res->is_shared_alias = true;
 
+  // Capture the resource metadata that the runtime provides for the opened
+  // resource. Some code paths (e.g. Map(READ) implicit sync heuristics) rely on
+  // bind/usage flags to distinguish staging readback resources from GPU-only
+  // textures.
+  __if_exists(D3D10DDIARG_OPENRESOURCE::BindFlags) {
+    res->bind_flags = pOpenResource->BindFlags;
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::MiscFlags) {
+    res->misc_flags = pOpenResource->MiscFlags;
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::Usage) {
+    res->usage = static_cast<uint32_t>(pOpenResource->Usage);
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::CPUAccessFlags) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pOpenResource->CPUAccessFlags);
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::CpuAccessFlags) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pOpenResource->CpuAccessFlags);
+  }
+
   // Recover the runtime allocation handle (`hAllocation`) for LockCb/UnlockCb
   // and the KM handles needed for pfnDeallocateCb. Field availability varies
   // across WDK vintages, so treat all as optional.
