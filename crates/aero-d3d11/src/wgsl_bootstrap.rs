@@ -166,7 +166,13 @@ fn translate_ps(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
     s.push_str("};\n\n");
 
     s.push_str("@fragment\nfn fs_main(input: PsIn) -> @location(0) vec4<f32> {\n");
-    s.push_str(&format!("  return input.v{};\n", mov.src.index));
+    if mov.src.index == 0 {
+        // The bootstrap translator assumes v0 is the pixel shader's position input. For the
+        // common debug pattern `mov o0, v0`, return the builtin `position` value.
+        s.push_str("  return input.pos;\n");
+    } else {
+        s.push_str(&format!("  return input.v{};\n", mov.src.index));
+    }
     s.push_str("}\n");
 
     Ok(WgslBootstrapTranslation { wgsl: s })

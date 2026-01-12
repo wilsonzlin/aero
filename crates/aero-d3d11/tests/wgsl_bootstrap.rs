@@ -30,6 +30,29 @@ fn operand_token(operand_type: u32) -> u32 {
 }
 
 #[test]
+fn bootstrap_translates_mov_from_v0_as_position() {
+    // Pixel shader stage type is 0.
+    let body = [
+        // mov o0, v0
+        opcode_token(OPCODE_MOV, 5),
+        operand_token(OPERAND_TYPE_OUTPUT),
+        0,
+        operand_token(OPERAND_TYPE_INPUT),
+        0,
+        opcode_token(OPCODE_RET, 1),
+    ];
+    let program_bytes = tokens_to_bytes(&make_sm5_program_tokens(0, &body));
+    let program = Sm4Program::parse_program_tokens(&program_bytes).expect("parse_program_tokens");
+
+    let wgsl = translate_sm4_to_wgsl_bootstrap(&program)
+        .expect("translation should succeed")
+        .wgsl;
+    assert!(wgsl.contains("return input.pos;"), "{wgsl}");
+    assert!(!wgsl.contains("input.v0"), "{wgsl}");
+    naga::front::wgsl::parse_str(&wgsl).expect("generated WGSL should parse");
+}
+
+#[test]
 fn bootstrap_errors_on_unsupported_instruction() {
     // Pixel shader stage type is 0.
     let body = [
