@@ -5677,6 +5677,274 @@ fn aerogpu_cmd_set_shader_constants_f_between_draws_unused_does_not_restart_rend
 }
 
 #[test]
+fn aerogpu_cmd_set_shader_constants_f_between_draws_preserves_order_with_prior_encoder_copy() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const VB: u32 = 1;
+        const RT: u32 = 2;
+        const VS: u32 = 10;
+        const PS: u32 = 11;
+        const IL: u32 = 20;
+
+        let ps_red = build_ps_solid_red_dxbc();
+
+        let ilay = build_ilay_pos3();
+
+        let vertices = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+        ];
+        let vb_bytes = bytemuck::bytes_of(&vertices);
+
+        let translate_x_10: [f32; 16] = [
+            1.0, 0.0, 0.0, 10.0, //
+            0.0, 1.0, 0.0, 0.0,  //
+            0.0, 0.0, 1.0, 0.0,  //
+            0.0, 0.0, 0.0, 1.0,  //
+        ];
+        let identity: [f32; 16] = [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0, //
+        ];
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_BUFFER (VB)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&VB.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER.to_le_bytes());
+        stream.extend_from_slice(&(vb_bytes.len() as u64).to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // UPLOAD_RESOURCE (VB)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&VB.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&(vb_bytes.len() as u64).to_le_bytes()); // size_bytes
+        stream.extend_from_slice(vb_bytes);
+        stream.resize(stream.len() + (align4(vb_bytes.len()) - vb_bytes.len()), 0);
+        end_cmd(&mut stream, start);
+
+        // CREATE_TEXTURE2D (RT 4x4)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&RT.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_RENDER_TARGET.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_SHADER_DXBC (VS)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+        stream.extend_from_slice(&VS.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+        stream.extend_from_slice(&(DXBC_VS_MATRIX.len() as u32).to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(DXBC_VS_MATRIX);
+        stream.resize(
+            stream.len() + (align4(DXBC_VS_MATRIX.len()) - DXBC_VS_MATRIX.len()),
+            0,
+        );
+        end_cmd(&mut stream, start);
+
+        // CREATE_SHADER_DXBC (PS)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateShaderDxbc as u32);
+        stream.extend_from_slice(&PS.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // stage = pixel
+        stream.extend_from_slice(&(ps_red.len() as u32).to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&ps_red);
+        stream.resize(stream.len() + (align4(ps_red.len()) - ps_red.len()), 0);
+        end_cmd(&mut stream, start);
+
+        // CREATE_INPUT_LAYOUT
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateInputLayout as u32);
+        stream.extend_from_slice(&IL.to_le_bytes());
+        stream.extend_from_slice(&(ilay.len() as u32).to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&ilay);
+        stream.resize(
+            stream.len() + (align4(ilay.len()) - ilay.len()),
+            0,
+        );
+        end_cmd(&mut stream, start);
+
+        // SET_RENDER_TARGETS
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetRenderTargets as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // color_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // depth_stencil
+        stream.extend_from_slice(&RT.to_le_bytes());
+        for _ in 0..7 {
+            stream.extend_from_slice(&0u32.to_le_bytes());
+        }
+        end_cmd(&mut stream, start);
+
+        // SET_VIEWPORT 0..4
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetViewport as u32);
+        stream.extend_from_slice(&0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&4f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&4f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&0f32.to_bits().to_le_bytes());
+        stream.extend_from_slice(&1f32.to_bits().to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        // BIND_SHADERS
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::BindShaders as u32);
+        stream.extend_from_slice(&VS.to_le_bytes());
+        stream.extend_from_slice(&PS.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // cs
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // SET_INPUT_LAYOUT
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetInputLayout as u32);
+        stream.extend_from_slice(&IL.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // SET_VERTEX_BUFFERS
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetVertexBuffers as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+        stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+        stream.extend_from_slice(&VB.to_le_bytes()); // buffer
+        stream.extend_from_slice(&(core::mem::size_of::<VertexPos3>() as u32).to_le_bytes()); // stride_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // SET_PRIMITIVE_TOPOLOGY
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetPrimitiveTopology as u32);
+        stream.extend_from_slice(&(AerogpuPrimitiveTopology::TriangleList as u32).to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // SET_BLEND_STATE (sample_mask = 0, so DRAW is skipped)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetBlendState as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes()); // enable
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_factor
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_factor
+        stream.extend_from_slice(&0u32.to_le_bytes()); // blend_op
+        stream.extend_from_slice(&0xFu32.to_le_bytes()); // write mask + padding
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_factor_alpha
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_factor_alpha
+        stream.extend_from_slice(&0u32.to_le_bytes()); // blend_op_alpha
+        for c in [0.0f32; 4] {
+            stream.extend_from_slice(&c.to_bits().to_le_bytes());
+        }
+        stream.extend_from_slice(&0u32.to_le_bytes()); // sample_mask
+        end_cmd(&mut stream, start);
+
+        // CLEAR to black.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Clear as u32);
+        stream.extend_from_slice(&AEROGPU_CLEAR_COLOR.to_le_bytes());
+        for bits in [0.0f32, 0.0, 0.0, 1.0].map(f32::to_bits) {
+            stream.extend_from_slice(&bits.to_le_bytes());
+        }
+        stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // depth
+        stream.extend_from_slice(&0u32.to_le_bytes()); // stencil
+        end_cmd(&mut stream, start);
+
+        // SET_SHADER_CONSTANTS_F (VS, matrix translate +10 x).
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetShaderConstantsF as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+        stream.extend_from_slice(&0u32.to_le_bytes()); // start_register
+        stream.extend_from_slice(&4u32.to_le_bytes()); // vec4_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        for f in translate_x_10 {
+            stream.extend_from_slice(&f.to_le_bytes());
+        }
+        end_cmd(&mut stream, start);
+
+        // DRAW (skipped because sample_mask == 0)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Draw as u32);
+        stream.extend_from_slice(&3u32.to_le_bytes()); // vertex_count
+        stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // first_vertex
+        stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance
+        end_cmd(&mut stream, start);
+
+        // SET_SHADER_CONSTANTS_F (VS, identity) between draws. This must not be reordered ahead of
+        // the earlier constants upload.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetShaderConstantsF as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+        stream.extend_from_slice(&0u32.to_le_bytes()); // start_register
+        stream.extend_from_slice(&4u32.to_le_bytes()); // vec4_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        for f in identity {
+            stream.extend_from_slice(&f.to_le_bytes());
+        }
+        end_cmd(&mut stream, start);
+
+        // SET_BLEND_STATE (sample_mask = all ones)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetBlendState as u32);
+        stream.extend_from_slice(&0u32.to_le_bytes()); // enable
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_factor
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_factor
+        stream.extend_from_slice(&0u32.to_le_bytes()); // blend_op
+        stream.extend_from_slice(&0xFu32.to_le_bytes()); // write mask + padding
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_factor_alpha
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_factor_alpha
+        stream.extend_from_slice(&0u32.to_le_bytes()); // blend_op_alpha
+        for c in [0.0f32; 4] {
+            stream.extend_from_slice(&c.to_bits().to_le_bytes());
+        }
+        stream.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // sample_mask
+        end_cmd(&mut stream, start);
+
+        // DRAW (should be red if identity matrix is applied last)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Draw as u32);
+        stream.extend_from_slice(&3u32.to_le_bytes()); // vertex_count
+        stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // first_vertex
+        stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance
+        end_cmd(&mut stream, start);
+
+        let stream = finish_stream(stream);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+        assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
 fn aerogpu_cmd_set_render_state_between_draws_does_not_restart_render_pass() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {

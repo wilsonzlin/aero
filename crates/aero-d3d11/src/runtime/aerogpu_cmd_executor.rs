@@ -4156,6 +4156,7 @@ impl AerogpuD3d11Executor {
 
         encoder.copy_buffer_to_buffer(&staging, 0, dst, offset_bytes, byte_len as u64);
         self.encoder_has_commands = true;
+        self.encoder_used_buffers.insert(legacy_constants_buffer_id(stage));
         Ok(())
     }
 
@@ -5004,9 +5005,7 @@ impl AerogpuD3d11Executor {
                 let src = unsafe { &*src_ptr };
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
                 self.encoder_has_commands = true;
-                if cb.buffer != legacy_constants_buffer_id(stage) {
-                    self.encoder_used_buffers.insert(cb.buffer);
-                }
+                self.encoder_used_buffers.insert(cb.buffer);
             }
         }
 
