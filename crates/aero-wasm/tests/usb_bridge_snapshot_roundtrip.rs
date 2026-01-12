@@ -21,6 +21,7 @@ const USBCMD_RUN: u16 = 1 << 0;
 const USBSTS_USBINT: u16 = 1 << 0;
 const USBINTR_IOC: u16 = 1 << 2;
 const PORTSC_PED: u16 = 1 << 2;
+const PORTSC_PR: u16 = 1 << 9;
 
 // UHCI link pointer bits.
 const LINK_PTR_T: u32 = 1 << 0;
@@ -141,6 +142,72 @@ fn uhci_controller_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     // Clearing USBSTS.USBINT should deassert the IRQ line.
     ctrl2.io_write(REG_USBSTS, 2, USBSTS_USBINT as u32);
     assert!(!ctrl2.irq_asserted());
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_restore_clears_webusb_host_state_and_allows_retry() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
+    let fl_base = setup_webusb_control_in_frame_list(guest_base);
+
+    let mut ctrl = UhciControllerBridge::new(guest_base, guest_size).unwrap();
+    ctrl.set_connected(true);
+    ctrl.io_write(REG_FRBASEADD, 4, fl_base);
+
+    // Reset + enable the WebUSB root port (PORTSC2) by pulsing PR and waiting 50 frames.
+    ctrl.io_write(REG_PORTSC1, 4, (u32::from(PORTSC_PR)) << 16);
+    ctrl.step_frames(50);
+
+    ctrl.io_write(REG_USBCMD, 2, USBCMD_RUN as u32);
+
+    // First attempt should emit a host action.
+    ctrl.step_frame();
+    let drained = ctrl.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let first_id = match actions.first() {
+        Some(UsbHostAction::ControlIn { id, .. }) => *id,
+        other => panic!("expected ControlIn action, got {other:?}"),
+    };
+
+    // With the action drained but no completion, the device is still inflight and should not emit
+    // duplicates while the TD retries.
+    ctrl.step_frame();
+    let drained_again = ctrl.drain_actions().expect("drain_actions ok");
+    let actions_again: Vec<UsbHostAction> = if drained_again.is_null() {
+        Vec::new()
+    } else {
+        serde_wasm_bindgen::from_value(drained_again).expect("deserialize UsbHostAction[]")
+    };
+    assert!(
+        actions_again.is_empty(),
+        "expected inflight WebUSB transfer to suppress duplicate actions"
+    );
+
+    let snapshot = ctrl.snapshot_state().to_vec();
+
+    let mut ctrl2 = UhciControllerBridge::new(guest_base, guest_size).unwrap();
+    ctrl2.restore_state(&snapshot).expect("restore_state ok");
+
+    let drained_after_restore = ctrl2.drain_actions().expect("drain_actions ok");
+    assert!(
+        drained_after_restore.is_null(),
+        "expected WebUSB host queues to be cleared on restore"
+    );
+
+    // The guest TD remains active and is retried; with host state cleared, the next retry should
+    // re-emit host actions.
+    ctrl2.step_frame();
+    let drained_retry = ctrl2.drain_actions().expect("drain_actions ok");
+    let actions_retry: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained_retry).expect("deserialize UsbHostAction[]");
+    let retry_id = match actions_retry.first() {
+        Some(UsbHostAction::ControlIn { id, .. }) => *id,
+        other => panic!("expected ControlIn action after restore, got {other:?}"),
+    };
+    assert_ne!(
+        retry_id, first_id,
+        "expected re-emitted host action to allocate a new id after restore"
+    );
 }
 
 // WebUSB UHCI bridge register constants (u32 offsets).
