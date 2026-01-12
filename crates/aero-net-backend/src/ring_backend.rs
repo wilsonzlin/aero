@@ -4,6 +4,12 @@ use aero_ipc::ring::{PopError, PushError};
 
 use crate::NetworkBackend;
 
+/// Maximum number of RX ring records to pop per [`NetworkBackend::poll_receive`] call.
+///
+/// This bounds worst-case host work if the ring contains a large number of oversized frames (which
+/// are dropped without being returned to the NIC model).
+pub const MAX_RX_POPS_PER_POLL: usize = 64;
+
 /// Minimal abstraction over an Aero IPC ring buffer suitable for framing raw Ethernet payloads.
 pub trait FrameRing {
     fn capacity_bytes(&self) -> usize;
@@ -220,7 +226,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
             return None;
         }
 
-        loop {
+        for _ in 0..MAX_RX_POPS_PER_POLL {
             match self.rx.try_pop_vec() {
                 Ok(frame) => {
                     if frame.len() > self.max_frame_bytes {
@@ -239,6 +245,8 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
                 }
             }
         }
+
+        None
     }
 
     fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
@@ -390,6 +398,68 @@ mod tests {
                 tx_dropped_full: 0,
                 rx_popped_frames: 1,
                 rx_dropped_oversize: 1,
+                rx_corrupt: 0,
+            }
+        );
+    }
+
+    struct OversizeRxRing {
+        calls: Cell<u32>,
+        ok_until: u32,
+        frame_len: usize,
+    }
+
+    impl OversizeRxRing {
+        fn new(ok_until: u32, frame_len: usize) -> Self {
+            Self {
+                calls: Cell::new(0),
+                ok_until,
+                frame_len,
+            }
+        }
+
+        fn calls(&self) -> u32 {
+            self.calls.get()
+        }
+    }
+
+    impl FrameRing for OversizeRxRing {
+        fn capacity_bytes(&self) -> usize {
+            64
+        }
+
+        fn try_push(&self, _payload: &[u8]) -> Result<(), PushError> {
+            Ok(())
+        }
+
+        fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+            let calls = self.calls.get();
+            if calls >= self.ok_until {
+                return Err(PopError::Empty);
+            }
+
+            self.calls.set(calls + 1);
+            Ok(vec![0u8; self.frame_len])
+        }
+    }
+
+    #[test]
+    fn poll_receive_is_bounded_when_dropping_oversized_frames() {
+        let tx = Arc::new(RingBuffer::new(64));
+        let rx = Rc::new(OversizeRxRing::new((MAX_RX_POPS_PER_POLL + 10) as u32, 3));
+
+        let mut backend = L2TunnelRingBackend::with_max_frame_bytes(tx, rx.clone(), 2);
+
+        assert_eq!(backend.poll_receive(), None);
+        assert_eq!(rx.calls(), MAX_RX_POPS_PER_POLL as u32);
+        assert_eq!(
+            backend.stats(),
+            L2TunnelRingBackendStats {
+                tx_pushed_frames: 0,
+                tx_dropped_oversize: 0,
+                tx_dropped_full: 0,
+                rx_popped_frames: 0,
+                rx_dropped_oversize: MAX_RX_POPS_PER_POLL as u64,
                 rx_corrupt: 0,
             }
         );
