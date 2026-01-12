@@ -86,9 +86,9 @@ mod platform_handle {
             | DiskError::OffsetOverflow => {
                 io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
             }
-            DiskError::InvalidSparseHeader(_)
-            | DiskError::CorruptSparseImage(_)
-            | DiskError::CorruptImage(_) => {
+            DiskError::CorruptImage(_)
+            | DiskError::InvalidSparseHeader(_)
+            | DiskError::CorruptSparseImage(_) => {
                 io::Error::new(io::ErrorKind::InvalidData, err.to_string())
             }
             DiskError::InvalidConfig(_) => {

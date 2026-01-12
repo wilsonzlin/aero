@@ -15,7 +15,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Object, Reflect, Uint8Array};
 
 use aero_cpu_core::{
-    CpuCore, Exception, PagingBus,
+    CpuBus, CpuCore, Exception, PagingBus,
     assist::AssistContext,
     interp::tier0::{
         Tier0Config,
@@ -23,7 +23,7 @@ use aero_cpu_core::{
     },
     state::{CpuMode, Segment},
 };
-use aero_mmu::MemoryBus;
+use aero_mmu::{MemoryBus, Mmu};
 
 use crate::{RunExit, RunExitKind};
 
@@ -180,10 +180,9 @@ fn set_real_mode_seg(seg: &mut Segment, selector: u16) {
 /// This is intended to be driven by `web/src/workers/cpu.worker.ts`.
 #[wasm_bindgen]
 pub struct WasmVm {
-    guest_base: u32,
-    guest_size: u64,
     cpu: CpuCore,
     assist: AssistContext,
+    bus: PagingBus<WasmPhysBus, JsIoBus>,
 }
 
 #[wasm_bindgen]
@@ -213,11 +212,21 @@ impl WasmVm {
             )));
         }
 
+        let cpu = CpuCore::new(CpuMode::Real);
+        let assist = AssistContext::default();
+        let mut bus = PagingBus::new_with_io(
+            WasmPhysBus {
+                guest_base,
+                guest_size: guest_size_u64,
+            },
+            JsIoBus,
+        );
+        bus.sync(&cpu.state);
+
         Ok(Self {
-            guest_base,
-            guest_size: guest_size_u64,
-            cpu: CpuCore::new(CpuMode::Real),
-            assist: AssistContext::default(),
+            cpu,
+            assist,
+            bus,
         })
     }
 
@@ -227,6 +236,7 @@ impl WasmVm {
         self.cpu.state.halted = false;
         self.cpu.state.clear_pending_bios_int();
         self.assist = AssistContext::default();
+        *self.bus.mmu_mut() = Mmu::new();
 
         // Real-mode: base = selector<<4, 64KiB limit.
         set_real_mode_seg(&mut self.cpu.state.segments.cs, 0);
@@ -237,6 +247,7 @@ impl WasmVm {
         set_real_mode_seg(&mut self.cpu.state.segments.gs, 0);
 
         self.cpu.state.set_rip(entry_ip as u64);
+        self.bus.sync(&self.cpu.state);
     }
 
     /// Execute up to `max_insts` instructions.
@@ -252,11 +263,6 @@ impl WasmVm {
             };
         }
 
-        let phys = WasmPhysBus {
-            guest_base: self.guest_base,
-            guest_size: self.guest_size,
-        };
-        let mut bus = PagingBus::new_with_io(phys, JsIoBus);
         let cfg = Tier0Config::from_cpuid(&self.assist.features);
 
         let mut executed = 0u64;
@@ -266,7 +272,7 @@ impl WasmVm {
                 &cfg,
                 &mut self.assist,
                 &mut self.cpu,
-                &mut bus,
+                &mut self.bus,
                 remaining,
             );
             executed = executed.saturating_add(batch.executed);
@@ -388,6 +394,11 @@ impl WasmVm {
 
         aero_snapshot::apply_cpu_state_to_cpu_core(&cpu_state, &mut self.cpu.state);
         aero_snapshot::apply_mmu_state_to_cpu_core(&mmu_state, &mut self.cpu.state);
+
+        // The paging bus caches translations in its internal TLB. Snapshots only capture the
+        // architectural MMU registers, so discard any cached translations before resuming.
+        *self.bus.mmu_mut() = Mmu::new();
+        self.bus.sync(&self.cpu.state);
 
         // Reset runtime bookkeeping that is intentionally not part of the snapshot encoding.
         self.cpu.pending = Default::default();
