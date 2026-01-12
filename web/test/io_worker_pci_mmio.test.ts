@@ -32,15 +32,31 @@ test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async ()
   });
 
   const [result] = (await once(cpuWorker, "message")) as [
-    { ok: boolean; idDword: number; bar0: number; mmioReadback: number },
+    {
+      ok: boolean;
+      idDword: number;
+      ssidDword: number;
+      ssidDwordAfter: number;
+      irqLineBefore: number;
+      irqLineAfter: number;
+      irqPinBefore: number;
+      irqPinAfter: number;
+      bar0: number;
+      mmioReadback: number;
+    },
   ];
 
   assert.equal(result.ok, true);
   assert.equal(result.idDword >>> 0, 0x5678_1234);
+  assert.equal(result.ssidDword >>> 0, 0xef01_abcd);
+  assert.equal(result.ssidDwordAfter >>> 0, 0xef01_abcd);
+  assert.equal(result.irqLineBefore >>> 0, 0x0b);
+  assert.equal(result.irqLineAfter >>> 0, 0x0c);
+  assert.equal(result.irqPinBefore >>> 0, 0x02);
+  assert.equal(result.irqPinAfter >>> 0, 0x02);
   assert.equal(result.bar0 >>> 0, 0xe000_0000);
   assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
 
   await cpuWorker.terminate();
   await ioWorker.terminate();
 });
-

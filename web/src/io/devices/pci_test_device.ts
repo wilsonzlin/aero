@@ -31,8 +31,11 @@ export class PciTestDevice implements PciDevice {
   readonly name = "pci_test";
   readonly vendorId = 0x1234;
   readonly deviceId = 0x5678;
+  readonly subsystemVendorId = 0xabcd;
+  readonly subsystemId = 0xef01;
   readonly classCode = 0xff_00_00; // "other"
   readonly irqLine = 0x0b;
+  readonly interruptPin = 0x02; // INTB#
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: 0x100 }, null, null, null, null, null];
 
@@ -48,4 +51,3 @@ export class PciTestDevice implements PciDevice {
     writeLe(this.#regs, Number(offset), size, value);
   }
 }
-

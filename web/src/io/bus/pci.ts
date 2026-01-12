@@ -30,7 +30,17 @@ export interface PciDevice {
   readonly name: string;
   readonly vendorId: number;
   readonly deviceId: number;
+  /**
+   * Subsystem Vendor ID (SSVID) @ 0x2C.
+   *
+   * If omitted, defaults to {@link vendorId}.
+   */
   readonly subsystemVendorId?: number;
+  /**
+   * Subsystem ID (SSID) @ 0x2E.
+   *
+   * If omitted, defaults to {@link deviceId}.
+   */
   readonly subsystemId?: number;
   /**
    * Class code packed as 0xBBSSPP (base class, subclass, programming interface).
@@ -38,13 +48,19 @@ export interface PciDevice {
    */
   readonly classCode: number;
   readonly revisionId?: number;
+  /**
+   * Interrupt line @ 0x3C.
+   *
+   * This field is writable by the guest (per PCI spec) and typically used to
+   * report legacy PIC routing.
+   */
   readonly irqLine?: number;
   /**
-   * PCI interrupt pin number (0x3d): 1=INTA#, 2=INTB#, 3=INTC#, 4=INTD#.
+   * PCI interrupt pin number (0x3D): 0=none, 1=INTA#, 2=INTB#, 3=INTC#, 4=INTD#.
    *
    * Defaults to INTA# for endpoint devices.
-  */
-  readonly interruptPin?: 1 | 2 | 3 | 4;
+   */
+  readonly interruptPin?: 0 | 1 | 2 | 3 | 4;
   readonly bars?: ReadonlyArray<PciBar | null>;
   /**
    * PCI header type (standard offset 0x0E). Bit 7 is the multifunction bit.
@@ -241,7 +257,9 @@ export class PciBus implements PortIoHandler {
 
     // Interrupt line/pin.
     config[0x3c] = (device.irqLine ?? 0x00) & 0xff;
-    config[0x3d] = (device.interruptPin ?? 0x01) & 0xff;
+    const intPin = device.interruptPin ?? 0x01;
+    if (intPin < 0 || intPin > 4) throw new Error(`PCI interruptPin must be 0..4, got ${intPin}`);
+    config[0x3d] = intPin & 0xff;
 
     const bars: Array<PciBarSlot | null> = Array.from({ length: 6 }, () => null);
     const barDescs = device.bars ?? [];
@@ -423,7 +441,10 @@ export class PciBus implements PortIoHandler {
   #writeConfigDword(fn: PciFunction, alignedOff: number, value: number): void {
     // Command register changes affect BAR decoding enablement.
     if (alignedOff === 0x04) {
-      writeU32LE(fn.config, alignedOff, value);
+      // Command (low 16) is writable; status (high 16) is treated as read-only for now.
+      const cur = readU32LE(fn.config, alignedOff);
+      const newValue = ((cur & 0xffff_0000) | (value & 0x0000_ffff)) >>> 0;
+      writeU32LE(fn.config, alignedOff, newValue);
       this.#refreshDeviceDecoding(fn);
       return;
     }
@@ -474,7 +495,40 @@ export class PciBus implements PortIoHandler {
       return;
     }
 
-    writeU32LE(fn.config, alignedOff, value);
+    const mask = this.#writableMaskForDword(alignedOff);
+    if (mask === 0) return;
+    if (mask === 0xffff_ffff) {
+      writeU32LE(fn.config, alignedOff, value);
+      return;
+    }
+    const cur = readU32LE(fn.config, alignedOff);
+    const newValue = ((cur & ~mask) | (value & mask)) >>> 0;
+    writeU32LE(fn.config, alignedOff, newValue);
+  }
+
+  #writableMaskForDword(alignedOff: number): number {
+    // Keep a small mask table for registers we care about.
+    // Any unlisted register defaults to RW (helps compatibility with guests).
+    switch (alignedOff) {
+      case 0x00:
+        // Vendor/device IDs are RO.
+        return 0x0000_0000;
+      case 0x08:
+        // Revision/class code are RO.
+        return 0x0000_0000;
+      case 0x0c:
+        // Cache line size (0x0C), latency timer (0x0D), BIST (0x0F) are writable.
+        // Header type (0x0E) is RO.
+        return 0xff00_ffff;
+      case 0x2c:
+        // Subsystem IDs are RO.
+        return 0x0000_0000;
+      case 0x3c:
+        // Interrupt line is RW; interrupt pin (and other bytes) are RO.
+        return 0x0000_00ff;
+      default:
+        return 0xffff_ffff;
+    }
   }
 
   #commandFlags(fn: PciFunction): { ioEnabled: boolean; memEnabled: boolean } {

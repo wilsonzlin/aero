@@ -80,6 +80,30 @@ try {
     io.portWrite(0x0cf8, 4, 0x8000_0000);
     const idDword = io.portRead(0x0cfc, 4);
 
+    // Read subsystem IDs dword (SSVID/SSID at 0x2C).
+    io.portWrite(0x0cf8, 4, 0x8000_002c);
+    const ssidDword = io.portRead(0x0cfc, 4);
+
+    // Read interrupt line/pin.
+    io.portWrite(0x0cf8, 4, 0x8000_003c);
+    const irqLineBefore = io.portRead(0x0cfc, 1);
+    const irqPinBefore = io.portRead(0x0cfd, 1);
+
+    // Interrupt line (0x3C) should be writable; interrupt pin (0x3D) should remain RO.
+    // Perform a 16-bit write that attempts to modify both line+pin.
+    io.portWrite(0x0cf8, 4, 0x8000_003c);
+    io.portWrite(0x0cfc, 2, 0x040c); // line=0x0c, pin=0x04
+
+    io.portWrite(0x0cf8, 4, 0x8000_003c);
+    const irqLineAfter = io.portRead(0x0cfc, 1);
+    const irqPinAfter = io.portRead(0x0cfd, 1);
+
+    // Subsystem IDs are read-only; writes should be ignored.
+    io.portWrite(0x0cf8, 4, 0x8000_002c);
+    io.portWrite(0x0cfc, 4, 0x0000_0000);
+    io.portWrite(0x0cf8, 4, 0x8000_002c);
+    const ssidDwordAfter = io.portRead(0x0cfc, 4);
+
     // Read BAR0 (offset 0x10).
     io.portWrite(0x0cf8, 4, 0x8000_0010);
     const bar0 = io.portRead(0x0cfc, 4);
@@ -92,7 +116,19 @@ try {
     io.mmioWrite(base + 0n, 4, 0x1234_5678);
     const mmioReadback = io.mmioRead(base + 0n, 4);
 
-    parentPort!.postMessage({ ok: true, idDword, bar0, mmioReadback, irqEvents });
+    parentPort!.postMessage({
+      ok: true,
+      idDword,
+      ssidDword,
+      ssidDwordAfter,
+      irqLineBefore,
+      irqLineAfter,
+      irqPinBefore,
+      irqPinAfter,
+      bar0,
+      mmioReadback,
+      irqEvents,
+    });
   } else if (workerData.scenario === "uart16550") {
     const lsrBefore = io.portRead(0x3f8 + 5, 1);
     io.portWrite(0x3f8, 1, "H".charCodeAt(0));
