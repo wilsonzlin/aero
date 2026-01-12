@@ -14,9 +14,23 @@ fn create_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
         return None;
     }
 
-    if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
-        // Some WGPU backends complain loudly if this isn't set, even when we never create a surface.
-        std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        if needs_runtime_dir {
+            let dir = std::env::temp_dir().join(format!(
+                "aero-d3d9-xdg-runtime-{}-vertex-input",
+                std::process::id()
+            ));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
     }
 
     let instance = wgpu::Instance::default();
