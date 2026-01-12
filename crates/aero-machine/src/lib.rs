@@ -5453,8 +5453,8 @@ impl snapshot::SnapshotTarget for Machine {
                         // Port mappings are part of machine wiring, not the snapshot payload, so
                         // install the default VGA port ranges now.
                         self.io.register_range(
-                            0x3C0,
-                            0x20,
+                            0x3B0,
+                            0x30,
                             Box::new(VgaPortIo { dev: vga.clone() }),
                         );
                         self.io.register_shared_range(0x01CE, 2, {

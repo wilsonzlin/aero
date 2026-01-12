@@ -110,23 +110,19 @@ impl NvmeController {
         self.csts |= CSTS_RDY;
         self.page_size = page_size;
 
-        let asqs = ((self.aqa & 0xffff) + 1)
-            .min(NVME_MAX_QUEUE_ENTRIES as u32)
-            .max(1) as u16;
-        let acqs = (((self.aqa >> 16) & 0xffff) + 1)
-            .min(NVME_MAX_QUEUE_ENTRIES as u32)
-            .max(1) as u16;
+        let asqs = ((self.aqa & 0xffff) + 1).clamp(1, NVME_MAX_QUEUE_ENTRIES as u32) as u16;
+        let acqs = (((self.aqa >> 16) & 0xffff) + 1).clamp(1, NVME_MAX_QUEUE_ENTRIES as u32) as u16;
         let admin_sq = SubmissionQueue {
             id: 0,
             base: self.asq,
-            size: asqs.max(1),
+            size: asqs,
             head: 0,
             tail: 0,
             cqid: 0,
         };
         let admin_cq = CompletionQueue {
             base: self.acq,
-            size: acqs.max(1),
+            size: acqs,
             head: 0,
             tail: 0,
             phase: true,

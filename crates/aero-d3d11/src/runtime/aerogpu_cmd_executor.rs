@@ -7678,7 +7678,6 @@ fn get_or_create_render_pipeline_for_state<'a>(
             if let Some(&loc) = used_missing.first() {
                 bail!("pixel shader reads @location({loc}), but VS does not output it");
             }
-
             ps_link_locations = ps_declared_inputs
                 .intersection(&vs_outputs)
                 .copied()

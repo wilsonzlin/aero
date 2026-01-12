@@ -38,14 +38,11 @@ pub(crate) fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     // Grammar note: the JS side treats `device.<id>` as a stable wire spelling and intentionally
     // restricts `<id>` to ASCII decimal digits (no `+`, no `-`) so roundtrips are deterministic and
     // unambiguous. Keep Rust consistent.
-    if let Some(rest) = kind.strip_prefix(DEVICE_KIND_PREFIX_ID)
-        && rest.chars().all(|c| c.is_ascii_digit())
-        && let Ok(id) = rest.parse::<u32>()
-    {
-        return Some(DeviceId(id));
+    let rest = kind.strip_prefix(DEVICE_KIND_PREFIX_ID)?;
+    if !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
     }
-
-    None
+    rest.parse::<u32>().ok().map(DeviceId)
 }
 
 pub(crate) fn kind_from_device_id(id: DeviceId) -> String {
