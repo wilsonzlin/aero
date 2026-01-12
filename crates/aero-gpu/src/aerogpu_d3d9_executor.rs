@@ -1698,6 +1698,18 @@ impl AerogpuD3d9Executor {
                     ),
                 ));
             }
+
+            // Shader creation uses the persistent shader cache on wasm, which requires async IO.
+            // Reject synchronous execution to avoid silently bypassing persistence.
+            let shader_at = stream.cmds.iter().position(|cmd| match cmd {
+                AeroGpuCmd::CreateShaderDxbc { .. } => true,
+                _ => false,
+            });
+            if let Some(at) = shader_at {
+                return Err(AerogpuD3d9Error::Validation(format!(
+                    "CREATE_SHADER_DXBC requires async execution on wasm (call execute_cmd_stream_for_context_async or execute_cmd_stream_with_guest_memory_for_context_async); first CREATE_SHADER_DXBC at packet {at}"
+                )));
+            }
         }
 
         self.switch_context(context_id);
