@@ -66,7 +66,17 @@ export interface AeroNetTraceApi {
   enable: () => void;
   disable: () => void;
   downloadPcapng: () => Promise<Uint8Array>;
+  /**
+   * Non-draining snapshot export (if supported by the runtime).
+   *
+   * Unlike `downloadPcapng()`, this does not clear the in-memory capture buffer.
+   */
+  exportPcapng?: () => Promise<Uint8Array>;
   clear?: () => void | Promise<void>;
+  /**
+   * Legacy alias for clearing the capture (some older hosts use this name).
+   */
+  clearCapture?: () => void;
   getStats?: () => unknown | Promise<unknown>;
 }
 

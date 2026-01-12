@@ -1126,11 +1126,14 @@ an Ethernet “pipe” (the same conceptual boundary described in ADR 0013 / Opt
 
 Capture format notes:
 
-- The exported PCAPNG uses two Ethernet interfaces:
-  - `guest_rx` (tunnel → guest)
-  - `guest_tx` (guest → tunnel)
-- Direction is encoded by the interface, not by PCAPNG `epb_flags`.
-- The current web runtime capture contains only raw Ethernet frames (no proxy-payload pseudo-interfaces).
+- Ethernet frames are written on a single interface named `guest-eth0`; packet direction is encoded
+  via the Enhanced Packet Block `epb_flags` option (`1` = inbound, `2` = outbound).
+- If proxy payload records are present, additional pseudo-interfaces may be emitted:
+  - `tcp-proxy` (`LINKTYPE_USER0` / 147) containing pseudo-packets with an `ATCP` header.
+  - `udp-proxy` (`LINKTYPE_USER1` / 148) containing pseudo-packets with an `AUDP` header.
+- Note: the worker-based web runtime currently only records raw Ethernet frames by default. The
+  proxy pseudo-interfaces only appear if something explicitly calls `NetTracer.recordTcpProxy()` /
+  `recordUdpProxy()`.
 - Frames are recorded at the forwarder boundary (best-effort). In particular, the capture may
   include frames that were later dropped due to missing tunnel/backpressure, or because `NET_RX`
   was full.
@@ -1158,6 +1161,7 @@ In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there i
 - (Optional) **Live stats** (captured bytes/records + drop counters) when the backend implements a stats API.
 - **Clear capture** (when supported by the backend).
 - **Download capture (PCAPNG)** to your local machine.
+- **Download snapshot (PCAPNG)** (when supported): exports without clearing the in-memory buffer.
 - **Save capture to OPFS** (Origin Private File System) at a configurable path (default
   `captures/aero-net-trace.pcapng`).
 
@@ -1214,8 +1218,8 @@ filters. Common ones when debugging guest bring-up:
 - `dns` (DNS queries/responses)
 - `tcp` / `udp` / `icmp`
 
-Because the capture uses separate interfaces (`guest_rx` and `guest_tx`), Wireshark may show
-conversations split across interfaces. Use “Follow Stream” and per-interface packet lists as needed.
+Because the capture uses a single Ethernet interface (`guest-eth0`) with direction encoded via
+`epb_flags`, you can view both inbound/outbound packets together in normal Wireshark flows.
 
 #### Automation API (`window.aero.netTrace`)
 
@@ -1229,6 +1233,7 @@ When present, it implements:
 - `enable(): void`
 - `disable(): void`
 - `downloadPcapng(): Promise<Uint8Array>`
+  - Draining export (clears the in-memory buffer after exporting).
 
 Some builds may additionally expose:
 
@@ -1236,11 +1241,12 @@ Some builds may additionally expose:
 - `getStats(): unknown | Promise<unknown>` (implementation-defined counters such as buffered bytes/frames and drops)
   - When implemented in the web runtime, it typically returns:
     `{ enabled, records, bytes, droppedRecords, droppedBytes }` (same shape as `NetTracer.stats()` in `web/src/net/net_tracer.ts`).
+- `exportPcapng(): Promise<Uint8Array>` (non-draining snapshot export)
 
 Worker-runtime note: in the worker-based runtime, these operations are implemented by sending
 `net.trace.*` `postMessage()` commands to the net worker and receiving the `net.trace.pcapng`
-response. See `web/src/runtime/coordinator.ts` (helper methods) and `web/src/workers/net.worker.ts`
-(the handler + `NetTracer`).
+response (`take_pcapng` drains; `export_pcapng` snapshots). See `web/src/runtime/coordinator.ts`
+(helper methods) and `web/src/workers/net.worker.ts` (the handler + `NetTracer`).
 
 Example:
 
@@ -1267,6 +1273,9 @@ The web tracing buffer is held in-memory and has an explicit size cap to prevent
 - Exporting via the UI (or `downloadPcapng`) uses the net worker’s `takePcapng()` path, which
   **clears the buffer after exporting**. Use this (or the clear button / API) to keep captures
   bounded during long debugging sessions.
+- Snapshot exporting (via `exportPcapng`) does **not** clear the buffer; use this when you want to
+  preview a capture without losing it, but prefer the draining export for long sessions to keep
+  memory bounded.
 - Note: in the current web runtime, exporting clears the buffered frames but does **not** reset the
   drop counters — use **Clear capture** / `clear()` if you want to reset `droppedRecords` and
   `droppedBytes`.
