@@ -22,10 +22,16 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(SATA_AHCI_ICH9.device_id, 0x2922);
     assert_eq!(SATA_AHCI_ICH9.class.as_u32(), 0x010601);
 
+    // Lock in AHCI ABAR contract details (BAR5, 8KiB MMIO window) so the guest-visible PCI profile
+    // cannot drift during refactors.
+    assert_eq!(AHCI_ABAR_BAR_INDEX, 5);
+    assert_eq!(AHCI_ABAR_CFG_OFFSET, 0x24);
+    assert_eq!(AHCI_ABAR_SIZE_U32, 0x2000);
+    assert_eq!(AHCI_ABAR_SIZE, 0x2000);
+
     // AHCI ABAR constants should stay consistent with the canonical PCI profile.
     assert_eq!(SATA_AHCI_ICH9.bars.len(), 1);
     assert_eq!(SATA_AHCI_ICH9.bars[0].index, AHCI_ABAR_BAR_INDEX);
-    assert_eq!(AHCI_ABAR_CFG_OFFSET, 0x10 + 4 * AHCI_ABAR_BAR_INDEX);
     assert_eq!(SATA_AHCI_ICH9.bars[0].size, AHCI_ABAR_SIZE);
     assert_eq!(u64::from(AHCI_ABAR_SIZE_U32), AHCI_ABAR_SIZE);
 
