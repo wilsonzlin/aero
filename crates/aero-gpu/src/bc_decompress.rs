@@ -131,16 +131,37 @@ fn decode_bc3_alpha_palette(alpha0: u8, alpha1: u8) -> [u8; 8] {
 }
 
 fn write_pixel(out: &mut [u8], width: u32, x: u32, y: u32, rgba: [u8; 4]) {
-    let idx = ((y * width + x) * 4) as usize;
+    // Use u64 arithmetic to avoid overflow panics when called with extreme dimensions.
+    let idx = (u64::from(y) * u64::from(width) + u64::from(x)) * 4;
+    let idx: usize = idx
+        .try_into()
+        .expect("pixel index should fit in usize for allocated output");
     out[idx..idx + 4].copy_from_slice(&rgba);
 }
 
 fn write_pixel_rgb_a(out: &mut [u8], width: u32, x: u32, y: u32, rgb: [u8; 3], a: u8) {
-    let idx = ((y * width + x) * 4) as usize;
+    let idx = (u64::from(y) * u64::from(width) + u64::from(x)) * 4;
+    let idx: usize = idx
+        .try_into()
+        .expect("pixel index should fit in usize for allocated output");
     out[idx] = rgb[0];
     out[idx + 1] = rgb[1];
     out[idx + 2] = rgb[2];
     out[idx + 3] = a;
+}
+
+fn checked_decompressed_len_rgba8(width: u32, height: u32) -> Option<usize> {
+    let pixels = u64::from(width).checked_mul(u64::from(height))?;
+    let bytes = pixels.checked_mul(4)?;
+    usize::try_from(bytes).ok()
+}
+
+fn checked_expected_bc_bytes(width: u32, height: u32, bytes_per_block: u64) -> Option<usize> {
+    let blocks_w = u64::from(width.div_ceil(4));
+    let blocks_h = u64::from(height.div_ceil(4));
+    let blocks = blocks_w.checked_mul(blocks_h)?;
+    let bytes = blocks.checked_mul(bytes_per_block)?;
+    usize::try_from(bytes).ok()
 }
 
 fn decompress_bc1_block(
@@ -206,108 +227,140 @@ fn decompress_bc3_block(
 }
 
 pub fn decompress_bc1_rgba8(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8> {
-    let blocks_w = width.div_ceil(4);
-    let blocks_h = height.div_ceil(4);
-    let expected = blocks_w as usize * blocks_h as usize * 8;
-    assert_eq!(
-        bc1_data.len(),
-        expected,
-        "BC1 data length mismatch: expected {expected} bytes for {width}x{height}, got {}",
-        bc1_data.len()
-    );
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return Vec::new();
+    };
+    // Output is zero-initialized so truncated input yields deterministic black texels.
+    let mut out = vec![0u8; out_len];
 
-    let mut out = vec![0u8; (width * height * 4) as usize];
-    for by in 0..blocks_h {
-        for bx in 0..blocks_w {
-            let block_index = (by * blocks_w + bx) as usize;
-            let start = block_index * 8;
-            let block: &[u8; 8] = bc1_data[start..start + 8].try_into().unwrap();
-            decompress_bc1_block(block, bx * 4, by * 4, width, height, &mut out);
-        }
+    let blocks_w = width.div_ceil(4);
+    if blocks_w == 0 {
+        return out;
     }
+
+    // Only iterate the number of blocks actually present in the input buffer to avoid large
+    // loops on malformed dimensions.
+    let expected_bytes = checked_expected_bc_bytes(width, height, 8);
+    let expected_blocks = expected_bytes.map(|b| b / 8).unwrap_or(0);
+    let available_blocks = bc1_data.len() / 8;
+    let blocks_to_process = expected_blocks.min(available_blocks);
+
+    for block_index in 0..blocks_to_process {
+        let start = block_index * 8;
+        let Ok(block) = bc1_data[start..start + 8].try_into() else {
+            break;
+        };
+
+        let bx = (block_index % blocks_w as usize) as u32;
+        let by = (block_index / blocks_w as usize) as u32;
+        decompress_bc1_block(&block, bx * 4, by * 4, width, height, &mut out);
+    }
+
     out
 }
 
 pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8> {
-    let blocks_w = width.div_ceil(4);
-    let blocks_h = height.div_ceil(4);
-    let expected = blocks_w as usize * blocks_h as usize * 16;
-    assert_eq!(
-        bc3_data.len(),
-        expected,
-        "BC3 data length mismatch: expected {expected} bytes for {width}x{height}, got {}",
-        bc3_data.len()
-    );
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return Vec::new();
+    };
+    let mut out = vec![0u8; out_len];
 
-    let mut out = vec![0u8; (width * height * 4) as usize];
-    for by in 0..blocks_h {
-        for bx in 0..blocks_w {
-            let block_index = (by * blocks_w + bx) as usize;
-            let start = block_index * 16;
-            let block: &[u8; 16] = bc3_data[start..start + 16].try_into().unwrap();
-            decompress_bc3_block(block, bx * 4, by * 4, width, height, &mut out);
-        }
+    let blocks_w = width.div_ceil(4);
+    if blocks_w == 0 {
+        return out;
     }
+
+    let expected_bytes = checked_expected_bc_bytes(width, height, 16);
+    let expected_blocks = expected_bytes.map(|b| b / 16).unwrap_or(0);
+    let available_blocks = bc3_data.len() / 16;
+    let blocks_to_process = expected_blocks.min(available_blocks);
+
+    for block_index in 0..blocks_to_process {
+        let start = block_index * 16;
+        let Ok(block) = bc3_data[start..start + 16].try_into() else {
+            break;
+        };
+
+        let bx = (block_index % blocks_w as usize) as u32;
+        let by = (block_index / blocks_w as usize) as u32;
+        decompress_bc3_block(&block, bx * 4, by * 4, width, height, &mut out);
+    }
+
     out
 }
 
 pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8> {
-    let blocks_w = width.div_ceil(4);
-    let blocks_h = height.div_ceil(4);
-    let expected = blocks_w as usize * blocks_h as usize * 16;
-    assert_eq!(
-        bc2_data.len(),
-        expected,
-        "BC2 data length mismatch: expected {expected} bytes for {width}x{height}, got {}",
-        bc2_data.len()
-    );
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return Vec::new();
+    };
+    let mut out = vec![0u8; out_len];
 
-    let mut out = vec![0u8; (width * height * 4) as usize];
-    for by in 0..blocks_h {
-        for bx in 0..blocks_w {
-            let block_index = (by * blocks_w + bx) as usize;
-            let start = block_index * 16;
-            let block: &[u8; 16] = bc2_data[start..start + 16].try_into().unwrap();
-            decompress_bc2_block(block, bx * 4, by * 4, width, height, &mut out);
-        }
+    let blocks_w = width.div_ceil(4);
+    if blocks_w == 0 {
+        return out;
     }
+
+    let expected_bytes = checked_expected_bc_bytes(width, height, 16);
+    let expected_blocks = expected_bytes.map(|b| b / 16).unwrap_or(0);
+    let available_blocks = bc2_data.len() / 16;
+    let blocks_to_process = expected_blocks.min(available_blocks);
+
+    for block_index in 0..blocks_to_process {
+        let start = block_index * 16;
+        let Ok(block) = bc2_data[start..start + 16].try_into() else {
+            break;
+        };
+
+        let bx = (block_index % blocks_w as usize) as u32;
+        let by = (block_index / blocks_w as usize) as u32;
+        decompress_bc2_block(&block, bx * 4, by * 4, width, height, &mut out);
+    }
+
     out
 }
 
 pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8> {
-    let blocks_w = width.div_ceil(4);
-    let blocks_h = height.div_ceil(4);
-    let expected = blocks_w as usize * blocks_h as usize * 16;
-    assert_eq!(
-        bc7_data.len(),
-        expected,
-        "BC7 data length mismatch: expected {expected} bytes for {width}x{height}, got {}",
-        bc7_data.len()
-    );
-
-    let mut out = vec![0u8; (width * height * 4) as usize];
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return Vec::new();
+    };
+    let mut out = vec![0u8; out_len];
     let mut decoded = [0u8; 4 * 4 * 4];
 
-    for by in 0..blocks_h {
-        for bx in 0..blocks_w {
-            let block_index = (by * blocks_w + bx) as usize;
-            let start = block_index * 16;
-            let block = &bc7_data[start..start + 16];
+    let blocks_w = width.div_ceil(4);
+    if blocks_w == 0 {
+        return out;
+    }
 
-            bcdec_rs::bc7(block, &mut decoded, 4 * 4);
+    let expected_bytes = checked_expected_bc_bytes(width, height, 16);
+    let expected_blocks = expected_bytes.map(|b| b / 16).unwrap_or(0);
+    let available_blocks = bc7_data.len() / 16;
+    let blocks_to_process = expected_blocks.min(available_blocks);
 
-            for py in 0..4u32 {
-                for px in 0..4u32 {
-                    let x = bx * 4 + px;
-                    let y = by * 4 + py;
-                    if x >= width || y >= height {
-                        continue;
-                    }
+    for block_index in 0..blocks_to_process {
+        let start = block_index * 16;
+        let Some(block) = bc7_data.get(start..start + 16) else {
+            break;
+        };
 
-                    let src = ((py * 16 + px * 4) as usize)..((py * 16 + px * 4 + 4) as usize);
-                    let dst = ((y * width + x) * 4) as usize;
-                    out[dst..dst + 4].copy_from_slice(&decoded[src]);
+        bcdec_rs::bc7(block, &mut decoded, 4 * 4);
+
+        let bx = (block_index % blocks_w as usize) as u32;
+        let by = (block_index / blocks_w as usize) as u32;
+
+        for py in 0..4u32 {
+            for px in 0..4u32 {
+                let x = bx * 4 + px;
+                let y = by * 4 + py;
+                if x >= width || y >= height {
+                    continue;
                 }
+
+                let src = ((py * 16 + px * 4) as usize)..((py * 16 + px * 4 + 4) as usize);
+                let dst = (u64::from(y) * u64::from(width) + u64::from(x)) * 4;
+                let dst: usize = dst
+                    .try_into()
+                    .expect("pixel index should fit in usize for allocated output");
+                out[dst..dst + 4].copy_from_slice(&decoded[src]);
             }
         }
     }
@@ -428,5 +481,21 @@ mod tests {
         // Row 3 alpha 17.
         let row3 = 3 * row_stride;
         assert_eq!(&rgba[row3..row3 + 4], &[255, 255, 255, 17]);
+    }
+
+    #[test]
+    fn bc1_short_input_is_zero_filled() {
+        // 4x4 BC1 expects exactly 8 bytes but provide fewer. We should not panic.
+        let rgba = decompress_bc1_rgba8(4, 4, &[0u8; 4]);
+        assert_eq!(rgba.len(), 4 * 4 * 4);
+        assert!(rgba.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn bc7_huge_dimensions_do_not_overflow_or_hang() {
+        // The decoder should return quickly without attempting to allocate or iterate a massive
+        // output buffer on obviously-invalid dimensions.
+        let rgba = decompress_bc7_rgba8(u32::MAX, u32::MAX, &[]);
+        assert!(rgba.is_empty());
     }
 }
