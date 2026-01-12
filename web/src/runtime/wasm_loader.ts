@@ -119,6 +119,24 @@ export interface WasmApi {
     };
 
     /**
+     * Tiered VM Tier-1 JIT ABI layout constants.
+     *
+     * Exposed so JS code can locate the per-call commit flag and inline TLB region without
+     * duplicating Rust-side constants that may change over time.
+     *
+     * Optional while older WASM builds are still in circulation.
+     */
+    tiered_vm_jit_abi_layout?: () => {
+        readonly jit_ctx_header_bytes: number;
+        readonly jit_tlb_entries: number;
+        readonly jit_tlb_entry_bytes: number;
+        readonly tier2_ctx_bytes: number;
+        readonly commit_flag_offset: number;
+        readonly jit_ctx_ptr_offset?: number;
+        readonly tier2_ctx_offset?: number;
+    };
+
+    /**
      * DOM-style mouse button IDs (mirrors `MouseEvent.button`).
      *
      * Optional for older WASM builds.
@@ -1052,6 +1070,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         sum: mod.sum,
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
+        tiered_vm_jit_abi_layout: mod.tiered_vm_jit_abi_layout,
         mem_load_u32: mod.mem_load_u32,
         jit_abi_constants: mod.jit_abi_constants,
         MouseButton: mod.MouseButton,

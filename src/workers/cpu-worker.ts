@@ -45,16 +45,14 @@ const DEBUG_SYNC_INDEX = 5;
 // Layout (relative to `cpuPtr`):
 //   CpuState (cpu_state_size bytes, sourced from `api.jit_abi_constants()`)
 //   JitContext (header + inline TLB)
-//   Tier-2 ctx (12 bytes)
+//   Tier-2 ctx
 //   commit_flag (u32)
 //
 // JS sets `commit_flag = 0` when it rolls back architectural + memory effects on runtime exits.
 // The tiered dispatcher uses this to avoid retiring guest instructions for rolled-back blocks.
-const JIT_CTX_HEADER_BYTES = 16;
-const JIT_TLB_ENTRIES = 256;
-const JIT_TLB_ENTRY_BYTES = 16;
-const JIT_CTX_TOTAL_BYTES = JIT_CTX_HEADER_BYTES + JIT_TLB_ENTRIES * JIT_TLB_ENTRY_BYTES;
-const TIER2_CTX_BYTES = 12;
+// NOTE: These layout constants are sourced from the WASM build via `jit_abi_constants()` and
+// `tiered_vm_jit_abi_layout()` so the JS worker cannot drift from the Rust-side memory layout
+// contract.
 
 // Tier-1 "exit to interpreter" sentinel return value (`u64::MAX` encoded as `i64`).
 const JIT_EXIT_SENTINEL_I64 = -1n;
@@ -244,7 +242,36 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   const cpu_rax_off = cpu_gpr_off[0]! >>> 0;
-  const COMMIT_FLAG_OFFSET = cpu_state_size + JIT_CTX_TOTAL_BYTES + TIER2_CTX_BYTES;
+
+  const abiLayoutFn = api.tiered_vm_jit_abi_layout;
+  if (typeof abiLayoutFn !== 'function') {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason:
+        'tiered_vm_jit_abi_layout export is unavailable (missing WASM ABI layout helper). Rebuild the aero-wasm package.',
+    });
+    return;
+  }
+  const abiLayout = abiLayoutFn();
+  const jitCtxHeaderBytes = readMaybeNumber(abiLayout, 'jit_ctx_header_bytes') >>> 0;
+  const jitTlbEntries = readMaybeNumber(abiLayout, 'jit_tlb_entries') >>> 0;
+  const jitTlbEntryBytes = readMaybeNumber(abiLayout, 'jit_tlb_entry_bytes') >>> 0;
+  const tier2CtxBytes = readMaybeNumber(abiLayout, 'tier2_ctx_bytes') >>> 0;
+  const commitFlagOffset = readMaybeNumber(abiLayout, 'commit_flag_offset') >>> 0;
+
+  if (!jitCtxHeaderBytes || !jitTlbEntries || !jitTlbEntryBytes || !tier2CtxBytes || !commitFlagOffset) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid tiered_vm_jit_abi_layout values: ${JSON.stringify({
+        jitCtxHeaderBytes,
+        jitTlbEntries,
+        jitTlbEntryBytes,
+        tier2CtxBytes,
+        commitFlagOffset,
+      })}`,
+    });
+    return;
+  }
 
   const desiredGuestBytes = DEFAULT_GUEST_RAM_BYTES;
   const layout = api.guest_ram_layout(desiredGuestBytes);
@@ -291,7 +318,7 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     refreshMemU8();
 
-    const commitFlagAddr = (cpuPtr + COMMIT_FLAG_OFFSET) >>> 0;
+    const commitFlagAddr = (cpuPtr + commitFlagOffset) >>> 0;
     // Default to "committed". Rollback paths clear this before returning so the WASM tiered VM can
     // report `JitBlockExit { committed: false }`.
     dv.setUint32(commitFlagAddr, 1, true);
@@ -490,7 +517,9 @@ async function runTieredVm(iterations: number, threshold: number) {
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
       const vaddrU = asU64(vaddr);
       const vpn = vaddrU >> 12n;
-      const idx = Number(vpn & 0xffn) >>> 0;
+      const tlbEntriesBig = BigInt(jitTlbEntries);
+      const tlbMaskBig = tlbEntriesBig - 1n;
+      const idx = Number((tlbEntriesBig & tlbMaskBig) === 0n ? vpn & tlbMaskBig : vpn % tlbEntriesBig) >>> 0;
 
       const tlbSalt = dv.getBigUint64(jitCtxPtr + 8, true);
       const tag = asU64((vpn ^ tlbSalt) | 1n);
@@ -500,7 +529,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       const flags = 1n | 2n | 4n | (isRam ? 8n : 0n);
       const data = asU64(physBase | flags);
 
-      const entryAddr = jitCtxPtr + 16 + idx * 16;
+      const entryAddr = jitCtxPtr + jitCtxHeaderBytes + idx * jitTlbEntryBytes;
       dv.setBigUint64(entryAddr, tag, true);
       dv.setBigUint64(entryAddr + 8, data, true);
 
@@ -555,7 +584,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       // We use guest RAM as a scratch region for the Tier-1 ABI buffer (CpuState + jit_ctx + tier2_ctx + commit flag).
       const cpuPtr = (guest_base + 0xa000) >>> 0;
       const jitCtxPtr = (cpuPtr + cpu_state_size) >>> 0;
-      if (cpuPtr + COMMIT_FLAG_OFFSET + 4 > guest_base + guest_size) return false;
+      if (cpuPtr + commitFlagOffset + 4 > guest_base + guest_size) return false;
 
       // Initialize the minimal JitContext header expected by our `mmu_translate` stub.
       dv.setBigUint64(jitCtxPtr + 0, BigInt(guest_base), true); // ram_base
@@ -642,7 +671,7 @@ async function runTieredVm(iterations: number, threshold: number) {
         refreshMemU8();
         const cpuAfter = memU8.slice(cpuPtr, cpuPtr + cpu_state_size);
         const storeAfter = dv.getUint32(storeLinear, true);
-        const commitAfter = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
+        const commitAfter = dv.getUint32(cpuPtr + commitFlagOffset, true);
 
         if (expectRollback) {
           if (!arraysEqual(cpuBefore, cpuAfter)) return false;
@@ -671,13 +700,13 @@ async function runTieredVm(iterations: number, threshold: number) {
         dv.setBigUint64(cpu_ptr + cpu_rax_off, rax + 2n, true);
         return JIT_EXIT_SENTINEL_I64;
       };
-      dv.setUint32(cpuPtr + COMMIT_FLAG_OFFSET, 0, true);
+      dv.setUint32(cpuPtr + commitFlagOffset, 0, true);
       dv.setBigUint64(cpuPtr + cpu_rax_off, preRax, true);
       const retCommitted = (
         globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
       ).__aero_jit_call(committedIndex, cpuPtr, 0);
       if (retCommitted !== JIT_EXIT_SENTINEL_I64) return false;
-      const commitCommitted = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
+      const commitCommitted = dv.getUint32(cpuPtr + commitFlagOffset, true);
       if (commitCommitted !== 1) return false;
 
       return true;

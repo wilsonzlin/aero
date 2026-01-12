@@ -1811,14 +1811,31 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         // This mirrors `crates/aero-wasm/src/tiered_vm.rs` where the wasm backend expects the JS
         // host to clear a commit flag slot when it rolls back (or otherwise does not commit) a JIT
         // block.
-        const JIT_CTX_HEADER_BYTES = 16;
-        const JIT_TLB_ENTRIES = 256;
-        const JIT_TLB_ENTRY_BYTES = 16;
-        const JIT_CTX_TOTAL_BYTES = JIT_CTX_HEADER_BYTES + JIT_TLB_ENTRIES * JIT_TLB_ENTRY_BYTES;
-        const TIER2_CTX_BYTES = 12;
-        const commitFlagAddr = (jitCtxPtr + JIT_CTX_TOTAL_BYTES + TIER2_CTX_BYTES) >>> 0;
+        const commitFlagOffsetFromJitCtx = (() => {
+          try {
+            const api = wasmApi;
+            const layoutFn = api?.tiered_vm_jit_abi_layout;
+            if (typeof layoutFn !== "function") return undefined;
+            const layout = layoutFn();
+            const commitFlagOffset = readDemoNumber(layout, "commit_flag_offset");
+            const jitCtxPtrOffset = readDemoNumber(layout, "jit_ctx_ptr_offset");
+            if (typeof commitFlagOffset !== "number" || typeof jitCtxPtrOffset !== "number") return undefined;
+            if (!Number.isFinite(commitFlagOffset) || !Number.isFinite(jitCtxPtrOffset)) return undefined;
+            const rel = commitFlagOffset - jitCtxPtrOffset;
+            return rel >= 0 ? rel : undefined;
+          } catch {
+            return undefined;
+          }
+        })();
         try {
-          new DataView(segments.guestMemory.buffer).setUint32(commitFlagAddr, 0, true);
+          if (
+            typeof commitFlagOffsetFromJitCtx === "number" &&
+            Number.isFinite(commitFlagOffsetFromJitCtx) &&
+            commitFlagOffsetFromJitCtx >= 0
+          ) {
+            const commitFlagAddr = (jitCtxPtr + commitFlagOffsetFromJitCtx) >>> 0;
+            new DataView(segments.guestMemory.buffer).setUint32(commitFlagAddr, 0, true);
+          }
         } catch {
           // ignore
         }

@@ -31,7 +31,7 @@ use aero_cpu_core::state::{
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
 use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
-use aero_jit_x86::{BlockLimits, Tier1Bus, discover_block};
+use aero_jit_x86::{discover_block, BlockLimits, Tier1Bus, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
 
 use crate::jit_write_log::GuestWriteLog;
 use crate::RunExitKind;
@@ -103,6 +103,78 @@ const DEFAULT_TLB_SALT: u64 = 0x1234_5678_9abc_def0;
 /// other Tier-2 metadata slots.
 const COMMIT_FLAG_OFFSET: u32 = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
 const COMMIT_FLAG_BYTES: u32 = 4;
+
+/// Exported Tier-1 JIT ABI layout constants.
+///
+/// This exists so JS host code (CPU worker) can discover the exact layout of the Tier-1 JIT
+/// context and Tier-2 metadata regions inside the linear-memory JIT ABI buffer, without
+/// duplicating Rust-side constants that may drift over time.
+#[wasm_bindgen]
+pub struct TieredVmJitAbiLayout {
+    jit_ctx_header_bytes: u32,
+    jit_tlb_entries: u32,
+    jit_tlb_entry_bytes: u32,
+    tier2_ctx_bytes: u32,
+    /// Offset (relative to `cpu_ptr`) of the `u32` commit flag written by the JS host.
+    commit_flag_offset: u32,
+    /// Offset (relative to `cpu_ptr`) of the Tier-1 JIT context pointer (`jit_ctx_ptr`).
+    jit_ctx_ptr_offset: u32,
+    /// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
+    tier2_ctx_offset: u32,
+}
+
+#[wasm_bindgen]
+impl TieredVmJitAbiLayout {
+    #[wasm_bindgen(getter)]
+    pub fn jit_ctx_header_bytes(&self) -> u32 {
+        self.jit_ctx_header_bytes
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn jit_tlb_entries(&self) -> u32 {
+        self.jit_tlb_entries
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn jit_tlb_entry_bytes(&self) -> u32 {
+        self.jit_tlb_entry_bytes
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn tier2_ctx_bytes(&self) -> u32 {
+        self.tier2_ctx_bytes
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn commit_flag_offset(&self) -> u32 {
+        self.commit_flag_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn jit_ctx_ptr_offset(&self) -> u32 {
+        self.jit_ctx_ptr_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn tier2_ctx_offset(&self) -> u32 {
+        self.tier2_ctx_offset
+    }
+}
+
+/// Return the current Tier-1 JIT ABI layout constants for the Tiered VM.
+#[wasm_bindgen]
+pub fn tiered_vm_jit_abi_layout() -> TieredVmJitAbiLayout {
+    TieredVmJitAbiLayout {
+        // The Tier-1 JIT context header is the fixed portion before the inline TLB array.
+        jit_ctx_header_bytes: JitContext::BYTE_SIZE as u32,
+        jit_tlb_entries: JIT_TLB_ENTRIES as u32,
+        jit_tlb_entry_bytes: JIT_TLB_ENTRY_SIZE,
+        tier2_ctx_bytes: TIER2_CTX_SIZE,
+        commit_flag_offset: COMMIT_FLAG_OFFSET,
+        jit_ctx_ptr_offset: CPU_STATE_SIZE as u32,
+        tier2_ctx_offset: TIER2_CTX_OFFSET,
+    }
+}
 
 fn wasm_memory_byte_len() -> u64 {
     // `memory_size(0)` returns the number of 64KiB wasm pages.
