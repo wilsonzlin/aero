@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { PCI_MMIO_BASE } from "../../web/src/arch/guest_phys";
+
 test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page }) => {
   await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
 
@@ -161,6 +163,6 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
   });
 
   expect(result.idDword >>> 0).toBe(0x5678_1234);
-  expect(result.bar0 >>> 0).toBe(0xe000_0000);
+  expect(result.bar0 >>> 0).toBe(PCI_MMIO_BASE);
   expect(result.mmioReadback >>> 0).toBe(0x1234_5678);
 });
