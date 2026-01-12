@@ -4,7 +4,7 @@
 
 These tests validate small, host-side helpers used by the Win7 QEMU harness:
 
-- HTTP server helpers (including the deterministic 1 MiB `-large` payload)
+- HTTP server helpers (including the deterministic 1 MiB `-large` payload and upload verification via POST)
 - QEMU keyval quoting
 - QMP `input-send-event` command formatting for virtio-input injection
 - WAV parsing / non-silence verification helpers for virtio-snd
@@ -18,4 +18,3 @@ From the repo root:
 ```sh
 python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests
 ```
-
