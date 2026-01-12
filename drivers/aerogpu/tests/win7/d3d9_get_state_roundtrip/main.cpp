@@ -433,6 +433,18 @@ static int TestCreateStateBlockAll(aerogpu_test::TestReporter& reporter,
   if (FAILED(hr)) {
     return reporter.FailHresult("SetFVF (clobber pre Apply all baseline)", hr);
   }
+  {
+    DWORD got_fvf = 0;
+    hr = dev->GetFVF(&got_fvf);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetFVF (after SetFVF clobber pre Apply all baseline)", hr);
+    }
+    if (got_fvf != fvf_1) {
+      return reporter.Fail("SetFVF/GetFVF mismatch (clobber pre Apply all baseline): got=0x%08lX expected=0x%08lX",
+                           (unsigned long)got_fvf,
+                           (unsigned long)fvf_1);
+    }
+  }
   hr = dev->SetTransform(D3DTS_WORLD, &world_1);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTransform(D3DTS_WORLD) (clobber pre Apply all baseline)", hr);

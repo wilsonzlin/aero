@@ -9435,37 +9435,43 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     return trace.ret(S_OK);
   }
 
-  if (fvf != 0 && fvf != kSupportedFvfXyzrhwDiffuse) {
-    return trace.ret(D3DERR_INVALIDCALL);
-  }
-
   if (fvf == 0) {
     dev->fvf = 0;
     stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
     return trace.ret(S_OK);
   }
 
-  if (!dev->fvf_vertex_decl) {
-    // Build the declaration for this FVF. For bring-up we only support the
-    // `XYZRHW | DIFFUSE` path used by the Win7 d3d9ex_triangle test.
-    const D3DVERTEXELEMENT9_COMPAT elems[] = {
-        // stream, offset, type, method, usage, usage_index
-        {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-        {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-        {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-    };
-
-    dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+  // For bring-up we only use the FVF value to select the fixed-function
+  // passthrough pipeline (XYZRHW|DIFFUSE). Other FVFs are accepted and cached so
+  // GetFVF + state blocks behave deterministically, even if rendering is not yet
+  // supported for those formats.
+  if (fvf == kSupportedFvfXyzrhwDiffuse) {
     if (!dev->fvf_vertex_decl) {
+      // Build the declaration for this FVF. For bring-up we only support the
+      // `XYZRHW | DIFFUSE` path used by the Win7 D3D9Ex bring-up tests.
+      const D3DVERTEXELEMENT9_COMPAT elems[] = {
+          // stream, offset, type, method, usage, usage_index
+          {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+          {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      };
+
+      dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+      if (!dev->fvf_vertex_decl) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+    }
+
+    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl)) {
       return trace.ret(E_OUTOFMEMORY);
     }
+    dev->fvf = fvf;
+    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl, dev->fvf);
+    return trace.ret(S_OK);
   }
 
-  if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl)) {
-    return trace.ret(E_OUTOFMEMORY);
-  }
   dev->fvf = fvf;
-  stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl, dev->fvf);
+  stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
   return trace.ret(S_OK);
 }
 
