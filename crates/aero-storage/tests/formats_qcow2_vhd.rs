@@ -510,6 +510,48 @@ fn qcow2_rejects_compressed_l2_entry() {
 }
 
 #[test]
+fn qcow2_rejects_unaligned_refcount_block_entry() {
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+    let refcount_block_offset = cluster_size * 3;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_refcount_entry = refcount_block_offset | 2;
+    backend
+        .write_at(refcount_table_offset, &bad_refcount_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 unaligned refcount block entry")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_compressed_refcount_block_entry() {
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+    let refcount_block_offset = cluster_size * 3;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_refcount_entry = refcount_block_offset | QCOW2_OFLAG_COMPRESSED;
+    backend
+        .write_at(refcount_table_offset, &bad_refcount_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("qcow2 compressed refcount block")
+    ));
+}
+
+#[test]
 fn qcow2_v2_open_write_and_reopen_roundtrip() {
     let backend = make_qcow2_v2_empty(64 * 1024);
     let mut disk = Qcow2Disk::open(backend).unwrap();
@@ -1197,6 +1239,26 @@ fn vhd_dynamic_rejects_invalid_block_size() {
     assert!(matches!(
         err,
         DiskError::CorruptImage("vhd block_size invalid")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_dynamic_header_overlapping_footer_copy() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let footer = make_vhd_footer(virtual_size, 3, 0);
+    let file_len = backend.len().unwrap();
+    backend.write_at(0, &footer).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header overlaps footer copy")
     ));
 }
 

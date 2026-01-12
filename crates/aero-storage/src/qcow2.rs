@@ -556,6 +556,15 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         }
 
         let existing = self.refcount_table[block_index];
+        if (existing & QCOW2_OFLAG_COMPRESSED) != 0 {
+            return Err(DiskError::Unsupported("qcow2 compressed refcount block"));
+        }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
+        if (existing & low_mask) != 0 {
+            return Err(DiskError::CorruptImage(
+                "qcow2 unaligned refcount block entry",
+            ));
+        }
         let existing_offset = self.mask_offset(existing);
         if existing_offset != 0 {
             self.ensure_refcount_block_cached(existing_offset)?;

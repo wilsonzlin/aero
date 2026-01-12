@@ -154,6 +154,11 @@ impl<B: StorageBackend> VhdDisk<B> {
                         "vhd dynamic header offset misaligned",
                     ));
                 }
+                if footer.data_offset < SECTOR_SIZE as u64 {
+                    return Err(DiskError::CorruptImage(
+                        "vhd dynamic header overlaps footer copy",
+                    ));
+                }
                 let footer_offset = len - SECTOR_SIZE as u64;
                 let dyn_header_end = footer
                     .data_offset
