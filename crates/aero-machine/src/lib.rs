@@ -76,6 +76,7 @@ use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, InterruptInput, PlatformInterrupts,
 };
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
@@ -848,7 +849,7 @@ impl VirtioInterruptSink for NoopVirtioInterruptSink {
 
     fn lower_legacy_irq(&mut self) {}
 
-    fn signal_msix(&mut self, _vector: u16) {}
+    fn signal_msix(&mut self, _message: MsiMessage) {}
 }
 
 struct VirtioPciBar0Mmio {
