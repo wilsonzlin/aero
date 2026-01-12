@@ -58,7 +58,7 @@ fn aero_err_from_emu_byte_err(
     offset: Option<u64>,
     len: Option<usize>,
     capacity: Option<u64>,
-) -> aero_storage::DiskError {
+    ) -> aero_storage::DiskError {
     match err {
         DiskError::UnalignedBuffer { len, sector_size } => aero_storage::DiskError::UnalignedLength {
             len,
@@ -74,6 +74,8 @@ fn aero_err_from_emu_byte_err(
             capacity: capacity.unwrap_or(0),
         },
         DiskError::NotSupported(msg) => aero_storage::DiskError::NotSupported(msg),
+        DiskError::CorruptImage(msg) => aero_storage::DiskError::CorruptImage(msg),
+        DiskError::Unsupported(msg) => aero_storage::DiskError::Unsupported(msg),
         DiskError::QuotaExceeded => aero_storage::DiskError::QuotaExceeded,
         DiskError::InUse => aero_storage::DiskError::InUse,
         DiskError::InvalidState(msg) => aero_storage::DiskError::InvalidState(msg),

@@ -182,11 +182,9 @@ fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
     match err {
         aero_storage::DiskError::UnalignedLength { .. }
         | aero_storage::DiskError::OffsetOverflow
-        | aero_storage::DiskError::CorruptImage(_)
         | aero_storage::DiskError::InvalidConfig(_)
         | aero_storage::DiskError::InvalidSparseHeader(_)
         | aero_storage::DiskError::CorruptImage(_)
-        | aero_storage::DiskError::Unsupported(_)
         | aero_storage::DiskError::CorruptSparseImage(_) => {
             io::Error::new(io::ErrorKind::InvalidInput, err)
         }
