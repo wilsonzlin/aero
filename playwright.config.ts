@@ -117,7 +117,6 @@ const REUSE_SERVER_SETTING = (process.env.AERO_PLAYWRIGHT_REUSE_SERVER ?? '').to
 const REUSE_EXISTING_SERVER =
   !process.env.CI && (REUSE_SERVER_SETTING === '1' || REUSE_SERVER_SETTING === 'true');
 const CHROMIUM_ARGS = [
-  '--enable-unsafe-webgpu',
   // Keep screenshot colors deterministic across environments.
   '--force-color-profile=srgb',
   ...(EXPOSE_GC ? ['--js-flags=--expose-gc'] : []),
@@ -133,6 +132,10 @@ const CHROMIUM_ARGS = [
  */
 const CHROMIUM_WEBGPU_ARGS = [
   ...CHROMIUM_ARGS,
+  // WebGPU is guarded behind a dedicated project so non-WebGPU test runs don't depend on
+  // Chromium's evolving WebGPU defaults (and to avoid flakiness/crashes on environments where
+  // WebGPU init is unstable).
+  '--enable-unsafe-webgpu',
   // WebGPU is generally enabled by default in modern Chromium, but CI
   // environments can be configured more conservatively.
   '--enable-features=WebGPU',
