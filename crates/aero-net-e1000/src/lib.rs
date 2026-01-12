@@ -604,7 +604,12 @@ impl E1000Device {
         }
     }
 
-    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+    /// Register-only MMIO write path.
+    ///
+    /// This updates internal device state but **must not** touch guest memory.
+    /// DMA side effects (descriptor reads/writes, RX buffer writes, etc.) are
+    /// deferred to [`poll`].
+    pub fn mmio_write_reg(&mut self, offset: u64, size: usize, value: u32) {
         let aligned = (offset & !3) as u32;
         let shift = ((offset & 3) * 8) as u32;
 
@@ -627,11 +632,23 @@ impl E1000Device {
             (cur & !mask) | value32
         };
 
-        self.mmio_write_u32_aligned(mem, aligned, merged);
+        self.mmio_write_u32_aligned_reg(aligned, merged);
+    }
+
+    /// MMIO write path that preserves legacy semantics: register write + immediate DMA.
+    ///
+    /// This is a thin compatibility wrapper around [`mmio_write_reg`] + [`poll`].
+    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        self.mmio_write_reg(offset, size, value);
+        self.poll(mem);
     }
 
     pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
         self.mmio_read(offset as u64, 4)
+    }
+
+    pub fn mmio_write_u32_reg(&mut self, offset: u32, value: u32) {
+        self.mmio_write_reg(offset as u64, 4, value);
     }
 
     pub fn mmio_write_u32(&mut self, mem: &mut dyn MemoryBus, offset: u32, value: u32) {
@@ -658,7 +675,10 @@ impl E1000Device {
     }
 
     /// Write to the device's I/O BAR (IOADDR/IODATA window).
-    pub fn io_write(&mut self, mem: &mut dyn MemoryBus, offset: u32, size: usize, value: u32) {
+    ///
+    /// This register-only variant updates the IOADDR latch and the targeted MMIO register but
+    /// does **not** touch guest memory. DMA side effects are deferred to [`poll`].
+    pub fn io_write_reg(&mut self, offset: u32, size: usize, value: u32) {
         match offset {
             0x0..=0x3 => {
                 let shift = (offset & 3) * 8;
@@ -676,10 +696,18 @@ impl E1000Device {
                 self.io_reg = ((cur & !mask) | ((value << shift) & mask)) & !3;
             }
             0x4..=0x7 => {
-                self.mmio_write(mem, (self.io_reg + (offset - 0x4)) as u64, size, value);
+                self.mmio_write_reg((self.io_reg + (offset - 0x4)) as u64, size, value);
             }
             _ => {}
         }
+    }
+
+    /// Write to the device's I/O BAR (IOADDR/IODATA window) with immediate DMA.
+    ///
+    /// This is a compatibility wrapper around [`io_write_reg`] + [`poll`].
+    pub fn io_write(&mut self, mem: &mut dyn MemoryBus, offset: u32, size: usize, value: u32) {
+        self.io_write_reg(offset, size, value);
+        self.poll(mem);
     }
 
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
@@ -709,7 +737,7 @@ impl E1000Device {
     /// has enabled reception and made descriptors available.
     pub fn receive_frame(&mut self, mem: &mut dyn MemoryBus, frame: &[u8]) {
         self.enqueue_rx_frame(frame.to_vec());
-        self.flush_rx_pending(mem);
+        self.poll(mem);
     }
 
     /// Guest → host path. Returns the next frame transmitted by the guest.
@@ -819,7 +847,7 @@ impl E1000Device {
         }
     }
 
-    fn mmio_write_u32_aligned(&mut self, mem: &mut dyn MemoryBus, offset: u32, value: u32) {
+    fn mmio_write_u32_aligned_reg(&mut self, offset: u32, value: u32) {
         match offset {
             REG_CTRL => {
                 if (value & CTRL_RST) != 0 {
@@ -876,7 +904,6 @@ impl E1000Device {
 
             REG_RCTL => {
                 self.rctl = value;
-                self.flush_rx_pending(mem);
             }
             REG_TCTL => self.tctl = value,
 
@@ -886,7 +913,6 @@ impl E1000Device {
             REG_RDH => self.rdh = value,
             REG_RDT => {
                 self.rdt = value;
-                self.flush_rx_pending(mem);
             }
 
             REG_TDBAL => self.tdbal = value,
@@ -895,7 +921,6 @@ impl E1000Device {
             REG_TDH => self.tdh = value,
             REG_TDT => {
                 self.tdt = value;
-                self.process_tx(mem);
             }
 
             REG_RAL0 => {
@@ -1873,6 +1898,87 @@ mod tests {
     }
 
     #[test]
+    fn tx_mmio_write_reg_defers_dma_until_poll() {
+        let mut mem = TestMem::new(0x10_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Set up TX ring at 0x1000 with 4 descriptors.
+        dev.tdbal = 0x1000;
+        dev.tdlen = (TxDesc::LEN as u32) * 4;
+        dev.tdh = 0;
+        dev.tdt = 0;
+        dev.tctl = TCTL_EN;
+        dev.ims = ICR_TXDW;
+
+        // Packet buffer at 0x2000.
+        let pkt = [0x11u8; MIN_L2_FRAME_LEN];
+        mem.write_bytes(0x2000, &pkt);
+
+        let desc0 = TxDesc {
+            buffer_addr: 0x2000,
+            length: pkt.len() as u16,
+            cso: 0,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
+            status: 0,
+            css: 0,
+            special: 0,
+        };
+        mem.write_bytes(0x1000, &desc0.to_bytes());
+
+        // Guest updates tail to 1 (register-only write, no DMA yet).
+        dev.mmio_write_u32_reg(REG_TDT, 1);
+
+        assert!(dev.pop_tx_frame().is_none());
+        let unchanged = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        assert_eq!(unchanged.status & TXD_STAT_DD, 0);
+
+        // DMA happens once the device is polled.
+        dev.poll(&mut mem);
+
+        assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
+        let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
+        assert_ne!(updated.status & TXD_STAT_DD, 0);
+        assert!(dev.irq_level());
+    }
+
+    #[test]
+    fn tx_io_write_reg_defers_dma_until_poll() {
+        let mut mem = TestMem::new(0x10_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Set up TX ring at 0x1000 with 4 descriptors.
+        dev.tdbal = 0x1000;
+        dev.tdlen = (TxDesc::LEN as u32) * 4;
+        dev.tdh = 0;
+        dev.tdt = 0;
+        dev.tctl = TCTL_EN;
+
+        // Packet buffer at 0x2000.
+        let pkt = [0x11u8; MIN_L2_FRAME_LEN];
+        mem.write_bytes(0x2000, &pkt);
+
+        let desc0 = TxDesc {
+            buffer_addr: 0x2000,
+            length: pkt.len() as u16,
+            cso: 0,
+            cmd: TXD_CMD_EOP | TXD_CMD_RS,
+            status: 0,
+            css: 0,
+            special: 0,
+        };
+        mem.write_bytes(0x1000, &desc0.to_bytes());
+
+        // Select TDT via IOADDR, then write tail via IODATA (register-only path).
+        dev.io_write_reg(0x0, 4, REG_TDT);
+        dev.io_write_reg(0x4, 4, 1);
+
+        assert!(dev.pop_tx_frame().is_none());
+
+        dev.poll(&mut mem);
+        assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
+    }
+
+    #[test]
     fn rx_processing_writes_frame_and_sets_dd() {
         let mut mem = TestMem::new(0x20_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
@@ -1916,6 +2022,56 @@ mod tests {
         let icr = dev.mmio_read_u32(REG_ICR);
         assert_eq!(icr & ICR_RXT0, ICR_RXT0);
         assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn rx_enqueue_defers_dma_until_poll() {
+        let mut mem = TestMem::new(0x20_000);
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // RX ring at 0x3000 with 2 descriptors.
+        dev.rdbal = 0x3000;
+        dev.rdlen = (RxDesc::LEN as u32) * 2;
+        dev.rdh = 0;
+        dev.rdt = 1;
+        dev.rctl = RCTL_EN;
+        dev.ims = ICR_RXT0;
+
+        // Two receive buffers at 0x4000, 0x5000.
+        let desc0 = RxDesc {
+            buffer_addr: 0x4000,
+            length: 0,
+            checksum: 0,
+            status: 0,
+            errors: 0,
+            special: 0,
+        };
+        let desc1 = RxDesc {
+            buffer_addr: 0x5000,
+            ..desc0
+        };
+        mem.write_bytes(0x3000, &desc0.to_bytes());
+        mem.write_bytes(0x3010, &desc1.to_bytes());
+
+        // Sentinel to detect unexpected writes.
+        mem.write_bytes(0x4000, &[0x5a; 32]);
+
+        let frame = vec![0x22u8; MIN_L2_FRAME_LEN];
+        dev.enqueue_rx_frame(frame.clone());
+
+        // No DMA occurs until poll.
+        assert_eq!(mem.read_bytes(0x4000, 32), vec![0x5a; 32]);
+        assert!(!dev.irq_level());
+
+        dev.poll(&mut mem);
+
+        assert_eq!(mem.read_bytes(0x4000, frame.len()), frame);
+        let updated = RxDesc::from_bytes(read_desc::<{ RxDesc::LEN }>(&mut mem, 0x3000));
+        assert_eq!(
+            updated.status & (RXD_STAT_DD | RXD_STAT_EOP),
+            RXD_STAT_DD | RXD_STAT_EOP
+        );
+        assert!(dev.irq_level());
     }
 
     #[test]
