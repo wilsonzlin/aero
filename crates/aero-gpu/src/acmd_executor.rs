@@ -250,7 +250,10 @@ impl AeroGpuAcmdExecutor {
                     ..
                 } => {
                     let rt = if color_count == 0 { 0 } else { colors[0] };
-                    self.render_target = self.shared_surfaces.resolve_handle(rt);
+                    self.render_target = self
+                        .shared_surfaces
+                        .resolve_cmd_handle(rt)
+                        .map_err(|e| AeroGpuAcmdExecutorError::Backend(e.to_string()))?;
                 }
                 AeroGpuCmd::Clear {
                     flags,
@@ -534,6 +537,46 @@ mod tests {
             assert!(
                 scanout.is_none(),
                 "expected scanout to be cleared after destroy"
+            );
+        });
+    }
+
+    #[test]
+    fn set_render_targets_rejects_destroyed_original_handle_while_alias_alive() {
+        pollster::block_on(async {
+            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
+
+            const ORIGINAL: u32 = 1;
+            const ALIAS: u32 = 2;
+            const TOKEN: u64 = 0x1122_3344_5566_7788;
+
+            let mut w = AerogpuCmdWriter::new();
+            w.create_texture2d(
+                ORIGINAL,
+                /*usage_flags=*/ 0,
+                AerogpuFormat::B8G8R8A8Unorm as u32,
+                /*width=*/ 4,
+                /*height=*/ 4,
+                /*mip_levels=*/ 1,
+                /*array_layers=*/ 1,
+                /*row_pitch_bytes=*/ 0,
+                /*backing_alloc_id=*/ 0,
+                /*backing_offset_bytes=*/ 0,
+            );
+            w.export_shared_surface(ORIGINAL, TOKEN);
+            w.import_shared_surface(ALIAS, TOKEN);
+            w.destroy_resource(ORIGINAL);
+
+            // The original handle is now destroyed but the underlying texture is still alive via
+            // the alias. The destroyed original handle ID must not be accepted for subsequent
+            // commands.
+            w.set_render_targets(&[ORIGINAL], /*depth_stencil=*/ 0);
+
+            let err = exec.execute_submission(&w.finish(), None).unwrap_err();
+            let message = err.to_string();
+            assert!(
+                message.contains("destroyed") || message.contains("was destroyed"),
+                "unexpected error: {message}"
             );
         });
     }

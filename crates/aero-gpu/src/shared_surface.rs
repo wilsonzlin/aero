@@ -36,6 +36,10 @@ pub(crate) enum SharedSurfaceError {
         "shared surface handle 0x{0:08X} is still in use (underlying id kept alive by shared surface aliases)"
     )]
     HandleStillInUse(u32),
+    #[error(
+        "shared surface handle 0x{0:08X} was destroyed (underlying id kept alive by shared surface aliases)"
+    )]
+    HandleDestroyed(u32),
 }
 
 /// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
@@ -110,6 +114,25 @@ impl SharedSurfaceTable {
 
     pub(crate) fn resolve_handle(&self, handle: u32) -> u32 {
         self.handles.get(&handle).copied().unwrap_or(handle)
+    }
+
+    /// Resolves a handle coming from an AeroGPU command stream.
+    ///
+    /// This differs from [`Self::resolve_handle`] by treating "reserved underlying IDs" as
+    /// invalid: if an original handle has been destroyed while shared-surface aliases still exist,
+    /// the underlying numeric ID is kept alive in `refcounts` to prevent handle reuse/collision,
+    /// but the original handle value must not be used for subsequent commands.
+    pub(crate) fn resolve_cmd_handle(&self, handle: u32) -> Result<u32, SharedSurfaceError> {
+        if handle == 0 {
+            return Ok(0);
+        }
+        if self.handles.contains_key(&handle) {
+            return Ok(self.resolve_handle(handle));
+        }
+        if self.refcounts.contains_key(&handle) {
+            return Err(SharedSurfaceError::HandleDestroyed(handle));
+        }
+        Ok(handle)
     }
 
     pub(crate) fn export(
