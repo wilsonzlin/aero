@@ -26,11 +26,11 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 function parsePcapng(bytes: Uint8Array): {
   interfaces: Array<{ name: string | null }>;
-  packets: Array<{ payload: Uint8Array; interfaceId: number }>;
+  packets: Array<{ payload: Uint8Array; interfaceId: number; epbFlags: number | null }>;
 } {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const interfaces: Array<{ name: string | null }> = [];
-  const packets: Array<{ payload: Uint8Array; interfaceId: number }> = [];
+  const packets: Array<{ payload: Uint8Array; interfaceId: number; epbFlags: number | null }> = [];
   const textDecoder = new TextDecoder();
 
   let off = 0;
@@ -75,7 +75,24 @@ function parsePcapng(bytes: Uint8Array): {
       const packetDataEnd = packetDataStart + capturedLen;
       if (packetDataEnd > bodyEnd) throw new Error(`pcapng: EPB packet data overruns block at ${off}`);
       const payload = bytes.subarray(packetDataStart, packetDataEnd).slice();
-      packets.push({ payload, interfaceId });
+
+      let epbFlags: number | null = null;
+      // Options begin after packet data, padded to 32-bit.
+      let optOff = packetDataStart + ((capturedLen + 3) & ~3);
+      while (optOff + 4 <= bodyEnd) {
+        const code = view.getUint16(optOff, true);
+        const len = view.getUint16(optOff + 2, true);
+        const valueStart = optOff + 4;
+        const valueEnd = valueStart + len;
+        if (valueEnd > bodyEnd) throw new Error(`pcapng: EPB option overruns block at ${off}`);
+        if (code === 0) break;
+        if (code === 2 && len === 4) {
+          epbFlags = view.getUint32(valueStart, true);
+        }
+        optOff = valueStart + ((len + 3) & ~3);
+      }
+
+      packets.push({ payload, interfaceId, epbFlags });
       off += blockLen;
       continue;
     }
@@ -438,6 +455,12 @@ describe("workers/net.worker (worker_threads)", () => {
       // Direction is encoded as distinct PCAPNG interfaces.
       expect(tx!.interfaceId).toBe(guestTxId);
       expect(rx!.interfaceId).toBe(guestRxId);
+
+      // Also ensure `epb_flags` direction bits are set:
+      // - 1 = inbound
+      // - 2 = outbound
+      expect((tx!.epbFlags ?? 0) & 0x3).toBe(2);
+      expect((rx!.epbFlags ?? 0) & 0x3).toBe(1);
     } finally {
       await worker.terminate();
     }

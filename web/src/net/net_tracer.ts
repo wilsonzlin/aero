@@ -1,4 +1,11 @@
-import { PCAPNG_LINKTYPE_ETHERNET, writePcapng, type PcapngEnhancedPacket, type PcapngInterfaceDescription } from "./pcapng";
+import {
+  PCAPNG_EPB_DIR_INBOUND,
+  PCAPNG_EPB_DIR_OUTBOUND,
+  PCAPNG_LINKTYPE_ETHERNET,
+  writePcapng,
+  type PcapngEnhancedPacket,
+  type PcapngInterfaceDescription,
+} from "./pcapng";
 
 export type FrameDirection = "guest_tx" | "guest_rx";
 
@@ -98,6 +105,9 @@ export class NetTracer {
       interfaceId: rec.direction === "guest_rx" ? 0 : 1,
       timestamp: rec.timestampNs,
       packet: rec.frame,
+      // Also set EPB direction flags for compatibility with readers that use
+      // `epb_flags` instead of (or in addition to) the interface list.
+      flags: rec.direction === "guest_rx" ? PCAPNG_EPB_DIR_INBOUND : PCAPNG_EPB_DIR_OUTBOUND,
     }));
 
     return writePcapng({ interfaces, packets });
@@ -113,4 +123,3 @@ export class NetTracer {
     };
   }
 }
-

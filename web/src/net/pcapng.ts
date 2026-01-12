@@ -11,6 +11,12 @@ export const PCAPNG_LINKTYPE_ETHERNET = 1;
 const PCAPNG_IF_OPTION_NAME = 2;
 const PCAPNG_IF_OPTION_TSRESOL = 9;
 
+// Enhanced Packet Block options.
+export const PCAPNG_EPB_OPTION_FLAGS = 2;
+export const PCAPNG_EPB_DIR_MASK = 0b11;
+export const PCAPNG_EPB_DIR_INBOUND = 1;
+export const PCAPNG_EPB_DIR_OUTBOUND = 2;
+
 function pad4(len: number): number {
   return (4 - (len & 3)) & 3;
 }
@@ -74,6 +80,13 @@ export interface PcapngEnhancedPacket {
   // Timestamp units must match the interface's `if_tsresol` (typically ns).
   timestamp: bigint;
   packet: Uint8Array;
+  // Optional Enhanced Packet Block flags (pcapng `epb_flags` option code 2).
+  //
+  // Bits 0-1 encode packet direction:
+  // - 0: unknown
+  // - 1: inbound
+  // - 2: outbound
+  flags?: number;
 }
 
 export interface PcapngCapture {
@@ -130,7 +143,8 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
 
   for (const pkt of capture.packets) {
     const dataLen = pkt.packet.byteLength;
-    totalLen += 32 + dataLen + pad4(dataLen);
+    const optsLen = pkt.flags === undefined ? 0 : 12; // flags + end-of-options
+    totalLen += 32 + dataLen + pad4(dataLen) + optsLen;
   }
 
   const w = new ByteWriter(totalLen);
@@ -165,7 +179,8 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
   for (const pkt of capture.packets) {
     const dataLen = pkt.packet.byteLength;
     const paddedDataLen = dataLen + pad4(dataLen);
-    const epbLen = 32 + paddedDataLen;
+    const optsLen = pkt.flags === undefined ? 0 : 12; // flags + end-of-options
+    const epbLen = 32 + paddedDataLen + optsLen;
 
     const ts = pkt.timestamp;
     const tsLo = Number(ts & 0xffff_ffffn);
@@ -180,9 +195,16 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
     w.writeU32(dataLen >>> 0);
     w.writeBytes(pkt.packet);
     w.writeZeros(pad4(dataLen));
+    if (pkt.flags !== undefined) {
+      w.writeU16(PCAPNG_EPB_OPTION_FLAGS);
+      w.writeU16(4);
+      w.writeU32(pkt.flags >>> 0);
+      // End of options.
+      w.writeU16(0);
+      w.writeU16(0);
+    }
     w.writeU32(epbLen);
   }
 
   return w.finish();
 }
-
