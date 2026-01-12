@@ -2,8 +2,11 @@
 
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
-use aero_net_e1000::{E1000Device, ICR_TXDW, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
+use aero_net_e1000::{
+    E1000Device, ICR_TXDW, MAX_L2_FRAME_LEN, MAX_TX_AGGREGATE_LEN, MIN_L2_FRAME_LEN,
+};
 use memory::MemoryBus;
+use nt_packetlib::io::net::packet::checksum::ipv4_header_checksum;
 
 const REG_IMS: u32 = 0x00D0;
 
@@ -83,6 +86,43 @@ fn write_rx_desc(dma: &mut TestDma, addr: u64, buf_addr: u64) {
     dma.write(addr + 10, &0u16.to_le_bytes()); // checksum
     dma.write(addr + 12, &[0]); // status
     dma.write(addr + 13, &[0]); // errors
+    dma.write(addr + 14, &0u16.to_le_bytes()); // special
+}
+
+fn write_adv_context_desc(
+    dma: &mut TestDma,
+    addr: u64,
+    ipcss: u8,
+    ipcso: u8,
+    ipcse: u16,
+    tucss: u8,
+    tucso: u8,
+    tucse: u16,
+    mss: u16,
+    hdr_len: u8,
+    cmd: u8,
+) {
+    dma.write(addr + 0, &[ipcss]);
+    dma.write(addr + 1, &[ipcso]);
+    dma.write(addr + 2, &ipcse.to_le_bytes());
+    dma.write(addr + 4, &[tucss]);
+    dma.write(addr + 5, &[tucso]);
+    dma.write(addr + 6, &tucse.to_le_bytes());
+    dma.write(addr + 8, &0u16.to_le_bytes()); // reserved
+    dma.write(addr + 10, &[0x20]); // DTYP=CTXT (0x2 << 4)
+    dma.write(addr + 11, &[cmd]);
+    dma.write(addr + 12, &mss.to_le_bytes());
+    dma.write(addr + 14, &[hdr_len]);
+    dma.write(addr + 15, &[0]); // tcp header len (unused)
+}
+
+fn write_adv_data_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cmd: u8, popts: u8) {
+    dma.write(addr, &buf_addr.to_le_bytes());
+    dma.write(addr + 8, &len.to_le_bytes());
+    dma.write(addr + 10, &[0x30]); // DTYP=DATA (0x3 << 4)
+    dma.write(addr + 11, &[cmd]);
+    dma.write(addr + 12, &[0]); // status
+    dma.write(addr + 13, &[popts]);
     dma.write(addr + 14, &0u16.to_le_bytes()); // special
 }
 
@@ -239,4 +279,130 @@ fn snapshot_rejects_absurd_rx_pending_count() {
         err,
         SnapshotError::InvalidFieldEncoding("e1000 rx_pending count")
     );
+}
+
+#[test]
+fn snapshot_roundtrip_restores_advanced_tx_state() {
+    // Advanced TX descriptor bits.
+    const TXD_CMD_EOP: u8 = 1 << 0;
+    const TXD_CMD_RS: u8 = 1 << 3;
+    const TXD_CMD_DEXT: u8 = 1 << 5;
+
+    // Advanced TX data descriptor popts flags.
+    const POPTS_IXSM: u8 = 0x01;
+
+    let mut dma = TestDma::new(0x20_000);
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+    dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable (allow TX DMA)
+
+    // Configure TX ring.
+    let tx_ring = 0x1000u64;
+    dev.mmio_write_u32(REG_TDBAL, tx_ring as u32);
+    dev.mmio_write_u32(REG_TDLEN, 4 * 16);
+    dev.mmio_write_u32(REG_TDH, 0);
+    dev.mmio_write_u32(REG_TDT, 0);
+    dev.mmio_write_u32(REG_TCTL, TCTL_EN);
+
+    // Build a minimal Ethernet+IPv4 packet; checksum field initially zero.
+    let payload = [0x01, 0x02, 0x03, 0x04];
+    let ip_total_len = (20 + payload.len()) as u16;
+    let mut ipv4 = [
+        0x45, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x00, 64, 17, 0x00, 0x00, 192, 168, 0, 2,
+        192, 168, 0, 1,
+    ];
+    ipv4[2..4].copy_from_slice(&ip_total_len.to_be_bytes());
+    let expected_csum = ipv4_header_checksum(&ipv4);
+
+    let mut frame = Vec::new();
+    frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]); // dst
+    frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src
+    frame.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype
+    frame.extend_from_slice(&ipv4);
+    frame.extend_from_slice(&payload);
+
+    let split = 30usize;
+    let part1 = frame[..split].to_vec();
+    let part2 = frame[split..].to_vec();
+
+    let part1_addr = 0x2000u64;
+    let part2_addr = 0x3000u64;
+    dma.write(part1_addr, &part1);
+    dma.write(part2_addr, &part2);
+
+    // Context descriptor sets up checksum offsets (ipcss/ipcso/ipcse) so IXSM can be applied.
+    let ipcss = 14u8;
+    let ipcso = (14 + 10) as u8;
+    let ipcse = (14 + 20 - 1) as u16;
+    let tucss = (14 + 20) as u8;
+    let tucso = (14 + 20 + 16) as u8;
+    let tucse = (frame.len() - 1) as u16;
+
+    write_adv_context_desc(
+        &mut dma,
+        tx_ring,
+        ipcss,
+        ipcso,
+        ipcse,
+        tucss,
+        tucso,
+        tucse,
+        1460,
+        54,
+        TXD_CMD_DEXT | TXD_CMD_RS,
+    );
+    write_adv_data_desc(
+        &mut dma,
+        tx_ring + 16,
+        part1_addr,
+        part1.len() as u16,
+        TXD_CMD_DEXT | TXD_CMD_RS,
+        POPTS_IXSM,
+    );
+    write_adv_data_desc(
+        &mut dma,
+        tx_ring + 2 * 16,
+        part2_addr,
+        part2.len() as u16,
+        TXD_CMD_DEXT | TXD_CMD_EOP | TXD_CMD_RS,
+        0,
+    );
+
+    // Process context + first data descriptor (leave the packet incomplete).
+    dev.mmio_write_u32(REG_TDT, 2);
+    dev.poll(&mut dma);
+
+    let snapshot = dev.save_state();
+
+    let mut restored = E1000Device::new([0; 6]);
+    restored.load_state(&snapshot).expect("load_state");
+
+    // Complete the packet after restore.
+    restored.mmio_write_u32(REG_TDT, 3);
+    restored.poll(&mut dma);
+    let out = restored.pop_tx_frame().expect("expected a TX frame");
+    assert_eq!(out.len(), frame.len());
+    assert_eq!(out[14 + 10..14 + 12], expected_csum.to_be_bytes());
+}
+
+#[test]
+fn snapshot_load_rejects_corrupt_or_oversized_fields() {
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    // Corrupt magic/truncated header.
+    assert!(matches!(
+        dev.load_state(b"NOPE"),
+        Err(SnapshotError::UnexpectedEof | SnapshotError::InvalidMagic)
+    ));
+
+    // Oversized tx_partial should be rejected.
+    let oversized = vec![0u8; MAX_TX_AGGREGATE_LEN + 1];
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(60, oversized);
+    let bytes = w.finish();
+
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 tx_partial"));
 }
