@@ -155,6 +155,7 @@ import {
   vmSnapshotDeviceKindToId,
 } from "./vm_snapshot_wasm";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
+import { registerVirtioInputKeyboardPciFunction } from "./io_virtio_input_register";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -1073,11 +1074,19 @@ function maybeInitVirtioInput(): void {
     keyboardFn = new VirtioInputPciFunction({ kind: "keyboard", device: keyboardDev as unknown as any, irqSink: mgr.irqSink });
     mouseFn = new VirtioInputPciFunction({ kind: "mouse", device: mouseDev as unknown as any, irqSink: mgr.irqSink });
 
-    // Register as a single multi-function PCI device (fn0 = keyboard, fn1 = mouse).
-    mgr.registerPciDevice(keyboardFn);
+    // Register as a single multi-function PCI device:
+    // - function 0: keyboard
+    // - function 1: mouse
+    //
+    // Prefer the canonical BDF used by the Rust "canonical IO bus" (0:10.0 / 0:10.1). If that
+    // slot is already occupied, fall back to auto allocation while still keeping both functions
+    // on the same PCI device number.
+    const { addr: keyboardAddr } = registerVirtioInputKeyboardPciFunction({ mgr, keyboardFn });
     keyboardRegistered = true;
     mgr.addTickable(keyboardFn);
-    mgr.registerPciDevice(mouseFn);
+    const mouseAddr = mgr.registerPciDevice(mouseFn, { device: keyboardAddr.device, function: 1 });
+    // Keep bdf consistent with actual assigned addresses (useful for debugging).
+    (mouseFn as unknown as { bdf?: typeof mouseAddr }).bdf = mouseAddr;
     mgr.addTickable(mouseFn);
 
     virtioInputKeyboard = keyboardFn;

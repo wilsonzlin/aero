@@ -31,7 +31,7 @@ const VIRTIO_INPUT_MMIO_BAR_SIZE = 0x4000;
 // IRQ5 is unused by the other built-in devices (i8042=IRQ1/12, UART=IRQ4, UHCI=IRQ11, E1000=IRQ10).
 const VIRTIO_INPUT_IRQ_LINE = 0x05;
 // Canonical multifunction virtio-input device location (keyboard=fn0, mouse=fn1).
-const VIRTIO_INPUT_PCI_DEVICE = 10;
+export const VIRTIO_INPUT_PCI_DEVICE = 10;
 
 // Virtio input event codes we need on the host side.
 const BTN_LEFT = 0x110;
