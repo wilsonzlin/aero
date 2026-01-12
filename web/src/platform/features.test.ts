@@ -8,6 +8,7 @@ const GLOBALS = globalThis as unknown as {
   AudioWorkletNode?: unknown;
   AudioContext?: unknown;
   OffscreenCanvas?: unknown;
+  FileSystemFileHandle?: unknown;
 };
 
 const originalValidate = WebAssembly.validate;
@@ -29,6 +30,7 @@ afterEach(() => {
   delete GLOBALS.AudioWorkletNode;
   delete GLOBALS.AudioContext;
   delete GLOBALS.OffscreenCanvas;
+  delete GLOBALS.FileSystemFileHandle;
 });
 
 function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeatureReport {
@@ -129,6 +131,24 @@ describe("detectPlatformFeatures", () => {
     GLOBALS.isSecureContext = true;
     const secure = detectPlatformFeatures();
     expect(secure.webhid).toBe(true);
+  });
+
+  it("detects OPFS SyncAccessHandle when FileSystemFileHandle.createSyncAccessHandle is exposed", () => {
+    WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
+
+    (navigator as unknown as { storage?: unknown }).storage = {
+      getDirectory: () => Promise.resolve(null),
+    };
+
+    // `createSyncAccessHandle` is only usable in dedicated workers at runtime, but for feature
+    // detection we only need to check that the method exists on the prototype.
+    GLOBALS.FileSystemFileHandle = class FileSystemFileHandle {
+      createSyncAccessHandle(): void {}
+    };
+
+    const report = detectPlatformFeatures();
+    expect(report.opfs).toBe(true);
+    expect(report.opfsSyncAccessHandle).toBe(true);
   });
 });
 
