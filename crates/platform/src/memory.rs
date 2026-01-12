@@ -2,8 +2,10 @@ use crate::address_filter::AddressFilter;
 use crate::chipset::A20GateHandle;
 use crate::dirty_memory::{DirtyTrackingHandle, DirtyTrackingMemory, DEFAULT_DIRTY_PAGE_SIZE};
 use aero_pc_constants::PCIE_ECAM_BASE;
-use memory::{DenseMemory, GuestMemory, MapError, MmioHandler, PhysicalMemoryBus};
-use memory::phys::{MappedGuestMemory, MappedRegion};
+use memory::{
+    DenseMemory, GuestMemory, GuestMemoryMapping, MapError, MappedGuestMemory, MmioHandler,
+    PhysicalMemoryBus,
+};
 use std::sync::Arc;
 
 /// Base address of the system BIOS ROM in the 20-bit real-mode memory window.
@@ -50,23 +52,27 @@ impl MemoryBus {
             .checked_add(high_len)
             .expect("high RAM end overflow");
 
-        Box::new(MappedGuestMemory::new(
-            ram,
-            vec![
-                // Low RAM: [0..PCIE_ECAM_BASE)
-                MappedRegion {
-                    guest_start: 0,
-                    inner_start: 0,
-                    len: PCIE_ECAM_BASE,
-                },
-                // High RAM: [4GiB..4GiB + (ram_bytes - PCIE_ECAM_BASE))
-                MappedRegion {
-                    guest_start: HIGH_RAM_BASE,
-                    inner_start: PCIE_ECAM_BASE,
-                    len: high_end - HIGH_RAM_BASE,
-                },
-            ],
-        ))
+        Box::new(
+            MappedGuestMemory::new(
+                ram,
+                high_end,
+                vec![
+                    // Low RAM: [0..PCIE_ECAM_BASE)
+                    GuestMemoryMapping {
+                        phys_start: 0,
+                        phys_end: PCIE_ECAM_BASE,
+                        inner_offset: 0,
+                    },
+                    // High RAM: [4GiB..4GiB + (ram_bytes - PCIE_ECAM_BASE))
+                    GuestMemoryMapping {
+                        phys_start: HIGH_RAM_BASE,
+                        phys_end: high_end,
+                        inner_offset: PCIE_ECAM_BASE,
+                    },
+                ],
+            )
+            .expect("failed to map PC high RAM"),
+        )
     }
 
     pub fn new(filter: AddressFilter, ram_size: usize) -> Self {
