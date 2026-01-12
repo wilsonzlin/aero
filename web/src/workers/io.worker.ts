@@ -5,6 +5,7 @@ import { openRingByKind } from "../ipc/ipc";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { InputEventType } from "../input/event_queue";
+import { chooseKeyboardInputBackend, chooseMouseInputBackend } from "../input/input_backend_selection";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -3446,45 +3447,23 @@ function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
 }
 
 function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): void {
-  // Never switch keyboard input backends while keys are held down. Doing so would risk leaving the
-  // prior backend in a "key down" state (no matching release event), which can manifest as stuck
-  // keys in the guest OS.
-  if (pressedKeyboardHidUsageCount !== 0) return;
-
-  if (opts.virtioKeyboardOk && virtioInputKeyboard) {
-    keyboardInputBackend = "virtio";
-    return;
-  }
-
-  // Prefer the synthetic USB keyboard once it's available so we don't keep relying on PS/2
-  // scancode injection after WASM finishes initializing.
-  if (syntheticUsbHidAttached && usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard)) {
-    keyboardInputBackend = "usb";
-    return;
-  }
-
-  keyboardInputBackend = "ps2";
+  keyboardInputBackend = chooseKeyboardInputBackend({
+    current: keyboardInputBackend,
+    keysHeld: pressedKeyboardHidUsageCount !== 0,
+    virtioOk: opts.virtioKeyboardOk && !!virtioInputKeyboard,
+    usbOk: syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard),
+  });
 }
 
 function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
-  // Avoid switching input backends while a mouse button is held down to prevent leaving the
-  // prior backend with a latched "button down" state (stuck drag).
-  if ((mouseButtonsMask & 0x07) !== 0) return;
-
-  if (opts.virtioMouseOk && virtioInputMouse) {
-    mouseInputBackend = "virtio";
-    return;
-  }
-
-  // Prefer PS/2 mouse injection whenever an i8042 controller is available so mouse input works
-  // even when the synthetic USB HID mouse is absent/unconfigured.
-  if (i8042Wasm || i8042Ts) {
-    mouseInputBackend = "ps2";
-    return;
-  }
-
-  // Final fallback: enqueue synthetic USB HID reports (if available).
-  mouseInputBackend = "usb";
+  mouseInputBackend = chooseMouseInputBackend({
+    current: mouseInputBackend,
+    buttonsHeld: (mouseButtonsMask & 0x07) !== 0,
+    virtioOk: opts.virtioMouseOk && !!virtioInputMouse,
+    // Prefer PS/2 mouse injection whenever an i8042 controller is available so mouse input works
+    // even when the synthetic USB HID mouse is absent/unconfigured.
+    usbOk: !(i8042Wasm || i8042Ts),
+  });
 }
 
 function drainSyntheticUsbHidReports(): void {
