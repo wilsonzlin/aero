@@ -48,6 +48,7 @@ pub fn dispatch_interrupt(
         0x14 => handle_int14(cpu, bus),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
+        0x17 => handle_int17(cpu, bus),
         0x18 => handle_int18(bios, cpu, bus, disk),
         0x19 => handle_int19(bios, cpu, bus, disk),
         0x1A => handle_int1a(bios, cpu, bus),
@@ -136,6 +137,46 @@ fn handle_int12(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     // amount of memory below the EBDA.
     let base_mem_kb = bus.read_u16(BDA_BASE + 0x13);
     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (base_mem_kb as u64);
+    cpu.rflags &= !FLAG_CF;
+}
+
+fn handle_int17(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
+    // Printer services.
+    //
+    // Like INT 14h, we don't currently emulate the device registers. We treat the BDA LPT base
+    // address table (0x40:0x08) as the source of truth for port presence.
+    //
+    // Return convention: AH=status.
+    let port = (cpu.gpr[gpr::RDX] & 0xFFFF) as u16;
+    let lpt_base = if port < 3 {
+        bus.read_u16(BDA_BASE + 0x08 + (port as u64) * 2)
+    } else {
+        0
+    };
+
+    // Status bits (subset; IBM PC/AT convention):
+    // - bit 0: timeout
+    // - bit 4: selected
+    // - bit 7: not busy
+    let status: u8 = if lpt_base != 0 { 0x90 } else { 0x01 };
+
+    let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
+    match ah {
+        0x00 => {
+            // Print character.
+        }
+        0x01 => {
+            // Initialize printer.
+        }
+        0x02 => {
+            // Get printer status.
+        }
+        _ => {
+            // Unknown function: report timeout.
+        }
+    }
+
+    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | ((status as u64) << 8);
     cpu.rflags &= !FLAG_CF;
 }
 
@@ -1809,6 +1850,27 @@ mod tests {
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x80);
         assert_eq!(cpu.gpr[gpr::RAX] as u8, 0);
+    }
+
+    #[test]
+    fn int17_status_reports_timeout_when_lpt_absent_and_ready_when_present() {
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+
+        cpu.gpr[gpr::RAX] = 0x0200; // AH=02h status
+        cpu.gpr[gpr::RDX] = 0x0000; // LPT1
+        handle_int17(&mut cpu, &mut mem);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x01);
+
+        // Advertise LPT1 in BDA.
+        mem.write_u16(BDA_BASE + 0x08, 0x0378);
+        cpu.gpr[gpr::RAX] = 0x0200;
+        cpu.gpr[gpr::RDX] = 0x0000;
+        handle_int17(&mut cpu, &mut mem);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x90);
     }
 
     #[test]
