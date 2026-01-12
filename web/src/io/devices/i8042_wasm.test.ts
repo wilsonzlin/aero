@@ -132,6 +132,19 @@ describe("I8042Bridge (wasm)", () => {
        const snap2 = dev.save_state();
        dev.load_state(snap2);
        expect(dev.take_reset_requests()).toBe(0);
+
+       // If the guest reconfigures the keyboard to use a non-Set-2 scancode set, host-side
+       // injections (which are always Set-2 bytes) should be dropped rather than delivering the
+       // wrong set.
+       dev.port_write(0x60, 0xf0); // get/set scancode set (next byte)
+       dev.port_write(0x60, 0x01); // set 1
+       // Drain ACKs.
+       while ((dev.port_read(0x64) & 0x01) !== 0) dev.port_read(0x60);
+       drainIrqs();
+
+       dev.inject_key_scancode_bytes(0x1c, 1);
+       expect(drainIrqs() & 0x01).toBe(0);
+       expect(dev.port_read(0x64) & 0x01).toBe(0);
      } finally {
        dev.free();
      }
