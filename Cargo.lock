@@ -211,6 +211,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "futures-intrusive",
+ "js-sys",
  "lru",
  "naga 0.20.0",
  "pollster",
