@@ -143,6 +143,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   #irqLevel = false;
   #destroyed = false;
   #driverOkLogged = false;
+  #micSampleRateHz = 0;
 
   constructor(opts: { bridge: VirtioSndPciBridgeLike; irqSink: IrqSink; mode?: VirtioSndPciMode }) {
     this.#bridge = opts.bridge;
@@ -391,6 +392,19 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     if (dstSampleRateHz > 0) {
       try {
         this.#bridge.set_host_sample_rate_hz(dstSampleRateHz);
+
+        // The Rust virtio-snd device can track its capture sample rate to the host/output sample
+        // rate until a distinct capture rate is configured. Reassert the configured capture rate
+        // after updating the host/output rate so mic capture stays pinned to the host mic
+        // AudioContext sample rate.
+        const micSr = this.#micSampleRateHz >>> 0;
+        if (micSr > 0) {
+          try {
+            this.#bridge.set_capture_sample_rate_hz(micSr);
+          } catch {
+            // ignore
+          }
+        }
       } catch {
         // ignore invalid/missing rate plumbing
       }
@@ -417,6 +431,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     const sr = sampleRateHz >>> 0;
     if (!sr) return;
+    this.#micSampleRateHz = sr;
     try {
       this.#bridge.set_capture_sample_rate_hz(sr);
     } catch {

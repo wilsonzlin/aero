@@ -310,3 +310,40 @@ describe("io/devices/virtio_snd PCI command semantics", () => {
     expect(irqSink.raiseIrq).toHaveBeenLastCalledWith(9);
   });
 });
+
+describe("io/devices/virtio_snd audio ring attachment", () => {
+  it("reasserts capture sample rate after updating the host/output sample rate", () => {
+    const setHostRate = vi.fn();
+    const setCaptureRate = vi.fn();
+    const setAudioRing = vi.fn();
+
+    const bridge: VirtioSndPciBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      poll: vi.fn(),
+      driver_ok: vi.fn(() => false),
+      irq_asserted: vi.fn(() => false),
+      set_audio_ring_buffer: setAudioRing,
+      set_host_sample_rate_hz: setHostRate,
+      set_mic_ring_buffer: vi.fn(),
+      set_capture_sample_rate_hz: setCaptureRate,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioSndPciDevice({ bridge, irqSink });
+
+    const ringBuffer =
+      typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
+
+    // Configure a mic capture rate that differs from the output rate, then update the output rate
+    // via setAudioRingBuffer. The wrapper should reassert the capture rate so virtio-snd capture
+    // does not drift back to tracking output.
+    dev.setCaptureSampleRateHz(44_100);
+    setCaptureRate.mockClear();
+
+    dev.setAudioRingBuffer({ ringBuffer, capacityFrames: 128, channelCount: 2, dstSampleRateHz: 48_000 });
+    expect(setHostRate).toHaveBeenCalledWith(48_000);
+    expect(setAudioRing).toHaveBeenCalledWith(ringBuffer, 128, 2);
+    expect(setCaptureRate).toHaveBeenCalledWith(44_100);
+  });
+});
