@@ -213,20 +213,30 @@ requires a segmented/sparse host backing model (or wasm `memory64`).
 │ 0x0060, 0x0064 │ PS/2 Controller (Keyboard/Mouse)               │
 │ 0x0070-0x0071  │ CMOS / RTC                                     │
 │ 0x0080-0x008F  │ DMA Page Registers                             │
-│ 0x00A0-0x00A1  │ PIC 2 (Slave)                                  │
-│ 0x00C0-0x00DF  │ DMA Controller 2                               │
-│ 0x0170-0x0177  │ IDE Secondary                                  │
-│ 0x01F0-0x01F7  │ IDE Primary                                    │
-│ 0x0278-0x027A  │ Parallel Port (LPT)                            │
-│ 0x02F8-0x02FF  │ COM2 Serial                                    │
-│ 0x03C0-0x03DF  │ AeroGPU legacy VGA registers                    │
-│ 0x03F0-0x03F7  │ Floppy Controller                              │
-│ 0x03F8-0x03FF  │ COM1 Serial                                    │
-│ 0x0CF8-0x0CFF  │ PCI Configuration                              │
-│ 0x0CF9         │ Reset Control (ACPI FADT reset register)        │
-│ 0x0400-0x0427  │ ACPI PM I/O (PM1a_EVT/CNT, PM_TMR, GPE0, SCI)   │
-└─────────────────────────────────────────────────────────────────┘
+ │ 0x00A0-0x00A1  │ PIC 2 (Slave)                                  │
+ │ 0x00C0-0x00DF  │ DMA Controller 2                               │
+ │ 0x0170-0x0177  │ IDE Secondary                                  │
+ │ 0x01CE-0x01CF  │ VBE (Bochs VBE_DISPI) index/data               │
+ │ 0x01F0-0x01F7  │ IDE Primary                                    │
+ │ 0x0278-0x027A  │ Parallel Port (LPT)                            │
+ │ 0x02F8-0x02FF  │ COM2 Serial                                    │
+│ 0x03C0-0x03DF  │ VGA registers (legacy display)                  │
+ │ 0x03F0-0x03F7  │ Floppy Controller                              │
+ │ 0x03F8-0x03FF  │ COM1 Serial                                    │
+ │ 0x0CF8-0x0CFF  │ PCI Configuration                              │
+ │ 0x0CF9         │ Reset Control (ACPI FADT reset register)        │
+ │ 0x0400-0x0427  │ ACPI PM I/O (PM1a_EVT/CNT, PM_TMR, GPE0, SCI)   │
+ └─────────────────────────────────────────────────────────────────┘
 ```
+
+Note on boot display vs AeroGPU:
+
+- Today, the canonical `aero_machine::Machine` implements these VGA/VBE legacy ports using the
+  standalone `aero_gpu_vga` device model (boot display).
+- The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
+  VGA/VBE compatibility; see:
+  - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)
+  - [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md)
 
 ---
 
