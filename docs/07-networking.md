@@ -1149,9 +1149,10 @@ Capture format notes:
 - If proxy payload records are present, additional pseudo-interfaces may be emitted:
   - `tcp-proxy` (`LINKTYPE_USER0` / 147) containing pseudo-packets with an `ATCP` header.
   - `udp-proxy` (`LINKTYPE_USER1` / 148) containing pseudo-packets with an `AUDP` header.
-- Note: the worker-based web runtime currently only records raw Ethernet frames by default. The
-  proxy pseudo-interfaces only appear if something explicitly calls `NetTracer.recordTcpProxy()` /
-  `recordUdpProxy()`.
+- Note: in the worker-based web runtime, proxy payload capture is opt-in:
+  - `NetTracer` defaults `captureTcpProxy=false` and `captureUdpProxy=false` (matching Rust).
+  - The proxy pseudo-interfaces only appear if proxy capture is enabled *and* something explicitly
+    calls `NetTracer.recordTcpProxy()` / `recordUdpProxy()`.
 - Frames are recorded at the forwarder boundary (best-effort). In particular, the capture may
   include frames that were later dropped due to missing tunnel/backpressure, or because `NET_RX`
   was full.

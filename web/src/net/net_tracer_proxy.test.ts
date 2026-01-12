@@ -199,4 +199,21 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
     expect(tcpPkt!.packetData.byteLength).toBe(16);
     expect(udpPkt!.packetData.byteLength).toBe(16);
   });
+
+  it("does not capture proxy packets unless explicitly enabled in NetTraceConfig", () => {
+    const tracer = new NetTracer();
+    tracer.enable();
+
+    tracer.recordTcpProxy("guest_to_remote", 123, Uint8Array.of(1, 2, 3), 1n);
+    tracer.recordUdpProxy("guest_to_remote", "proxy", [1, 2, 3, 4], 1, 2, Uint8Array.of(4, 5, 6), 2n);
+
+    const { interfaces, epbs } = parsePcapng(tracer.exportPcapng());
+    const linkTypes = interfaces.map((i) => i.linkType);
+    expect(linkTypes).toContain(1);
+    expect(linkTypes).not.toContain(147);
+    expect(linkTypes).not.toContain(148);
+
+    expect(epbs.some((epb) => ascii(epb.packetData.slice(0, 4)) === "ATCP")).toBe(false);
+    expect(epbs.some((epb) => ascii(epb.packetData.slice(0, 4)) === "AUDP")).toBe(false);
+  });
 });
