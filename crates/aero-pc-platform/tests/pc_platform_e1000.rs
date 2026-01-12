@@ -1,4 +1,5 @@
 use aero_cpu_core::mem::CpuBus as _;
+use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
 use aero_devices::pci::profile::NIC_E1000_82540EM;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
@@ -112,6 +113,47 @@ fn pc_platform_enumerates_e1000_and_assigns_bars() {
     let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) & 0xffff;
     assert_ne!(command & 0x1, 0, "BIOS POST should enable IO decoding");
     assert_ne!(command & 0x2, 0, "BIOS POST should enable memory decoding");
+
+    // Class/subclass/prog-if/revision should match the device profile.
+    let class_rev = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x08);
+    assert_eq!(class_rev & 0xFF, u32::from(NIC_E1000_82540EM.revision_id));
+    assert_eq!((class_rev >> 8) & 0xFF, u32::from(NIC_E1000_82540EM.class.prog_if));
+    assert_eq!((class_rev >> 16) & 0xFF, u32::from(NIC_E1000_82540EM.class.sub_class));
+    assert_eq!(
+        (class_rev >> 24) & 0xFF,
+        u32::from(NIC_E1000_82540EM.class.base_class)
+    );
+
+    // Subsystem IDs should match the device profile.
+    let subsystem = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x2C);
+    assert_eq!(
+        subsystem & 0xFFFF,
+        u32::from(NIC_E1000_82540EM.subsystem_vendor_id)
+    );
+    assert_eq!(
+        (subsystem >> 16) & 0xFFFF,
+        u32::from(NIC_E1000_82540EM.subsystem_id)
+    );
+
+    // Interrupt pin/line should be populated by the platform's INTx router.
+    let intr = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3C);
+    let interrupt_line = (intr & 0xFF) as u8;
+    let interrupt_pin = ((intr >> 8) & 0xFF) as u8;
+    assert_eq!(
+        interrupt_pin,
+        NIC_E1000_82540EM
+            .interrupt_pin
+            .expect("profile should provide interrupt pin")
+            .to_config_u8()
+    );
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let expected_gsi = router.gsi_for_intx(
+        bdf,
+        NIC_E1000_82540EM
+            .interrupt_pin
+            .expect("profile should provide interrupt pin"),
+    );
+    assert_eq!(interrupt_line, u8::try_from(expected_gsi).unwrap());
 
     let bar0_base = read_e1000_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
