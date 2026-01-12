@@ -2389,9 +2389,10 @@ impl Machine {
     /// the machine's canonical [`SharedDisk`] (which is intentionally `!Send`/`!Sync` for WASM
     /// compatibility).
     ///
-    /// This method preserves the NVMe controller's internal state (including PCI config space
-    /// fields that are snapshotted by the device model) by snapshotting the current NVMe device
-    /// state and re-loading it after swapping the backend.
+    /// This method preserves the NVMe controller's guest-visible state (PCI config + controller
+    /// registers/queues) by snapshotting the current device model state and re-loading it after
+    /// swapping the host disk backend. This is intended for host-managed snapshot restore flows
+    /// where the disk contents live outside the snapshot blob.
     pub fn attach_nvme_disk(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
@@ -2418,10 +2419,33 @@ impl Machine {
             ))
         })?;
 
+        // Replace the device model while keeping the `Rc` identity stable for persistent MMIO
+        // mappings.
         *nvme.borrow_mut() = new_dev;
+
+        // Keep internal PCI config coherent with the canonical `PciConfigPorts` state.
+        if let Some(pci_cfg) = &self.pci_cfg {
+            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+            let (command, bar0_base) = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let bar0_base = cfg
+                    .and_then(|cfg| cfg.bar_range(0))
+                    .map(|range| range.base)
+                    .unwrap_or(0);
+                (command, bar0_base)
+            };
+
+            let mut dev = nvme.borrow_mut();
+            dev.config_mut().set_command(command);
+            if bar0_base != 0 {
+                dev.config_mut().set_bar_base(0, bar0_base);
+            }
+        }
+
         Ok(())
     }
-
     /// Attach the machine's canonical [`SharedDisk`] to AHCI port 0 (if AHCI is enabled).
     ///
     /// This makes firmware INT13 disk reads and AHCI DMA observe the same underlying bytes.
