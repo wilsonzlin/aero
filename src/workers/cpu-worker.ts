@@ -566,11 +566,6 @@ async function runTieredVm(iterations: number, threshold: number) {
       }
     }
 
-    // Optional backwards-compatible commit-status signal for alternate runtimes.
-    // The canonical contract is the in-memory `commit_flag` slot, but setting this makes it easy
-    // to debug commit/rollback behaviour from JS (and supports older consumers that read a global).
-    globalThis.__aero_jit_last_committed = !shouldRollback;
-
     return ret;
   };
 
