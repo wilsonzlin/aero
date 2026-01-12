@@ -155,6 +155,20 @@ To generate a catalog locally, copy the built SYS into the package staging folde
 drivers/windows7/virtio-input/inf/aero_virtio_input.sys
 ```
 
+Instead of copying manually, you can use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
+```
+
+If you built via the CI/MSBuild pipeline (which places outputs under `out/drivers/...`), run from the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/stage-built-sys.ps1 `
+  -Arch amd64 `
+  -InputDir out/drivers/windows7/virtio-input
+```
+
 ## Test certificate workflow (generate + install)
 
 ### 1) Generate a test certificate (on the signing machine)
