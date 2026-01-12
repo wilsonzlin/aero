@@ -24,18 +24,41 @@ MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 
 # Defensive defaults for shared-host agent execution.
 #
-# These reduce the likelihood of hitting per-user process/thread limits which can cause rustc to
-# ICE when it fails to spawn its internal Rayon thread pool.
+# In constrained agent sandboxes we intermittently hit rustc panics like:
+#   "failed to spawn helper thread (WouldBlock)"
+# when Cargo/rustc try to create too many threads/processes in parallel.
 #
-# Callers can always override by setting these variables explicitly.
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+# Prefer reliability over speed: default to -j1 unless overridden.
+#
+# Override (preferred, shared with scripts/agent-env.sh):
+#   export AERO_CARGO_BUILD_JOBS=2   # or 4, etc
+#   bash ./scripts/safe-run.sh cargo test --locked
+#
+# Or override directly:
+#   CARGO_BUILD_JOBS=2 bash ./scripts/safe-run.sh cargo test --locked
+_aero_default_cargo_build_jobs=1
+if [[ -z "${CARGO_BUILD_JOBS:-}" ]]; then
+    if [[ -n "${AERO_CARGO_BUILD_JOBS:-}" ]]; then
+        if [[ "${AERO_CARGO_BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+            export CARGO_BUILD_JOBS="${AERO_CARGO_BUILD_JOBS}"
+        else
+            echo "[safe-run] warning: invalid AERO_CARGO_BUILD_JOBS value: ${AERO_CARGO_BUILD_JOBS} (expected positive integer); using ${_aero_default_cargo_build_jobs}" >&2
+            export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
+        fi
+    else
+        export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
+    fi
+fi
+unset _aero_default_cargo_build_jobs 2>/dev/null || true
+
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
 # Reduce codegen parallelism per crate (avoids memory spikes / thread creation failures).
 # Only apply when invoking cargo directly, and don't override an explicit codegen-units setting.
 if [[ "${1:-}" == "cargo" || "${1:-}" == */cargo ]]; then
     if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
-        export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=${CARGO_BUILD_JOBS}"
+        # Keep per-crate parallelism low but not pathologically slow.
+        export RUSTFLAGS="${RUSTFLAGS:-} -C codegen-units=4"
         export RUSTFLAGS="${RUSTFLAGS# }"
     fi
 fi
@@ -48,6 +71,8 @@ if [[ $# -lt 1 ]]; then
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
+    echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1)" >&2
+    echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (takes precedence if set)" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 cargo build --locked" >&2
