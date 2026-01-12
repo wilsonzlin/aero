@@ -32,7 +32,7 @@ The D3D9-only variant (`aerogpu.inf`) is not staged unless you customize `driver
 Legacy binding INFs are shipped under `legacy/` for emulator builds that intentionally expose the deprecated legacy device model:
 
 - `legacy/aerogpu.inf` (D3D9-only; shipped by default)
-- `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; optional/opt-in)
+- `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; exists in-tree but is not shipped in CI packages by default)
 
 The canonical DX11-capable variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs). It is staged in CI by default;
 see `drivers/aerogpu/packaging/win7/README.md` for install notes.
@@ -55,9 +55,13 @@ Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-pac
 
 - `infFiles` selects which INF(s) to stage at the **package root**. AeroGPU CI currently stages:
   - `packaging/win7/aerogpu_dx11.inf` (DX11-capable package; canonical binding)
+
+  If you stage both `aerogpu.inf` and `aerogpu_dx11.inf`, Windows PnP should prefer `aerogpu_dx11.inf` (lower `FeatureScore`),
+  and `packaging/win7/install.cmd` also prefers `aerogpu_dx11.inf` when it is present at the package root.
+
   Legacy binding INFs are shipped separately under `legacy/` (see `drivers/aerogpu/legacy/`):
-  - `legacy/aerogpu.inf` (D3D9-only; staged by default)
-  - `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; add to `additionalFiles` if you stage DX11 payloads)
+  - `legacy/aerogpu.inf` (D3D9-only; shipped in CI packages by default)
+  - `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; add to `additionalFiles` to ship it in CI packages)
 - `wow64Files` lists x86 UMD DLLs that must be present in the x64 package during `Inf2Cat`.
   AeroGPU includes:
   - `aerogpu_d3d9.dll` (required for Win7 x64 WOW64 D3D9)
