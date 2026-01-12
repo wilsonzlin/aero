@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { waitForAudioOutputNonSilent } from "./util/audio";
-import { probeOpfsSyncAccessHandle } from "./util/opfs";
+import { probeOpfsSyncAccessHandle, removeOpfsEntryBestEffort } from "./util/opfs";
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
@@ -255,31 +255,5 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
 
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputWorker", { threshold: 0.01 });
 
-  // Best-effort cleanup: OPFS can persist across runs in some environments.
-  // Ignore failures (missing APIs, already deleted, permission issues, etc.).
-  await page.evaluate(async (path) => {
-    try {
-      const storage = (navigator as Navigator & { storage?: StorageManager | undefined }).storage;
-      const getDir = (storage as StorageManager & { getDirectory?: unknown })?.getDirectory as
-        | ((this: StorageManager) => Promise<FileSystemDirectoryHandle>)
-        | undefined;
-      if (typeof getDir !== "function") return;
-
-      const parts = String(path)
-        .split("/")
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0);
-      if (parts.length === 0) return;
-      const filename = parts.pop();
-      if (!filename) return;
-
-      let dir = await getDir.call(storage);
-      for (const part of parts) {
-        dir = await dir.getDirectoryHandle(part);
-      }
-      await dir.removeEntry(filename);
-    } catch {
-      // ignore
-    }
-  }, snapshotPath);
+  await removeOpfsEntryBestEffort(page, snapshotPath);
 });

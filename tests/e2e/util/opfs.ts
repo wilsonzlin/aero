@@ -6,6 +6,41 @@ export type OpfsSyncAccessHandleProbeResult =
   | { ok: false; supported: false; reason: string };
 
 /**
+ * Best-effort removal of a file entry from OPFS.
+ *
+ * - No-ops if OPFS APIs are unavailable.
+ * - Swallows errors (missing entry, permission issues, etc.).
+ * - Intended for Playwright cleanup because OPFS can persist across runs in some environments.
+ */
+export async function removeOpfsEntryBestEffort(page: Page, path: string): Promise<void> {
+  await page.evaluate(async (path) => {
+    try {
+      const storage = (navigator as Navigator & { storage?: StorageManager | undefined }).storage;
+      const getDir = (storage as StorageManager & { getDirectory?: unknown })?.getDirectory as
+        | ((this: StorageManager) => Promise<FileSystemDirectoryHandle>)
+        | undefined;
+      if (typeof getDir !== "function") return;
+
+      const parts = String(path)
+        .split("/")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      if (parts.length === 0) return;
+      const filename = parts.pop();
+      if (!filename) return;
+
+      let dir = await getDir.call(storage);
+      for (const part of parts) {
+        dir = await dir.getDirectoryHandle(part);
+      }
+      await dir.removeEntry(filename);
+    } catch {
+      // ignore
+    }
+  }, path);
+}
+
+/**
  * Best-effort probe for OPFS SyncAccessHandle support.
  *
  * Notes:
@@ -44,4 +79,3 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
     }
   });
 }
-
