@@ -421,7 +421,19 @@ impl PciConfigSpace {
     pub fn restore_state(&mut self, state: &PciConfigSpaceState) {
         self.bytes = state.bytes;
         for i in 0..self.bars.len() {
-            self.bars[i].base = state.bar_base[i];
+            // BAR base alignment is a guest-visible hardware invariant: real devices mask BAR base
+            // writes to the BAR size alignment (in addition to the config-space flag bits).
+            //
+            // Snapshots may come from older versions or hostile inputs; normalize restored BAR
+            // bases through the same mask so the post-restore config space and BAR routing behave
+            // like real hardware.
+            self.bars[i].base = self
+                .bars
+                .get(i)
+                .and_then(|bar| bar.def)
+                .map_or(state.bar_base[i], |def| {
+                    Self::mask_bar_base(def, state.bar_base[i])
+                });
             self.bars[i].probe = state.bar_probe[i];
         }
 
@@ -768,5 +780,40 @@ mod tests {
         cfg.write(0x14, 4, 0x1234_5678);
         assert_eq!(cfg.bar_range(1).unwrap().base, 0x1234_5660);
         assert_eq!(cfg.read(0x14, 4), 0x1234_5661);
+    }
+
+    #[test]
+    fn restore_state_masks_bar_bases_to_bar_size_alignment() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+
+        let mut state = cfg.snapshot_state();
+        // Inject misaligned bases; restore_state should normalize them to hardware behavior.
+        state.bar_base[0] = 0x1234_5678;
+        state.bar_base[1] = 0x1234_5678;
+
+        let mut restored = PciConfigSpace::new(0xabcd, 0xef01);
+        restored.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        restored.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        restored.restore_state(&state);
+
+        assert_eq!(restored.bar_range(0).unwrap().base, 0x1234_5000);
+        assert_eq!(restored.read(0x10, 4), 0x1234_5000);
+
+        assert_eq!(restored.bar_range(1).unwrap().base, 0x1234_5660);
+        assert_eq!(restored.read(0x14, 4), 0x1234_5661);
     }
 }
