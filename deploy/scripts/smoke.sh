@@ -318,15 +318,24 @@ if command -v node >/dev/null 2>&1; then
    return Number(match[1]);
  }
 
- function sleep(ms) {
-   return new Promise((resolve) => setTimeout(resolve, ms));
- }
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
- function readSocketChunk(socket, timeoutMs, label) {
-   return new Promise((resolve, reject) => {
-     const onData = (chunk) => {
-       cleanup();
-       resolve(chunk);
+  function parseOptionalPositiveInt(value) {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n <= 0) return null;
+    return n;
+  }
+
+  function readSocketChunk(socket, timeoutMs, label) {
+    return new Promise((resolve, reject) => {
+      const onData = (chunk) => {
+        cleanup();
+        resolve(chunk);
      };
      const onError = (err) => {
        cleanup();
@@ -411,11 +420,33 @@ if command -v node >/dev/null 2>&1; then
               reject(new Error(`invalid limits.l2.maxControlPayloadBytes: ${maxControlPayloadBytes}`));
               return;
             }
- 
+
+            // If the deploy stack overrides the proxy payload limits via env vars, ensure the
+            // gateway surfaces the same values in `POST /session` so browser clients can align
+            // their bounds checks.
+            const expectedFrame = parseOptionalPositiveInt(process.env.AERO_L2_MAX_FRAME_PAYLOAD);
+            if (expectedFrame !== null && expectedFrame !== maxFramePayloadBytes) {
+              reject(
+                new Error(
+                  `limits.l2.maxFramePayloadBytes mismatch: got ${maxFramePayloadBytes}, expected ${expectedFrame}`,
+                ),
+              );
+              return;
+            }
+            const expectedControl = parseOptionalPositiveInt(process.env.AERO_L2_MAX_CONTROL_PAYLOAD);
+            if (expectedControl !== null && expectedControl !== maxControlPayloadBytes) {
+              reject(
+                new Error(
+                  `limits.l2.maxControlPayloadBytes mismatch: got ${maxControlPayloadBytes}, expected ${expectedControl}`,
+                ),
+              );
+              return;
+            }
+  
             const udpRelay = payload.udpRelay;
             if (!udpRelay || typeof udpRelay !== "object") {
               reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
-             return;
+              return;
            }
           if (udpRelay.baseUrl !== `https://${host}`) {
             reject(new Error(`unexpected udpRelay.baseUrl: ${udpRelay.baseUrl}`));
