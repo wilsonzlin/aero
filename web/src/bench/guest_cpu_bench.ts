@@ -9,17 +9,30 @@ function nowMs(): number {
   return typeof performance?.now === "function" ? performance.now() : Date.now();
 }
 
-function clampU32(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0xffff_ffff;
+function requirePositiveFiniteSeconds(seconds: number): number {
+  if (!Number.isFinite(seconds)) {
+    throw new Error(`Guest CPU benchmark: "seconds" must be a finite number. Got: ${String(seconds)}`);
   }
-  if (value < 0) {
-    return 0;
+  if (seconds <= 0) {
+    throw new Error(`Guest CPU benchmark: "seconds" must be > 0. Got: ${String(seconds)}`);
   }
-  if (value > 0xffff_ffff) {
-    return 0xffff_ffff;
+  return seconds;
+}
+
+function requirePositiveU32Iters(iters: number): number {
+  if (!Number.isFinite(iters)) {
+    throw new Error(`Guest CPU benchmark: "iters" must be a finite number. Got: ${String(iters)}`);
   }
-  return Math.floor(value);
+  if (!Number.isInteger(iters)) {
+    throw new Error(`Guest CPU benchmark: "iters" must be an integer. Got: ${String(iters)}`);
+  }
+  if (iters <= 0) {
+    throw new Error(`Guest CPU benchmark: "iters" must be > 0. Got: ${String(iters)}`);
+  }
+  if (iters > 0xffff_ffff) {
+    throw new Error(`Guest CPU benchmark: "iters" must be <= 4294967295 (u32). Got: ${String(iters)}`);
+  }
+  return iters;
 }
 
 function readNumberField(obj: unknown, key: string): number | undefined {
@@ -257,6 +270,23 @@ function checkChecksumOrThrow(params: {
   );
 }
 
+function checkDeterminismOrThrow(params: {
+  variant: GuestCpuBenchVariant;
+  mode: GuestCpuMode;
+  expected: string;
+  observed: string;
+}): void {
+  if (params.expected === params.observed) return;
+  throw new Error(
+    [
+      `Guest CPU benchmark determinism check failed (${params.variant}, mode=${params.mode}).`,
+      `Expected checksum (reference run): ${params.expected}`,
+      `Observed checksum (measured run): ${params.observed}`,
+      "Hint: the payload is expected to be deterministic; this usually means guest-visible state was not fully reset between runs.",
+    ].join("\n"),
+  );
+}
+
 export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCpuBenchRun> {
   if (opts.mode !== "interpreter") {
     throw new Error(
@@ -265,17 +295,18 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
   }
 
   if (opts.seconds !== undefined && opts.iters !== undefined) {
-    throw new Error('Guest CPU benchmark: specify either "seconds" or "iters", not both.');
+    throw new Error('Guest CPU benchmark: "seconds" and "iters" are mutually exclusive; specify only one.');
   }
 
-  const secondsBudgetRaw = opts.seconds ?? (opts.iters === undefined ? DEFAULT_SECONDS : undefined);
+  const usingIters = opts.iters !== undefined;
   const secondsBudget =
-    secondsBudgetRaw === undefined || !Number.isFinite(secondsBudgetRaw) ? undefined : Math.max(0, secondsBudgetRaw);
+    opts.seconds !== undefined
+      ? requirePositiveFiniteSeconds(opts.seconds)
+      : usingIters
+        ? undefined
+        : DEFAULT_SECONDS;
 
-  const itersPerRun =
-    secondsBudget !== undefined
-      ? DEFAULT_ITERS_PER_RUN
-      : Math.max(1, clampU32(opts.iters ?? DEFAULT_ITERS_PER_RUN));
+  const itersPerRun = usingIters ? requirePositiveU32Iters(opts.iters!) : DEFAULT_ITERS_PER_RUN;
   const warmupRuns = secondsBudget !== undefined ? DEFAULT_WARMUP_RUNS : 0;
 
   const { api } = await initWasmForContext();
@@ -294,7 +325,7 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
   const h = new api.GuestCpuBenchHarness();
   try {
     const payloadInfo = parsePayloadInfo(h.payload_info(opts.variant));
-    const expectedChecksum = formatChecksum(
+    const canonicalExpectedChecksum = formatChecksum(
       payloadInfo.bitness,
       payloadInfo.expected_checksum_hi,
       payloadInfo.expected_checksum_lo,
@@ -310,27 +341,33 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
       const insts = u64ToNumber(parsed.retired_instructions_hi, parsed.retired_instructions_lo);
       const seconds = (t1 - t0) / 1000;
 
-      if (itersPerRun === DEFAULT_ITERS_PER_RUN) {
-        checkChecksumOrThrow({ variant: opts.variant, mode: opts.mode, expected: expectedChecksum, observed: checksum });
-      }
-
       return { seconds, insts, checksum };
     };
 
-    for (let i = 0; i < warmupRuns; i++) {
-      runOnce();
-    }
-
     const runMips: number[] = [];
-    let observedChecksum = expectedChecksum;
+    let expectedChecksum: string;
+    let observedChecksum: string;
     let totalInstructions = 0;
     let totalSeconds = 0;
     let measuredRuns = 0;
 
     if (secondsBudget !== undefined) {
-      // Ensure at least one run, even if `secondsBudget === 0`.
+      expectedChecksum = canonicalExpectedChecksum;
+      observedChecksum = expectedChecksum;
+      // Ensure at least one measured run, even if `secondsBudget` is very small.
+      for (let i = 0; i < warmupRuns; i++) {
+        const { checksum } = runOnce();
+        checkChecksumOrThrow({
+          variant: opts.variant,
+          mode: opts.mode,
+          expected: expectedChecksum,
+          observed: checksum,
+        });
+      }
+
       while (measuredRuns < 1 || totalSeconds < secondsBudget) {
         const { seconds, insts, checksum } = runOnce();
+        checkChecksumOrThrow({ variant: opts.variant, mode: opts.mode, expected: expectedChecksum, observed: checksum });
         observedChecksum = checksum;
         measuredRuns++;
         totalInstructions += insts;
@@ -340,14 +377,41 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
         runMips.push((insts / safeSeconds) / 1e6);
       }
     } else {
-      const { seconds, insts, checksum } = runOnce();
-      observedChecksum = checksum;
-      measuredRuns = 1;
-      totalInstructions = insts;
-      totalSeconds = seconds;
+      const reference = runOnce();
+      if (itersPerRun === DEFAULT_ITERS_PER_RUN) {
+        checkChecksumOrThrow({
+          variant: opts.variant,
+          mode: opts.mode,
+          expected: canonicalExpectedChecksum,
+          observed: reference.checksum,
+        });
+      }
 
-      const safeSeconds = seconds > 0 ? seconds : 1e-9;
-      runMips.push((insts / safeSeconds) / 1e6);
+      const measured = runOnce();
+      if (itersPerRun === DEFAULT_ITERS_PER_RUN) {
+        checkChecksumOrThrow({
+          variant: opts.variant,
+          mode: opts.mode,
+          expected: canonicalExpectedChecksum,
+          observed: measured.checksum,
+        });
+      }
+
+      checkDeterminismOrThrow({
+        variant: opts.variant,
+        mode: opts.mode,
+        expected: reference.checksum,
+        observed: measured.checksum,
+      });
+
+      expectedChecksum = reference.checksum;
+      observedChecksum = measured.checksum;
+      measuredRuns = 1;
+      totalInstructions = measured.insts;
+      totalSeconds = measured.seconds;
+
+      const safeSeconds = measured.seconds > 0 ? measured.seconds : 1e-9;
+      runMips.push((measured.insts / safeSeconds) / 1e6);
     }
 
     const safeTotalSeconds = totalSeconds > 0 ? totalSeconds : 1e-9;
