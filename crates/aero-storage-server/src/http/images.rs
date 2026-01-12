@@ -22,6 +22,7 @@ use axum::{
     routing::get,
     Router,
 };
+use http_body::{Body as HttpBody, Frame, SizeHint};
 use futures::Stream;
 use std::{
     pin::Pin,
@@ -29,6 +30,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::io::ReaderStream;
 use tracing::Instrument;
 
@@ -43,6 +45,7 @@ pub struct ImagesState {
     cors: CorsConfig,
     cross_origin_resource_policy: HeaderValue,
     public_cache_max_age: Duration,
+    bytes_request_semaphore: Option<Arc<Semaphore>>,
 }
 
 impl ImagesState {
@@ -56,6 +59,9 @@ impl ImagesState {
             cors: CorsConfig::default(),
             cross_origin_resource_policy: HeaderValue::from_static("same-site"),
             public_cache_max_age: DEFAULT_PUBLIC_MAX_AGE,
+            bytes_request_semaphore: Some(Arc::new(Semaphore::new(
+                crate::DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS,
+            ))),
         }
     }
 
@@ -107,6 +113,18 @@ impl ImagesState {
         self
     }
 
+    /// Set the maximum number of concurrent requests allowed to the image bytes endpoints.
+    ///
+    /// Use `0` to disable limiting (unlimited).
+    pub fn with_max_concurrent_bytes_requests(mut self, max: usize) -> Self {
+        self.bytes_request_semaphore = if max == 0 {
+            None
+        } else {
+            Some(Arc::new(Semaphore::new(max)))
+        };
+        self
+    }
+
     pub(crate) fn metrics(&self) -> &Metrics {
         self.metrics.as_ref()
     }
@@ -147,10 +165,15 @@ pub async fn head_image(
 }
 
 pub async fn options_image(State(state): State<ImagesState>, req_headers: HeaderMap) -> Response {
+    let permit = match try_acquire_bytes_permit(&state, &req_headers) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NO_CONTENT;
     insert_cors_preflight_headers(response.headers_mut(), &state, &req_headers);
-    response
+    attach_bytes_permit(response, permit)
 }
 
 async fn serve_image(
@@ -159,111 +182,188 @@ async fn serve_image(
     req_headers: HeaderMap,
     want_body: bool,
 ) -> Response {
-    let image = match state.store.get_image(&image_id).await {
-        Ok(image) => image,
-        Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
-            return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
-        }
-        Err(StoreError::Manifest(err)) => {
-            state.metrics.inc_store_error("manifest");
-            tracing::error!(error = %err, "store manifest error");
-            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
-        }
-        Err(StoreError::Io(err)) => {
-            state.metrics.inc_store_error("meta");
-            tracing::error!(error = %err, "store get_image failed");
-            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
-        }
-        Err(StoreError::InvalidRange { .. }) => {
-            // `get_image` doesn't currently produce this, but keep mapping defensive.
-            state.metrics.inc_store_error("meta");
-            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
-        }
+    let permit = match try_acquire_bytes_permit(&state, &req_headers) {
+        Ok(p) => p,
+        Err(resp) => return resp,
     };
 
-    let image_public = image.public;
-    let meta = image.meta;
+    let response = (async move {
+        let image = match state.store.get_image(&image_id).await {
+            Ok(image) => image,
+            Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
+                return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
+            }
+            Err(StoreError::Manifest(err)) => {
+                state.metrics.inc_store_error("manifest");
+                tracing::error!(error = %err, "store manifest error");
+                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+            }
+            Err(StoreError::Io(err)) => {
+                state.metrics.inc_store_error("meta");
+                tracing::error!(error = %err, "store get_image failed");
+                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+            }
+            Err(StoreError::InvalidRange { .. }) => {
+                // `get_image` doesn't currently produce this, but keep mapping defensive.
+                state.metrics.inc_store_error("meta");
+                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+            }
+        };
 
-    let len = meta.size;
-    let cache_control = data_cache_control_value(&state, &req_headers, image_public);
+        let image_public = image.public;
+        let meta = image.meta;
 
-    // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
-    // ETag we would send on success. Some store implementations may not provide an ETag; in that
-    // case fall back to our deterministic weak ETag so `If-None-Match: *` and revalidation still
-    // work.
-    let fallback_etag = meta.etag.is_none().then(|| cache::etag_or_fallback(&meta));
-    let current_etag = meta.etag.as_deref().or(fallback_etag.as_deref());
+        let len = meta.size;
+        let cache_control = data_cache_control_value(&state, &req_headers, image_public);
 
-    // Conditional requests: if the client has a matching validator, we can return `304` and
-    // avoid streaming bytes (RFC 9110).
-    if cache::is_not_modified(&req_headers, current_etag, meta.last_modified) {
-        return not_modified_response(&state, &req_headers, &meta, cache_control);
-    }
+        // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
+        // ETag we would send on success. Some store implementations may not provide an ETag; in that
+        // case fall back to our deterministic weak ETag so `If-None-Match: *` and revalidation still
+        // work.
+        let fallback_etag = meta.etag.is_none().then(|| cache::etag_or_fallback(&meta));
+        let current_etag = meta.etag.as_deref().or(fallback_etag.as_deref());
 
-    let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
-    if let Some(range_header) = range_header {
-        // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
-        if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified) {
-            return full_response(&state, &req_headers, &image_id, meta, want_body, cache_control)
-                .await;
+        // Conditional requests: if the client has a matching validator, we can return `304` and
+        // avoid streaming bytes (RFC 9110).
+        if cache::is_not_modified(&req_headers, current_etag, meta.last_modified) {
+            return not_modified_response(&state, &req_headers, &meta, cache_control);
         }
 
-        let specs = match parse_range_header(range_header) {
-            Ok(Some(v)) => v,
-            Ok(None) => {
+        let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+        if let Some(range_header) = range_header {
+            // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
+            if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified)
+            {
                 return full_response(&state, &req_headers, &image_id, meta, want_body, cache_control)
+                    .await;
+            }
+
+            let specs = match parse_range_header(range_header) {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    return full_response(
+                        &state,
+                        &req_headers,
+                        &image_id,
+                        meta,
+                        want_body,
+                        cache_control,
+                    )
                     .await
-            }
-            Err(RangeParseError::HeaderTooLarge { .. } | RangeParseError::TooManyRanges { .. }) => {
-                state.metrics.inc_range_request_invalid();
-                return response_with_status(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    &state,
-                    &req_headers,
-                );
-            }
-            Err(_) => {
-                // For syntactically invalid ranges, follow our public contract and return `416`.
-                // (See `docs/16-disk-image-streaming-auth.md`.)
-                state.metrics.inc_range_request_invalid();
-                return range_not_satisfiable(&state, &req_headers, len);
-            }
-        };
+                }
+                Err(
+                    RangeParseError::HeaderTooLarge { .. } | RangeParseError::TooManyRanges { .. },
+                ) => {
+                    state.metrics.inc_range_request_invalid();
+                    return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state, &req_headers);
+                }
+                Err(_) => {
+                    // For syntactically invalid ranges, follow our public contract and return `416`.
+                    // (See `docs/16-disk-image-streaming-auth.md`.)
+                    state.metrics.inc_range_request_invalid();
+                    return range_not_satisfiable(&state, &req_headers, len);
+                }
+            };
 
-        let range = match resolve_range(&specs, len, state.range_options) {
-            Ok(r) => r,
-            // Abuse guard: we cap the maximum single-range response size to avoid clients forcing
-            // huge reads (amplification / resource exhaustion).
-            Err(RangeResolveError::TooManyBytes) => {
-                state.metrics.inc_range_request_invalid();
-                return response_with_status(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    &state,
-                    &req_headers,
-                );
-            }
-            // Disk streaming only supports a single range per request.
-            Err(RangeResolveError::MultiRangeNotSupported | RangeResolveError::Unsatisfiable) => {
-                state.metrics.inc_range_request_invalid();
-                return range_not_satisfiable(&state, &req_headers, len);
-            }
-        };
+            let range = match resolve_range(&specs, len, state.range_options) {
+                Ok(r) => r,
+                // Abuse guard: we cap the maximum single-range response size to avoid clients forcing
+                // huge reads (amplification / resource exhaustion).
+                Err(RangeResolveError::TooManyBytes) => {
+                    state.metrics.inc_range_request_invalid();
+                    return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state, &req_headers);
+                }
+                // Disk streaming only supports a single range per request.
+                Err(
+                    RangeResolveError::MultiRangeNotSupported | RangeResolveError::Unsatisfiable,
+                ) => {
+                    state.metrics.inc_range_request_invalid();
+                    return range_not_satisfiable(&state, &req_headers, len);
+                }
+            };
 
-        state.metrics.inc_range_request_valid();
+            state.metrics.inc_range_request_valid();
 
-        return single_range_response(
-            &state,
-            &req_headers,
-            &image_id,
-            meta,
-            range,
-            want_body,
-            cache_control,
-        )
-        .await;
+            return single_range_response(
+                &state,
+                &req_headers,
+                &image_id,
+                meta,
+                range,
+                want_body,
+                cache_control,
+            )
+            .await;
+        }
+
+        full_response(&state, &req_headers, &image_id, meta, want_body, cache_control).await
+    })
+    .await;
+
+    attach_bytes_permit(response, permit)
+}
+
+fn try_acquire_bytes_permit(
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+) -> Result<Option<OwnedSemaphorePermit>, Response> {
+    let Some(sem) = state.bytes_request_semaphore.as_ref() else {
+        return Ok(None);
+    };
+
+    match sem.clone().try_acquire_owned() {
+        Ok(permit) => Ok(Some(permit)),
+        Err(_) => Err(response_with_status(
+            StatusCode::TOO_MANY_REQUESTS,
+            state,
+            req_headers,
+        )),
+    }
+}
+
+fn attach_bytes_permit(mut response: Response, permit: Option<OwnedSemaphorePermit>) -> Response {
+    let Some(permit) = permit else {
+        return response;
+    };
+
+    let body = std::mem::replace(response.body_mut(), Body::empty());
+    *response.body_mut() = Body::new(PermitBody::new(body, permit));
+    response
+}
+
+struct PermitBody {
+    inner: Pin<Box<Body>>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl PermitBody {
+    fn new(inner: Body, permit: OwnedSemaphorePermit) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            _permit: permit,
+        }
+    }
+}
+
+impl HttpBody for PermitBody {
+    type Data = <Body as HttpBody>::Data;
+    type Error = <Body as HttpBody>::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        this.inner.as_mut().poll_frame(cx)
     }
 
-    full_response(&state, &req_headers, &image_id, meta, want_body, cache_control).await
+    fn is_end_stream(&self) -> bool {
+        self.inner.as_ref().get_ref().is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.as_ref().get_ref().size_hint()
+    }
 }
 
 async fn full_response(

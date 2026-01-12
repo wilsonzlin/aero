@@ -29,6 +29,13 @@ use store::ImageStore;
 use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Default maximum number of concurrent requests allowed for the image bytes endpoints
+/// (`/v1/images/:image_id` and `/v1/images/:image_id/data`).
+///
+/// This is a per-process cap intended as basic DoS hardening.
+pub const DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS: usize = 64;
+
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn ImageStore>,
@@ -36,6 +43,7 @@ pub struct AppState {
     pub cross_origin_resource_policy: HeaderValue,
     range_options: Option<http::range::RangeOptions>,
     public_cache_max_age: Option<Duration>,
+    max_concurrent_bytes_requests: usize,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -47,6 +55,7 @@ impl AppState {
             cross_origin_resource_policy: HeaderValue::from_static("same-site"),
             range_options: None,
             public_cache_max_age: None,
+            max_concurrent_bytes_requests: DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS,
         }
     }
 
@@ -93,6 +102,14 @@ impl AppState {
         self.public_cache_max_age = Some(max_age);
         self
     }
+
+    /// Set the maximum number of concurrent requests allowed to the image bytes endpoints.
+    ///
+    /// Use `0` to disable limiting (unlimited).
+    pub fn with_max_concurrent_bytes_requests(mut self, max: usize) -> Self {
+        self.max_concurrent_bytes_requests = max;
+        self
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -101,12 +118,14 @@ pub fn app(state: AppState) -> axum::Router {
     let cross_origin_resource_policy = state.cross_origin_resource_policy.clone();
     let range_options = state.range_options;
     let public_cache_max_age = state.public_cache_max_age;
+    let max_concurrent_bytes_requests = state.max_concurrent_bytes_requests;
     let store = Arc::clone(&state.store);
     let metrics = Arc::new(Metrics::new());
 
     let mut images_state = http::images::ImagesState::new(store, Arc::clone(&metrics))
         .with_cors(cors)
-        .with_cross_origin_resource_policy(cross_origin_resource_policy);
+        .with_cross_origin_resource_policy(cross_origin_resource_policy)
+        .with_max_concurrent_bytes_requests(max_concurrent_bytes_requests);
     if let Some(range_options) = range_options {
         images_state = images_state.with_range_options(range_options);
     }

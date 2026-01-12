@@ -567,6 +567,7 @@ dependencies = [
  "clap",
  "futures",
  "hex",
+ "http-body 1.0.1",
  "http-body-util",
  "httpdate",
  "prometheus",

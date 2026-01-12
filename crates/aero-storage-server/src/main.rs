@@ -60,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     state = state.with_cross_origin_resource_policy(HeaderValue::from_str(corp_policy)?);
+    state = state.with_max_concurrent_bytes_requests(config.max_concurrent_bytes_requests);
     let app = aero_storage_server::app(state);
 
     tracing::info!(
@@ -71,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         max_range_bytes = ?config.max_range_bytes,
         public_cache_max_age_secs = ?config.public_cache_max_age_secs,
         cors_preflight_max_age_secs = ?config.cors_preflight_max_age_secs,
+        max_concurrent_bytes_requests = config.max_concurrent_bytes_requests,
         "aero-storage-server listening"
     );
 

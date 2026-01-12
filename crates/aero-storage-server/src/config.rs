@@ -1,4 +1,5 @@
 use clap::Parser;
+use aero_storage_server::DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS;
 use std::{env, net::SocketAddr, path::PathBuf};
 
 #[derive(Debug, Clone, Parser)]
@@ -56,7 +57,6 @@ struct Args {
     /// Environment variable: `AERO_STORAGE_LOG_LEVEL`.
     #[arg(long, env = "AERO_STORAGE_LOG_LEVEL")]
     log_level: Option<String>,
-
     /// Maximum number of bytes allowed to be served for a single `Range` request.
     ///
     /// Environment variable: `AERO_STORAGE_MAX_RANGE_BYTES`.
@@ -74,6 +74,19 @@ struct Args {
     /// Environment variable: `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS`.
     #[arg(long, env = "AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS")]
     cors_preflight_max_age_secs: Option<u64>,
+
+    /// Maximum concurrent requests to the image bytes endpoints (`/v1/images/:image_id` and
+    /// `/v1/images/:image_id/data`).
+    ///
+    /// Set to 0 to disable limiting (unlimited).
+    ///
+    /// Environment variable: `AERO_STORAGE_MAX_CONCURRENT_BYTES_REQUESTS`.
+    #[arg(
+        long,
+        env = "AERO_STORAGE_MAX_CONCURRENT_BYTES_REQUESTS",
+        default_value_t = DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS
+    )]
+    max_concurrent_bytes_requests: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +100,7 @@ pub struct Config {
     pub max_range_bytes: Option<u64>,
     pub public_cache_max_age_secs: Option<u64>,
     pub cors_preflight_max_age_secs: Option<u64>,
+    pub max_concurrent_bytes_requests: usize,
 }
 
 impl Config {
@@ -150,6 +164,7 @@ impl Config {
             max_range_bytes: args.max_range_bytes,
             public_cache_max_age_secs: args.public_cache_max_age_secs,
             cors_preflight_max_age_secs: args.cors_preflight_max_age_secs,
+            max_concurrent_bytes_requests: args.max_concurrent_bytes_requests,
         }
     }
 }
