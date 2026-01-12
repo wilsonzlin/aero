@@ -1419,6 +1419,51 @@ fn vhd_rejects_file_too_small_to_contain_footer() {
 }
 
 #[test]
+fn vhd_rejects_footer_truncated_when_backend_len_is_stale() {
+    // Simulate a backend that reports a length large enough for a footer, but then fails reads with
+    // OutOfBounds (e.g. file shrank between len() and read_at()).
+    struct StaleLenBackend {
+        reported_len: u64,
+    }
+
+    impl StorageBackend for StaleLenBackend {
+        fn len(&mut self) -> aero_storage::Result<u64> {
+            Ok(self.reported_len)
+        }
+
+        fn set_len(&mut self, _len: u64) -> aero_storage::Result<()> {
+            Err(DiskError::NotSupported(
+                "set_len not supported for stale-len test backend".into(),
+            ))
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            Err(DiskError::OutOfBounds {
+                offset,
+                len: buf.len(),
+                capacity: 0,
+            })
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+            Err(DiskError::NotSupported(
+                "write_at not supported for stale-len test backend".into(),
+            ))
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            Ok(())
+        }
+    }
+
+    let backend = StaleLenBackend {
+        reported_len: SECTOR_SIZE as u64,
+    };
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::CorruptImage("vhd footer truncated")));
+}
+
+#[test]
 fn vhd_fixed_rejects_truncated_disk_missing_data_region() {
     // Footer claims a 1KiB fixed disk but the file only contains the footer sector.
     let virtual_size = 2 * SECTOR_SIZE as u64;
