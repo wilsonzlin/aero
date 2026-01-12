@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/pion/webrtc/v4"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 )
 
 const (
@@ -13,7 +15,7 @@ const (
 
 	// DataChannelLabelL2 is the DataChannel label used for the Option C L2 tunnel
 	// (raw Ethernet frames). See `docs/l2-tunnel-protocol.md`.
-	DataChannelLabelL2 = "l2"
+	DataChannelLabelL2 = l2tunnel.DataChannelLabel
 )
 
 func validateUDPDataChannel(dc *webrtc.DataChannel) error {

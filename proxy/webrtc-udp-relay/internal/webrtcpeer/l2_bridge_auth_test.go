@@ -11,13 +11,14 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 )
 
 func newL2BackendWSServer(t *testing.T, expectedOrigin string, requiredToken string) string {
 	t.Helper()
 
 	upgrader := websocket.Upgrader{
-		Subprotocols: []string{l2TunnelSubprotocol},
+		Subprotocols: []string{l2tunnel.Subprotocol},
 		// The default origin check only accepts same-origin requests, which isn't
 		// what we want in these tests.
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -32,7 +33,7 @@ func newL2BackendWSServer(t *testing.T, expectedOrigin string, requiredToken str
 		offered := websocket.Subprotocols(r)
 		foundTunnel := false
 		for _, p := range offered {
-			if p == l2TunnelSubprotocol {
+			if p == l2tunnel.Subprotocol {
 				foundTunnel = true
 				break
 			}
@@ -43,7 +44,7 @@ func newL2BackendWSServer(t *testing.T, expectedOrigin string, requiredToken str
 		}
 
 		if requiredToken != "" {
-			want := l2TokenSubprotocolPrefix + requiredToken
+			want := l2tunnel.TokenSubprotocolPrefix + requiredToken
 			foundToken := false
 			for _, p := range offered {
 				if p == want {
@@ -65,7 +66,7 @@ func newL2BackendWSServer(t *testing.T, expectedOrigin string, requiredToken str
 		defer conn.Close()
 		// Ensure the server selects the required tunnel subprotocol even when
 		// additional subprotocols (e.g. auth) are offered.
-		if got := conn.Subprotocol(); got != l2TunnelSubprotocol {
+		if got := conn.Subprotocol(); got != l2tunnel.Subprotocol {
 			return
 		}
 	}))

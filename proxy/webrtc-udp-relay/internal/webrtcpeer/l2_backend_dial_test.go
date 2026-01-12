@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 )
 
 type l2HandshakeObserved struct {
@@ -27,7 +28,7 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 	obsCh := make(chan l2HandshakeObserved, 1)
 
 	upgrader := websocket.Upgrader{
-		Subprotocols: []string{l2TunnelSubprotocol},
+		Subprotocols: []string{l2tunnel.Subprotocol},
 		// The test itself verifies Origin; accept all origins at the upgrader
 		// level so CheckOrigin does not interfere.
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -47,7 +48,7 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 
 		foundTunnelProto := false
 		for _, proto := range obs.Subprotocols {
-			if proto == l2TunnelSubprotocol {
+			if proto == l2tunnel.Subprotocol {
 				foundTunnelProto = true
 				break
 			}
@@ -73,7 +74,7 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 				return
 			}
 		case config.L2BackendAuthForwardModeSubprotocol:
-			want := l2TokenSubprotocolPrefix + expectedCredential
+			want := l2tunnel.TokenSubprotocolPrefix + expectedCredential
 			found := false
 			for _, proto := range obs.Subprotocols {
 				if proto == want {
@@ -96,7 +97,7 @@ func newTestL2Backend(t *testing.T, expectedOrigin string, expectedCredential st
 		}
 		// Ensure the server selects the required tunnel subprotocol even when
 		// additional subprotocols (e.g. auth) are offered.
-		if got := c.Subprotocol(); got != l2TunnelSubprotocol {
+		if got := c.Subprotocol(); got != l2tunnel.Subprotocol {
 			_ = c.Close()
 			return
 		}
@@ -199,11 +200,11 @@ func TestDialL2Backend_AuthSubprotocolAndOriginOverride(t *testing.T) {
 		if obs.Origin != overrideOrigin {
 			t.Fatalf("Origin=%q, want %q", obs.Origin, overrideOrigin)
 		}
-		wantTokenProto := l2TokenSubprotocolPrefix + credential
+		wantTokenProto := l2tunnel.TokenSubprotocolPrefix + credential
 		foundTokenProto := false
 		foundTunnelProto := false
 		for _, proto := range obs.Subprotocols {
-			if proto == l2TunnelSubprotocol {
+			if proto == l2tunnel.Subprotocol {
 				foundTunnelProto = true
 			}
 			if proto == wantTokenProto {
@@ -211,7 +212,7 @@ func TestDialL2Backend_AuthSubprotocolAndOriginOverride(t *testing.T) {
 			}
 		}
 		if !foundTunnelProto {
-			t.Fatalf("expected offered subprotocol %q in %v", l2TunnelSubprotocol, obs.Subprotocols)
+			t.Fatalf("expected offered subprotocol %q in %v", l2tunnel.Subprotocol, obs.Subprotocols)
 		}
 		if !foundTokenProto {
 			t.Fatalf("expected offered subprotocol %q in %v", wantTokenProto, obs.Subprotocols)

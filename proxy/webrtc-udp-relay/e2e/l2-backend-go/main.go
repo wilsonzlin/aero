@@ -15,17 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-)
 
-const (
-	subprotocol = "aero-l2-tunnel-v1"
-	tokenPrefix = "aero-l2-token."
-
-	// Minimal subset of docs/l2-tunnel-protocol.md used by the E2E harness.
-	msgMagic   = 0xA2
-	msgVersion = 0x03
-	msgPing    = 0x01
-	msgPong    = 0x02
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 )
 
 type lastHandshake struct {
@@ -56,7 +47,7 @@ func main() {
 
 	upgrader := websocket.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
-		Subprotocols: []string{subprotocol},
+		Subprotocols: []string{l2tunnel.Subprotocol},
 	}
 
 	var lastMu sync.Mutex
@@ -129,7 +120,7 @@ func main() {
 		}
 		defer conn.Close()
 
-		if conn.Subprotocol() != subprotocol {
+		if conn.Subprotocol() != l2tunnel.Subprotocol {
 			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseProtocolError, "missing subprotocol"), time.Now().Add(time.Second))
 			return
 		}
@@ -142,12 +133,12 @@ func main() {
 			if msgType != websocket.BinaryMessage {
 				continue
 			}
-			if len(payload) < 4 || payload[0] != msgMagic || payload[1] != msgVersion || payload[2] != msgPing {
+			if len(payload) < l2tunnel.HeaderLen || payload[0] != l2tunnel.Magic || payload[1] != l2tunnel.Version || payload[2] != l2tunnel.TypePing {
 				continue
 			}
 			// Echo PING payload (including header flags) but swap type.
 			out := append([]byte(nil), payload...)
-			out[2] = msgPong
+			out[2] = l2tunnel.TypePong
 			_ = conn.WriteMessage(websocket.BinaryMessage, out)
 		}
 	})
@@ -196,8 +187,8 @@ func splitHeaderTokens(values []string) []string {
 
 func tokenFromSubprotocols(protocols []string) string {
 	for _, proto := range protocols {
-		if strings.HasPrefix(proto, tokenPrefix) {
-			return strings.TrimPrefix(proto, tokenPrefix)
+		if strings.HasPrefix(proto, l2tunnel.TokenSubprotocolPrefix) {
+			return strings.TrimPrefix(proto, l2tunnel.TokenSubprotocolPrefix)
 		}
 	}
 	return ""

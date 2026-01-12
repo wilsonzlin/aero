@@ -12,14 +12,13 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
 
 const (
-	l2TunnelSubprotocol      = "aero-l2-tunnel-v1"
-	l2TokenSubprotocolPrefix = "aero-l2-token."
-	l2DialTimeout            = 5 * time.Second
-	l2WriteTimeout           = 5 * time.Second
+	l2DialTimeout  = 5 * time.Second
+	l2WriteTimeout = 5 * time.Second
 )
 
 type l2BackendDialConfig struct {
@@ -129,11 +128,11 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
 		HandshakeTimeout: l2DialTimeout,
-		Subprotocols:     []string{l2TunnelSubprotocol},
+		Subprotocols:     []string{l2tunnel.Subprotocol},
 	}
 
 	if cfg.BackendToken != "" {
-		tokenProto := l2TokenSubprotocolPrefix + cfg.BackendToken
+		tokenProto := l2tunnel.TokenSubprotocolPrefix + cfg.BackendToken
 		if !isWebSocketSubprotocolToken(tokenProto) {
 			return nil, fmt.Errorf("l2 backend token is not valid for Sec-WebSocket-Protocol; use query-string auth instead")
 		}
@@ -160,7 +159,7 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 		// configured; prefer the explicit backend token over the per-session
 		// credential in that case.
 		if cfg.Credential != "" && cfg.BackendToken == "" {
-			tokenProto := l2TokenSubprotocolPrefix + cfg.Credential
+			tokenProto := l2tunnel.TokenSubprotocolPrefix + cfg.Credential
 			if !isWebSocketSubprotocolToken(tokenProto) {
 				return nil, fmt.Errorf("l2 auth forwarding mode %q requires a credential that is valid for Sec-WebSocket-Protocol; use %q instead", cfg.AuthForwardMode, config.L2BackendAuthForwardModeQuery)
 			}
@@ -190,9 +189,9 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
-	if got := conn.Subprotocol(); got != l2TunnelSubprotocol {
+	if got := conn.Subprotocol(); got != l2tunnel.Subprotocol {
 		_ = conn.Close()
-		return nil, fmt.Errorf("l2 backend did not negotiate required subprotocol %q (got %q)", l2TunnelSubprotocol, got)
+		return nil, fmt.Errorf("l2 backend did not negotiate required subprotocol %q (got %q)", l2tunnel.Subprotocol, got)
 	}
 	if cfg.MaxMessageBytes > 0 {
 		conn.SetReadLimit(int64(cfg.MaxMessageBytes))

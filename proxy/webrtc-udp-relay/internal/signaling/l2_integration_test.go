@@ -18,13 +18,10 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/httpserver"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
-)
-
-const (
-	testL2TunnelSubprotocol = "aero-l2-tunnel-v1"
 )
 
 func startTestL2Backend(t *testing.T) (wsURL string, upgradeCount *atomic.Int64) {
@@ -43,13 +40,13 @@ func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgr
 
 	upgrader := websocket.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
-		Subprotocols: []string{testL2TunnelSubprotocol},
+		Subprotocols: []string{l2tunnel.Subprotocol},
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /l2", func(w http.ResponseWriter, r *http.Request) {
 		if token != "" {
-			want := "aero-l2-token." + token
+			want := l2tunnel.TokenSubprotocolPrefix + token
 			ok := false
 			for _, raw := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
 				if strings.TrimSpace(raw) == want {
@@ -70,7 +67,7 @@ func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgr
 		}
 		defer conn.Close()
 
-		if conn.Subprotocol() != testL2TunnelSubprotocol {
+		if conn.Subprotocol() != l2tunnel.Subprotocol {
 			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseProtocolError, "missing subprotocol"), time.Now().Add(time.Second))
 			return
 		}
@@ -84,11 +81,11 @@ func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgr
 				continue
 			}
 			// Minimal subset of docs/l2-tunnel-protocol.md: PING (0xA2 0x03 0x01 0x00) -> PONG.
-			if len(payload) < 4 || payload[0] != 0xA2 || payload[1] != 0x03 || payload[2] != 0x01 {
+			if len(payload) < l2tunnel.HeaderLen || payload[0] != l2tunnel.Magic || payload[1] != l2tunnel.Version || payload[2] != l2tunnel.TypePing {
 				continue
 			}
 			out := append([]byte(nil), payload...)
-			out[2] = 0x02
+			out[2] = l2tunnel.TypePong
 			_ = conn.WriteMessage(websocket.BinaryMessage, out)
 		}
 	})
@@ -131,7 +128,7 @@ func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL
 
 	upgrader := websocket.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
-		Subprotocols: []string{testL2TunnelSubprotocol},
+		Subprotocols: []string{l2tunnel.Subprotocol},
 	}
 
 	mux := http.NewServeMux()
@@ -155,7 +152,7 @@ func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL
 		}
 		defer conn.Close()
 
-		if conn.Subprotocol() != testL2TunnelSubprotocol {
+		if conn.Subprotocol() != l2tunnel.Subprotocol {
 			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseProtocolError, "missing subprotocol"), time.Now().Add(time.Second))
 			return
 		}
@@ -169,11 +166,11 @@ func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL
 				continue
 			}
 			// Minimal subset of docs/l2-tunnel-protocol.md: PING (0xA2 0x03 0x01 0x00) -> PONG.
-			if len(payload) < 4 || payload[0] != 0xA2 || payload[1] != 0x03 || payload[2] != 0x01 {
+			if len(payload) < l2tunnel.HeaderLen || payload[0] != l2tunnel.Magic || payload[1] != l2tunnel.Version || payload[2] != l2tunnel.TypePing {
 				continue
 			}
 			out := append([]byte(nil), payload...)
-			out[2] = 0x02
+			out[2] = l2tunnel.TypePong
 			_ = conn.WriteMessage(websocket.BinaryMessage, out)
 		}
 	})
@@ -364,7 +361,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 
 	ordered := true
 	maxRetransmits := uint16(0)
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
@@ -403,7 +400,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsUnordered(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := false
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -441,7 +438,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -470,7 +467,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -482,7 +479,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -504,7 +501,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -533,7 +530,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -545,7 +542,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -573,7 +570,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -605,7 +602,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -617,7 +614,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -637,7 +634,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	if info.Origin != strings.ToLower(baseURL) {
 		t.Fatalf("backend Origin=%q, want %q", info.Origin, strings.ToLower(baseURL))
 	}
-	if strings.Contains(info.SubprotocolHeader, "aero-l2-token.") {
+	if strings.Contains(info.SubprotocolHeader, l2tunnel.TokenSubprotocolPrefix) {
 		t.Fatalf("expected no aero-l2-token subprotocol when backend token is unset (got %q)", info.SubprotocolHeader)
 	}
 }
@@ -659,7 +656,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -690,7 +687,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -733,7 +730,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -765,7 +762,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -807,7 +804,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -836,7 +833,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -848,7 +845,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -865,7 +862,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 	if info.TokenQuery != "" {
 		t.Fatalf("backend query token=%q, want empty", info.TokenQuery)
 	}
-	if !strings.Contains(info.SubprotocolHeader, "aero-l2-token.relay-secret") {
+	if !strings.Contains(info.SubprotocolHeader, l2tunnel.TokenSubprotocolPrefix+"relay-secret") {
 		t.Fatalf("expected Sec-WebSocket-Protocol to include forwarded credential (got %q)", info.SubprotocolHeader)
 	}
 }
@@ -888,7 +885,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -917,7 +914,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -929,7 +926,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -946,10 +943,10 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 	if info.TokenQuery != "" {
 		t.Fatalf("backend query token=%q, want empty", info.TokenQuery)
 	}
-	if !strings.Contains(info.SubprotocolHeader, "aero-l2-token.backend-secret") {
+	if !strings.Contains(info.SubprotocolHeader, l2tunnel.TokenSubprotocolPrefix+"backend-secret") {
 		t.Fatalf("expected Sec-WebSocket-Protocol to include backend token (got %q)", info.SubprotocolHeader)
 	}
-	if strings.Contains(info.SubprotocolHeader, "aero-l2-token.client-secret") {
+	if strings.Contains(info.SubprotocolHeader, l2tunnel.TokenSubprotocolPrefix+"client-secret") {
 		t.Fatalf("expected Sec-WebSocket-Protocol not to include forwarded credential when backend token is configured (got %q)", info.SubprotocolHeader)
 	}
 }
@@ -971,7 +968,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -1000,7 +997,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -1012,7 +1009,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
@@ -1029,7 +1026,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 	if info.TokenQuery != "" {
 		t.Fatalf("backend query token=%q, want empty", info.TokenQuery)
 	}
-	if strings.Contains(info.SubprotocolHeader, "aero-l2-token.") {
+	if strings.Contains(info.SubprotocolHeader, l2tunnel.TokenSubprotocolPrefix) {
 		t.Fatalf("expected no aero-l2-token.* subprotocol when auth forward mode is none (got %q)", info.SubprotocolHeader)
 	}
 }
@@ -1051,7 +1048,7 @@ func TestWebRTCUDPRelay_L2TunnelSubprotocolForwardingRejectsInvalidCredential(t 
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -1093,7 +1090,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 	t.Cleanup(func() { _ = pc.Close() })
 
 	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+	dc, err := pc.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
@@ -1125,7 +1122,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	ping := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePing, 0x00}
 	if err := dc.Send(ping); err != nil {
 		t.Fatalf("send ping: %v", err)
 	}
@@ -1137,7 +1134,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	want := []byte{l2tunnel.Magic, l2tunnel.Version, l2tunnel.TypePong, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
 	}
