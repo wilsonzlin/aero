@@ -1105,13 +1105,22 @@ impl Piix3IdePciDevice {
             }
         }
 
+        // Snapshot the PCI config space and BAR state. `PciConfigSpaceState::bytes` stores
+        // BAR dwords as raw base addresses (without the IO space indicator bit), so derive
+        // guest-visible BAR register values from `bar_base` and keep the byte image in sync.
         let pci_snap = self.config.snapshot_state();
-        let regs = pci_snap.bytes;
-        let bar0 = u32::from_le_bytes(regs[0x10..0x14].try_into().unwrap());
-        let bar1 = u32::from_le_bytes(regs[0x14..0x18].try_into().unwrap());
-        let bar2 = u32::from_le_bytes(regs[0x18..0x1C].try_into().unwrap());
-        let bar3 = u32::from_le_bytes(regs[0x1C..0x20].try_into().unwrap());
-        let bar4 = u32::from_le_bytes(regs[0x20..0x24].try_into().unwrap());
+        let mut regs = pci_snap.bytes;
+        let bar0 = (pci_snap.bar_base[0] as u32 & 0xFFFF_FFFC) | 0x01;
+        let bar1 = (pci_snap.bar_base[1] as u32 & 0xFFFF_FFFC) | 0x01;
+        let bar2 = (pci_snap.bar_base[2] as u32 & 0xFFFF_FFFC) | 0x01;
+        let bar3 = (pci_snap.bar_base[3] as u32 & 0xFFFF_FFFC) | 0x01;
+        let bar4 = (pci_snap.bar_base[4] as u32 & 0xFFFF_FFFC) | 0x01;
+
+        regs[0x10..0x14].copy_from_slice(&bar0.to_le_bytes());
+        regs[0x14..0x18].copy_from_slice(&bar1.to_le_bytes());
+        regs[0x18..0x1C].copy_from_slice(&bar2.to_le_bytes());
+        regs[0x1C..0x20].copy_from_slice(&bar3.to_le_bytes());
+        regs[0x20..0x24].copy_from_slice(&bar4.to_le_bytes());
 
         IdeControllerState {
             pci: PciConfigSpaceState {

@@ -717,6 +717,66 @@ impl IdeController {
                 _ => 0xffff_ffff,
             };
         }
+
+        // BAR reads must respect size probing state and may be performed with byte/word accesses
+        // (e.g. via 0xCFC+1). Model them by reading the aligned dword value and applying
+        // shift/mask based on the access size.
+        if (0x10..=0x23).contains(&offset) {
+            let aligned = offset & !0x3;
+            let bar = match aligned {
+                0x10 => {
+                    if self.bar0_probe {
+                        // 8-byte I/O BAR.
+                        !(0x08u32 - 1) | 0x01
+                    } else {
+                        self.bar0
+                    }
+                }
+                0x14 => {
+                    if self.bar1_probe {
+                        // 4-byte I/O BAR.
+                        !(0x04u32 - 1) | 0x01
+                    } else {
+                        self.bar1
+                    }
+                }
+                0x18 => {
+                    if self.bar2_probe {
+                        // 8-byte I/O BAR.
+                        !(0x08u32 - 1) | 0x01
+                    } else {
+                        self.bar2
+                    }
+                }
+                0x1C => {
+                    if self.bar3_probe {
+                        // 4-byte I/O BAR.
+                        !(0x04u32 - 1) | 0x01
+                    } else {
+                        self.bar3
+                    }
+                }
+                0x20 => {
+                    // BAR4: Bus Master IDE (16 bytes).
+                    if self.bar4_probe {
+                        !(0x10u32 - 1) | 0x01
+                    } else {
+                        self.bar4
+                    }
+                }
+                _ => u32::from_le_bytes(self.pci_regs[aligned..aligned + 4].try_into().unwrap()),
+            };
+
+            let shift = (offset - aligned) * 8;
+            let mask = match size {
+                1 => 0xFF,
+                2 => 0xFFFF,
+                4 => 0xFFFF_FFFF,
+                _ => 0xFFFF_FFFF,
+            };
+            return (bar >> shift) & mask;
+        }
+
         match size {
             1 => self.pci_regs[offset] as u32,
             2 => u16::from_le_bytes(self.pci_regs[offset..offset + 2].try_into().unwrap()) as u32,
