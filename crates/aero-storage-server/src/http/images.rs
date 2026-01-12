@@ -1,4 +1,5 @@
 use crate::{
+    cors::CorsConfig,
     http::{
         cache,
         range::{
@@ -31,7 +32,7 @@ use std::{
 use tokio_util::io::ReaderStream;
 use tracing::Instrument;
 
-const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_PUBLIC_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone)]
@@ -39,8 +40,7 @@ pub struct ImagesState {
     store: Arc<dyn ImageStore>,
     metrics: Arc<Metrics>,
     range_options: RangeOptions,
-    cors_allow_origin: HeaderValue,
-    cors_allow_credentials: bool,
+    cors: CorsConfig,
     cross_origin_resource_policy: HeaderValue,
     public_cache_max_age: Duration,
 }
@@ -53,8 +53,7 @@ impl ImagesState {
             range_options: RangeOptions {
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             },
-            cors_allow_origin: HeaderValue::from_static("*"),
-            cors_allow_credentials: false,
+            cors: CorsConfig::default(),
             cross_origin_resource_policy: HeaderValue::from_static("same-site"),
             public_cache_max_age: DEFAULT_PUBLIC_MAX_AGE,
         }
@@ -65,13 +64,32 @@ impl ImagesState {
         self
     }
 
+    pub fn with_cors(mut self, cors: CorsConfig) -> Self {
+        self.cors = cors;
+        self
+    }
+
     pub fn with_cors_allow_origin(mut self, cors_allow_origin: HeaderValue) -> Self {
-        self.cors_allow_origin = cors_allow_origin;
+        self.cors = self.cors.with_allow_origin(cors_allow_origin);
         self
     }
 
     pub fn with_cors_allow_credentials(mut self, cors_allow_credentials: bool) -> Self {
-        self.cors_allow_credentials = cors_allow_credentials;
+        self.cors = self.cors.with_allow_credentials(cors_allow_credentials);
+        self
+    }
+
+    pub fn with_cors_allowed_origins<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.cors = self.cors.with_allowed_origins(origins);
+        self
+    }
+
+    pub fn with_cors_preflight_max_age(mut self, max_age: Duration) -> Self {
+        self.cors = self.cors.with_preflight_max_age(max_age);
         self
     }
 
@@ -128,10 +146,10 @@ pub async fn head_image(
     serve_image(image_id, state, headers, false).await
 }
 
-pub async fn options_image(State(state): State<ImagesState>) -> Response {
+pub async fn options_image(State(state): State<ImagesState>, req_headers: HeaderMap) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NO_CONTENT;
-    insert_cors_preflight_headers(response.headers_mut(), &state);
+    insert_cors_preflight_headers(response.headers_mut(), &state, &req_headers);
     response
 }
 
@@ -144,22 +162,22 @@ async fn serve_image(
     let meta = match state.store.get_meta(&image_id).await {
         Ok(meta) => meta,
         Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
-            return response_with_status(StatusCode::NOT_FOUND, &state);
+            return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
         }
         Err(StoreError::Manifest(err)) => {
             state.metrics.inc_store_error("manifest");
             tracing::error!(error = %err, "store manifest error");
-            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state);
+            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
         }
         Err(StoreError::Io(err)) => {
             state.metrics.inc_store_error("meta");
             tracing::error!(error = %err, "store get_meta failed");
-            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state);
+            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
         }
         Err(StoreError::InvalidRange { .. }) => {
             // `get_meta` doesn't currently produce this, but keep mapping defensive.
             state.metrics.inc_store_error("meta");
-            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state);
+            return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
         }
     };
 
@@ -176,30 +194,36 @@ async fn serve_image(
     // Conditional requests: if the client has a matching validator, we can return `304` and
     // avoid streaming bytes (RFC 9110).
     if cache::is_not_modified(&req_headers, current_etag, meta.last_modified) {
-        return not_modified_response(&state, &meta, cache_control);
+        return not_modified_response(&state, &req_headers, &meta, cache_control);
     }
 
     let range_header = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok());
     if let Some(range_header) = range_header {
         // RFC 9110 If-Range support: if validator doesn't match, ignore Range and return 200.
         if !cache::if_range_allows_range(&req_headers, meta.etag.as_deref(), meta.last_modified) {
-            return full_response(&state, &image_id, meta, want_body, cache_control).await;
+            return full_response(&state, &req_headers, &image_id, meta, want_body, cache_control)
+                .await;
         }
 
         let specs = match parse_range_header(range_header) {
             Ok(Some(v)) => v,
             Ok(None) => {
-                return full_response(&state, &image_id, meta, want_body, cache_control).await
+                return full_response(&state, &req_headers, &image_id, meta, want_body, cache_control)
+                    .await
             }
             Err(RangeParseError::HeaderTooLarge { .. } | RangeParseError::TooManyRanges { .. }) => {
                 state.metrics.inc_range_request_invalid();
-                return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state);
+                return response_with_status(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(_) => {
                 // For syntactically invalid ranges, follow our public contract and return `416`.
                 // (See `docs/16-disk-image-streaming-auth.md`.)
                 state.metrics.inc_range_request_invalid();
-                return range_not_satisfiable(&state, len);
+                return range_not_satisfiable(&state, &req_headers, len);
             }
         };
 
@@ -209,26 +233,39 @@ async fn serve_image(
             // huge reads (amplification / resource exhaustion).
             Err(RangeResolveError::TooManyBytes) => {
                 state.metrics.inc_range_request_invalid();
-                return response_with_status(StatusCode::PAYLOAD_TOO_LARGE, &state);
+                return response_with_status(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &state,
+                    &req_headers,
+                );
             }
             // Disk streaming only supports a single range per request.
             Err(RangeResolveError::MultiRangeNotSupported | RangeResolveError::Unsatisfiable) => {
                 state.metrics.inc_range_request_invalid();
-                return range_not_satisfiable(&state, len);
+                return range_not_satisfiable(&state, &req_headers, len);
             }
         };
 
         state.metrics.inc_range_request_valid();
 
-        return single_range_response(&state, &image_id, meta, range, want_body, cache_control)
-            .await;
+        return single_range_response(
+            &state,
+            &req_headers,
+            &image_id,
+            meta,
+            range,
+            want_body,
+            cache_control,
+        )
+        .await;
     }
 
-    full_response(&state, &image_id, meta, want_body, cache_control).await
+    full_response(&state, &req_headers, &image_id, meta, want_body, cache_control).await
 }
 
 async fn full_response(
     state: &ImagesState,
+    req_headers: &HeaderMap,
     image_id: &str,
     meta: crate::store::ImageMeta,
     want_body: bool,
@@ -253,7 +290,7 @@ async fn full_response(
                 let stream = InstrumentedStream::new(ReaderStream::new(reader), span);
                 Body::from_stream(stream)
             }
-            Err(err) => return response_from_store_error(state, err, meta.size),
+            Err(err) => return response_from_store_error(state, req_headers, err, meta.size),
         }
     } else {
         Body::empty()
@@ -261,7 +298,7 @@ async fn full_response(
 
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
-    insert_cors_headers(headers, state);
+    insert_cors_headers(headers, state, req_headers);
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(meta.content_type),
@@ -284,6 +321,7 @@ async fn full_response(
 
 async fn single_range_response(
     state: &ImagesState,
+    req_headers: &HeaderMap,
     image_id: &str,
     meta: crate::store::ImageMeta,
     range: ByteRange,
@@ -314,7 +352,7 @@ async fn single_range_response(
                 let stream = InstrumentedStream::new(ReaderStream::new(reader), span);
                 Body::from_stream(stream)
             }
-            Err(err) => return response_from_store_error(state, err, meta.size),
+            Err(err) => return response_from_store_error(state, req_headers, err, meta.size),
         }
     } else {
         Body::empty()
@@ -322,7 +360,7 @@ async fn single_range_response(
 
     *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     let headers = response.headers_mut();
-    insert_cors_headers(headers, state);
+    insert_cors_headers(headers, state, req_headers);
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(meta.content_type),
@@ -351,11 +389,11 @@ async fn single_range_response(
     response
 }
 
-fn range_not_satisfiable(state: &ImagesState, len: u64) -> Response {
+fn range_not_satisfiable(state: &ImagesState, req_headers: &HeaderMap, len: u64) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
     let headers = response.headers_mut();
-    insert_cors_headers(headers, state);
+    insert_cors_headers(headers, state, req_headers);
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(
         header::CACHE_CONTROL,
@@ -368,30 +406,35 @@ fn range_not_satisfiable(state: &ImagesState, len: u64) -> Response {
     response
 }
 
-fn response_from_store_error(state: &ImagesState, err: StoreError, len: u64) -> Response {
+fn response_from_store_error(
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+    err: StoreError,
+    len: u64,
+) -> Response {
     match err {
         StoreError::NotFound | StoreError::InvalidImageId { .. } => {
-            response_with_status(StatusCode::NOT_FOUND, state)
+            response_with_status(StatusCode::NOT_FOUND, state, req_headers)
         }
-        StoreError::InvalidRange { .. } => range_not_satisfiable(state, len),
+        StoreError::InvalidRange { .. } => range_not_satisfiable(state, req_headers, len),
         StoreError::Manifest(err) => {
             state.metrics.inc_store_error("manifest");
             tracing::error!(error = %err, "store manifest error");
-            response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state)
+            response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state, req_headers)
         }
         StoreError::Io(err) => {
             state.metrics.inc_store_error("open_range");
             tracing::error!(error = %err, "store open_range failed");
-            response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state)
+            response_with_status(StatusCode::INTERNAL_SERVER_ERROR, state, req_headers)
         }
     }
 }
 
-fn response_with_status(status: StatusCode, state: &ImagesState) -> Response {
+fn response_with_status(status: StatusCode, state: &ImagesState, req_headers: &HeaderMap) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;
     let headers = response.headers_mut();
-    insert_cors_headers(headers, state);
+    insert_cors_headers(headers, state, req_headers);
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(
         header::CACHE_CONTROL,
@@ -400,25 +443,13 @@ fn response_with_status(status: StatusCode, state: &ImagesState) -> Response {
     response
 }
 
-pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState) {
-    headers.insert(
-        HeaderName::from_static("access-control-allow-origin"),
-        state.cors_allow_origin.clone(),
-    );
-    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
-        headers.insert(
-            HeaderName::from_static("access-control-allow-credentials"),
-            HeaderValue::from_static("true"),
-        );
-    }
-    // Be conservative: even when `Access-Control-Allow-Origin: *`, varying on Origin is safe and
-    // avoids surprising cache poisoning if deployments change to an allowlist.
-    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
-    headers.insert(
-        HeaderName::from_static("access-control-expose-headers"),
-        HeaderValue::from_static(
+pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState, req_headers: &HeaderMap) {
+    state.cors.insert_cors_headers(
+        headers,
+        req_headers,
+        Some(HeaderValue::from_static(
             "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length",
-        ),
+        )),
     );
     headers.insert(
         HeaderName::from_static("cross-origin-resource-policy"),
@@ -426,36 +457,18 @@ pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState) 
     );
 }
 
-pub(crate) fn insert_cors_preflight_headers(headers: &mut HeaderMap, state: &ImagesState) {
-    headers.insert(
-        HeaderName::from_static("access-control-allow-origin"),
-        state.cors_allow_origin.clone(),
-    );
-    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
-        headers.insert(
-            HeaderName::from_static("access-control-allow-credentials"),
-            HeaderValue::from_static("true"),
-        );
-    }
-    headers.insert(
-        header::VARY,
-        HeaderValue::from_static(
-            "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
-        ),
-    );
-    headers.insert(
-        HeaderName::from_static("access-control-allow-methods"),
+pub(crate) fn insert_cors_preflight_headers(
+    headers: &mut HeaderMap,
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+) {
+    state.cors.insert_cors_preflight_headers(
+        headers,
+        req_headers,
         HeaderValue::from_static("GET, HEAD, OPTIONS"),
-    );
-    headers.insert(
-        HeaderName::from_static("access-control-allow-headers"),
         HeaderValue::from_static(
             "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type",
         ),
-    );
-    headers.insert(
-        HeaderName::from_static("access-control-max-age"),
-        HeaderValue::from_static("86400"),
     );
     headers.insert(
         HeaderName::from_static("cross-origin-resource-policy"),
@@ -493,13 +506,14 @@ fn data_cache_control_value(state: &ImagesState, req_headers: &HeaderMap) -> Hea
 
 fn not_modified_response(
     state: &ImagesState,
+    req_headers: &HeaderMap,
     meta: &crate::store::ImageMeta,
     cache_control: HeaderValue,
 ) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NOT_MODIFIED;
     let headers = response.headers_mut();
-    insert_cors_headers(headers, state);
+    insert_cors_headers(headers, state, req_headers);
     insert_data_cache_headers(headers, meta, cache_control);
     response
 }

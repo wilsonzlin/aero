@@ -1,12 +1,13 @@
 use axum::{
     extract::State,
     http::{header, HeaderValue},
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 
 use super::images::ImagesState;
 
-pub(crate) async fn handle(State(state): State<ImagesState>) -> Response {
+pub(crate) async fn handle(State(state): State<ImagesState>, req_headers: HeaderMap) -> Response {
     let body = state.metrics().encode();
     let mut resp = (
         [(
@@ -16,6 +17,6 @@ pub(crate) async fn handle(State(state): State<ImagesState>) -> Response {
         body,
     )
         .into_response();
-    super::images::insert_cors_headers(resp.headers_mut(), &state);
+    super::images::insert_cors_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }

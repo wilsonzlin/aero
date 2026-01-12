@@ -10,15 +10,18 @@ struct Args {
     #[arg(long, env = "AERO_STORAGE_LISTEN_ADDR")]
     listen_addr: Option<SocketAddr>,
 
-    /// Origin to allow for CORS.
+    /// Origin(s) to allow for CORS.
     ///
-    /// When set to a specific origin (not `*`), `aero-storage-server` will also send
-    /// `Access-Control-Allow-Credentials: true` so cookie-authenticated cross-origin fetches can
-    /// succeed.
+    /// This flag can be repeated or provided as a comma-separated list.
+    ///
+    /// - When set to `*`, `aero-storage-server` will respond with `Access-Control-Allow-Origin: *`
+    ///   and will NOT send `Access-Control-Allow-Credentials`.
+    /// - When set to a list of origins, `aero-storage-server` will echo back the request `Origin`
+    ///   if and only if it appears in the allowlist.
     ///
     /// Environment variable: `AERO_STORAGE_CORS_ORIGIN`.
-    #[arg(long, env = "AERO_STORAGE_CORS_ORIGIN")]
-    cors_origin: Option<String>,
+    #[arg(long, env = "AERO_STORAGE_CORS_ORIGIN", value_delimiter = ',', num_args = 1..)]
+    cors_origin: Vec<String>,
 
     /// Cross-Origin-Resource-Policy header value for image bytes responses.
     ///
@@ -43,15 +46,36 @@ struct Args {
     /// Environment variable: `AERO_STORAGE_LOG_LEVEL`.
     #[arg(long, env = "AERO_STORAGE_LOG_LEVEL")]
     log_level: Option<String>,
+
+    /// Maximum number of bytes allowed to be served for a single `Range` request.
+    ///
+    /// Environment variable: `AERO_STORAGE_MAX_RANGE_BYTES`.
+    #[arg(long, env = "AERO_STORAGE_MAX_RANGE_BYTES")]
+    max_range_bytes: Option<u64>,
+
+    /// Cache max-age (in seconds) used for publicly cacheable disk image bytes responses.
+    ///
+    /// Environment variable: `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS`.
+    #[arg(long, env = "AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS")]
+    public_cache_max_age_secs: Option<u64>,
+
+    /// Preflight cache duration (in seconds) used for `Access-Control-Max-Age`.
+    ///
+    /// Environment variable: `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS`.
+    #[arg(long, env = "AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS")]
+    cors_preflight_max_age_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub listen_addr: SocketAddr,
-    pub cors_origin: Option<String>,
+    pub cors_origins: Option<Vec<String>>,
     pub cross_origin_resource_policy: String,
     pub images_root: PathBuf,
     pub log_level: String,
+    pub max_range_bytes: Option<u64>,
+    pub public_cache_max_age_secs: Option<u64>,
+    pub cors_preflight_max_age_secs: Option<u64>,
 }
 
 impl Config {
@@ -77,12 +101,16 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("./images"));
 
         let cors_origin = args
-            .cors_origin
-            .or_else(|| env::var("AERO_STORAGE_SERVER_CORS_ORIGIN").ok());
-        let cors_origin = cors_origin.and_then(|v| {
-            let v = v.trim().to_string();
-            (!v.is_empty()).then_some(v)
-        });
+            .cors_origin;
+        let cors_origins = if !cors_origin.is_empty() {
+            Some(parse_origin_list(&cors_origin.join(",")))
+        } else if let Ok(v) = env::var("AERO_STORAGE_SERVER_CORS_ORIGIN") {
+            let v = v.trim();
+            (!v.is_empty()).then(|| parse_origin_list(v))
+        } else {
+            None
+        };
+        let cors_origins = cors_origins.and_then(|v| (!v.is_empty()).then_some(v));
 
         let cross_origin_resource_policy = args
             .cross_origin_resource_policy
@@ -103,14 +131,25 @@ impl Config {
 
         Self {
             listen_addr,
-            cors_origin,
+            cors_origins,
             cross_origin_resource_policy,
             images_root,
             log_level,
+            max_range_bytes: args.max_range_bytes,
+            public_cache_max_age_secs: args.public_cache_max_age_secs,
+            cors_preflight_max_age_secs: args.cors_preflight_max_age_secs,
         }
     }
 }
 
 fn parse_env(var: &str) -> Option<SocketAddr> {
     env::var(var).ok().and_then(|value| value.parse().ok())
+}
+
+fn parse_origin_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .collect()
 }

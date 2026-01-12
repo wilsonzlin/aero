@@ -26,12 +26,20 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | `--cross-origin-resource-policy` | `AERO_STORAGE_CROSS_ORIGIN_RESOURCE_POLICY` | `same-site` |
 | `--images-root` | `AERO_STORAGE_IMAGE_ROOT` | `./images` |
 | `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
+| `--max-range-bytes` | `AERO_STORAGE_MAX_RANGE_BYTES` | `8388608` (8 MiB) |
+| `--public-cache-max-age-secs` | `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS` | `3600` |
+| `--cors-preflight-max-age-secs` | `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS` | `86400` |
 
 Notes:
 
-- If `--cors-origin` is set to a specific origin (not `*`), the server will also send
-  `Access-Control-Allow-Credentials: true` so cookie-authenticated cross-origin requests can
-  succeed.
+- `--cors-origin` can be repeated or provided as a comma-separated list.
+  - If set to `*`, the server responds with `Access-Control-Allow-Origin: *` and does **not** send
+    `Access-Control-Allow-Credentials`.
+  - If set to an allowlist, the server will echo back the request `Origin` only when it is in the
+    allowlist.
+  - When configured with an allowlist (not `*`), the server defaults to sending
+    `Access-Control-Allow-Credentials: true` so cookie-authenticated cross-origin requests can
+    succeed.
 - `--cross-origin-resource-policy` controls the `Cross-Origin-Resource-Policy` response header on
   image bytes responses (defence-in-depth for `COEP: require-corp`). The default `same-site` works
   well when the app and storage server are on the same eTLD+1 (e.g. `app.example.com` and

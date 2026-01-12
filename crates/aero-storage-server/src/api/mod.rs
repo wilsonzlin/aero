@@ -2,7 +2,7 @@ mod images;
 
 use axum::{
     extract::State,
-    http::{header, HeaderMap, HeaderName, HeaderValue},
+    http::HeaderMap,
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -27,35 +27,27 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-fn insert_cors_headers(headers: &mut HeaderMap, state: &AppState) {
-    headers.insert(
-        HeaderName::from_static("access-control-allow-origin"),
-        state.cors_allow_origin.clone(),
-    );
-    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
-        headers.insert(
-            HeaderName::from_static("access-control-allow-credentials"),
-            HeaderValue::from_static("true"),
-        );
-    }
-    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+fn insert_cors_headers(headers: &mut HeaderMap, state: &AppState, req_headers: &HeaderMap) {
+    state
+        .cors
+        .insert_cors_headers(headers, req_headers, None);
 }
 
-async fn health(State(state): State<AppState>) -> Response {
+async fn health(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let mut resp = "ok\n".into_response();
-    insert_cors_headers(resp.headers_mut(), &state);
+    insert_cors_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
 
-async fn healthz(State(state): State<AppState>) -> Response {
+async fn healthz(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let mut resp = Json(StatusResponse { status: "ok" }).into_response();
-    insert_cors_headers(resp.headers_mut(), &state);
+    insert_cors_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
 
-async fn readyz(State(state): State<AppState>) -> Response {
+async fn readyz(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let mut resp = Json(StatusResponse { status: "ok" }).into_response();
-    insert_cors_headers(resp.headers_mut(), &state);
+    insert_cors_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
 
@@ -68,7 +60,7 @@ struct VersionResponse {
     built_at: String,
 }
 
-async fn version(State(state): State<AppState>) -> Response {
+async fn version(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let version = std::env::var("AERO_STORAGE_SERVER_VERSION")
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let git_sha = std::env::var("AERO_STORAGE_SERVER_GIT_SHA")
@@ -84,7 +76,7 @@ async fn version(State(state): State<AppState>) -> Response {
         built_at,
     })
     .into_response();
-    insert_cors_headers(resp.headers_mut(), &state);
+    insert_cors_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
 

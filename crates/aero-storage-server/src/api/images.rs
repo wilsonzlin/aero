@@ -1,8 +1,8 @@
 use axum::extract::{Path, State};
-use axum::http::header::{self, CACHE_CONTROL, ETAG, LAST_MODIFIED, VARY};
+use axum::http::header::{self, CACHE_CONTROL, ETAG, LAST_MODIFIED};
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use axum::http::{HeaderName, HeaderValue};
+use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -100,69 +100,37 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn metadata_cache_headers(state: &AppState) -> HeaderMap {
+fn metadata_cache_headers(state: &AppState, req_headers: &HeaderMap) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    headers.insert(
-        HeaderName::from_static("access-control-allow-origin"),
-        state.cors_allow_origin.clone(),
+    state.cors.insert_cors_headers(
+        &mut headers,
+        req_headers,
+        Some(HeaderValue::from_static("ETag, Last-Modified, Cache-Control")),
     );
-    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
-        headers.insert(
-            HeaderName::from_static("access-control-allow-credentials"),
-            HeaderValue::from_static("true"),
-        );
-    }
-    headers.insert(
-        HeaderName::from_static("access-control-expose-headers"),
-        HeaderValue::from_static("ETag, Last-Modified, Cache-Control"),
-    );
-    headers.insert(VARY, HeaderValue::from_static("Origin"));
     headers
 }
 
-fn insert_metadata_preflight_headers(headers: &mut HeaderMap, state: &AppState) {
-    headers.insert(
-        HeaderName::from_static("access-control-allow-origin"),
-        state.cors_allow_origin.clone(),
-    );
-    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
-        headers.insert(
-            HeaderName::from_static("access-control-allow-credentials"),
-            HeaderValue::from_static("true"),
-        );
-    }
-    headers.insert(
-        VARY,
-        HeaderValue::from_static(
-            "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
-        ),
-    );
-    headers.insert(
-        HeaderName::from_static("access-control-allow-methods"),
+fn insert_metadata_preflight_headers(headers: &mut HeaderMap, state: &AppState, req_headers: &HeaderMap) {
+    state.cors.insert_cors_preflight_headers(
+        headers,
+        req_headers,
         HeaderValue::from_static("GET, HEAD, OPTIONS"),
-    );
-    headers.insert(
-        HeaderName::from_static("access-control-allow-headers"),
         HeaderValue::from_static(
             "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type",
         ),
     );
-    headers.insert(
-        HeaderName::from_static("access-control-max-age"),
-        HeaderValue::from_static("86400"),
-    );
 }
 
-pub async fn options_images(State(state): State<AppState>) -> Response {
+pub async fn options_images(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let mut resp = StatusCode::NO_CONTENT.into_response();
-    insert_metadata_preflight_headers(resp.headers_mut(), &state);
+    insert_metadata_preflight_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
 
-pub async fn options_image_meta(State(state): State<AppState>) -> Response {
+pub async fn options_image_meta(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let mut resp = StatusCode::NO_CONTENT.into_response();
-    insert_metadata_preflight_headers(resp.headers_mut(), &state);
+    insert_metadata_preflight_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
 
@@ -178,7 +146,7 @@ pub async fn list_images(
     let list_etag = cache::etag_for_image_list(&etag_entries);
 
     if cache::is_not_modified(&req_headers, list_etag.to_str().ok(), None) {
-        let mut headers = metadata_cache_headers(&state);
+        let mut headers = metadata_cache_headers(&state, &req_headers);
         headers.insert(ETAG, list_etag);
         let mut resp = StatusCode::NOT_MODIFIED.into_response();
         *resp.headers_mut() = headers;
@@ -186,7 +154,7 @@ pub async fn list_images(
     }
 
     let images: Vec<ImageResponse> = images.into_iter().map(ImageResponse::from).collect();
-    let mut headers = metadata_cache_headers(&state);
+    let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, list_etag);
     Ok((headers, Json(images)).into_response())
 }
@@ -200,7 +168,7 @@ pub async fn get_image_meta(
     let etag = cache::etag_or_fallback(&image.meta);
 
     if cache::is_not_modified(&req_headers, Some(&etag), image.meta.last_modified) {
-        let mut headers = metadata_cache_headers(&state);
+        let mut headers = metadata_cache_headers(&state, &req_headers);
         headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
             headers.insert(LAST_MODIFIED, lm);
@@ -210,7 +178,7 @@ pub async fn get_image_meta(
         return Ok(resp);
     }
 
-    let mut headers = metadata_cache_headers(&state);
+    let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);
@@ -230,14 +198,14 @@ pub async fn head_images(
     let list_etag = cache::etag_for_image_list(&etag_entries);
 
     if cache::is_not_modified(&req_headers, list_etag.to_str().ok(), None) {
-        let mut headers = metadata_cache_headers(&state);
+        let mut headers = metadata_cache_headers(&state, &req_headers);
         headers.insert(ETAG, list_etag);
         let mut resp = StatusCode::NOT_MODIFIED.into_response();
         *resp.headers_mut() = headers;
         return Ok(resp);
     }
 
-    let mut headers = metadata_cache_headers(&state);
+    let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, list_etag);
     headers.insert(
         header::CONTENT_TYPE,
@@ -255,7 +223,7 @@ pub async fn head_image_meta(
     let etag = cache::etag_or_fallback(&image.meta);
 
     if cache::is_not_modified(&req_headers, Some(&etag), image.meta.last_modified) {
-        let mut headers = metadata_cache_headers(&state);
+        let mut headers = metadata_cache_headers(&state, &req_headers);
         headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
         if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
             headers.insert(LAST_MODIFIED, lm);
@@ -265,7 +233,7 @@ pub async fn head_image_meta(
         return Ok(resp);
     }
 
-    let mut headers = metadata_cache_headers(&state);
+    let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
     if let Some(lm) = cache::last_modified_header_value(image.meta.last_modified) {
         headers.insert(LAST_MODIFIED, lm);

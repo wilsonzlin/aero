@@ -10,6 +10,8 @@ use axum::http::HeaderValue;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpListener;
 #[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::EnvFilter;
@@ -24,12 +26,29 @@ async fn main() -> anyhow::Result<()> {
 
     let store = Arc::new(LocalFsImageStore::new(config.images_root.clone()));
     let mut state = AppState::new(store);
-    if let Some(origin) = config.cors_origin.as_deref() {
-        let origin = origin.trim();
-        state = state.with_cors_allow_origin(HeaderValue::from_str(origin)?);
-        // If an explicit origin is configured (i.e. not `*`), default to allowing credentials so
-        // cookie-authenticated requests can succeed in cross-origin deployments.
-        state = state.with_cors_allow_credentials(origin != "*");
+
+    if let Some(origins) = config.cors_origins.as_deref() {
+        if origins.iter().any(|o| o.trim() == "*") {
+            state = state.with_cors_allow_origin(HeaderValue::from_static("*"));
+            state = state.with_cors_allow_credentials(false);
+        } else {
+            state = state.with_cors_allowed_origins(origins.iter().map(|s| s.as_str()));
+            // If an explicit allowlist is configured (i.e. not `*`), default to allowing
+            // credentials so cookie-authenticated requests can succeed in cross-origin deployments.
+            state = state.with_cors_allow_credentials(true);
+        }
+    }
+
+    if let Some(max_range_bytes) = config.max_range_bytes {
+        state = state.with_max_range_bytes(max_range_bytes);
+    }
+
+    if let Some(max_age_secs) = config.public_cache_max_age_secs {
+        state = state.with_public_cache_max_age(Duration::from_secs(max_age_secs));
+    }
+
+    if let Some(max_age_secs) = config.cors_preflight_max_age_secs {
+        state = state.with_cors_preflight_max_age(Duration::from_secs(max_age_secs));
     }
     let corp_policy = config.cross_origin_resource_policy.trim();
     if corp_policy != "same-origin" && corp_policy != "same-site" && corp_policy != "cross-origin" {
@@ -43,8 +62,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         listen_addr = %config.listen_addr,
         images_root = %config.images_root.display(),
-        cors_origin = ?config.cors_origin,
+        cors_origins = ?config.cors_origins,
         cross_origin_resource_policy = %corp_policy,
+        max_range_bytes = ?config.max_range_bytes,
+        public_cache_max_age_secs = ?config.public_cache_max_age_secs,
+        cors_preflight_max_age_secs = ?config.cors_preflight_max_age_secs,
         "aero-storage-server listening"
     );
 
