@@ -753,6 +753,13 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
                          (unsigned)expected_green);
   }
 
+  // Restore the full-screen VB for subsequent tests (vertex-state and later
+  // Capture/Apply phases expect to validate center pixels).
+  hr = dev->SetStreamSource(0, vb.get(), 0, sizeof(VertexPosTex));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(vb restore after pixelstate)", hr);
+  }
+
   // Exercise D3DSBT_VERTEXSTATE: it should restore VB bindings (so draw works),
   // but should NOT override pixel-state (texture/PS constants).
   ComPtr<IDirect3DStateBlock9> sb_vertex;
