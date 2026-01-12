@@ -6,6 +6,36 @@ import type { IrqSink } from "../device_manager";
 import { E1000PciDevice, type E1000BridgeLike } from "./e1000";
 
 describe("io/devices/E1000PciDevice", () => {
+  it("exposes the expected PCI identity and BAR layout", () => {
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    const bridge: E1000BridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      poll: vi.fn(),
+      receive_frame: vi.fn(),
+      pop_tx_frame: vi.fn(() => undefined),
+      irq_level: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+    expect(dev.vendorId).toBe(0x8086);
+    expect(dev.deviceId).toBe(0x100e);
+    expect(dev.classCode).toBe(0x02_00_00);
+    expect(dev.revisionId).toBe(0);
+    expect(dev.irqLine).toBe(10);
+    expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x20_000 }, { kind: "io", size: 0x40 }, null, null, null, null]);
+  });
+
   it("pumps NET_RX -> receive_frame and drains pop_tx_frame -> NET_TX", () => {
     const { buffer } = createIpcBuffer([
       { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
@@ -134,4 +164,3 @@ describe("io/devices/E1000PciDevice", () => {
     expect(irqSink.lowerIrq).toHaveBeenCalledWith(10);
   });
 });
-
