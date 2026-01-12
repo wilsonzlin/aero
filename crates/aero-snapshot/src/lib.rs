@@ -26,6 +26,7 @@ pub use crate::types::{
     MmuState, SegmentState, SnapshotMeta, VcpuSnapshot,
 };
 
+use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::io::{ReadLeExt, WriteLeExt};
@@ -162,6 +163,11 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     write_section(w, SectionId::DEVICES, 1, 0, |w| {
         let mut devices = source.device_states();
         devices.sort_by_key(|device| (device.id.0, device.version, device.flags));
+        if devices.windows(2).any(|w| {
+            w[0].id.0 == w[1].id.0 && w[0].version == w[1].version && w[0].flags == w[1].flags
+        }) {
+            return Err(SnapshotError::Corrupt("duplicate device entry"));
+        }
         let count: u32 = devices
             .len()
             .try_into()
@@ -416,8 +422,14 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("too many devices"));
                     }
                     let mut devices = Vec::with_capacity(count.min(64));
+                    let mut seen = HashSet::with_capacity(count.min(64));
                     for _ in 0..count {
-                        devices.push(DeviceState::decode(&mut section_reader, 64 * 1024 * 1024)?);
+                        let device = DeviceState::decode(&mut section_reader, 64 * 1024 * 1024)?;
+                        let key = (device.id.0, device.version, device.flags);
+                        if !seen.insert(key) {
+                            return Err(SnapshotError::Corrupt("duplicate device entry"));
+                        }
+                        devices.push(device);
                     }
                     target.restore_device_states(devices);
                 }

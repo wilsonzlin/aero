@@ -3,10 +3,10 @@
 use std::io::{Cursor, ErrorKind};
 
 use aero_snapshot::{
-    inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuState, DeviceState,
-    DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, Result, SaveOptions, SectionId,
-    SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget, SNAPSHOT_ENDIANNESS_LITTLE,
-    SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+    inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuState, DeviceId,
+    DeviceState, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, Result, SaveOptions,
+    SectionId, SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
+    SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 
 #[derive(Default)]
@@ -89,6 +89,61 @@ impl SnapshotSource for MinimalSource {
     }
 }
 
+struct DuplicateDeviceSource {
+    ram: Vec<u8>,
+}
+
+impl SnapshotSource for DuplicateDeviceSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta::default()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        vec![
+            DeviceState {
+                id: DeviceId::PCI,
+                version: 1,
+                flags: 0,
+                data: vec![0xAA],
+            },
+            DeviceState {
+                id: DeviceId::PCI,
+                version: 1,
+                flags: 0,
+                data: vec![0xBB],
+            },
+        ]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..offset + buf.len()]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
 fn push_section(dst: &mut Vec<u8>, id: SectionId, version: u16, flags: u16, payload: &[u8]) {
     dst.extend_from_slice(&id.0.to_le_bytes());
     dst.extend_from_slice(&version.to_le_bytes());
@@ -110,6 +165,75 @@ fn minimal_snapshot_with_ram_payload(ram_payload: &[u8]) -> Vec<u8> {
     push_section(&mut bytes, SectionId::CPU, 1, 0, &cpu_payload);
     push_section(&mut bytes, SectionId::RAM, 1, 0, ram_payload);
     bytes
+}
+
+#[test]
+fn save_snapshot_rejects_duplicate_device_entries() {
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            compression: Compression::None,
+            chunk_size: 1024,
+            ..RamWriteOptions::default()
+        },
+    };
+
+    let mut source = DuplicateDeviceSource { ram: vec![0u8; 8] };
+    let mut cursor = Cursor::new(Vec::new());
+    let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate device entry")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_device_entries() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let mut devices_payload = Vec::new();
+    devices_payload.extend_from_slice(&2u32.to_le_bytes());
+    DeviceState {
+        id: DeviceId::PCI,
+        version: 1,
+        flags: 0,
+        data: vec![0xAA],
+    }
+    .encode(&mut devices_payload)
+    .unwrap();
+    DeviceState {
+        id: DeviceId::PCI,
+        version: 1,
+        flags: 0,
+        data: vec![0xBB],
+    }
+    .encode(&mut devices_payload)
+    .unwrap();
+    push_section(&mut bytes, SectionId::DEVICES, 1, 0, &devices_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate device entry")
+    ));
 }
 
 #[test]
