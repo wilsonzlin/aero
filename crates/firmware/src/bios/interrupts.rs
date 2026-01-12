@@ -694,10 +694,20 @@ fn build_e820_map(
         let mut cursor = base;
         for &(r_base, r_len, r_type) in reserved {
             let r_end = r_base.saturating_add(r_len);
-            let a_start = r_base.clamp(base, end);
+            let mut a_start = r_base.clamp(base, end);
             let a_end = r_end.clamp(base, end);
             if a_end <= a_start {
                 continue;
+            }
+
+            // The reserved windows are expected to be sorted by base, but may still overlap if a
+            // caller provides inconsistent ACPI/NVS placements. Clamp to `cursor` so we never emit
+            // overlapping E820 entries.
+            if a_end <= cursor {
+                continue;
+            }
+            if a_start < cursor {
+                a_start = cursor;
             }
 
             if a_start > cursor {
@@ -722,7 +732,10 @@ fn build_e820_map(
     reserved.sort_by_key(|(base, _, _)| *base);
 
     // Conventional memory (0 - EBDA).
-    push_region(&mut map, 0, EBDA_BASE, E820_RAM);
+    //
+    // Clamp the usable RAM entry to the configured guest RAM size so we never report more RAM
+    // than actually exists (e.g. for pathological/defensive configurations like `total_memory=0`).
+    push_region(&mut map, 0, EBDA_BASE.min(total_memory), E820_RAM);
 
     // EBDA reserved.
     push_region(
@@ -736,11 +749,9 @@ fn build_e820_map(
     push_region(&mut map, 0x000A_0000, ONE_MIB, E820_RESERVED);
 
     if total_memory <= ONE_MIB {
-        // Guest RAM smaller than 1MiB is unusual, but keep the map well-formed by truncating
-        // the conventional memory entry.
-        if total_memory > 0 {
-            map[0].length = map[0].length.min(total_memory);
-        }
+        // Guest RAM smaller than 1MiB is unusual, but the map is still well-formed:
+        // - Conventional RAM is clamped above.
+        // - EBDA/VGA regions remain reserved.
         return map;
     }
 
@@ -998,6 +1009,39 @@ mod tests {
                 overlap_end <= overlap_start,
                 "RAM entry overlaps ECAM window: {entry:?}"
             );
+        }
+    }
+
+    #[test]
+    fn e820_with_zero_guest_ram_reports_no_ram_entries() {
+        let map = build_e820_map(0, None, None);
+        assert!(
+            map.iter()
+                .filter(|e| e.region_type == E820_RAM && e.length != 0)
+                .count()
+                == 0,
+            "E820 should not report RAM when total_memory is 0: {map:?}"
+        );
+    }
+
+    #[test]
+    fn e820_reserved_windows_do_not_produce_overlapping_entries() {
+        // Deliberately provide overlapping firmware-reserved regions to ensure the map builder
+        // remains well-formed (no overlaps) even under inconsistent inputs.
+        let total = 64 * 1024 * 1024;
+        let base = 0x0010_0000;
+        let acpi = (base + 0x1000, 0x2000); // 0x101000..0x103000
+        let nvs = (base + 0x2000, 0x3000); // 0x102000..0x105000 (overlaps ACPI)
+        let map = build_e820_map(total, Some(acpi), Some(nvs));
+
+        // Ensure strict non-overlap and sortedness by base.
+        let mut last_end = 0u64;
+        for entry in &map {
+            assert!(
+                entry.base >= last_end,
+                "E820 entries overlap or are out of order: last_end=0x{last_end:x}, entry={entry:?}"
+            );
+            last_end = entry.base.saturating_add(entry.length);
         }
     }
 }
