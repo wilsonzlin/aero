@@ -220,7 +220,12 @@ public:
     return hr;
   }
 
-private:
+ private:
+  D3d9TraceFunc func_ = D3d9TraceFunc::kCount;
+  uint64_t arg0_ = 0;
+  uint64_t arg1_ = 0;
+  uint64_t arg2_ = 0;
+  uint64_t arg3_ = 0;
   D3d9TraceRecord* record_ = nullptr;
   HRESULT hr_ = static_cast<HRESULT>(0x7FFFFFFF);
 };

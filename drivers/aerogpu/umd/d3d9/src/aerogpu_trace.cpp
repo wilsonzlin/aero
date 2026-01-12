@@ -521,16 +521,36 @@ D3d9TraceRecord* alloc_record(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, 
   return rec;
 }
 
-void dump_trace(const char* reason) {
+// Like alloc_record, but bypasses the per-entrypoint uniqueness filter.
+// Used by dump-on-fail so the failing call is recorded even if TRACE_MODE=unique
+// and the same entrypoint was already seen earlier.
+D3d9TraceRecord* alloc_record_force(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
   if (!g_trace_enabled.load(std::memory_order_acquire)) {
-    return;
+    return nullptr;
   }
 
-  bool expected = false;
-  if (!g_trace_dumped.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-    return;
+  if (!filter_allows(func)) {
+    return nullptr;
   }
 
+  const uint32_t index = g_trace_write_index.fetch_add(1, std::memory_order_relaxed);
+  if (index >= std::min(g_trace_max_records, kTraceCapacity)) {
+    return nullptr;
+  }
+
+  D3d9TraceRecord* rec = &g_trace_records[index];
+  rec->timestamp = trace_timestamp();
+  rec->thread_id = trace_thread_id();
+  rec->func_id = static_cast<uint32_t>(func);
+  rec->arg0 = arg0;
+  rec->arg1 = arg1;
+  rec->arg2 = arg2;
+  rec->arg3 = arg3;
+  rec->hr = kTraceHrPending;
+  return rec;
+}
+
+void dump_trace_impl(const char* reason) {
   const uint32_t max_entries = std::min(g_trace_max_records, kTraceCapacity);
   const uint32_t recorded = std::min(g_trace_write_index.load(std::memory_order_relaxed), max_entries);
 
@@ -557,6 +577,19 @@ void dump_trace(const char* reason) {
                static_cast<unsigned long long>(rec.arg3),
                static_cast<unsigned>(rec.hr));
   }
+}
+
+void dump_trace(const char* reason) {
+  if (!g_trace_enabled.load(std::memory_order_acquire)) {
+    return;
+  }
+
+  bool expected = false;
+  if (!g_trace_dumped.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  dump_trace_impl(reason);
 }
 
 } // namespace
@@ -684,6 +717,11 @@ void d3d9_trace_maybe_dump_on_present(uint32_t present_count) {
 }
 
 D3d9TraceCall::D3d9TraceCall(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+  func_ = func;
+  arg0_ = arg0;
+  arg1_ = arg1;
+  arg2_ = arg2;
+  arg3_ = arg3;
   record_ = alloc_record(func, arg0, arg1, arg2, arg3);
   if (record_) {
     hr_ = kTraceHrPending;
@@ -693,9 +731,24 @@ D3d9TraceCall::D3d9TraceCall(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, u
 D3d9TraceCall::~D3d9TraceCall() {
   if (record_) {
     record_->hr = hr_;
-    if (g_trace_dump_on_fail && FAILED(hr_)) {
-      dump_trace(func_name(static_cast<D3d9TraceFunc>(record_->func_id)));
+  }
+
+  if (g_trace_dump_on_fail && FAILED(hr_) && g_trace_enabled.load(std::memory_order_acquire) && filter_allows(func_)) {
+    // Best-effort capture of the failure context. Dump once, and ensure the
+    // failing call is in the trace even in TRACE_MODE=unique.
+    bool expected = false;
+    if (!g_trace_dumped.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      return;
     }
+
+    if (!record_) {
+      record_ = alloc_record_force(func_, arg0_, arg1_, arg2_, arg3_);
+      if (record_) {
+        record_->hr = hr_;
+      }
+    }
+
+    dump_trace_impl(func_name(func_));
   }
 }
 
