@@ -914,4 +914,130 @@ describe("RemoteChunkedDisk", () => {
 
     await disk.close();
   });
+
+  it(
+    "streams large multi-chunk reads without unbounded inflight fetch state",
+    async () => {
+    const chunkSize = 1024 * 1024; // 1 MiB (multiple of 512)
+    const chunkCount = 16;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+    };
+
+    let activeChunkRequests = 0;
+    let maxActiveChunkRequests = 0;
+    const pendingResponses: Array<() => void> = [];
+    let stalledResponses = 0;
+
+    let twoChunkRequestsResolve: (() => void) | null = null;
+    const twoChunkRequests = new Promise<void>((resolve) => {
+      twoChunkRequestsResolve = resolve;
+    });
+
+    const { baseUrl, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      const m = url.pathname.match(/^\/chunks\/(\d+)\.bin$/);
+      if (m) {
+        const idx = Number(m[1]);
+        if (!Number.isSafeInteger(idx) || idx < 0 || idx >= chunkCount) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+
+        activeChunkRequests += 1;
+        maxActiveChunkRequests = Math.max(maxActiveChunkRequests, activeChunkRequests);
+        res.on("finish", () => {
+          activeChunkRequests -= 1;
+        });
+
+        const start = idx * chunkSize;
+        const data = new Uint8Array(chunkSize);
+        for (let i = 0; i < data.length; i += 1) data[i] = (start + i) & 0xff;
+
+        const send = () => {
+          res.statusCode = 200;
+          res.setHeader("content-type", "application/octet-stream");
+          res.end(data);
+        };
+
+        // Stall the first two chunk responses so the read stays in-flight long enough
+        // to observe telemetry. This makes unbounded per-chunk promise creation
+        // (and the resulting inflight map growth) deterministic in the test.
+        if (stalledResponses < 2) {
+          stalledResponses += 1;
+          pendingResponses.push(send);
+          if (stalledResponses === 2) twoChunkRequestsResolve?.();
+          return;
+        }
+
+        send();
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store: new TestMemoryStore(),
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 2,
+    });
+
+    const buf = new Uint8Array(totalSize);
+
+    let inflightBeforeRelease = 0;
+    try {
+      const readPromise = disk.readSectors(0, buf);
+
+      await Promise.race([
+        twoChunkRequests,
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("timed out waiting for chunk requests")), 2000)),
+      ]);
+
+      // Yield to ensure any queued chunk tasks have a chance to register as inflight.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      inflightBeforeRelease = disk.getTelemetrySnapshot().inflightFetches;
+
+      // Release stalled responses and complete the read.
+      for (const send of pendingResponses.splice(0)) send();
+      await readPromise;
+
+      for (let i = 0; i < buf.length; i += 1) {
+        const expected = i & 0xff;
+        const actual = buf[i]!;
+        if (actual !== expected) {
+          throw new Error(`read mismatch at byte=${i} expected=${expected} actual=${actual}`);
+        }
+      }
+    } finally {
+      // Best-effort: avoid leaking stalled HTTP responses and in-flight reads on failure.
+      for (const send of pendingResponses.splice(0)) send();
+      await disk.close();
+    }
+
+      expect(maxActiveChunkRequests).toBeLessThanOrEqual(2);
+      expect(inflightBeforeRelease).toBeLessThanOrEqual(2);
+    },
+    30_000,
+  );
 });

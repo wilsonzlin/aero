@@ -897,6 +897,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private readonly manifest: ParsedChunkedDiskManifest;
   private readonly chunkCache: ChunkCache;
   private readonly prefetchSequentialChunks: number;
+  private readonly maxConcurrentFetches: number;
   private readonly semaphore: Semaphore;
   private readonly maxAttempts: number;
   private readonly retryBaseDelayMs: number;
@@ -939,6 +940,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     this.capacityBytes = manifest.totalSize;
     this.chunkCache = chunkCache;
     this.prefetchSequentialChunks = options.prefetchSequentialChunks;
+    this.maxConcurrentFetches = options.maxConcurrentFetches;
     this.semaphore = new Semaphore(options.maxConcurrentFetches);
     this.maxAttempts = options.maxAttempts;
     this.retryBaseDelayMs = options.retryBaseDelayMs;
@@ -1139,20 +1141,53 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       await this.chunkCache.prefetchChunks(indices);
     }
 
-    const promises: Promise<Uint8Array<ArrayBuffer>>[] = [];
-    for (let chunk = startChunk; chunk <= endChunk; chunk += 1) {
-      promises.push(this.getChunk(chunk));
+    const readStart = offset;
+    const readEnd = offset + buffer.byteLength;
+    const chunkSize = this.manifest.chunkSize;
+
+    const copyFromChunk = (chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): void => {
+      const chunkStart = chunkIndex * chunkSize;
+      const chunkEnd = chunkStart + bytes.length;
+      const copyStart = Math.max(readStart, chunkStart);
+      const copyEnd = Math.min(readEnd, chunkEnd);
+      if (copyEnd <= copyStart) return;
+
+      const srcStart = copyStart - chunkStart;
+      const dstStart = copyStart - readStart;
+      const len = copyEnd - copyStart;
+      buffer.set(bytes.subarray(srcStart, srcStart + len), dstStart);
+    };
+
+    // Avoid allocating/promising all spanned chunks at once: keeping an array of
+    // promises can retain many resolved multi-megabyte ArrayBuffers until the
+    // whole read completes. Instead, process a bounded window of chunks and
+    // copy them into the caller's buffer as they arrive.
+    const window = new Map<number, Promise<void>>();
+    let nextChunk = startChunk;
+    const maxInflight = this.maxConcurrentFetches;
+
+    const launch = (chunkIndex: number): void => {
+      const task = this.getChunk(chunkIndex)
+        .then((bytes) => {
+          copyFromChunk(chunkIndex, bytes);
+        })
+        .finally(() => {
+          window.delete(chunkIndex);
+        });
+      window.set(chunkIndex, task);
+    };
+
+    while (nextChunk <= endChunk && window.size < maxInflight) {
+      launch(nextChunk);
+      nextChunk += 1;
     }
 
-    let pos = 0;
-    for (let i = 0; i < promises.length; i += 1) {
-      const chunkIndex = startChunk + i;
-      const bytes = await promises[i]!;
-      const chunkStart = chunkIndex * this.manifest.chunkSize;
-      const within = offset > chunkStart ? offset - chunkStart : 0;
-      const toCopy = Math.min(buffer.byteLength - pos, bytes.length - within);
-      buffer.set(bytes.subarray(within, within + toCopy), pos);
-      pos += toCopy;
+    while (window.size > 0) {
+      await Promise.race(window.values());
+      while (nextChunk <= endChunk && window.size < maxInflight) {
+        launch(nextChunk);
+        nextChunk += 1;
+      }
     }
 
     this.maybePrefetch(offset, buffer.byteLength, endChunk);
