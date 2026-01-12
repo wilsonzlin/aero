@@ -7,7 +7,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use aero_devices::acpi_pm::{
     DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
 };
-use aero_devices::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PciInterruptPin};
+use aero_devices::pci::{
+    GsiLevelSink, PciBarDefinition, PciBdf, PciConfigSpace, PciCoreSnapshot, PciDevice,
+    PciInterruptPin,
+};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 
 fn pc_machine_config() -> MachineConfig {
@@ -135,6 +138,17 @@ fn reverse_devices_section(bytes: &[u8]) -> Vec<u8> {
     }
 
     out
+}
+
+#[derive(Default)]
+struct RecordingSink {
+    events: Vec<(u32, bool)>,
+}
+
+impl GsiLevelSink for RecordingSink {
+    fn set_gsi_level(&mut self, gsi: u32, level: bool) {
+        self.events.push((gsi, level));
+    }
 }
 
 #[test]
@@ -588,6 +602,95 @@ fn restore_device_states_does_not_sync_pci_intx_when_intx_snapshot_is_invalid() 
     }
 
     assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
+}
+
+#[test]
+fn restore_device_states_accepts_legacy_pci_device_id_for_pci_intx_state() {
+    let src = Machine::new(pc_machine_config()).unwrap();
+    let pci_intx = src.pci_intx_router().expect("pc platform enabled");
+
+    // Put the INTx router into a non-default state by asserting an INTx pin.
+    {
+        let mut pci_intx = pci_intx.borrow_mut();
+        let mut sink = RecordingSink::default();
+        pci_intx.assert_intx(PciBdf::new(0, 1, 0), PciInterruptPin::IntA, &mut sink);
+    }
+
+    let expected_events = {
+        let pci_intx = pci_intx.borrow();
+        let mut sink = RecordingSink::default();
+        pci_intx.sync_levels_to_sink(&mut sink);
+        sink.events
+    };
+
+    // Legacy layout: store a `PciIntxRouter` io-snapshot blob (inner `INTX`) under the historical
+    // outer `DeviceId::PCI` key.
+    let legacy_state = {
+        let pci_intx = pci_intx.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_intx)
+    };
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![legacy_state]);
+
+    let restored_events = {
+        let pci_intx = restored.pci_intx_router().expect("pc platform enabled");
+        let pci_intx = pci_intx.borrow();
+        let mut sink = RecordingSink::default();
+        pci_intx.sync_levels_to_sink(&mut sink);
+        sink.events
+    };
+
+    assert_eq!(restored_events, expected_events);
+}
+
+#[test]
+fn restore_device_states_accepts_legacy_pci_device_id_for_combined_pci_core_snapshot() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+    let pci_intx = src.pci_intx_router().expect("pc platform enabled");
+
+    // Put the PCI config ports into a non-default state (the 0xCF8 address latch is part of the
+    // PCI config mechanism snapshot).
+    let addr = cfg_addr(PciBdf::new(0, 1, 0), 0x10);
+    src.io_write(0xCF8, 4, addr);
+    assert_eq!(src.io_read(0xCF8, 4), addr);
+
+    // Put the INTx router into a non-default state too.
+    {
+        let mut pci_intx = pci_intx.borrow_mut();
+        let mut sink = RecordingSink::default();
+        pci_intx.assert_intx(PciBdf::new(0, 1, 0), PciInterruptPin::IntA, &mut sink);
+    }
+
+    let expected_intx_events = {
+        let pci_intx = pci_intx.borrow();
+        let mut sink = RecordingSink::default();
+        pci_intx.sync_levels_to_sink(&mut sink);
+        sink.events
+    };
+
+    let core_state = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let mut pci_intx = pci_intx.borrow_mut();
+        let core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &core)
+    };
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![core_state]);
+
+    assert_eq!(restored.io_read(0xCF8, 4), addr);
+
+    let restored_intx_events = {
+        let pci_intx = restored.pci_intx_router().expect("pc platform enabled");
+        let pci_intx = pci_intx.borrow();
+        let mut sink = RecordingSink::default();
+        pci_intx.sync_levels_to_sink(&mut sink);
+        sink.events
+    };
+
+    assert_eq!(restored_intx_events, expected_intx_events);
 }
 
 #[test]

@@ -1605,24 +1605,33 @@ impl snapshot::SnapshotTarget for Machine {
                         restored_pci_intx = true;
                     }
                     Err(_) => {
-                        // Backward compatibility: some snapshots stored only `PciConfigPorts`
-                        // (`PCPT`) under `DeviceId::PCI`.
+                        // Backward compatibility: some snapshots stored `PciConfigPorts` (`PCPT`)
+                        // or `PciIntxRouter` (`INTX`) directly under the historical `DeviceId::PCI`.
                         //
-                        // If a dedicated `PCI_CFG` entry is also present, prefer it.
-                        if let (Some(pci_cfg), Some(cfg_state)) =
-                            (&self.pci_cfg, pci_cfg_state.take())
-                        {
+                        // If a dedicated `PCI_CFG` entry is also present, prefer it for config ports.
+                        let cfg_result = if let Some(cfg_state) = pci_cfg_state.take() {
                             let mut pci_cfg = pci_cfg.borrow_mut();
-                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                                 &cfg_state,
                                 &mut *pci_cfg,
-                            );
-                        } else if let Some(pci_cfg) = &self.pci_cfg {
+                            )
+                        } else {
                             let mut pci_cfg = pci_cfg.borrow_mut();
-                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                                 &state,
                                 &mut *pci_cfg,
-                            );
+                            )
+                        };
+                        let _ = cfg_result;
+
+                        let mut pci_intx = pci_intx.borrow_mut();
+                        if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                            &state,
+                            &mut *pci_intx,
+                        )
+                        .is_ok()
+                        {
+                            restored_pci_intx = true;
                         }
                     }
                 }
