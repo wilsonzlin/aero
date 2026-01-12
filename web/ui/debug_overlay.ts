@@ -61,11 +61,29 @@ export class DebugOverlay {
     this._updateIntervalMs = opts.updateIntervalMs ?? this._updateIntervalMs;
     this._parent = opts.parent ?? (typeof document !== "undefined" ? document.body : null);
 
+    const isTextInput = (target: EventTarget | null): boolean => {
+      const HTMLElementCtor = (globalThis as unknown as { HTMLElement?: unknown }).HTMLElement;
+      if (typeof HTMLElementCtor !== "function") return false;
+      if (!(target instanceof (HTMLElementCtor as typeof HTMLElement))) return false;
+      const el = target as HTMLElement;
+      const tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return true;
+      return el.isContentEditable;
+    };
+
     this._onKeyDown = (ev) => {
-      if (ev.code === this._toggleKey && !ev.repeat) {
-        ev.preventDefault();
-        this.toggle();
-      }
+      if (ev.repeat) return;
+      // If a VM/input-capture layer (or another hotkey handler) already consumed
+      // the event, do not toggle the overlay.
+      if (ev.defaultPrevented) return;
+      if (isTextInput(ev.target)) return;
+      // Avoid toggling on Ctrl/Alt/Meta chords to reduce conflicts with host/OS
+      // shortcuts and preserve the ability to use capture modifiers.
+      if (ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return;
+      if (ev.code !== this._toggleKey) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.toggle();
     };
   }
 
@@ -90,13 +108,15 @@ export class DebugOverlay {
     this._root = el;
     this._parent.appendChild(el);
 
-    window.addEventListener("keydown", this._onKeyDown, { capture: true });
+    // Attach in bubbling phase so capture-phase handlers (VM input capture) can
+    // swallow keystrokes first via stopPropagation.
+    window.addEventListener("keydown", this._onKeyDown);
   }
 
   detach(): void {
     if (!this._root) return;
     this.hide();
-    window.removeEventListener("keydown", this._onKeyDown, { capture: true });
+    window.removeEventListener("keydown", this._onKeyDown);
     this._root.remove();
     this._root = null;
   }

@@ -38,25 +38,38 @@ export function attachPointerLock(canvas: HTMLCanvasElement, handlers: InputHand
     return () => {};
   }
 
-  const onClick = () => {
+  const onClick = (ev: MouseEvent) => {
     if (document.pointerLockElement !== canvas) {
+      // Avoid bubbling the click to other UI handlers while we're transitioning
+      // into capture mode.
+      ev.preventDefault();
+      ev.stopPropagation();
       canvas.requestPointerLock();
+      canvas.focus();
     }
   };
 
   const onMouseMove = (ev: MouseEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
     handlers.onEvent({ type: 'mouseMove', dx: ev.movementX, dy: ev.movementY });
   };
 
   const onMouseDown = (ev: MouseEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
     handlers.onEvent({ type: 'mouseButton', button: ev.button, down: true });
   };
 
   const onMouseUp = (ev: MouseEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
     handlers.onEvent({ type: 'mouseButton', button: ev.button, down: false });
   };
 
   const onWheel = (ev: WheelEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
     handlers.onEvent({ type: 'mouseWheel', deltaX: ev.deltaX, deltaY: ev.deltaY, deltaZ: ev.deltaZ });
   };
 
@@ -68,7 +81,8 @@ export function attachPointerLock(canvas: HTMLCanvasElement, handlers: InputHand
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mousedown', onMouseDown);
       document.addEventListener('mouseup', onMouseUp);
-      document.addEventListener('wheel', onWheel, { passive: true });
+      // Wheel must be non-passive so we can preventDefault and avoid scrolling.
+      document.addEventListener('wheel', onWheel, { passive: false });
     } else {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mousedown', onMouseDown);
@@ -100,6 +114,7 @@ export function attachKeyboard(canvas: HTMLCanvasElement, handlers: InputHandler
 
   const onKeyDown = (ev: KeyboardEvent) => {
     ev.preventDefault();
+    ev.stopPropagation();
     handlers.onEvent({
       type: 'keyDown',
       code: ev.code,
@@ -113,6 +128,7 @@ export function attachKeyboard(canvas: HTMLCanvasElement, handlers: InputHandler
 
   const onKeyUp = (ev: KeyboardEvent) => {
     ev.preventDefault();
+    ev.stopPropagation();
     handlers.onEvent({
       type: 'keyUp',
       code: ev.code,
@@ -131,4 +147,3 @@ export function attachKeyboard(canvas: HTMLCanvasElement, handlers: InputHandler
     canvas.removeEventListener('keyup', onKeyUp);
   };
 }
-
