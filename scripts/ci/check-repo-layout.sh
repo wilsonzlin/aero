@@ -60,6 +60,27 @@ if git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >
   exit 1
 fi
 
+# Ensure the `emulator` crate continues to register the QEMU boot tests via `[[test]]` entries.
+# (Docs and CI rely on `cargo test -p emulator --test ...` working even though the sources live
+# under the workspace root `tests/` directory.)
+need_file "crates/emulator/Cargo.toml"
+emulator_boot_test_needles=(
+  'name = "boot_basic"'
+  'path = "../../tests/boot/basic_boot.rs"'
+  'name = "boot_sector"'
+  'path = "../../tests/boot_sector.rs"'
+  'name = "freedos_boot"'
+  'path = "../../tests/freedos_boot.rs"'
+  'name = "windows7_boot"'
+  'path = "../../tests/windows7_boot.rs"'
+)
+for needle in "${emulator_boot_test_needles[@]}"; do
+  if ! grep -qF "${needle}" crates/emulator/Cargo.toml; then
+    die "crates/emulator/Cargo.toml missing expected boot test registration: ${needle}"
+  fi
+done
+unset emulator_boot_test_needles
+
 # Additionally, ensure that any doc line that mentions these test targets includes `-p emulator`
 # (avoid ambiguous `cargo test --test ...` invocations that would default to the workspace root
 # package).
