@@ -38,6 +38,7 @@ use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
 };
 use aero_devices::clock::ManualClock;
+use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
@@ -3106,6 +3107,9 @@ impl Machine {
 
             PlatformInterrupts::register_imcr_ports(&mut self.io, interrupts.clone());
             register_pic8259_on_platform_interrupts(&mut self.io, interrupts.clone());
+
+            let dma = Rc::new(RefCell::new(Dma8237::new()));
+            register_dma8237(&mut self.io, dma);
 
             // PIT 8254.
             let pit: SharedPit8254 = match &self.pit {

@@ -19,6 +19,10 @@ impl Dma8237 {
         Self::default()
     }
 
+    pub fn reset(&mut self) {
+        self.regs.clear();
+    }
+
     pub fn read_u8(&self, port: u16) -> u8 {
         self.regs.get(&port).copied().unwrap_or(0)
     }
@@ -82,6 +86,10 @@ impl PortIoDevice for Dma8237Port {
             }
             _ => dma.write_u8(port, value as u8),
         }
+    }
+
+    fn reset(&mut self) {
+        self.dma.borrow_mut().reset();
     }
 }
 

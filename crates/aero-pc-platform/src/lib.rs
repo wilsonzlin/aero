@@ -5,6 +5,7 @@ use aero_audio::hda_pci::HdaPciDevice;
 use aero_devices::a20_gate::A20Gate;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
 use aero_devices::clock::ManualClock;
+use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
@@ -1211,6 +1212,9 @@ impl PcPlatform {
 
         PlatformInterrupts::register_imcr_ports(&mut io, interrupts.clone());
         register_pic8259_on_platform_interrupts(&mut io, interrupts.clone());
+
+        let dma = Rc::new(RefCell::new(Dma8237::new()));
+        register_dma8237(&mut io, dma);
 
         let pit = Rc::new(RefCell::new(Pit8254::new()));
         pit.borrow_mut()
