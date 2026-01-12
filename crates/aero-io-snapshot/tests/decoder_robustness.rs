@@ -188,3 +188,25 @@ fn snapshot_reader_u16_rejects_wrong_length() {
     let err = r.u16(1).unwrap_err();
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("u16"));
 }
+
+#[test]
+fn snapshot_writer_sorts_field_tags_canonically() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+    const HEADER_LEN: usize = 4 + 2 + 2 + 4 + 2 + 2;
+
+    let mut w = SnapshotWriter::new(DEVICE_ID, SnapshotVersion::new(1, 0));
+    w.field_bytes(3, vec![0x33]);
+    w.field_bytes(1, vec![0x11]);
+    w.field_bytes(2, vec![0x22]);
+    let bytes = w.finish();
+
+    // Fields are encoded as:
+    // u16 tag, u32 len, [len] bytes.
+    fn read_tag(bytes: &[u8], off: usize) -> u16 {
+        u16::from_le_bytes([bytes[off], bytes[off + 1]])
+    }
+
+    assert_eq!(read_tag(&bytes, HEADER_LEN), 1);
+    assert_eq!(read_tag(&bytes, HEADER_LEN + 7), 2);
+    assert_eq!(read_tag(&bytes, HEADER_LEN + 14), 3);
+}
