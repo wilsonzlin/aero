@@ -171,6 +171,12 @@ case "${cmd0}" in
     # spawn internal helper threads). Allow safe-run to retry these in the same way as Cargo.
     is_retryable_cmd=true
     ;;
+  bash|bash.exe|sh|sh.exe|python|python.exe|python3|python3.exe)
+    # Wrapper/driver commands commonly used to invoke other tools (including Cargo). Mark these as
+    # retryable so transient EAGAIN/WouldBlock failures from nested Rust tooling still get the
+    # benefit of safe-run's retry/backoff.
+    is_retryable_cmd=true
+    ;;
   npm|npm.exe|pnpm|pnpm.exe|yarn|yarn.exe|node|node.exe|npx|npx.exe|wasm-pack|wasm-pack.exe)
     # Common build/test drivers which may spawn Cargo/rustc internally (e.g.
     # `npm -w web run wasm:build`).
