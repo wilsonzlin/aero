@@ -69,6 +69,10 @@ assert_retry "unwrap-eagain-only" <<'EOF'
 called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
 EOF
 
+assert_retry "unwrap-eagain-system" <<'EOF'
+called Result::unwrap() on an Err value: System(Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" })
+EOF
+
 assert_retry "unwrap-eagain-multiline" <<'EOF'
 called Result::unwrap() on an Err value:
 Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
