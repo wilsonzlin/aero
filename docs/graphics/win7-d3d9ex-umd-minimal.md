@@ -305,7 +305,29 @@ If you implement only one blend mode initially, make sure you cover standard pre
 
 Guest-side validation:
 
- * `drivers/aerogpu/tests/win7/d3d9ex_event_query` verifies `D3DQUERYTYPE_EVENT` completion behavior and that `GetData(D3DGETDATA_DONOTFLUSH)` remains non-blocking (including an initial poll before `Flush`; DWM relies on this polling pattern).
+  * `drivers/aerogpu/tests/win7/d3d9ex_event_query` verifies `D3DQUERYTYPE_EVENT` completion behavior and that `GetData(D3DGETDATA_DONOTFLUSH)` remains non-blocking (including an initial poll before `Flush`; DWM relies on this polling pattern).
+
+#### 2.3.9 State blocks and validation helpers (recommended for app compatibility)
+
+While DWM itself typically relies on shaders + explicit state setting, many D3D9 apps (and some runtimes) use **state blocks** and **ValidateDevice**:
+
+| Func pointer | Required? | Minimal semantics | What can be stubbed |
+|---|---:|---|---|
+| `pfnBeginStateBlock` / `pfnEndStateBlock` | Recommended | Begin/finish capturing a stateblock via subsequent DDI calls. | If unimplemented, return a clean failure (`D3DERR_INVALIDCALL`/`D3DERR_NOTAVAILABLE`) rather than crashing. |
+| `pfnCreateStateBlock` | Recommended | Create a stateblock for `D3DSBT_ALL` / `D3DSBT_PIXELSTATE` / `D3DSBT_VERTEXSTATE`. | Same as above. |
+| `pfnCaptureStateBlock` / `pfnApplyStateBlock` | Recommended | Capture current state into a block, and apply a block back to the device state. | N/A |
+| `pfnDeleteStateBlock` | Recommended | Free a state block. | N/A |
+| `pfnValidateDevice` | Recommended | Return a conservative pass count (typically `1`) for the supported shader pipeline. | Avoid hard-failing unless truly unsupported; callers often treat ValidateDevice as an advisory probe. |
+
+Practical notes:
+
+- State blocks are primarily about *state capture/restore*, not rendering. A minimal but robust first pass can cache the state you already track for your command stream and replay it on Apply.
+- Some apps create a new stateblock by doing `BeginStateBlock → Apply(existing) → EndStateBlock`. In this scenario, **Apply must record state** into the in-progress capture even if the apply is a no-op.
+
+Guest-side validation:
+
+* `drivers/aerogpu/tests/win7/d3d9ex_stateblock_sanity` covers Begin/End + Create/Capture/Apply and includes the “nested Apply while recording” pattern.
+* `drivers/aerogpu/tests/win7/d3d9_validate_device_sanity` covers `ValidateDevice`.
 
 ---
 
