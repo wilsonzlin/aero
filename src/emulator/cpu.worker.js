@@ -105,6 +105,7 @@ function post(msg) {
 }
 
 function attachMicRingBuffer(ringBuffer, sampleRate) {
+  const prevSab = micHeader?.buffer ?? null;
   if (ringBuffer === null || ringBuffer === undefined) {
     micHeader = null;
     micSamples = null;
@@ -119,6 +120,8 @@ function attachMicRingBuffer(ringBuffer, sampleRate) {
   if (typeof Sab === "undefined" || !(ringBuffer instanceof Sab)) {
     throw new EmulatorError(ErrorCode.InvalidConfig, "mic ringBuffer must be a SharedArrayBuffer or null.");
   }
+
+  const isNewAttach = prevSab !== ringBuffer;
 
   micHeader = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
   micSamples = new Float32Array(ringBuffer, MIC_HEADER_BYTES);
@@ -137,11 +140,13 @@ function attachMicRingBuffer(ringBuffer, sampleRate) {
   // The AudioWorklet microphone producer can start writing before (or while) this worker is
   // attached as the consumer. To avoid replaying stale samples (large perceived latency),
   // discard any buffered data when attaching by advancing readPos := writePos.
-  try {
-    const writePos = Atomics.load(micHeader, MIC_WRITE_POS_INDEX) >>> 0;
-    Atomics.store(micHeader, MIC_READ_POS_INDEX, writePos);
-  } catch {
-    // ignore
+  if (isNewAttach) {
+    try {
+      const writePos = Atomics.load(micHeader, MIC_WRITE_POS_INDEX) >>> 0;
+      Atomics.store(micHeader, MIC_READ_POS_INDEX, writePos);
+    } catch {
+      // ignore
+    }
   }
 }
 
