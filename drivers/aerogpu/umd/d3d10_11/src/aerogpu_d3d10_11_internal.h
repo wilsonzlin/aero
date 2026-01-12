@@ -385,6 +385,15 @@ struct Resource {
   // header stays WDK-independent.
   uint32_t wddm_allocation_handle = 0;
 
+  // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
+  // 0 if the resource is not shareable.
+  uint64_t share_token = 0;
+
+  // True if this resource was created with D3D10/D3D11 RESOURCE_MISC_SHARED.
+  bool is_shared = false;
+  // True if this resource is an imported alias (OpenResource/OpenSharedResource).
+  bool is_shared_alias = false;
+
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
   uint32_t usage = kD3D11UsageDefault;

@@ -654,8 +654,17 @@ struct AeroGpuResource {
   //
   // IMPORTANT: this is *not* the stable cross-layer `alloc_id` (see
   // `aerogpu_wddm_alloc.h`); it is only valid for the originating process'
-  // runtime callbacks.
+   // runtime callbacks.
   uint32_t wddm_allocation_handle = 0;
+
+  // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
+  // 0 if the resource is not shareable.
+  uint64_t share_token = 0;
+
+  // True if this resource was created with D3D10_RESOURCE_MISC_SHARED.
+  bool is_shared = false;
+  // True if this resource is an imported alias (OpenResource/OpenSharedResource).
+  bool is_shared_alias = false;
 
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
@@ -1791,9 +1800,39 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_FAIL;
     }
 
+    // Treat the private driver data blob as in/out so the Win7 KMD can fill
+    // `share_token` for shared allocations (mirrors the D3D9Ex UMD contract).
+    const uint64_t share_token = static_cast<uint64_t>(priv.share_token);
+    if (is_shared && share_token == 0) {
+      // If the KMD does not return a stable token, shared surface interop cannot
+      // work across processes; fail cleanly.
+      D3DDDICB_DEALLOCATE dealloc = {};
+      D3DKMT_HANDLE h = static_cast<D3DKMT_HANDLE>(km_alloc);
+      __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+        dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
+        dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(km_resource);
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
+        dealloc.NumAllocations = km_alloc ? 1u : 0u;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
+        dealloc.HandleList = km_alloc ? &h : nullptr;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
+        dealloc.phAllocations = km_alloc ? &h : nullptr;
+      }
+      (void)CallCbMaybeHandle(dev->callbacks.pfnDeallocateCb, dev->hrt_device, &dealloc);
+      return E_FAIL;
+    }
+
     res->backing_alloc_id = alloc_id;
     res->backing_offset_bytes = 0;
     res->wddm.km_resource_handle = km_resource;
+    res->share_token = is_shared ? share_token : 0;
+    res->is_shared = is_shared;
+    res->is_shared_alias = false;
     uint32_t runtime_alloc = 0;
     __if_exists(AllocationInfoT::hAllocation) {
       runtime_alloc = static_cast<uint32_t>(alloc_info[0].hAllocation);
@@ -1912,6 +1951,31 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
     if (!res->storage.empty()) {
       EmitUploadLocked(hDevice, dev, res, 0, res->storage.size());
+    }
+
+    if (res->is_shared && res->share_token != 0) {
+      // Shared resources must be importable cross-process as soon as CreateResource
+      // returns. Since AeroGPU resource creation is expressed via the command
+      // stream, export the resource and force a submission so the host observes
+      // the share_token mapping immediately (mirrors D3D9Ex behavior).
+      auto* export_cmd =
+          dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
+      if (!export_cmd) {
+        deallocate_if_needed();
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      export_cmd->resource_handle = res->handle;
+      export_cmd->reserved0 = 0;
+      export_cmd->share_token = res->share_token;
+
+      HRESULT submit_hr = S_OK;
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        deallocate_if_needed();
+        res->~AeroGpuResource();
+        return submit_hr;
+      }
     }
     return S_OK;
   }
@@ -2066,12 +2130,155 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!res->storage.empty()) {
       EmitUploadLocked(hDevice, dev, res, 0, res->storage.size());
     }
+
+    if (res->is_shared && res->share_token != 0) {
+      auto* export_cmd =
+          dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
+      if (!export_cmd) {
+        deallocate_if_needed();
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      export_cmd->resource_handle = res->handle;
+      export_cmd->reserved0 = 0;
+      export_cmd->share_token = res->share_token;
+
+      HRESULT submit_hr = S_OK;
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        deallocate_if_needed();
+        res->~AeroGpuResource();
+        return submit_hr;
+      }
+    }
     return S_OK;
   }
 
   deallocate_if_needed();
   res->~AeroGpuResource();
   return E_NOTIMPL;
+}
+
+HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
+                              const D3D10DDIARG_OPENRESOURCE* pOpenResource,
+                              D3D10DDI_HRESOURCE hResource,
+                              D3D10DDI_HRTRESOURCE) {
+  if (!hDevice.pDrvPrivate || !pOpenResource || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  const void* priv_data = nullptr;
+  uint32_t priv_size = 0;
+  __if_exists(D3D10DDIARG_OPENRESOURCE::pPrivateDriverData) {
+    priv_data = pOpenResource->pPrivateDriverData;
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::PrivateDriverDataSize) {
+    priv_size = static_cast<uint32_t>(pOpenResource->PrivateDriverDataSize);
+  }
+
+  if (!priv_data || priv_size < sizeof(aerogpu_wddm_alloc_priv)) {
+    return E_INVALIDARG;
+  }
+
+  aerogpu_wddm_alloc_priv_v2 priv{};
+  const size_t copy_bytes = std::min(static_cast<size_t>(priv_size), sizeof(priv));
+  std::memcpy(&priv, priv_data, copy_bytes);
+  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+    return E_INVALIDARG;
+  }
+  if ((priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) == 0 || priv.share_token == 0 || priv.alloc_id == 0) {
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+  res->handle = allocate_global_handle(dev->adapter);
+  res->backing_alloc_id = static_cast<uint32_t>(priv.alloc_id);
+  res->backing_offset_bytes = 0;
+  res->wddm_allocation_handle = 0;
+  res->share_token = static_cast<uint64_t>(priv.share_token);
+  res->is_shared = true;
+  res->is_shared_alias = true;
+
+  // Recover the runtime allocation handle (`hAllocation`) for LockCb/UnlockCb
+  // and the KM handles needed for pfnDeallocateCb. Field availability varies
+  // across WDK vintages, so treat all as optional.
+  __if_exists(D3D10DDIARG_OPENRESOURCE::hKMResource) {
+    res->wddm.km_resource_handle = static_cast<uint64_t>(pOpenResource->hKMResource);
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::hKMAllocation) {
+    res->wddm.km_allocation_handles.push_back(static_cast<uint64_t>(pOpenResource->hKMAllocation));
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::hAllocation) {
+    const uint64_t h = static_cast<uint64_t>(pOpenResource->hAllocation);
+    if (h != 0) {
+      res->wddm_allocation_handle = static_cast<uint32_t>(h);
+      if (res->wddm.km_allocation_handles.empty()) {
+        res->wddm.km_allocation_handles.push_back(h);
+      }
+    }
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::phAllocations) {
+    __if_exists(D3D10DDIARG_OPENRESOURCE::NumAllocations) {
+      if (pOpenResource->phAllocations && pOpenResource->NumAllocations) {
+        const uint64_t h = static_cast<uint64_t>(pOpenResource->phAllocations[0]);
+        if (h != 0) {
+          res->wddm_allocation_handle = static_cast<uint32_t>(h);
+          if (res->wddm.km_allocation_handles.empty()) {
+            res->wddm.km_allocation_handles.push_back(h);
+          }
+        }
+      }
+    }
+  }
+
+  // Set the resource description from the preserved private data blob (v2).
+  if (priv.kind == AEROGPU_WDDM_ALLOC_KIND_BUFFER) {
+    res->kind = ResourceKind::Buffer;
+    res->size_bytes = static_cast<uint64_t>(priv.size_bytes);
+  } else if (priv.kind == AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D) {
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(static_cast<uint32_t>(priv.format));
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+    res->kind = ResourceKind::Texture2D;
+    res->width = static_cast<uint32_t>(priv.width);
+    res->height = static_cast<uint32_t>(priv.height);
+    res->mip_levels = 1;
+    res->array_size = 1;
+    res->dxgi_format = static_cast<uint32_t>(priv.format);
+    res->row_pitch_bytes = static_cast<uint32_t>(priv.row_pitch_bytes);
+    if (res->row_pitch_bytes == 0 && res->width != 0) {
+      const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+      const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      if (bpp == 0 || row_bytes_u64 == 0 || row_bytes_u64 > UINT32_MAX) {
+        res->~AeroGpuResource();
+        return E_INVALIDARG;
+      }
+      res->row_pitch_bytes = AlignUpU32(static_cast<uint32_t>(row_bytes_u64), 256);
+    }
+  } else {
+    res->~AeroGpuResource();
+    return E_INVALIDARG;
+  }
+
+  auto* import_cmd =
+      dev->cmd.append_fixed<aerogpu_cmd_import_shared_surface>(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
+  if (!import_cmd) {
+    res->~AeroGpuResource();
+    return E_OUTOFMEMORY;
+  }
+  import_cmd->out_resource_handle = res->handle;
+  import_cmd->reserved0 = 0;
+  import_cmd->share_token = res->share_token;
+
+  return S_OK;
 }
 
 void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
@@ -4848,6 +5055,11 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
       // Reject duplicates: RotateResourceIdentities expects distinct resources.
       return;
     }
+    // Shared resources have stable identities (`share_token`); rotating them is
+    // likely to break EXPORT/IMPORT semantics across processes.
+    if (res->is_shared || res->is_shared_alias || res->share_token != 0) {
+      return;
+    }
     resources.push_back(res);
   }
 
@@ -5205,7 +5417,12 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     funcs.pfnDrawAuto = &NotImpl<decltype(funcs.pfnDrawAuto)>::Fn;
   }
   if constexpr (has_pfnOpenResource<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnOpenResource = &NotImpl<decltype(funcs.pfnOpenResource)>::Fn;
+    using Fn = decltype(funcs.pfnOpenResource);
+    if constexpr (std::is_convertible_v<decltype(&OpenResource), Fn>) {
+      funcs.pfnOpenResource = &OpenResource;
+    } else {
+      funcs.pfnOpenResource = &NotImpl<Fn>::Fn;
+    }
   }
   if constexpr (has_pfnSoSetTargets<D3D10DDI_DEVICEFUNCS>::value) {
     // Valid to leave SO unbound for bring-up; treat as a no-op.

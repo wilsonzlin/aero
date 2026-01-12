@@ -105,6 +105,7 @@ drivers/aerogpu/tests/win7/
   d3d11_map_dynamic_buffer_sanity/
   d3d11_map_roundtrip/
   d3d11_update_subresource_texture_sanity/
+  d3d11_shared_surface_ipc/
   d3d11_texture_sampling_sanity/
   d3d11_dynamic_constant_buffer_sanity/
   d3d11_depth_test_sanity/
@@ -357,6 +358,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_map_dynamic_buffer_sanity` exercises dynamic buffer CPU-write paths (`Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)`), stresses DISCARD renaming hazards, and validates vertex/index/constant buffer map paths via staging readback
 * `d3d11_map_roundtrip` validates `Map/Unmap` on a `D3D11_USAGE_STAGING` texture by writing a checker pattern via `Map(WRITE)` and reading it back via `Map(READ)` (no rendering required)
 * `d3d11_update_subresource_texture_sanity` validates `UpdateSubresource` on both textures (full + boxed update, padded RowPitch) and a DEFAULT constant buffer (full + boxed range update) via staging readback
+* `d3d11_shared_surface_ipc` creates a D3D11 shareable texture in one process, duplicates the shared `HANDLE` into a second process, opens it via `OpenSharedResource`, and validates the consumer can read back the producer's clear color (catches bugs where the driver treats the numeric handle value as a stable cross-process token)
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 * `d3d11_texture_sampling_sanity` renders a textured quad into an offscreen render target and validates a few sampled texels via readback (requires feature level >= 10_0)
 * `d3d11_dynamic_constant_buffer_sanity` draws using a dynamic constant buffer updated with `Map(WRITE_DISCARD)` between draws (blue fullscreen, then green centered triangle) and validates output via readback (requires feature level >= 10_0)

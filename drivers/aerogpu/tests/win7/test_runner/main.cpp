@@ -939,6 +939,7 @@ int main(int argc, char** argv) {
       "d3d11_map_dynamic_buffer_sanity",
       "d3d11_map_roundtrip",
       "d3d11_update_subresource_texture_sanity",
+      "d3d11_shared_surface_ipc",
       "d3d11_texture_sampling_sanity",
       "d3d11_dynamic_constant_buffer_sanity",
       "d3d11_depth_test_sanity",

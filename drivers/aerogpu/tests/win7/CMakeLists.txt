@@ -334,6 +334,11 @@ aerogpu_add_win7_test(d3d11_update_subresource_texture_sanity
 )
 target_link_libraries(d3d11_update_subresource_texture_sanity PRIVATE d3d11 dxgi)
 
+aerogpu_add_win7_test(d3d11_shared_surface_ipc
+  d3d11_shared_surface_ipc/main.cpp
+)
+target_link_libraries(d3d11_shared_surface_ipc PRIVATE d3d11 dxgi)
+
 aerogpu_add_win7_test(d3d11_texture_sampling_sanity
   d3d11_texture_sampling_sanity/main.cpp
 )
