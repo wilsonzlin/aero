@@ -560,6 +560,67 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
     return reporter.Fail("pixel mismatch after nested Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
   }
 
+  // ValidateDevice should not hard-fail for the supported shader pipeline.
+  DWORD validate_passes = 0;
+  hr = dev->ValidateDevice(&validate_passes);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ValidateDevice", hr);
+  }
+  if (validate_passes == 0) {
+    return reporter.Fail("ValidateDevice returned 0 passes");
+  }
+
+  // Exercise CreateStateBlock (DDI-backed) as well as Begin/End.
+  ComPtr<IDirect3DStateBlock9> sb_created;
+  hr = dev->CreateStateBlock(D3DSBT_ALL, sb_created.put());
+  if (FAILED(hr) || !sb_created) {
+    return reporter.FailHresult("CreateStateBlock(D3DSBT_ALL)", FAILED(hr) ? hr : E_FAIL);
+  }
+
+  // Mutate state away (shader/texture/constant/viewport/VB), then Apply and verify we
+  // get back the captured (green) result.
+  hr = dev->SetPixelShader(ps_copy_tex.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShader(copy_tex mutate 2)", hr);
+  }
+  hr = dev->SetTexture(0, tex_b.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture B (mutate 2)", hr);
+  }
+  hr = dev->SetPixelShaderConstantF(0, c0_white, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(white mutate 2)", hr);
+  }
+  hr = dev->SetViewport(&vp_small);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport(small mutate 3)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(COLORWRITEENABLE=0 mutate 2)", hr);
+  }
+  hr = dev->SetStreamSource(0, NULL, 0, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(NULL mutate 2)", hr);
+  }
+
+  hr = sb_created->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply (created)", hr);
+  }
+  hr = DrawQuad(dev.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad (after CreateStateBlock Apply)", hr);
+  }
+  px = 0;
+  hr = ReadBackbufferPixel(dev.get(), NULL, NULL, &px);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixel (after CreateStateBlock Apply)", hr);
+  }
+  if ((px & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+    return reporter.Fail("pixel mismatch after CreateStateBlock Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
+  }
+
   // Capture should update the existing block to the current device state.
   float c0_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   hr = dev->SetTexture(0, tex_a.get());
