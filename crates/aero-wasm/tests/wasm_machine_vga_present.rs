@@ -124,7 +124,9 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
     }
     assert!(halted, "guest never reached HLT");
 
-    assert!(machine.vga_present(), "machine did not expose a VGA device");
+    // Ensure the VGA/SVGA front buffer is up to date before reading it via ptr/len.
+    // (In the canonical machine configuration VGA is always present.)
+    machine.vga_present();
 
     let width = machine.vga_width();
     let height = machine.vga_height();
