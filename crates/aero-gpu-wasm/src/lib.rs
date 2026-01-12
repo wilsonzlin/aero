@@ -31,8 +31,25 @@ mod guest_phys {
     /// Returns `Some(ram_offset)` if (and only if) the entire range is backed by RAM.
     /// Returns `None` for hole/out-of-range ranges, or for ranges that span multiple regions.
     pub fn translate_guest_paddr_range(ram_bytes: u64, paddr: u64, len: u64) -> Option<u64> {
+        // For zero-length accesses, accept boundary addresses (mirrors slice indexing semantics).
         if len == 0 {
-            return Some(0);
+            if ram_bytes <= LOW_RAM_END {
+                return (paddr <= ram_bytes).then_some(paddr);
+            }
+
+            // Low RAM boundary.
+            if paddr <= LOW_RAM_END {
+                return Some(paddr);
+            }
+
+            // High RAM boundary.
+            let high_len = ram_bytes.saturating_sub(LOW_RAM_END);
+            let high_end = HIGH_RAM_START.saturating_add(high_len);
+            if paddr >= HIGH_RAM_START && paddr <= high_end {
+                return Some(LOW_RAM_END + (paddr - HIGH_RAM_START));
+            }
+
+            return None;
         }
 
         if ram_bytes <= LOW_RAM_END {
@@ -73,11 +90,15 @@ mod guest_phys {
         #[test]
         fn translate_guest_paddr_range_identity_for_small_ram() {
             let ram = 0x2000;
+            assert_eq!(translate_guest_paddr_range(ram, 0, 0), Some(0));
             assert_eq!(translate_guest_paddr_range(ram, 0, 1), Some(0));
             assert_eq!(translate_guest_paddr_range(ram, 0x1234, 4), Some(0x1234));
             assert_eq!(translate_guest_paddr_range(ram, ram - 1, 1), Some(ram - 1));
             assert_eq!(translate_guest_paddr_range(ram, ram, 1), None);
             assert_eq!(translate_guest_paddr_range(ram, ram - 1, 2), None);
+            // Empty slice at end is OK.
+            assert_eq!(translate_guest_paddr_range(ram, ram, 0), Some(ram));
+            assert_eq!(translate_guest_paddr_range(ram, ram + 1, 0), None);
         }
 
         #[test]
@@ -95,6 +116,13 @@ mod guest_phys {
                 translate_guest_paddr_range(ram, HIGH_RAM_START - 4, 4),
                 None
             );
+            // Empty slice at the low/high boundary is OK.
+            assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END, 0), Some(LOW_RAM_END));
+            assert_eq!(
+                translate_guest_paddr_range(ram, HIGH_RAM_START, 0),
+                Some(LOW_RAM_END)
+            );
+            assert_eq!(translate_guest_paddr_range(ram, HIGH_RAM_START - 1, 0), None);
             // High RAM remaps above 4GiB.
             assert_eq!(
                 translate_guest_paddr_range(ram, HIGH_RAM_START, 4),
@@ -103,6 +131,11 @@ mod guest_phys {
             assert_eq!(
                 translate_guest_paddr_range(ram, HIGH_RAM_START + 0x1FFC, 4),
                 Some(LOW_RAM_END + 0x1FFC)
+            );
+            // Empty slice at the end of high RAM is OK.
+            assert_eq!(
+                translate_guest_paddr_range(ram, HIGH_RAM_START + 0x2000, 0),
+                Some(ram)
             );
             // Cross-region rejected (low -> hole).
             assert_eq!(translate_guest_paddr_range(ram, LOW_RAM_END - 2, 4), None);
