@@ -1,6 +1,9 @@
+use std::io;
+
 use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices_storage::ata::AtaDrive;
-use aero_devices_storage::pci_ide::PRIMARY_PORTS;
+use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_pc_platform::PcPlatform;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
@@ -14,14 +17,12 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(0xCFC, 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.write(0xCFC, 2, u32::from(value));
 }
 
@@ -47,26 +48,11 @@ fn pc_platform_enumerates_ide_and_preserves_legacy_bar_bases() {
     assert_ne!(command & 0x1, 0, "BIOS POST should enable I/O decoding");
 
     // IDE PCI config space should expose legacy compatible BAR assignments.
-    assert_eq!(
-        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 0),
-        0x1F0
-    );
-    assert_eq!(
-        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 1),
-        0x3F4
-    );
-    assert_eq!(
-        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 2),
-        0x170
-    );
-    assert_eq!(
-        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 3),
-        0x374
-    );
-    assert_eq!(
-        read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4),
-        0xC000
-    );
+    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 0), 0x1F0);
+    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 1), 0x3F4);
+    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 2), 0x170);
+    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 3), 0x374);
+    assert_eq!(read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4), 0xC000);
 }
 
 #[test]
@@ -187,4 +173,216 @@ fn pc_platform_ide_dma_and_irq14_routing_work() {
     let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[derive(Debug)]
+struct MemIso {
+    sector_count: u32,
+    data: Vec<u8>,
+}
+
+impl MemIso {
+    fn new(sectors: u32) -> Self {
+        Self {
+            sector_count: sectors,
+            data: vec![0u8; sectors as usize * 2048],
+        }
+    }
+}
+
+impl IsoBackend for MemIso {
+    fn sector_count(&self) -> u32 {
+        self.sector_count
+    }
+
+    fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()> {
+        if !buf.len().is_multiple_of(2048) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unaligned buffer length",
+            ));
+        }
+        let start = lba as usize * 2048;
+        let end = start
+            .checked_add(buf.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "overflow"))?;
+        if end > self.data.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "OOB"));
+        }
+        buf.copy_from_slice(&self.data[start..end]);
+        Ok(())
+    }
+}
+
+fn send_atapi_packet(pc: &mut PcPlatform, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
+    pc.io.write(base + 1, 1, features as u32);
+    pc.io.write(base + 4, 1, (byte_count & 0xFF) as u32);
+    pc.io.write(base + 5, 1, (byte_count >> 8) as u32);
+    pc.io.write(base + 7, 1, 0xA0); // PACKET
+    for i in 0..6 {
+        let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
+        pc.io.write(base, 2, w as u32);
+    }
+}
+
+#[test]
+fn pc_platform_enumerates_piix3_ide_at_canonical_bdf_and_atapi_works_on_secondary_master() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+
+    // Confirm the PCI function exists at the canonical BDF.
+    let bdf = IDE_PIIX3.bdf;
+    let id = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x00);
+    assert_eq!(id & 0xffff, u32::from(IDE_PIIX3.vendor_id));
+    assert_eq!((id >> 16) & 0xffff, u32::from(IDE_PIIX3.device_id));
+
+    // Attach an ISO-backed CD-ROM as "secondary master" (canonical Win7 install media slot).
+    let mut iso = MemIso::new(2);
+    iso.data[2048..2053].copy_from_slice(b"WORLD");
+    pc.ide
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .controller
+        .attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+
+    // Select master on secondary channel.
+    pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // INQUIRY (alloc 36).
+    let mut inquiry = [0u8; 12];
+    inquiry[0] = 0x12;
+    inquiry[4] = 36;
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &inquiry, 36);
+
+    let mut inq_buf = [0u8; 36];
+    for i in 0..(36 / 2) {
+        let w = pc.io.read(SECONDARY_PORTS.cmd_base, 2) as u16;
+        inq_buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(&inq_buf[8..12], b"AERO");
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = pc.io.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    // READ(10) for LBA=1, blocks=1 (should start with "WORLD").
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&1u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &read10, 2048);
+
+    let mut out = vec![0u8; 2048];
+    for i in 0..(2048 / 2) {
+        let w = pc.io.read(SECONDARY_PORTS.cmd_base, 2) as u16;
+        out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(&out[..5], b"WORLD");
+}
+
+#[test]
+fn pc_platform_ide_atapi_dma_raises_secondary_irq15() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+
+    // Attach ISO with recognizable bytes at sector 0.
+    let mut iso = MemIso::new(1);
+    iso.data[0..8].copy_from_slice(b"DMATEST!");
+    pc.ide
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .controller
+        .attach_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Program PIC offsets and unmask IRQ2 (cascade) + IRQ15 so we can observe the interrupt.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(15, false);
+    }
+
+    // Enable IO decode + Bus Mastering so BMIDE DMA is allowed.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    // Read BAR4 (bus master I/O base).
+    let bar4 = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x20);
+    let bm_base = (bar4 & 0xffff_fffc) as u16;
+    assert_ne!(bm_base, 0, "BAR4 should be programmed by BIOS POST");
+
+    // Select master on secondary channel.
+    pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = pc.io.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    // PRD table and DMA buffer in guest RAM.
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // One PRD entry: 2048 bytes, EOT.
+    pc.memory.write_u32(prd_addr, dma_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, 2048);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+
+    // Program secondary PRD pointer (BMIDE base + 8 + 4).
+    pc.io.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // Start secondary bus master, direction=read (device -> memory).
+    pc.io.write(bm_base + 8, 1, 0x09);
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let mut out = [0u8; 8];
+    pc.memory.read_physical(dma_buf, &mut out);
+    assert_eq!(&out, b"DMATEST!");
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ15 should be pending after ATAPI DMA completes");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 15);
+
+    // ACK+EOI so the PIC isn't left with stale state if this test is extended.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(pending);
+        interrupts.pic_mut().eoi(pending);
+    }
 }
