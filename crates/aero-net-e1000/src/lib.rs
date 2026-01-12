@@ -57,6 +57,16 @@ pub const MAX_TX_OUT_QUEUE: usize = 256;
 /// host runtimes (e.g. browser workers).
 pub const MAX_TX_DESCS_PER_POLL: u32 = 4096;
 
+/// Upper bound on the number of RX/TX descriptors the device model will accept.
+///
+/// This is primarily a robustness limit: in real hardware the ring lengths are bounded, but a
+/// malicious guest (or a corrupted snapshot) could otherwise configure an absurdly large ring and
+/// cause `poll()` to iterate an unbounded number of descriptors.
+///
+/// Keep this value in sync with the snapshot decoder limits in
+/// `aero_io_snapshot::io::net::state::E1000DeviceState`.
+const MAX_RING_DESC_COUNT: u32 = 65_536;
+
 // MMIO register offsets (subset).
 const REG_CTRL: u32 = 0x0000;
 const REG_STATUS: u32 = 0x0008;
@@ -1012,7 +1022,11 @@ impl E1000Device {
         if self.rdlen < desc_len || !self.rdlen.is_multiple_of(desc_len) {
             return None;
         }
-        Some(self.rdlen / desc_len)
+        let count = self.rdlen / desc_len;
+        if count > MAX_RING_DESC_COUNT {
+            return None;
+        }
+        Some(count)
     }
 
     fn tx_ring_desc_count(&self) -> Option<u32> {
@@ -1020,7 +1034,11 @@ impl E1000Device {
         if self.tdlen < desc_len || !self.tdlen.is_multiple_of(desc_len) {
             return None;
         }
-        Some(self.tdlen / desc_len)
+        let count = self.tdlen / desc_len;
+        if count > MAX_RING_DESC_COUNT {
+            return None;
+        }
+        Some(count)
     }
 
     fn rx_desc_base(&self) -> u64 {
@@ -1086,7 +1104,13 @@ impl E1000Device {
                 break;
             }
             let idx = head as u64;
-            let desc_addr = base + idx * RxDesc::LEN as u64;
+            let desc_addr = match idx
+                .checked_mul(RxDesc::LEN as u64)
+                .and_then(|off| base.checked_add(off))
+            {
+                Some(addr) => addr,
+                None => break,
+            };
             let desc_bytes = read_desc::<{ RxDesc::LEN }>(mem, desc_addr);
             let mut desc = RxDesc::from_bytes(desc_bytes);
 
@@ -1184,7 +1208,13 @@ impl E1000Device {
         while head != tail && desc_budget != 0 {
             desc_budget -= 1;
             let idx = head as u64;
-            let desc_addr = base + idx * TxDesc::LEN as u64;
+            let desc_addr = match idx
+                .checked_mul(TxDesc::LEN as u64)
+                .and_then(|off| base.checked_add(off))
+            {
+                Some(addr) => addr,
+                None => break,
+            };
             let mut desc_bytes = read_desc::<{ TxDesc::LEN }>(mem, desc_addr);
 
             let Some(desc) = TxDescriptor::parse(desc_bytes) else {
@@ -2048,6 +2078,73 @@ mod tests {
         dev.poll(&mut mem);
 
         assert_eq!(dev.mmio_read_u32(REG_TDH), dev.tdt % 4);
+    }
+
+    #[test]
+    fn tx_desc_address_overflow_does_not_panic_or_dma() {
+        // Regression test: descriptor address calculations must not panic on u64 overflow, and the
+        // device model must not wrap around and DMA at an unintended low address.
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+        let mut panic_mem = PanicMem;
+
+        // 2 descriptors, so RDH=1 is valid. Choose a base such that base + 1*16 overflows.
+        dev.tdbah = 0xFFFF_FFFF;
+        dev.tdbal = 0xFFFF_FFF8;
+        dev.tdlen = (TxDesc::LEN as u32) * 2;
+        dev.tdh = 1;
+        dev.tdt = 0;
+        dev.tctl = TCTL_EN;
+
+        dev.poll(&mut panic_mem);
+    }
+
+    #[test]
+    fn rx_desc_address_overflow_does_not_panic_or_dma() {
+        // Same as `tx_desc_address_overflow_does_not_panic_or_dma`, but for RX descriptor reads.
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+        let mut panic_mem = PanicMem;
+
+        dev.rdbah = 0xFFFF_FFFF;
+        dev.rdbal = 0xFFFF_FFF8;
+        dev.rdlen = (RxDesc::LEN as u32) * 2;
+        dev.rdh = 1;
+        dev.rdt = 0;
+        dev.rctl = RCTL_EN;
+
+        dev.enqueue_rx_frame(vec![0x22u8; MIN_L2_FRAME_LEN]);
+
+        dev.poll(&mut panic_mem);
+    }
+
+    #[test]
+    fn tx_rejects_excessive_ring_len_without_dma() {
+        // If the guest configures an absurdly large descriptor ring, the model should reject it
+        // and avoid attempting a pathological amount of DMA/descriptor iteration.
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+        let mut panic_mem = PanicMem;
+
+        dev.mmio_write_u32_reg(REG_TDLEN, (MAX_RING_DESC_COUNT + 1) * (TxDesc::LEN as u32));
+        dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
+        dev.mmio_write_u32_reg(REG_TDT, 1); // doorbell
+
+        dev.poll(&mut panic_mem);
+    }
+
+    #[test]
+    fn rx_rejects_excessive_ring_len_without_dma() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+        let mut panic_mem = PanicMem;
+
+        dev.enqueue_rx_frame(vec![0x22u8; MIN_L2_FRAME_LEN]);
+        dev.mmio_write_u32_reg(REG_RDLEN, (MAX_RING_DESC_COUNT + 1) * (RxDesc::LEN as u32));
+        dev.mmio_write_u32_reg(REG_RDT, 1);
+        dev.mmio_write_u32_reg(REG_RCTL, RCTL_EN);
+
+        dev.poll(&mut panic_mem);
     }
 
     #[test]
