@@ -174,6 +174,110 @@ fn pc_platform_gates_ahci_mmio_on_pci_command_register() {
 }
 
 #[test]
+fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Unmask IRQ2 (cascade) and IRQ12 so we can observe INTx via the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(12, false);
+    }
+
+    // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
+    let bar5_base: u64 = 0xE100_0000;
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+
+    // Enable memory decoding but keep bus mastering disabled.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    // Program HBA + port 0 registers.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.memory.write_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // Issue IDENTIFY DMA.
+    write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut pc, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    // Ensure the buffer starts cleared so we can detect whether DMA ran.
+    pc.memory.write_u32(identify_buf, 0);
+
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+    pc.process_ahci();
+    pc.poll_pci_intx_lines();
+
+    assert_eq!(
+        pc.memory.read_u8(identify_buf),
+        0,
+        "AHCI DMA should be gated off when PCI bus mastering is disabled"
+    );
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Now enable bus mastering and re-run processing; the pending command should complete.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    pc.process_ahci();
+    pc.poll_pci_intx_lines();
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ12 should be pending after IDENTIFY DMA completion");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 12);
+
+    // Consume and EOI the interrupt so subsequent assertions about pending vectors are not
+    // affected by the edge-triggered PIC latching semantics.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(pending);
+        interrupts.pic_mut().eoi(pending);
+    }
+
+    let mut identify = [0u8; SECTOR_SIZE];
+    pc.memory.read_physical(identify_buf, &mut identify);
+    assert_eq!(identify[0], 0x40);
+
+    // Clear the interrupt and ensure it deasserts.
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
 fn pc_platform_routes_ahci_mmio_after_bar5_reprogramming() {
     let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
     let bdf = SATA_AHCI_ICH9.bdf;
