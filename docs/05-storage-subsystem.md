@@ -47,7 +47,7 @@ This topology is treated as part of the platform ABI: drift should be caught by 
 │  └─────────────────────────────────────────────────────────┘    │
 │       │                                                          │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Storage Port Driver (AHCI: storahci.sys)                │    │
+│  │  Storage miniport (AHCI: msahci.sys on Win7)             │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │       │                                                          │
 └───────┼─────────────────────────────────────────────────────────┘
