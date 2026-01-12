@@ -72,7 +72,7 @@ This topology is treated as part of the platform ABI: drift should be caught by 
 │       │                                                          │
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐    │
 │  │  OPFS Backend  │  │IndexedDB Cache │  │  Remote API    │    │
-│  │  (large files) │  │ (hot sectors)  │  │  (streaming)   │    │
+│  │  (large files) │  │ (async cache)  │  │  (streaming)   │    │
 │  └────────────────┘  └────────────────┘  └────────────────┘    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
