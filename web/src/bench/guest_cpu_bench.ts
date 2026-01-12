@@ -369,7 +369,14 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
         });
       }
 
-      while (measuredRuns < 1 || totalSeconds < secondsBudget) {
+      // Use wall-clock time for the measurement budget rather than summing per-run durations.
+      //
+      // Some environments can quantize `performance.now()` such that very fast runs appear to take
+      // `0ms`, which would otherwise cause `totalSeconds` to never increase and the loop to never
+      // terminate.
+      const measuredStartMs = nowMs();
+      const budgetMs = secondsBudget * 1000;
+      while (measuredRuns < 1 || nowMs() - measuredStartMs < budgetMs) {
         const { seconds, insts, checksum } = runOnce();
         checkChecksumOrThrow({ variant: opts.variant, mode: opts.mode, expected: expectedChecksum, observed: checksum });
         observedChecksum = checksum;
@@ -379,6 +386,12 @@ export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCp
 
         const safeSeconds = seconds > 0 ? seconds : 1e-9;
         runMips.push((insts / safeSeconds) / 1e6);
+      }
+      // If per-run timing was too coarse (e.g. rounded to zero), fall back to the wall-clock time
+      // so summary metrics remain finite and roughly correct.
+      const wallSeconds = (nowMs() - measuredStartMs) / 1000;
+      if (wallSeconds > totalSeconds) {
+        totalSeconds = wallSeconds;
       }
     } else {
       const reference = runOnce();
