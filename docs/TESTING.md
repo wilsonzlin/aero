@@ -210,7 +210,11 @@ cargo test --locked -p <crate-name> -- --ignored
 
 Some integration tests boot guest media **headlessly under QEMU** to validate early boot flows and enable deterministic framebuffer/serial checkpoints.
 
-These tests are defined under the workspace root `tests/` directory, but are registered as `[[test]]` targets in the `emulator` crate.
+These tests are defined under the workspace root `tests/` directory (e.g. `tests/boot_sector.rs`,
+`tests/freedos_boot.rs`, `tests/windows7_boot.rs`, and `tests/boot/basic_boot.rs`), but are
+registered as `[[test]]` targets in `crates/emulator/Cargo.toml` (paths like
+`../../tests/boot_sector.rs`). This is why you run them via the `emulator` crate (`-p emulator`),
+not the workspace root package (`-p aero`).
 
 ### Prerequisites
 
@@ -229,11 +233,11 @@ bash ./scripts/build-bootsector.sh
 bash ./scripts/prepare-freedos.sh
 
 # Run the QEMU boot tests.
-cargo test --locked -p emulator --test boot_sector --test freedos_boot
+cargo test -p emulator --test boot_sector --test freedos_boot --locked
 
 # In constrained/contended sandboxes (agents/CI-like), prefer safe-run.sh (timeout + memory limit).
 # The first run can take >10 minutes to compile on a cold checkout.
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test --locked -p emulator --test boot_sector --test freedos_boot
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --test freedos_boot --locked
 ```
 
 ### Windows 7 (local only)
@@ -242,7 +246,7 @@ The Windows boot test is intentionally gated and requires user-supplied media:
 
 ```bash
 bash ./scripts/prepare-windows7.sh
-cargo test --locked -p emulator --test windows7_boot -- --ignored
+cargo test -p emulator --test windows7_boot --locked -- --ignored
 ```
 
 ### Useful environment variables

@@ -355,6 +355,10 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 
 ## Testing
 
+QEMU boot integration tests live under the workspace root `tests/` directory, but are registered
+under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (e.g.
+`path = "../../tests/boot_sector.rs"`). Always run them via `-p emulator` (not `-p aero`).
+
 ```bash
 # Run BIOS tests
 bash ./scripts/safe-run.sh cargo test -p firmware --locked
