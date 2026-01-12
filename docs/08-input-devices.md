@@ -760,10 +760,11 @@ Current implementation details:
   - See: `web/src/usb/uhci_external_hub.ts`, `web/src/workers/io.worker.ts`
 - Browser input capture emits both PS/2 scancodes and HID usage events so the runtime can drive
   multiple backends from the same captured stream.
-- The I/O worker dynamically selects an input backend:
-  - Prefer **virtio-input** when the guest driver is `driver_ok`
-  - Else prefer the synthetic **USB HID** devices once the guest configures them
-  - Else fall back to legacy **PS/2 i8042** injection during early boot
+- The I/O worker dynamically selects an input backend (and avoids switching while keys/buttons
+  are held down to prevent stuck input states):
+  - **Keyboard:** virtio-input (when `driver_ok`) → synthetic USB keyboard (once configured) → PS/2 i8042
+  - **Mouse:** virtio-input (when `driver_ok`) → PS/2 i8042 (preferred) → (USB fallback only if PS/2 is unavailable)
+  - **Gamepad:** synthetic USB gamepad (no virtio/PS/2 fallback)
 
 For USB HID **gamepad** details (including the composite HID topology and the exact
 gamepad report descriptor + byte layout), see
