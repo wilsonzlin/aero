@@ -69,7 +69,6 @@ use pci_firmware::SharedPciConfigPortsBiosAdapter;
 
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
-const SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS: usize = 1024 * 1024;
 const NS_PER_SEC: u128 = 1_000_000_000;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 
@@ -624,11 +623,6 @@ pub struct Machine {
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
 
-    // Temporary storage used during snapshot restore: `restore_device_states` decodes
-    // CPU_INTERNAL but `post_restore` resets `cpu.pending` to a baseline default before
-    // applying this machine-defined state back on top.
-    restored_cpu_internal: Option<snapshot::CpuInternalState>,
-
     /// Remainder used when converting CPU cycles (TSC ticks) into nanoseconds for deterministic
     /// platform device ticking.
     ///
@@ -672,7 +666,6 @@ impl Machine {
             ps2_mouse_buttons: 0,
             next_snapshot_id: 1,
             last_snapshot_id: None,
-            restored_cpu_internal: None,
             tsc_ns_remainder: 0,
         };
 
@@ -1153,7 +1146,6 @@ impl Machine {
         }
         self.serial_log.clear();
         self.reset_latch.clear();
-        self.restored_cpu_internal = None;
 
         let expected_parent_snapshot_id = self.last_snapshot_id;
         snapshot::restore_snapshot_with_options(
@@ -1873,19 +1865,12 @@ impl snapshot::SnapshotSource for Machine {
                 .external_interrupts
                 .iter()
                 .copied()
-                .take(SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS)
                 .collect(),
         };
         devices.push(
             cpu_internal
                 .to_device_state()
-                .unwrap_or_else(|_| snapshot::DeviceState {
-                    id: snapshot::DeviceId::CPU_INTERNAL,
-                    version: snapshot::CpuInternalState::VERSION,
-                    flags: 0,
-                    // `CpuInternalState::encode` for a default/empty state.
-                    data: vec![0, 0, 0, 0, 0],
-                }),
+                .expect("CpuInternalState::to_device_state should be infallible"),
         );
         devices
     }
@@ -1934,8 +1919,6 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn restore_cpu_state(&mut self, state: snapshot::CpuState) {
-        // Clear any stale restore-only state before applying new snapshot sections.
-        self.restored_cpu_internal = None;
         snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
     }
 
@@ -1947,8 +1930,9 @@ impl snapshot::SnapshotTarget for Machine {
     fn restore_device_states(&mut self, states: Vec<snapshot::DeviceState>) {
         use std::collections::HashMap;
 
-        // Clear any stale restore-only state before applying new snapshot sections.
-        self.restored_cpu_internal = None;
+        // Reset pending CPU bookkeeping to a deterministic baseline, so restores from older
+        // snapshots (that lack `CPU_INTERNAL`) still clear stale pending state.
+        self.cpu.pending = Default::default();
 
         // Restore ordering must be explicit and independent of snapshot file ordering so device
         // state is deterministic (especially for interrupt lines and PCI INTx routing).
@@ -2182,10 +2166,16 @@ impl snapshot::SnapshotTarget for Machine {
         // the router snapshot.
         self.sync_pci_intx_sources_to_interrupts();
 
-        // CPU_INTERNAL: machine-defined CPU bookkeeping (applied in `post_restore`).
+        // CPU_INTERNAL: machine-defined CPU bookkeeping (interrupt shadow + external interrupt FIFO).
         if let Some(state) = by_id.remove(&snapshot::DeviceId::CPU_INTERNAL) {
-            if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
-                self.restored_cpu_internal = Some(decoded);
+            if state.version == snapshot::CpuInternalState::VERSION {
+                if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
+                    self.cpu
+                        .pending
+                        .set_interrupt_inhibit(decoded.interrupt_inhibit);
+                    self.cpu.pending.external_interrupts =
+                        decoded.pending_external_interrupts.into_iter().collect();
+                }
             }
         }
     }
@@ -2227,17 +2217,6 @@ impl snapshot::SnapshotTarget for Machine {
         self.ps2_mouse_buttons = 0xFF;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
-        self.mmu = aero_mmu::Mmu::new();
-        // Reset non-architectural interrupt bookkeeping to a deterministic baseline. If the
-        // snapshot contains a CPU_INTERNAL device entry, apply its fields back on top.
-        let cpu_internal = self.restored_cpu_internal.take();
-        self.cpu.pending = Default::default();
-        if let Some(cpu_internal) = cpu_internal {
-            self.cpu
-                .pending
-                .set_interrupt_inhibit(cpu_internal.interrupt_inhibit);
-            self.cpu.pending.external_interrupts = cpu_internal.pending_external_interrupts.into();
-        }
         // Snapshots restore RAM and paging control registers, but do not capture the MMU's internal
         // translation cache (TLB). Since `Machine` keeps a persistent MMU to warm the TLB across
         // batches, reset it here so restored execution never uses stale translations.
@@ -3665,7 +3644,6 @@ mod tests {
             "CPU should wake from HLT once PCI INTx is delivered"
         );
     }
-
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn machine_e1000_tx_ring_requires_bus_master_and_transmits_to_ring_backend() {
@@ -3772,5 +3750,30 @@ mod tests {
 
         m.poll_network();
         assert_eq!(tx_ring.try_pop(), Ok(frame));
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_cpu_internal_state() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        src.cpu.pending.inhibit_interrupts_for_one_instruction();
+        src.cpu.pending.inject_external_interrupt(0x20);
+        src.cpu.pending.inject_external_interrupt(0x21);
+        src.cpu.pending.inject_external_interrupt(0x22);
+
+        let expected_inhibit = src.cpu.pending.interrupt_inhibit();
+        let expected_external = src.cpu.pending.external_interrupts.clone();
+
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        assert_eq!(restored.cpu.pending.interrupt_inhibit(), expected_inhibit);
+        assert_eq!(restored.cpu.pending.external_interrupts, expected_external);
     }
 }
