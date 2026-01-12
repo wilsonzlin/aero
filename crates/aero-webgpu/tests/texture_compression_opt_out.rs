@@ -2,6 +2,8 @@ use aero_webgpu::WebGpuContext;
 
 mod common;
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct EnvVarGuard {
     key: &'static str,
     prev: Option<std::ffi::OsString>,
@@ -30,6 +32,7 @@ impl Drop for EnvVarGuard {
 // that support them.
 #[test]
 fn texture_compression_opt_out_disables_caps() {
+    let _lock = ENV_LOCK.lock().unwrap();
     // Env vars are process-global, so use a guard to ensure we restore any pre-existing value.
     let _guard = EnvVarGuard::set("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION", "1");
 
@@ -77,4 +80,3 @@ fn texture_compression_opt_out_disables_caps() {
         }
     });
 }
-
