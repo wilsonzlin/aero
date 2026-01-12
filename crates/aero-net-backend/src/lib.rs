@@ -118,13 +118,13 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for std::rc::Rc<std::cell::RefCe
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for std::sync::Mutex<T> {
     fn transmit(&mut self, frame: Vec<u8>) {
-        self.lock()
+        self.get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .transmit(frame);
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
-        self.lock()
+        self.get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .poll_receive()
     }

@@ -1242,7 +1242,7 @@ mod tests {
         );
         assert_eq!(
             backend.tx_log.as_slice(),
-            [discover_frame.clone()],
+            std::slice::from_ref(&discover_frame),
             "backend should have received exactly the DHCPDISCOVER TX frame"
         );
         assert!(
