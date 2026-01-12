@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { IrqSink } from "../device_manager";
 import { I8042Controller } from "./i8042";
 
+function drainAllOutputBytes(dev: I8042Controller): number[] {
+  const out: number[] = [];
+  while ((dev.portRead(0x0064, 1) & 0x01) !== 0) {
+    out.push(dev.portRead(0x0060, 1));
+  }
+  return out;
+}
+
 describe("io/devices/I8042Controller", () => {
   it("pulses IRQ1 once per keyboard byte when interrupts are enabled", () => {
     const irqEvents: string[] = [];
@@ -363,6 +371,45 @@ describe("io/devices/I8042Controller", () => {
 
     expect(irqSink.raiseIrq).toHaveBeenCalledWith(1);
     expect(irqSink.raiseIrq).not.toHaveBeenCalledWith(12);
+  });
+
+  it("translates PrintScreen Set-2 scancode sequences to Set-1 multi-byte sequences", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    // PrintScreen make: E0 12 E0 7C -> E0 2A E0 37.
+    dev.injectKeyboardBytes(new Uint8Array([0xe0, 0x12, 0xe0, 0x7c]));
+    expect(drainAllOutputBytes(dev)).toEqual([0xe0, 0x2a, 0xe0, 0x37]);
+
+    // PrintScreen break: E0 F0 7C E0 F0 12 -> E0 B7 E0 AA.
+    dev.injectKeyboardBytes(new Uint8Array([0xe0, 0xf0, 0x7c, 0xe0, 0xf0, 0x12]));
+    expect(drainAllOutputBytes(dev)).toEqual([0xe0, 0xb7, 0xe0, 0xaa]);
+  });
+
+  it("translates Pause Set-2 scancode sequence to Set-1 make-only sequence", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    // Pause make: E1 14 77 E1 F0 14 F0 77 -> E1 1D 45 E1 9D C5.
+    dev.injectKeyboardBytes(new Uint8Array([0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77]));
+    expect(drainAllOutputBytes(dev)).toEqual([0xe1, 0x1d, 0x45, 0xe1, 0x9d, 0xc5]);
+  });
+
+  it("translates extended and numpad keys consistently with the Rust i8042 model", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    // MetaLeft make/break.
+    dev.injectKeyboardBytes(new Uint8Array([0xe0, 0x1f]));
+    expect(drainAllOutputBytes(dev)).toEqual([0xe0, 0x5b]);
+    dev.injectKeyboardBytes(new Uint8Array([0xe0, 0xf0, 0x1f]));
+    expect(drainAllOutputBytes(dev)).toEqual([0xe0, 0xdb]);
+
+    // Numpad7 make/break (no E0 prefix).
+    dev.injectKeyboardBytes(new Uint8Array([0x6c]));
+    expect(drainAllOutputBytes(dev)).toEqual([0x47]);
+    dev.injectKeyboardBytes(new Uint8Array([0xf0, 0x6c]));
+    expect(drainAllOutputBytes(dev)).toEqual([0xc7]);
   });
 
   it("produces PS/2 mouse packets with AUX_OBF set and gates IRQ12 via the command byte", () => {
