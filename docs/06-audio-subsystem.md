@@ -103,6 +103,7 @@ Guest-visible devices are registered on the IO worker PCI bus:
 - Bus/device plumbing: `web/src/io/device_manager.ts`, `web/src/io/bus/pci.ts`, `web/src/io/bus/mmio.ts`
 - Worker wiring: `web/src/workers/io.worker.ts` (calls `DeviceManager.registerPciDevice(...)`)
   - HDA PCI function wrapper: `web/src/io/devices/hda.ts` (`HdaPciDevice`, backed by `HdaControllerBridge`).
+    - Registration entrypoint: `maybeInitHdaDevice()` in `web/src/workers/io.worker.ts`.
   - See `web/src/io/devices/uhci.ts` for a concrete example of a WASM-backed PCI device wrapper (PIO + IRQ + tick scheduling).
 
 ### Ring producer/consumer constraints (SPSC)
