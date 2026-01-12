@@ -271,8 +271,10 @@ impl SparseFileChunkStore {
     }
 
     fn chunk_range(&self, chunk_index: u64) -> (u64, u64) {
-        let start = chunk_index * self.chunk_size;
-        let end = (start + self.chunk_size).min(self.total_size);
+        let Some(start) = chunk_index.checked_mul(self.chunk_size) else {
+            return (self.total_size, self.total_size);
+        };
+        let end = start.saturating_add(self.chunk_size).min(self.total_size);
         (start, end)
     }
 }
@@ -368,8 +370,10 @@ impl DirectoryChunkStore {
     }
 
     fn chunk_range(&self, chunk_index: u64) -> (u64, u64) {
-        let start = chunk_index * self.chunk_size;
-        let end = (start + self.chunk_size).min(self.total_size);
+        let Some(start) = chunk_index.checked_mul(self.chunk_size) else {
+            return (self.total_size, self.total_size);
+        };
+        let end = start.saturating_add(self.chunk_size).min(self.total_size);
         (start, end)
     }
 }
@@ -830,11 +834,15 @@ impl StreamingDisk {
     fn spawn_prefetch(&self, start_chunk: u64, count: u64, token: CancellationToken) {
         let disk = self.clone();
         tokio::spawn(async move {
+            let chunk_size = disk.inner.options.chunk_size;
             for chunk in start_chunk..start_chunk.saturating_add(count) {
                 if token.is_cancelled() {
                     break;
                 }
-                if chunk * disk.inner.options.chunk_size >= disk.inner.total_size {
+                let Some(chunk_start) = chunk.checked_mul(chunk_size) else {
+                    break;
+                };
+                if chunk_start >= disk.inner.total_size {
                     break;
                 }
                 let _ = disk.ensure_chunk_cached(chunk, &token).await;
@@ -848,9 +856,11 @@ impl StreamingDisk {
             None => {
                 // Metadata says the chunk is present but the data is missing/corrupt.
                 // Heal by dropping the chunk from the downloaded set and re-fetching.
-                let chunk_start = chunk_index * self.inner.options.chunk_size;
-                let chunk_end =
-                    (chunk_start + self.inner.options.chunk_size).min(self.inner.total_size);
+                let chunk_size = self.inner.options.chunk_size;
+                let chunk_start = chunk_index.checked_mul(chunk_size).ok_or_else(|| {
+                    StreamingDiskError::Protocol("chunk offset overflow".to_string())
+                })?;
+                let chunk_end = chunk_start.saturating_add(chunk_size).min(self.inner.total_size);
                 {
                     let mut state = self.inner.state.lock().await;
                     state.downloaded.remove(chunk_start, chunk_end);
@@ -872,11 +882,14 @@ impl StreamingDisk {
         token: &CancellationToken,
     ) -> Result<(), StreamingDiskError> {
         let chunk_size = self.inner.options.chunk_size;
-        let chunk_start = chunk_index * chunk_size;
+        let Some(chunk_start) = chunk_index.checked_mul(chunk_size) else {
+            // Treat overflow as out-of-range; there is nothing to fetch.
+            return Ok(());
+        };
         if chunk_start >= self.inner.total_size {
             return Ok(());
         }
-        let chunk_end = (chunk_start + chunk_size).min(self.inner.total_size);
+        let chunk_end = chunk_start.saturating_add(chunk_size).min(self.inner.total_size);
 
         {
             let state = self.inner.state.lock().await;
