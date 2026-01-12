@@ -477,6 +477,209 @@ fn restore_snapshot_rejects_duplicate_apic_ids_in_cpus_section() {
 }
 
 #[test]
+fn restore_snapshot_rejects_duplicate_meta_sections() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut meta_payload = Vec::new();
+    SnapshotMeta::default().encode(&mut meta_payload).unwrap();
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate META section")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_cpu_sections() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate CPU/CPUS section")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_mmu_sections() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let mut mmu_payload = Vec::new();
+    MmuState::default().encode_v2(&mut mmu_payload).unwrap();
+    push_section(&mut bytes, SectionId::MMU, 2, 0, &mmu_payload);
+    push_section(&mut bytes, SectionId::MMU, 2, 0, &mmu_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate MMU section")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_devices_sections() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let devices_payload = 0u32.to_le_bytes();
+    push_section(&mut bytes, SectionId::DEVICES, 1, 0, &devices_payload);
+    push_section(&mut bytes, SectionId::DEVICES, 1, 0, &devices_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate DEVICES section")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_disks_sections() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let mut disks_payload = Vec::new();
+    DiskOverlayRefs::default()
+        .encode(&mut disks_payload)
+        .unwrap();
+    push_section(&mut bytes, SectionId::DISKS, 1, 0, &disks_payload);
+    push_section(&mut bytes, SectionId::DISKS, 1, 0, &disks_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate DISKS section")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_duplicate_ram_sections() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+    push_section(&mut bytes, SectionId::RAM, 1, 0, &ram_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("duplicate RAM section")
+    ));
+}
+
+#[test]
 fn restore_snapshot_rejects_truncated_unknown_section_payload() {
     let options = SaveOptions {
         ram: RamWriteOptions {

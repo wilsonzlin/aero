@@ -344,6 +344,11 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
 
     let mut meta: Option<SnapshotMeta> = None;
 
+    let mut seen_meta_section = false;
+    let mut seen_mmu_section = false;
+    let mut seen_devices_section = false;
+    let mut seen_disks_section = false;
+
     let mut seen_cpu = false;
     let mut seen_ram = false;
 
@@ -356,6 +361,10 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
         match header.id {
             id if id == SectionId::META => {
                 if header.version == 1 {
+                    if seen_meta_section {
+                        return Err(SnapshotError::Corrupt("duplicate META section"));
+                    }
+                    seen_meta_section = true;
                     let decoded = SnapshotMeta::decode(&mut section_reader)?;
                     meta = Some(decoded.clone());
                     target.restore_meta(decoded);
@@ -363,6 +372,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             }
             id if id == SectionId::CPU => {
                 if header.version == 1 {
+                    if seen_cpu {
+                        return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
+                    }
                     let cpu = CpuState::decode_v1(&mut section_reader)?;
                     target.restore_cpu_states(vec![VcpuSnapshot {
                         apic_id: 0,
@@ -371,6 +383,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     }])?;
                     seen_cpu = true;
                 } else if header.version >= 2 {
+                    if seen_cpu {
+                        return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
+                    }
                     let cpu = CpuState::decode_v2(&mut section_reader)?;
                     target.restore_cpu_states(vec![VcpuSnapshot {
                         apic_id: 0,
@@ -382,6 +397,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             }
             id if id == SectionId::CPUS => {
                 if header.version == 1 {
+                    if seen_cpu {
+                        return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
+                    }
                     let count = section_reader.read_u32_le()? as usize;
                     let mut cpus = Vec::with_capacity(count.min(64));
                     let mut seen = HashSet::with_capacity(count.min(64));
@@ -399,6 +417,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     target.restore_cpu_states(cpus)?;
                     seen_cpu = true;
                 } else if header.version >= 2 {
+                    if seen_cpu {
+                        return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
+                    }
                     let count = section_reader.read_u32_le()? as usize;
                     let mut cpus = Vec::with_capacity(count.min(64));
                     let mut seen = HashSet::with_capacity(count.min(64));
@@ -419,15 +440,27 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             }
             id if id == SectionId::MMU => {
                 if header.version == 1 {
+                    if seen_mmu_section {
+                        return Err(SnapshotError::Corrupt("duplicate MMU section"));
+                    }
+                    seen_mmu_section = true;
                     let mmu = MmuState::decode_v1(&mut section_reader)?;
                     target.restore_mmu_state(mmu);
                 } else if header.version >= 2 {
+                    if seen_mmu_section {
+                        return Err(SnapshotError::Corrupt("duplicate MMU section"));
+                    }
+                    seen_mmu_section = true;
                     let mmu = MmuState::decode_v2(&mut section_reader)?;
                     target.restore_mmu_state(mmu);
                 }
             }
             id if id == SectionId::DEVICES => {
                 if header.version == 1 {
+                    if seen_devices_section {
+                        return Err(SnapshotError::Corrupt("duplicate DEVICES section"));
+                    }
+                    seen_devices_section = true;
                     let count = section_reader.read_u32_le()? as usize;
                     if count > MAX_DEVICE_COUNT {
                         return Err(SnapshotError::Corrupt("too many devices"));
@@ -447,6 +480,10 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             }
             id if id == SectionId::DISKS => {
                 if header.version == 1 {
+                    if seen_disks_section {
+                        return Err(SnapshotError::Corrupt("duplicate DISKS section"));
+                    }
+                    seen_disks_section = true;
                     let disks = DiskOverlayRefs::decode(&mut section_reader)?;
                     let mut seen = HashSet::with_capacity(disks.disks.len().min(64));
                     for disk in &disks.disks {
@@ -459,6 +496,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             }
             id if id == SectionId::RAM => {
                 if header.version == 1 {
+                    if seen_ram {
+                        return Err(SnapshotError::Corrupt("duplicate RAM section"));
+                    }
                     let expected_len = target.ram_len() as u64;
 
                     // Read the fixed-size RAM header so we can validate the dirty-parent contract
