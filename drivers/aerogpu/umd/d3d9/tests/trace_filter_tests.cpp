@@ -38,6 +38,10 @@ int main() {
   aerogpu::d3d9_trace_on_process_detach();
 
   const std::string output = slurp_file_after_closing_stderr(out_path);
+  if (output.find("dump reason=DLL_PROCESS_DETACH") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected dump reason DLL_PROCESS_DETACH (log=%s)\n", out_path.c_str());
+    return 1;
+  }
   if (output.find("Device::ValidateDevice") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected output to contain Device::ValidateDevice (log=%s)\n", out_path.c_str());
     return 1;
