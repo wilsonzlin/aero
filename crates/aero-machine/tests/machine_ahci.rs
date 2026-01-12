@@ -398,7 +398,10 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
         cfg_addr(bdf.bus, bdf.device, bdf.function, 0x00),
     );
     let id = m.io_read(PCI_CFG_DATA_PORT, 4);
-    assert_eq!(id, 0x2922_8086);
+    assert_eq!(
+        id,
+        (u32::from(SATA_AHCI_ICH9.device_id) << 16) | u32::from(SATA_AHCI_ICH9.vendor_id)
+    );
 
     // Interrupt Line should match the active PCI INTx router configuration.
     let expected_gsi = {
