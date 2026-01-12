@@ -320,7 +320,7 @@ impl UhciControllerBridge {
     pub fn io_read(&mut self, offset: u16, size: u8) -> u32 {
         let size = validate_port_size(size);
         if size == 0 {
-            return 0xFFFF_FFFF;
+            return 0;
         }
         self.ctrl.io_read(offset, size)
     }

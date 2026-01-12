@@ -238,7 +238,7 @@ impl E1000Bridge {
     pub fn mmio_read(&mut self, offset: u32, size: u32) -> u32 {
         let size = validate_io_size(size);
         if size == 0 {
-            return 0xFFFF_FFFF;
+            return 0;
         }
         let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
         if end > E1000_MMIO_SIZE {
@@ -262,7 +262,7 @@ impl E1000Bridge {
     pub fn io_read(&mut self, offset: u32, size: u32) -> u32 {
         let size = validate_io_size(size);
         if size == 0 {
-            return 0xFFFF_FFFF;
+            return 0;
         }
         let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
         if end > E1000_IO_SIZE {

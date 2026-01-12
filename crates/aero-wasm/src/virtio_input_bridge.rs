@@ -147,7 +147,7 @@ impl VirtioInputPciDeviceCore {
     pub fn mmio_read(&mut self, offset: u64, size: u8) -> u32 {
         let size = validate_mmio_size(size);
         if size == 0 {
-            return 0xFFFF_FFFF;
+            return 0;
         }
 
         let mut buf = [0u8; 4];
@@ -712,6 +712,7 @@ mod remap_tests {
     use super::wasm_guest_memory::WasmGuestMemory;
 
     use aero_virtio::memory::GuestMemory;
+    use super::{VirtioInputDeviceKind, VirtioInputPciDeviceCore};
 
     #[test]
     fn virtio_wasm_guest_memory_maps_high_ram_above_4gib() {
@@ -728,5 +729,11 @@ mod remap_tests {
         let slice = mem.get_slice(0x1_0000_0000, 4).expect("high RAM slice");
         assert_eq!(slice, &[0x11, 0x22, 0x33, 0x44]);
         assert_eq!(slice.as_ptr(), high.as_ptr());
+    }
+
+    #[test]
+    fn mmio_read_size0_is_noop() {
+        let mut dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
+        assert_eq!(dev.mmio_read(0, 0), 0);
     }
 }

@@ -488,7 +488,7 @@ impl VirtioSndPciBridge {
     pub fn mmio_read(&mut self, offset: u32, size: u8) -> u32 {
         let size = validate_mmio_size(size);
         if size == 0 {
-            return 0xFFFF_FFFF;
+            return 0;
         }
 
         let mut buf = [0u8; 4];
