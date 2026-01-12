@@ -752,7 +752,7 @@ impl AeroGpuSoftwareExecutor {
 
         fn div_ceil_u32(n: u32, d: u32) -> u32 {
             debug_assert!(d != 0);
-            (n + d - 1) / d
+            n.div_ceil(d)
         }
 
         let mut total_size_bytes: u64 = 0;
