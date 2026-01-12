@@ -82,6 +82,28 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
       bufferLevelFrames: typeof out?.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : null,
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
       overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
+      maxAbsSample: (() => {
+        if (!out?.ringBuffer?.samples || !out?.ringBuffer?.header) return null;
+        const samples: Float32Array = out.ringBuffer.samples;
+        const header: Uint32Array = out.ringBuffer.header;
+        const cc = out.ringBuffer.channelCount | 0;
+        const cap = out.ringBuffer.capacityFrames | 0;
+        if (cc <= 0 || cap <= 0) return null;
+        const write = Atomics.load(header, 1) >>> 0;
+        const framesToInspect = Math.min(1024, cap);
+        const startFrame = (write - framesToInspect) >>> 0;
+        let maxAbs = 0;
+        for (let i = 0; i < framesToInspect; i++) {
+          const frame = (startFrame + i) % cap;
+          const base = frame * cc;
+          for (let c = 0; c < cc; c++) {
+            const s = samples[base + c] ?? 0;
+            const a = Math.abs(s);
+            if (a > maxAbs) maxAbs = a;
+          }
+        }
+        return maxAbs;
+      })(),
     };
   });
 
@@ -94,4 +116,7 @@ test("AudioWorklet output runs and receives frames from IO-worker HDA PCI/MMIO d
   // Startup is still subject to scheduler variance in CI; allow up to one render quantum worth of underrun.
   expect(result.underruns).toBeLessThanOrEqual(128);
   expect(result.overruns).toBe(0);
+  // Confirm we are not just advancing indices with silence.
+  expect(result.maxAbsSample).not.toBeNull();
+  expect(result.maxAbsSample as number).toBeGreaterThan(0.01);
 });
