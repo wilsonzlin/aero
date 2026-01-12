@@ -71,6 +71,8 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 - [`docs/16-virtio-drivers-win7.md`](../docs/16-virtio-drivers-win7.md) — Virtio driver plumbing notes (transport/virtqueues)
 - [`drivers/README.md`](../drivers/README.md) — What CI actually ships (artifact names, release workflow, Guest Tools media)
 - [`docs/virtio-windows-drivers.md`](../docs/virtio-windows-drivers.md) — Virtio driver packaging options (in-tree vs virtio-win)
+- [`docs/virtio-input.md`](../docs/virtio-input.md) — virtio-input device model notes (keyboard/mouse) + contract mapping
+- [`docs/virtio-snd.md`](../docs/virtio-snd.md) — virtio-snd device model notes + contract mapping (incl. transitional ID notes)
 - [`docs/windows7-guest-tools.md`](../docs/windows7-guest-tools.md) — End-to-end Win7 install + switch to virtio + AeroGPU
 - [`docs/windows7-driver-troubleshooting.md`](../docs/windows7-driver-troubleshooting.md) — Debugging tips
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — AeroGPU VGA compat
