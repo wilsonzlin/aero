@@ -70,6 +70,10 @@ export class InputCapture {
   private readonly queue: InputEventQueue;
   private readonly pointerLock: PointerLock;
   private readonly pressedCodes = new Set<string>();
+  // Host-only keys that were intentionally swallowed (e.g. pointer lock release chord) and whose
+  // corresponding keyup should also be swallowed to avoid delivering a stray "break" event to the
+  // guest.
+  private readonly suppressedKeyUps = new Set<string>();
   private readonly gamepad: GamepadCapture | null;
   private readonly gamepadPollIntervalMs: number;
   private gamepadLastPollMs = 0;
@@ -144,6 +148,7 @@ export class InputCapture {
   private readonly handleBlur = (): void => {
     this.hasFocus = false;
     this.pointerLock.exit();
+    this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
@@ -155,6 +160,7 @@ export class InputCapture {
   private readonly handleWindowBlur = (): void => {
     this.windowFocused = false;
     this.pointerLock.exit();
+    this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
@@ -172,6 +178,7 @@ export class InputCapture {
     }
 
     this.pointerLock.exit();
+    this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
@@ -186,6 +193,7 @@ export class InputCapture {
     if (this.pointerLock.isLocked && this.releaseChord && chordMatches(event, this.releaseChord)) {
       event.preventDefault();
       event.stopPropagation();
+      this.suppressedKeyUps.add(event.code);
       this.pointerLock.exit();
       return;
     }
@@ -222,6 +230,13 @@ export class InputCapture {
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
     if (!this.isCapturingKeyboard()) {
+      return;
+    }
+
+    if (this.suppressedKeyUps.delete(event.code)) {
+      // Swallow the matching keyup for a host-only chord so the guest does not observe a stray break.
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
 
@@ -418,6 +433,7 @@ export class InputCapture {
     }
 
     this.hasFocus = false;
+    this.suppressedKeyUps.clear();
 
     window.clearInterval(this.flushTimer);
     this.flushTimer = null;

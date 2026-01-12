@@ -61,9 +61,11 @@ describe("InputCapture wheel handling", () => {
       const ev = { deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 5 } as unknown as WheelEvent;
       (capture as any).handleWheel(ev);
       expect((capture as any).queue.size).toBe(1);
-      expect(stopPropagation).toHaveBeenCalledTimes(5);
 
       capture.flushNow();
+
+      expect(preventDefault).toHaveBeenCalledTimes(5);
+      expect(stopPropagation).toHaveBeenCalledTimes(5);
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
@@ -98,11 +100,25 @@ describe("InputCapture wheel handling", () => {
       const stopPropagation = vi.fn();
       // 150px + 50px = 200px => 2 wheel "clicks" (100px/click). Old behavior would floor each event and
       // lose the final 0.5 click.
-      (capture as any).handleWheel({ deltaY: 150, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 1 } as unknown as WheelEvent);
-      (capture as any).handleWheel({ deltaY: 50, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 2 } as unknown as WheelEvent);
-      expect(stopPropagation).toHaveBeenCalledTimes(2);
+      (capture as any).handleWheel({
+        deltaY: 150,
+        deltaMode: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 1,
+      } as unknown as WheelEvent);
+      (capture as any).handleWheel({
+        deltaY: 50,
+        deltaMode: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 2,
+      } as unknown as WheelEvent);
 
       capture.flushNow();
+
+      expect(preventDefault).toHaveBeenCalledTimes(2);
+      expect(stopPropagation).toHaveBeenCalledTimes(2);
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
