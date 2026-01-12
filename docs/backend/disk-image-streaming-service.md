@@ -336,6 +336,11 @@ Example:
 filesystem-derived validators, allowing stable caching for immutable/versioned images even if file
 mtimes change during copy/restore.
 
+Notes:
+
+- `etag` must be a valid HTTP **entity-tag**, including quotes (e.g. `"v1"` or `W/"v1"`).
+- `last_modified` must be an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`).
+
 If no manifest is present, the server may fall back to a stable directory listing (development
 only).
 
