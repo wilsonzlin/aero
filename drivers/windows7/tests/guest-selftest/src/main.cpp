@@ -2900,6 +2900,8 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
     return false;
   }
 
+  const bool status_ok = status >= 200 && status < 300;
+
   DWORD content_len = 0;
   DWORD content_len_size = sizeof(content_len);
   bool has_content_len = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
@@ -2929,10 +2931,10 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
              content_type.empty() ? "-" : WideToUtf8(content_type).c_str(),
              etag.empty() ? "-" : WideToUtf8(etag).c_str());
   }
-  if (!content_type.empty() && !StartsWithInsensitive(content_type, L"application/octet-stream")) {
+  if (status_ok && !content_type.empty() && !StartsWithInsensitive(content_type, L"application/octet-stream")) {
     log.Logf("virtio-net: HTTP GET large unexpected Content-Type: %s", WideToUtf8(content_type).c_str());
   }
-  if (!etag.empty()) {
+  if (status_ok && !etag.empty()) {
     // Best-effort: accept weak ETags and quoted values. Only used for logging/hints; the
     // pass/fail criteria remains size+hash.
     std::wstring e = etag;
