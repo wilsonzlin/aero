@@ -346,6 +346,8 @@ Backward compatibility:
 - Older snapshots may store `PciIntxRouter` (`INTX`) directly under `DeviceId::PCI` (`5`) instead of `DeviceId::PCI_INTX_ROUTER` (`15`).
 
 Restore code should accept these legacy layouts, but new snapshots should prefer the split-out `PCI_CFG` + `PCI_INTX_ROUTER` entries.
+If both legacy `DeviceId::PCI` (`5`) entries and split-out `PCI_CFG`/`PCI_INTX_ROUTER` entries are present in the same snapshot, restore
+implementations should prefer the split-out entries.
 
 Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the platform interrupt controller complex** (typically the `DeviceId::PLATFORM_INTERRUPTS` snapshot in Aero’s machine model, or the historical `DeviceId::APIC` id in older snapshots) to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
 
