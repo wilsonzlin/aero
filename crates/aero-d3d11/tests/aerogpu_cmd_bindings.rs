@@ -5712,9 +5712,9 @@ fn aerogpu_cmd_set_shader_constants_f_between_draws_preserves_order_with_prior_e
 
         let translate_x_10: [f32; 16] = [
             1.0, 0.0, 0.0, 10.0, //
-            0.0, 1.0, 0.0, 0.0,  //
-            0.0, 0.0, 1.0, 0.0,  //
-            0.0, 0.0, 0.0, 1.0,  //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0, //
         ];
         let identity: [f32; 16] = [
             1.0, 0.0, 0.0, 0.0, //
@@ -5795,10 +5795,7 @@ fn aerogpu_cmd_set_shader_constants_f_between_draws_preserves_order_with_prior_e
         stream.extend_from_slice(&(ilay.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&ilay);
-        stream.resize(
-            stream.len() + (align4(ilay.len()) - ilay.len()),
-            0,
-        );
+        stream.resize(stream.len() + (align4(ilay.len()) - ilay.len()), 0);
         end_cmd(&mut stream, start);
 
         // SET_RENDER_TARGETS
