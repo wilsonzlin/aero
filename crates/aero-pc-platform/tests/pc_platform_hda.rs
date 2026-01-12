@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::HDA_ICH6;
+use aero_devices::pci::profile::{HDA_ICH6, SATA_AHCI_ICH9};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
@@ -27,6 +27,12 @@ fn read_hda_bar0_base(pc: &mut PcPlatform) -> u64 {
     let bdf = HDA_ICH6.bdf;
     let bar0 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10);
     u64::from(bar0 & 0xffff_fff0)
+}
+
+fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, 0x10 + 5 * 4);
+    u64::from(bar5 & 0xffff_fff0)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -122,6 +128,33 @@ fn pc_platform_routes_hda_mmio_through_bar0() {
     // PhysicalMemoryBus issues MMIO reads in chunks up to 8 bytes; ensure the HDA MMIO mapping
     // handles 64-bit reads by splitting into supported access sizes.
     assert_eq!(pc.memory.read_u64(bar0_base + 0x08), 0x0001_0000_0000_0001);
+}
+
+#[test]
+fn pc_platform_routes_multiple_pci_mmio_bars() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_hda: true,
+            enable_ahci: true,
+            ..Default::default()
+        },
+    );
+
+    let hda_bar0_base = read_hda_bar0_base(&mut pc);
+    let ahci_bar5_base = read_ahci_bar5_base(&mut pc);
+    assert_ne!(hda_bar0_base, 0);
+    assert_ne!(ahci_bar5_base, 0);
+    assert_ne!(hda_bar0_base, ahci_bar5_base);
+
+    // HDA: bring controller out of reset (GCTL.CRST).
+    pc.memory.write_u32(hda_bar0_base + 0x08, 1);
+    assert_ne!(pc.memory.read_u32(hda_bar0_base + 0x08) & 1, 0);
+
+    // AHCI: CAP should be readable (not an unmapped all-ones region), and GHC should latch AE.
+    assert_ne!(pc.memory.read_u32(ahci_bar5_base + 0x00), 0xffff_ffff);
+    pc.memory.write_u32(ahci_bar5_base + 0x04, 1 << 31);
+    assert_ne!(pc.memory.read_u32(ahci_bar5_base + 0x04) & (1 << 31), 0);
 }
 
 #[test]
