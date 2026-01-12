@@ -83,13 +83,34 @@ export function tryInitVirtioNetDevice(opts: {
 
     // Some builds may expose legacy IO methods even when the underlying transport is modern-only.
     // Detect whether legacy I/O is actually enabled via a basic HOST_FEATURES probe.
+    //
+    // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
+    // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
+    const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    let ok = false;
     try {
-      const probe = (read.call(bridge, 0, 4) as number) >>> 0;
-      if (probe === 0xffff_ffff) {
-        bridge.free();
-        return null;
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0001);
+        } catch {
+          // ignore
+        }
       }
+      const probe = (read.call(bridge, 0, 4) as number) >>> 0;
+      ok = probe !== 0xffff_ffff;
     } catch {
+      ok = false;
+    } finally {
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0000);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!ok) {
       try {
         bridge.free();
       } catch {

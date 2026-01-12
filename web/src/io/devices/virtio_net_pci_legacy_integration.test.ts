@@ -122,17 +122,34 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     }
 
     // Probe HOST_FEATURES. Some builds may expose the methods but still be modern-only.
+    //
+    // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
+    // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
+    const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    let probeOk = false;
     try {
-      const probe = (legacyRead.call(bridge, 0, 4) as number) >>> 0;
-      if (probe === 0xffff_ffff) {
+      if (setCmd) {
         try {
-          bridgeAny.free?.();
+          setCmd.call(bridge, 0x0001);
         } catch {
           // ignore
         }
-        return;
       }
+      const probe = (legacyRead.call(bridge, 0, 4) as number) >>> 0;
+      probeOk = probe !== 0xffff_ffff;
     } catch {
+      probeOk = false;
+    } finally {
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0000);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!probeOk) {
       try {
         bridgeAny.free?.();
       } catch {

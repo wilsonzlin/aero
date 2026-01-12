@@ -92,6 +92,7 @@ export function tryInitVirtioSndDevice(opts: {
     // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
     // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
     const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    let ok = false;
     try {
       if (setCmd) {
         try {
@@ -101,17 +102,9 @@ export function tryInitVirtioSndDevice(opts: {
         }
       }
       const probe = (read.call(bridge, 0, 4) as number) >>> 0;
-      if (probe === 0xffff_ffff) {
-        bridge.free();
-        return null;
-      }
+      ok = probe !== 0xffff_ffff;
     } catch {
-      try {
-        bridge.free();
-      } catch {
-        // ignore
-      }
-      return null;
+      ok = false;
     } finally {
       if (setCmd) {
         try {
@@ -120,6 +113,15 @@ export function tryInitVirtioSndDevice(opts: {
           // ignore
         }
       }
+    }
+
+    if (!ok) {
+      try {
+        bridge.free();
+      } catch {
+        // ignore
+      }
+      return null;
     }
   }
 

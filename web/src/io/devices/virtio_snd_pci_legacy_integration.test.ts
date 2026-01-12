@@ -110,13 +110,34 @@ describe("io/devices/virtio-snd (legacy virtio-pci I/O integration)", () => {
 
     // Detect whether legacy I/O is actually enabled (modern-only devices may still expose the
     // methods but return open-bus reads).
+    //
+    // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
+    // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
+    const setCmd = typeof bridge.set_pci_command === "function" ? bridge.set_pci_command : null;
+    let probeOk = false;
     try {
-      const probe = (legacyRead.call(bridge, 0, 4) as number) >>> 0;
-      if (probe === 0xffff_ffff) {
-        bridge.free?.();
-        return;
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0001);
+        } catch {
+          // ignore
+        }
       }
+      const probe = (legacyRead.call(bridge, 0, 4) as number) >>> 0;
+      probeOk = probe !== 0xffff_ffff;
     } catch {
+      probeOk = false;
+    } finally {
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0000);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!probeOk) {
       try {
         bridge.free?.();
       } catch {
@@ -315,4 +336,3 @@ describe("io/devices/virtio-snd (legacy virtio-pci I/O integration)", () => {
     }
   });
 });
-

@@ -65,18 +65,36 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
     }
     // Newer builds may expose `io_read`/`io_write` even for modern-only devices; detect whether the
     // legacy register block is actually enabled.
+    //
+    // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
+    // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
+    const bridgeAny = bridge as any;
+    const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    let probeOk = false;
     try {
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0001);
+        } catch {
+          // ignore
+        }
+      }
       const probe = legacyRead.call(bridge, 0, 4) >>> 0;
-      if (probe === 0xffff_ffff) {
-        bridge.free();
-        return;
-      }
+      probeOk = probe !== 0xffff_ffff;
     } catch {
-      try {
-        bridge.free();
-      } catch {
-        // ignore
+      probeOk = false;
+    } finally {
+      if (setCmd) {
+        try {
+          setCmd.call(bridge, 0x0000);
+        } catch {
+          // ignore
+        }
       }
+    }
+
+    if (!probeOk) {
+      bridge.free();
       return;
     }
 
