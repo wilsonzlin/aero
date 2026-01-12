@@ -577,6 +577,49 @@ test("convertToAeroSparse: rejects dynamic VHD with absurd BAT size", async () =
   );
 });
 
+test("convertToAeroSparse: rejects dynamic VHD with huge block_size", async () => {
+  const footerSize = 512;
+  const dynHeaderOffset = 512;
+  const dynHeaderSize = 1024;
+  const batOffset = 1536;
+
+  const blockSize = 128 * 1024 * 1024; // > 64 MiB cap
+  const logicalSize = blockSize;
+  const maxTableEntries = 1;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  writeU64BE(footer, 16, BigInt(dynHeaderOffset)); // data offset
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 3); // disk type dynamic
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const dyn = new Uint8Array(dynHeaderSize);
+  dyn.set(new TextEncoder().encode("cxsparse"), 0);
+  writeU64BE(dyn, 8, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(dyn, 16, BigInt(batOffset));
+  writeU32BE(dyn, 24, 0x0001_0000);
+  writeU32BE(dyn, 28, maxTableEntries);
+  writeU32BE(dyn, 32, blockSize);
+  writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
+
+  const fileSize = 512 + 1024 + 512 + 512;
+  const file = new Uint8Array(fileSize);
+  file.set(footer, 0);
+  file.set(dyn, dynHeaderOffset);
+  file.fill(0xff, batOffset, batOffset + 512); // BAT: all unallocated
+  file.set(footer, fileSize - footerSize);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD block_size too large/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: fixed VHD footer copy at offset 0 is ignored", async () => {
   const { file, logical } = buildFixedVhdFixtureWithFooterCopy();
   const src = new MemSource(file);

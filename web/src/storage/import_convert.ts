@@ -553,6 +553,8 @@ const VHD_TYPE_FIXED = 2;
 const VHD_TYPE_DYNAMIC = 3;
 const VHD_BAT_FREE = 0xffff_ffff;
 const VHD_MAX_BAT_BYTES = 128 * 1024 * 1024;
+const VHD_MAX_BLOCK_BYTES = 64 * 1024 * 1024;
+const VHD_MAX_BITMAP_BYTES = 32 * 1024 * 1024;
 
 async function convertVhdToSparse(
   src: RandomAccessSource,
@@ -591,6 +593,7 @@ async function convertVhdToSparse(
   const dyn = await VhdDynamicHeader.read(src, footer.dataOffset);
   if (!Number.isSafeInteger(dyn.blockSize) || dyn.blockSize <= 0) throw new Error("invalid VHD block size");
   assertBlockSize(dyn.blockSize);
+  if (dyn.blockSize > VHD_MAX_BLOCK_BYTES) throw new Error("VHD block_size too large");
 
   const expectedEntries = divCeil(logicalSize, dyn.blockSize);
   if (dyn.maxTableEntries < expectedEntries) throw new Error("VHD max_table_entries too small");
@@ -602,6 +605,7 @@ async function convertVhdToSparse(
   const sectorsPerBlock = dyn.blockSize / 512;
   const bitmapBytes = Math.ceil(sectorsPerBlock / 8);
   const bitmapSize = nextPow2(Math.max(512, bitmapBytes));
+  if (bitmapSize > VHD_MAX_BITMAP_BYTES) throw new Error("VHD bitmap too large");
   const blockTotalSize = bitmapSize + dyn.blockSize;
   if (!Number.isSafeInteger(blockTotalSize) || blockTotalSize <= 0) throw new Error("invalid VHD block size");
   const bitmap = new Uint8Array(bitmapSize);
