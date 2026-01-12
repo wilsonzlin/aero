@@ -186,6 +186,7 @@ pub struct Qcow2Disk<B> {
     header: Qcow2Header,
     l1_table: Vec<u64>,
     refcount_table: Vec<u64>,
+    metadata_clusters: Vec<u64>,
     l2_cache: LruCache<u64, Vec<u64>>,
     refcount_cache: LruCache<u64, Vec<u16>>,
     next_free_offset: u64,
@@ -333,15 +334,20 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             DiskError::InvalidConfig("qcow2 refcount cache size is zero"),
         )?;
 
-        Ok(Self {
+        let mut disk = Self {
             backend,
             header,
             l1_table,
             refcount_table,
+            metadata_clusters: Vec::new(),
             l2_cache: LruCache::new(l2_cache_cap),
             refcount_cache: LruCache::new(refcount_cache_cap),
             next_free_offset,
-        })
+        };
+
+        disk.build_metadata_clusters(file_len)?;
+
+        Ok(disk)
     }
 
     pub fn into_backend(self) -> B {
@@ -366,6 +372,68 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             return Err(DiskError::CorruptImage(ctx));
         }
         Ok(())
+    }
+
+    fn build_metadata_clusters(&mut self, file_len: u64) -> Result<()> {
+        let cluster_size = self.cluster_size();
+
+        let mut clusters = Vec::new();
+
+        for &l1_entry in &self.l1_table {
+            let Some(l2_offset) = self.l2_table_offset_from_l1_entry(l1_entry)? else {
+                continue;
+            };
+            let end = l2_offset
+                .checked_add(cluster_size)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if end > file_len {
+                return Err(DiskError::CorruptImage("qcow2 l2 table truncated"));
+            }
+            clusters.push(l2_offset);
+        }
+
+        for &entry in &self.refcount_table {
+            let Some(block_offset) = self.refcount_block_offset_from_entry(entry)? else {
+                continue;
+            };
+            let end = block_offset
+                .checked_add(cluster_size)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if end > file_len {
+                return Err(DiskError::CorruptImage("qcow2 refcount block truncated"));
+            }
+            clusters.push(block_offset);
+        }
+
+        clusters.sort_unstable();
+        for w in clusters.windows(2) {
+            if w[0] == w[1] {
+                return Err(DiskError::CorruptImage("qcow2 metadata clusters overlap"));
+            }
+        }
+
+        self.metadata_clusters = clusters;
+        Ok(())
+    }
+
+    fn record_metadata_cluster(&mut self, cluster_offset: u64) -> Result<()> {
+        if let Some(last) = self.metadata_clusters.last().copied() {
+            if cluster_offset > last {
+                self.metadata_clusters.push(cluster_offset);
+                return Ok(());
+            }
+        } else {
+            self.metadata_clusters.push(cluster_offset);
+            return Ok(());
+        }
+
+        match self.metadata_clusters.binary_search(&cluster_offset) {
+            Ok(_) => Err(DiskError::CorruptImage("qcow2 metadata clusters overlap")),
+            Err(idx) => {
+                self.metadata_clusters.insert(idx, cluster_offset);
+                Ok(())
+            }
+        }
     }
 
     fn cluster_size(&self) -> u64 {
@@ -446,6 +514,11 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             return Err(DiskError::CorruptImage("qcow2 invalid l2 entry"));
         }
         self.validate_cluster_not_overlapping_metadata(offset)?;
+        if self.metadata_clusters.binary_search(&offset).is_ok() {
+            return Err(DiskError::CorruptImage(
+                "qcow2 data cluster overlaps metadata",
+            ));
+        }
         Ok(Some(offset))
     }
 
@@ -502,6 +575,29 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         }
 
         Ok(())
+    }
+
+    fn refcount_block_offset_from_entry(&self, entry: u64) -> Result<Option<u64>> {
+        if entry == 0 {
+            return Ok(None);
+        }
+        if (entry & QCOW2_OFLAG_COMPRESSED) != 0 {
+            return Err(DiskError::Unsupported("qcow2 compressed refcount block"));
+        }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
+        if (entry & low_mask) != 0 {
+            return Err(DiskError::CorruptImage(
+                "qcow2 unaligned refcount block entry",
+            ));
+        }
+        let offset = self.mask_offset(entry);
+        if offset == 0 {
+            return Err(DiskError::CorruptImage(
+                "qcow2 invalid refcount block entry",
+            ));
+        }
+        self.validate_cluster_not_overlapping_metadata(offset)?;
+        Ok(Some(offset))
     }
 
     fn load_l2_table(&mut self, l2_offset: u64) -> Result<Vec<u64>> {
@@ -580,6 +676,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         let cluster_size = self.cluster_size();
         let new_l2_offset = self.allocate_cluster_raw()?;
         write_zeroes(&mut self.backend, new_l2_offset, cluster_size)?;
+        self.record_metadata_cluster(new_l2_offset)?;
 
         self.set_refcount_for_offset(new_l2_offset, 1)?;
 
@@ -693,30 +790,15 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         }
 
         let existing = self.refcount_table[block_index];
-        if (existing & QCOW2_OFLAG_COMPRESSED) != 0 {
-            return Err(DiskError::Unsupported("qcow2 compressed refcount block"));
-        }
-        let low_mask = (1u64 << self.header.cluster_bits) - 1;
-        if (existing & low_mask) != 0 {
-            return Err(DiskError::CorruptImage(
-                "qcow2 unaligned refcount block entry",
-            ));
-        }
-        let existing_offset = self.mask_offset(existing);
-        if existing_offset != 0 {
-            self.validate_cluster_not_overlapping_metadata(existing_offset)?;
+        if let Some(existing_offset) = self.refcount_block_offset_from_entry(existing)? {
             self.ensure_refcount_block_cached(existing_offset)?;
             return Ok(existing_offset);
-        }
-        if existing != 0 {
-            return Err(DiskError::CorruptImage(
-                "qcow2 invalid refcount block entry",
-            ));
         }
 
         let cluster_size = self.cluster_size();
         let new_block_offset = self.allocate_cluster_raw()?;
         write_zeroes(&mut self.backend, new_block_offset, cluster_size)?;
+        self.record_metadata_cluster(new_block_offset)?;
 
         let entry_offset = self
             .header

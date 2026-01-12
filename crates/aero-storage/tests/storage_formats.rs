@@ -465,10 +465,11 @@ fn qcow2_rejects_l1_entries_pointing_past_eof() {
         .write_at(l1_table_offset, &bad_l1_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(storage).unwrap();
-    let mut buf = vec![0u8; SECTOR];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
-    assert!(matches!(err, DiskError::CorruptImage(_)));
+    let err = Qcow2Disk::open(storage).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 l2 table truncated")
+    ));
 }
 
 #[test]

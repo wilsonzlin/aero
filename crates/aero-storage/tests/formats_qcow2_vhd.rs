@@ -573,9 +573,7 @@ fn qcow2_rejects_l2_table_overlapping_refcount_table() {
         .write_at(l1_table_offset, &bad_l1_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let mut buf = [0u8; SECTOR_SIZE];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 cluster overlaps refcount table")
@@ -604,6 +602,27 @@ fn qcow2_rejects_data_cluster_overlapping_l1_table() {
 }
 
 #[test]
+fn qcow2_rejects_data_cluster_overlapping_refcount_block() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+    let refcount_block_offset = cluster_size * 3;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_l2_entry = refcount_block_offset | QCOW2_OFLAG_COPIED;
+    backend
+        .write_at(l2_table_offset, &bad_l2_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 data cluster overlaps metadata")
+    ));
+}
+
+#[test]
 fn qcow2_rejects_compressed_l1_entry() {
     let cluster_size = 1u64 << 12;
     let l1_table_offset = cluster_size * 2;
@@ -615,10 +634,26 @@ fn qcow2_rejects_compressed_l1_entry() {
         .write_at(l1_table_offset, &l1_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let mut buf = [0u8; SECTOR_SIZE];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(err, DiskError::Unsupported("qcow2 compressed l1")));
+}
+
+#[test]
+fn qcow2_rejects_refcount_block_overlapping_l2_table() {
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+    let l2_table_offset = cluster_size * 4;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    backend
+        .write_at(refcount_table_offset, &l2_table_offset.to_be_bytes())
+        .unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 metadata clusters overlap")
+    ));
 }
 
 #[test]
@@ -654,9 +689,7 @@ fn qcow2_rejects_unaligned_l1_entry() {
         .write_at(l1_table_offset, &bad_l1_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let mut buf = [0u8; SECTOR_SIZE];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 unaligned l1 entry")
@@ -717,9 +750,7 @@ fn qcow2_rejects_unaligned_refcount_block_entry() {
         .write_at(refcount_table_offset, &bad_refcount_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let data = vec![0x11u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &data).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 unaligned refcount block entry")
@@ -738,9 +769,7 @@ fn qcow2_rejects_compressed_refcount_block_entry() {
         .write_at(refcount_table_offset, &bad_refcount_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let data = vec![0x11u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &data).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::Unsupported("qcow2 compressed refcount block")
@@ -758,9 +787,7 @@ fn qcow2_rejects_nonzero_refcount_entry_with_zero_offset() {
         .write_at(refcount_table_offset, &bad_refcount_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let data = vec![0x11u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &data).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 invalid refcount block entry")
@@ -778,9 +805,7 @@ fn qcow2_rejects_refcount_block_overlapping_l1_table() {
         .write_at(refcount_table_offset, &l1_table_offset.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let data = vec![0x11u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &data).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 cluster overlaps l1 table")
@@ -797,9 +822,7 @@ fn qcow2_rejects_refcount_block_overlapping_refcount_table() {
         .write_at(refcount_table_offset, &refcount_table_offset.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open(backend).unwrap();
-    let data = vec![0x11u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &data).unwrap_err();
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("qcow2 cluster overlaps refcount table")
