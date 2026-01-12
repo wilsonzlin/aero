@@ -301,11 +301,19 @@ Several fixed-function/resource state paths are cached for deterministic `Get*` 
 
 - texture stage state (D3DTSS_*)
 - transforms / clip planes / N-patch mode
+- stream source frequency (instancing) / software vertex processing
 - shader int/bool constants
 - lighting/material
 - palettes / clip status / gamma ramp
 - resource priority
 - autogen filter type
+
+These cached values participate in D3D9 state blocks:
+
+- `BeginStateBlock`/`EndStateBlock` records them when the corresponding `Set*` calls are made.
+- `CreateStateBlock` snapshots the current cached values when the state block is created.
+- `CaptureStateBlock` refreshes them from the current device state.
+- `ApplyStateBlock` restores them (updating the UMD-side caches so `Get*` reflects the applied state).
 
 ### Caps/feature gating
 
