@@ -215,3 +215,43 @@ fn virtual_disk_from_emu_disk_backend_supports_unaligned_writes() {
     assert_eq!(disk.0.data()[512], 0x22);
     assert_eq!(disk.0.data()[513], 0xBB);
 }
+
+#[test]
+fn virtual_disk_from_emu_disk_backend_reports_out_of_bounds() {
+    let backend = EmuMemDisk::new(1);
+    let mut disk = VirtualDiskFromEmuDiskBackend(backend);
+
+    let mut buf = [0u8; 1];
+    let err = disk.read_at(512, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_storage::DiskError::OutOfBounds {
+            offset: 512,
+            len: 1,
+            capacity: 512,
+        }
+    ));
+
+    let err = disk.write_at(512, &[0u8; 1]).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_storage::DiskError::OutOfBounds {
+            offset: 512,
+            len: 1,
+            capacity: 512,
+        }
+    ));
+}
+
+#[test]
+fn virtual_disk_from_emu_disk_backend_reports_offset_overflow() {
+    let backend = EmuMemDisk::new(1);
+    let mut disk = VirtualDiskFromEmuDiskBackend(backend);
+
+    let mut buf = [0u8; 1];
+    let err = disk.read_at(u64::MAX, &mut buf).unwrap_err();
+    assert!(matches!(err, aero_storage::DiskError::OffsetOverflow));
+
+    let err = disk.write_at(u64::MAX, &[0u8; 1]).unwrap_err();
+    assert!(matches!(err, aero_storage::DiskError::OffsetOverflow));
+}
