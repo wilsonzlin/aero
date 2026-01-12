@@ -261,12 +261,13 @@ mod wasm {
     async fn get_or_create_directory(
         parent: &FileSystemDirectoryHandle,
         name: &str,
+        create: bool,
     ) -> Result<FileSystemDirectoryHandle, DiskError> {
         let opts = Object::new();
         Reflect::set(
             &opts,
             &JsValue::from_str("create"),
-            &JsValue::from_bool(true),
+            &JsValue::from_bool(create),
         )
         .map_err(disk_error_from_js)?;
         let promise = parent
@@ -312,7 +313,7 @@ mod wasm {
         };
 
         for component in dirs {
-            dir = get_or_create_directory(&dir, component).await?;
+            dir = get_or_create_directory(&dir, component, create).await?;
         }
 
         get_or_create_file(&dir, file_name, create).await
