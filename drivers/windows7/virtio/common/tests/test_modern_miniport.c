@@ -150,6 +150,22 @@ static void test_init_ok(void)
     free(bar0);
 }
 
+static void test_init_invalid_parameters(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    assert(VirtioPciModernMiniportInit(NULL, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256) == STATUS_INVALID_PARAMETER);
+    assert(VirtioPciModernMiniportInit(&dev, NULL, sizeof(bar0), pci_cfg, 256) == STATUS_INVALID_PARAMETER);
+    assert(VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, 0, pci_cfg, 256) == STATUS_INVALID_PARAMETER);
+    assert(VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), NULL, 256) == STATUS_INVALID_PARAMETER);
+    assert(VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 0) == STATUS_INVALID_PARAMETER);
+}
+
 static void test_init_invalid_cfg_too_small_fails(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -452,6 +468,28 @@ static void test_write_driver_features_direct(void)
     assert(sim.driver_features == features);
 
     VirtioPciModernMmioSimUninstall();
+}
+
+static void test_negotiate_features_invalid_parameters(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    uint64_t negotiated;
+    NTSTATUS st;
+
+    memset(&dev, 0, sizeof(dev));
+
+    negotiated = 0x1234ull;
+    st = VirtioPciNegotiateFeatures(NULL, 0, 0, &negotiated);
+    assert(st == STATUS_INVALID_PARAMETER);
+    assert(negotiated == 0);
+
+    negotiated = 0x1234ull;
+    st = VirtioPciNegotiateFeatures(&dev, 0, 0, &negotiated);
+    assert(st == STATUS_INVALID_PARAMETER);
+    assert(negotiated == 0);
+
+    st = VirtioPciNegotiateFeatures(&dev, 0, 0, NULL);
+    assert(st == STATUS_INVALID_PARAMETER);
 }
 
 static void test_negotiate_features_missing_required_fails(void)
@@ -991,6 +1029,37 @@ static void test_read_device_config_invalid_range(void)
     VirtioPciModernMmioSimInstall(&sim);
 
     st = VirtioPciReadDeviceConfig(&dev, TEST_DEVICE_CFG_LEN - 1, buf, 2);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_read_device_config_invalid_parameters(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    uint8_t buf[1];
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciReadDeviceConfig(&dev, 0, NULL, 1);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    st = VirtioPciReadDeviceConfig(NULL, 0, buf, 1);
     assert(st == STATUS_INVALID_PARAMETER);
 
     VirtioPciModernMmioSimUninstall();
@@ -1592,6 +1661,7 @@ static void test_reset_device_clears_after_stall_dispatch_level(void)
 int main(void)
 {
     test_init_ok();
+    test_init_invalid_parameters();
     test_init_invalid_cfg_too_small_fails();
     test_init_invalid_missing_cap_list_fails();
     test_init_invalid_notify_multiplier_zero_fails();
@@ -1607,6 +1677,7 @@ int main(void)
     test_read_device_features();
     test_status_helpers();
     test_write_driver_features_direct();
+    test_negotiate_features_invalid_parameters();
     test_negotiate_features_missing_required_fails();
     test_negotiate_features_requires_version_1();
     test_negotiate_features_version_1_only_succeeds();
@@ -1621,6 +1692,7 @@ int main(void)
     test_read_device_config_success();
     test_read_device_config_generation_retry_succeeds();
     test_read_device_config_invalid_range();
+    test_read_device_config_invalid_parameters();
     test_read_device_config_zero_length_noop();
     test_read_device_config_generation_mismatch_times_out();
     test_get_queue_notify_address_respects_multiplier();
