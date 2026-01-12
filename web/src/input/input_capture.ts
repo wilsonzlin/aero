@@ -257,6 +257,9 @@ export class InputCapture {
       return;
     }
 
+    event.preventDefault();
+    event.stopPropagation();
+
     // Pointer lock movementX/Y are already deltas; scale and preserve fractions.
     this.mouseFracX += event.movementX * this.mouseSensitivity;
     this.mouseFracY += event.movementY * this.mouseSensitivity;

@@ -79,4 +79,33 @@ describe("InputCapture preventDefault policy", () => {
       expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("stops propagation for mousemove events while pointer lock is active", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      // Simulate pointer lock (the mousemove listener is attached to `document`).
+      (capture as any).pointerLock.locked = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      const ev = {
+        movementX: 3,
+        movementY: -2,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 0,
+      } as unknown as MouseEvent;
+      (capture as any).handleMouseMove(ev);
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    });
+  });
 });
