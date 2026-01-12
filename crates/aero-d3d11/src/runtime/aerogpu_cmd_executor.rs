@@ -3771,6 +3771,16 @@ impl AerogpuD3d11Executor {
         if mip_levels == 0 || array_layers == 0 {
             bail!("CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1");
         }
+        // WebGPU validation requires `mip_level_count` to be within the possible chain length for
+        // the given dimensions. Rejecting this up front avoids wgpu validation panics and prevents
+        // pathological mip counts from causing extremely large loops in guest-layout validation.
+        let max_dim = width.max(height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if mip_levels > max_mip_levels {
+            bail!(
+                "CREATE_TEXTURE2D: mip_levels too large for dimensions (width={width}, height={height}, mip_levels={mip_levels}, max_mip_levels={max_mip_levels})"
+            );
+        }
         if let Some(&existing) = self.shared_surfaces.handles.get(&texture_handle) {
             if existing != texture_handle {
                 bail!(

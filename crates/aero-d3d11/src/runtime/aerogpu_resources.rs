@@ -230,6 +230,15 @@ impl AerogpuResourceManager {
         if array_layers == 0 {
             bail!("CreateTexture2d: array_layers must be >= 1");
         }
+        // WebGPU validation requires `mip_level_count` to be within the possible chain length for
+        // the given dimensions.
+        let max_dim = width.max(height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if mip_levels > max_mip_levels {
+            bail!(
+                "CreateTexture2d: mip_levels too large for dimensions (width={width}, height={height}, mip_levels={mip_levels}, max_mip_levels={max_mip_levels})"
+            );
+        }
         if backing_alloc_id != 0 && row_pitch_bytes == 0 {
             bail!("CreateTexture2d: row_pitch_bytes is required for allocation-backed textures");
         }

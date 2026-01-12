@@ -625,6 +625,41 @@ fn d3d9_create_texture2d_rejects_zero_mip_levels() {
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }
+
+#[test]
+fn d3d9_create_texture2d_rejects_mip_levels_beyond_chain_length() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // 4x4 textures only have 3 mip levels (4x4, 2x2, 1x1). Requesting 4 should be rejected
+    // before hitting wgpu validation.
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                   // texture_handle
+        0,                                   // usage_flags
+        AerogpuFormat::R8G8B8A8Unorm as u32, // format
+        4,                                   // width
+        4,                                   // height
+        4,                                   // mip_levels (invalid)
+        1,                                   // array_layers
+        0,                                   // row_pitch_bytes
+        0,                                   // backing_alloc_id
+        0,                                   // backing_offset_bytes
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_TEXTURE2D with too many mips to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("mip_levels too large")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
 #[test]
 fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {

@@ -2534,6 +2534,15 @@ impl AerogpuD3d9Executor {
                         "CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1".into(),
                     ));
                 }
+                // WebGPU validation requires `mip_level_count` to be within the possible chain
+                // length for the given dimensions.
+                let max_dim = width.max(height);
+                let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+                if mip_levels > max_mip_levels {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "CREATE_TEXTURE2D: mip_levels too large for dimensions (width={width}, height={height}, mip_levels={mip_levels}, max_mip_levels={max_mip_levels})"
+                    )));
+                }
                 if aerogpu_format_bc(format_raw).is_some()
                     && (usage_flags
                         & (cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET
