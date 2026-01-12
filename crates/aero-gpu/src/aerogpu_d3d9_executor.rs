@@ -2421,17 +2421,26 @@ impl AerogpuD3d9Executor {
                 let mapped_format = map_aerogpu_format(format_raw)?;
                 let format = match mapped_format {
                     // Allow BC formats to fall back to CPU decompression + RGBA8 uploads when the
-                    // device can't sample BC textures (e.g. wgpu GL/WebGL2 paths).
+                    // device can't sample BC textures (e.g. wgpu GL/WebGL2 paths), or when the
+                    // texture size isn't compatible with wgpu's BC requirements (block-aligned
+                    // width/height).
                     wgpu::TextureFormat::Bc1RgbaUnorm
                     | wgpu::TextureFormat::Bc2RgbaUnorm
                     | wgpu::TextureFormat::Bc3RgbaUnorm
-                    | wgpu::TextureFormat::Bc7RgbaUnorm
-                        if !self
+                    | wgpu::TextureFormat::Bc7RgbaUnorm => {
+                        let bc_supported = self
                             .device
                             .features()
-                            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC) =>
-                    {
-                        wgpu::TextureFormat::Rgba8Unorm
+                            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+                        let block = aerogpu_format_texel_block_info(format_raw)?;
+                        let block_aligned = width.is_multiple_of(block.block_width)
+                            && height.is_multiple_of(block.block_height);
+
+                        if bc_supported && block_aligned {
+                            mapped_format
+                        } else {
+                            wgpu::TextureFormat::Rgba8Unorm
+                        }
                     }
                     other => other,
                 };
