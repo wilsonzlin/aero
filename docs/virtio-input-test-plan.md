@@ -438,6 +438,14 @@ Expected signal:
 - **Pass:** test exits with code `0`.
 - **Fail:** the assertion output will usually point directly at the drift (wrong IDs, wrong cap chain offsets, wrong BAR0 size, etc).
 
+Additionally, to validate the **browser key mapping** used by virtio-input injection (DOM `KeyboardEvent.code` → HID usage → Linux `KEY_*` codes), run:
+
+```bash
+npm -w web run test:unit -- src/io/devices/virtio_input_keymap.test.ts
+```
+
+This is a fast regression check that contract-required keys like **F1..F12**, `NumLock`, and `ScrollLock` map correctly end-to-end.
+
 Use the same “CPU ↔ IO worker” technique used by the existing PCI tests to read config space via PCI config mechanism #1 (ports `0xCF8`/`0xCFC`):
 
 - [`tests/e2e/io_worker_i8042.spec.ts`](../tests/e2e/io_worker_i8042.spec.ts) (see “PCI config + BAR-backed MMIO dispatch”)
