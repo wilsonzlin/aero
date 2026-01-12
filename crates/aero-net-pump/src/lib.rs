@@ -675,6 +675,59 @@ mod tests {
     }
 
     #[test]
+    fn zero_budgets_do_not_call_backend() {
+        #[derive(Default)]
+        struct PanicBackend;
+
+        impl NetworkBackend for PanicBackend {
+            fn transmit(&mut self, _frame: Vec<u8>) {
+                panic!("unexpected transmit with zero budget");
+            }
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                panic!("unexpected poll_receive with zero budget");
+            }
+        }
+
+        let mut mem = TestMem::new(0x80_000);
+        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        nic.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
+
+        // Prepare a TX descriptor so the NIC would have something to publish to its TX queue.
+        configure_tx_ring(&mut nic, 0x1000, 4);
+        let tx_frame = build_test_frame(b"tx");
+        mem.write(0x4000, &tx_frame);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            tx_frame.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        nic.mmio_write_u32_reg(0x3818, 1); // TDT
+
+        // Prepare an RX ring; backend won't be polled due to zero budget.
+        configure_rx_ring(&mut nic, 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+
+        let mut backend = PanicBackend::default();
+        let counts = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 0, 0);
+        assert_eq!(
+            counts,
+            PumpCounts {
+                tx_frames: 0,
+                rx_frames: 0,
+            }
+        );
+
+        // The NIC should still have processed its rings during the initial poll and enqueued the
+        // TX frame into its host-facing TX queue (but we did not drain it due to budget 0).
+        assert_eq!(nic.pop_tx_frame().as_deref(), Some(tx_frame.as_slice()));
+    }
+
+    #[test]
     fn same_poll_backend_response_is_delivered_to_guest() {
         #[derive(Default)]
         struct EchoBackend {
