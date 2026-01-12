@@ -34,6 +34,10 @@ If you are building from source / working on a PR, the GitHub Actions workflow
 > VMM you may need to set `x-pci-revision=0x01` on the virtio devices (and preferably `disable-legacy=on`) for the
 > drivers to bind.
 
+If you are validating **virtio-input** specifically (device model + Win7 driver + web runtime routing), see:
+
+- [`virtio-input-test-plan.md`](./virtio-input-test-plan.md)
+
 ## Contents
 
 - [Prerequisites](#prerequisites)

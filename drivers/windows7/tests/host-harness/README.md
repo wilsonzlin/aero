@@ -1,5 +1,9 @@
 # Host harness (PowerShell) for Win7 virtio selftests
 
+End-to-end virtio-input validation plan (device model + driver + web runtime routing):
+
+- `docs/virtio-input-test-plan.md` (from repo root)
+
 This directory contains the host-side scripts used to run the Windows 7 guest selftests under QEMU and return a deterministic PASS/FAIL exit code.
 
 ## Prerequisites
