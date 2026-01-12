@@ -208,7 +208,10 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     size_t packetBytes = 0;
     NTSTATUS status = WdfRequestRetrieveInputBuffer(Request, sizeof(*packet), (PVOID *)&packet, &packetBytes);
     if (!NT_SUCCESS(status)) {
-        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s input buffer retrieve failed: %!STATUS!\n", name, status);
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*packet), (PVOID *)&packet, &packetBytes);
+    }
+    if (!NT_SUCCESS(status)) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL, "%s transfer packet retrieve failed: %!STATUS!\n", name, status);
         WdfRequestComplete(Request, status);
         return STATUS_SUCCESS;
     }
