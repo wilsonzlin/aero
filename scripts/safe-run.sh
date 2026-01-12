@@ -183,6 +183,13 @@ MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 # takes effect.
 case "${AERO_ISOLATE_CARGO_HOME:-}" in
   "" | 0 | false | FALSE | no | NO | off | OFF)
+    # Convenience: if a per-checkout Cargo home already exists (created by a previous run or by
+    # `scripts/agent-env.sh`), prefer using it automatically as long as the caller hasn't set a
+    # custom `CARGO_HOME`. This avoids surprising a developer who explicitly configured Cargo,
+    # while still reducing global cache lock contention for agent sandboxes.
+    if [[ -z "${CARGO_HOME:-}" ]] && [[ -d "$REPO_ROOT/.cargo-home" ]]; then
+      export CARGO_HOME="$REPO_ROOT/.cargo-home"
+    fi
     ;;
   1 | true | TRUE | yes | YES | on | ON)
     export CARGO_HOME="$REPO_ROOT/.cargo-home"
