@@ -123,8 +123,8 @@ const _: () = {
     assert!(CODE_VERSION_TABLE_LEN_OFFSET == TIER2_CTX_OFFSET + 8);
     assert!(TIER2_CTX_SIZE == 12);
     assert!(JIT_CTX_SIZE == TIER2_CTX_SIZE);
-    assert!(TIER2_CTX_OFFSET % 4 == 0);
-    assert!(TIER2_CTX_SIZE % 4 == 0);
+    assert!(TIER2_CTX_OFFSET.is_multiple_of(4));
+    assert!(TIER2_CTX_SIZE.is_multiple_of(4));
 };
 
 #[cfg(test)]

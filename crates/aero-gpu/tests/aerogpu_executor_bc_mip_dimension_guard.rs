@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 mod common;
 
 use aero_gpu::aerogpu_executor::AeroGpuExecutor;

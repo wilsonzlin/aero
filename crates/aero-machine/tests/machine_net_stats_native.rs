@@ -163,7 +163,10 @@ fn machine_e1000_l2_tunnel_rings_tx_rx_stats_smoke() {
             Err(err) => panic!("unexpected NET_TX fill error: {err:?}"),
         }
     }
-    assert!(filled > 0, "expected NET_TX ring to accept at least one record");
+    assert!(
+        filled > 0,
+        "expected NET_TX ring to accept at least one record"
+    );
 
     // Write a second TX descriptor at index 1 and advance TDT.
     let tx_buf2: u64 = 0x24_000;

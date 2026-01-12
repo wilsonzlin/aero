@@ -37,23 +37,24 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     m.io_write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn write_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
-    m.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     m.io_write(PCI_CFG_DATA_PORT, 4, value);
 }
 
-fn write_cmd_header(
-    m: &mut Machine,
-    clb: u64,
-    slot: usize,
-    ctba: u64,
-    prdtl: u16,
-    write: bool,
-) {
+fn write_cmd_header(m: &mut Machine, clb: u64, slot: usize, ctba: u64, prdtl: u16, write: bool) {
     let cfl = 5u32;
     let w = if write { 1u32 << 6 } else { 0 };
     let flags = cfl | w | ((prdtl as u32) << 16);
@@ -117,9 +118,7 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
     // This config is snapshotted and should be restored before we re-drive INTx.
     let (gsi, expected_vector) = {
         let bdf = profile::SATA_AHCI_ICH9.bdf;
-        let gsi = pci_intx
-            .borrow()
-            .gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
         let gsi_u8 = u8::try_from(gsi).expect("gsi must fit in ISA IRQ range for legacy PIC");
         assert!(
             gsi_u8 < 16,
@@ -189,7 +188,10 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
         0,
         "IDENTIFY DMA did not complete"
     );
-    assert!(ahci.borrow().intx_level(), "AHCI should assert INTx after DMA completion");
+    assert!(
+        ahci.borrow().intx_level(),
+        "AHCI should assert INTx after DMA completion"
+    );
 
     // Ensure we have *not* synchronized PCI INTx levels into the platform interrupts yet. This is
     // the behavior we care about: a machine snapshot can capture the device state while the
@@ -235,4 +237,3 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
         "expected PCI INTx (GSI {gsi}) to deliver vector 0x{expected_vector:02x} after restore"
     );
 }
-

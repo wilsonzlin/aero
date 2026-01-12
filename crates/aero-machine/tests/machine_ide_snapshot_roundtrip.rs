@@ -74,7 +74,7 @@ fn machine_snapshot_roundtrip_preserves_ide_inflight_dma_command_and_allows_resu
     // Program BMIDE and start the engine (direction=to-memory).
     src.io_write(bm_base + 4, 4, prd_addr as u32);
     src.io_write(bm_base + 2, 1, 0x06); // clear error/irq bits (defensive)
-    src.io_write(bm_base + 0, 1, 0x09); // start + direction=to-memory
+    src.io_write(bm_base, 1, 0x09); // start + direction=to-memory
 
     // Issue ATA READ DMA (0xC8) for LBA 0, count 1, primary master.
     src.io_write(0x1F2, 1, 1);
@@ -100,10 +100,15 @@ fn machine_snapshot_roundtrip_preserves_ide_inflight_dma_command_and_allows_resu
     // Host contract: controller restore drops attached disks; reattach after restoring state.
     let mut disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
     disk.write_at(0, &[9, 8, 7, 6]).unwrap();
-    restored.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+    restored
+        .attach_ide_primary_master_disk(Box::new(disk))
+        .unwrap();
 
     let bm_base2 = (read_cfg_u32(&mut restored, bdf, 0x20) & 0xFFFF_FFFC) as u16;
-    assert_eq!(bm_base2, bm_base, "BMIDE BAR4 base should survive snapshot/restore");
+    assert_eq!(
+        bm_base2, bm_base,
+        "BMIDE BAR4 base should survive snapshot/restore"
+    );
 
     // Resume IDE processing and verify the DMA completes.
     restored.process_ide();

@@ -3938,10 +3938,7 @@ impl Machine {
                         // `MemoryBus` before we program the VGA device's VBE enable bits, so those
                         // MMIO writes may have been ignored. If the guest did not set the VBE "no
                         // clear" bit, perform an efficient host-side clear after enabling the mode.
-                        if ax_before == 0x4F02
-                            && ax_after == 0x004F
-                            && (bx_before & 0x8000) == 0
-                        {
+                        if ax_before == 0x4F02 && ax_after == 0x004F && (bx_before & 0x8000) == 0 {
                             let bytes_per_pixel = (bpp as usize).div_ceil(8);
                             let clear_len = (width as usize)
                                 .saturating_mul(height as usize)
@@ -5139,7 +5136,7 @@ mod tests {
 
         let dev = Rc::new(RefCell::new(VirtioPciDevice::new(
             Box::new(DummyVirtioDevice),
-            Box::new(NoopVirtioInterruptSink::default()),
+            Box::new(NoopVirtioInterruptSink),
         )));
 
         let mut mmio = VirtioPciBar0Mmio::new(dev);
@@ -7472,10 +7469,8 @@ mod tests {
         // BIOS POST enables A20; force it off so we exercise the A20-aliasing path.
         m.chipset.a20().set_enabled(false);
 
-        let inner = aero_cpu_core::PagingBus::new_with_io(
-            &mut m.mem,
-            StrictIoPortBus { io: &mut m.io },
-        );
+        let inner =
+            aero_cpu_core::PagingBus::new_with_io(&mut m.mem, StrictIoPortBus { io: &mut m.io });
         let mut bus = MachineCpuBus {
             a20: m.chipset.a20(),
             inner,

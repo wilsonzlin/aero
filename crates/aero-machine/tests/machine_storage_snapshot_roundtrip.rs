@@ -512,8 +512,13 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
         // Mask off the low flag bits (MMIO BAR).
         let bdf = profile::SATA_AHCI_ICH9.bdf;
         u64::from(
-            read_cfg_u32(&mut src, bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET)
-                & 0xFFFF_FFF0,
+            read_cfg_u32(
+                &mut src,
+                bdf.bus,
+                bdf.device,
+                bdf.function,
+                AHCI_ABAR_CFG_OFFSET,
+            ) & 0xFFFF_FFF0,
         )
     };
     assert!(ahci_abar != 0, "AHCI BAR5 must be programmed");

@@ -4479,15 +4479,25 @@ mod tests {
 
         let unorm_bytes =
             AeroGpuSoftwareExecutor::encode_color_f32_as_u8(AeroGpuFormat::R8G8B8A8Unorm, sampled);
-        assert!((unorm_bytes[0] as i32 - 55).abs() <= 1, "r={}", unorm_bytes[0]);
+        assert!(
+            (unorm_bytes[0] as i32 - 55).abs() <= 1,
+            "r={}",
+            unorm_bytes[0]
+        );
         assert!(unorm_bytes[1] <= 1, "g={}", unorm_bytes[1]);
         assert!(unorm_bytes[2] <= 1, "b={}", unorm_bytes[2]);
         assert_eq!(unorm_bytes[3], 255);
 
         // If we re-encode the sampled value to sRGB, we should recover the original ~0x80.
-        let srgb_bytes =
-            AeroGpuSoftwareExecutor::encode_color_f32_as_u8(AeroGpuFormat::R8G8B8A8UnormSrgb, sampled);
-        assert!((srgb_bytes[0] as i32 - 128).abs() <= 1, "r={}", srgb_bytes[0]);
+        let srgb_bytes = AeroGpuSoftwareExecutor::encode_color_f32_as_u8(
+            AeroGpuFormat::R8G8B8A8UnormSrgb,
+            sampled,
+        );
+        assert!(
+            (srgb_bytes[0] as i32 - 128).abs() <= 1,
+            "r={}",
+            srgb_bytes[0]
+        );
         assert_eq!(srgb_bytes[1], 0);
         assert_eq!(srgb_bytes[2], 0);
         assert_eq!(srgb_bytes[3], 255);

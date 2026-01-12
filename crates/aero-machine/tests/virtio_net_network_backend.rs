@@ -235,7 +235,10 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
     m.write_physical_u16(tx_notify_addr, 1);
     m.poll_network();
 
-    assert!(state.borrow().tx.is_empty(), "TX should be gated while BME=0");
+    assert!(
+        state.borrow().tx.is_empty(),
+        "TX should be gated while BME=0"
+    );
     assert_eq!(m.read_physical_u16(tx_used + 2), 0);
 
     // Enable PCI Bus Mastering so the device is allowed to DMA.

@@ -873,11 +873,13 @@ fn run_bc_texture_guest_backed_upload_and_sample(
         // The guest-backed texture should remain BC-compressed in the native path, so RGBA8
         // readback must be rejected.
         match sample_readback {
-            Err(AerogpuD3d9Error::ReadbackUnsupported(handle)) => assert_eq!(handle, SAMPLE_TEX_HANDLE),
+            Err(AerogpuD3d9Error::ReadbackUnsupported(handle)) => {
+                assert_eq!(handle, SAMPLE_TEX_HANDLE)
+            }
             Err(other) => panic!("expected ReadbackUnsupported, got {other:?}"),
-            Ok((w, h, _)) => panic!(
-                "expected ReadbackUnsupported for BC texture, got Ok({w}x{h}) instead"
-            ),
+            Ok((w, h, _)) => {
+                panic!("expected ReadbackUnsupported for BC texture, got Ok({w}x{h}) instead")
+            }
         }
     }
 }

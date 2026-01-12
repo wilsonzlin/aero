@@ -192,8 +192,7 @@ pub fn normalize_origin(input: &str) -> Option<String> {
     // Require an explicit scheme://host serialization; `url` will happily
     // normalize `https:example.com` to `https://example.com/`, but browsers won't
     // emit those in Origin headers.
-    let (scheme_len, rest) = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("http://")
-    {
+    let (scheme_len, rest) = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("http://") {
         (7usize, &trimmed[7..])
     } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("https://") {
         (8usize, &trimmed[8..])

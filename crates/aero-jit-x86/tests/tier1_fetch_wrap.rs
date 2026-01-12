@@ -34,10 +34,7 @@ fn discover_block_mode_32bit_fetch_wraps_across_4gib_boundary() {
     let block = discover_block_mode(&bus, 0xffff_ffff, BlockLimits::default(), 32);
     assert_eq!(block.entry_rip, 0xffff_ffff);
     assert_eq!(block.insts.len(), 1);
-    assert_eq!(
-        block.insts[0].kind,
-        InstKind::JmpRel { target: 0x1 }
-    );
+    assert_eq!(block.insts[0].kind, InstKind::JmpRel { target: 0x1 });
     assert!(matches!(block.end_kind, BlockEndKind::Jmp));
 }
 
@@ -52,10 +49,6 @@ fn discover_block_mode_16bit_fetch_wraps_across_64k_boundary() {
     let block = discover_block_mode(&bus, 0xffff, BlockLimits::default(), 16);
     assert_eq!(block.entry_rip, 0xffff);
     assert_eq!(block.insts.len(), 1);
-    assert_eq!(
-        block.insts[0].kind,
-        InstKind::JmpRel { target: 0x1 }
-    );
+    assert_eq!(block.insts[0].kind, InstKind::JmpRel { target: 0x1 });
     assert!(matches!(block.end_kind, BlockEndKind::Jmp));
 }
-

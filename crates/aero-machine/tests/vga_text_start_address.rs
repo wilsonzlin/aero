@@ -64,4 +64,3 @@ fn vga_text_mode_crtc_start_address_offsets_rendered_text() {
     };
     assert_eq!(pixel_page1, 0xFFAA_0000);
 }
-

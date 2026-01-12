@@ -22,4 +22,3 @@ fn tier1_compilation_byte_len_excludes_trailing_invalid() {
     assert_eq!(compilation.instruction_count, 1);
     assert_eq!(compilation.byte_len, 1);
 }
-

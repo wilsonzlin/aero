@@ -1385,8 +1385,7 @@ fn pc_platform_uhci_external_hub_delivers_keyboard_report_via_dma() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
