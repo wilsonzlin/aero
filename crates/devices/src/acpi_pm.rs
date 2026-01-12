@@ -486,6 +486,7 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         const TAG_GPE0_EN: u16 = 5;
         const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
         const TAG_SCI_LEVEL: u16 = 7;
+        const TAG_PM_TIMER_TICKS: u16 = 8;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -537,6 +538,20 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
         let now = self.clock.now_ns();
         if let Some(elapsed) = r.u64(TAG_PM_TIMER_ELAPSED_NS)? {
             self.timer_base_ns = now.wrapping_sub(elapsed);
+        } else if let Some(ticks) = r.u32(TAG_PM_TIMER_TICKS)? {
+            // Forward-compatible fallback for snapshots that may omit `TAG_PM_TIMER_ELAPSED_NS`.
+            //
+            // Pick an elapsed-nanoseconds value that yields the desired 24-bit PM_TMR tick count under:
+            //   ticks = elapsed_ns * FREQ / 1e9
+            // (matching the guest-visible PM_TMR register). This cannot preserve the sub-tick
+            // remainder, but it is sufficient to restore the observed counter value.
+            let desired_ticks = (ticks & PM_TIMER_MASK_24BIT) as u128;
+            let numer = desired_ticks.saturating_mul(NS_PER_SEC);
+            let elapsed_ns = numer
+                .saturating_add(PM_TIMER_FREQUENCY_HZ.saturating_sub(1))
+                / PM_TIMER_FREQUENCY_HZ;
+            let elapsed_ns_u64 = elapsed_ns.min(u64::MAX as u128) as u64;
+            self.timer_base_ns = now.wrapping_sub(elapsed_ns_u64);
         }
         self.timer_last_clock_ns = now;
 
