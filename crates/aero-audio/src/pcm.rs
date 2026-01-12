@@ -1327,6 +1327,22 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_ignores_partial_trailing_frame_for_8bit() {
+        // 8-bit stereo => 2 bytes per frame. Provide 1 full frame + 1 extra byte.
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 8,
+            channels: 2,
+        };
+        // ch0=0 -> -1.0, ch1=255 -> 127/128; trailing byte is ignored.
+        let input = [0x00u8, 0xFF, 0x80];
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 1);
+        assert_f32_approx_eq(out[0][0], -1.0, 1e-6);
+        assert_f32_approx_eq(out[0][1], 127.0 / 128.0, 1e-6);
+    }
+
+    #[test]
     fn encode_mono_f32_to_pcm_writes_exact_bytes_for_8bit_unsigned() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
