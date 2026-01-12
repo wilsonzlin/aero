@@ -14,6 +14,12 @@ use crate::binding_model::{
     MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
 };
 
+/// The AeroGPU D3D11 binding model uses stage-scoped bind groups:
+/// - `@group(0)` = vertex shader resources
+/// - `@group(1)` = pixel/fragment shader resources
+/// - `@group(2)` = compute shader resources
+const MAX_BIND_GROUP_INDEX: u32 = 2;
+
 #[derive(Debug, Clone)]
 pub(super) struct PipelineBindingsInfo {
     pub layout_key: PipelineLayoutKey,
@@ -32,6 +38,13 @@ where
     let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
     for shader in shader_bindings {
         for binding in shader {
+            if binding.group > MAX_BIND_GROUP_INDEX {
+                bail!(
+                    "binding @group({}) is out of range for AeroGPU D3D11 binding model (max {})",
+                    binding.group,
+                    MAX_BIND_GROUP_INDEX
+                );
+            }
             let group_map = groups.entry(binding.group).or_default();
             if let Some(existing) = group_map.get_mut(&binding.binding) {
                 if existing.kind != binding.kind {
@@ -505,6 +518,41 @@ mod tests {
             assert!(
                 err.contains("Texture2D") && err.contains("ConstantBuffer"),
                 "expected error to mention both kinds; got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn pipeline_bindings_info_rejects_out_of_range_group() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let bindings = vec![crate::Binding {
+                group: MAX_BIND_GROUP_INDEX + 1,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [bindings.as_slice()],
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("out of range") && err.contains("binding model"),
+                "unexpected error: {err}"
             );
         });
     }
