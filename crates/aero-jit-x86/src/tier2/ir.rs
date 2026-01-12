@@ -103,6 +103,7 @@ pub enum BinOp {
     Xor,
     Shl,
     Shr,
+    Sar,
     Eq,
     LtU,
 }
@@ -225,6 +226,21 @@ pub fn eval_binop(op: BinOp, lhs: u64, rhs: u64) -> (u64, FlagValues) {
         BinOp::Shr => {
             let sh = (rhs & 63) as u32;
             let res = lhs.wrapping_shr(sh);
+            (
+                res,
+                FlagValues {
+                    cf: false,
+                    pf: parity_even(res as u8),
+                    af: false,
+                    zf: res == 0,
+                    sf: (res >> 63) != 0,
+                    of: false,
+                },
+            )
+        }
+        BinOp::Sar => {
+            let sh = (rhs & 63) as u32;
+            let res = ((lhs as i64).wrapping_shr(sh)) as u64;
             (
                 res,
                 FlagValues {

@@ -588,6 +588,64 @@ impl BlockLowerer<'_> {
                     flags: FlagSet::EMPTY,
                 });
             }
+            BinOp::Sar => {
+                // Tier-1 SAR is currently used only for sign extension / address-like
+                // computation; we do not model flag updates for it.
+                if !flags.is_empty() {
+                    self.unsupported = true;
+                    return;
+                }
+
+                let mask = width.mask();
+
+                // 1) Mask to the operand width.
+                let lhs_masked = self.fresh_temp();
+                self.instrs.push(Instr::BinOp {
+                    dst: lhs_masked,
+                    op: BinOp::And,
+                    lhs: self.value(lhs),
+                    rhs: Operand::Const(mask),
+                    flags: FlagSet::EMPTY,
+                });
+
+                // 2) Sign-extend to 64 bits using (x << shift) >>_arith shift.
+                let shift = 64 - width.bits();
+                let lhs_shl = self.fresh_temp();
+                self.instrs.push(Instr::BinOp {
+                    dst: lhs_shl,
+                    op: BinOp::Shl,
+                    lhs: Operand::Value(lhs_masked),
+                    rhs: Operand::Const(shift as u64),
+                    flags: FlagSet::EMPTY,
+                });
+                let lhs_sext = self.fresh_temp();
+                self.instrs.push(Instr::BinOp {
+                    dst: lhs_sext,
+                    op: BinOp::Sar,
+                    lhs: Operand::Value(lhs_shl),
+                    rhs: Operand::Const(shift as u64),
+                    flags: FlagSet::EMPTY,
+                });
+
+                // 3) Shift arithmetically by the dynamic rhs.
+                let shifted = self.fresh_temp();
+                self.instrs.push(Instr::BinOp {
+                    dst: shifted,
+                    op: BinOp::Sar,
+                    lhs: Operand::Value(lhs_sext),
+                    rhs: self.value(rhs),
+                    flags: FlagSet::EMPTY,
+                });
+
+                // 4) Mask result back to the operand width.
+                self.instrs.push(Instr::BinOp {
+                    dst,
+                    op: BinOp::And,
+                    lhs: Operand::Value(shifted),
+                    rhs: Operand::Const(mask),
+                    flags: FlagSet::EMPTY,
+                });
+            }
             _ => {
                 self.unsupported = true;
             }
@@ -883,6 +941,6 @@ fn map_binop(op: T1BinOp) -> Option<BinOp> {
         T1BinOp::Xor => Some(BinOp::Xor),
         T1BinOp::Shl => Some(BinOp::Shl),
         T1BinOp::Shr => Some(BinOp::Shr),
-        T1BinOp::Sar => None,
+        T1BinOp::Sar => Some(BinOp::Sar),
     }
 }

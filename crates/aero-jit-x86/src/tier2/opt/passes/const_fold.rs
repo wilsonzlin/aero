@@ -289,7 +289,7 @@ fn algebraic_simplify(op: BinOp, lhs: Operand, rhs: Operand) -> Option<Operand> 
             (x, y) if x == y => Some(Operand::Const(0)),
             _ => None,
         },
-        BinOp::Shl | BinOp::Shr => match rhs {
+        BinOp::Shl | BinOp::Shr | BinOp::Sar => match rhs {
             Operand::Const(0) => Some(lhs),
             _ => None,
         },
