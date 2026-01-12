@@ -53,7 +53,7 @@ Tip: if you see `running 0 tests`, prefer the explicit integration test invocati
 
 Primary coverage lives in:
 
-- `crates/aero-virtio/tests/virtio_input.rs`
+- [`crates/aero-virtio/tests/virtio_input.rs`](../crates/aero-virtio/tests/virtio_input.rs)
 
 ### 1.2 Run contract-level virtio PCI checks that virtio-input depends on
 
@@ -124,8 +124,8 @@ The Win7 virtio-input driver contains a portable translator (`virtio_input_event
 
 Source and test:
 
-- Translator: `drivers/windows7/virtio-input/src/hid_translate.c`
-- Test: `drivers/windows7/virtio-input/tests/hid_translate_test.c`
+- Translator: [`drivers/windows7/virtio-input/src/hid_translate.c`](../drivers/windows7/virtio-input/src/hid_translate.c)
+- Test: [`drivers/windows7/virtio-input/tests/hid_translate_test.c`](../drivers/windows7/virtio-input/tests/hid_translate_test.c)
 
 ### 2.1 Build + run (gcc / clang)
 
@@ -172,7 +172,7 @@ The host-side unit test asserts these mappings. If this fails, fix the mapping i
 
 Full reference:
 
-- `drivers/windows7/virtio-input/tests/qemu/README.md`
+- [`drivers/windows7/virtio-input/tests/qemu/README.md`](../drivers/windows7/virtio-input/tests/qemu/README.md)
 
 ### 3.0 Build/package/sign the driver (host)
 
@@ -184,7 +184,7 @@ QEMU bring-up requires an installable driver package directory containing:
 
 See the canonical driver README for the full build + signing workflow and CI output paths:
 
-- `drivers/windows7/virtio-input/README.md`
+- [`drivers/windows7/virtio-input/README.md`](../drivers/windows7/virtio-input/README.md)
 
 ### 3.1 Boot QEMU with virtio-input devices
 
@@ -252,7 +252,7 @@ These are common “first look” signals when validating the driver end-to-end:
 
 For detailed troubleshooting (including QEMU-specific notes), see:
 
-- `drivers/windows7/virtio-input/tests/qemu/README.md`
+- [`drivers/windows7/virtio-input/tests/qemu/README.md`](../drivers/windows7/virtio-input/tests/qemu/README.md)
 
 ---
 
@@ -260,7 +260,7 @@ For detailed troubleshooting (including QEMU-specific notes), see:
 
 Full reference:
 
-- `drivers/windows7/tests/host-harness/README.md`
+- [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md)
 
 ### 4.1 Basic invocation (PowerShell)
 
@@ -338,7 +338,7 @@ Once virtio-input is wired into the web runtime PCI bus, validate the device is 
 
 Use the same “CPU ↔ IO worker” technique used by the existing PCI tests to read config space via PCI config mechanism #1 (ports `0xCF8`/`0xCFC`):
 
-- `tests/e2e/io_worker_i8042.spec.ts` (see “PCI config + BAR-backed MMIO dispatch”)
+- [`tests/e2e/io_worker_i8042.spec.ts`](../tests/e2e/io_worker_i8042.spec.ts) (see “PCI config + BAR-backed MMIO dispatch”)
 
 At a high level:
 
@@ -370,7 +370,7 @@ Expected signal:
 
 The intended auto-routing policy is implemented by the input capture pipeline:
 
-- `crates/emulator/src/in_capture.rs` (`InputRoutingPolicy::Auto`)
+- [`crates/emulator/src/in_capture.rs`](../crates/emulator/src/in_capture.rs) (`InputRoutingPolicy::Auto`)
 - It prefers virtio-input only when `virtio.keyboard.driver_ok()` / `virtio.mouse.driver_ok()` becomes true.
 
 Validation steps:
@@ -388,7 +388,7 @@ If you need an explicit “device-ready” signal, `DRIVER_OK` is the virtio sta
 When debugging routing issues, add a one-line log/trace when the virtio-input driver becomes ready:
 
 - log when `VirtioInputDevice::driver_ok()` transitions from false → true
-  - see `crates/emulator/src/io/virtio/devices/input.rs` (`driver_ok()`)
+  - see [`crates/emulator/src/io/virtio/devices/input.rs`](../crates/emulator/src/io/virtio/devices/input.rs) (`driver_ok()`)
 
 And/or log which backend is selected in `InputRoutingPolicy::Auto`:
 
