@@ -480,7 +480,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         /* Disable MSI-X for this queue; INTx/ISR is required by contract v1. */
-        (void)VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, 0xFFFFu);
+        (void)VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, VIRTIO_PCI_MSI_NO_VECTOR);
 
         status = VirtioPciModernTransportSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
         if (!NT_SUCCESS(status)) {
@@ -703,7 +703,7 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     /* Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1. */
-    (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, 0xFFFFu);
+    (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, VIRTIO_PCI_MSI_NO_VECTOR);
 
     VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
 

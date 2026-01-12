@@ -55,6 +55,10 @@ typedef struct _FAKE_DEV {
 	UINT8 MbFillDeviceCfgValue;
 	BOOLEAN MbForceMsixConfigNoVector;
 	BOOLEAN MbForceQueueMsixVectorNoVector;
+	BOOLEAN MbForceMsixConfigMismatch;
+	UINT16 MbForcedMsixConfigMismatch;
+	BOOLEAN MbForceQueueMsixVectorMismatch;
+	UINT16 MbForcedQueueMsixVectorMismatch;
 } FAKE_DEV;
 
 static void WriteLe16(UINT8 *p, UINT16 v)
@@ -288,6 +292,12 @@ static void OsMb(void *ctx)
 	}
 	if (dev->MbForceQueueMsixVectorNoVector) {
 		common->queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR;
+	}
+	if (dev->MbForceMsixConfigMismatch) {
+		common->msix_config = dev->MbForcedMsixConfigMismatch;
+	}
+	if (dev->MbForceQueueMsixVectorMismatch) {
+		common->queue_msix_vector = dev->MbForcedQueueMsixVectorMismatch;
 	}
 }
 
@@ -1082,6 +1092,48 @@ static void TestQueueMsixVectorRefusedFails(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestMsixConfigVectorMismatchFails(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbForceMsixConfigMismatch = TRUE;
+	dev.MbForcedMsixConfigMismatch = 5;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetConfigMsixVector(&t, 1);
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestQueueMsixVectorMismatchFails(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbForceQueueMsixVectorMismatch = TRUE;
+	dev.MbForcedQueueMsixVectorMismatch = 7;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, 2);
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestCompatInitAcceptsRelocatedCaps(void)
 {
 	FAKE_DEV dev;
@@ -1463,6 +1515,8 @@ int main(void)
 	TestQueueSetupAndNotify();
 	TestMsixConfigVectorRefusedFails();
 	TestQueueMsixVectorRefusedFails();
+	TestMsixConfigVectorMismatchFails();
+	TestQueueMsixVectorMismatchFails();
 	TestCompatInitAcceptsRelocatedCaps();
 	TestCompatInitAccepts32BitBar0Mmio();
 	TestQueueSetupRejectUnalignedOrInvalidQueue();
