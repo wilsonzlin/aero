@@ -108,3 +108,24 @@ fn e1000_device_state_rejects_unaligned_io_reg() {
     let err = state.load_state(&bytes).unwrap_err();
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 io_reg"));
 }
+
+#[test]
+fn e1000_device_state_rejects_unaligned_other_regs_key() {
+    // TAG_OTHER_REGS = 90.
+    // Encoding: count (u32) then count*(key u32, val u32).
+    let mut w = SnapshotWriter::new(
+        <E1000DeviceState as IoSnapshot>::DEVICE_ID,
+        <E1000DeviceState as IoSnapshot>::DEVICE_VERSION,
+    );
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    payload.extend_from_slice(&0x123u32.to_le_bytes()); // unaligned
+    payload.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+    w.field_bytes(90, payload);
+
+    let bytes = w.finish();
+    let mut state = E1000DeviceState::default();
+    let err = state.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
+}
