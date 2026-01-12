@@ -1595,7 +1595,7 @@ impl HdaPlaybackDemo {
 
         // Defensive clamp: this is a JS-callable demo API, so avoid allocating multi-gigabyte
         // buffers if a caller passes an absurd sample rate.
-        let host_sample_rate = host_sample_rate.clamp(1, 384_000);
+        let host_sample_rate = host_sample_rate.clamp(1, aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
 
         let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
 

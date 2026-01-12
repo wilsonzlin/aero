@@ -43,17 +43,10 @@ fn validate_mmio_size(size: u32) -> Option<usize> {
     }
 }
 
-/// Defensive upper bound for host-provided sample rates.
-///
-/// Web Audio sample rates are typically 44.1kHz/48kHz (sometimes 96kHz). Since the wasm bridge is
-/// callable from JS, clamp values to avoid allocating multi-gigabyte buffers if a caller passes an
-/// absurd rate.
-///
-/// Keep this consistent with the snapshot restore clamp in `aero-audio`'s HDA model.
-const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
-
 fn clamp_host_sample_rate_hz(rate_hz: u32) -> u32 {
-    rate_hz.clamp(1, MAX_HOST_SAMPLE_RATE_HZ)
+    // Use the shared audio clamp constant so the WASM surface stays consistent with snapshot
+    // restore behavior in the pure-Rust device model.
+    rate_hz.clamp(1, aero_audio::MAX_HOST_SAMPLE_RATE_HZ)
 }
 
 struct WorkletBridgeSink<'a> {
@@ -535,16 +528,25 @@ mod tests {
 
         // Constructor should clamp.
         let bridge = HdaControllerBridge::new(guest_base, guest_size, Some(u32::MAX)).unwrap();
-        assert_eq!(bridge.output_sample_rate_hz(), MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            bridge.output_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
 
         // Setter should clamp.
         let mut bridge2 = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
         bridge2.set_output_rate_hz(u32::MAX).unwrap();
-        assert_eq!(bridge2.output_sample_rate_hz(), MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            bridge2.output_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
 
         // Capture sample rate setter should clamp too (does not return a value).
         bridge2.set_capture_sample_rate_hz(u32::MAX);
-        assert_eq!(bridge2.hda.capture_sample_rate_hz(), MAX_HOST_SAMPLE_RATE_HZ);
+        assert_eq!(
+            bridge2.hda.capture_sample_rate_hz(),
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+        );
     }
 
     #[wasm_bindgen_test]

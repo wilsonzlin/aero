@@ -583,9 +583,15 @@ fn hda_snapshot_restore_clamps_snapshot_sample_rates_to_avoid_oom() {
     let mut restored = HdaController::new();
     restored.restore_state(&snap);
 
-    assert_eq!(restored.output_rate_hz(), 384_000);
-    assert_eq!(restored.capture_sample_rate_hz(), 384_000);
-    assert_eq!(restored.audio_out.capacity_frames(), 38_400);
+    assert_eq!(restored.output_rate_hz(), aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+    assert_eq!(
+        restored.capture_sample_rate_hz(),
+        aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+    );
+    assert_eq!(
+        restored.audio_out.capacity_frames(),
+        (aero_audio::MAX_HOST_SAMPLE_RATE_HZ / 10) as usize
+    );
 }
 
 #[test]

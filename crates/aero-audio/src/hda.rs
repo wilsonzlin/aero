@@ -2041,8 +2041,7 @@ impl HdaController {
         fn clamp_snapshot_rate_hz(rate_hz: u32) -> u32 {
             // Snapshot files may come from untrusted sources; clamp to a reasonable upper bound so
             // restore cannot allocate multi-gigabyte host buffers.
-            const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
-            rate_hz.clamp(1, MAX_HOST_SAMPLE_RATE_HZ)
+            rate_hz.clamp(1, crate::MAX_HOST_SAMPLE_RATE_HZ)
         }
 
         if state.output_rate_hz != 0 {

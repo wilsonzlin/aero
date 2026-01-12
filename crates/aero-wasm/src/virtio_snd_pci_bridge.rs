@@ -38,15 +38,10 @@ fn wasm_memory_byte_len() -> u64 {
     pages.saturating_mul(64 * 1024)
 }
 
-/// Defensive upper bound for host-provided sample rates.
-///
-/// Web Audio sample rates are typically 44.1kHz/48kHz (sometimes 96kHz). Since the wasm bridge is
-/// callable from JS, clamp values to avoid allocating multi-gigabyte buffers if a caller passes an
-/// absurd rate.
-const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
-
 fn clamp_host_sample_rate_hz(rate_hz: u32) -> u32 {
-    rate_hz.clamp(1, MAX_HOST_SAMPLE_RATE_HZ)
+    // Use the shared audio clamp constant so the WASM surface stays consistent with other bridges
+    // and snapshot restore behavior.
+    rate_hz.clamp(1, aero_audio::MAX_HOST_SAMPLE_RATE_HZ)
 }
 
 #[inline]
@@ -514,13 +509,13 @@ mod tests {
         bridge.set_host_sample_rate_hz(u32::MAX).unwrap();
         assert_eq!(
             bridge.snd_mut().host_sample_rate_hz(),
-            MAX_HOST_SAMPLE_RATE_HZ
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
         );
 
         bridge.set_capture_sample_rate_hz(u32::MAX).unwrap();
         assert_eq!(
             bridge.snd_mut().capture_sample_rate_hz(),
-            MAX_HOST_SAMPLE_RATE_HZ
+            aero_audio::MAX_HOST_SAMPLE_RATE_HZ
         );
     }
 }
