@@ -396,7 +396,11 @@ impl Channel {
     }
 
     fn begin_pio_out(&mut self, kind: TransferKind, len: usize) {
-        self.data = vec![0u8; len];
+        let Some(data) = try_alloc_zeroed(len) else {
+            self.abort_command(0x04);
+            return;
+        };
+        self.data = data;
         self.data_index = 0;
         self.data_mode = DataMode::PioOut;
         self.transfer_kind = Some(kind);
@@ -954,7 +958,10 @@ impl IdeController {
                                 .and_then(|v| usize::try_from(v).ok())
                                 .filter(|&v| v <= MAX_IDE_DATA_BUFFER_BYTES);
 
-                            byte_len.map(|len| DmaRequest::ata_write(vec![0u8; len], lba, sectors))
+                            byte_len.and_then(|len| {
+                                try_alloc_zeroed(len)
+                                    .map(|buf| DmaRequest::ata_write(buf, lba, sectors))
+                            })
                         } else {
                             ata_pio_read(dev, lba, sectors)
                                 .ok()
@@ -1088,6 +1095,13 @@ impl IdeController {
     }
 }
 
+fn try_alloc_zeroed(len: usize) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len).ok()?;
+    buf.resize(len, 0);
+    Some(buf)
+}
+
 fn ata_identify_data(dev: Option<&IdeDevice>) -> Vec<u8> {
     match dev {
         Some(IdeDevice::Ata(d)) => d.identify_sector().to_vec(),
@@ -1106,7 +1120,12 @@ fn ata_pio_read(dev: &mut AtaDrive, lba: u64, sectors: u64) -> io::Result<Vec<u8
             "transfer too large",
         ));
     }
-    let mut buf = vec![0u8; byte_len];
+    let mut buf = try_alloc_zeroed(byte_len).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::OutOfMemory,
+            "failed to allocate ATA PIO read buffer",
+        )
+    })?;
     dev.read_sectors(lba, &mut buf)?;
     Ok(buf)
 }
@@ -1607,5 +1626,38 @@ mod tests {
         // DMA capability bits should remain stable across controller resets.
         assert_eq!(ctl.bus_master[0].read(2, 1) & (1 << 5), 1 << 5);
         assert_eq!(ctl.bus_master[1].read(2, 1) & (1 << 6), 1 << 6);
+    }
+
+    #[test]
+    fn pio_out_allocation_failure_aborts_command_instead_of_panicking() {
+        let mut chan = Channel::new(PRIMARY_PORTS);
+
+        // Seed in-flight state that should get cleared by `abort_command`.
+        chan.status = IDE_STATUS_BSY | IDE_STATUS_DRQ;
+        chan.data_mode = DataMode::PioIn;
+        chan.transfer_kind = Some(TransferKind::AtaPioRead);
+        chan.data = vec![1, 2, 3];
+        chan.data_index = 1;
+        chan.irq_pending = false;
+        chan.pending_dma = Some(DmaRequest::ata_read(vec![0xAA]));
+        chan.pio_write = Some((0x1234, 1));
+
+        // Use a length that deterministically fails `try_reserve_exact` with a capacity overflow,
+        // without actually attempting to allocate an enormous buffer.
+        chan.begin_pio_out(TransferKind::AtaPioWrite, usize::MAX);
+
+        assert_eq!(chan.data_mode, DataMode::None);
+        assert_eq!(chan.transfer_kind, None);
+        assert!(chan.data.is_empty());
+        assert_eq!(chan.data_index, 0);
+        assert!(chan.pending_dma.is_none());
+        assert!(chan.pio_write.is_none());
+
+        assert_eq!(chan.error, 0x04);
+        assert_ne!(chan.status & IDE_STATUS_ERR, 0);
+        assert_ne!(chan.status & IDE_STATUS_DRDY, 0);
+        assert_eq!(chan.status & IDE_STATUS_BSY, 0);
+        assert_eq!(chan.status & IDE_STATUS_DRQ, 0);
+        assert!(chan.irq_pending);
     }
 }
