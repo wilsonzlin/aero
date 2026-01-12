@@ -1175,8 +1175,10 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 {VIRTIO_INPUT_KEY_LEFTALT, "KEY_LEFTALT"},
                 {VIRTIO_INPUT_KEY_RIGHTALT, "KEY_RIGHTALT"},
 
-                /* Lock. */
+                /* Lock keys. */
                 {VIRTIO_INPUT_KEY_CAPSLOCK, "KEY_CAPSLOCK"},
+                {VIRTIO_INPUT_KEY_NUMLOCK, "KEY_NUMLOCK"},
+                {VIRTIO_INPUT_KEY_SCROLLLOCK, "KEY_SCROLLLOCK"},
 
                  /* KEY_F1..KEY_F12 (Linux input ABI). */
                  {VIRTIO_INPUT_KEY_F1, "KEY_F1"},

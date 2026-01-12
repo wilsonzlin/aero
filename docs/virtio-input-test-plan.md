@@ -132,9 +132,14 @@ Expected output:
 hid_translate_test: ok
 ```
 
-### 2.2 Explicit mapping check: F1..F12
+### 2.2 Explicit mapping check: F1..F12, NumLock, ScrollLock
 
 The translator **must** map Linux `KEY_F1..KEY_F12` (virtio-input EV_KEY codes) to the correct HID keyboard usages (`0x3A..0x45`).
+
+It must also map the lock keys used by Windows LED state:
+
+- `KEY_NUMLOCK` → HID usage `0x53`
+- `KEY_SCROLLLOCK` → HID usage `0x47`
 
 This is required by the contract (virtio-input keyboard “minimum required supported key codes” includes **F1..F12**; contract §3.3.5).
 
