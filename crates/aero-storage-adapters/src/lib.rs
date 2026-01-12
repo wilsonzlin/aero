@@ -44,7 +44,8 @@ use aero_storage::{VirtualDisk, SECTOR_SIZE};
 /// Adapter wrapper for exposing an [`aero_storage::VirtualDisk`] as an NVMe disk backend.
 ///
 /// The actual `aero_devices_nvme::DiskBackend` implementation is provided by the
-/// `aero-devices-nvme` crate.
+/// `aero-devices-nvme` crate. That crate re-exports this wrapper as
+/// `aero_devices_nvme::AeroStorageDiskAdapter` for ergonomic use at call sites.
 pub struct AeroVirtualDiskAsNvmeBackend {
     disk: Box<dyn VirtualDisk + Send>,
 }
