@@ -270,7 +270,18 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     const sr = sampleRateHz >>> 0;
     if (sr === 0) return;
-    if (sr === this.#micSampleRateHz) return;
+    // Even if the sample rate is unchanged from the JS wrapper's perspective, the WASM-side
+    // controller can drift (e.g. `set_output_rate_hz` may implicitly update the capture rate when
+    // it was still tracking the previous output rate). Keep the device model in sync by mirroring
+    // the rate into WASM on every call.
+    if (sr === this.#micSampleRateHz) {
+      try {
+        this.#bridge.set_capture_sample_rate_hz(sr);
+      } catch {
+        // ignore
+      }
+      return;
+    }
     this.#micSampleRateHz = sr;
     this.#syncMic();
   }

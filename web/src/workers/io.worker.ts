@@ -1956,6 +1956,16 @@ function maybeInitHdaDevice(): void {
         dstSampleRateHz: audioOutDstSampleRate,
       });
     }
+    // Setting the output rate can implicitly update the capture rate when it was still tracking
+    // the previous output rate. Re-apply the current host mic sample rate so capture stays in
+    // sync with the live microphone AudioContext.
+    if (micSampleRate > 0) {
+      try {
+        dev.setCaptureSampleRateHz(micSampleRate);
+      } catch {
+        // ignore
+      }
+    }
 
     // If virtio-snd was initialized before HDA (e.g. HDA init failed once and later succeeded),
     // ensure it is detached from the shared audio/mic rings. The AudioWorklet rings are SPSC and
@@ -2143,6 +2153,16 @@ function maybeInitVirtioSndDevice(): void {
           channelCount: audioOutChannelCount,
           dstSampleRateHz: audioOutDstSampleRate,
         });
+      } catch {
+        // ignore
+      }
+    }
+    // Setting the host/output sample rate can implicitly update the capture rate when it was still
+    // tracking the previous output rate. Re-apply the current host mic sample rate so capture stays
+    // consistent even when mic capture was initialized before audio output.
+    if (micSampleRate > 0) {
+      try {
+        dev.setCaptureSampleRateHz(micSampleRate);
       } catch {
         // ignore
       }
@@ -3009,6 +3029,15 @@ function attachAudioRingBuffer(
     } catch (err) {
       console.warn("[io.worker] HDA setAudioRingBuffer failed:", err);
     }
+    // Ensure the capture path stays pinned to the host mic sample rate even if changing the
+    // output rate caused the WASM device model to update its capture rate (default tracking).
+    if (micSampleRate > 0) {
+      try {
+        hda.setCaptureSampleRateHz(micSampleRate);
+      } catch {
+        // ignore
+      }
+    }
     if (snd) {
       try {
         snd.setAudioRingBuffer({
@@ -3031,6 +3060,14 @@ function attachAudioRingBuffer(
       });
     } catch (err) {
       console.warn("[io.worker] virtio-snd setAudioRingBuffer failed:", err);
+    }
+    // Match the capture sample rate to the live host mic graph if one is present.
+    if (micSampleRate > 0) {
+      try {
+        snd.setCaptureSampleRateHz(micSampleRate);
+      } catch {
+        // ignore
+      }
     }
   }
 }
