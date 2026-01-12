@@ -331,18 +331,21 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
   private normalizeIndex(): void {
     // Ensure accessCounter always monotonically increases beyond all lastAccess values.
     let maxAccess = this.index.accessCounter;
-    for (const meta of Object.values(this.index.chunks)) {
-      if (Number.isFinite(meta.lastAccess) && meta.lastAccess > maxAccess) {
-        maxAccess = meta.lastAccess;
-      }
+    const chunks = this.index.chunks;
+    for (const key in chunks) {
+      if (!Object.prototype.hasOwnProperty.call(chunks, key)) continue;
+      const meta = chunks[key];
+      if (Number.isFinite(meta.lastAccess) && meta.lastAccess > maxAccess) maxAccess = meta.lastAccess;
     }
     this.index.accessCounter = maxAccess;
   }
 
   private recomputeTotalBytes(): number {
     let total = 0;
-    for (const meta of Object.values(this.index.chunks)) {
-      total += meta.byteLength;
+    const chunks = this.index.chunks;
+    for (const key in chunks) {
+      if (!Object.prototype.hasOwnProperty.call(chunks, key)) continue;
+      total += chunks[key]!.byteLength;
     }
     return total;
   }
@@ -373,7 +376,10 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       let victim: number | null = null;
       let victimAccess = Number.POSITIVE_INFINITY;
 
-      for (const [idxStr, meta] of Object.entries(this.index.chunks)) {
+      const chunks = this.index.chunks;
+      for (const idxStr in chunks) {
+        if (!Object.prototype.hasOwnProperty.call(chunks, idxStr)) continue;
+        const meta = chunks[idxStr]!;
         const idx = Number(idxStr);
         if (!Number.isFinite(idx)) continue;
         const access = meta.lastAccess;
