@@ -270,25 +270,30 @@ assign any other device to `00:02.0`.
 00:04.0  - HD Audio (ICH6)
 00:05.0  - E1000 NIC
 00:06.0  - RTL8139 NIC (alternate)
-00:07.0  - AeroGPU display controller (reserved canonical BDF)
+00:07.0  - AeroGPU display controller (reserved canonical BDF; `PCI\\VEN_A3A0&DEV_0001`, see `docs/abi/aerogpu-pci-identity.md`)
 00:08.0  - virtio-net
 00:09.0  - virtio-blk
 00:0a.0  - virtio-input keyboard (multi-function)
 00:0a.1  - virtio-input mouse
 00:0b.0  - virtio-snd
+00:0c.0  - Transitional VGA/VBE PCI stub (Bochs/QEMU "Standard VGA"-like identity; `aero_gpu_vga` LFB routing). Must not collide with AeroGPU at `00:07.0`.
 ```
 
 ### Note on VGA / display today
 
-The canonical `aero_machine::Machine` currently provides its boot display via the legacy VGA/VBE
-(`aero_gpu_vga`) device model:
+The canonical `aero_machine::Machine` currently uses `aero_gpu_vga` (VGA + Bochs VBE_DISPI) for
+boot display:
 
-- fixed ports `0x3C0..0x3DF`
-- Bochs VBE ports `0x01CE/0x01CF`
-- legacy VRAM window `0xA0000..0xBFFFF`
+* Legacy VGA ports: `0x3C0..0x3DF`
+* VBE ports: `0x01CE/0x01CF`
+* Legacy VRAM window: `0xA0000..0xBFFFF`
+* Fixed SVGA linear framebuffer (LFB): `0xE000_0000` (within the reserved below-4 GiB PCI/MMIO hole)
 
-The Bochs VBE linear framebuffer base is `0xE000_0000` (within the reserved below-4 GiB PCI/MMIO
-hole).
+To make the LFB reachable via the canonical PCI MMIO window (`0xE000_0000..`), the machine also
+exposes a **minimal PCI VGA function** (Bochs/QEMU "Standard VGA"-like IDs) at `00:0C.0`.
+
+This PCI stub is intentionally *not* at `00:07.0`: that BDF is reserved for the long-term AeroGPU
+WDDM device identity (`PCI\\VEN_A3A0&DEV_0001`; see `docs/abi/aerogpu-pci-identity.md`).
 
 ---
 
