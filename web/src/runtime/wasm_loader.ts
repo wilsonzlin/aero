@@ -632,11 +632,6 @@ export interface WasmApi {
      * Optional while older WASM builds are still in circulation.
      */
     WasmTieredVm?: new (guestBase: number, guestSize: number) => {
-        readonly guest_base: number;
-        readonly guest_size: number;
-        readonly interp_blocks_total: bigint;
-        readonly jit_blocks_total: bigint;
-
         reset_real_mode(entryIp: number): void;
 
         /**
