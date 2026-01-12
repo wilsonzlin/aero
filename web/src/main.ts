@@ -570,7 +570,8 @@ function renderMachinePanel(): HTMLElement {
   const vgaInfo = el("pre", { text: "" });
   const inputHint = el("div", {
     class: "mono",
-    text: "Tip: click the canvas to focus it; keyboard events will be forwarded to the guest via Machine.inject_browser_key().",
+    text:
+      "Tip: click the canvas to focus it; keyboard/mouse events will be forwarded to the guest via Machine.inject_browser_key()/inject_mouse_* when available.",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
   canvas.tabIndex = 0;
@@ -954,12 +955,74 @@ function renderMachinePanel(): HTMLElement {
         }
       };
 
+      const onMouseMove = (ev: MouseEvent): void => {
+        if (!running) return;
+        const fn = (machine as unknown as { inject_mouse_motion?: unknown }).inject_mouse_motion;
+        if (typeof fn !== "function") return;
+        // Use browser-style coordinates: +X right, +Y down.
+        const dx = ev.movementX | 0;
+        const dy = ev.movementY | 0;
+        if (dx === 0 && dy === 0) return;
+        try {
+          fn.call(machine, dx, dy, 0);
+        } catch {
+          // ignore
+        }
+      };
+
+      const onWheel = (ev: WheelEvent): void => {
+        if (!running) return;
+        const fn = (machine as unknown as { inject_mouse_motion?: unknown }).inject_mouse_motion;
+        if (typeof fn !== "function") return;
+        // DOM WheelEvent: deltaY < 0 is wheel up. Machine uses PS/2 convention: positive is wheel up.
+        const wheel = ev.deltaY === 0 ? 0 : ev.deltaY < 0 ? 1 : -1;
+        if (wheel === 0) return;
+        try {
+          fn.call(machine, 0, 0, wheel);
+          ev.preventDefault();
+        } catch {
+          // ignore
+        }
+      };
+
+      const onMouseDown = (ev: MouseEvent): void => {
+        if (!running) return;
+        const fn = (machine as unknown as { inject_mouse_button?: unknown }).inject_mouse_button;
+        if (typeof fn !== "function") return;
+        try {
+          fn.call(machine, ev.button | 0, true);
+          ev.preventDefault();
+        } catch {
+          // ignore
+        }
+      };
+
+      const onMouseUp = (ev: MouseEvent): void => {
+        if (!running) return;
+        const fn = (machine as unknown as { inject_mouse_button?: unknown }).inject_mouse_button;
+        if (typeof fn !== "function") return;
+        try {
+          fn.call(machine, ev.button | 0, false);
+          ev.preventDefault();
+        } catch {
+          // ignore
+        }
+      };
+
       canvas.addEventListener("keydown", onKeyDown);
       canvas.addEventListener("keyup", onKeyUp);
+      canvas.addEventListener("mousemove", onMouseMove);
+      canvas.addEventListener("wheel", onWheel, { passive: false });
+      canvas.addEventListener("mousedown", onMouseDown);
+      canvas.addEventListener("mouseup", onMouseUp);
 
       const detachInput = () => {
         canvas.removeEventListener("keydown", onKeyDown);
         canvas.removeEventListener("keyup", onKeyUp);
+        canvas.removeEventListener("mousemove", onMouseMove);
+        canvas.removeEventListener("wheel", onWheel);
+        canvas.removeEventListener("mousedown", onMouseDown);
+        canvas.removeEventListener("mouseup", onMouseUp);
       };
 
       const timer = window.setInterval(() => {
