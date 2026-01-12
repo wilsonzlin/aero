@@ -51,7 +51,12 @@ export const StatusIndex = {
   IoHidInputReportDropCounter: 19,
 
   // Device-bus state observed by the CPU worker.
-  // These are primarily for debugging/observability until the real CPU core is wired up.
+  //
+  // IRQ bitmaps represent *line levels* (asserted/deasserted) after wire-OR; they are useful for
+  // debugging and simple polling, but do not encode edge-triggered interrupts directly (edge
+  // sources are represented as pulses and must be latched by the PIC/APIC model).
+  //
+  // See `docs/irq-semantics.md`.
   CpuIrqBitmapLo: 32,
   CpuIrqBitmapHi: 33,
   CpuA20Enabled: 34,
