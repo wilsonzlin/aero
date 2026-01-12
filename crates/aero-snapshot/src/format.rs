@@ -126,6 +126,12 @@ impl DeviceId {
     /// See `docs/16-snapshots.md` and `web/src/workers/vm_snapshot_wasm.ts` for the stable mapping
     /// to the string kind `audio.virtio_snd`.
     pub const VIRTIO_SND: DeviceId = DeviceId(22);
+    /// Guest-visible virtio-net (virtio-pci) NIC device state.
+    ///
+    /// This ID is used by the canonical `aero_machine::Machine` when `enable_virtio_net` is set so
+    /// virtio-pci transport state (virtqueues + pending interrupts) can be snapshotted/restored
+    /// deterministically.
+    pub const VIRTIO_NET: DeviceId = DeviceId(23);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -151,6 +157,7 @@ impl DeviceId {
             DeviceId::NET_STACK => Some("NET_STACK"),
             DeviceId::PLATFORM_INTERRUPTS => Some("PLATFORM_INTERRUPTS"),
             DeviceId::VIRTIO_SND => Some("VIRTIO_SND"),
+            DeviceId::VIRTIO_NET => Some("VIRTIO_NET"),
             _ => None,
         }
     }

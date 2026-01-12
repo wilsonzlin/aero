@@ -5,6 +5,7 @@ pub(crate) const DEVICE_KIND_I8042: &str = "input.i8042";
 pub(crate) const DEVICE_KIND_AUDIO_HDA: &str = "audio.hda";
 pub(crate) const DEVICE_KIND_AUDIO_VIRTIO_SND: &str = "audio.virtio_snd";
 pub(crate) const DEVICE_KIND_NET_E1000: &str = "net.e1000";
+pub(crate) const DEVICE_KIND_NET_VIRTIO_NET: &str = "net.virtio_net";
 pub(crate) const DEVICE_KIND_NET_STACK: &str = "net.stack";
 pub(crate) const DEVICE_KIND_PREFIX_ID: &str = "device.";
 
@@ -23,6 +24,9 @@ pub(crate) fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     }
     if kind == DEVICE_KIND_NET_E1000 {
         return Some(DeviceId::E1000);
+    }
+    if kind == DEVICE_KIND_NET_VIRTIO_NET {
+        return Some(DeviceId::VIRTIO_NET);
     }
     if kind == DEVICE_KIND_NET_STACK {
         return Some(DeviceId::NET_STACK);
@@ -60,6 +64,9 @@ pub(crate) fn kind_from_device_id(id: DeviceId) -> String {
     if id == DeviceId::E1000 {
         return DEVICE_KIND_NET_E1000.to_string();
     }
+    if id == DeviceId::VIRTIO_NET {
+        return DEVICE_KIND_NET_VIRTIO_NET.to_string();
+    }
     if id == DeviceId::NET_STACK {
         return DEVICE_KIND_NET_STACK.to_string();
     }
@@ -83,6 +90,10 @@ mod tests {
             Some(DeviceId::VIRTIO_SND)
         );
         assert_eq!(parse_device_kind("net.e1000"), Some(DeviceId::E1000));
+        assert_eq!(
+            parse_device_kind("net.virtio_net"),
+            Some(DeviceId::VIRTIO_NET)
+        );
         assert_eq!(parse_device_kind("net.stack"), Some(DeviceId::NET_STACK));
     }
 
@@ -116,6 +127,7 @@ mod tests {
             "audio.virtio_snd"
         );
         assert_eq!(kind_from_device_id(DeviceId::E1000), "net.e1000");
+        assert_eq!(kind_from_device_id(DeviceId::VIRTIO_NET), "net.virtio_net");
         assert_eq!(kind_from_device_id(DeviceId::NET_STACK), "net.stack");
         assert_eq!(kind_from_device_id(DeviceId(1234)), "device.1234");
     }

@@ -2200,6 +2200,11 @@ impl Machine {
         self.e1000.clone()
     }
 
+    /// Returns the virtio-net (virtio-pci) device, if present.
+    pub fn virtio_net(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
+        self.virtio_net.clone()
+    }
+
     /// Returns the VGA/SVGA device, if present.
     pub fn vga(&self) -> Option<Rc<RefCell<VgaDevice>>> {
         self.vga.clone()
@@ -4592,6 +4597,29 @@ impl snapshot::SnapshotSource for Machine {
                 &*e1000.borrow(),
             ));
         }
+        if let Some(virtio_net) = &self.virtio_net {
+            // Virtio devices gate DMA and legacy INTx semantics on the PCI command register, but the
+            // machine owns the canonical PCI config space (`PciConfigPorts`). Mirror the command
+            // register so the serialized virtio transport state reflects the guest-visible PCI
+            // configuration.
+            let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let command = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.command())
+                        .unwrap_or(0)
+                };
+                virtio_net.borrow_mut().set_pci_command(command);
+            }
+
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::VIRTIO_NET,
+                &*virtio_net.borrow(),
+            ));
+        }
         if let Some(uhci) = &self.uhci {
             let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
@@ -5368,6 +5396,18 @@ impl snapshot::SnapshotTarget for Machine {
             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                 &state,
                 &mut *e1000.borrow_mut(),
+            );
+        }
+
+        // Restore virtio-net after the interrupt controller + PCI INTx router so its restored
+        // legacy INTx level can be re-driven into the sink deterministically.
+        if let (Some(virtio), Some(state)) = (
+            &self.virtio_net,
+            by_id.remove(&snapshot::DeviceId::VIRTIO_NET),
+        ) {
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *virtio.borrow_mut(),
             );
         }
 
