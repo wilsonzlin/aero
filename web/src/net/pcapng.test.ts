@@ -54,7 +54,16 @@ describe("net/pcapng.writePcapng", () => {
     expect(shbType).toBe(0x0a0d_0d0a);
 
     const shbLen = view.getUint32(shbOff + 4, true);
-    expect(shbLen).toBe(28);
+    const shbUserApplBytes = new TextEncoder().encode("aero");
+    const shbExpectedLen =
+      28 +
+      // shb_userappl (code=4)
+      4 +
+      shbUserApplBytes.byteLength +
+      pad4(shbUserApplBytes.byteLength) +
+      // end of options
+      4;
+    expect(shbLen).toBe(shbExpectedLen);
     expect(shbLen % 4).toBe(0);
 
     const shbBom = view.getUint32(shbOff + 8, true);
@@ -70,6 +79,26 @@ describe("net/pcapng.writePcapng", () => {
     const shbSectionLenHi = view.getUint32(shbOff + 20, true);
     const shbSectionLen = (BigInt(shbSectionLenHi) << 32n) | BigInt(shbSectionLenLo);
     expect(shbSectionLen).toBe(0xffff_ffff_ffff_ffffn);
+
+    // shb_userappl (code=4)
+    {
+      const optOff = shbOff + 24;
+      const code = view.getUint16(optOff, true);
+      const len = view.getUint16(optOff + 2, true);
+      expect(code).toBe(4);
+      expect(len).toBe(shbUserApplBytes.byteLength);
+      const valueStart = optOff + 4;
+      const valueEnd = valueStart + len;
+      expect(bytes.subarray(valueStart, valueEnd)).toEqual(shbUserApplBytes);
+      // padding bytes
+      const paddedEnd = valueEnd + pad4(len);
+      for (let i = valueEnd; i < paddedEnd; i += 1) {
+        expect(bytes[i]).toBe(0);
+      }
+      // end-of-options
+      expect(view.getUint16(paddedEnd, true)).toBe(0);
+      expect(view.getUint16(paddedEnd + 2, true)).toBe(0);
+    }
 
     const shbTrailerLen = view.getUint32(shbOff + shbLen - 4, true);
     expect(shbTrailerLen).toBe(shbLen);
@@ -315,4 +344,3 @@ describe("net/pcapng.PcapngWriter", () => {
     expect(foundFlags).toBe(true);
   });
 });
-

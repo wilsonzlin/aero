@@ -406,6 +406,9 @@ export interface PcapngEnhancedPacket {
 }
 
 export interface PcapngCapture {
+  // Optional SHB `shb_userappl` string (pcapng option code 4).
+  // If omitted, defaults to `"aero"` for parity with the Rust tracer.
+  userAppl?: string;
   interfaces: readonly PcapngInterfaceDescription[];
   packets: readonly PcapngEnhancedPacket[];
 }
@@ -446,8 +449,13 @@ function writeInterfaceOptions(w: ByteWriter, desc: PcapngInterfaceDescription):
 }
 
 export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
-  // Section Header Block: no options, fixed size.
-  const shbLen = 28;
+  const userAppl = capture.userAppl ?? "aero";
+  const userApplBytes = textEncoder.encode(userAppl);
+  const shbOptLen = optTotalLen(userApplBytes.byteLength);
+  const shbOptsLen = shbOptLen + 4; // + opt_end
+
+  // Section Header Block: fixed body + (optional) userappl option.
+  const shbLen = 28 + shbOptsLen;
 
   let totalLen = shbLen;
 
@@ -473,6 +481,14 @@ export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
   w.writeU16(0); // minor
   w.writeU32(0xffff_ffff); // section length low (unknown)
   w.writeU32(0xffff_ffff); // section length high (unknown)
+  // shb_userappl option
+  w.writeU16(4); // shb_userappl
+  w.writeU16(userApplBytes.byteLength);
+  w.writeBytes(userApplBytes);
+  w.writeZeros(pad4(userApplBytes.byteLength));
+  // End of options.
+  w.writeU16(0);
+  w.writeU16(0);
   w.writeU32(shbLen);
 
   // IDBs
