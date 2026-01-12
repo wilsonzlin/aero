@@ -139,6 +139,71 @@ fn pc_platform_routes_uhci_io_through_bar4() {
 }
 
 #[test]
+fn pc_platform_gates_uhci_io_on_pci_command_register() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    // Ensure I/O decoding is enabled initially and writes take effect.
+    assert_eq!(pc.io.read(bar4_base + REG_SOFMOD, 1) as u8, 64);
+    pc.io.write(bar4_base + REG_SOFMOD, 1, 12);
+    assert_eq!(pc.io.read(bar4_base + REG_SOFMOD, 1) as u8, 12);
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    assert_ne!(command & 0x1, 0, "UHCI should have I/O decoding enabled by BIOS POST");
+
+    // Disable I/O decoding (bit 0): reads should float high and writes should be ignored.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command & !0x1,
+    );
+    assert_eq!(pc.io.read(bar4_base + REG_SOFMOD, 1), 0xFF);
+    pc.io.write(bar4_base + REG_SOFMOD, 1, 34);
+
+    // Re-enable I/O decoding; the write above must not have reached the device.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, command | 0x1);
+    assert_eq!(pc.io.read(bar4_base + REG_SOFMOD, 1) as u8, 12);
+}
+
+#[test]
+fn pc_platform_routes_uhci_io_after_bar4_reprogramming() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+
+    let old_base = read_uhci_bar4_base(&mut pc);
+    assert_ne!(old_base, 0);
+
+    // Write a recognizable value via the initial BAR.
+    pc.io.write(old_base + REG_SOFMOD, 1, 12);
+    assert_eq!(pc.io.read(old_base + REG_SOFMOD, 1) as u8, 12);
+
+    // Relocate BAR4 within the platform's PCI I/O window (size 0x20, alignment 0x20).
+    let new_base = old_base.wrapping_add(0x200);
+    assert_eq!(new_base as u32 % 0x20, 0);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x20,
+        u32::from(new_base),
+    );
+    assert_eq!(read_uhci_bar4_base(&mut pc), new_base);
+
+    // Old base should no longer decode.
+    assert_eq!(pc.io.read(old_base + REG_SOFMOD, 1), 0xFF);
+
+    // New base should decode and preserve device register state.
+    assert_eq!(pc.io.read(new_base + REG_SOFMOD, 1) as u8, 12);
+    pc.io.write(new_base + REG_SOFMOD, 1, 34);
+    assert_eq!(pc.io.read(new_base + REG_SOFMOD, 1) as u8, 34);
+}
+
+#[test]
 fn pc_platform_uhci_tick_advances_frnum_deterministically() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bar4_base = read_uhci_bar4_base(&mut pc);
@@ -431,6 +496,63 @@ fn pc_platform_routes_uhci_intx_via_pic_in_legacy_mode() {
         .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_USBINT));
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_respects_pci_interrupt_disable_bit_for_uhci_intx() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    // Unmask IRQ2 (cascade) + IRQ11 so we can observe the UHCI interrupt through the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(11, false);
+    }
+
+    // Enable IOC interrupts in the UHCI controller and force a USBINT status bit so the controller
+    // asserts its IRQ line.
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_IOC));
+    {
+        let uhci = pc.uhci.as_ref().expect("UHCI should be enabled").clone();
+        uhci.borrow_mut()
+            .controller_mut()
+            .set_usbsts_bits(USBSTS_USBINT);
+        assert!(uhci.borrow().irq_level());
+    }
+
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+
+    // Disable INTx in PCI command register (bit 10) while leaving I/O decode enabled.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 10),
+    );
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts.borrow().pic().get_pending_vector(),
+        None,
+        "INTx should be suppressed when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx and ensure the asserted line is delivered.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, command & !(1 << 10));
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts
+            .borrow()
+            .pic()
+            .get_pending_vector()
+            .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
+        Some(11)
+    );
 }
 
 #[test]
