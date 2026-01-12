@@ -78,6 +78,17 @@ fn vhd_footer_checksum(raw: &[u8; 512]) -> u32 {
     !sum
 }
 
+fn vhd_dynamic_header_checksum(raw: &[u8; 1024]) -> u32 {
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (36..40).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
 fn make_qcow2_empty(virtual_size: u64) -> MemStorage {
     assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
 
@@ -217,6 +228,8 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemStorage {
     write_be_u32(&mut dyn_header, 24, 0x0001_0000);
     write_be_u32(&mut dyn_header, 28, max_table_entries);
     write_be_u32(&mut dyn_header, 32, block_size);
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
     storage.write_at(dyn_header_offset, &dyn_header).unwrap();
 
     let bat = vec![0xFFu8; bat_size as usize];
@@ -570,6 +583,36 @@ fn vhd_dynamic_write_persists_after_reopen() {
 }
 
 #[test]
+fn vhd_dynamic_rejects_bad_dynamic_header_checksum() {
+    let mut storage = make_vhd_dynamic_empty(1024 * 1024, 64 * 1024);
+
+    // Clobber the checksum field (offset 36) without changing the rest of the header.
+    let dyn_header_offset = 512u64;
+    storage.write_at(dyn_header_offset + 36, &0u32.to_be_bytes()).unwrap();
+
+    let res = emulator::io::storage::formats::VhdDisk::open(storage);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("vhd dynamic header checksum mismatch"))
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_bad_dynamic_header_data_offset() {
+    let mut storage = make_vhd_dynamic_empty(1024 * 1024, 64 * 1024);
+
+    // The dynamic header's `data_offset` is at 8..16 and must be 0xFFFF..FFFF.
+    let dyn_header_offset = 512u64;
+    storage.write_at(dyn_header_offset + 8, &0u64.to_be_bytes()).unwrap();
+
+    let res = emulator::io::storage::formats::VhdDisk::open(storage);
+    assert!(matches!(
+        res,
+        Err(DiskError::CorruptImage("vhd dynamic header data_offset invalid"))
+    ));
+}
+
+#[test]
 fn vhd_dynamic_rejects_oversized_bat() {
     const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -597,6 +640,8 @@ fn vhd_dynamic_rejects_oversized_bat() {
         u32::try_from(required_entries).expect("required_entries too large for u32"),
     );
     write_be_u32(&mut dyn_header, 32, block_size);
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
     storage.write_at(dyn_header_offset, &dyn_header).unwrap();
 
     let res = emulator::io::storage::formats::VhdDisk::open(storage);

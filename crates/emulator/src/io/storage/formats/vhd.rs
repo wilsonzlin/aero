@@ -94,6 +94,13 @@ impl VhdDynamicHeader {
             ));
         }
 
+        // Per spec, dynamic VHDs use 0xFFFF..FFFF to indicate there is no next header structure.
+        // We only support standalone fixed/dynamic images, so reject anything else.
+        let data_offset = be_u64(&raw[8..16]);
+        if data_offset != u64::MAX {
+            return Err(DiskError::CorruptImage("vhd dynamic header data_offset invalid"));
+        }
+
         let table_offset = be_u64(&raw[16..24]);
         let header_version = be_u32(&raw[24..28]);
         if header_version != VHD_FILE_FORMAT_VERSION {
@@ -101,6 +108,7 @@ impl VhdDynamicHeader {
         }
         let max_table_entries = be_u32(&raw[28..32]);
         let block_size = be_u32(&raw[32..36]);
+        let expected_checksum = be_u32(&raw[36..40]);
 
         if !table_offset.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd bat offset misaligned"));
@@ -110,6 +118,13 @@ impl VhdDynamicHeader {
         }
         if block_size == 0 || !(block_size as u64).is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd block_size invalid"));
+        }
+
+        let actual_checksum = vhd_checksum_dynamic_header(raw);
+        if expected_checksum != actual_checksum {
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header checksum mismatch",
+            ));
         }
 
         Ok(Self {
@@ -667,6 +682,17 @@ fn vhd_checksum_footer(raw: &[u8; 512]) -> u32 {
     let mut sum: u32 = 0;
     for (i, b) in raw.iter().enumerate() {
         if (64..68).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
+fn vhd_checksum_dynamic_header(raw: &[u8; 1024]) -> u32 {
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (36..40).contains(&i) {
             continue;
         }
         sum = sum.wrapping_add(*b as u32);
