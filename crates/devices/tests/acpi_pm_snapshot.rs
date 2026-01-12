@@ -331,6 +331,42 @@ fn snapshot_restore_from_ticks_and_remainder_without_elapsed_ns_preserves_phase(
 }
 
 #[test]
+fn snapshot_restore_from_ticks_and_remainder_with_wrap_restores_phase() {
+    const PM_TIMER_HZ: u128 = 3_579_545;
+    const NS_PER_SEC: u128 = 1_000_000_000;
+
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(9_000_000);
+
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
+
+    // Pick an elapsed time that exceeds 2^24 ticks so load_state must solve for the wrap count `k`
+    // when reconstructing the timer from (ticks_mod, remainder).
+    let elapsed_ns = 5_000_000_001u64;
+    let numer = (elapsed_ns as u128) * PM_TIMER_HZ;
+    let ticks_full = numer / NS_PER_SEC;
+    let ticks_mod = (ticks_full as u32) & 0x00FF_FFFF;
+    let remainder = (numer % NS_PER_SEC) as u32;
+
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const TAG_PM_TIMER_REMAINDER: u16 = 9;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, ticks_mod);
+    w.field_u32(TAG_PM_TIMER_REMAINDER, remainder);
+    pm.load_state(&w.finish()).unwrap();
+
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF, ticks_mod);
+
+    // Re-saving must preserve the remainder (phase). If load_state fell back to ticks-only
+    // reconstruction, the remainder would almost certainly differ.
+    let snap2 = pm.save_state();
+    let r = SnapshotReader::parse(&snap2, *b"ACPM").unwrap();
+    let remainder2 = r.u32(TAG_PM_TIMER_REMAINDER).unwrap().unwrap();
+    assert_eq!(remainder2, remainder);
+}
+
+#[test]
 fn snapshot_save_samples_clock_once_for_timer_encoding() {
     // Snapshot save should sample the clock once for deterministic PM timer encoding. This guards
     // against regressions where `save_state()` would call `Clock::now_ns()` multiple times and
