@@ -4090,6 +4090,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
 
   {
+    DWORD got = 0;
     const DWORD colorop_a = (DWORD)D3DTOP_ADD;
     hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, colorop_a);
     if (FAILED(hr)) {
