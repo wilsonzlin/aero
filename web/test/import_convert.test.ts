@@ -318,6 +318,60 @@ function buildFixedVhdFixtureWithFooterCopyNonIdentical(): { file: Uint8Array; l
   return { file, logical };
 }
 
+function buildFixedVhdFixtureWithoutFooterCopyButSector0LooksLikeFooter(): { file: Uint8Array; logical: Uint8Array } {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const eofFooter = new Uint8Array(footerSize);
+  eofFooter.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(eofFooter, 8, 2); // features
+  writeU32BE(eofFooter, 12, 0x0001_0000); // file_format_version
+  // Fixed disks use dataOffset = u64::MAX.
+  writeU64BE(eofFooter, 16, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(eofFooter, 48, BigInt(logicalSize)); // current size
+  writeU32BE(eofFooter, 60, 2); // disk type fixed
+  writeU32BE(eofFooter, 24, 5678); // timestamp (arbitrary)
+  writeU32BE(eofFooter, 64, vhdChecksum(eofFooter, 64));
+
+  // Make sector 0 look like a valid footer too (same size/type), but not identical to the EOF footer.
+  const sector0 = eofFooter.slice();
+  writeU32BE(sector0, 24, 1234); // timestamp differs
+  writeU32BE(sector0, 64, vhdChecksum(sector0, 64));
+
+  const fileSize = logicalSize + footerSize;
+  const file = new Uint8Array(fileSize);
+  // Disk payload begins at offset 0 (no footer copy).
+  file.set(sector0, 0);
+  // Required footer at EOF.
+  file.set(eofFooter, fileSize - footerSize);
+
+  const logical = new Uint8Array(logicalSize);
+  logical.set(sector0, 0);
+  return { file, logical };
+}
+
+function buildFixedVhdFixtureInvalidFixedDataOffset(): { file: Uint8Array } {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  // Fixed disks must use dataOffset = u64::MAX; use u64::MAX-1 (which rounds to the same JS number)
+  // to ensure validation is performed at bigint precision.
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_fffen);
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const fileSize = logicalSize + footerSize;
+  const file = new Uint8Array(fileSize);
+  file.fill(0x5a, 0, logicalSize);
+  file.set(footer, fileSize - footerSize);
+  return { file };
+}
+
 function buildFixedVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
   const footerSize = 512;
   const logicalSize = 512;
@@ -790,6 +844,30 @@ test("convertToAeroSparse: non-identical fixed VHD footer copy at offset 0 is ig
   const roundtrip = readLogical(parsed, 0, logical.byteLength);
   assert.deepEqual(roundtrip, logical);
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: fixed VHD without footer copy does not mis-detect sector 0 as a footer copy", async () => {
+  const { file, logical } = buildFixedVhdFixtureWithoutFooterCopyButSector0LooksLikeFooter();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });
+  assert.equal(manifest.originalFormat, "vhd");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: rejects fixed VHD with invalid data_offset", async () => {
+  const { file } = buildFixedVhdFixtureInvalidFixedDataOffset();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /invalid VHD data_offset/i.test(err.message),
+  );
 });
 
 test("convertToAeroSparse: supports cancellation via AbortSignal", async () => {

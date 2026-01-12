@@ -988,10 +988,15 @@ class VhdFooter {
     if (diskType !== VHD_TYPE_FIXED && diskType !== VHD_TYPE_DYNAMIC) {
       throw new Error("unsupported VHD disk_type");
     }
-    const dataOffset = Number(dataOffsetBig);
+    let dataOffset: number;
     if (diskType === VHD_TYPE_FIXED) {
+      // Use bigint to avoid precision loss for u64::MAX (which is not exactly representable as a JS number).
       if (dataOffsetBig !== 0xffff_ffff_ffff_ffffn) throw new Error("invalid VHD data_offset");
+      dataOffset = Number(dataOffsetBig);
     } else {
+      if (dataOffsetBig === 0xffff_ffff_ffff_ffffn) throw new Error("invalid VHD data_offset");
+      if (dataOffsetBig > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("invalid VHD data_offset");
+      dataOffset = Number(dataOffsetBig);
       if (!Number.isSafeInteger(dataOffset) || dataOffset <= 0) throw new Error("invalid VHD data_offset");
       if (dataOffset % 512 !== 0) throw new Error("invalid VHD data_offset");
       if (dataOffset < 512) throw new Error("invalid VHD data_offset");
