@@ -355,11 +355,12 @@ async function readOpfsTextFile(dir, name) {
  * @returns {Promise<boolean>}
  */
 async function writeOpfsTextFile(dir, name, contents) {
+  /** @type {any} */
+  let writable = null;
   try {
     const handle = await dir.getFileHandle(name, { create: true });
     // Truncate by default so rewriting an existing key does not append and
     // corrupt the JSON blob (implementation detail varies across browsers).
-    let writable;
     try {
       writable = await handle.createWritable({ keepExistingData: false });
     } catch {
@@ -370,6 +371,13 @@ async function writeOpfsTextFile(dir, name, contents) {
     await writable.close();
     return true;
   } catch {
+    // Best-effort cleanup: abort any in-progress write and delete any partial file.
+    try {
+      if (writable && typeof writable.abort === "function") await writable.abort();
+    } catch {
+      // Ignore.
+    }
+    await deleteOpfsFile(dir, name);
     return false;
   }
 }
