@@ -157,6 +157,7 @@ async function main() {
   let pipelineKey = null;
   let pipelineOpfsFileExists = false;
   let pipelineRoundtripOk = false;
+  let pipelineCacheHit = false;
   if (large) {
     if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
       try {
@@ -176,7 +177,12 @@ async function main() {
         try {
           const pipelineDesc = buildLargePipelineDescriptor(310 * 1024);
           pipelineKey = await computePipelineCacheKey(pipelineDesc);
-          await cache.putPipelineDescriptor(pipelineKey, pipelineDesc);
+          // `PersistentGpuCache.open()` warms pipeline descriptors into memory.
+          // If the descriptor was persisted previously, this should already be a hit.
+          pipelineCacheHit = cache.pipelineDescriptors.has(pipelineKey);
+          if (!pipelineCacheHit) {
+            await cache.putPipelineDescriptor(pipelineKey, pipelineDesc);
+          }
           // Force a persistent read path within the same session.
           cache.pipelineDescriptors.clear();
           const gotPipeline = await cache.getPipelineDescriptor(pipelineKey);
@@ -218,6 +224,7 @@ async function main() {
     pipelineKey,
     pipelineOpfsFileExists,
     pipelineRoundtripOk,
+    pipelineCacheHit,
   };
 
   // Best-effort: close the IndexedDB handle so persistent-context tests can
