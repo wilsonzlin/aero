@@ -157,6 +157,38 @@ test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { ski
   }
 });
 
+test("agent-env: NODE_OPTIONS does not include disallowed node flags", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    // Ensure the test is deterministic even if the outer environment injects NODE_OPTIONS.
+    delete env.NODE_OPTIONS;
+
+    const nodeOptions = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$NODE_OPTIONS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.match(nodeOptions, /--max-old-space-size=4096\b/);
+    assert.ok(!nodeOptions.includes("--test-concurrency"), `expected NODE_OPTIONS not to include --test-concurrency, got: ${nodeOptions}`);
+
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; node -e "process.stdout.write(\\\"ok\\\")"'],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    assert.equal(stdout, "ok");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {

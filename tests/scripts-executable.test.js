@@ -430,6 +430,21 @@ test("safe-run.sh can force-disable wrappers via AERO_DISABLE_RUSTC_WRAPPER (Lin
   }
 });
 
+test("safe-run.sh sets NODE_OPTIONS without disallowed flags (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  // Keep deterministic even if the outer environment injects NODE_OPTIONS.
+  delete env.NODE_OPTIONS;
+
+  const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["node", "-e", 'process.stdout.write(process.env.NODE_OPTIONS || "")'], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.match(stdout, /--max-old-space-size=4096\b/);
+  assert.ok(!stdout.includes("--test-concurrency"), `expected NODE_OPTIONS not to include --test-concurrency, got: ${stdout}`);
+});
+
 test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
   try {
