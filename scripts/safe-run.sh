@@ -421,6 +421,15 @@ should_retry_rustc_thread_error() {
         return 0
     fi
 
+    # As a catch-all: rustc reports internal compiler errors (ICEs) with a generic banner.
+    # If the ICE clearly stems from OS resource limits (EAGAIN/WouldBlock), retry/backoff is
+    # usually sufficient.
+    if grep -q "error: the compiler unexpectedly panicked" "${stderr_log}" \
+        && grep -Eq "Resource temporarily unavailable|WouldBlock|os error 11|EAGAIN" "${stderr_log}"
+    then
+        return 0
+    fi
+
     # Some environments hit transient EAGAIN failures inside `git` itself (e.g. when Cargo fetches
     # git dependencies), which surface as:
     #
