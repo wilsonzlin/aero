@@ -719,4 +719,206 @@ mod tests {
             "unexpected error for out-of-range sampler: {err}"
         );
     }
+
+    #[test]
+    fn binding_to_layout_entry_rejects_mismatched_binding_numbers() {
+        let cb = crate::Binding {
+            group: 0,
+            binding: 1,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::ConstantBuffer {
+                slot: 0,
+                reg_count: 1,
+            },
+        };
+        assert!(binding_to_layout_entry(&cb)
+            .unwrap_err()
+            .to_string()
+            .contains("cbuffer slot 0 expected @binding(0)"));
+
+        let tex = crate::Binding {
+            group: 0,
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::Texture2D { slot: 0 },
+        };
+        assert!(binding_to_layout_entry(&tex)
+            .unwrap_err()
+            .to_string()
+            .contains("texture slot 0 expected @binding(32)"));
+
+        let sampler = crate::Binding {
+            group: 0,
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::Sampler { slot: 0 },
+        };
+        assert!(binding_to_layout_entry(&sampler)
+            .unwrap_err()
+            .to_string()
+            .contains("sampler slot 0 expected @binding(160)"));
+    }
+
+    #[test]
+    fn pipeline_bindings_merge_and_bind_group_caching() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            let device = rt.device();
+            let mut bind_group_layout_cache = BindGroupLayoutCache::new();
+
+            let bindings_a = vec![
+                crate::Binding {
+                    group: 0,
+                    binding: BINDING_BASE_CBUFFER,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    kind: crate::BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 4,
+                    },
+                },
+                crate::Binding {
+                    group: 0,
+                    binding: BINDING_BASE_TEXTURE,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    kind: crate::BindingKind::Texture2D { slot: 0 },
+                },
+                crate::Binding {
+                    group: 0,
+                    binding: BINDING_BASE_SAMPLER,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    kind: crate::BindingKind::Sampler { slot: 0 },
+                },
+            ];
+            let bindings_b = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_CBUFFER,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 4,
+                },
+            }];
+
+            let info = build_pipeline_bindings_info(
+                device,
+                &mut bind_group_layout_cache,
+                [bindings_a.as_slice(), bindings_b.as_slice()],
+            )
+            .expect("bindings should merge");
+            assert_eq!(info.group_layouts.len(), 1);
+            assert_eq!(info.group_bindings.len(), 1);
+
+            let merged_cb = info.group_bindings[0]
+                .iter()
+                .find(|b| matches!(b.kind, crate::BindingKind::ConstantBuffer { slot: 0, .. }))
+                .expect("merged constant buffer binding");
+            assert_eq!(
+                merged_cb.visibility,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+            );
+
+            let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy uniform"),
+                size: 256,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+
+            let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("reflection_bindings test dummy texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_texture_view =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let mut sampler_cache = SamplerCache::new();
+            let default_sampler =
+                sampler_cache.get_or_create(device, &wgpu::SamplerDescriptor::default());
+
+            struct DummyProvider<'a> {
+                dummy_uniform: &'a wgpu::Buffer,
+                dummy_texture_view: &'a wgpu::TextureView,
+                default_sampler: &'a CachedSampler,
+            }
+
+            impl BindGroupResourceProvider for DummyProvider<'_> {
+                fn constant_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+                    None
+                }
+
+                fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn dummy_uniform(&self) -> &wgpu::Buffer {
+                    self.dummy_uniform
+                }
+
+                fn dummy_texture_view(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view
+                }
+
+                fn default_sampler(&self) -> &CachedSampler {
+                    self.default_sampler
+                }
+            }
+
+            let provider = DummyProvider {
+                dummy_uniform: &dummy_uniform,
+                dummy_texture_view: &dummy_texture_view,
+                default_sampler: &default_sampler,
+            };
+
+            let mut bind_group_cache = BindGroupCache::new(16);
+            let bg1 = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &info.group_layouts[0],
+                &info.group_bindings[0],
+                &provider,
+            )
+            .expect("bind group should build");
+            let stats = bind_group_cache.stats();
+            assert_eq!(stats.misses, 1);
+            assert_eq!(stats.hits, 0);
+
+            let bg2 = build_bind_group(
+                device,
+                &mut bind_group_cache,
+                &info.group_layouts[0],
+                &info.group_bindings[0],
+                &provider,
+            )
+            .expect("bind group should be cached");
+            let stats = bind_group_cache.stats();
+            assert_eq!(stats.misses, 1);
+            assert_eq!(stats.hits, 1);
+            assert!(Arc::ptr_eq(&bg1, &bg2));
+        });
+    }
 }
