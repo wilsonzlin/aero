@@ -1,5 +1,6 @@
 use aero_devices::pci::{PciBarDefinition, PciDevice};
 use aero_devices::usb::uhci::{register_uhci_io_ports, regs, SharedUhciPciDevice, UhciPciDevice};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::io::IoPortBus;
@@ -168,4 +169,61 @@ fn uhci_tick_dma_is_gated_by_pci_bus_master_enable() {
         reads != 0 || writes != 0,
         "UHCI should access guest memory when PCI COMMAND.BUS_MASTER is set"
     );
+}
+
+#[test]
+fn uhci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
+    let mut dev = UhciPciDevice::default();
+
+    // Configure some PCI state (BAR + command bits) and drive BAR probing so we exercise the
+    // internal BAR-probe bookkeeping.
+    let bar_offset = 0x10 + u16::from(UhciPciDevice::IO_BAR_INDEX) * 4;
+    dev.config_mut()
+        .set_bar_base(UhciPciDevice::IO_BAR_INDEX, 0x1000);
+    dev.config_mut().set_command(0x0001 | (1 << 2));
+    dev.config_mut().write(bar_offset, 4, 0xFFFF_FFFF);
+
+    // Configure some controller registers.
+    dev.controller_mut()
+        .io_write(regs::REG_SOFMOD, 1, 12u32);
+    dev.controller_mut()
+        .io_write(regs::REG_USBINTR, 2, regs::USBINTR_IOC as u32);
+    dev.controller_mut().io_write(
+        regs::REG_USBCMD,
+        2,
+        u32::from(regs::USBCMD_RS | regs::USBCMD_MAXP),
+    );
+    dev.controller_mut()
+        .io_write(regs::REG_FRNUM, 2, 0x123u32);
+
+    let snapshot = dev.save_state();
+    assert_eq!(
+        dev.save_state(),
+        snapshot,
+        "save_state output must be deterministic"
+    );
+
+    let mut restored = UhciPciDevice::default();
+    restored
+        .load_state(&snapshot)
+        .expect("snapshot load should succeed");
+
+    // Config-space bytes and BAR probe state should restore exactly.
+    assert_eq!(dev.config().snapshot_state(), restored.config().snapshot_state());
+
+    // Reading the BAR should still return the size mask because BAR probing was active.
+    let bar_read = restored.config_mut().read(bar_offset, 4);
+    assert_eq!(bar_read, 0xFFFF_FFE1);
+
+    // Controller register state should restore.
+    let before = dev.controller().regs();
+    let after = restored.controller().regs();
+    assert_eq!(before.usbcmd, after.usbcmd);
+    assert_eq!(before.usbsts, after.usbsts);
+    assert_eq!(before.usbintr, after.usbintr);
+    assert_eq!(before.usbint_causes, after.usbint_causes);
+    assert_eq!(before.frnum, after.frnum);
+    assert_eq!(before.flbaseadd, after.flbaseadd);
+    assert_eq!(before.sofmod, after.sofmod);
+    assert_eq!(dev.irq_level(), restored.irq_level());
 }

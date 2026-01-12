@@ -4,9 +4,13 @@
 //! as a PCI function with an I/O BAR.
 
 use crate::pci::profile::USB_UHCI_PIIX3;
-use crate::pci::{PciBarKind, PciConfigSpace, PciDevice};
+use crate::pci::{PciBarKind, PciConfigSpace, PciConfigSpaceState, PciDevice};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_usb::uhci::UhciController;
 pub use aero_usb::uhci::{regs, regs::*};
 use std::cell::RefCell;
@@ -168,6 +172,67 @@ impl PciDevice for UhciPciDevice {
         // Reset controller registers while keeping attached device models.
         self.controller
             .io_write(REG_USBCMD, 2, u32::from(USBCMD_HCRESET));
+    }
+}
+
+impl IoSnapshot for UhciPciDevice {
+    const DEVICE_ID: [u8; 4] = *b"UHCP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_PCI: u16 = 1;
+        const TAG_CONTROLLER: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let pci = self.config.snapshot_state();
+        let mut pci_enc = Encoder::new().bytes(&pci.bytes);
+        for i in 0..6 {
+            pci_enc = pci_enc.u64(pci.bar_base[i]).bool(pci.bar_probe[i]);
+        }
+        w.field_bytes(TAG_PCI, pci_enc.finish());
+
+        w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_PCI: u16 = 1;
+        const TAG_CONTROLLER: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_PCI) {
+            let mut d = Decoder::new(buf);
+            let mut config_bytes = [0u8; crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE];
+            let len = config_bytes.len();
+            config_bytes.copy_from_slice(d.bytes(len)?);
+
+            let mut bar_base = [0u64; 6];
+            let mut bar_probe = [false; 6];
+            for i in 0..6 {
+                bar_base[i] = d.u64()?;
+                bar_probe[i] = d.bool()?;
+            }
+            d.finish()?;
+
+            self.config.restore_state(&PciConfigSpaceState {
+                bytes: config_bytes,
+                bar_base,
+                bar_probe,
+            });
+        }
+
+        let Some(buf) = r.bytes(TAG_CONTROLLER) else {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "missing uhci controller state",
+            ));
+        };
+        self.controller.load_state(buf)?;
+
+        Ok(())
     }
 }
 
