@@ -16,8 +16,9 @@ use axum::{
     extract::{Path, State},
     http::{
         header::{self, HeaderName, HeaderValue},
-        HeaderMap, StatusCode,
+        HeaderMap, Request, StatusCode,
     },
+    middleware::Next,
     response::Response,
     routing::get,
     Router,
@@ -174,7 +175,8 @@ pub fn router() -> Router<ImagesState> {
 }
 
 pub fn router_with_state(state: ImagesState) -> Router {
-    router().with_state(state)
+    let router = router().with_state(state.clone());
+    router.route_layer(axum::middleware::from_fn_with_state(state, image_id_path_len_guard))
 }
 
 pub async fn get_image(
@@ -204,6 +206,27 @@ pub async fn head_image(
         return response_with_status(StatusCode::NOT_FOUND, &state, &headers);
     }
     serve_image(image_id, state, headers, false).await
+}
+
+async fn image_id_path_len_guard(
+    State(state): State<ImagesState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let path = req.uri().path();
+    let Some(rest) = path.strip_prefix("/v1/images/") else {
+        return next.run(req).await;
+    };
+
+    let raw_id = rest.split('/').next().unwrap_or("");
+    // A percent-encoded byte takes 3 chars (`%xx`), so if the raw path segment exceeds
+    // `MAX_IMAGE_ID_LEN * 3` then the decoded ID must exceed `MAX_IMAGE_ID_LEN` as well.
+    if raw_id.len() > crate::store::MAX_IMAGE_ID_LEN * 3 {
+        tracing::Span::current().record("image_id", tracing::field::display("<invalid>"));
+        return response_with_status(StatusCode::NOT_FOUND, &state, req.headers());
+    }
+
+    next.run(req).await
 }
 
 pub async fn options_image(State(state): State<ImagesState>, req_headers: HeaderMap) -> Response {

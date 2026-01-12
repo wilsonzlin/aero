@@ -1,8 +1,11 @@
+use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::header::{self, CACHE_CONTROL, ETAG, LAST_MODIFIED};
 use axum::http::HeaderMap;
+use axum::http::Request;
 use axum::http::StatusCode;
 use axum::http::HeaderValue;
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -23,6 +26,31 @@ pub fn router() -> Router<AppState> {
                 .head(head_image_meta)
                 .options(options_image_meta),
         )
+        // DoS hardening: reject pathological `:id` segments before `Path<String>` extraction.
+        .route_layer(axum::middleware::from_fn(image_id_path_len_guard))
+}
+
+async fn image_id_path_len_guard(req: Request<Body>, next: Next) -> Response {
+    let path = req.uri().path();
+    let Some(rest) = path.strip_prefix("/v1/images/") else {
+        return next.run(req).await;
+    };
+    let Some(rest) = rest.strip_suffix("/meta") else {
+        return next.run(req).await;
+    };
+
+    // Only enforce on `/v1/images/:id/meta`.
+    if rest.contains('/') {
+        return next.run(req).await;
+    }
+
+    // A percent-encoded byte takes 3 chars (`%xx`), so if the raw path segment exceeds
+    // `MAX_IMAGE_ID_LEN * 3` then the decoded ID must exceed `MAX_IMAGE_ID_LEN` as well.
+    if rest.len() > crate::store::MAX_IMAGE_ID_LEN * 3 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    next.run(req).await
 }
 
 #[derive(Debug, serde::Serialize)]
