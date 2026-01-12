@@ -896,6 +896,32 @@ fn restore_snapshot_rejects_disks_base_image_too_long() {
 }
 
 #[test]
+fn restore_snapshot_rejects_truncated_device_entry() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    // DEVICES payload containing 1 device entry, but with a non-zero length and no payload bytes.
+    let mut devices_payload = Vec::new();
+    devices_payload.extend_from_slice(&1u32.to_le_bytes()); // count
+    devices_payload.extend_from_slice(&DeviceId::PCI.0.to_le_bytes()); // id
+    devices_payload.extend_from_slice(&1u16.to_le_bytes()); // version
+    devices_payload.extend_from_slice(&0u16.to_le_bytes()); // flags
+    devices_payload.extend_from_slice(&1u64.to_le_bytes()); // len (but missing 1 byte)
+    push_section(&mut bytes, SectionId::DEVICES, 1, 0, &devices_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("device entry truncated")
+    ));
+}
+
+#[test]
 fn restore_snapshot_rejects_duplicate_meta_sections() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(SNAPSHOT_MAGIC);
@@ -1156,6 +1182,47 @@ fn restore_snapshot_rejects_truncated_cpus_entry_len() {
     let mut target = DummyTarget::new(0);
     let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
     assert!(matches!(err, SnapshotError::Corrupt("truncated CPU entry")));
+}
+
+#[test]
+fn restore_snapshot_rejects_truncated_vcpu_internal_state() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    // Valid vCPU entry, then corrupt the internal_len field to claim 1 byte when there are 0.
+    let vcpu = VcpuSnapshot {
+        apic_id: 0,
+        cpu: CpuState::default(),
+        internal_state: Vec::new(),
+    };
+    let mut entry = Vec::new();
+    vcpu.encode_v2(&mut entry).unwrap();
+
+    // Entry layout v2: apic_id (u32) + CpuState::encode_v2 + internal_len (u64) + internal_state.
+    let cpu_len = {
+        let mut tmp = Vec::new();
+        CpuState::default().encode_v2(&mut tmp).unwrap();
+        tmp.len()
+    };
+    let internal_len_off = 4 + cpu_len;
+    entry[internal_len_off..internal_len_off + 8].copy_from_slice(&1u64.to_le_bytes());
+
+    let mut cpus_payload = Vec::new();
+    cpus_payload.extend_from_slice(&1u32.to_le_bytes());
+    cpus_payload.extend_from_slice(&(entry.len() as u64).to_le_bytes());
+    cpus_payload.extend_from_slice(&entry);
+    push_section(&mut bytes, SectionId::CPUS, 2, 0, &cpus_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("truncated vCPU internal state")
+    ));
 }
 
 #[test]

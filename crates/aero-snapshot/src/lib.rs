@@ -39,6 +39,8 @@ const DUPLICATE_APIC_ID: &str = "duplicate APIC ID in CPU list (apic_id must be 
 const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
 const MAX_DEVICE_COUNT: usize = 4096;
 const MAX_CPU_COUNT: usize = 256;
+const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
+const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -482,10 +484,23 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                             return Err(SnapshotError::Corrupt("truncated CPU entry"));
                         }
                         let mut entry_reader = (&mut section_reader).take(entry_len);
-                        let cpu = VcpuSnapshot::decode_v1(&mut entry_reader, 64 * 1024 * 1024)?;
+                        let apic_id = entry_reader.read_u32_le()?;
+                        let cpu = CpuState::decode_v1(&mut entry_reader)?;
+                        let internal_len = entry_reader.read_u64_le()?;
+                        if internal_len > MAX_VCPU_INTERNAL_LEN {
+                            return Err(SnapshotError::Corrupt("vCPU internal state too large"));
+                        }
+                        if internal_len > entry_reader.limit() {
+                            return Err(SnapshotError::Corrupt("truncated vCPU internal state"));
+                        }
+                        let internal_state = entry_reader.read_exact_vec(internal_len as usize)?;
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
-                        cpus.push(cpu);
+                        cpus.push(VcpuSnapshot {
+                            apic_id,
+                            cpu,
+                            internal_state,
+                        });
                     }
                     // Provide deterministic ordering to snapshot targets regardless of snapshot file
                     // ordering. Snapshot encoding already canonicalizes by `apic_id`, but older or
@@ -514,10 +529,23 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                             return Err(SnapshotError::Corrupt("truncated CPU entry"));
                         }
                         let mut entry_reader = (&mut section_reader).take(entry_len);
-                        let cpu = VcpuSnapshot::decode_v2(&mut entry_reader, 64 * 1024 * 1024)?;
+                        let apic_id = entry_reader.read_u32_le()?;
+                        let cpu = CpuState::decode_v2(&mut entry_reader)?;
+                        let internal_len = entry_reader.read_u64_le()?;
+                        if internal_len > MAX_VCPU_INTERNAL_LEN {
+                            return Err(SnapshotError::Corrupt("vCPU internal state too large"));
+                        }
+                        if internal_len > entry_reader.limit() {
+                            return Err(SnapshotError::Corrupt("truncated vCPU internal state"));
+                        }
+                        let internal_state = entry_reader.read_exact_vec(internal_len as usize)?;
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
-                        cpus.push(cpu);
+                        cpus.push(VcpuSnapshot {
+                            apic_id,
+                            cpu,
+                            internal_state,
+                        });
                     }
                     // Provide deterministic ordering to snapshot targets regardless of snapshot file
                     // ordering. Snapshot encoding already canonicalizes by `apic_id`, but older or
@@ -559,8 +587,23 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     }
                     let mut devices = Vec::with_capacity(count.min(64));
                     for _ in 0..count {
-                        let device = DeviceState::decode(&mut section_reader, 64 * 1024 * 1024)?;
-                        devices.push(device);
+                        let id = DeviceId(section_reader.read_u32_le()?);
+                        let version = section_reader.read_u16_le()?;
+                        let flags = section_reader.read_u16_le()?;
+                        let len = section_reader.read_u64_le()?;
+                        if len > MAX_DEVICE_ENTRY_LEN {
+                            return Err(SnapshotError::Corrupt("device entry too large"));
+                        }
+                        if len > section_reader.limit() {
+                            return Err(SnapshotError::Corrupt("device entry truncated"));
+                        }
+                        let data = section_reader.read_exact_vec(len as usize)?;
+                        devices.push(DeviceState {
+                            id,
+                            version,
+                            flags,
+                            data,
+                        });
                     }
                     // Provide deterministic ordering to snapshot targets regardless of snapshot file
                     // ordering. Snapshot encoding already canonicalizes by `(device_id, version, flags)`,
