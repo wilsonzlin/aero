@@ -11,6 +11,7 @@ use std::rc::Rc;
 pub struct Serial16550 {
     base: u16,
     ier: u8,
+    fcr: u8,
     lcr: u8,
     mcr: u8,
     lsr: u8,
@@ -27,6 +28,7 @@ impl Serial16550 {
         Self {
             base,
             ier: 0,
+            fcr: 0,
             lcr: 0x03,
             mcr: 0,
             // THR empty + transmitter empty.
@@ -44,12 +46,42 @@ impl Serial16550 {
         self.rx.push_back(byte);
     }
 
+    /// Whether the UART is currently requesting an interrupt.
+    ///
+    /// This models the UART's `INTR` output as wired on PC hardware: the line is gated by the
+    /// `OUT2` bit in the Modem Control Register (MCR). Software typically sets `OUT2` during UART
+    /// initialization to enable interrupt delivery.
+    pub fn irq_level(&self) -> bool {
+        self.interrupt_pending() && (self.mcr & 0x08) != 0
+    }
+
     pub fn take_tx(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.tx)
     }
 
     fn dlab(&self) -> bool {
         self.lcr & 0x80 != 0
+    }
+
+    fn fifo_enabled(&self) -> bool {
+        (self.fcr & 0x01) != 0
+    }
+
+    fn interrupt_pending(&self) -> bool {
+        // Receive Data Available.
+        (self.ier & 0x01) != 0 && !self.rx.is_empty()
+    }
+
+    fn read_iir(&self) -> u8 {
+        // Bit 0: 1 = no interrupt pending.
+        // Bits 3:1: interrupt ID.
+        // Bits 7:6: FIFO enabled status (16550).
+        let fifo_bits = if self.fifo_enabled() { 0xC0 } else { 0x00 };
+        if self.interrupt_pending() {
+            fifo_bits | 0x04
+        } else {
+            fifo_bits | 0x01
+        }
     }
 
     fn offset(&self, port: u16) -> Option<u16> {
@@ -76,7 +108,7 @@ impl Serial16550 {
                     self.ier
                 }
             }
-            2 => 0x01, // IIR: no interrupt pending.
+            2 => self.read_iir(),
             3 => self.lcr,
             4 => self.mcr,
             5 => {
@@ -113,7 +145,12 @@ impl Serial16550 {
                 }
             }
             2 => {
-                // FCR write; ignore for now.
+                // FCR write.
+                self.fcr = value;
+                // Clear receive FIFO.
+                if (value & 0x02) != 0 {
+                    self.rx.clear();
+                }
             }
             3 => self.lcr = value,
             4 => self.mcr = value,

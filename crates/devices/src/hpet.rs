@@ -185,13 +185,18 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        self.general_config = 0;
-        self.general_int_status = 0;
-        self.main_counter = 0;
-        self.remainder_fs = 0;
-        self.last_update_ns = self.clock.now_ns();
+        // Decode all fields into temporary locals first so `load_state()` is atomic: if decoding
+        // fails due to snapshot corruption, the device remains unchanged and the clock is not
+        // sampled (important for deterministic test clocks that advance on each `now_ns()` call).
+        let general_config =
+            r.u64(TAG_GENERAL_CONFIG)?
+                .unwrap_or(0) & (GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE);
+        let general_int_status = r.u64(TAG_GENERAL_INT_STATUS)?.unwrap_or(0);
+        let main_counter = r.u64(TAG_MAIN_COUNTER)?.unwrap_or(0);
+        let remainder_fs = r.u64(TAG_REMAINDER_FS)?.unwrap_or(0);
 
-        for timer in &mut self.timers {
+        let mut timers = self.timers.clone();
+        for timer in &mut timers {
             // Preserve the reset/default route, but clear dynamic state.
             timer.config &= TIMER_CFG_INT_ROUTE_MASK;
             timer.comparator = 0;
@@ -199,19 +204,6 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
             timer.fsb_route = 0;
             timer.armed = false;
             timer.irq_asserted = false;
-        }
-
-        if let Some(cfg) = r.u64(TAG_GENERAL_CONFIG)? {
-            self.general_config = cfg & (GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE);
-        }
-        if let Some(sts) = r.u64(TAG_GENERAL_INT_STATUS)? {
-            self.general_int_status = sts;
-        }
-        if let Some(counter) = r.u64(TAG_MAIN_COUNTER)? {
-            self.main_counter = counter;
-        }
-        if let Some(rem) = r.u64(TAG_REMAINDER_FS)? {
-            self.remainder_fs = rem;
         }
 
         if let Some(buf) = r.bytes(TAG_TIMERS) {
@@ -231,8 +223,8 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
                 let fsb_route = d.u64()?;
                 let armed = d.bool()?;
 
-                if idx < self.timers.len() {
-                    let timer = &mut self.timers[idx];
+                if idx < timers.len() {
+                    let timer = &mut timers[idx];
                     timer.config = config & TIMER_WRITABLE_MASK & !TIMER_CFG_FSB_ENABLE;
                     timer.comparator = comparator;
                     timer.period = if timer.is_periodic() { period } else { 0 };
@@ -249,6 +241,15 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
             }
             d.finish()?;
         }
+
+        let now = self.clock.now_ns();
+
+        self.general_config = general_config;
+        self.general_int_status = general_int_status;
+        self.main_counter = main_counter;
+        self.remainder_fs = remainder_fs;
+        self.last_update_ns = now;
+        self.timers = timers;
 
         Ok(())
     }

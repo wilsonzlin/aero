@@ -2732,6 +2732,19 @@ impl Machine {
                 interrupts.lower_irq(InterruptInput::IsaIrq(15));
             }
         }
+
+        // COM1 serial (16550) uses ISA IRQ4 on PC-compatible platforms. The UART's interrupt output
+        // is level-based (asserted while an interrupt condition is pending); the platform interrupt
+        // router converts this into an edge for the legacy PIC, and into a level for IOAPIC mode.
+        if let Some(serial) = &self.serial {
+            let level = serial.borrow().irq_level();
+            let mut interrupts = interrupts.borrow_mut();
+            if level {
+                interrupts.raise_irq(InterruptInput::IsaIrq(4));
+            } else {
+                interrupts.lower_irq(InterruptInput::IsaIrq(4));
+            }
+        }
     }
 
     fn sync_ide_irqs_to_interrupts(&mut self) {
