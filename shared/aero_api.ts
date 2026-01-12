@@ -56,6 +56,9 @@ export type WebGpuBenchResult =
 
 export interface AeroBenchApi {
   runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
+  runMicrobenchSuite?: (opts?: unknown) => Promise<unknown>;
+  runStorageBench?: (opts?: unknown) => Promise<unknown>;
+  runGuestCpuBench?: (opts?: unknown) => Promise<unknown>;
 }
 
 export interface AeroNetTraceApi {

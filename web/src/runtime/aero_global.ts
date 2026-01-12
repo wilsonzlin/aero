@@ -35,12 +35,15 @@ export function installAeroGlobal(): void {
     return result;
   };
 
-  aero.bench.runStorageBench = async (opts?: StorageBenchOpts): Promise<StorageBenchResult> => {
-    const result = await runStorageBench(opts);
+  function runStorageBenchGlobal(opts?: unknown): Promise<unknown>;
+  function runStorageBenchGlobal(opts?: StorageBenchOpts): Promise<StorageBenchResult>;
+  async function runStorageBenchGlobal(opts?: unknown): Promise<unknown> {
+    const result = await runStorageBench(opts as StorageBenchOpts | undefined);
     setBenchmark("storage", result);
     installAeroGlobals();
     return result;
-  };
+  }
+  aero.bench.runStorageBench = runStorageBenchGlobal;
 
   aero.bench.runGuestCpuBench = async (opts: GuestCpuBenchOpts): Promise<GuestCpuBenchRun> => {
     const result = await runGuestCpuBench(opts);

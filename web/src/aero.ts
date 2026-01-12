@@ -2,10 +2,18 @@ import { runMicrobenchSuite } from "./bench/microbench";
 import { getBenchmarksSnapshot } from "./bench/store";
 import type { PerfApi } from "./perf/types";
 
+type RunMicrobenchSuite = typeof runMicrobenchSuite;
+
+function runMicrobenchSuiteGlobal(opts?: unknown): Promise<unknown>;
+function runMicrobenchSuiteGlobal(opts?: Parameters<RunMicrobenchSuite>[0]): ReturnType<RunMicrobenchSuite>;
+async function runMicrobenchSuiteGlobal(opts?: unknown): Promise<unknown> {
+  return await runMicrobenchSuite(opts as Parameters<RunMicrobenchSuite>[0]);
+}
+
 export function installAeroGlobals(): void {
   window.aero = window.aero ?? {};
   const aero = window.aero as NonNullable<Window["aero"]>;
-  aero.bench = { ...(aero.bench ?? {}), runMicrobenchSuite };
+  aero.bench = { ...(aero.bench ?? {}), runMicrobenchSuite: runMicrobenchSuiteGlobal };
 
   if (aero.perf) {
     ensureBenchmarksAttachedToPerfExport(aero.perf);
