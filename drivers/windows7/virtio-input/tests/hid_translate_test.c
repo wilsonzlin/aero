@@ -66,6 +66,18 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_TAB) == 0x2B);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_SPACE) == 0x2C);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_CAPSLOCK) == 0x39);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F1) == 0x3A);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F2) == 0x3B);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F3) == 0x3C);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F4) == 0x3D);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F5) == 0x3E);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F6) == 0x3F);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F7) == 0x40);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F8) == 0x41);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F9) == 0x42);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F10) == 0x43);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F11) == 0x44);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F12) == 0x45);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_UP) == 0x52);
 
   /* Modifiers are handled as a bitmask, not returned as usages. */
@@ -117,6 +129,21 @@ static void test_keyboard_reports(void) {
   send_key(&t, VIRTIO_INPUT_KEY_A, 2);
   send_syn(&t);
   assert(cap.count == 1);
+}
+
+static void test_keyboard_function_key_f1_report(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+
+  /* Press F1, flush. */
+  send_key(&t, VIRTIO_INPUT_KEY_F1, 1);
+  send_syn(&t);
+
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x3A, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
 }
 
 static void test_keyboard_overflow_queue(void) {
@@ -269,6 +296,7 @@ static void test_mouse_only_enable(void) {
 int main(void) {
   test_mapping();
   test_keyboard_reports();
+  test_keyboard_function_key_f1_report();
   test_keyboard_overflow_queue();
   test_mouse_reports();
   test_reset_emits_release_reports();

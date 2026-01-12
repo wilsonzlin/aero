@@ -216,6 +216,8 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    ```bat
    hidtest.exe --keyboard
    ```
+   While it is running, press **F1..F12**. Each function key should appear in the keyboard
+   report's key array as HID usage `0x3A..0x45` (F1=`0x3A`, F12=`0x45`).
 
 3. Read mouse reports (prefers a virtio mouse device when present):
    ```bat

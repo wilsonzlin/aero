@@ -130,6 +130,20 @@ static const struct hid_translate_keymap_entry kLinuxToHidKeymap[] = {
     /* Locks. */
     {VIRTIO_INPUT_KEY_CAPSLOCK, 0x39},
 
+    /* Function keys. */
+    {VIRTIO_INPUT_KEY_F1, 0x3A},
+    {VIRTIO_INPUT_KEY_F2, 0x3B},
+    {VIRTIO_INPUT_KEY_F3, 0x3C},
+    {VIRTIO_INPUT_KEY_F4, 0x3D},
+    {VIRTIO_INPUT_KEY_F5, 0x3E},
+    {VIRTIO_INPUT_KEY_F6, 0x3F},
+    {VIRTIO_INPUT_KEY_F7, 0x40},
+    {VIRTIO_INPUT_KEY_F8, 0x41},
+    {VIRTIO_INPUT_KEY_F9, 0x42},
+    {VIRTIO_INPUT_KEY_F10, 0x43},
+    {VIRTIO_INPUT_KEY_F11, 0x44},
+    {VIRTIO_INPUT_KEY_F12, 0x45},
+
     /* Navigation/editing. */
     {VIRTIO_INPUT_KEY_INSERT, 0x49},
     {VIRTIO_INPUT_KEY_HOME, 0x4A},
