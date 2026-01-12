@@ -2,6 +2,10 @@
 
 This repository includes a minimal **virtio-snd** device model (`crates/aero-virtio`, `aero_virtio::devices::snd`) intended to be used as a high-performance alternative to full Intel HDA emulation once guest drivers exist.
 
+Note: the **browser worker runtime** currently wires up **HDA** as the default guest audio device. The virtio-snd device model
+exists (and the Windows 7 driver contract + Guest Tools packaging flow exist), but a corresponding IO-worker `PciDevice` wrapper
+is not yet registered in `web/src/io/devices/*`, so virtio-snd may not be available in all runtimes/configurations.
+
 The legacy virtio-snd implementation under `crates/emulator/src/io/virtio/devices/snd.rs` is retained behind the `emulator/legacy-audio` feature for reference.
 
 See also:
