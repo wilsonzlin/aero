@@ -632,7 +632,12 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return status;
         }
 
-        /* Disable MSI-X for this queue; INTx/ISR is required by contract v1. */
+        /*
+         * Disable MSI-X for this queue; INTx/ISR is required by contract v1.
+         *
+         * Use a best-effort call here: if the device/transport rejects MSI-X
+         * programming (read-back mismatch) we still proceed with INTx.
+         */
         (void)VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, VIRTIO_PCI_MSI_NO_VECTOR);
 
         status = VirtioPciModernTransportSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
@@ -900,7 +905,11 @@ NTSTATUS VirtIoSndStartHardware(
         goto fail;
     }
 
-    /* Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1. */
+    /*
+     * Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
+     *
+     * Best-effort: any failure here should not prevent INTx bring-up.
+     */
     (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, VIRTIO_PCI_MSI_NO_VECTOR);
 
     VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
