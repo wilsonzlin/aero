@@ -166,6 +166,35 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a0 = hDevice.pDrvPrivate`
   - `a1 = out pass count pointer` (either `pNumPasses` or the ValidateDevice args struct pointer)
 
+- Legacy fixed-function state (cached-only for Get*/StateBlock compatibility):
+  - `Device::SetTextureStageState` / `Device::GetTextureStageState`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = pack_u32_u32(stage, state)`
+    - `a2 = value` (Set) or `pValue` (Get)
+  - `Device::SetTransform` / `Device::MultiplyTransform` / `Device::GetTransform`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = transform state id` (`D3DTRANSFORMSTATETYPE` numeric value)
+    - `a2 = matrix pointer`
+  - `Device::SetClipPlane` / `Device::GetClipPlane`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = plane index`
+    - `a2 = plane pointer`
+  - `Device::SetStreamSourceFreq` / `Device::GetStreamSourceFreq`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = stream index`
+    - `a2 = value` (Set) or `pValue` (Get)
+  - `Device::SetSoftwareVertexProcessing` / `Device::GetSoftwareVertexProcessing`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = enabled` (Set) or `pEnabled` (Get)
+  - `Device::SetNPatchMode` / `Device::GetNPatchMode`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = mode` (Set) or `pMode` (Get)
+  - `Device::SetShaderConstI/B` / `Device::GetShaderConstI/B`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = shader stage` (VS=0, PS=1)
+    - `a2 = pack_u32_u32(start_register, count)`
+    - `a3 = data pointer`
+
 The exact packing per entrypoint is defined where the DDI is instrumented:
 `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp` (search for `D3d9TraceCall`).
 
