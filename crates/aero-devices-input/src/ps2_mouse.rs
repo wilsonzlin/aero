@@ -273,6 +273,9 @@ impl Ps2Mouse {
                 // IntelliMouse wheel extension sequence: 200, 100, 80.
                 if self.sample_rate_seq == [200, 100, 80] {
                     self.device_id = 0x03;
+                } else if self.sample_rate_seq == [200, 200, 80] {
+                    // IntelliMouse Explorer (5-button) sequence.
+                    self.device_id = 0x04;
                 }
             }
         }
@@ -585,5 +588,26 @@ mod tests {
         assert_eq!(packet.len(), 4);
         assert_eq!(packet[0] & 0x08, 0x08);
         assert_eq!(packet[3], 0x01);
+    }
+
+    #[test]
+    fn intellimouse_explorer_sequence_sets_device_id_0x04() {
+        let mut m = Ps2Mouse::new();
+
+        // IntelliMouse Explorer (5-button) sequence: 200, 200, 80.
+        m.receive_byte(0xF3);
+        m.receive_byte(200);
+        m.receive_byte(0xF3);
+        m.receive_byte(200);
+        m.receive_byte(0xF3);
+        m.receive_byte(80);
+
+        // Drain ACKs.
+        while m.pop_output().is_some() {}
+
+        // Get device ID.
+        m.receive_byte(0xF2);
+        assert_eq!(m.pop_output(), Some(0xFA));
+        assert_eq!(m.pop_output(), Some(0x04));
     }
 }
