@@ -376,8 +376,8 @@ async fn test_windows_7_boot() {
     
     // Aero does not ship Windows images. This test is opt-in and requires a
     // locally-provided disk image path.
-    let win7_image = std::env::var("AERO_WIN7_IMAGE")
-        .expect("set AERO_WIN7_IMAGE to a locally-provided Windows 7 disk image");
+    let win7_image = std::env::var("AERO_WINDOWS7_IMAGE")
+        .expect("set AERO_WINDOWS7_IMAGE to a locally-provided Windows 7 disk image");
     vm.load_disk(&win7_image).await;
     
     // Boot to login screen
@@ -1175,8 +1175,8 @@ fn create_test_disk(scenario: TestScenario) -> DiskImage {
         // Aero does not ship Windows disk images. When developing locally, keep
         // any Windows image outside the repo and plumb it in via configuration.
         TestScenario::BootableWindows7 => DiskImage::from_path(
-            std::env::var("AERO_WIN7_IMAGE")
-                .expect("set AERO_WIN7_IMAGE to a locally-provided Windows 7 disk image"),
+            std::env::var("AERO_WINDOWS7_IMAGE")
+                .expect("set AERO_WINDOWS7_IMAGE to a locally-provided Windows 7 disk image"),
         ),
     }
 }
