@@ -667,6 +667,9 @@ static int RunConsumer(int argc, char** argv) {
     return reporter.Fail("OpenSharedResource returned NULL texture");
   }
 
+  // Once the resource is opened, the shared handle can be closed.
+  CloseHandle(shared_handle);
+
   uint32_t pixel = 0;
   rc = ReadbackExpectedPixel(&reporter, kTestName, device.get(), context.get(), shared_tex.get(), dump, dump_bmp_path, &pixel);
   if (rc != 0) {
