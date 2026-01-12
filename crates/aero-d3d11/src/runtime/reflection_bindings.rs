@@ -372,6 +372,45 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_bindings_info_includes_empty_groups_before_max_group() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            // Vertex shader uses no resources, but pixel shader uses group 1. WebGPU requires that
+            // the pipeline layout includes all bind groups up to the maximum group index, so group
+            // 0 must exist as an empty layout.
+            let vs: Vec<crate::Binding> = Vec::new();
+            let ps = vec![crate::Binding {
+                group: 1,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [vs.as_slice(), ps.as_slice()],
+            )
+            .unwrap();
+
+            assert_eq!(info.group_bindings.len(), 2);
+            assert!(info.group_bindings[0].is_empty());
+            assert_eq!(info.group_bindings[1].len(), 1);
+            assert_eq!(info.group_bindings[1][0].group, 1);
+        });
+    }
+
+    #[test]
     fn build_bind_group_uses_scratch_for_unaligned_uniform_offsets() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
