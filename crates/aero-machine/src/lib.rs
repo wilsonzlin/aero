@@ -1120,6 +1120,17 @@ pub struct Machine {
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
     bios: Bios,
     disk: SharedDisk,
+    /// Whether the machine should automatically keep its canonical [`SharedDisk`] attached to the
+    /// canonical AHCI boot slot (port 0).
+    ///
+    /// By default, [`Machine`] attaches `SharedDisk` to AHCI port 0 so BIOS INT13 and AHCI DMA see
+    /// consistent bytes.
+    ///
+    /// When a host/test explicitly attaches a different drive to AHCI port 0 via
+    /// [`Machine::attach_ahci_drive_port0`] / [`Machine::attach_ahci_disk_port0`], this flag is
+    /// cleared so subsequent [`Machine::reset`] calls and [`Machine::set_disk_image`] calls do not
+    /// clobber the host-provided backend.
+    ahci_port0_auto_attach_shared_disk: bool,
     network_backend: Option<Box<dyn NetworkBackend>>,
 
     serial: Option<SharedSerial16550>,
@@ -1204,6 +1215,7 @@ impl Machine {
             ide: None,
             bios: Bios::new(BiosConfig::default()),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
+            ahci_port0_auto_attach_shared_disk: true,
             network_backend: None,
             serial: None,
             i8042: None,
@@ -1305,9 +1317,11 @@ impl Machine {
     fn attach_shared_disk_to_storage_controllers(&mut self) {
         // Canonical AHCI port 0.
         if let Some(ahci) = self.ahci.as_ref() {
-            let drive = AtaDrive::new(Box::new(self.disk.clone()))
-                .expect("machine disk should be 512-byte aligned");
-            ahci.borrow_mut().attach_drive(0, drive);
+            if self.ahci_port0_auto_attach_shared_disk {
+                let drive = AtaDrive::new(Box::new(self.disk.clone()))
+                    .expect("machine disk should be 512-byte aligned");
+                ahci.borrow_mut().attach_drive(0, drive);
+            }
         }
     }
 
@@ -1599,6 +1613,11 @@ impl Machine {
         let Some(ahci) = &self.ahci else {
             return;
         };
+        if port == 0 {
+            // The host is explicitly attaching a drive backend. Do not auto-attach/overwrite this
+            // slot with the machine's `SharedDisk` on future resets or `set_disk_image()` calls.
+            self.ahci_port0_auto_attach_shared_disk = false;
+        }
         ahci.borrow_mut().attach_drive(port, drive);
     }
 
