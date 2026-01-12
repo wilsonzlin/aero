@@ -28,6 +28,7 @@ Optional legacy filename alias:
 `Inf2Cat` hashes every file referenced by the INF. That means:
 
 - `aero_virtio_input.sys` must exist in this folder before running `..\scripts\make-cat.cmd`.
+  - To stage it automatically from a build output directory, run `..\scripts\stage-built-sys.ps1` (x86 or amd64).
 - If you add extra payload files later (coinstallers, firmware blobs, etc), update the INF and regenerate the catalog.
 
 ### KMDF version / coinstaller
@@ -46,3 +47,5 @@ Once the driver binaries exist, `..\scripts\package-release.ps1` can be used to 
 
 - Includes the INF (and CAT if present) from this directory
 - Pulls the built SYS (and optional KMDF coinstaller DLL) from the `-InputDir` you provide
+
+For a one-shot local workflow (stage SYS → generate CAT → sign → zip), see `..\scripts\build-release.ps1`.
