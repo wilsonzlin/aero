@@ -493,7 +493,6 @@ impl PciBarMmioHandler for PcAhciMmioBar {
         self.ahci.borrow_mut().mmio_write(offset, size, value);
     }
 }
-
 /// UHCI (BAR4) handler registered via the platform's `PciIoWindow`.
 ///
 /// The `port` argument is interpreted as the device-relative offset within BAR4.
@@ -1465,6 +1464,18 @@ impl PcPlatform {
 
         let ide = if config.enable_ide {
             let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+            // Attach a small in-memory disk by default so guests see an IDE HDD without any
+            // additional host-side wiring. Callers can override this by attaching their own disk
+            // via `PcPlatform::attach_ide_primary_master_disk`.
+            {
+                let disk = RawDisk::create(MemBackend::new(), 1024u64 * SECTOR_SIZE as u64)
+                    .expect("failed to allocate in-memory IDE disk");
+                let drive = AtaDrive::new(Box::new(disk))
+                    .expect("in-memory IDE disk should be 512-byte aligned");
+                ide.borrow_mut()
+                    .controller
+                    .attach_primary_master_ata(drive);
+            }
 
             let profile = aero_devices::pci::profile::IDE_PIIX3;
             let bdf = profile.bdf;
