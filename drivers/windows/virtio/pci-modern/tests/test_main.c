@@ -859,6 +859,33 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestNegotiateFeaturesRejectsRequiredEventIdx(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	assert(dev.DriverFeatures == 0);
+	assert(VirtioPciModernTransportGetStatus(&t) == 0);
+
+	negotiated = 0xDEADBEEFDEADBEEFull;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, (UINT64)1u << 29, 0, &negotiated);
+	assert(st == STATUS_INVALID_PARAMETER);
+	assert(negotiated == 0);
+	assert(dev.DriverFeatures == 0);
+	assert(VirtioPciModernTransportGetStatus(&t) == 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestNegotiateFeaturesStrictDoesNotNegotiatePackedRingOffered(void)
 {
 	FAKE_DEV dev;
@@ -914,6 +941,33 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing(void)
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
 	assert(dev.DriverFeatures == negotiated);
 	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) == 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestNegotiateFeaturesRejectsRequiredPackedRing(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	assert(dev.DriverFeatures == 0);
+	assert(VirtioPciModernTransportGetStatus(&t) == 0);
+
+	negotiated = 0xDEADBEEFDEADBEEFull;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, (UINT64)1u << 34, 0, &negotiated);
+	assert(st == STATUS_INVALID_PARAMETER);
+	assert(negotiated == 0);
+	assert(dev.DriverFeatures == 0);
+	assert(VirtioPciModernTransportGetStatus(&t) == 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -1402,8 +1456,10 @@ int main(void)
 	TestNegotiateFeaturesStrictRejectNoIndirectDesc();
 	TestNegotiateFeaturesStrictDoesNotNegotiateEventIdxOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx();
+	TestNegotiateFeaturesRejectsRequiredEventIdx();
 	TestNegotiateFeaturesStrictDoesNotNegotiatePackedRingOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
+	TestNegotiateFeaturesRejectsRequiredPackedRing();
 	TestQueueSetupAndNotify();
 	TestMsixConfigVectorRefusedFails();
 	TestQueueMsixVectorRefusedFails();

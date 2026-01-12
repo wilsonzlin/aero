@@ -736,14 +736,24 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 	}
 	*negotiated_out = 0;
 
-	/* Contract requirement: modern device (VERSION_1). */
-	required |= VIRTIO_F_VERSION_1;
-
 	/* Contract requirement: split ring only; never negotiate EVENT_IDX or PACKED ring. */
 	forbidden = (UINT64)1u << VIRTIO_F_RING_EVENT_IDX_BIT;
 	forbidden |= (UINT64)1u << VIRTIO_F_RING_PACKED_BIT;
+
+	/*
+	 * Reject callers that attempt to require forbidden ring features.
+	 *
+	 * These features are never negotiated by the AERO-W7-VIRTIO v1 transport; dropping them
+	 * silently from the required set can mask driver bugs.
+	 */
+	if ((required & forbidden) != 0) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	/* Contract requirement: modern device (VERSION_1). */
+	required |= VIRTIO_F_VERSION_1;
+
 	wanted &= ~forbidden;
-	required &= ~forbidden;
 	indirect_desc = (UINT64)1u << VIRTIO_F_RING_INDIRECT_DESC_BIT;
 
 	VirtioPciModernTransportResetDevice(t);
