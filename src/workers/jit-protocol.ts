@@ -9,6 +9,12 @@ export interface CompileBlockRequest {
 
 export interface CompileBlockResponseMeta {
   wasm_byte_len: number;
+  /**
+   * Length of the compiled guest code block in bytes (from guest memory).
+   *
+   * Used by the tiered runtime to track self-modifying code invalidation via page versions.
+   */
+  code_byte_len: number;
 }
 
 export interface CompileBlockResponse {
@@ -26,7 +32,7 @@ export interface CompileError {
 }
 
 export type CpuToJitMessage =
-  | { type: 'JitWorkerInit'; memory: WebAssembly.Memory }
+  | { type: 'JitWorkerInit'; memory: WebAssembly.Memory; guest_base: number; guest_size: number }
   | ({ type: 'CompileBlockRequest' } & CompileBlockRequest);
 
 export type JitToCpuMessage =

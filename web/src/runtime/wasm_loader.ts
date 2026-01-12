@@ -565,45 +565,30 @@ export interface WasmApi {
     };
 
     /**
-     * Tier-0 + Tier-1 tiered execution VM loop for the browser CPU worker.
+     * Minimal tiered VM loop (Tier-0 interpreter + Tier-1 JIT dispatch via `globalThis.__aero_jit_call`).
      *
-     * This VM runs basic blocks via `aero_cpu_core::exec::ExecDispatcher` and calls out to JS to
-     * execute Tier-1 blocks (`globalThis.__aero_jit_call`).
+     * Intended for the root Vite harness JIT smoke test (`src/workers/cpu-worker.ts`).
      *
      * Optional while older WASM builds are still in circulation.
      */
     WasmTieredVm?: new (guestBase: number, guestSize: number) => {
-        readonly guest_base: number;
-        readonly guest_size: number;
-        readonly interp_blocks_total: bigint;
-        readonly jit_blocks_total: bigint;
-
         reset_real_mode(entryIp: number): void;
-
         /**
-         * Execute up to `maxBlocks` basic blocks and return a plain JS object with execution
-         * counters and an early-exit reason.
+         * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
          */
-        run_blocks(maxBlocks: number): {
-            kind: number;
-            detail: string;
-            executed_blocks: number;
-            interp_blocks: number;
-            jit_blocks: number;
-        };
-
+        run_blocks(blocks: number): void;
         /**
-         * Drain de-duplicated compile requests (entry RIPs).
+         * Drain queued compilation requests (entry RIPs) produced by the tiered runtime.
          */
-        drain_compile_requests(): bigint[];
-
+        drain_compile_requests(): Uint32Array;
         /**
-         * Install a compiled Tier-1 block into the JIT cache.
-         *
-         * Returns an array of evicted entry RIPs so the JS runtime can free/reuse table slots.
+         * Install a compiled Tier-1 block into the runtime cache.
          */
-        install_tier1_block(entryRip: bigint, tableIndex: number, codePaddr: bigint, byteLen: number): bigint[];
-
+        install_tier1_block(entryRip: number, tableIndex: number, codePaddr: number, byteLen: number): void;
+        readonly interp_executions?: number;
+        readonly jit_executions?: number;
+        readonly guest_base?: number;
+        readonly guest_size?: number;
         free(): void;
     };
 
