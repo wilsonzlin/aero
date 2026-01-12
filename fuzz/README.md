@@ -69,4 +69,7 @@ cd fuzz && cargo fuzz run fuzz_http_range -- -runs=10000
 
 # ATAPI packet parsing (SCSI CDBs)
 cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
+
+# AeroSparse image parsing/open + bounded IO against corrupt images
+cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000
 ```
