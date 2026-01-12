@@ -128,7 +128,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::RTC` (`4`) — RTC/CMOS (0x70/0x71; inner `RTCC`)
 - `DeviceId::PCI_CFG` (`14`) — PCI config I/O ports + PCI bus config-space image state (`PciConfigPorts`, inner `PCPT`)
 - `DeviceId::PCI_INTX_ROUTER` (`15`) — PCI INTx router (`PciIntxRouter`, inner `INTX`)
-- `DeviceId::PCI` (`5`) — legacy PCI core state (either a `PciCoreSnapshot` wrapper, inner `PCIC`, or a historical `PciConfigPorts` snapshot, inner `PCPT`; see `PCI core state` below)
+- `DeviceId::PCI` (`5`) — legacy PCI core state (either a `PciCoreSnapshot` wrapper, inner `PCIC`, or a historical `PciConfigPorts` snapshot, inner `PCPT`, or a historical `PciIntxRouter` snapshot, inner `INTX`; see `PCI core state` below)
 - `DeviceId::I8042` (`13`) — i8042 PS/2 controller (0x60/0x64; inner `8042`)
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer; inner `ACPM`)
 - `DeviceId::HPET` (`17`) — HPET timer state (inner `HPET`)
@@ -140,7 +140,8 @@ Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples insi
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
 `(DeviceId::PCI, 1, 0)` key. Canonical full-machine snapshots store PCI core state using *separate* `DeviceId::PCI_CFG` +
 `DeviceId::PCI_INTX_ROUTER` entries (see `PCI core state` below). Restore code should remain compatible with legacy snapshots that stored PCI
-config ports under `DeviceId::PCI` or stored a combined `PciCoreSnapshot` wrapper (`PCIC`) under `DeviceId::PCI`.
+config ports under `DeviceId::PCI`, stored PCI INTx routing under `DeviceId::PCI`, or stored a combined `PciCoreSnapshot` wrapper (`PCIC`)
+under `DeviceId::PCI`.
 
 #### ACPI PM (`DeviceId::ACPI_PM`)
 
