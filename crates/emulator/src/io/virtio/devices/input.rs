@@ -956,6 +956,14 @@ mod tests {
             key_bitmap[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8)),
             0
         );
+        assert_ne!(
+            key_bitmap[(BTN_RIGHT / 8) as usize] & (1u8 << (BTN_RIGHT % 8)),
+            0
+        );
+        assert_ne!(
+            key_bitmap[(BTN_MIDDLE / 8) as usize] & (1u8 << (BTN_MIDDLE % 8)),
+            0
+        );
 
         mouse.write_config(1, &[EV_REL as u8]);
         let rel_bitmap = mouse.read_config(8, 128);
