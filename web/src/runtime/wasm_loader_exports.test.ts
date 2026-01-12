@@ -161,6 +161,50 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.UhciControllerBridge).toBe(FakeUhciControllerBridge);
   });
 
+  it("surfaces E1000Bridge when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakeE1000Bridge {
+      constructor(_guestBase: number, _guestSize: number, _mac?: Uint8Array) {}
+
+      mmio_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      mmio_write(_offset: number, _size: number, _value: number): void {}
+      io_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      io_write(_offset: number, _size: number, _value: number): void {}
+      poll(): void {}
+      receive_frame(_frame: Uint8Array): void {}
+      pop_tx_frame(): Uint8Array | null {
+        return null;
+      }
+      irq_level(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        E1000Bridge: FakeE1000Bridge,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.E1000Bridge).toBe(FakeE1000Bridge);
+  });
+
   it("surfaces UsbPassthroughDemo when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
