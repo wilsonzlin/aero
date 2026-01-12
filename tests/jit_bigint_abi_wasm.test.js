@@ -7,7 +7,17 @@ import {
   JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES,
 } from "../src/workers/wasm-bytes.ts";
 
-test("jit i64 BigInt ABI: wasm fixture imports/returns use BigInt", async () => {
+const HAS_SHARED_WASM_MEMORY = (() => {
+  try {
+    // eslint-disable-next-line no-new
+    new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test("jit i64 BigInt ABI: wasm fixture imports/returns use BigInt", { skip: !HAS_SHARED_WASM_MEMORY }, async () => {
   const calls = {
     mem_read_u64: 0,
     mem_write_u64: 0,
@@ -125,7 +135,7 @@ test("jit i64 BigInt ABI: code_page_version import uses BigInt", async () => {
   assert.equal(seenPage, -1n);
 });
 
-test("jit i64 BigInt ABI: rollback fixture returns sentinel and uses BigInt params", async () => {
+test("jit i64 BigInt ABI: rollback fixture returns sentinel and uses BigInt params", { skip: !HAS_SHARED_WASM_MEMORY }, async () => {
   let sawWrite = false;
   let sawExit = false;
 
