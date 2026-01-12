@@ -487,6 +487,40 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("does not double-prefix endpoints.l2 when gatewayBaseUrl is a same-origin relative path", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+    const originalLocation = (globalThis as unknown as Record<string, unknown>).location;
+
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(JSON.stringify({ endpoints: { l2: "/base/l2" } }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+    (globalThis as unknown as Record<string, unknown>).location = { href: "https://gateway.example.com/app/index.html" };
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("/base", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+    });
+
+    try {
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+      if (originalLocation === undefined) delete (globalThis as { location?: unknown }).location;
+      else (globalThis as unknown as Record<string, unknown>).location = originalLocation;
+    }
+  });
+
   it("auto-reconnects on close with exponential backoff", async () => {
     vi.useFakeTimers();
     const originalFetch = globalThis.fetch;
