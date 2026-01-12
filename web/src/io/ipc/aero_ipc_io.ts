@@ -44,14 +44,14 @@ export interface AeroIpcIoDispatchTarget {
    * resolves.
    *
    * The implementation is responsible for copying bytes into the shared guest
-   * memory at `guestOffset`.
+   * memory at `guestOffset` (a guest physical address).
    */
   diskRead?(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult>;
   /**
    * Optional disk write handler.
    *
    * The implementation is responsible for copying bytes out of the shared guest
-   * memory at `guestOffset`.
+   * memory at `guestOffset` (a guest physical address).
    */
   diskWrite?(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult>;
   tick(nowMs: number): void;
