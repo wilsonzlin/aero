@@ -12,8 +12,8 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::header::{
     ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE,
-    AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, ORIGIN, RANGE,
-    VARY,
+    AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_NONE_MATCH,
+    IF_RANGE, ORIGIN, RANGE, VARY,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -221,11 +221,23 @@ async fn disk_headers_middleware(
     req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response {
+    let has_auth = req.headers().contains_key(AUTHORIZATION)
+        || req
+            .uri()
+            .query()
+            .map(|q| q.split('&').any(|kv| kv.starts_with("token=")))
+            .unwrap_or(false);
     let origin = req.headers().get(ORIGIN).cloned();
     let mut resp = next.run(req).await;
     apply_cors_headers(&state.cfg, origin.as_ref(), &mut resp, false, "");
-    resp.headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-transform"));
+    resp.headers_mut().insert(
+        CACHE_CONTROL,
+        if has_auth {
+            HeaderValue::from_static("private, no-store, no-transform")
+        } else {
+            HeaderValue::from_static("no-transform")
+        },
+    );
     resp.headers_mut().insert(
         HeaderName::from_static("cross-origin-resource-policy"),
         state.cfg.corp_policy.as_header_value(),
@@ -282,7 +294,9 @@ fn apply_cors_headers(
         );
         resp.headers_mut().insert(
             ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Range, If-Range, Authorization, Content-Type"),
+            HeaderValue::from_static(
+                "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type",
+            ),
         );
         resp.headers_mut()
             .insert(ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("86400"));
@@ -538,11 +552,31 @@ async fn disk_get(
         .map_err(|err| match err.kind() {
             std::io::ErrorKind::NotFound => ApiError::NotFound,
             _ => ApiError::Internal,
-        })?;
+    })?;
     let size = metadata.len();
     let etag = compute_etag(&metadata);
 
-    let range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
+    let etag_str = etag.to_str().ok();
+
+    // Conditional requests: If-None-Match dominates If-Modified-Since (we only implement ETag
+    // revalidation here).
+    if let (Some(etag_str), Some(if_none_match)) = (
+        etag_str,
+        headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()),
+    ) {
+        if if_none_match_matches(if_none_match, etag_str) {
+            return Ok(not_modified_response(etag.clone()));
+        }
+    }
+
+    let mut range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
+    let if_range = headers.get(IF_RANGE).and_then(|v| v.to_str().ok());
+    if let (Some(_range), Some(if_range), Some(etag_str)) = (range_header, if_range, etag_str) {
+        if !if_range_allows_range(if_range, etag_str) {
+            // RFC 9110: ignore Range when If-Range doesn't match to avoid mixed-version bytes.
+            range_header = None;
+        }
+    }
     let ranges = match resolve_request_ranges(&state.cfg, range_header, size) {
         Ok(r) => r,
         Err(RangeRequestError::NotSatisfiable) => return Ok(range_not_satisfiable_response(size)),
@@ -751,6 +785,63 @@ fn extract_token<'a>(headers: &'a HeaderMap, token_qs: Option<&'a str>) -> Optio
     token_qs.filter(|s| !s.trim().is_empty())
 }
 
+fn not_modified_response(etag: HeaderValue) -> Response {
+    Response::builder()
+        .status(StatusCode::NOT_MODIFIED)
+        .header(ACCEPT_RANGES, "bytes")
+        .header(ETAG, etag)
+        .header(CONTENT_LENGTH, "0")
+        .body(Body::empty())
+        .unwrap_or_else(|_| StatusCode::NOT_MODIFIED.into_response())
+}
+
+fn if_none_match_matches(if_none_match: &str, current_etag: &str) -> bool {
+    let current = strip_weak_prefix(current_etag.trim());
+
+    for raw in if_none_match.split(',') {
+        let tag = raw.trim();
+        if tag == "*" {
+            return true;
+        }
+        if strip_weak_prefix(tag) == current {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn strip_weak_prefix(tag: &str) -> &str {
+    let trimmed = tag.trim();
+    trimmed
+        .strip_prefix("W/")
+        .or_else(|| trimmed.strip_prefix("w/"))
+        .unwrap_or(trimmed)
+}
+
+fn if_range_allows_range(if_range: &str, current_etag: &str) -> bool {
+    let if_range = if_range.trim();
+    let current_etag = current_etag.trim();
+
+    // Only implement the entity-tag form here. RFC 9110 requires strong comparison.
+    if !(if_range.starts_with('"')
+        || if_range.starts_with("W/")
+        || if_range.starts_with("w/"))
+    {
+        return false;
+    }
+
+    if if_range.starts_with("W/")
+        || if_range.starts_with("w/")
+        || current_etag.starts_with("W/")
+        || current_etag.starts_with("w/")
+    {
+        return false;
+    }
+
+    if_range == current_etag
+}
+
 fn compute_etag(metadata: &std::fs::Metadata) -> HeaderValue {
     let size = metadata.len();
     let modified = metadata
@@ -760,8 +851,8 @@ fn compute_etag(metadata: &std::fs::Metadata) -> HeaderValue {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
 
-    let tag = format!("W/\"{size}-{modified}\"");
-    HeaderValue::from_str(&tag).unwrap_or_else(|_| HeaderValue::from_static("W/\"0-0\""))
+    let tag = format!("\"{size}-{modified}\"");
+    HeaderValue::from_str(&tag).unwrap_or_else(|_| HeaderValue::from_static("\"0-0\""))
 }
 
 fn range_not_satisfiable_response(size: u64) -> Response {
