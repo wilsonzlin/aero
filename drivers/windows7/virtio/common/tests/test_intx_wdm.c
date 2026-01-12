@@ -477,6 +477,53 @@ static void test_bit_accumulation_single_dpc(void)
     VirtioIntxDisconnect(&intx);
 }
 
+static void test_evt_dpc_accumulation_single_dpc(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, evt_dpc, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected_intx = &intx;
+
+    /* Queue interrupt -> queues a DPC. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(isr_reg == 0);
+    assert(intx.PendingIsrStatus == VIRTIO_PCI_ISR_QUEUE_INTERRUPT);
+    assert(intx.DpcInFlight == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+
+    /* Config interrupt arrives before the DPC runs -> bits accumulate, no second DPC. */
+    isr_reg = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(isr_reg == 0);
+    assert(intx.PendingIsrStatus == (VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT));
+    assert(intx.DpcInFlight == 1);
+    assert(intx.Dpc.Inserted != FALSE);
+
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) == FALSE);
+
+    assert(intx.PendingIsrStatus == 0);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.DpcCount == 1);
+
+    /* With EvtDpc installed, the helper should not call the per-bit callbacks. */
+    assert(ctx.dpc_calls == 1);
+    assert(ctx.last_isr_status == 0x3);
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+
+    VirtioIntxDisconnect(&intx);
+}
+
 static void test_disconnect_cancels_queued_dpc(void)
 {
     VIRTIO_INTX intx;
@@ -599,6 +646,7 @@ int main(void)
     test_unknown_isr_bits_no_callbacks_without_evt_dpc();
     test_queue_config_dispatch();
     test_bit_accumulation_single_dpc();
+    test_evt_dpc_accumulation_single_dpc();
     test_disconnect_cancels_queued_dpc();
     test_interrupt_during_dpc_requeues();
     test_evt_dpc_dispatch_override();
