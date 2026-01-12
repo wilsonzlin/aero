@@ -360,6 +360,11 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
 ### Run + compare the storage I/O benchmark suite (OPFS + IndexedDB)
 
 The storage bench is a Playwright-driven macrobench (`bench/runner.ts storage_io`) that writes a raw `storage_bench.json`.
+
+Note: this suite measures host-side OPFS/IndexedDB throughput. IndexedDB is async-only and does not
+currently back the synchronous Rust disk/controller path (`aero_storage::{StorageBackend, VirtualDisk}`).
+See: [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md).
+
 To reproduce the CI compare locally:
 
 ```bash

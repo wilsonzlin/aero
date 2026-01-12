@@ -185,6 +185,9 @@ The `storage_io` scenario loads `web/storage_bench.html` in Chromium via Playwri
 - `storage_bench.json` — raw storage benchmark report (OPFS preferred; falls back to IndexedDB)
 - `report.json` — scenario runner report containing a small set of key metrics (seq read/write MB/s, random read p50/p95)
 
+Note: IndexedDB is async-only and does not currently back the synchronous Rust disk/controller path
+(`aero_storage::{StorageBackend, VirtualDisk}`); see `docs/19-indexeddb-storage-story.md`.
+
 The benchmark uses a fixed `random_seed` so random I/O patterns are repeatable across runs.
 
 ### Running locally (CI parity)
