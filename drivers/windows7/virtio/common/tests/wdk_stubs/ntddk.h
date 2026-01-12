@@ -58,6 +58,14 @@ typedef uintptr_t KAFFINITY;
 #define PASSIVE_LEVEL ((KIRQL)0u)
 #define DISPATCH_LEVEL ((KIRQL)2u)
 
+/* DbgPrint/DbgPrintEx */
+#ifndef DPFLTR_IHVDRIVER_ID
+#define DPFLTR_IHVDRIVER_ID 0u
+#endif
+#ifndef DPFLTR_ERROR_LEVEL
+#define DPFLTR_ERROR_LEVEL 0u
+#endif
+
 /* Processor mode */
 typedef enum _KPROCESSOR_MODE {
     KernelMode = 0,
@@ -262,6 +270,27 @@ static __forceinline VOID KeStallExecutionProcessor(_In_ ULONG Microseconds)
 {
     WdkTestOnKeStallExecutionProcessor(Microseconds);
     /* Deterministic host tests: do not actually sleep. */
+}
+
+static __forceinline ULONGLONG KeQueryInterruptTime(VOID)
+{
+    /*
+     * Host tests are single-threaded and do not model real time.
+     * Provide a monotonically increasing timestamp in 100ns units so production
+     * code that uses KeQueryInterruptTime for deadline tracking does not spin
+     * forever.
+     */
+    static ULONGLONG t100ns = 0;
+    t100ns += 10000ull; /* +1ms per call */
+    return t100ns;
+}
+
+static __forceinline ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Format, ...)
+{
+    (void)ComponentId;
+    (void)Level;
+    (void)Format;
+    return 0;
 }
 
 /* Interlocked primitives (single-process host tests). */
