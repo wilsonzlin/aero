@@ -9,20 +9,30 @@ export interface IrqSink {
   /**
    * Assert an IRQ line.
    *
-   * In the web runtime, IRQs are modeled as *physical line levels* (asserted vs deasserted) that
-   * are transported between workers as discrete `irqRaise`/`irqLower` events.
+   * In the browser runtime, IRQs are modeled as *physical line levels*
+   * (asserted vs deasserted) and transported between workers as discrete
+   * `irqRaise`/`irqLower` events (see `docs/irq-semantics.md`).
    *
-   * - **Level-triggered sources** (e.g. PCI INTx devices like UHCI) should call {@link raiseIrq}
-   *   when the device begins asserting the line and {@link lowerIrq} when the condition is
-   *   cleared.
-   * - **Edge-triggered sources** (e.g. i8042 keyboard/mouse on ISA IRQ1/IRQ12) must be represented
-   *   as an explicit pulse: call {@link raiseIrq} immediately followed by {@link lowerIrq} to
-   *   generate a 0→1→0 transition.
+   * Shared lines are treated as refcounted wire-OR levels:
+   * - each `raiseIrq()` increments a per-line refcount
+   * - each `lowerIrq()` decrements it
+   * - the line is considered asserted while the refcount is > 0
    *
-   * See `docs/irq-semantics.md` for the full contract (including how future PIC/APIC models should
-   * latch edges).
+   * Repeated `raiseIrq()` calls without an intervening `lowerIrq()` are legal,
+   * but must eventually be balanced.
+   *
+   * Edge-triggered sources (e.g. ISA i8042 IRQ1/IRQ12) are represented as an
+   * explicit pulse: call `raiseIrq()` immediately followed by `lowerIrq()` to
+   * generate a 0→1→0 transition.
    */
   raiseIrq(irq: number): void;
+  /**
+   * Deassert an IRQ line.
+   *
+   * See `raiseIrq()` / `docs/irq-semantics.md` for the contract. Extra
+   * `lowerIrq()` calls when the refcount is already 0 are ignored (and may warn
+   * in dev builds).
+   */
   lowerIrq(irq: number): void;
 }
 

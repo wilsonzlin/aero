@@ -39,6 +39,13 @@ import {
   type WorkerInitMessage,
 } from "../runtime/protocol";
 import { DeviceManager, type IrqSink } from "../io/device_manager";
+import {
+  IRQ_REFCOUNT_ASSERT,
+  IRQ_REFCOUNT_DEASSERT,
+  IRQ_REFCOUNT_SATURATED,
+  IRQ_REFCOUNT_UNDERFLOW,
+  applyIrqRefCountChange,
+} from "../io/irq_refcount";
 import { I8042Controller } from "../io/devices/i8042";
 import { E1000PciDevice } from "../io/devices/e1000";
 import { PciTestDevice } from "../io/devices/pci_test_device";
@@ -1878,34 +1885,46 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         hidInRing = null;
       }
 
-      // IRQ delivery between workers models *physical line levels* (asserted vs deasserted)
-      // using discrete `irqRaise`/`irqLower` events (see `docs/irq-semantics.md`).
+      // IRQ delivery between workers models *physical line levels* (asserted vs
+      // deasserted) using discrete `irqRaise`/`irqLower` events (see
+      // `docs/irq-semantics.md`).
       //
-      // Multiple devices may share an IRQ line (e.g. PCI INTx). Model the electrical
-      // "wire-OR" by keeping a refcount per line and only emitting transitions:
+      // Multiple devices may share an IRQ line (e.g. PCI INTx). Model the
+      // electrical wire-OR by keeping a refcount per line and only emitting
+      // transitions:
       //   - emit `irqRaise` on 0→1
       //   - emit `irqLower` on 1→0
       //
       // Edge-triggered sources (e.g. i8042) are represented by emitting a pulse
-      // (`raiseIrq()` then `lowerIrq()`); this refcounting ensures the pulse reaches the CPU
-      // worker as a 0→1→0 transition (unless the line is already asserted, which matches
-      // real hardware: you can't observe a rising edge on an already-high line).
+      // (`raiseIrq()` then `lowerIrq()`); this refcounting ensures the pulse
+      // reaches the CPU worker as a 0→1→0 transition (unless the line is already
+      // asserted, which matches real hardware: you can't observe a rising edge
+      // on an already-high line).
+      //
+      // Guardrails:
+      //  - underflow is ignored (dev warning)
+      //  - overflow saturates at 0xffff to avoid Uint16Array wraparound (dev warning)
       const irqRefCounts = new Uint16Array(256);
+      const irqWarnedUnderflow = new Uint8Array(256);
+      const irqWarnedSaturated = new Uint8Array(256);
       const irqSink: IrqSink = {
         raiseIrq: (irq) => {
           const idx = irq & 0xff;
-          const prev = irqRefCounts[idx]!;
-          const next = prev + 1;
-          irqRefCounts[idx] = next;
-          if (prev === 0) enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: idx }));
+          const flags = applyIrqRefCountChange(irqRefCounts, idx, true);
+          if (flags & IRQ_REFCOUNT_ASSERT) enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: idx }));
+          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+            irqWarnedSaturated[idx] = 1;
+            console.warn(`[io.worker] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
+          }
         },
         lowerIrq: (irq) => {
           const idx = irq & 0xff;
-          const prev = irqRefCounts[idx]!;
-          if (prev === 0) return;
-          const next = prev - 1;
-          irqRefCounts[idx] = next;
-          if (next === 0) enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: idx }));
+          const flags = applyIrqRefCountChange(irqRefCounts, idx, false);
+          if (flags & IRQ_REFCOUNT_DEASSERT) enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: idx }));
+          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+            irqWarnedUnderflow[idx] = 1;
+            console.warn(`[io.worker] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
+          }
         },
       };
 

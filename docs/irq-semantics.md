@@ -1,97 +1,102 @@
-# IRQ semantics in the browser runtime
+# IRQ semantics (browser runtime)
 
-This document standardizes how Aero represents interrupt requests (IRQs) in the **browser
-multi-worker runtime** (`web/src`). It exists to remove ambiguity between **edge-triggered**
-sources (like the legacy i8042 PS/2 controller) and **level-triggered** sources (like PCI INTx
-devices such as UHCI).
+This document defines the **single, unambiguous contract** for interrupt request (IRQ) delivery in Aero's browser worker runtime.
 
-## Background / why this matters
+It exists to remove ambiguity between:
 
-- The Rust i8042 integration (`crates/devices/src/i8042.rs::PlatformIrqSink`) converts a
-  byte-ready event into an **edge** by explicitly pulsing the line (`raise` then immediately
-  `lower`).
-- The browser runtime transports IRQs between the IO worker and CPU worker as **level
-  transitions** (`irqRaise` / `irqLower`) and keeps per-line refcounts in both workers.
-- Historically, the TypeScript i8042 model asserted IRQ1 while its output queue was non-empty,
-  which is a *level* interpretation and can drop interrupts when multiple bytes are queued.
+- **Edge-triggered** interrupt sources (e.g. the legacy i8042 PS/2 controller on ISA IRQ1/IRQ12)
+- **Level-triggered** interrupt sources (e.g. PCI INTx devices like UHCI)
 
-If i8042 is treated as level-triggered, an edge-triggered interrupt controller (8259 PIC in its
-default mode) will only observe the first byte becoming available and may miss subsequent bytes
-until the line is deasserted.
+## What `raiseIrq()` / `lowerIrq()` mean
 
-## Contract: what `IrqSink.raiseIrq` / `IrqSink.lowerIrq` mean
+In `web/src`, `IrqSink` models **physical interrupt input line levels**:
 
-In the web runtime, `IrqSink` represents **physical interrupt input line levels**:
+- `raiseIrq(irq)` **asserts** the line
+- `lowerIrq(irq)` **deasserts** the line
 
-- `raiseIrq(irq)` **asserts** the line (logical active level).
-- `lowerIrq(irq)` **deasserts** the line.
+These calls manipulate the *wire* (line level). They do **not** mean "deliver an interrupt right now".
 
-The transport between workers is event-based, but the meaning is still “line changed level”.
-Devices must treat these calls as manipulating the *wire*, not as “deliver an interrupt right
-now”.
+See also:
 
-The runtime models IRQ lines as **wire-OR**:
+- `web/src/io/device_manager.ts` (`IrqSink`)
+- `web/src/workers/io.worker.ts` (device IRQ wiring)
+- `web/src/workers/cpu.worker.ts` (IRQ bitmap/refcount)
 
-- A line is considered asserted if **any** device is asserting it.
-- Calls must be balanced per source: every `raiseIrq()` must eventually be matched by
-  a `lowerIrq()` (even if they occur back-to-back to form a pulse).
+## Shared IRQ lines: refcounted wire-OR
 
-## Level-triggered sources (example: PCI INTx / UHCI)
+Multiple devices may share an IRQ line (e.g. PCI INTx, legacy PIC inputs). Aero models this as a refcounted **wire-OR**:
 
-**Level-triggered** devices assert their interrupt line while an interrupt condition remains
-pending, and deassert it once the condition is cleared/acknowledged.
+- each `raiseIrq()` increments a per-line refcount
+- each `lowerIrq()` decrements it
+- the effective line level is **asserted while the refcount is > 0**
 
-Examples:
+### Balanced usage
 
-- **PCI INTx** devices (e.g. UHCI): INTx is a shared, wired-OR, *level-triggered* signal in PCI.
-  `UhciPciDevice` mirrors `bridge.irq_asserted()` by calling `raiseIrq()` on 0→1 and `lowerIrq()`
-  on 1→0.
+Repeated `raiseIrq()` calls without an intervening `lowerIrq()` are legal, but they must eventually be balanced:
 
-## Edge-triggered sources (example: ISA i8042 IRQ1/IRQ12)
+```ts
+raiseIrq(1);
+raiseIrq(1); // refcount now 2
+lowerIrq(1); // refcount now 1 (still asserted)
+lowerIrq(1); // refcount now 0 (deasserted)
+```
 
-**Edge-triggered** sources generate a *pulse* (a rising edge) rather than holding a level.
+### Guardrails (underflow/overflow)
 
-In Aero’s browser runtime, edge-triggered sources MUST be represented as an explicit pulse:
+The worker runtime clamps common misuse patterns:
+
+- **Underflow**: extra `lowerIrq()` calls when the refcount is already 0 are ignored (dev-time warning).
+- **Overflow**: refcounts **saturate at `0xffff`** to avoid `Uint16Array` wraparound (dev-time warning).
+
+The shared helper that defines this behaviour is:
+
+- `web/src/io/irq_refcount.ts`
+
+And the unit tests that lock in the contract are:
+
+- `web/src/io/irq_refcount.test.ts`
+
+## Edge-triggered sources
+
+Edge-triggered sources MUST be represented as an explicit *pulse* (0→1→0):
 
 1. `raiseIrq(irq)`
-2. `lowerIrq(irq)` (immediately after, in the same turn/microtask is fine)
-
-This produces a 0→1→0 transition in the IO worker’s wire-OR refcounting and therefore a matching
-`irqRaise` + `irqLower` event pair delivered to the CPU worker.
+2. `lowerIrq(irq)` (immediately after; same turn/microtask is fine)
 
 Notes:
 
-- A rising edge cannot be observed if the line is already asserted (for example, because another
-  device is holding the line high). In that case the pulse is naturally suppressed by wire-OR
-  refcounting. This matches real hardware: you cannot get a new rising edge on an already-high
-  signal.
+- A rising edge cannot be observed if the line is already asserted (for example because another device is holding the line high). In that case the pulse is naturally suppressed by wire-OR refcounting.
+  This matches real hardware: you cannot get a new rising edge on an already-high signal.
 
-Examples:
+Example:
 
-- **i8042 keyboard/mouse controller** (ISA IRQ1/IRQ12): pulse when a byte is loaded into the
-  output buffer and interrupts are enabled.
-  - Rust glue pulses the line to feed a level+edge-detect interrupt router.
-  - The TS `I8042Controller` does the same (`raiseIrq(1)` + `lowerIrq(1)`) so one interrupt is
-    observable per output byte.
+- **i8042 keyboard/mouse controller** (ISA IRQ1/IRQ12): pulse when a byte becomes available and interrupts are enabled.
 
-## How the eventual PIC/APIC should consume these events
+## Level-triggered sources
 
-The current CPU worker exposes a **level bitmap** of asserted IRQ lines in shared memory. That is
-useful for debugging and simple polling, but it is **not sufficient** to faithfully represent
-edge-triggered interrupts (a short pulse could be missed by a sampler).
+Level-triggered devices assert their interrupt line while an interrupt condition remains pending, and deassert it once the condition is cleared/acknowledged.
 
-When a real interrupt controller model (PIC/APIC) is implemented for the browser runtime, it
-should:
+Example:
 
-1. Track the **external line level** per IRQ input (driven by `irqRaise`/`irqLower` transitions).
-2. For **edge-triggered inputs**: latch rising edges into a pending-request register (e.g. PIC
-   IRR) so the interrupt remains pending until acknowledged/EOI, even if the line is lowered
-   immediately after the edge.
-3. For **level-triggered inputs**: treat “line asserted” as “interrupt pending” until the device
-   clears the condition and deasserts the line.
+- **PCI INTx** devices (e.g. UHCI): INTx is a shared, wired-OR, *level-triggered* signal in PCI.
 
-## Summary (current sources in `web/src`)
+## Worker transport (`irqRaise` / `irqLower`)
 
-- **i8042 (ISA IRQ1/IRQ12)**: edge-triggered → model as pulses (`raiseIrq` then `lowerIrq`).
-- **PCI INTx devices** (e.g. **UHCI**, **E1000**): level-triggered → model as line assertion
-  (`raiseIrq` while pending, `lowerIrq` when cleared / acknowledged).
+Between the I/O worker and CPU worker, IRQs are transported as discrete AIPC events:
+
+- `irqRaise` (line asserted)
+- `irqLower` (line deasserted)
+
+These events are still *line levels*; edge-triggered interrupts are represented as explicit pulses.
+
+Implementation note: some paths may coalesce nested assertions for efficiency (only emit `irqRaise` on 0→1 and `irqLower` on 1→0). This is compatible with the level/refcount contract.
+
+## Future PIC/APIC behaviour
+
+The current CPU worker publishes a **level bitmap** of asserted IRQ lines into shared memory for debugging/observability.
+
+A level bitmap alone is not sufficient to faithfully represent edge-triggered interrupts (a short pulse can be missed by a sampler). When a real PIC/APIC model is implemented in the browser runtime, it should:
+
+1. Track the **external line level** per IRQ input (driven by `irqRaise`/`irqLower`).
+2. For **edge-triggered inputs**, latch rising edges into a pending register (e.g. PIC IRR) so they remain pending until acknowledged/EOI.
+3. For **level-triggered inputs**, treat “line asserted” as “interrupt pending” until the device clears the condition and deasserts the line.

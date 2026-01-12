@@ -96,6 +96,16 @@ For the canonical USB stack selection for the browser runtime, see [ADR 0015](./
 
 ---
 
+## IRQ semantics (browser runtime)
+
+Input devices ultimately notify the guest via IRQ lines (IRQ1/IRQ12 for PS/2,
+PCI INTx for UHCI, etc). In the browser runtime these are delivered as
+refcounted *line level* transitions (`raiseIrq` / `lowerIrq`). Edge-triggered
+sources are represented as explicit pulses (0→1→0).
+
+See [`docs/irq-semantics.md`](./irq-semantics.md) for the canonical contract and
+guardrails (underflow/overflow behaviour, wire-OR semantics, and tests).
+
 ## Snapshot/Restore (Save States)
 
 Input snapshots must preserve any **pending bytes** that the guest has not yet consumed, along with controller/device command state.

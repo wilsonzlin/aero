@@ -5,9 +5,14 @@ import type { IrqSink } from "../device_manager.ts";
 /**
  * IRQ callback invoked by {@link AeroIpcIoClient.poll}.
  *
- * `level=true` corresponds to an `irqRaise` event (line asserted) and `level=false` corresponds
- * to an `irqLower` event (line deasserted). These events model IRQ *line levels*; edge-triggered
- * interrupts are represented as explicit pulses (0→1→0).
+ * `level=true` corresponds to an `irqRaise` event (line asserted) and
+ * `level=false` corresponds to an `irqLower` event (line deasserted).
+ *
+ * These events model IRQ *line levels* (not \"deliver an interrupt now\"). Shared
+ * lines should be treated as refcounted wire-OR levels (effective level is high
+ * while the refcount is > 0).
+ *
+ * Edge-triggered interrupts are represented as explicit pulses (0→1→0).
  *
  * See `docs/irq-semantics.md`.
  */
@@ -232,6 +237,8 @@ export class AeroIpcIoClient {
 
   #handleIncomingEvent(evt: Event): void {
     if (evt.kind === "irqRaise" || evt.kind === "irqLower") {
+      // IRQ events are level transitions: `irqRaise` asserts the line and
+      // `irqLower` deasserts it. See `IrqCallback` for the wire-OR contract.
       this.#onIrq?.(evt.irq, evt.kind === "irqRaise");
       return;
     }
@@ -316,12 +323,15 @@ export class AeroIpcIoServer implements IrqSink {
   }
 
   raiseIrq(irq: number): void {
-    // IRQs are transported as line level transitions (assert/deassert). Edge-triggered sources
-    // are represented as explicit pulses (raise then lower). See `docs/irq-semantics.md`.
+    // Emit a level assertion event. Receivers are responsible for wire-OR /
+    // refcount behaviour when multiple devices share a line. Edge-triggered
+    // interrupts are represented as explicit pulses (raise then lower).
+    // See `docs/irq-semantics.md`.
     this.#emitEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff }));
   }
 
   lowerIrq(irq: number): void {
+    // Emit a level deassertion event. See `raiseIrq()`.
     this.#emitEvent(encodeEvent({ kind: "irqLower", irq: irq & 0xff }));
   }
 

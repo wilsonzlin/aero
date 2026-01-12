@@ -73,6 +73,11 @@ import {
 } from "../runtime/snapshot_protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import { AeroIpcIoClient } from "../io/ipc/aero_ipc_io";
+import {
+  IRQ_REFCOUNT_SATURATED,
+  IRQ_REFCOUNT_UNDERFLOW,
+  applyIrqRefCountChange,
+} from "../io/irq_refcount";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -137,21 +142,24 @@ let didIoDemo = false;
 
 let irqBitmapLo = 0;
 let irqBitmapHi = 0;
-// Per-IRQ reference counts so multiple devices can share an interrupt input line.
+// Per-IRQ reference counts so multiple devices can share an interrupt input line
+// (wire-OR semantics).
 //
 // The I/O worker transports IRQ activity as discrete `irqRaise`/`irqLower` events.
+// In the canonical browser runtime path (`web/src/workers/io.worker.ts`), those
+// events correspond to *aggregated line level transitions* after wire-OR.
 //
-// In the canonical browser runtime path (`web/src/workers/io.worker.ts`), those events correspond
-// to *aggregated line level transitions* (after wire-OR). We still keep a refcount here as a
-// robustness guard so alternate I/O paths (tests, demos) can safely emit per-device
-// assert/deassert events while still producing a correct wire-OR level bitmap.
+// We still keep a refcount here as a robustness guard so alternate I/O paths
+// (tests, demos) can safely emit per-device assert/deassert events while still
+// producing a correct wire-OR bitmap.
 //
-// The bitmap is published into shared memory for the WASM CPU core.
-//
-// Note: A level bitmap alone cannot represent edge-triggered interrupts. Edge-triggered devices
-// (e.g. i8042) are represented as explicit pulses (0→1→0 transitions); the eventual PIC/APIC model
-// should latch rising edges so they are not missed even if the line is lowered quickly.
+// Note: A level bitmap alone cannot represent edge-triggered interrupts.
+// Edge-triggered devices (e.g. i8042) are represented as explicit pulses
+// (0→1→0 transitions); the eventual PIC/APIC model should latch rising edges so
+// they are not missed even if the line is lowered quickly.
 const irqRefCounts = new Uint16Array(256);
+const irqWarnedUnderflow = new Uint8Array(256);
+const irqWarnedSaturated = new Uint8Array(256);
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -1180,6 +1188,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       irqBitmapLo = 0;
       irqBitmapHi = 0;
       irqRefCounts.fill(0);
+      irqWarnedUnderflow.fill(0);
+      irqWarnedSaturated.fill(0);
       Atomics.store(status, StatusIndex.CpuIrqBitmapLo, 0);
       Atomics.store(status, StatusIndex.CpuIrqBitmapHi, 0);
       Atomics.store(status, StatusIndex.CpuA20Enabled, 0);
@@ -1187,10 +1197,14 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         onIrq: (irq, level) => {
           perf.instant("cpu:io:irq", "t", { irq, level });
           const idx = irq & 0xff;
-          if (level) {
-            if (irqRefCounts[idx] !== 0xffff) irqRefCounts[idx] += 1;
-          } else if (irqRefCounts[idx] > 0) {
-            irqRefCounts[idx] -= 1;
+          const flags = applyIrqRefCountChange(irqRefCounts, idx, level);
+          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+            irqWarnedUnderflow[idx] = 1;
+            console.warn(`[cpu.worker] IRQ${idx} refcount underflow (irqLower without matching irqRaise?)`);
+          }
+          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+            irqWarnedSaturated[idx] = 1;
+            console.warn(`[cpu.worker] IRQ${idx} refcount saturated at 0xffff (irqRaise without matching irqLower?)`);
           }
           const asserted = irqRefCounts[idx] > 0;
           if (idx < 32) {
