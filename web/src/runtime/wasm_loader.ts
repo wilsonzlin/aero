@@ -946,17 +946,35 @@ export interface WasmApi {
      *
      * Optional for older WASM builds.
      */
-    HdaControllerBridge?: new (guestBase: number, guestSize: number) => {
+    HdaControllerBridge?: new (guestBase: number, guestSize: number, outputSampleRateHz?: number) => {
+        /**
+         * Host/output sample rate used by the controller when emitting audio.
+         *
+         * Added in newer WASM builds; older builds may not expose this.
+         */
+        readonly output_sample_rate_hz?: number;
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
 
         attach_audio_ring(ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number): void;
         detach_audio_ring(): void;
+        /**
+         * Alias for {@link attach_audio_ring} retained for older call sites/spec drafts.
+         */
+        attach_output_ring?: (ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number) => void;
+        /**
+         * Alias for {@link detach_audio_ring} retained for older call sites/spec drafts.
+         */
+        detach_output_ring?: () => void;
 
         attach_mic_ring(ringSab: SharedArrayBuffer, sampleRate: number): void;
         detach_mic_ring(): void;
 
         set_output_rate_hz(rate: number): void;
+        /**
+         * Alias for {@link set_output_rate_hz} retained for older call sites/spec drafts.
+         */
+        set_output_sample_rate_hz?: (rate: number) => void;
         process(frames: number): void;
 
         /**

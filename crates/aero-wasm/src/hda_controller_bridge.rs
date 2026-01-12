@@ -82,10 +82,20 @@ impl HdaControllerBridge {
     /// - `guest_size` is the guest RAM size in bytes. Pass `0` to use "the remainder of linear
     ///   memory" as guest RAM (mirrors `WasmVm` and other device bridges).
     #[wasm_bindgen(constructor)]
-    pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
+    pub fn new(
+        guest_base: u32,
+        guest_size: u32,
+        output_sample_rate_hz: Option<u32>,
+    ) -> Result<Self, JsValue> {
         if guest_base == 0 {
             return Err(js_error("guest_base must be non-zero"));
         }
+
+        let output_sample_rate_hz = match output_sample_rate_hz {
+            Some(0) => return Err(js_error("outputSampleRateHz must be non-zero")),
+            Some(v) => v,
+            None => 48_000,
+        };
 
         let mem_bytes = wasm_memory_byte_len();
         let guest_size_u64 = if guest_size == 0 {
@@ -109,7 +119,7 @@ impl HdaControllerBridge {
         }
 
         Ok(Self {
-            hda: HdaController::new(),
+            hda: HdaController::new_with_output_rate(output_sample_rate_hz),
             mem: crate::HdaGuestMemory {
                 guest_base,
                 guest_size: guest_size_u64,
@@ -118,6 +128,12 @@ impl HdaControllerBridge {
             mic_ring: None,
             pending_audio_ring_state: None,
         })
+    }
+
+    /// Return the host/output sample rate used by the controller when emitting audio.
+    #[wasm_bindgen(getter)]
+    pub fn output_sample_rate_hz(&self) -> u32 {
+        self.hda.output_rate_hz()
     }
 
     /// Read from the HDA MMIO region.
@@ -191,6 +207,21 @@ impl HdaControllerBridge {
         }
     }
 
+    /// Alias for [`Self::attach_audio_ring`] retained for older call sites/spec drafts.
+    pub fn attach_output_ring(
+        &mut self,
+        ring_sab: SharedArrayBuffer,
+        capacity_frames: u32,
+        channel_count: u32,
+    ) -> Result<(), JsValue> {
+        self.attach_audio_ring(ring_sab, capacity_frames, channel_count)
+    }
+
+    /// Alias for [`Self::detach_audio_ring`] retained for older call sites/spec drafts.
+    pub fn detach_output_ring(&mut self) {
+        self.detach_audio_ring();
+    }
+
     /// Attach the microphone capture ring buffer (consumer side; AudioWorklet is the producer).
     pub fn attach_mic_ring(
         &mut self,
@@ -218,6 +249,11 @@ impl HdaControllerBridge {
         }
         self.hda.set_output_rate_hz(rate);
         Ok(())
+    }
+
+    /// Alias for [`Self::set_output_rate_hz`] retained for older call sites/spec drafts.
+    pub fn set_output_sample_rate_hz(&mut self, rate: u32) -> Result<(), JsValue> {
+        self.set_output_rate_hz(rate)
     }
 
     /// Advance the HDA device by `frames` worth of host time.
@@ -379,7 +415,7 @@ mod tests {
         let guest_base = guest.as_mut_ptr() as u32;
         let guest_size = guest.len() as u32;
 
-        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
 
         // Bring controller out of reset.
         bridge.hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
