@@ -28,6 +28,7 @@ const MAX_DEVICE_BLOB_BYTES: usize = 4 * 1024 * 1024;
 
 const DEVICE_KIND_USB_UHCI: &str = "usb.uhci";
 const DEVICE_KIND_I8042: &str = "input.i8042";
+const DEVICE_KIND_AUDIO_HDA: &str = "audio.hda";
 const DEVICE_KIND_PREFIX_ID: &str = "device.";
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -140,6 +141,9 @@ fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     if kind == DEVICE_KIND_I8042 {
         return Some(DeviceId::I8042);
     }
+    if kind == DEVICE_KIND_AUDIO_HDA {
+        return Some(DeviceId::HDA);
+    }
 
     // For forward compatibility, unknown device ids can be surfaced as `device.<id>` strings.
     // When a snapshot is re-saved, accept this spelling and preserve the numeric device id.
@@ -158,6 +162,9 @@ fn kind_from_device_id(id: DeviceId) -> String {
     }
     if id == DeviceId::I8042 {
         return DEVICE_KIND_I8042.to_string();
+    }
+    if id == DeviceId::HDA {
+        return DEVICE_KIND_AUDIO_HDA.to_string();
     }
 
     // For unknown device ids, preserve them as `device.<id>` entries so callers can roundtrip them

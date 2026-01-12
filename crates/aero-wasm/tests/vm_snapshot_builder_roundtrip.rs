@@ -87,7 +87,13 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
     let usb_blob = build_usb_blob(usb_version);
     let i8042_version = SnapshotVersion::new(1, 2);
     let i8042_blob = SnapshotWriter::new(*b"8042", i8042_version).finish();
-    let devices_js = build_devices_js(&[("usb.uhci", &usb_blob), ("input.i8042", &i8042_blob)]);
+    let hda_version = SnapshotVersion::new(9, 1);
+    let hda_blob = SnapshotWriter::new(*b"HDA0", hda_version).finish();
+    let devices_js = build_devices_js(&[
+        ("usb.uhci", &usb_blob),
+        ("input.i8042", &i8042_blob),
+        ("audio.hda", &hda_blob),
+    ]);
 
     let snap_a = vm_snapshot_save(cpu_js.clone(), mmu_js.clone(), devices_js.clone())
         .expect("vm_snapshot_save ok")
@@ -174,6 +180,21 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         "i8042 device blob should be preserved verbatim"
     );
 
+    let hda_state = inspect
+        .devices
+        .iter()
+        .find(|d| d.id == DeviceId::HDA)
+        .expect("snapshot should contain HDA device state");
+    assert_eq!(
+        (hda_state.version, hda_state.flags),
+        (hda_version.major, hda_version.minor),
+        "HDA DeviceState version/flags should reflect aero-io-snapshot header"
+    );
+    assert_eq!(
+        hda_state.data, hda_blob,
+        "HDA device blob should be preserved verbatim"
+    );
+
     // Clear RAM and restore via the wasm export.
     guest.fill(0);
 
@@ -201,7 +222,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         "devices should be present"
     );
     let devices_out: Array = devices_out_val.dyn_into().expect("devices array");
-    assert_eq!(devices_out.length(), 2, "expected two device states");
+    assert_eq!(devices_out.length(), 3, "expected three device states");
 
     let mut kinds = Vec::new();
     for idx in 0..devices_out.length() {
@@ -231,6 +252,13 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_usb_state() {
         .map(|(_, bytes)| bytes.clone())
         .expect("i8042 device kind should roundtrip");
     assert_eq!(i8042_out, i8042_blob, "i8042 device bytes should roundtrip");
+
+    let hda_out = kinds
+        .iter()
+        .find(|(kind, _)| kind == "audio.hda")
+        .map(|(_, bytes)| bytes.clone())
+        .expect("HDA device kind should roundtrip");
+    assert_eq!(hda_out, hda_blob, "HDA device bytes should roundtrip");
 
     for (i, &b) in guest.iter().enumerate() {
         assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
