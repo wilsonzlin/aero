@@ -14,7 +14,10 @@ Minimal user-mode HID probe utility for validating the `virtio-input` HID minidr
 - Reads input reports via `ReadFile` in a loop and prints raw bytes + best-effort decoding for:
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
-- Optionally writes a keyboard LED output report (`ReportID=1`) via `WriteFile` to exercise `IOCTL_HID_WRITE_REPORT`.
+- Optionally writes a keyboard LED output report (`ReportID=1`) via:
+  - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
+  - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
+- Includes optional negative tests that pass invalid METHOD_NEITHER pointers (should fail cleanly without crashing the guest).
 
 ## Aero virtio-input IDs / expectations
 
