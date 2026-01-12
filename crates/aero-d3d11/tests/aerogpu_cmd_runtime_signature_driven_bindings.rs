@@ -921,6 +921,83 @@ fn build_ps_passthrough_color_dxbc() -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
+fn build_vs_passthrough_pos_and_color_with_rgb_mask_dxbc() -> Vec<u8> {
+    // Minimal VS that passes POSITION0 (v0.xyz) to SV_Position (o0) and COLOR0 (v1.xyzw) to COLOR0
+    // (o1), but declares the output COLOR0 mask as RGB-only (0x07).
+    //
+    // This models a common D3D pattern where one stage treats a varying as float3 while the other
+    // stage treats it as float4. D3D allows this, but WebGPU requires exact type matching at
+    // `@location(1)`.
+    //
+    // Token stream (SM4 subset):
+    //   mov o0, v0
+    //   mov o1, v1
+    //   ret
+    let isgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x07,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+    let osgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x0f,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            // RGB only.
+            mask: 0x07,
+        },
+    ]);
+
+    // vs_4_0
+    let version_token = 0x0001_0040u32;
+    // mov o#, v#
+    let mov_token = 0x01u32 | (5u32 << 11);
+    let dst_o = 0x0010_f022u32;
+    let src_v = 0x001e_4016u32;
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // mov o0, v0
+        mov_token,
+        dst_o,
+        0, // o0 index
+        src_v,
+        0, // v0 index
+        // mov o1, v1
+        mov_token,
+        dst_o,
+        1, // o1 index
+        src_v,
+        1, // v1 index
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shdr = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shdr.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+}
+
 fn build_vs_sample_t0_s0_to_color1_dxbc(u: f32, v: f32) -> Vec<u8> {
     // Minimal VS that samples t0+s0 at a constant coord and outputs it as COLOR0 (o1). Position is
     // passed through from input POSITION0 (v0) to SV_Position (o0).
@@ -2412,6 +2489,92 @@ fn aerogpu_cmd_runtime_signature_driven_trims_unused_ps_inputs_for_linking() {
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(pixels, vec![255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_links_mismatched_varying_masks() {
+    // Regression test: D3D stage interfaces can legally disagree on the component mask for a given
+    // varying register (e.g. VS exports float3 but PS declares float4). WebGPU requires the WGSL
+    // types to match exactly at a `@location`, so we normalize varyings to `vec4<f32>`.
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const RTEX: u32 = 5;
+
+        rt.create_shader_dxbc(VS, &build_vs_passthrough_pos_and_color_with_rgb_mask_dxbc())
+            .unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_passthrough_color_dxbc())
+            .unwrap();
+        rt.create_input_layout(IL, ILAY_POS3_COLOR).unwrap();
+
+        // Fullscreen triangle in clip space. The vertex color is green with alpha 0.0; the VS
+        // output signature masks away alpha (RGB-only), so the PS should observe alpha=1.0.
+        let vertices: [VertexPos3Color4; 3] = [
+            VertexPos3Color4 {
+                pos: [-1.0, -1.0, 0.0],
+                color: [0.0, 1.0, 0.0, 0.0],
+            },
+            VertexPos3Color4 {
+                pos: [3.0, -1.0, 0.0],
+                color: [0.0, 1.0, 0.0, 0.0],
+            },
+            VertexPos3Color4 {
+                pos: [-1.0, 3.0, 0.0],
+                color: [0.0, 1.0, 0.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3Color4>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 255, 0, 255]);
     });
 }
 

@@ -588,7 +588,11 @@ impl IoMaps {
                 "@location({}) {}: {},",
                 p.param.register,
                 p.field_name('o'),
-                p.wgsl_ty
+                // WGSL requires exact stage-interface type matching. D3D signatures can legally
+                // differ in their component masks between stages (e.g. VS exports float3 while PS
+                // declares float4). To avoid vec2/vec3/vec4 mismatches at the same @location, we
+                // normalize all user varyings to `vec4<f32>` in both VS outputs and PS inputs.
+                "vec4<f32>"
             ));
         }
         w.dedent();
@@ -617,7 +621,8 @@ impl IoMaps {
                 "@location({}) {}: {},",
                 p.param.register,
                 p.field_name('v'),
-                p.wgsl_ty
+                // See `emit_vs_structs` for why we use vec4 here.
+                "vec4<f32>"
             ));
         }
         w.dedent();
@@ -637,7 +642,9 @@ impl IoMaps {
             if p.param.register == pos_reg {
                 continue;
             }
-            let src = extract_from_vec4(&format!("o{}", p.param.register), p);
+            // `VsOut` always declares varyings as vec4, so apply the signature mask to fill
+            // missing components with D3D defaults.
+            let src = apply_sig_mask_to_vec4(&format!("o{}", p.param.register), p.param.mask);
             w.line(&format!("out.{} = {src};", p.field_name('o')));
         }
         w.line("return out;");
@@ -696,7 +703,12 @@ impl IoMaps {
                         register: reg,
                     },
                 )?;
-                Ok(expand_to_vec4(&format!("input.{}", p.field_name('v')), p))
+                // `PsIn` always declares varyings as vec4, so apply the signature mask to fill
+                // missing components with D3D defaults.
+                Ok(apply_sig_mask_to_vec4(
+                    &format!("input.{}", p.field_name('v')),
+                    p.param.mask,
+                ))
             }
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }
@@ -814,18 +826,24 @@ fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
     format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3])
 }
 
-fn extract_from_vec4(reg_expr: &str, p: &ParamInfo) -> String {
-    let mut parts = Vec::<String>::with_capacity(p.component_count);
-    for &c in p.components.iter().take(p.component_count) {
-        parts.push(format!("{reg_expr}.{}", component_char(c)));
+fn apply_sig_mask_to_vec4(expr: &str, mask: u8) -> String {
+    let mask = mask & 0xF;
+    if mask == 0xF {
+        return expr.to_owned();
     }
-    match p.component_count {
-        1 => parts[0].clone(),
-        2 => format!("vec2<f32>({}, {})", parts[0], parts[1]),
-        3 => format!("vec3<f32>({}, {}, {})", parts[0], parts[1], parts[2]),
-        4 => reg_expr.to_owned(),
-        _ => reg_expr.to_owned(),
+
+    let mut out = [String::new(), String::new(), String::new(), String::new()];
+    for (dst_comp, bit) in [1u8, 2, 4, 8].into_iter().enumerate() {
+        if (mask & bit) != 0 {
+            out[dst_comp] = format!("{expr}.{}", component_char(dst_comp as u8));
+        } else if dst_comp == 3 {
+            out[dst_comp] = "1.0".to_owned();
+        } else {
+            out[dst_comp] = "0.0".to_owned();
+        }
     }
+
+    format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3])
 }
 
 fn component_char(c: u8) -> char {
