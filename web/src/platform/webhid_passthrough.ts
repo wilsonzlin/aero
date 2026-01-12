@@ -144,7 +144,10 @@ export class WebHidPassthroughManager {
       if (typeof requested !== "number" || !Number.isInteger(requested) || requested <= 0) {
         return DEFAULT_EXTERNAL_HUB_PORT_COUNT;
       }
-      return Math.min(255, requested | 0);
+      // Root port 0 hosts an external hub that also carries fixed synthetic HID devices on ports 1..3.
+      // Never allow the hub to be configured with fewer downstream ports than that reserved range,
+      // otherwise synthetic HID attachments can fail once the runtime hub config is applied.
+      return Math.max(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1, Math.min(255, requested | 0));
     })();
     this.#reservedExternalHubPorts = (() => {
       const requested = options.reservedExternalHubPorts;

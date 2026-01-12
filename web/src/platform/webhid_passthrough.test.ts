@@ -388,6 +388,12 @@ describe("Guest USB path validator", () => {
 });
 
 describe("WebHID guest path allocation (external hub on root port 0)", () => {
+  it("clamps external hub port count so it cannot be smaller than the reserved synthetic HID port range", () => {
+    const manager = new WebHidPassthroughManager({ hid: null, target: new TestTarget(), externalHubPortCount: 1 });
+    expect(manager.getExternalHubPortCount()).toBe(UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
+    expect(manager.getReservedExternalHubPorts()).toBe(UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
+  });
+
   it("assigns hub-backed paths when attaching three devices", async () => {
     const target = new TestTarget();
     const externalHubPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 3;
