@@ -540,7 +540,7 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
               const kind = listName === "inputReports" ? "input" : "output";
               throw err(
                 itemPath,
-                `${kind} report length ${reportBytes} bytes exceeds max interrupt packet size ${MAX_INTERRUPT_REPORT_BYTES}`,
+                `${kind} report length ${reportBytes} bytes exceeds max USB full-speed interrupt packet size ${MAX_INTERRUPT_REPORT_BYTES}`,
               );
             }
           }
