@@ -85,3 +85,46 @@ async fn manifest_provided_etag_and_last_modified_are_used_for_bytes_endpoint() 
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
+
+#[tokio::test]
+async fn manifest_provided_etag_and_last_modified_are_used_for_meta_endpoint() {
+    let (app, _dir) = setup_app_with_manifest().await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/disk/meta")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let etag = res.headers()[header::ETAG].to_str().unwrap().to_string();
+    assert_eq!(etag, "\"stable-etag-v1\"");
+    assert_eq!(
+        res.headers()[header::LAST_MODIFIED].to_str().unwrap(),
+        "Sat, 10 Jan 2026 00:00:00 GMT"
+    );
+
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+
+    // Conditional GET uses the manifest-provided ETag and returns 304.
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/disk/meta")
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+}
