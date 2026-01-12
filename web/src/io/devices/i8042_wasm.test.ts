@@ -13,7 +13,7 @@ function makeTestMemory(): WebAssembly.Memory {
 }
 
 describe("I8042Bridge (wasm)", () => {
-  it("injects keyboard + mouse input and exposes IRQ levels via irq_mask()", async () => {
+  it("injects keyboard + mouse input and exposes IRQ pulses via drain_irqs()", async () => {
     const memory = makeTestMemory();
     let api: Awaited<ReturnType<typeof initWasmForContext>>["api"];
     try {
@@ -56,6 +56,23 @@ describe("I8042Bridge (wasm)", () => {
 
       const byte = dev.port_read(0x60);
       expect(byte).toBe(0x1e);
+      expect(drainIrqs() & 0x01).toBe(0);
+
+      // Regression test: when the output buffer refills immediately after a data port read, the
+      // i8042 should generate another IRQ pulse for the newly available byte.
+      //
+      // With a level-only `irq_mask()` API, this pulse can be missed because the mask stays
+      // asserted across the entire read+refill sequence.
+      dev.inject_key_scancode_bytes(0x1c, 1);
+      expect(drainIrqs() & 0x01).toBe(0x01);
+      // Queue another key while the output buffer is still full; no new pulse yet.
+      dev.inject_key_scancode_bytes(0x32, 1);
+      expect(drainIrqs() & 0x01).toBe(0);
+      // Reading the first byte should refill and generate another pulse.
+      dev.port_read(0x60);
+      expect(drainIrqs() & 0x01).toBe(0x01);
+      // Reading the final byte should not generate any more pulses.
+      dev.port_read(0x60);
       expect(drainIrqs() & 0x01).toBe(0);
 
       // Enable IRQ12 (bit 1) while keeping translation + IRQ1 enabled (default 0x45 -> 0x47).
