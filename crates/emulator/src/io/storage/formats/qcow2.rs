@@ -880,3 +880,118 @@ fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) 
 fn ranges_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
     start_a < end_b && start_b < end_a
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default, Clone)]
+    struct MemStorage {
+        data: Vec<u8>,
+    }
+
+    impl MemStorage {
+        fn with_len(len: usize) -> Self {
+            Self { data: vec![0; len] }
+        }
+    }
+
+    impl ByteStorage for MemStorage {
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+            let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(DiskError::OutOfBounds)?;
+            if end > self.data.len() {
+                return Err(DiskError::OutOfBounds);
+            }
+            buf.copy_from_slice(&self.data[offset..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+            let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(DiskError::OutOfBounds)?;
+            if end > self.data.len() {
+                self.data.resize(end, 0);
+            }
+            self.data[offset..end].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> DiskResult<()> {
+            Ok(())
+        }
+
+        fn len(&mut self) -> DiskResult<u64> {
+            Ok(self.data.len() as u64)
+        }
+
+        fn set_len(&mut self, len: u64) -> DiskResult<()> {
+            let len = usize::try_from(len).map_err(|_| DiskError::OutOfBounds)?;
+            self.data.resize(len, 0);
+            Ok(())
+        }
+    }
+
+    fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
+        buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
+    }
+
+    fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
+        buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
+    }
+
+    #[test]
+    fn qcow2_l2_cache_is_bounded() {
+        let cluster_bits = 21u32; // 2MiB clusters
+        let cluster_size = 1u64 << cluster_bits;
+        let l2_entries_per_table = cluster_size / 8;
+
+        let l1_entries = 10u64;
+        let guest_clusters = l1_entries * l2_entries_per_table;
+        let virtual_size = guest_clusters * cluster_size;
+
+        let refcount_table_offset = cluster_size;
+        let l1_table_offset = cluster_size * 2;
+        let l2_table_offset = cluster_size * 4;
+
+        // Provide a unique L2 table cluster for each L1 entry.
+        let file_len = cluster_size * (4 + l1_entries);
+        let mut storage = MemStorage::with_len(file_len as usize);
+
+        let mut header = [0u8; 104];
+        header[0..4].copy_from_slice(b"QFI\xfb");
+        write_be_u32(&mut header, 4, 3); // version
+        write_be_u32(&mut header, 20, cluster_bits);
+        write_be_u64(&mut header, 24, virtual_size);
+        write_be_u32(&mut header, 36, l1_entries as u32); // l1_size
+        write_be_u64(&mut header, 40, l1_table_offset);
+        write_be_u64(&mut header, 48, refcount_table_offset);
+        write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+        write_be_u64(&mut header, 72, 0); // incompatible_features
+        write_be_u64(&mut header, 80, 0); // compatible_features
+        write_be_u64(&mut header, 88, 0); // autoclear_features
+        write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+        write_be_u32(&mut header, 100, 104); // header_length
+        storage.write_at(0, &header).unwrap();
+
+        for i in 0..l1_entries {
+            let entry = (l2_table_offset + i * cluster_size) | QCOW2_OFLAG_COPIED;
+            storage
+                .write_at(l1_table_offset + i * 8, &entry.to_be_bytes())
+                .unwrap();
+        }
+
+        let mut disk = Qcow2Disk::open(storage).unwrap();
+        for i in 0..l1_entries {
+            disk.ensure_l2_cached(l2_table_offset + i * cluster_size)
+                .unwrap();
+        }
+
+        let expected_cap = (QCOW2_L2_CACHE_BUDGET_BYTES / cluster_size).max(1) as usize;
+        assert!(disk.l2_cache.len() <= expected_cap);
+    }
+}
