@@ -598,3 +598,54 @@ fn snapshot_restore_ignores_malformed_tick_fields_when_elapsed_ns_is_present() {
         "restored PM_TMR should use elapsed-ns and start from 0"
     );
 }
+
+#[test]
+fn snapshot_restore_rejects_device_id_mismatch() {
+    let cfg = AcpiPmConfig::default();
+    let mut pm = AcpiPmIo::new(cfg);
+
+    // Correct device snapshots must use `DEVICE_ID = b"ACPM"`.
+    let bytes = SnapshotWriter::new(*b"BAD!", SnapshotVersion::new(1, 0)).finish();
+    assert!(
+        matches!(
+            pm.load_state(&bytes),
+            Err(SnapshotError::DeviceIdMismatch {
+                expected: _,
+                found: _
+            })
+        ),
+        "load_state should reject snapshots with a different device_id"
+    );
+}
+
+#[test]
+fn snapshot_restore_rejects_unsupported_major_version() {
+    let cfg = AcpiPmConfig::default();
+    let mut pm = AcpiPmIo::new(cfg);
+
+    // Major version mismatch should fail fast; only additions are allowed within the same major.
+    let bytes = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(2, 0)).finish();
+    assert!(
+        matches!(
+            pm.load_state(&bytes),
+            Err(SnapshotError::UnsupportedDeviceMajorVersion {
+                found: 2,
+                supported: 1
+            })
+        ),
+        "load_state should reject unsupported device snapshot major versions"
+    );
+}
+
+#[test]
+fn snapshot_restore_accepts_future_minor_version() {
+    let cfg = AcpiPmConfig::default();
+    let mut pm = AcpiPmIo::new(cfg);
+
+    // Minor version bumps should be forward compatible (unknown tags are ignored).
+    const TAG_PM1_STS: u16 = 1;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 42));
+    w.field_u16(TAG_PM1_STS, 0xABCD);
+    pm.load_state(&w.finish()).unwrap();
+    assert_eq!(pm.pm1_status(), 0xABCD);
+}
