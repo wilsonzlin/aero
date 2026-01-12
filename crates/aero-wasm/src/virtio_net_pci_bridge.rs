@@ -352,6 +352,7 @@ impl VirtioNetPciBridge {
     /// this explicit hook.
     pub fn set_pci_command(&mut self, command: u32) {
         self.pci_command = (command & 0xffff) as u16;
+        self.dev.set_pci_command(self.pci_command);
     }
 
     pub fn mmio_read(&mut self, offset: u32, size: u8) -> u32 {

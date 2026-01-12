@@ -118,7 +118,15 @@ pub struct VirtioPciDevice {
     queues: Vec<QueueState>,
 
     isr_status: u8,
-    legacy_irq_asserted: bool,
+    /// Internal legacy INTx latch: whether the device would like to assert legacy INTx
+    /// (subject to PCI COMMAND.INTX_DISABLE gating).
+    legacy_irq_pending: bool,
+    /// Whether the device has currently asserted the legacy INTx line via the interrupt sink.
+    ///
+    /// This is tracked separately from [`Self::legacy_irq_pending`] so we can correctly emulate
+    /// `PCI COMMAND.INTX_DISABLE` (bit 10): when INTx is disabled we keep the internal pending
+    /// state but must deassert the external line.
+    legacy_irq_line: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -211,7 +219,8 @@ impl VirtioPciDevice {
             queue_select: 0,
             queues: Vec::new(),
             isr_status: 0,
-            legacy_irq_asserted: false,
+            legacy_irq_pending: false,
+            legacy_irq_line: false,
         };
         me.reset_transport();
         me.build_config_space();
@@ -239,7 +248,34 @@ impl VirtioPciDevice {
     /// Virtio legacy interrupts are level-triggered and are deasserted when the guest reads the
     /// ISR status register.
     pub fn irq_level(&self) -> bool {
-        self.legacy_irq_asserted
+        if self.intx_disabled() {
+            return false;
+        }
+        self.legacy_irq_pending
+    }
+
+    fn command(&self) -> u16 {
+        self.config.command()
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
+    }
+
+    /// Set the device's view of the PCI command register (offset 0x04, low 16 bits).
+    ///
+    /// Some platform integrations maintain PCI config space separately from the virtio transport
+    /// model; those integrations should call this method whenever the guest updates the PCI
+    /// command register so the virtio transport can correctly apply:
+    /// - bus mastering (DMA) gating via `COMMAND.BME` (bit 2), and
+    /// - legacy INTx gating via `COMMAND.INTX_DISABLE` (bit 10).
+    pub fn set_pci_command(&mut self, command: u16) {
+        self.config.set_command(command);
+        self.sync_legacy_irq_line();
     }
 
     pub fn device_as_any_mut(&mut self) -> &mut dyn Any {
@@ -261,6 +297,7 @@ impl VirtioPciDevice {
     }
 
     pub fn config_write(&mut self, offset: u16, data: &[u8]) {
+        let prev_command = self.command();
         match data.len() {
             0 => {}
             1 => self.config.write(offset, 1, u32::from(data[0])),
@@ -277,6 +314,11 @@ impl VirtioPciDevice {
                     self.config.write(off, 1, u32::from(*b));
                 }
             }
+        }
+
+        // Apply INTx disable gating if the guest updated the PCI command register.
+        if self.command() != prev_command {
+            self.sync_legacy_irq_line();
         }
     }
 
@@ -433,6 +475,13 @@ impl VirtioPciDevice {
     /// Process any pending queue work (including device-driven paths such as
     /// network RX) and deliver interrupts when required.
     pub fn poll(&mut self, mem: &mut dyn GuestMemory) {
+        // Gate virtqueue DMA on PCI command Bus Master Enable (bit 2).
+        //
+        // This prevents the device from touching guest memory (virtqueue structures + buffers)
+        // before the guest explicitly enables PCI bus mastering during enumeration.
+        if !self.bus_master_enabled() {
+            return;
+        }
         let queue_count = self.queues.len();
         for queue_index in 0..queue_count {
             if let Some(q) = self.queues.get_mut(queue_index) {
@@ -456,6 +505,10 @@ impl VirtioPciDevice {
     /// robust if a snapshot is taken after the guest posts buffers (and possibly kicks the queue)
     /// but before the platform gets a chance to service the notify.
     pub fn process_notified_queues(&mut self, mem: &mut dyn GuestMemory) {
+        // Gate virtqueue DMA on PCI command Bus Master Enable (bit 2).
+        if !self.bus_master_enabled() {
+            return;
+        }
         let queue_count = self.queues.len();
         for queue_index in 0..queue_count {
             let pending = self.queues.get(queue_index).is_some_and(|q| {
@@ -506,10 +559,8 @@ impl VirtioPciDevice {
         self.config_generation = 0;
         self.queue_select = 0;
         self.isr_status = 0;
-        if self.legacy_irq_asserted {
-            self.interrupts.lower_legacy_irq();
-        }
-        self.legacy_irq_asserted = false;
+        self.legacy_irq_pending = false;
+        self.sync_legacy_irq_line();
         self.transport_mode = TransportMode::Unknown;
         self.features_negotiated = false;
 
@@ -902,10 +953,23 @@ impl VirtioPciDevice {
             .unwrap_or(0xffff);
         if vec != 0xffff {
             self.interrupts.signal_msix(vec);
-        } else if !self.legacy_irq_asserted {
-            self.interrupts.raise_legacy_irq();
-            self.legacy_irq_asserted = true;
+        } else {
+            self.legacy_irq_pending = true;
+            self.sync_legacy_irq_line();
         }
+    }
+
+    fn sync_legacy_irq_line(&mut self) {
+        let should_assert = self.legacy_irq_pending && !self.intx_disabled();
+        if should_assert == self.legacy_irq_line {
+            return;
+        }
+        if should_assert {
+            self.interrupts.raise_legacy_irq();
+        } else {
+            self.interrupts.lower_legacy_irq();
+        }
+        self.legacy_irq_line = should_assert;
     }
 
     pub fn debug_queue_used_idx(&self, mem: &dyn GuestMemory, queue: u16) -> Option<u16> {
@@ -972,7 +1036,11 @@ impl VirtioPciDevice {
             msix_config_vector: self.msix_config_vector,
             queue_select: self.queue_select,
             isr_status: self.isr_status,
-            legacy_intx_level: self.legacy_irq_asserted,
+            // Store the internal legacy INTx latch (not gated by `PCI COMMAND.INTX_DISABLE`).
+            //
+            // This ensures a pending interrupt is not lost across snapshot/restore if the guest
+            // had temporarily disabled INTx delivery.
+            legacy_intx_level: self.legacy_irq_pending,
             queues,
         }
     }
@@ -1038,15 +1106,8 @@ impl VirtioPciDevice {
 
         // Restore interrupt state deterministically.
         self.isr_status = state.isr_status;
-
-        if self.legacy_irq_asserted != state.legacy_intx_level {
-            if state.legacy_intx_level {
-                self.interrupts.raise_legacy_irq();
-            } else {
-                self.interrupts.lower_legacy_irq();
-            }
-        }
-        self.legacy_irq_asserted = state.legacy_intx_level;
+        self.legacy_irq_pending = state.legacy_intx_level;
+        self.sync_legacy_irq_line();
 
         // Snapshot schema is modern-only. If the guest had started driver initialization, ensure we
         // continue to reject legacy register accesses after restore.
@@ -1098,10 +1159,8 @@ impl VirtioPciDevice {
     fn read_isr_and_clear(&mut self) -> u8 {
         let isr = self.isr_status;
         self.isr_status = 0;
-        if self.legacy_irq_asserted {
-            self.interrupts.lower_legacy_irq();
-            self.legacy_irq_asserted = false;
-        }
+        self.legacy_irq_pending = false;
+        self.sync_legacy_irq_line();
         isr
     }
 }

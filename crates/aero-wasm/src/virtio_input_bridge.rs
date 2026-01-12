@@ -107,6 +107,7 @@ impl VirtioInputPciDeviceCore {
     /// This is used to enforce PCI Bus Master Enable gating for DMA.
     pub fn set_pci_command(&mut self, command: u32) {
         self.pci_command = (command & 0xffff) as u16;
+        self.pci.set_pci_command(self.pci_command);
     }
 
     fn input_mut(&mut self) -> &mut VirtioInput {

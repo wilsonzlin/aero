@@ -1247,12 +1247,12 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         "INTx disable should suppress interrupt delivery"
     );
     assert!(
-        pc.virtio_blk
+        !pc.virtio_blk
             .as_ref()
             .expect("virtio-blk enabled")
             .borrow()
             .irq_level(),
-        "INTx disable should not change the device's asserted level"
+        "INTx disable should deassert the device's INTx line"
     );
 
     // Re-enable INTx and ensure it is delivered to the PIC.

@@ -95,7 +95,11 @@ pub struct VirtioPciTransportState {
     pub msix_config_vector: u16,
     pub queue_select: u16,
     pub isr_status: u8,
-    /// Current asserted level of the legacy INTx line (level-triggered).
+    /// Internal legacy INTx latch (level-triggered).
+    ///
+    /// This represents whether the device has an unacknowledged legacy interrupt pending
+    /// independent of `PCI COMMAND.INTX_DISABLE` gating. Platform integrations should gate
+    /// delivery of INTx based on the live PCI command register.
     pub legacy_intx_level: bool,
     pub queues: Vec<VirtioPciQueueState>,
 }

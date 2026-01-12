@@ -224,6 +224,10 @@ fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRa
     dev.config_read(0x14, &mut bar);
     assert_eq!(u32::from_le_bytes(bar), 0);
 
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+
     let caps = parse_caps(&mut dev);
     // `common` may legitimately be at BAR offset 0; the rest should be mapped.
     assert_ne!(caps.notify, 0);

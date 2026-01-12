@@ -373,6 +373,7 @@ impl VirtioSndPciBridge {
     /// this explicit hook.
     pub fn set_pci_command(&mut self, command: u32) {
         self.pci_command = (command & 0xffff) as u16;
+        self.dev.set_pci_command(self.pci_command);
     }
 
     /// Read from the virtio-pci BAR0 MMIO region.

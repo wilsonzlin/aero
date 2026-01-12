@@ -1572,7 +1572,23 @@ impl PcPlatform {
                 pci_intx_sources.push(PciIntxSource {
                     bdf,
                     pin: PciInterruptPin::IntA,
-                    query_level: Box::new(move |_pc| virtio_for_intx.borrow().irq_level()),
+                    query_level: Box::new(move |pc| {
+                        let command = {
+                            let mut pci_cfg = pc.pci_cfg.borrow_mut();
+                            pci_cfg
+                                .bus_mut()
+                                .device_config(bdf)
+                                .map(|cfg| cfg.command())
+                                .unwrap_or(0)
+                        };
+
+                        // Keep the virtio transport's internal PCI command register in sync so
+                        // `VirtioPciDevice::irq_level` can respect COMMAND.INTX_DISABLE (bit 10)
+                        // even though the PC platform owns the canonical PCI config space.
+                        let mut dev = virtio_for_intx.borrow_mut();
+                        dev.set_pci_command(command);
+                        dev.irq_level()
+                    }),
                 });
             }
 
@@ -2253,18 +2269,23 @@ impl PcPlatform {
         };
 
         let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-        let bus_master_enabled = {
+        let command = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             pci_cfg
                 .bus_mut()
                 .device_config(bdf)
-                .is_some_and(|cfg| (cfg.command() & (1 << 2)) != 0)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
         };
-        if !bus_master_enabled {
-            return;
-        }
 
         let mut virtio_blk = virtio_blk.borrow_mut();
+        // Keep the virtio transport's internal PCI command register in sync with the platform PCI
+        // bus. The PC platform maintains a separate canonical config-space model for enumeration,
+        // so the virtio transport must be updated explicitly.
+        virtio_blk.set_pci_command(command);
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
         let mut mem = VirtioDmaMemory {
             mem: &mut self.memory,
         };

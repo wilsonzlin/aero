@@ -81,6 +81,10 @@ fn virtio_pci_legacy_pfn_queue_and_isr_read_clears() {
     let mut dev = VirtioPciDevice::new_transitional(Box::new(blk), Box::new(irq));
     let mut mem = GuestRam::new(0x20000);
 
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2), including legacy virtqueue processing.
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+
     // 1) Read device features and accept them (legacy path exposes only low 32 bits).
     let mut f = [0u8; 4];
     dev.legacy_io_read(VIRTIO_PCI_LEGACY_HOST_FEATURES, &mut f);

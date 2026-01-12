@@ -134,6 +134,11 @@ fn bar_write_u8(dev: &mut VirtioPciDevice, _mem: &mut GuestRam, off: u64, val: u
 fn virtio_snd_pci_contract_v1_features_and_queue_sizes() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+
     let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x4000);
@@ -258,6 +263,11 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let (irq, irq_state) = SharedLegacyIrq::new();
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(irq));
+
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
+
     let caps = parse_caps(&mut dev);
 
     let mut mem = GuestRam::new(0x20000);
@@ -360,6 +370,10 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
     dev.config_read(0, &mut id);
     let vendor = u16::from_le_bytes(id[0..2].try_into().unwrap());
     assert_eq!(vendor, PCI_VENDOR_ID_VIRTIO);
+
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     assert_ne!(caps.notify, 0);
@@ -577,6 +591,10 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
     let output = CaptureSink(samples.clone());
     let snd = VirtioSnd::new_with_host_sample_rate(output, host_rate_hz);
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+
+    // Enable PCI bus mastering (DMA). The virtio-pci transport gates all guest-memory access on
+    // `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0004u16.to_le_bytes());
 
     let caps = parse_caps(&mut dev);
     let mut mem = GuestRam::new(0x40000);
