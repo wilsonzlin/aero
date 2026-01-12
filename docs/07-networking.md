@@ -1091,6 +1091,82 @@ The Rust implementation lives in `crates/emulator/src/io/net/trace/` and provide
   - Guest TX/RX Ethernet frames at the stack boundary
   - TCP proxy payloads (`ProxyAction::TcpSend` / `ProxyEvent::TcpData`) on a separate pseudo-interface.
 
+### Web runtime tracing (browser / worker runtime)
+
+When running the **worker-based web runtime** with the **Option C L2 tunnel**, you can capture the
+raw Ethernet frames being forwarded between the guest and the tunnel client and export them as a
+`.pcapng` file (openable in Wireshark).
+
+#### What it captures (L2 boundary)
+
+The web tracing capture is taken at the **L2 forwarder boundary** in the browser:
+
+- **Guest → tunnel:** frames drained from the guest-facing `NET_TX` ring before they are sent to the
+  tunnel transport.
+- **Tunnel → guest:** frames received from the tunnel transport before they are pushed into the
+  guest-facing `NET_RX` ring.
+
+In other words, it captures **guest↔tunnel Ethernet frames** right where the browser runtime acts as
+an Ethernet “pipe” (the same conceptual boundary described in ADR 0013 / Option C).
+
+Relevant implementation files:
+
+- UI surface: `web/src/net/trace_ui.ts`
+- Tunnel forwarder owner (where the capture boundary lives): `web/src/workers/net.worker.ts`
+
+#### UI workflow (“Network trace (PCAPNG)” panel)
+
+In the repo’s browser host UI, there is a panel titled **“Network trace (PCAPNG)”** that provides:
+
+- **Enable/disable** tracing via a checkbox.
+- **Download capture (PCAPNG)** to your local machine.
+- **Save capture to OPFS** (Origin Private File System) at a configurable path (default
+  `captures/aero-net-trace.pcapng`).
+
+If the tracing backend is not installed in the current build/runtime, enabling or downloading will
+fail with an error indicating `window.aero.netTrace` is missing.
+
+OPFS notes:
+
+- OPFS is origin-scoped browser storage (`navigator.storage.getDirectory()`); it is convenient for
+  keeping large captures without triggering a download prompt.
+- OPFS may not be available in all browsers/contexts; the UI will error if unsupported.
+
+#### Automation API (`window.aero.netTrace`)
+
+For browser automation and debugging from DevTools, the web runtime exposes an optional API at:
+
+`window.aero.netTrace`
+
+When present, it implements:
+
+- `isEnabled(): boolean`
+- `enable(): void`
+- `disable(): void`
+- `downloadPcapng(): Promise<Uint8Array>`
+
+Some builds may additionally expose:
+
+- `clear(): void` (drop buffered frames)
+- `stats(): unknown` (implementation-defined counters such as buffered bytes/frames and drops)
+
+Example:
+
+```js
+window.aero.netTrace.enable();
+// ...reproduce the issue...
+const bytes = await window.aero.netTrace.downloadPcapng();
+console.log("pcapng bytes:", bytes.byteLength);
+```
+
+#### Capture size limits + sensitivity
+
+PCAP/PCAPNG captures can be **large** and may contain **sensitive data** (credentials, cookies, DNS
+queries, internal IPs, etc). Treat captures like secrets.
+
+The web tracing buffer is expected to gain explicit **size limits** (to prevent unbounded memory
+growth) once implemented; until then, be careful about leaving tracing enabled for long sessions.
+
 ### Privacy / Security Warning
 
 Captures may include sensitive data such as credentials, cookies, private browsing traffic, or internal network metadata. Tracing must default to off and the UI should warn users before enabling or exporting captures. A redaction hook may be provided for stripping known sensitive payloads.
