@@ -1624,6 +1624,11 @@ function renderAudioPanel(): HTMLElement {
         };
 
         workerCoordinator.start(workerConfig);
+        // The synthetic HDA capture harness uses the IO worker's HDA controller to consume mic
+        // samples and DMA-write PCM into guest RAM. The default microphone ring-buffer policy
+        // routes the mic to the CPU worker when no disk is attached (demo mode), so override it
+        // here to ensure the IO worker receives the capture ring.
+        workerCoordinator.setMicrophoneRingBufferOwner("io");
         workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
         // Demo mode defaults the mic ring consumer to the CPU worker, but HDA capture lives in the IO worker.
         // Route the microphone ring explicitly so the IO worker is the sole SPSC consumer.
