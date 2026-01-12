@@ -496,3 +496,193 @@ pub mod wgpu_writer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct WriteCall {
+        rect: Rect,
+        bytes_per_row: usize,
+        data: Vec<u8>,
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingWriter {
+        calls: Vec<WriteCall>,
+    }
+
+    impl TextureWriter for RecordingWriter {
+        fn write_texture(&mut self, rect: Rect, bytes_per_row: usize, data: &[u8]) {
+            self.calls.push(WriteCall {
+                rect,
+                bytes_per_row,
+                data: data.to_vec(),
+            });
+        }
+    }
+
+    fn patterned_bytes(len: usize) -> Vec<u8> {
+        // Deterministic "unique-ish" pattern for verifying slices. Wraps naturally at 256.
+        (0..len).map(|i| i as u8).collect()
+    }
+
+    #[test]
+    fn direct_upload_path_full_frame_when_stride_is_aligned() {
+        let (width, height, bpp) = (64u32, 4u32, 4usize);
+        let stride = 256usize; // width*bpp == 256 -> 256-aligned.
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, None).unwrap();
+
+        assert_eq!(
+            telemetry,
+            PresentTelemetry {
+                rects_requested: 1,
+                rects_after_merge: 1,
+                rects_uploaded: 1,
+                bytes_uploaded: frame_len,
+            }
+        );
+        assert_eq!(presenter.last_telemetry(), telemetry);
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, Rect::new(0, 0, width, height));
+        assert_eq!(call.bytes_per_row, stride);
+        assert_eq!(call.data, frame_data);
+    }
+
+    #[test]
+    fn scratch_upload_path_when_row_bytes_not_256_aligned() {
+        let (width, height, bpp) = (3u32, 2u32, 4usize);
+        let stride = 12usize; // width*bpp == 12 -> NOT 256-aligned for copy_height>1.
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, None).unwrap();
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, Rect::new(0, 0, width, height));
+        assert_eq!(call.bytes_per_row, 256);
+
+        let row_bytes = full_row_bytes;
+        assert_eq!(call.data.len(), required_data_len(256, row_bytes, height as usize));
+
+        // Row 0 copied into [0..row_bytes].
+        assert_eq!(&call.data[0..row_bytes], &frame_data[0..row_bytes]);
+        // Row 1 copied into [bytes_per_row..bytes_per_row+row_bytes].
+        assert_eq!(
+            &call.data[256..(256 + row_bytes)],
+            &frame_data[row_bytes..(row_bytes * 2)]
+        );
+
+        assert_eq!(telemetry.rects_uploaded, 1);
+        assert_eq!(telemetry.bytes_uploaded, call.data.len());
+    }
+
+    #[test]
+    fn scratch_upload_path_when_dirty_rect_is_not_full_width() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize; // width*bpp == 40
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let dirty = Rect::new(2, 3, 4, 2);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter
+            .present(&frame_data, stride, Some(std::slice::from_ref(&dirty)))
+            .unwrap();
+
+        assert_eq!(telemetry.rects_requested, 1);
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+
+        assert_eq!(call.rect, dirty);
+        assert_eq!(call.bytes_per_row, 256);
+
+        let row_bytes = dirty.w as usize * bpp;
+        assert_eq!(
+            call.data.len(),
+            required_data_len(256, row_bytes, dirty.h as usize)
+        );
+
+        let row0_src_offset = dirty.y as usize * stride + dirty.x as usize * bpp;
+        let row1_src_offset = (dirty.y as usize + 1) * stride + dirty.x as usize * bpp;
+
+        assert_eq!(
+            &call.data[0..row_bytes],
+            &frame_data[row0_src_offset..(row0_src_offset + row_bytes)]
+        );
+        assert_eq!(
+            &call.data[256..(256 + row_bytes)],
+            &frame_data[row1_src_offset..(row1_src_offset + row_bytes)]
+        );
+
+        assert_eq!(telemetry.bytes_uploaded, call.data.len());
+    }
+
+    #[test]
+    fn error_stride_too_small() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 39usize; // < width*bpp (40)
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let err = presenter.present(&[], stride, None).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "stride too small (stride=39, min_stride=40)"
+        );
+        assert!(matches!(
+            err,
+            PresentError::StrideTooSmall {
+                stride: 39,
+                min_stride: 40
+            }
+        ));
+    }
+
+    #[test]
+    fn error_frame_data_too_small() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize; // == width*bpp
+
+        let full_row_bytes = width as usize * bpp;
+        let min_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(min_len - 1);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let err = presenter.present(&frame_data, stride, None).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "frame data too small (len={}, min_len={})",
+                min_len - 1,
+                min_len
+            )
+        );
+        assert!(matches!(
+            err,
+            PresentError::FrameDataTooSmall {
+                len,
+                min_len: ml
+            } if len == min_len - 1 && ml == min_len
+        ));
+    }
+}
