@@ -1505,6 +1505,24 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
     return false;
   }
 
+  // Populate SCSI addressing fields for pass-through. Some stacks require these to be set correctly.
+  // If the query fails, fall back to 0/0/0 (common for single-disk virtio-blk setups).
+  SCSI_ADDRESS addr{};
+  DWORD addr_bytes = 0;
+  if (DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_GET_ADDRESS, nullptr, 0, &addr, sizeof(addr), &addr_bytes,
+                      nullptr)) {
+    log.Logf("virtio-blk: REPORT_LUNS scsi_address port=%u path=%u target=%u lun=%u",
+             static_cast<unsigned>(addr.PortNumber), static_cast<unsigned>(addr.PathId),
+             static_cast<unsigned>(addr.TargetId), static_cast<unsigned>(addr.Lun));
+  } else {
+    addr.PortNumber = 0;
+    addr.PathId = 0;
+    addr.TargetId = 0;
+    addr.Lun = 0;
+    log.Logf("virtio-blk: REPORT_LUNS warning: IOCTL_SCSI_GET_ADDRESS failed err=%lu (using 0/0/0)",
+             static_cast<unsigned long>(GetLastError()));
+  }
+
   constexpr uint32_t kAllocLen = 16;
   // Fill with a non-zero pattern so truncated/short transfers don't get mistaken for an all-zero LUN entry.
   std::vector<uint8_t> resp(kAllocLen, 0xCC);
@@ -1519,10 +1537,9 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
 
   ScsiPassThroughDirectWithSense pkt{};
   pkt.sptd.Length = sizeof(pkt.sptd);
-  // Virtio-blk is a single-target virtual device; use 0/0/0 for addressing.
-  pkt.sptd.PathId = 0;
-  pkt.sptd.TargetId = 0;
-  pkt.sptd.Lun = 0;
+  pkt.sptd.PathId = addr.PathId;
+  pkt.sptd.TargetId = addr.TargetId;
+  pkt.sptd.Lun = addr.Lun;
   pkt.sptd.CdbLength = sizeof(cdb);
   pkt.sptd.SenseInfoLength = sizeof(pkt.sense);
   pkt.sptd.DataIn = SCSI_IOCTL_DATA_IN;
