@@ -64,8 +64,8 @@ Use this for:
 ```bash
 ./scripts/agent-env-setup.sh                    # One-time: validate environment
 source ./scripts/agent-env.sh                   # Activate recommended env vars
-./scripts/safe-run.sh cargo build --locked      # Build with timeout + memory limit
-./scripts/safe-run.sh cargo test --locked       # Test with timeout + memory limit
+./scripts/safe-run.sh cargo build --locked       # Build with timeout + memory limit
+./scripts/safe-run.sh cargo test --locked        # Test with timeout + memory limit
 
 # Override defaults if needed:
 AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
