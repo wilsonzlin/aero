@@ -1,7 +1,7 @@
 import { MmioBus } from "./bus/mmio.ts";
 import { PciBus } from "./bus/pci.ts";
 import { PortIoBus } from "./bus/portio.ts";
-import type { PciDevice } from "./bus/pci.ts";
+import type { PciAddress, PciDevice } from "./bus/pci.ts";
 import type { MmioHandler } from "./bus/mmio.ts";
 import type { PortIoHandler } from "./bus/portio.ts";
 
@@ -55,8 +55,8 @@ export class DeviceManager {
     this.mmioBus.mapRange(base, size, handler);
   }
 
-  registerPciDevice(device: PciDevice): void {
-    this.pciBus.registerDevice(device);
+  registerPciDevice(device: PciDevice, addr?: Partial<PciAddress>): PciAddress {
+    return this.pciBus.registerDevice(device, addr);
   }
 
   addTickable(device: TickableDevice): void {

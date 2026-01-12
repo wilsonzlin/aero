@@ -9,9 +9,22 @@ export type PciBar =
       size: number;
     }
   | {
+      kind: "mmio64";
+      size: number;
+    }
+  | {
       kind: "io";
       size: number;
     };
+
+export interface PciCapability {
+  /**
+   * Raw PCI capability bytes including the standard 2-byte header:
+   * - bytes[0] = capability ID
+   * - bytes[1] = next pointer (will be overwritten by {@link PciBus} when chaining)
+   */
+  readonly bytes: Uint8Array;
+}
 
 export interface PciDevice {
   readonly name: string;
@@ -25,6 +38,26 @@ export interface PciDevice {
   readonly revisionId?: number;
   readonly irqLine?: number;
   readonly bars?: ReadonlyArray<PciBar | null>;
+  readonly subsystemVendorId?: number;
+  readonly subsystemId?: number;
+  /**
+   * PCI header type (standard offset 0x0E). Bit 7 is the multifunction bit.
+   *
+   * For multi-function devices, the bus will automatically set bit 7 on
+   * function 0 when any additional functions are registered.
+   */
+  readonly headerType?: number;
+  /**
+   * Optional PCI capabilities to expose in configuration space. The bus will
+   * build a valid, 4-byte aligned capability list, set the Status.CAP_LIST bit,
+   * and populate the Capabilities Pointer at 0x34.
+   */
+  readonly capabilities?: ReadonlyArray<PciCapability>;
+  /**
+   * Optional hook for devices that need to populate additional PCI config space
+   * fields after the bus has written the standard header/BARs/capabilities.
+   */
+  initConfigSpace?(config: Uint8Array, addr: PciAddress): void;
 
   mmioRead?(barIndex: number, offset: bigint, size: number): number;
   mmioWrite?(barIndex: number, offset: bigint, size: number, value: number): void;
@@ -40,18 +73,31 @@ export interface PciAddress {
 
 interface PciBarState {
   desc: PciBar;
-  base: number;
-  sizing: boolean;
+  // Logical BAR index (0..5). For 64-bit BARs, this is the index of the low dword.
+  index: number;
+  base: bigint;
+  sizingLow: boolean;
+  sizingHigh: boolean;
   mmioHandle: MmioHandle | null;
   ioRange: { start: number; end: number } | null;
   ioHandler: PortIoHandler | null;
 }
 
+type PciBarSlot =
+  | {
+      bar: PciBarState;
+      part: "low";
+    }
+  | {
+      bar: PciBarState;
+      part: "high";
+    };
+
 interface PciFunction {
   addr: PciAddress;
   config: Uint8Array;
   device: PciDevice;
-  bars: Array<PciBarState | null>;
+  bars: Array<PciBarSlot | null>;
 }
 
 function isPow2(n: number): boolean {
@@ -78,23 +124,35 @@ function computeBarMask(desc: PciBar): number {
   if (desc.kind === "mmio32") {
     return (~(desc.size - 1) & 0xffff_fff0) >>> 0;
   }
+  if (desc.kind === "mmio64") {
+    // Low dword mask. Type bits must indicate 64-bit memory BAR (bits 2:1 = 0b10).
+    const fullMask = (~BigInt(desc.size - 1) & 0xffff_ffff_ffff_ffffn) & 0xffff_ffff_ffff_fff0n;
+    const low = Number(fullMask & 0xffff_ffffn) >>> 0;
+    return (low | 0x4) >>> 0;
+  }
   // IO BAR.
   return ((~(desc.size - 1) & 0xffff_fffc) | 0x1) >>> 0;
 }
 
-function sanitizeBarBase(desc: PciBar, value: number): number {
-  if (desc.kind === "mmio32") return value & 0xffff_fff0;
-  return value & 0xffff_fffc;
+function computeBarMaskHigh(desc: PciBar): number {
+  if (desc.kind !== "mmio64") return 0;
+  if (!isPow2(desc.size)) {
+    throw new Error(`PCI BAR size must be power-of-two, got ${desc.size}`);
+  }
+  const fullMask = (~BigInt(desc.size - 1) & 0xffff_ffff_ffff_ffffn) & 0xffff_ffff_ffff_fff0n;
+  return Number((fullMask >> 32n) & 0xffff_ffffn) >>> 0;
 }
 
 export class PciBus implements PortIoHandler {
   readonly #portBus: PortIoBus;
   readonly #mmioBus: MmioBus;
-  #functions: PciFunction[] = [];
+  #functions: Array<Array<PciFunction | null>> = Array.from({ length: 32 }, () =>
+    Array.from({ length: 8 }, () => null),
+  );
   #addrReg = 0;
 
   // Simple allocators for auto-assigned BARs (legacy 32-bit).
-  #nextMmioBase = 0xe000_0000;
+  #nextMmioBase = 0xe000_0000n;
   #nextIoBase = 0xc000;
 
   constructor(portBus: PortIoBus, mmioBus: MmioBus) {
@@ -109,10 +167,26 @@ export class PciBus implements PortIoHandler {
     this.#portBus.registerRange(0x0cfc, 0x0cff, this);
   }
 
-  registerDevice(device: PciDevice): PciAddress {
-    if (this.#functions.length >= 32) throw new Error("PCI bus full (max 32 devices on bus 0)");
+  registerDevice(device: PciDevice, addr: Partial<PciAddress> = {}): PciAddress {
+    const bus = addr.bus ?? 0;
+    if (bus !== 0) throw new Error(`only PCI bus 0 is supported, got bus ${bus}`);
 
-    const addr: PciAddress = { bus: 0, device: this.#functions.length, function: 0 };
+    const fnNum = addr.function ?? 0;
+    if (fnNum < 0 || fnNum > 7) throw new RangeError(`PCI function out of range: ${fnNum}`);
+
+    let devNum: number;
+    if (addr.device !== undefined) {
+      devNum = addr.device;
+    } else {
+      devNum = this.#allocDeviceNumber();
+    }
+    if (devNum < 0 || devNum > 31) throw new RangeError(`PCI device out of range: ${devNum}`);
+
+    if (this.#functions[devNum]![fnNum] !== null) {
+      throw new Error(`PCI address already in use: ${bus}:${devNum}.${fnNum}`);
+    }
+
+    const addrFull: PciAddress = { bus, device: devNum, function: fnNum };
     const config = new Uint8Array(256);
 
     // IDs.
@@ -129,39 +203,95 @@ export class PciBus implements PortIoHandler {
     config[0x0a] = (classCode >>> 8) & 0xff; // subclass
     config[0x0b] = (classCode >>> 16) & 0xff; // base class
 
-    // Header type: 0 (endpoint).
-    config[0x0e] = 0x00;
+    // Header type (type 0 by default).
+    config[0x0e] = (device.headerType ?? 0x00) & 0xff;
+
+    // Subsystem IDs (type 0 header).
+    const subsystemVendorId = device.subsystemVendorId ?? 0x0000;
+    const subsystemId = device.subsystemId ?? 0x0000;
+    config[0x2c] = subsystemVendorId & 0xff;
+    config[0x2d] = (subsystemVendorId >>> 8) & 0xff;
+    config[0x2e] = subsystemId & 0xff;
+    config[0x2f] = (subsystemId >>> 8) & 0xff;
 
     // Interrupt line/pin.
     config[0x3c] = (device.irqLine ?? 0x00) & 0xff;
     config[0x3d] = 0x01; // INTA#
 
-    const bars: Array<PciBarState | null> = [];
+    const bars: Array<PciBarSlot | null> = Array.from({ length: 6 }, () => null);
     const barDescs = device.bars ?? [];
     for (let i = 0; i < 6; i++) {
       const desc = barDescs[i] ?? null;
-      if (!desc) {
-        bars.push(null);
+      if (!desc) continue;
+
+      if (desc.kind === "mmio64") {
+        if (i >= 5) throw new Error("64-bit BAR cannot start at BAR5");
+        if (barDescs[i + 1] != null) {
+          throw new Error(`64-bit BAR at BAR${i} consumes BAR${i + 1}; it must be null`);
+        }
+
+        const base = this.#allocBarBase(desc);
+        const state: PciBarState = {
+          desc,
+          index: i,
+          base,
+          sizingLow: false,
+          sizingHigh: false,
+          mmioHandle: null,
+          ioRange: null,
+          ioHandler: null,
+        };
+
+        bars[i] = { bar: state, part: "low" };
+        bars[i + 1] = { bar: state, part: "high" };
+        writeU32LE(config, 0x10 + i * 4, this.#encodeBarValueLow(state));
+        writeU32LE(config, 0x10 + (i + 1) * 4, this.#encodeBarValueHigh(state));
+        i++;
         continue;
       }
 
       const base = this.#allocBarBase(desc);
       const state: PciBarState = {
         desc,
+        index: i,
         base,
-        sizing: false,
+        sizingLow: false,
+        sizingHigh: false,
         mmioHandle: null,
         ioRange: null,
         ioHandler: null,
       };
-
-      writeU32LE(config, 0x10 + i * 4, this.#encodeBarValue(state));
-      bars.push(state);
+      bars[i] = { bar: state, part: "low" };
+      writeU32LE(config, 0x10 + i * 4, this.#encodeBarValueLow(state));
     }
 
-    const fn: PciFunction = { addr, config, device, bars };
-    this.#functions.push(fn);
-    return addr;
+    // Install PCI capabilities (if any).
+    if (device.capabilities && device.capabilities.length > 0) {
+      this.#installCapabilities(config, device.capabilities);
+    }
+
+    // Allow device to populate additional config bytes.
+    device.initConfigSpace?.(config, addrFull);
+
+    const fn: PciFunction = { addr: addrFull, config, device, bars };
+    this.#functions[devNum]![fnNum] = fn;
+
+    // Multifunction: if any additional functions are registered, function 0 must
+    // advertise it via the Header Type multifunction bit.
+    if (fnNum !== 0) {
+      const fn0 = this.#functions[devNum]![0];
+      if (fn0) fn0.config[0x0e] = (fn0.config[0x0e]! | 0x80) & 0xff;
+    } else {
+      // fn0 registered; if other functions already exist, set the bit now.
+      for (let f = 1; f < 8; f++) {
+        if (this.#functions[devNum]![f]) {
+          config[0x0e] = (config[0x0e]! | 0x80) & 0xff;
+          break;
+        }
+      }
+    }
+
+    return addrFull;
   }
 
   portRead(port: number, size: number): number {
@@ -227,17 +357,18 @@ export class PciBus implements PortIoHandler {
     if (bus !== 0) return null;
     const dev = (this.#addrReg >>> 11) & 0x1f;
     const fn = (this.#addrReg >>> 8) & 0x07;
-    if (fn !== 0) return null;
-    return this.#functions[dev] ?? null;
+    return this.#functions[dev]?.[fn] ?? null;
   }
 
   #readConfigDword(fn: PciFunction, alignedOff: number): number {
     // BAR sizing probe support (OS writes all-ones then reads mask).
     if (alignedOff >= 0x10 && alignedOff <= 0x24) {
       const barIndex = (alignedOff - 0x10) >>> 2;
-      const bar = fn.bars[barIndex] ?? null;
-      if (bar && bar.sizing) {
-        return computeBarMask(bar.desc);
+      const slot = fn.bars[barIndex] ?? null;
+      if (slot) {
+        const bar = slot.bar;
+        if (slot.part === "low" && bar.sizingLow) return computeBarMask(bar.desc);
+        if (slot.part === "high" && bar.sizingHigh) return computeBarMaskHigh(bar.desc);
       }
     }
     return readU32LE(fn.config, alignedOff);
@@ -253,27 +384,47 @@ export class PciBus implements PortIoHandler {
 
     if (alignedOff >= 0x10 && alignedOff <= 0x24) {
       const barIndex = (alignedOff - 0x10) >>> 2;
-      const bar = fn.bars[barIndex] ?? null;
-      if (!bar) {
+      const slot = fn.bars[barIndex] ?? null;
+      if (!slot) {
         writeU32LE(fn.config, alignedOff, value);
         return;
       }
 
+      const bar = slot.bar;
       if (value === 0xffff_ffff) {
-        bar.sizing = true;
+        if (slot.part === "low") bar.sizingLow = true;
+        else bar.sizingHigh = true;
         // Store all-ones as written; reads will return mask while sizing is true.
         writeU32LE(fn.config, alignedOff, value);
         return;
       }
 
-      bar.sizing = false;
-      const newBase = sanitizeBarBase(bar.desc, value);
-      bar.base = newBase;
-      writeU32LE(fn.config, alignedOff, this.#encodeBarValue(bar));
+      if (slot.part === "low") bar.sizingLow = false;
+      else bar.sizingHigh = false;
+
+      // Update BAR base. For 64-bit BARs the base can be written via either dword.
+      if (bar.desc.kind === "mmio64") {
+        if (slot.part === "low") {
+          const lo = BigInt(value & 0xffff_fff0);
+          bar.base = (bar.base & 0xffff_ffff_0000_0000n) | lo;
+        } else {
+          const hi = BigInt(value >>> 0);
+          const lo = bar.base & 0xffff_ffffn;
+          bar.base = (hi << 32n) | lo;
+        }
+        // Always write both halves in canonical form (correct type bits in low dword).
+        writeU32LE(fn.config, 0x10 + bar.index * 4, this.#encodeBarValueLow(bar));
+        writeU32LE(fn.config, 0x10 + (bar.index + 1) * 4, this.#encodeBarValueHigh(bar));
+      } else {
+        // 32-bit MMIO or IO BAR.
+        if (bar.desc.kind === "mmio32") bar.base = BigInt(value & 0xffff_fff0);
+        else bar.base = BigInt(value & 0xffff_fffc);
+        writeU32LE(fn.config, alignedOff, this.#encodeBarValueLow(bar));
+      }
 
       // Remap BAR.
       this.#unmapBar(bar);
-      this.#mapBarIfEnabled(fn, barIndex, bar);
+      this.#mapBarIfEnabled(fn, bar);
       return;
     }
 
@@ -289,63 +440,71 @@ export class PciBus implements PortIoHandler {
   }
 
   #refreshDeviceDecoding(fn: PciFunction): void {
-    for (let barIndex = 0; barIndex < fn.bars.length; barIndex++) {
-      const bar = fn.bars[barIndex];
-      if (!bar) continue;
+    for (const slot of fn.bars) {
+      if (!slot || slot.part !== "low") continue;
+      const bar = slot.bar;
       this.#unmapBar(bar);
-      this.#mapBarIfEnabled(fn, barIndex, bar);
+      this.#mapBarIfEnabled(fn, bar);
     }
   }
 
-  #mapBarIfEnabled(fn: PciFunction, barIndex: number, bar: PciBarState): void {
+  #mapBarIfEnabled(fn: PciFunction, bar: PciBarState): void {
     // BARs decode only when PCI command bits enable them.
-    if (bar.base === 0) return;
+    if (bar.base === 0n) return;
     const { ioEnabled, memEnabled } = this.#commandFlags(fn);
     if (bar.desc.kind === "io") {
       if (!ioEnabled) return;
-      this.#mapBar(fn.device, barIndex, bar);
+      this.#mapBar(fn.device, bar.index, bar);
       return;
     }
-    if (bar.desc.kind === "mmio32") {
+    if (bar.desc.kind === "mmio32" || bar.desc.kind === "mmio64") {
       if (!memEnabled) return;
-      this.#mapBar(fn.device, barIndex, bar);
+      this.#mapBar(fn.device, bar.index, bar);
       return;
     }
   }
 
-  #encodeBarValue(bar: PciBarState): number {
+  #encodeBarValueLow(bar: PciBarState): number {
     if (bar.desc.kind === "mmio32") {
-      return (bar.base & 0xffff_fff0) >>> 0;
+      return Number(bar.base & 0xffff_fff0n) >>> 0;
     }
-    return ((bar.base & 0xffff_fffc) | 0x1) >>> 0;
+    if (bar.desc.kind === "mmio64") {
+      return (Number(bar.base & 0xffff_fff0n) | 0x4) >>> 0;
+    }
+    return (Number(bar.base & 0xffff_fffcn) | 0x1) >>> 0;
   }
 
-  #allocBarBase(desc: PciBar): number {
+  #encodeBarValueHigh(bar: PciBarState): number {
+    if (bar.desc.kind !== "mmio64") return 0;
+    return Number((bar.base >> 32n) & 0xffff_ffffn) >>> 0;
+  }
+
+  #allocBarBase(desc: PciBar): bigint {
     if (!isPow2(desc.size)) throw new Error(`BAR size must be power-of-two, got ${desc.size}`);
 
-    if (desc.kind === "mmio32") {
-      const align = Math.max(desc.size, 0x1000);
-      const base = (this.#nextMmioBase + (align - 1)) & ~(align - 1);
-      this.#nextMmioBase = (base + desc.size) >>> 0;
-      return base >>> 0;
+    if (desc.kind === "mmio32" || desc.kind === "mmio64") {
+      const align = BigInt(Math.max(desc.size, 0x1000));
+      const base = (this.#nextMmioBase + (align - 1n)) & ~(align - 1n);
+      this.#nextMmioBase = base + BigInt(desc.size);
+      return base;
     }
 
     const align = Math.max(desc.size, 4);
     const base = (this.#nextIoBase + (align - 1)) & ~(align - 1);
     this.#nextIoBase = (base + desc.size) & 0xffff;
-    return base & 0xffff;
+    return BigInt(base & 0xffff);
   }
 
   #mapBar(device: PciDevice, barIndex: number, bar: PciBarState): void {
-    if (bar.desc.kind === "mmio32") {
-      bar.mmioHandle = this.#mmioBus.mapRange(BigInt(bar.base >>> 0), BigInt(bar.desc.size), {
+    if (bar.desc.kind === "mmio32" || bar.desc.kind === "mmio64") {
+      bar.mmioHandle = this.#mmioBus.mapRange(bar.base, BigInt(bar.desc.size), {
         mmioRead: (offset, size) => device.mmioRead?.(barIndex, offset, size) ?? defaultReadValue(size),
         mmioWrite: (offset, size, value) => device.mmioWrite?.(barIndex, offset, size, value),
       });
       return;
     }
 
-    const start = bar.base & 0xffff;
+    const start = Number(bar.base & 0xffffn);
     const end = (start + bar.desc.size - 1) & 0xffff;
     const handler: PortIoHandler = {
       portRead: (port, size) => device.ioRead?.(barIndex, (port - start) & 0xffff, size) ?? defaultReadValue(size),
@@ -366,5 +525,54 @@ export class PciBus implements PortIoHandler {
       bar.ioRange = null;
       bar.ioHandler = null;
     }
+  }
+
+  #allocDeviceNumber(): number {
+    for (let dev = 0; dev < 32; dev++) {
+      const fns = this.#functions[dev]!;
+      let any = false;
+      for (let fn = 0; fn < 8; fn++) {
+        if (fns[fn] !== null) {
+          any = true;
+          break;
+        }
+      }
+      if (!any) return dev;
+    }
+    throw new Error("PCI bus full (max 32 devices on bus 0)");
+  }
+
+  #installCapabilities(config: Uint8Array, caps: ReadonlyArray<PciCapability>): void {
+    let nextOff = 0x40;
+    let firstPtr = 0;
+    let prevPtr = 0;
+
+    for (const cap of caps) {
+      const bytes = cap.bytes;
+      if (bytes.length < 2) throw new Error("PCI capability too short (need at least 2 bytes)");
+      nextOff = (nextOff + 3) & ~3; // 4-byte aligned.
+      if (nextOff > 0xff) throw new Error("PCI capability list overflow");
+      if (nextOff + bytes.length > config.length) throw new Error("PCI capability list exceeds config space");
+
+      if (firstPtr === 0) firstPtr = nextOff;
+      if (prevPtr !== 0) config[prevPtr + 1] = nextOff & 0xff;
+
+      config.set(bytes, nextOff);
+      // Bus owns next-pointer chaining.
+      config[nextOff + 1] = 0;
+      // For vendor-specific capabilities (0x09), ensure cap_len matches the structure length.
+      if (config[nextOff] === 0x09 && bytes.length >= 3) config[nextOff + 2] = bytes.length & 0xff;
+
+      prevPtr = nextOff;
+      nextOff += bytes.length;
+    }
+
+    if (firstPtr === 0) return;
+    config[0x34] = firstPtr & 0xff;
+    // Status bit 4: capabilities list.
+    const status = (config[0x06]! | (config[0x07]! << 8)) >>> 0;
+    const newStatus = (status | 0x0010) >>> 0;
+    config[0x06] = newStatus & 0xff;
+    config[0x07] = (newStatus >>> 8) & 0xff;
   }
 }
