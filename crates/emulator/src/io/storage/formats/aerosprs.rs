@@ -6,6 +6,8 @@ const SPARSE_VERSION: u32 = 1;
 const HEADER_SIZE: u64 = 4096;
 const JOURNAL_SIZE: u64 = 4096;
 const JOURNAL_MAGIC: [u8; 4] = *b"JNL1";
+// DoS guard: avoid allocating absurdly large in-memory allocation tables for untrusted images.
+const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SparseHeader {
@@ -52,14 +54,41 @@ impl SparseHeader {
         let journal_offset = u64::from_le_bytes(buf[44..52].try_into().unwrap());
         let data_offset = u64::from_le_bytes(buf[52..60].try_into().unwrap());
 
-        if sector_size == 0 || block_size == 0 {
-            return Err(DiskError::CorruptImage("invalid sector/block size"));
+        if sector_size != 512 && sector_size != 4096 {
+            return Err(DiskError::Unsupported(
+                "sector size (expected 512 or 4096)",
+            ));
+        }
+        if block_size == 0 {
+            return Err(DiskError::CorruptImage("invalid block size"));
         }
         if !(block_size as u64).is_multiple_of(sector_size as u64) {
             return Err(DiskError::CorruptImage(
                 "block size must be multiple of sector size",
             ));
         }
+        if total_sectors == 0 {
+            return Err(DiskError::CorruptImage("total sectors is zero"));
+        }
+
+        // Validate size math so later LBA->byte offset computation can't overflow.
+        let total_bytes = total_sectors
+            .checked_mul(sector_size as u64)
+            .ok_or(DiskError::CorruptImage("disk size overflow"))?;
+
+        let block_size_u64 = block_size as u64;
+        let expected_entries = total_bytes.div_ceil(block_size_u64);
+        if table_entries != expected_entries {
+            return Err(DiskError::CorruptImage("table entries mismatch"));
+        }
+
+        let table_bytes = table_entries
+            .checked_mul(8)
+            .ok_or(DiskError::CorruptImage("table size overflow"))?;
+        if table_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("allocation table too large"));
+        }
+
         if table_offset < HEADER_SIZE {
             return Err(DiskError::CorruptImage("table offset invalid"));
         }
@@ -68,6 +97,28 @@ impl SparseHeader {
         }
         if data_offset < HEADER_SIZE {
             return Err(DiskError::CorruptImage("data offset invalid"));
+        }
+        if !table_offset.is_multiple_of(8) || !journal_offset.is_multiple_of(8) {
+            return Err(DiskError::CorruptImage("metadata offset misaligned"));
+        }
+
+        let journal_end = journal_offset
+            .checked_add(JOURNAL_SIZE)
+            .ok_or(DiskError::CorruptImage("journal offset overflow"))?;
+        if journal_end > table_offset {
+            return Err(DiskError::CorruptImage("journal overlaps allocation table"));
+        }
+
+        let table_end = table_offset
+            .checked_add(table_bytes)
+            .ok_or(DiskError::CorruptImage("table offset overflow"))?;
+        if table_end > data_offset {
+            return Err(DiskError::CorruptImage(
+                "allocation table overlaps data region",
+            ));
+        }
+        if !data_offset.is_multiple_of(block_size_u64) {
+            return Err(DiskError::CorruptImage("data offset not block aligned"));
         }
 
         Ok(Self {
@@ -156,10 +207,18 @@ impl<S: ByteStorage> SparseDisk<S> {
         let table_bytes = table_entries
             .checked_mul(8)
             .ok_or(DiskError::Unsupported("table size overflow"))?;
+        if table_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("allocation table too large"));
+        }
 
         let journal_offset = HEADER_SIZE;
-        let table_offset = journal_offset + JOURNAL_SIZE;
-        let data_offset = align_up(table_offset + table_bytes, block_size_u64);
+        let table_offset = journal_offset
+            .checked_add(JOURNAL_SIZE)
+            .ok_or(DiskError::Unsupported("table offset overflow"))?;
+        let table_end = table_offset
+            .checked_add(table_bytes)
+            .ok_or(DiskError::Unsupported("table offset overflow"))?;
+        let data_offset = align_up(table_end, block_size_u64)?;
 
         let header = SparseHeader {
             sector_size,
@@ -173,14 +232,17 @@ impl<S: ByteStorage> SparseDisk<S> {
 
         storage.write_at(0, &header.encode())?;
         storage.write_at(journal_offset, &JournalRecord::empty().encode())?;
-        storage.write_at(table_offset, &vec![0u8; table_bytes as usize])?;
+        write_zeroes(&mut storage, table_offset, table_bytes)?;
         storage.set_len(data_offset)?;
         storage.flush()?;
 
+        let table_entries_usize: usize = table_entries
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
         Ok(Self {
             storage,
             header,
-            table: vec![0u64; table_entries as usize],
+            table: vec![0u64; table_entries_usize],
         })
     }
 
@@ -189,10 +251,28 @@ impl<S: ByteStorage> SparseDisk<S> {
         storage.read_at(0, &mut header_buf)?;
         let header = SparseHeader::decode(&header_buf)?;
 
-        let table_bytes = header.table_entries as usize * 8;
-        let mut table_buf = vec![0u8; table_bytes];
+        let file_len = storage.len()?;
+        if file_len < header.data_offset {
+            return Err(DiskError::CorruptImage("sparse image truncated"));
+        }
+
+        let table_bytes = header
+            .table_entries
+            .checked_mul(8)
+            .ok_or(DiskError::CorruptImage("table size overflow"))?;
+        if table_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("allocation table too large"));
+        }
+        let table_bytes_usize: usize = table_bytes
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
+        let mut table_buf = vec![0u8; table_bytes_usize];
         storage.read_at(header.table_offset, &mut table_buf)?;
-        let mut table = Vec::with_capacity(header.table_entries as usize);
+        let table_entries_usize: usize = header
+            .table_entries
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
+        let mut table = Vec::with_capacity(table_entries_usize);
         for chunk in table_buf.chunks_exact(8) {
             table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
         }
@@ -243,7 +323,15 @@ impl<S: ByteStorage> SparseDisk<S> {
                 "journal physical offset not aligned",
             ));
         }
-        let idx = record.logical_block as usize;
+        let idx: usize = record
+            .logical_block
+            .try_into()
+            .map_err(|_| DiskError::CorruptImage("journal logical block out of range"))?;
+        if idx >= self.table.len() {
+            return Err(DiskError::CorruptImage(
+                "journal logical block out of range",
+            ));
+        }
         let existing = self.table[idx];
         if existing != 0 && existing != record.physical_offset {
             return Err(DiskError::CorruptImage(
@@ -262,10 +350,13 @@ impl<S: ByteStorage> SparseDisk<S> {
     }
 
     fn write_table_entry(&mut self, logical_block: u64, physical_offset: u64) -> DiskResult<()> {
+        let logical_block_bytes = logical_block
+            .checked_mul(8)
+            .ok_or(DiskError::Unsupported("table offset overflow"))?;
         let offset = self
             .header
             .table_offset
-            .checked_add(logical_block.checked_mul(8).unwrap())
+            .checked_add(logical_block_bytes)
             .ok_or(DiskError::Unsupported("table offset overflow"))?;
         self.storage
             .write_at(offset, &physical_offset.to_le_bytes())?;
@@ -301,11 +392,10 @@ impl<S: ByteStorage> SparseDisk<S> {
         if len < self.header.data_offset {
             len = self.header.data_offset;
         }
-        let offset = align_up(len, block_size);
+        let offset = align_up(len, block_size)?;
         // Ensure the newly allocated block is fully zero-initialized so partial writes preserve
         // the semantics of unallocated blocks returning zero.
-        self.storage
-            .write_at(offset, &vec![0u8; block_size as usize])?;
+        write_zeroes(&mut self.storage, offset, block_size)?;
         Ok(offset)
     }
 }
@@ -330,18 +420,34 @@ impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
         let mut remaining = buf;
         let mut cur_lba = lba;
         while !remaining.is_empty() {
-            let byte_offset = cur_lba * sector_size;
+            let byte_offset =
+                cur_lba
+                    .checked_mul(sector_size)
+                    .ok_or(DiskError::OutOfRange {
+                        lba,
+                        sectors,
+                        capacity_sectors: self.header.total_sectors,
+                    })?;
             let logical_block = byte_offset / block_size;
             let block_off = (byte_offset % block_size) as usize;
-            let physical = self.table[logical_block as usize];
+            let logical_block_idx: usize = logical_block
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("logical block out of range"))?;
+            if logical_block_idx >= self.table.len() {
+                return Err(DiskError::CorruptImage("logical block out of range"));
+            }
+            let physical = self.table[logical_block_idx];
             let max_in_block = (block_size as usize).saturating_sub(block_off);
             let to_copy = max_in_block.min(remaining.len());
 
             if physical == 0 {
                 remaining[..to_copy].fill(0);
             } else {
+                let phys = physical
+                    .checked_add(block_off as u64)
+                    .ok_or(DiskError::CorruptImage("physical offset overflow"))?;
                 self.storage
-                    .read_at(physical + block_off as u64, &mut remaining[..to_copy])?;
+                    .read_at(phys, &mut remaining[..to_copy])?;
             }
 
             remaining = &mut remaining[to_copy..];
@@ -361,12 +467,24 @@ impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
         let mut remaining = buf;
         let mut cur_lba = lba;
         while !remaining.is_empty() {
-            let byte_offset = cur_lba * sector_size;
+            let byte_offset =
+                cur_lba
+                    .checked_mul(sector_size)
+                    .ok_or(DiskError::OutOfRange {
+                        lba,
+                        sectors,
+                        capacity_sectors: self.header.total_sectors,
+                    })?;
             let logical_block = byte_offset / block_size;
             let block_off = (byte_offset % block_size) as usize;
             let max_in_block = (block_size as usize).saturating_sub(block_off);
             let to_copy = max_in_block.min(remaining.len());
-            let idx = logical_block as usize;
+            let idx: usize = logical_block
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("logical block out of range"))?;
+            if idx >= self.table.len() {
+                return Err(DiskError::CorruptImage("logical block out of range"));
+            }
 
             let physical = if self.table[idx] == 0 {
                 // If this sub-range is all zeros and the block is currently unallocated, we can
@@ -379,8 +497,11 @@ impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
 
                 let new_physical = self.allocate_block()?;
                 // Write data into the freshly zero-initialized block.
+                let phys = new_physical
+                    .checked_add(block_off as u64)
+                    .ok_or(DiskError::CorruptImage("physical offset overflow"))?;
                 self.storage
-                    .write_at(new_physical + block_off as u64, &remaining[..to_copy])?;
+                    .write_at(phys, &remaining[..to_copy])?;
                 // Commit mapping via journal + table update.
                 let rec = JournalRecord {
                     state: 1,
@@ -403,8 +524,11 @@ impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
                 new_physical
             } else {
                 let physical = self.table[idx];
+                let phys = physical
+                    .checked_add(block_off as u64)
+                    .ok_or(DiskError::CorruptImage("physical offset overflow"))?;
                 self.storage
-                    .write_at(physical + block_off as u64, &remaining[..to_copy])?;
+                    .write_at(phys, &remaining[..to_copy])?;
                 physical
             };
 
@@ -421,16 +545,33 @@ impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
     }
 }
 
-fn align_up(value: u64, align: u64) -> u64 {
+fn align_up(value: u64, align: u64) -> DiskResult<u64> {
     if align == 0 {
-        return value;
+        return Ok(value);
     }
     let rem = value % align;
     if rem == 0 {
-        value
+        Ok(value)
     } else {
-        value + (align - rem)
+        value
+            .checked_add(align - rem)
+            .ok_or(DiskError::Unsupported("offset overflow"))
     }
+}
+
+fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) -> DiskResult<()> {
+    const CHUNK: u64 = 64 * 1024;
+    let buf = [0u8; CHUNK as usize];
+
+    while len > 0 {
+        let to_write = len.min(CHUNK);
+        storage.write_at(offset, &buf[..to_write as usize])?;
+        offset = offset
+            .checked_add(to_write)
+            .ok_or(DiskError::Unsupported("offset overflow"))?;
+        len -= to_write;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -487,11 +628,64 @@ mod tests {
             table_offset: 4096 + 4096,
             table_entries: 1,
             journal_offset: 4096,
-            data_offset: 8192,
+            data_offset: 1024 * 1024,
         };
         let enc = header.encode();
         let dec = SparseHeader::decode(&enc).unwrap();
         assert_eq!(header, dec);
+    }
+
+    #[test]
+    fn decode_rejects_total_size_overflow() {
+        let header = SparseHeader {
+            sector_size: 512,
+            block_size: 512,
+            total_sectors: u64::MAX,
+            table_offset: 8192,
+            table_entries: 1,
+            journal_offset: 4096,
+            data_offset: 8192,
+        };
+        let enc = header.encode();
+        let err = SparseHeader::decode(&enc).unwrap_err();
+        assert!(matches!(err, DiskError::CorruptImage("disk size overflow")));
+    }
+
+    #[test]
+    fn decode_rejects_table_entries_mismatch() {
+        // total_sectors=1024, sector_size=512 => 512KiB image. With block_size=1MiB the expected
+        // table entries is 1; claim 2 and ensure the header is rejected.
+        let header = SparseHeader {
+            sector_size: 512,
+            block_size: 1024 * 1024,
+            total_sectors: 1024,
+            table_offset: 8192,
+            table_entries: 2,
+            journal_offset: 4096,
+            data_offset: 1024 * 1024,
+        };
+        let enc = header.encode();
+        let err = SparseHeader::decode(&enc).unwrap_err();
+        assert!(matches!(err, DiskError::CorruptImage("table entries mismatch")));
+    }
+
+    #[test]
+    fn decode_rejects_allocation_table_too_large() {
+        // Construct the smallest valid header that still exceeds the MAX_TABLE_BYTES guard.
+        let table_entries = (MAX_TABLE_BYTES / 8) + 1;
+
+        let header = SparseHeader {
+            sector_size: 512,
+            block_size: 512,
+            total_sectors: table_entries,
+            table_offset: 8192,
+            table_entries,
+            journal_offset: 4096,
+            data_offset: 8192,
+        };
+        let enc = header.encode();
+        let err = SparseHeader::decode(&enc).unwrap_err();
+        assert!(matches!(err, DiskError::Unsupported("allocation table too large")));
     }
 
     #[test]
