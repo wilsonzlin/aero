@@ -10,8 +10,10 @@ import {
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_VERSION,
   L2TunnelDecodeError,
+  decodeStructuredErrorPayload,
   decodeL2Message,
   encodeError,
+  encodeStructuredErrorPayload,
   encodeL2Frame,
   encodePing,
   encodePong,
@@ -96,15 +98,15 @@ test("l2 tunnel matches canonical conformance vectors", () => {
     assert.deepEqual(Buffer.from(decoded.payload), Buffer.from(payload), `decode ${v.name}`);
 
     if (v.structured) {
-      const msg = Buffer.from(v.structured.message, "utf8");
-      const header = Buffer.from([
-        (v.structured.code >>> 8) & 0xff,
-        v.structured.code & 0xff,
-        (msg.length >>> 8) & 0xff,
-        msg.length & 0xff,
-      ]);
-      const expected = Buffer.concat([header, msg]);
-      assert.deepEqual(Buffer.from(payload), expected, `structured ERROR ${v.name}`);
+      const expectedPayload = encodeStructuredErrorPayload(
+        v.structured.code,
+        v.structured.message,
+        Number.MAX_SAFE_INTEGER,
+      );
+      assert.deepEqual(Buffer.from(payload), Buffer.from(expectedPayload), `structured ERROR ${v.name}`);
+
+      const decoded = decodeStructuredErrorPayload(payload);
+      assert.deepEqual(decoded, v.structured, `decode structured ERROR ${v.name}`);
     }
   }
 

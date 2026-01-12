@@ -5,6 +5,7 @@ import {
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_SUBPROTOCOL,
+  decodeStructuredErrorPayload,
   decodeL2Message,
   encodeL2Frame,
   encodePing,
@@ -182,21 +183,8 @@ function validateNonNegativeInt(name: string, value: number): void {
 }
 
 function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: string } {
-  // Prefer the structured binary form from docs/l2-tunnel-protocol.md:
-  //   code (u16 BE) | msg_len (u16 BE) | msg (msg_len bytes, UTF-8)
-  if (payload.byteLength >= 4) {
-    const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    const code = dv.getUint16(0, false);
-    const msgLen = dv.getUint16(2, false);
-    if (payload.byteLength === 4 + msgLen) {
-      const msgBytes = payload.subarray(4);
-      try {
-        return { code, message: textDecoder.decode(msgBytes) };
-      } catch {
-        // Fall through to the unstructured decoding below.
-      }
-    }
-  }
+  const structured = decodeStructuredErrorPayload(payload);
+  if (structured) return structured;
 
   // Unstructured form: treat the entire payload as UTF-8 (best-effort).
   try {

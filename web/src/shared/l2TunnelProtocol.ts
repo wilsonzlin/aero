@@ -17,6 +17,17 @@ export const L2_TUNNEL_TYPE_ERROR = 0x7f;
 export const L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD = 2048;
 export const L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD = 256;
 
+// Structured `ERROR` payload codes (see `docs/l2-tunnel-protocol.md`).
+export const L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR = 1;
+export const L2_TUNNEL_ERROR_CODE_AUTH_REQUIRED = 2;
+export const L2_TUNNEL_ERROR_CODE_AUTH_INVALID = 3;
+export const L2_TUNNEL_ERROR_CODE_ORIGIN_MISSING = 4;
+export const L2_TUNNEL_ERROR_CODE_ORIGIN_DENIED = 5;
+export const L2_TUNNEL_ERROR_CODE_QUOTA_BYTES = 6;
+export const L2_TUNNEL_ERROR_CODE_QUOTA_FPS = 7;
+export const L2_TUNNEL_ERROR_CODE_QUOTA_CONNECTIONS = 8;
+export const L2_TUNNEL_ERROR_CODE_BACKPRESSURE = 9;
+
 export type L2TunnelMessage = {
   version: number;
   type: number;
@@ -36,6 +47,80 @@ export class L2TunnelDecodeError extends Error {
 function assertNonNegative(name: string, value: number): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`${name} must be >= 0 (got ${value})`);
+  }
+}
+
+type StructuredErrorPayload = {
+  code: number;
+  message: string;
+};
+
+const structuredErrorTextEncoder = new TextEncoder();
+const structuredErrorTextDecoder = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Encode a structured `ERROR` payload:
+ *
+ * ```text
+ * code (u16 BE) | msg_len (u16 BE) | msg (msg_len bytes, UTF-8)
+ * ```
+ *
+ * This is used as the payload bytes for an `L2_TUNNEL_TYPE_ERROR` message (see
+ * `docs/l2-tunnel-protocol.md`).
+ *
+ * The returned payload is truncated as needed to fit within `maxPayloadBytes`.
+ */
+export function encodeStructuredErrorPayload(code: number, message: string, maxPayloadBytes: number): Uint8Array {
+  if (!Number.isInteger(code) || code < 0 || code > 0xffff) {
+    throw new RangeError(`code must be a u16 (0..=65535), got ${code}`);
+  }
+  assertNonNegative("maxPayloadBytes", maxPayloadBytes);
+  if (maxPayloadBytes < 4) {
+    return new Uint8Array();
+  }
+
+  const maxMsgLen = Math.min(maxPayloadBytes - 4, 0xffff);
+
+  let msgBytes = structuredErrorTextEncoder.encode(message);
+  if (msgBytes.length > maxMsgLen) {
+    // Truncate to fit and respect UTF-8 boundaries.
+    let end = maxMsgLen;
+    while (end > 0) {
+      try {
+        structuredErrorTextDecoder.decode(msgBytes.subarray(0, end));
+        break;
+      } catch {
+        end -= 1;
+      }
+    }
+    msgBytes = msgBytes.subarray(0, end);
+  }
+
+  const out = new Uint8Array(4 + msgBytes.length);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  dv.setUint16(0, code, false);
+  dv.setUint16(2, msgBytes.length, false);
+  out.set(msgBytes, 4);
+  return out;
+}
+
+/**
+ * Attempt to decode a structured `ERROR` payload (see `encodeStructuredErrorPayload`).
+ *
+ * Returns `{ code, message }` only if the payload matches the exact structured encoding.
+ */
+export function decodeStructuredErrorPayload(payload: Uint8Array): StructuredErrorPayload | null {
+  if (payload.byteLength < 4) return null;
+  const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const code = dv.getUint16(0, false);
+  const msgLen = dv.getUint16(2, false);
+  if (payload.byteLength !== 4 + msgLen) return null;
+  try {
+    const msgBytes = payload.subarray(4);
+    const message = structuredErrorTextDecoder.decode(msgBytes);
+    return { code, message };
+  } catch {
+    return null;
   }
 }
 
