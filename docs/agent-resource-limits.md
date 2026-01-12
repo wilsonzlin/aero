@@ -136,7 +136,7 @@ export AERO_RUST_CODEGEN_UNITS=1  # Optional: reduce per-crate parallelism (slow
 
 `bash ./scripts/safe-run.sh` also includes a small backoff + retry loop for Rust build/test commands
 (Cargo and common wrappers like `npm`/`wasm-pack`) when it detects transient `rustc` thread-spawn
-panics (e.g. `failed to spawn helper thread (WouldBlock)`), which can happen when many agents share
+panics (e.g. `failed to spawn helper thread (WouldBlock)` or `called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`), which can happen when many agents share
 the same host. Override with
 `AERO_SAFE_RUN_RUSTC_RETRIES=1` to disable retries.
 
@@ -358,6 +358,12 @@ In heavily constrained sandboxes (especially when building `wasm32-unknown-unkno
 failed to spawn helper thread: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
 ```
 
+Or it may surface as a panic/unwrap error (newer rustc versions):
+
+```text
+thread 'rustc' panicked at 'called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }'
+```
+
 Mitigations (start with the top-most):
 
 ```bash
@@ -526,6 +532,7 @@ In heavily contended agent sandboxes, `rustc` (or the linker driver it spawns) c
 
 - `failed to spawn helper thread (WouldBlock)`
 - `failed to spawn work thread: Resource temporarily unavailable`
+- `called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`
 - `could not exec the linker \`cc\`: Resource temporarily unavailable`
 
 These are usually **transient shared-host resource issues** (PID/thread limits), not deterministic build failures.
