@@ -5,6 +5,8 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+const MAX_OUTPUT_BYTES: usize = 4096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps2MouseButton {
     Left,
@@ -88,6 +90,13 @@ impl Ps2Mouse {
         self.out.pop_front()
     }
 
+    fn push_out(&mut self, byte: u8) {
+        if self.out.len() >= MAX_OUTPUT_BYTES {
+            let _ = self.out.pop_front();
+        }
+        self.out.push_back(byte);
+    }
+
     pub fn device_id(&self) -> u8 {
         self.device_id
     }
@@ -123,67 +132,67 @@ impl Ps2Mouse {
         match byte {
             0xE6 => {
                 self.scaling = Scaling::OneToOne;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xE7 => {
                 self.scaling = Scaling::TwoToOne;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xE8 => {
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 self.expecting_data = Some(ExpectingData::Resolution);
             }
             0xE9 => {
-                self.out.push_back(0xFA);
-                self.out.push_back(self.status_byte());
-                self.out.push_back(self.resolution);
-                self.out.push_back(self.sample_rate);
+                self.push_out(0xFA);
+                self.push_out(self.status_byte());
+                self.push_out(self.resolution);
+                self.push_out(self.sample_rate);
             }
             0xEA => {
                 self.mode = Mode::Stream;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xEB => {
                 // Read data (remote mode).
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 self.send_packet();
             }
             0xF0 => {
                 self.mode = Mode::Remote;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xF2 => {
-                self.out.push_back(0xFA);
-                self.out.push_back(self.device_id);
+                self.push_out(0xFA);
+                self.push_out(self.device_id);
             }
             0xF3 => {
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 self.expecting_data = Some(ExpectingData::SampleRate);
             }
             0xF4 => {
                 self.reporting_enabled = true;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xF5 => {
                 self.reporting_enabled = false;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xF6 => {
                 self.reset_to_defaults();
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xFF => {
                 // Reset.
                 self.reset_to_defaults();
                 self.device_id = 0x00;
                 self.sample_rate_seq = [0; 3];
-                self.out.push_back(0xFA);
-                self.out.push_back(0xAA);
-                self.out.push_back(0x00);
+                self.push_out(0xFA);
+                self.push_out(0xAA);
+                self.push_out(0x00);
             }
             _ => {
                 // ACK unknown commands for compatibility.
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
         }
     }
@@ -205,11 +214,11 @@ impl Ps2Mouse {
         match expecting {
             ExpectingData::Resolution => {
                 self.resolution = byte;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             ExpectingData::SampleRate => {
                 self.sample_rate = byte;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
 
                 self.sample_rate_seq[0] = self.sample_rate_seq[1];
                 self.sample_rate_seq[1] = self.sample_rate_seq[2];
@@ -280,14 +289,14 @@ impl Ps2Mouse {
             b0 |= 0x80;
         }
 
-        self.out.push_back(b0);
-        self.out.push_back((x_clamped as i16 & 0xFF) as u8);
-        self.out.push_back((y_clamped as i16 & 0xFF) as u8);
+        self.push_out(b0);
+        self.push_out((x_clamped as i16 & 0xFF) as u8);
+        self.push_out((y_clamped as i16 & 0xFF) as u8);
 
         if self.device_id >= 0x03 {
             // IntelliMouse: signed 4-bit wheel delta (-8..7).
             let wheel = self.wheel.clamp(-8, 7) as i8;
-            self.out.push_back((wheel as u8) & 0x0F);
+            self.push_out((wheel as u8) & 0x0F);
         }
 
         self.dx = 0;
@@ -405,10 +414,14 @@ impl IoSnapshot for Ps2Mouse {
         self.out.clear();
         if let Some(buf) = r.bytes(TAG_OUTPUT) {
             let mut d = Decoder::new(buf);
-            for byte in d.vec_u8()? {
-                self.out.push_back(byte);
-            }
+            let len = d.u32()? as usize;
+            let bytes = d.bytes(len)?;
             d.finish()?;
+
+            let drop = len.saturating_sub(MAX_OUTPUT_BYTES);
+            for &byte in bytes.iter().skip(drop) {
+                self.push_out(byte);
+            }
         }
 
         Ok(())
@@ -418,6 +431,36 @@ impl IoSnapshot for Ps2Mouse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_queue_is_bounded_during_runtime() {
+        let mut m = Ps2Mouse::new();
+        for _ in 0..(MAX_OUTPUT_BYTES + 10) {
+            m.receive_byte(0xE6);
+        }
+        let drained: Vec<u8> = std::iter::from_fn(|| m.pop_output()).collect();
+        assert_eq!(drained.len(), MAX_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn snapshot_restore_truncates_oversized_output_queue() {
+        const TAG_OUTPUT: u16 = 5;
+
+        let bytes: Vec<u8> = (0..(MAX_OUTPUT_BYTES as u32 + 10))
+            .map(|v| v as u8)
+            .collect();
+
+        let mut w = SnapshotWriter::new(Ps2Mouse::DEVICE_ID, Ps2Mouse::DEVICE_VERSION);
+        w.field_bytes(TAG_OUTPUT, Encoder::new().vec_u8(&bytes).finish());
+
+        let mut m = Ps2Mouse::new();
+        m.load_state(&w.finish())
+            .expect("snapshot restore should succeed");
+
+        let drained: Vec<u8> = std::iter::from_fn(|| m.pop_output()).collect();
+        let drop = bytes.len() - MAX_OUTPUT_BYTES;
+        assert_eq!(drained, bytes[drop..]);
+    }
 
     #[test]
     fn stream_packet_inverts_y() {

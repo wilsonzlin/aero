@@ -8,6 +8,8 @@ use std::sync::Arc;
 pub const IOAPIC_MMIO_BASE: u64 = 0xFEC0_0000;
 pub const IOAPIC_MMIO_SIZE: u64 = 0x1000;
 
+const MAX_SNAPSHOT_REDIRECTION_ENTRIES: usize = 4096;
+
 /// I/O APIC ID (4-bit field in the ID register).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IoApicId(pub u8);
@@ -451,6 +453,11 @@ impl IoSnapshot for IoApic {
                     "ioapic redirection count",
                 ));
             }
+            if count > MAX_SNAPSHOT_REDIRECTION_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "ioapic redirection count",
+                ));
+            }
             let mut entries = Vec::with_capacity(count);
             for _ in 0..count {
                 let vector = d.u8()?;
@@ -482,11 +489,15 @@ impl IoSnapshot for IoApic {
 
         if let Some(buf) = r.bytes(TAG_PIN_ACTIVE_LOW) {
             let mut d = Decoder::new(buf);
-            let values = d.vec_u8()?;
+            let count = d.u32()? as usize;
+            if count > MAX_SNAPSHOT_REDIRECTION_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding("ioapic pin_active_low"));
+            }
+            let values = d.bytes(count)?;
             d.finish()?;
             self.pin_active_low = values
-                .into_iter()
-                .map(|v| match v {
+                .iter()
+                .map(|v| match *v {
                     0 => Ok(false),
                     1 => Ok(true),
                     _ => Err(SnapshotError::InvalidFieldEncoding("ioapic pin_active_low")),
@@ -496,11 +507,15 @@ impl IoSnapshot for IoApic {
 
         if let Some(buf) = r.bytes(TAG_PIN_LEVEL) {
             let mut d = Decoder::new(buf);
-            let values = d.vec_u8()?;
+            let count = d.u32()? as usize;
+            if count > MAX_SNAPSHOT_REDIRECTION_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding("ioapic pin_level"));
+            }
+            let values = d.bytes(count)?;
             d.finish()?;
             self.pin_level = values
-                .into_iter()
-                .map(|v| match v {
+                .iter()
+                .map(|v| match *v {
                     0 => Ok(false),
                     1 => Ok(true),
                     _ => Err(SnapshotError::InvalidFieldEncoding("ioapic pin_level")),
@@ -625,5 +640,26 @@ mod tests {
 
         ioapic.set_irq_level(1, true);
         assert_eq!(service_next(&lapic), Some(0x21));
+    }
+
+    #[test]
+    fn snapshot_rejects_excessive_redirection_entries() {
+        const TAG_REDIRECTION: u16 = 3;
+
+        let (mut ioapic, _lapic) = mk_ioapic();
+
+        let mut w = SnapshotWriter::new(IoApic::DEVICE_ID, IoApic::DEVICE_VERSION);
+        let redir = Encoder::new()
+            .u32((MAX_SNAPSHOT_REDIRECTION_ENTRIES as u32) + 1)
+            .finish();
+        w.field_bytes(TAG_REDIRECTION, redir);
+
+        let err = ioapic
+            .load_state(&w.finish())
+            .expect_err("snapshot should reject excessive redirection count");
+        assert!(matches!(
+            err,
+            SnapshotError::InvalidFieldEncoding("ioapic redirection count")
+        ));
     }
 }

@@ -474,6 +474,8 @@ impl IoSnapshot for PlatformInterrupts {
         const TAG_GSI_LEVEL: u16 = 8;
         const TAG_LAPIC_CLOCK_NOW_NS: u16 = 9;
 
+        const MAX_SNAPSHOT_GSI_LEVELS: usize = 4096;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -503,11 +505,17 @@ impl IoSnapshot for PlatformInterrupts {
 
         if let Some(buf) = r.bytes(TAG_GSI_LEVEL) {
             let mut d = Decoder::new(buf);
-            let levels = d.vec_u8()?;
+            let count = d.u32()? as usize;
+            if count > MAX_SNAPSHOT_GSI_LEVELS {
+                return Err(
+                    aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding("gsi_level"),
+                );
+            }
+            let levels = d.bytes(count)?;
             d.finish()?;
             self.gsi_level = levels
-                .into_iter()
-                .map(|v| match v {
+                .iter()
+                .map(|v| match *v {
                     0 => Ok(false),
                     1 => Ok(true),
                     _ => Err(

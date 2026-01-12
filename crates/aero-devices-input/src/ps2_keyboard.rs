@@ -7,6 +7,8 @@ use aero_io_snapshot::io::state::{
 
 use crate::scancode::{push_set2_sequence, Set2Scancode};
 
+const MAX_OUTPUT_BYTES: usize = 4096;
+
 #[derive(Debug, Clone, Copy)]
 enum ExpectingData {
     LedState,
@@ -49,6 +51,13 @@ impl Ps2Keyboard {
         self.out.pop_front()
     }
 
+    fn push_out(&mut self, byte: u8) {
+        if self.out.len() >= MAX_OUTPUT_BYTES {
+            let _ = self.out.pop_front();
+        }
+        self.out.push_back(byte);
+    }
+
     pub fn inject_key(&mut self, scancode: Set2Scancode, pressed: bool) {
         if !self.scanning_enabled {
             return;
@@ -61,7 +70,9 @@ impl Ps2Keyboard {
 
         let mut seq = Vec::new();
         push_set2_sequence(&mut seq, scancode, pressed);
-        self.out.extend(seq);
+        for byte in seq {
+            self.push_out(byte);
+        }
     }
 
     /// Receives a byte from the host (guest) over the PS/2 data port.
@@ -74,39 +85,39 @@ impl Ps2Keyboard {
         match byte {
             0xED => {
                 // Set LEDs (next byte contains LED state).
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 self.expecting_data = Some(ExpectingData::LedState);
             }
             0xEE => {
                 // Echo.
-                self.out.push_back(0xEE);
+                self.push_out(0xEE);
             }
             0xF0 => {
                 // Get/Set scancode set (next byte selects).
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 self.expecting_data = Some(ExpectingData::ScancodeSet);
             }
             0xF2 => {
                 // Identify.
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 // MF2 keyboard ID.
-                self.out.push_back(0xAB);
-                self.out.push_back(0x83);
+                self.push_out(0xAB);
+                self.push_out(0x83);
             }
             0xF3 => {
                 // Set typematic rate/delay.
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
                 self.expecting_data = Some(ExpectingData::Typematic);
             }
             0xF4 => {
                 // Enable scanning.
                 self.scanning_enabled = true;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xF5 => {
                 // Disable scanning.
                 self.scanning_enabled = false;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xF6 => {
                 // Set defaults.
@@ -114,7 +125,7 @@ impl Ps2Keyboard {
                 self.typematic = 0x0B;
                 self.leds = 0;
                 self.scanning_enabled = true;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             0xFF => {
                 // Reset.
@@ -122,12 +133,12 @@ impl Ps2Keyboard {
                 self.typematic = 0x0B;
                 self.leds = 0;
                 self.scanning_enabled = true;
-                self.out.push_back(0xFA);
-                self.out.push_back(0xAA);
+                self.push_out(0xFA);
+                self.push_out(0xAA);
             }
             _ => {
                 // Most commands are ACKed even if unsupported.
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
         }
     }
@@ -136,22 +147,22 @@ impl Ps2Keyboard {
         match expecting {
             ExpectingData::LedState => {
                 self.leds = byte & 0x07;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             ExpectingData::Typematic => {
                 self.typematic = byte;
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
             ExpectingData::ScancodeSet => {
                 if byte == 0 {
-                    self.out.push_back(0xFA);
-                    self.out.push_back(self.scancode_set);
+                    self.push_out(0xFA);
+                    self.push_out(self.scancode_set);
                     return;
                 }
                 if (1..=3).contains(&byte) {
                     self.scancode_set = byte;
                 }
-                self.out.push_back(0xFA);
+                self.push_out(0xFA);
             }
         }
     }
@@ -224,12 +235,51 @@ impl IoSnapshot for Ps2Keyboard {
         self.out.clear();
         if let Some(buf) = r.bytes(TAG_OUTPUT) {
             let mut d = Decoder::new(buf);
-            for byte in d.vec_u8()? {
-                self.out.push_back(byte);
-            }
+            let len = d.u32()? as usize;
+            let bytes = d.bytes(len)?;
             d.finish()?;
+
+            let drop = len.saturating_sub(MAX_OUTPUT_BYTES);
+            for &byte in bytes.iter().skip(drop) {
+                self.push_out(byte);
+            }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_queue_is_bounded_during_runtime() {
+        let mut kb = Ps2Keyboard::new();
+        for _ in 0..(MAX_OUTPUT_BYTES + 10) {
+            kb.receive_byte(0xEE); // Echo.
+        }
+        let drained: Vec<u8> = std::iter::from_fn(|| kb.pop_output()).collect();
+        assert_eq!(drained.len(), MAX_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn snapshot_restore_truncates_oversized_output_queue() {
+        const TAG_OUTPUT: u16 = 3;
+
+        let bytes: Vec<u8> = (0..(MAX_OUTPUT_BYTES as u32 + 10))
+            .map(|v| v as u8)
+            .collect();
+
+        let mut w = SnapshotWriter::new(Ps2Keyboard::DEVICE_ID, Ps2Keyboard::DEVICE_VERSION);
+        w.field_bytes(TAG_OUTPUT, Encoder::new().vec_u8(&bytes).finish());
+
+        let mut kb = Ps2Keyboard::new();
+        kb.load_state(&w.finish())
+            .expect("snapshot restore should succeed");
+
+        let drained: Vec<u8> = std::iter::from_fn(|| kb.pop_output()).collect();
+        let drop = bytes.len() - MAX_OUTPUT_BYTES;
+        assert_eq!(drained, bytes[drop..]);
     }
 }
