@@ -127,7 +127,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::PIT` (`3`) — PIT (8254; inner `PIT4`)
 - `DeviceId::RTC` (`4`) — RTC/CMOS (0x70/0x71; inner `RTCC`)
 - `DeviceId::PCI_CFG` (`14`) — PCI config I/O ports + PCI bus config-space image state (`PciConfigPorts`, inner `PCPT`)
-- `DeviceId::PCI_INTX` (`15`) — PCI INTx router (`PciIntxRouter`, inner `INTX`)
+- `DeviceId::PCI_INTX_ROUTER` (`15`) — PCI INTx router (`PciIntxRouter`, inner `INTX`)
 - `DeviceId::PCI` (`5`) — legacy PCI core state (either a `PciCoreSnapshot` wrapper, inner `PCIC`, or a historical `PciConfigPorts` snapshot, inner `PCPT`; see `PCI core state` below)
 - `DeviceId::I8042` (`13`) — i8042 PS/2 controller (0x60/0x64; inner `8042`)
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer; inner `ACPM`)
@@ -139,7 +139,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
 `(DeviceId::PCI, 1, 0)` key. Canonical full-machine snapshots store PCI core state using *separate* `DeviceId::PCI_CFG` +
-`DeviceId::PCI_INTX` entries (see `PCI core state` below). Restore code should remain compatible with legacy snapshots that stored PCI
+`DeviceId::PCI_INTX_ROUTER` entries (see `PCI core state` below). Restore code should remain compatible with legacy snapshots that stored PCI
 config ports under `DeviceId::PCI` or stored a combined `PciCoreSnapshot` wrapper (`PCIC`) under `DeviceId::PCI`.
 
 #### ACPI PM (`DeviceId::ACPI_PM`)
@@ -172,7 +172,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `APIC` | `2` | `device.2` | Local APIC (guest-visible state) |
 | `PIT` | `3` | `device.3` | PIT timer |
 | `RTC` | `4` | `device.4` | RTC/CMOS |
-| `PCI` | `5` | `device.5` | Legacy PCI core state (old snapshots; prefer `PCI_CFG` + `PCI_INTX`) |
+| `PCI` | `5` | `device.5` | Legacy PCI core state (old snapshots; prefer `PCI_CFG` + `PCI_INTX_ROUTER`) |
 | `DISK_CONTROLLER` | `6` | `device.6` | Disk controller(s) + DMA state |
 | `VGA` | `7` | `device.7` | VGA/VESA device model |
 | `SERIAL` | `8` | `device.8` | UART 16550 |
@@ -182,7 +182,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `USB` | `12` | `usb.uhci` | Browser USB stack (UHCI controller + runtime/bridge state) |
 | `I8042` | `13` | `input.i8042` | Legacy i8042 PS/2 controller state |
 | `PCI_CFG` | `14` | `device.14` | PCI config ports + bus state (`PciConfigPorts`, inner `PCPT`) |
-| `PCI_INTX` | `15` | `device.15` | PCI INTx routing state (`PciIntxRouter`, inner `INTX`) |
+| `PCI_INTX_ROUTER` | `15` | `device.15` | PCI INTx routing state (`PciIntxRouter`, inner `INTX`) |
 | `ACPI_PM` | `16` | `device.16` | ACPI fixed-feature power management state |
 | `HPET` | `17` | `device.17` | High Precision Event Timer state |
 | `HDA` | `18` | `audio.hda` | HD Audio controller/runtime state |
@@ -286,7 +286,7 @@ The PCI core in `crates/aero-devices` snapshots only **guest-visible PCI-layer s
 Canonical full-machine snapshots store these as **separate** `DEVICES` entries with distinct outer `DeviceId`s:
 
 - `DeviceId::PCI_CFG` (`14`) for the `PciConfigPorts` TLV blob (`DEVICE_ID = PCPT`)
-- `DeviceId::PCI_INTX` (`15`) for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
+- `DeviceId::PCI_INTX_ROUTER` (`15`) for the `PciIntxRouter` TLV blob (`DEVICE_ID = INTX`)
 
 This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI TLVs commonly share the same inner snapshot `(major, minor)` (e.g. v1.0). It also reflects different restore orchestration: `PciIntxRouter` requires a post-restore `sync_levels_to_sink()` call once the platform interrupt controller/sink is restored, while `PCI_CFG` can be restored earlier.
 
@@ -294,16 +294,11 @@ Backward compatibility:
 
 - Some snapshot integrations store PCI core state as a single `DeviceId::PCI` (`5`) entry using a wrapper TLV (`aero_devices::pci::PciCoreSnapshot`, inner `DEVICE_ID = PCIC`) that nests both `PCPT` and `INTX` as fields.
 - Older snapshots may store `PciConfigPorts` (`PCPT`) directly under `DeviceId::PCI` (`5`) instead of `DeviceId::PCI_CFG` (`14`).
-- Older snapshots may store `PciIntxRouter` (`INTX`) directly under `DeviceId::PCI` (`5`) instead of `DeviceId::PCI_INTX` (`15`).
+- Older snapshots may store `PciIntxRouter` (`INTX`) directly under `DeviceId::PCI` (`5`) instead of `DeviceId::PCI_INTX_ROUTER` (`15`).
 
-Restore code should accept these legacy layouts, but new snapshots should prefer the split-out `PCI_CFG` + `PCI_INTX` entries.
+Restore code should accept these legacy layouts, but new snapshots should prefer the split-out `PCI_CFG` + `PCI_INTX_ROUTER` entries.
 
-Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform
-interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the
-platform interrupt controller complex** (typically the `DeviceId::PLATFORM_INTERRUPTS` snapshot in Aero’s machine
-model, or the historical `DeviceId::APIC` id in older snapshots) to re-drive any asserted GSIs (e.g.
-level-triggered INTx
-lines).
+Restore ordering note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink. Snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` **after restoring the platform interrupt controller complex** (typically the `DeviceId::PLATFORM_INTERRUPTS` snapshot in Aero’s machine model, or the historical `DeviceId::APIC` id in older snapshots) to re-drive any asserted GSIs (e.g. level-triggered INTx lines).
 
 ### Storage controllers (AHCI / IDE / ATAPI)
 

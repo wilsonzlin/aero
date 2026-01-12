@@ -49,7 +49,7 @@ impl DeviceId {
     ///
     /// This avoids `aero-snapshot`'s `DEVICES` uniqueness constraint on `(DeviceId, version, flags)`
     /// while still capturing both sub-snapshots. See [`DeviceId::PCI_CFG`] and
-    /// [`DeviceId::PCI_INTX`] for the optional split-out entries.
+    /// [`DeviceId::PCI_INTX_ROUTER`] for the optional split-out entries.
     pub const PCI: DeviceId = DeviceId(5);
     pub const DISK_CONTROLLER: DeviceId = DeviceId(6);
     pub const VGA: DeviceId = DeviceId(7);
@@ -74,6 +74,8 @@ impl DeviceId {
     ///
     /// Prefer [`DeviceId::PCI`] for new snapshot adapters. This ID exists for backward
     /// compatibility with older snapshots that stored PCI state as multiple device entries.
+    pub const PCI_INTX_ROUTER: DeviceId = DeviceId(15);
+    /// Backward compatible alias for [`DeviceId::PCI_INTX_ROUTER`].
     pub const PCI_INTX: DeviceId = DeviceId(15);
     /// ACPI fixed-feature power management I/O state (PM1/GPE/SMI_CMD).
     pub const ACPI_PM: DeviceId = DeviceId(16);
@@ -105,7 +107,7 @@ impl DeviceId {
             DeviceId::USB => Some("USB"),
             DeviceId::I8042 => Some("I8042"),
             DeviceId::PCI_CFG => Some("PCI_CFG"),
-            DeviceId::PCI_INTX => Some("PCI_INTX"),
+            DeviceId::PCI_INTX_ROUTER => Some("PCI_INTX_ROUTER"),
             DeviceId::ACPI_PM => Some("ACPI_PM"),
             DeviceId::HPET => Some("HPET"),
             DeviceId::HDA => Some("HDA"),
