@@ -40,8 +40,9 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
 - `AEROGPU_D3D9_TRACE_FILTER=<TOKENS>`  
   Records only entrypoints whose trace name contains any of the comma-separated tokens (case-insensitive substring match).
   Leading/trailing whitespace around tokens is ignored.
-  Note: the filter applies to both recording and dump triggers (for example, `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` will only fire for filtered-in entrypoints).
+  Note: the filter applies to both recording and dump triggers (for example, `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` / `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` will only fire for filtered-in entrypoints).
   Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
+  Tip: use `AEROGPU_D3D9_TRACE_FILTER=stub` to record only stubbed entrypoints (trace names include the substring `(stub)`).
 
 - `AEROGPU_D3D9_TRACE_STDERR=1` (Windows-only; optional)  
   By default, trace output on Windows is emitted via `OutputDebugStringA` (for DebugView/WinDbg). When this is set, the trace output is also echoed to `stderr` (useful for console repro apps and host-side unit tests).
@@ -77,6 +78,9 @@ The trace buffer is only dumped when triggered:
 
 - `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1`  
   Dumps once on the first traced entrypoint that returns a failing HRESULT (`FAILED(hr)`). The dump reason string is the failing entrypoint name.
+
+- `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`  
+  Dumps once on the first traced entrypoint whose trace name is marked as a stub (contains the substring `(stub)`). This is useful for quickly identifying when the Win7 D3D9 runtime (or `dwm.exe`) exercises an unimplemented DDI, even if that stub returns `S_OK`.
 
 For `dwm.exe`, prefer `AEROGPU_D3D9_TRACE_DUMP_PRESENT` so you get logs *while DWM is running*, rather than only at shutdown.
 For small repro apps that don't call `Present`/`PresentEx` (for example `d3d9_validate_device_sanity` and `d3d9ex_stateblock_sanity`), prefer `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1` so the trace dumps when the process exits.

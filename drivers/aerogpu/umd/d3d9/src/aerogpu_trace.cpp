@@ -37,6 +37,7 @@ uint32_t g_trace_dump_present_count = 0;
 bool g_trace_dump_on_detach = false;
 bool g_trace_dump_on_fail = false;
 bool g_trace_stderr_enabled = false;
+bool g_trace_dump_on_stub = false;
 
 std::atomic<uint32_t> g_trace_write_index{0};
 D3d9TraceRecord g_trace_records[kTraceCapacity]{};
@@ -558,13 +559,15 @@ void dump_trace_impl(const char* reason) {
   const uint32_t max_entries = std::min(g_trace_max_records, kTraceCapacity);
   const uint32_t recorded = std::min(g_trace_write_index.load(std::memory_order_relaxed), max_entries);
 
-  trace_outf("aerogpu-d3d9-trace: dump reason=%s entries=%u mode=%s max=%u filter_on=%u filter_count=%u\n",
-             reason ? reason : "(null)",
-             static_cast<unsigned>(recorded),
-             g_trace_unique_only ? "unique" : "all",
-             static_cast<unsigned>(max_entries),
-             static_cast<unsigned>(g_trace_filter_enabled ? 1u : 0u),
-             static_cast<unsigned>(g_trace_filter_enabled ? g_trace_filter_count : kFuncCount));
+  trace_outf(
+      "aerogpu-d3d9-trace: dump reason=%s entries=%u mode=%s max=%u dump_on_stub=%u filter_on=%u filter_count=%u\n",
+      reason ? reason : "(null)",
+      static_cast<unsigned>(recorded),
+      g_trace_unique_only ? "unique" : "all",
+      static_cast<unsigned>(max_entries),
+      static_cast<unsigned>(g_trace_dump_on_stub ? 1u : 0u),
+      static_cast<unsigned>(g_trace_filter_enabled ? 1u : 0u),
+      static_cast<unsigned>(g_trace_filter_enabled ? g_trace_filter_count : kFuncCount));
 
   for (uint32_t i = 0; i < recorded; i++) {
     const D3d9TraceRecord& rec = g_trace_records[i];
@@ -634,6 +637,7 @@ void d3d9_trace_init_from_env() {
   g_trace_dump_on_detach = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH");
   g_trace_dump_on_fail = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL");
   g_trace_stderr_enabled = env_bool("AEROGPU_D3D9_TRACE_STDERR");
+  g_trace_dump_on_stub = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_STUB");
 
   char filter[512] = {};
   if (env_get("AEROGPU_D3D9_TRACE_FILTER", filter, sizeof(filter))) {
@@ -699,12 +703,13 @@ void d3d9_trace_init_from_env() {
   g_trace_enabled.store(true, std::memory_order_release);
 
   trace_outf(
-      "aerogpu-d3d9-trace: enabled mode=%s max=%u dump_present=%u dump_on_detach=%u dump_on_fail=%u filter_on=%u filter_count=%u\n",
+      "aerogpu-d3d9-trace: enabled mode=%s max=%u dump_present=%u dump_on_detach=%u dump_on_fail=%u dump_on_stub=%u filter_on=%u filter_count=%u\n",
       g_trace_unique_only ? "unique" : "all",
       static_cast<unsigned>(g_trace_max_records),
       static_cast<unsigned>(g_trace_dump_present_count),
       static_cast<unsigned>(g_trace_dump_on_detach ? 1u : 0u),
       static_cast<unsigned>(g_trace_dump_on_fail ? 1u : 0u),
+      static_cast<unsigned>(g_trace_dump_on_stub ? 1u : 0u),
       static_cast<unsigned>(g_trace_filter_enabled ? 1u : 0u),
       static_cast<unsigned>(g_trace_filter_count));
 }
@@ -738,23 +743,34 @@ D3d9TraceCall::~D3d9TraceCall() {
     record_->hr = hr_;
   }
 
-  if (g_trace_dump_on_fail && FAILED(hr_) && g_trace_enabled.load(std::memory_order_acquire) && filter_allows(func_)) {
-    // Best-effort capture of the failure context. Dump once, and ensure the
-    // failing call is in the trace even in TRACE_MODE=unique.
-    bool expected = false;
-    if (!g_trace_dumped.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      return;
-    }
-
-    if (!record_) {
-      record_ = alloc_record_force(func_, arg0_, arg1_, arg2_, arg3_);
-      if (record_) {
-        record_->hr = hr_;
-      }
-    }
-
-    dump_trace_impl(func_name(func_));
+  const bool trace_enabled = g_trace_enabled.load(std::memory_order_acquire);
+  if (!trace_enabled || !filter_allows(func_)) {
+    return;
   }
+
+  const bool should_dump_on_fail = g_trace_dump_on_fail && FAILED(hr_);
+  const bool should_dump_on_stub =
+      g_trace_dump_on_stub && std::strstr(func_name(func_), "(stub)") != nullptr;
+
+  if (!should_dump_on_fail && !should_dump_on_stub) {
+    return;
+  }
+
+  // Best-effort capture of the failure/stub context. Dump once, and ensure the
+  // triggering call is in the trace even in TRACE_MODE=unique.
+  bool expected = false;
+  if (!g_trace_dumped.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  if (!record_) {
+    record_ = alloc_record_force(func_, arg0_, arg1_, arg2_, arg3_);
+    if (record_) {
+      record_->hr = hr_;
+    }
+  }
+
+  dump_trace_impl(func_name(func_));
 }
 
 } // namespace aerogpu
