@@ -2,16 +2,19 @@ mod common;
 
 use std::sync::Arc;
 
+use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::stats::GpuStats;
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
+use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
-        AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+        AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
         AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
+    cmd_writer::AerogpuCmdWriter,
 };
 
 const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = AerogpuFormat::BC1RgbaUnorm as u32;
@@ -338,6 +341,198 @@ fn d3d9_cmd_stream_bc1_texture_direct_upload_and_sample() {
         &bc1_block,
         [255, 0, 0, 255],
     );
+}
+
+#[test]
+fn d3d9_cmd_stream_bc1_texture_direct_guest_backed_upload_and_sample() {
+    let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
+        Some(exec) => exec,
+        None => {
+            if texture_compression_disabled_by_env() {
+                common::skip_or_panic(
+                    module_path!(),
+                    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set",
+                );
+            } else {
+                common::skip_or_panic(
+                    module_path!(),
+                    "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
+                );
+            }
+            return;
+        }
+    };
+
+    // BC1 4x4 block encoding a solid red color (0xF800 in RGB565).
+    let bc1_block = [
+        0x00, 0xF8, // color0
+        0x00, 0xF8, // color1
+        0x00, 0x00, 0x00, 0x00, // indices
+    ];
+
+    // Guest memory backing.
+    const TEX_ALLOC_ID: u32 = 1;
+    const TEX_GPA: u64 = 0x1000;
+    let alloc_table = AllocTable::new([(
+        TEX_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: TEX_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+    let mut guest_memory = VecGuestMemory::new(0x2000);
+    guest_memory
+        .write(TEX_GPA, &bc1_block)
+        .expect("write guest BC data");
+
+    const RT_HANDLE: u32 = 1;
+    const VB_HANDLE: u32 = 2;
+    const SAMPLE_TEX_HANDLE: u32 = 3;
+    const VS_HANDLE: u32 = 4;
+    const PS_HANDLE: u32 = 5;
+    const IL_HANDLE: u32 = 6;
+
+    let width = 64u32;
+    let height = 64u32;
+
+    let mut vb_data = Vec::new();
+    // D3D9 defaults to back-face culling with clockwise front faces.
+    let verts = [
+        (-0.8f32, -0.2f32, 0.0f32, 1.0f32),
+        (0.0f32, 0.8f32, 0.0f32, 1.0f32),
+        (0.8f32, -0.2f32, 0.0f32, 1.0f32),
+    ];
+    for (x, y, z, w) in verts {
+        push_f32(&mut vb_data, x);
+        push_f32(&mut vb_data, y);
+        push_f32(&mut vb_data, z);
+        push_f32(&mut vb_data, w);
+    }
+    assert_eq!(vb_data.len(), 3 * 16);
+
+    // D3DVERTEXELEMENT9 stream (little-endian).
+    // Element 0: POSITION0 float4 at stream 0 offset 0.
+    // End marker: stream 0xFF, type UNUSED.
+    let mut vertex_decl = Vec::new();
+    push_u16(&mut vertex_decl, 0); // stream
+    push_u16(&mut vertex_decl, 0); // offset
+    push_u8(&mut vertex_decl, 3); // type = FLOAT4
+    push_u8(&mut vertex_decl, 0); // method
+    push_u8(&mut vertex_decl, 0); // usage = POSITION
+    push_u8(&mut vertex_decl, 0); // usage_index
+    push_u16(&mut vertex_decl, 0x00FF); // stream = 0xFF
+    push_u16(&mut vertex_decl, 0); // offset
+    push_u8(&mut vertex_decl, 17); // type = UNUSED
+    push_u8(&mut vertex_decl, 0); // method
+    push_u8(&mut vertex_decl, 0); // usage
+    push_u8(&mut vertex_decl, 0); // usage_index
+    assert_eq!(vertex_decl.len(), 16);
+
+    let vs_bytes = assemble_vs_passthrough_pos_and_t0_from_c0();
+    let ps_bytes = assemble_ps_texld_s3();
+
+    let mut stream = AerogpuCmdWriter::new();
+
+    stream.create_texture2d(
+        RT_HANDLE,
+        AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AerogpuFormat::R8G8B8A8Unorm as u32,
+        width,
+        height,
+        1,
+        1,
+        width * 4,
+        0,
+        0,
+    );
+
+    stream.create_texture2d(
+        SAMPLE_TEX_HANDLE,
+        AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AerogpuFormat::BC1RgbaUnorm as u32,
+        4,
+        4,
+        1,
+        1,
+        8, // row_pitch_bytes (1 block row of BC1)
+        TEX_ALLOC_ID,
+        0,
+    );
+    stream.resource_dirty_range(SAMPLE_TEX_HANDLE, 0, bc1_block.len() as u64);
+
+    stream.create_buffer(
+        VB_HANDLE,
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        vb_data.len() as u64,
+        0,
+        0,
+    );
+    stream.upload_resource(VB_HANDLE, 0, &vb_data);
+
+    stream.create_shader_dxbc(VS_HANDLE, AerogpuShaderStage::Vertex, &vs_bytes);
+    stream.create_shader_dxbc(PS_HANDLE, AerogpuShaderStage::Pixel, &ps_bytes);
+    stream.bind_shaders(VS_HANDLE, PS_HANDLE, 0);
+
+    stream.create_input_layout(IL_HANDLE, &vertex_decl);
+    stream.set_input_layout(IL_HANDLE);
+
+    stream.set_vertex_buffers(
+        0,
+        &[AerogpuVertexBufferBinding {
+            buffer: VB_HANDLE,
+            stride_bytes: 16,
+            offset_bytes: 0,
+            reserved0: 0,
+        }],
+    );
+    stream.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+
+    stream.set_render_targets(&[RT_HANDLE], 0);
+    stream.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+    stream.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
+
+    // VS c0 = vec4(0.5, 0.5, 0.0, 1.0) -> constant texcoord.
+    stream.set_shader_constants_f(AerogpuShaderStage::Vertex, 0, &[0.5, 0.5, 0.0, 1.0]);
+
+    // Bind s3 for the pixel shader stage.
+    stream.set_texture(AerogpuShaderStage::Pixel, 3, SAMPLE_TEX_HANDLE);
+
+    stream.draw(3, 1, 0, 0);
+
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream.finish(),
+        &mut guest_memory,
+        Some(&alloc_table),
+    )
+    .expect("execute should succeed");
+
+    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+    assert_eq!((out_w, out_h), (width, height));
+
+    let px = |x: u32, y: u32| -> [u8; 4] {
+        let idx = ((y * width + x) * 4) as usize;
+        rgba[idx..idx + 4].try_into().unwrap()
+    };
+
+    assert_eq!(px(32, 2), [0, 0, 0, 255], "top row should be background");
+    assert_eq!(
+        px(32, 16),
+        [255, 0, 0, 255],
+        "inside probe should be the sampled BC texture color"
+    );
+
+    // The guest-backed texture should remain BC-compressed in the native path, so RGBA8 readback
+    // must be rejected.
+    match pollster::block_on(exec.readback_texture_rgba8(SAMPLE_TEX_HANDLE)) {
+        Err(AerogpuD3d9Error::ReadbackUnsupported(handle)) => assert_eq!(handle, SAMPLE_TEX_HANDLE),
+        Err(other) => panic!("expected ReadbackUnsupported, got {other:?}"),
+        Ok((w, h, _)) => {
+            panic!("expected ReadbackUnsupported for BC texture, got Ok({w}x{h}) instead")
+        }
+    }
 }
 
 #[test]
