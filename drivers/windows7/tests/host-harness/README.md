@@ -88,6 +88,10 @@ scraping in CI):
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason=...`
 
+Note: The harness may retry input injection a few times after the guest reports `virtio-input-events|READY` to reduce
+timing flakiness (input reports can be dropped if no user-mode read is pending). In that case you may see multiple
+`VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the Python harness includes `attempt=<n>` in the marker).
+
 Note: On some QEMU builds, `input-send-event` may not accept the `device=` routing parameter. In that case the harness
 falls back to broadcasting the input events and reports `kbd_mode=broadcast` / `mouse_mode=broadcast` in the marker.
 
