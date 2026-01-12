@@ -1891,8 +1891,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           // Probe within guest RAM (not the runtime-reserved low region of the wasm linear
           // memory) so we don't risk clobbering the Rust/WASM runtime.
           //
-          // Use an offset that is unlikely to overlap with other worker probes/counters.
-          const memProbeGuestOffset = 0x1100;
+          // Use an offset that is unlikely to overlap with other worker probes/counters
+          // and also avoids low-memory demo DMA regions (e.g. the CPU worker's disk demo
+          // writes to 0x1000..0x1200).
+          const memProbeGuestOffset = 0x104;
           const memProbeLinearOffset = guestU8.byteOffset + memProbeGuestOffset;
           const memView = new DataView(init.guestMemory.buffer);
           if (memProbeLinearOffset + 4 > memView.byteLength) {
@@ -1928,8 +1930,8 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           const guestBaseBytes = (guestU8 as Uint8Array | undefined)?.byteOffset ?? 0;
           const guestSizeBytes = (guestU8 as Uint8Array | undefined)?.byteLength ?? 0;
           const detail = {
-            guestOffset: "0x1100",
-            linearOffset: `0x${(guestBaseBytes + 0x1100).toString(16)}`,
+            guestOffset: "0x104",
+            linearOffset: `0x${(guestBaseBytes + 0x104).toString(16)}`,
             guestBase: `0x${guestBaseBytes.toString(16)}`,
             guestSize: `0x${guestSizeBytes.toString(16)}`,
           };
