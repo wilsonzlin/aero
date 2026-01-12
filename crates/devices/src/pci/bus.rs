@@ -55,13 +55,29 @@ impl PciBus {
     }
 
     pub fn iter_mapped_mmio_bars(&self) -> impl Iterator<Item = PciMappedBar> + '_ {
-        self.iter_mapped_bars()
-            .filter(|mapped| matches!(mapped.range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64))
+        // Avoid constructing `PciMappedBar` instances for non-MMIO entries in the hot path.
+        self.mapped_bars
+            .iter()
+            .filter_map(|((bdf, bar), range)| {
+                matches!(range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64).then_some(PciMappedBar {
+                    bdf: *bdf,
+                    bar: *bar,
+                    range: *range,
+                })
+            })
     }
 
     pub fn iter_mapped_io_bars(&self) -> impl Iterator<Item = PciMappedBar> + '_ {
-        self.iter_mapped_bars()
-            .filter(|mapped| matches!(mapped.range.kind, PciBarKind::Io))
+        // Avoid constructing `PciMappedBar` instances for non-I/O entries in the hot path.
+        self.mapped_bars
+            .iter()
+            .filter_map(|((bdf, bar), range)| {
+                matches!(range.kind, PciBarKind::Io).then_some(PciMappedBar {
+                    bdf: *bdf,
+                    bar: *bar,
+                    range: *range,
+                })
+            })
     }
 
     pub fn mapped_bars(&self) -> Vec<PciMappedBar> {
