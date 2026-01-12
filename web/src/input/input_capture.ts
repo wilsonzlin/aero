@@ -130,6 +130,7 @@ export class InputCapture {
     }
 
     const nowUs = toTimestampUs(performance.now());
+    this.resetAccumulatedMotion();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -149,6 +150,7 @@ export class InputCapture {
   private readonly handleBlur = (): void => {
     this.hasFocus = false;
     this.pointerLock.exit();
+    this.resetAccumulatedMotion();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -161,6 +163,7 @@ export class InputCapture {
   private readonly handleWindowBlur = (): void => {
     this.windowFocused = false;
     this.pointerLock.exit();
+    this.resetAccumulatedMotion();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -179,6 +182,7 @@ export class InputCapture {
     }
 
     this.pointerLock.exit();
+    this.resetAccumulatedMotion();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -443,6 +447,7 @@ export class InputCapture {
 
     this.hasFocus = false;
     this.suppressedKeyUps.clear();
+    this.resetAccumulatedMotion();
 
     window.clearInterval(this.flushTimer);
     this.flushTimer = null;
@@ -572,6 +577,12 @@ export class InputCapture {
       }
     }
     return new ArrayBuffer(byteLength);
+  }
+
+  private resetAccumulatedMotion(): void {
+    this.mouseFracX = 0;
+    this.mouseFracY = 0;
+    this.wheelFrac = 0;
   }
 
   private takeWholeWheelDelta(): number {

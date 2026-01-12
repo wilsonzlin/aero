@@ -130,4 +130,42 @@ describe("InputCapture wheel handling", () => {
       expect(words[5]).toBe(0);
     });
   });
+
+  it("drops fractional wheel remainder when capture is blurred so it cannot cause a later spurious tick", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      // 90px in pixel mode => 0.9 wheel steps; should not emit yet but leaves remainder.
+      (capture as any).handleWheel({ deltaY: 90, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 0 } as unknown as WheelEvent);
+      expect((capture as any).queue.size).toBe(0);
+
+      // Blur should reset remainder.
+      (capture as any).handleBlur();
+      expect((capture as any).wheelFrac).toBe(0);
+
+      // Resume capture and ensure the next small wheel delta does not immediately tick.
+      (capture as any).hasFocus = true;
+      (capture as any).handleWheel({ deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 1 } as unknown as WheelEvent);
+      expect((capture as any).queue.size).toBe(0);
+
+      capture.flushNow();
+      expect(posted).toHaveLength(0);
+    });
+  });
 });
