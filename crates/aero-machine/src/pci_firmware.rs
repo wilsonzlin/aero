@@ -249,6 +249,18 @@ mod tests {
         sector
     }
 
+    fn expected_irq_line(pirq_to_gsi: [u32; 4], device: u8, interrupt_pin: u8) -> u8 {
+        // Must match the firmware BIOS swizzle in `firmware::bios::pci`:
+        //   PIRQ = (device + (pin-1)) mod 4
+        if interrupt_pin == 0 {
+            return 0xFF;
+        }
+        let pin_index = interrupt_pin.wrapping_sub(1) & 0x03;
+        let pirq = device.wrapping_add(pin_index) & 0x03;
+        let gsi = pirq_to_gsi[pirq as usize];
+        u8::try_from(gsi).unwrap_or(0xFF)
+    }
+
     #[test]
     fn firmware_bios_pci_enumeration_programs_interrupt_line_via_cfg_ports() {
         let mut pci_bus = PciBus::new();
@@ -266,21 +278,26 @@ mod tests {
         let mut disk: Box<dyn BlockDevice> =
             Box::new(InMemoryDisk::from_boot_sector(boot_sector()));
 
-        let mut bios = Bios::new(BiosConfig {
+        let bios_cfg = BiosConfig {
             enable_acpi: false,
+            pirq_to_gsi: [40, 41, 42, 43],
             ..BiosConfig::default()
-        });
+        };
+        let expected = expected_irq_line(
+            bios_cfg.pirq_to_gsi,
+            bdf.device,
+            PciInterruptPin::IntA.to_config_u8(),
+        );
+        let mut bios = Bios::new(bios_cfg);
 
         bios.post_with_pci(&mut cpu, &mut mem, &mut *disk, Some(&mut adapter));
 
-        // With PIRQ[A-D] -> [10,11,12,13] and swizzle (pin+device)%4:
-        // device=1, INTA (pin_index=0) => PIRQ index 1 => GSI 11.
         let line = pci_ports
             .bus_mut()
             .device_config_mut(bdf)
             .unwrap()
             .interrupt_line();
-        assert_eq!(line, 11);
+        assert_eq!(line, expected);
     }
 
     #[test]
@@ -299,14 +316,21 @@ mod tests {
         let mut disk: Box<dyn BlockDevice> =
             Box::new(InMemoryDisk::from_boot_sector(boot_sector()));
 
-        let mut bios = Bios::new(BiosConfig {
+        let bios_cfg = BiosConfig {
             enable_acpi: false,
+            pirq_to_gsi: [40, 41, 42, 43],
             ..BiosConfig::default()
-        });
+        };
+        let expected = expected_irq_line(
+            bios_cfg.pirq_to_gsi,
+            bdf.device,
+            PciInterruptPin::IntA.to_config_u8(),
+        );
+        let mut bios = Bios::new(bios_cfg);
 
         bios.post_with_pci(&mut cpu, &mut mem, &mut *disk, Some(&mut adapter));
 
         let line = pci_bus.device_config_mut(bdf).unwrap().interrupt_line();
-        assert_eq!(line, 11);
+        assert_eq!(line, expected);
     }
 }
