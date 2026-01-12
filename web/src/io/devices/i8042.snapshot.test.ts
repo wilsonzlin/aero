@@ -36,7 +36,9 @@ describe("io/devices/i8042 snapshot", () => {
     const restored = makeController();
     restored.loadState(snap);
 
-    expect(drainPort60(restored)).toEqual([0x1c, 0xf0, 0x1c, 0xfa, 0x00]);
+    // Default i8042 command byte enables Set-2 -> Set-1 translation, so KeyA
+    // make/break becomes 0x1E/0x9E.
+    expect(drainPort60(restored)).toEqual([0x1e, 0x9e, 0xfa, 0x00]);
   });
 
   it("preserves pending controller command state (0xD4 awaiting data) across restore", () => {

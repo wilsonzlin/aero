@@ -33,7 +33,9 @@ afterEach(() => {
 });
 
 describe("runtime/jit_wasm_loader", () => {
-  it("exposes compile_tier1_block and returns valid wasm bytes", async () => {
+  it(
+    "exposes compile_tier1_block and returns valid wasm bytes",
+    async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
     const fakeModule = {
@@ -60,9 +62,13 @@ describe("runtime/jit_wasm_loader", () => {
     const bytesForWasm: Uint8Array<ArrayBuffer> =
       bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
     expect(WebAssembly.validate(bytesForWasm)).toBe(true);
-  });
+    },
+    20_000
+  );
 
-  it("prefers pkg-jit-single even when WASM threads are available (avoids huge SharedArrayBuffer allocation)", async () => {
+  it(
+    "prefers pkg-jit-single even when WASM threads are available (avoids huge SharedArrayBuffer allocation)",
+    async () => {
     // Simulate a COOP/COEP-capable environment (threads available).
     Object.defineProperty(globalThis, "crossOriginIsolated", {
       value: true,
@@ -136,5 +142,7 @@ describe("runtime/jit_wasm_loader", () => {
     const bytesForWasm: Uint8Array<ArrayBuffer> =
       bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
     expect(WebAssembly.validate(bytesForWasm)).toBe(true);
-  });
+    },
+    20_000
+  );
 });

@@ -2,9 +2,12 @@ import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PortIoHandler } from "../bus/portio.ts";
 import type { IrqSink } from "../device_manager.ts";
 
-const STATUS_OBF = 0x01; // Output Buffer Full
-const STATUS_MOBF = 0x20; // Mouse Output Buffer Full
-const STATUS_SYS = 0x04; // System flag
+// i8042 status register bits.
+const STATUS_OBF = 0x01; // Output buffer full.
+const STATUS_IBF = 0x02; // Input buffer full.
+const STATUS_SYS = 0x04; // System flag.
+const STATUS_A2 = 0x08; // Last write was to command port (0x64).
+const STATUS_AUX_OBF = 0x20; // Mouse output buffer full.
 
 const OUTPUT_PORT_RESET = 0x01; // Bit 0 (active-low reset line)
 const OUTPUT_PORT_A20 = 0x02; // Bit 1
@@ -189,6 +192,269 @@ function decodeOutputSource(code: number): OutputSource {
   }
 }
 
+/**
+ * Set-2 -> Set-1 translation state, used when i8042 command-byte bit 6 is set.
+ *
+ * Ported from `crates/aero-devices-input/src/i8042.rs`.
+ */
+class Set2ToSet1 {
+  sawE0 = false;
+  sawF0 = false;
+
+  feed(byte: number): number[] {
+    const b = byte & 0xff;
+    switch (b) {
+      case 0xe0:
+        this.sawE0 = true;
+        return [0xe0];
+      case 0xe1:
+        // Pause/Break sequence.
+        this.sawE0 = false;
+        this.sawF0 = false;
+        return [0xe1];
+      case 0xf0:
+        this.sawF0 = true;
+        return [];
+      default: {
+        const extended = this.sawE0;
+        const breakCode = this.sawF0;
+        this.sawE0 = false;
+        this.sawF0 = false;
+
+        let out = set2ToSet1(b, extended);
+        if (breakCode) out |= 0x80;
+        return [out & 0xff];
+      }
+    }
+  }
+}
+
+function set2ToSet1(code: number, extended: boolean): number {
+  const c = code & 0xff;
+  const e = Boolean(extended);
+
+  // Flatten (code, extended) into a single switch key for speed.
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
+  switch ((c << 1) | (e ? 1 : 0)) {
+    // Non-extended
+    case (0x76 << 1) | 0:
+      return 0x01; // Esc
+    case (0x16 << 1) | 0:
+      return 0x02; // 1
+    case (0x1e << 1) | 0:
+      return 0x03; // 2
+    case (0x26 << 1) | 0:
+      return 0x04; // 3
+    case (0x25 << 1) | 0:
+      return 0x05; // 4
+    case (0x2e << 1) | 0:
+      return 0x06; // 5
+    case (0x36 << 1) | 0:
+      return 0x07; // 6
+    case (0x3d << 1) | 0:
+      return 0x08; // 7
+    case (0x3e << 1) | 0:
+      return 0x09; // 8
+    case (0x46 << 1) | 0:
+      return 0x0a; // 9
+    case (0x45 << 1) | 0:
+      return 0x0b; // 0
+    case (0x4e << 1) | 0:
+      return 0x0c; // -
+    case (0x55 << 1) | 0:
+      return 0x0d; // =
+    case (0x66 << 1) | 0:
+      return 0x0e; // Backspace
+    case (0x0d << 1) | 0:
+      return 0x0f; // Tab
+    case (0x15 << 1) | 0:
+      return 0x10; // Q
+    case (0x1d << 1) | 0:
+      return 0x11; // W
+    case (0x24 << 1) | 0:
+      return 0x12; // E
+    case (0x2d << 1) | 0:
+      return 0x13; // R
+    case (0x2c << 1) | 0:
+      return 0x14; // T
+    case (0x35 << 1) | 0:
+      return 0x15; // Y
+    case (0x3c << 1) | 0:
+      return 0x16; // U
+    case (0x43 << 1) | 0:
+      return 0x17; // I
+    case (0x44 << 1) | 0:
+      return 0x18; // O
+    case (0x4d << 1) | 0:
+      return 0x19; // P
+    case (0x54 << 1) | 0:
+      return 0x1a; // [
+    case (0x5b << 1) | 0:
+      return 0x1b; // ]
+    case (0x5a << 1) | 0:
+      return 0x1c; // Enter
+    case (0x14 << 1) | 0:
+      return 0x1d; // Left Ctrl
+    case (0x1c << 1) | 0:
+      return 0x1e; // A
+    case (0x1b << 1) | 0:
+      return 0x1f; // S
+    case (0x23 << 1) | 0:
+      return 0x20; // D
+    case (0x2b << 1) | 0:
+      return 0x21; // F
+    case (0x34 << 1) | 0:
+      return 0x22; // G
+    case (0x33 << 1) | 0:
+      return 0x23; // H
+    case (0x3b << 1) | 0:
+      return 0x24; // J
+    case (0x42 << 1) | 0:
+      return 0x25; // K
+    case (0x4b << 1) | 0:
+      return 0x26; // L
+    case (0x4c << 1) | 0:
+      return 0x27; // ;
+    case (0x52 << 1) | 0:
+      return 0x28; // '
+    case (0x0e << 1) | 0:
+      return 0x29; // `
+    case (0x12 << 1) | 0:
+      return 0x2a; // Left Shift
+    case (0x5d << 1) | 0:
+      return 0x2b; // \
+    case (0x1a << 1) | 0:
+      return 0x2c; // Z
+    case (0x22 << 1) | 0:
+      return 0x2d; // X
+    case (0x21 << 1) | 0:
+      return 0x2e; // C
+    case (0x2a << 1) | 0:
+      return 0x2f; // V
+    case (0x32 << 1) | 0:
+      return 0x30; // B
+    case (0x31 << 1) | 0:
+      return 0x31; // N
+    case (0x3a << 1) | 0:
+      return 0x32; // M
+    case (0x41 << 1) | 0:
+      return 0x33; // ,
+    case (0x49 << 1) | 0:
+      return 0x34; // .
+    case (0x4a << 1) | 0:
+      return 0x35; // /
+    case (0x59 << 1) | 0:
+      return 0x36; // Right Shift
+    case (0x11 << 1) | 0:
+      return 0x38; // Left Alt
+    case (0x29 << 1) | 0:
+      return 0x39; // Space
+    case (0x58 << 1) | 0:
+      return 0x3a; // CapsLock
+    case (0x05 << 1) | 0:
+      return 0x3b; // F1
+    case (0x06 << 1) | 0:
+      return 0x3c; // F2
+    case (0x04 << 1) | 0:
+      return 0x3d; // F3
+    case (0x0c << 1) | 0:
+      return 0x3e; // F4
+    case (0x03 << 1) | 0:
+      return 0x3f; // F5
+    case (0x0b << 1) | 0:
+      return 0x40; // F6
+    case (0x83 << 1) | 0:
+      return 0x41; // F7
+    case (0x0a << 1) | 0:
+      return 0x42; // F8
+    case (0x01 << 1) | 0:
+      return 0x43; // F9
+    case (0x09 << 1) | 0:
+      return 0x44; // F10
+    case (0x78 << 1) | 0:
+      return 0x57; // F11
+    case (0x07 << 1) | 0:
+      return 0x58; // F12
+    case (0x77 << 1) | 0:
+      return 0x45; // NumLock
+    case (0x7e << 1) | 0:
+      return 0x46; // ScrollLock
+    case (0x6c << 1) | 0:
+      return 0x47; // Numpad7
+    case (0x75 << 1) | 0:
+      return 0x48; // Numpad8
+    case (0x7d << 1) | 0:
+      return 0x49; // Numpad9
+    case (0x7b << 1) | 0:
+      return 0x4a; // NumpadSubtract
+    case (0x6b << 1) | 0:
+      return 0x4b; // Numpad4
+    case (0x73 << 1) | 0:
+      return 0x4c; // Numpad5
+    case (0x74 << 1) | 0:
+      return 0x4d; // Numpad6
+    case (0x79 << 1) | 0:
+      return 0x4e; // NumpadAdd
+    case (0x69 << 1) | 0:
+      return 0x4f; // Numpad1
+    case (0x72 << 1) | 0:
+      return 0x50; // Numpad2
+    case (0x7a << 1) | 0:
+      return 0x51; // Numpad3
+    case (0x70 << 1) | 0:
+      return 0x52; // Numpad0
+    case (0x71 << 1) | 0:
+      return 0x53; // NumpadDecimal
+    case (0x7c << 1) | 0:
+      return 0x37; // NumpadMultiply
+    case (0x61 << 1) | 0:
+      return 0x56; // IntlBackslash (ISO 102-key)
+
+    // Extended
+    case (0x14 << 1) | 1:
+      return 0x1d; // Right Ctrl
+    case (0x11 << 1) | 1:
+      return 0x38; // Right Alt
+    case (0x75 << 1) | 1:
+      return 0x48; // Up
+    case (0x72 << 1) | 1:
+      return 0x50; // Down
+    case (0x6b << 1) | 1:
+      return 0x4b; // Left
+    case (0x74 << 1) | 1:
+      return 0x4d; // Right
+    case (0x6c << 1) | 1:
+      return 0x47; // Home
+    case (0x69 << 1) | 1:
+      return 0x4f; // End
+    case (0x7d << 1) | 1:
+      return 0x49; // PageUp
+    case (0x7a << 1) | 1:
+      return 0x51; // PageDown
+    case (0x70 << 1) | 1:
+      return 0x52; // Insert
+    case (0x71 << 1) | 1:
+      return 0x53; // Delete
+    case (0x5a << 1) | 1:
+      return 0x1c; // Numpad Enter
+    case (0x4a << 1) | 1:
+      return 0x35; // Numpad Divide
+    case (0x1f << 1) | 1:
+      return 0x5b; // Left Meta / Windows
+    case (0x27 << 1) | 1:
+      return 0x5c; // Right Meta / Windows
+    case (0x2f << 1) | 1:
+      return 0x5d; // ContextMenu
+    case (0x12 << 1) | 1:
+      return 0x2a; // PrintScreen sequence
+    case (0x7c << 1) | 1:
+      return 0x37; // PrintScreen sequence
+
+    default:
+      return c;
+  }
+}
+
 class Ps2Keyboard {
   scancodeSet = 2;
   leds = 0;
@@ -212,6 +478,9 @@ class Ps2Keyboard {
 
   injectScancodes(bytes: Uint8Array): void {
     if (!this.scanningEnabled) return;
+    // InputCapture produces Set-2 sequences. If the guest switched the device to
+    // a different set, we currently drop injected bytes (matching the Rust model).
+    if (this.scancodeSet !== 2) return;
     for (const b of bytes) {
       if (this.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
       this.outQueue.push(b & 0xff);
@@ -685,8 +954,13 @@ export class I8042Controller implements PortIoHandler {
   readonly #sysCtrl?: I8042SystemControlSink;
 
   #status = STATUS_SYS;
-  #commandByte = 0x00;
+  // Default command byte matches the canonical Rust model:
+  //  - IRQ1 enabled
+  //  - system flag set
+  //  - Set-2 -> Set-1 translation enabled
+  #commandByte = 0x45;
   #pendingCommand: number | null = null;
+  #lastWriteWasCommand = false;
 
   #outQueue: OutputByte[] = [];
   #irqLastHead: OutputByte | null = null;
@@ -695,6 +969,7 @@ export class I8042Controller implements PortIoHandler {
 
   readonly #keyboard = new Ps2Keyboard();
   readonly #mouse = new Ps2Mouse();
+  readonly #translator = new Set2ToSet1();
 
   constructor(irq: IrqSink, opts: I8042ControllerOptions = {}) {
     this.#irq = irq;
@@ -712,7 +987,7 @@ export class I8042Controller implements PortIoHandler {
         return item ? item.value & 0xff : 0x00;
       }
       case 0x0064:
-        return this.#status & 0xff;
+        return this.#readStatus();
       default:
         return defaultReadValue(size);
     }
@@ -747,90 +1022,171 @@ export class I8042Controller implements PortIoHandler {
     this.#syncStatusAndIrq();
   }
 
+  /**
+   * Host-side injection API: relative mouse motion in PS/2 coordinate space.
+   *
+   * - dx: right is positive
+   * - dy: up is positive (InputCapture already inverts DOM Y)
+   * - wheel: positive is wheel up
+   */
+  injectMouseMotion(dx: number, dy: number, wheel: number): void {
+    this.#mouse.movement(dx, dy, wheel);
+    this.#pumpDeviceQueues();
+    this.#syncStatusAndIrq();
+  }
+
+  /**
+   * Host-side injection API: set absolute mouse button state bitmask.
+   *
+   * Bits: 0=left, 1=right, 2=middle.
+   */
+  injectMouseButtons(buttonMask: number): void {
+    this.#mouse.setButtons(buttonMask);
+    this.#pumpDeviceQueues();
+    this.#syncStatusAndIrq();
+  }
+
+  #readStatus(): number {
+    let st = this.#status;
+    if (this.#lastWriteWasCommand) st |= STATUS_A2;
+    else st &= ~STATUS_A2;
+    return st & 0xff;
+  }
+
   #writeCommand(cmd: number): void {
-    switch (cmd & 0xff) {
-      case 0x20: // Read command byte
-        this.#enqueue(this.#commandByte, "controller");
-        return;
-      case 0x60: // Write command byte (next data byte)
-        this.#pendingCommand = 0x60;
-        return;
-      case 0xaa: // Self test
-        this.#enqueue(0x55, "controller");
-        return;
-      case 0xd0: // Read output port
-        this.#enqueue(this.#outputPort, "controller");
-        return;
-      case 0xd1: // Write output port (next data byte)
-        this.#pendingCommand = 0xd1;
-        return;
-      case 0xa7: // Disable mouse port
-        this.#commandByte |= 0x20;
-        this.#syncStatusAndIrq();
-        return;
-      case 0xa8: // Enable mouse port
-        this.#commandByte &= ~0x20;
-        this.#syncStatusAndIrq();
-        return;
-      case 0xa9: // Test mouse port
-        this.#enqueue(0x00, "controller");
-        return;
-      case 0xab: // Test keyboard port
-        this.#enqueue(0x00, "controller");
-        return;
-      case 0xad: // Disable keyboard
-        this.#commandByte |= 0x10;
-        this.#syncStatusAndIrq();
-        return;
-      case 0xae: // Enable keyboard
-        this.#commandByte &= ~0x10;
-        this.#syncStatusAndIrq();
-        return;
-      case 0xd4: // Write to mouse (next data byte)
-        this.#pendingCommand = 0xd4;
-        return;
-      case 0xdd: // Non-standard: disable A20 gate
-        this.#setOutputPort(this.#outputPort & ~OUTPUT_PORT_A20);
-        return;
-      case 0xdf: // Non-standard: enable A20 gate
-        this.#setOutputPort(this.#outputPort | OUTPUT_PORT_A20);
-        return;
-      case 0xfe: // Pulse output port bit 0 low (system reset)
-        this.#sysCtrl?.requestReset();
-        return;
-      default:
-        // Unknown/unimplemented controller command.
-        return;
+    this.#lastWriteWasCommand = true;
+    this.#status |= STATUS_IBF;
+    try {
+      switch (cmd & 0xff) {
+        case 0x20: // Read command byte
+          this.#enqueue(this.#commandByte, "controller");
+          return;
+        case 0x60: // Write command byte (next data byte)
+          this.#pendingCommand = 0x60;
+          return;
+        case 0xaa: // Self test
+          this.#enqueue(0x55, "controller");
+          return;
+        case 0xd0: // Read output port
+          this.#enqueue(this.#outputPort, "controller");
+          return;
+        case 0xd1: // Write output port (next data byte)
+          this.#pendingCommand = 0xd1;
+          return;
+        case 0xd2: // Write next data byte into output buffer (as keyboard data)
+          this.#pendingCommand = 0xd2;
+          return;
+        case 0xd3: // Write next data byte into output buffer (as mouse data)
+          this.#pendingCommand = 0xd3;
+          return;
+        case 0xa7: // Disable mouse port
+          this.#commandByte |= 0x20;
+          this.#pumpDeviceQueues();
+          this.#syncStatusAndIrq();
+          return;
+        case 0xa8: // Enable mouse port
+          this.#commandByte &= ~0x20;
+          this.#pumpDeviceQueues();
+          this.#syncStatusAndIrq();
+          return;
+        case 0xa9: // Test mouse port
+          this.#enqueue(0x00, "controller");
+          return;
+        case 0xab: // Test keyboard port
+          this.#enqueue(0x00, "controller");
+          return;
+        case 0xad: // Disable keyboard
+          this.#commandByte |= 0x10;
+          this.#syncStatusAndIrq();
+          return;
+        case 0xae: // Enable keyboard
+          this.#commandByte &= ~0x10;
+          this.#pumpDeviceQueues();
+          this.#syncStatusAndIrq();
+          return;
+        case 0xd4: // Write to mouse (next data byte)
+          this.#pendingCommand = 0xd4;
+          return;
+        case 0xdd: // Non-standard: disable A20 gate
+          this.#setOutputPort(this.#outputPort & ~OUTPUT_PORT_A20);
+          return;
+        case 0xdf: // Non-standard: enable A20 gate
+          this.#setOutputPort(this.#outputPort | OUTPUT_PORT_A20);
+          return;
+        case 0xfe: // Pulse output port bit 0 low (system reset)
+          this.#sysCtrl?.requestReset();
+          return;
+        default:
+          // Unknown/unimplemented controller command.
+          return;
+      }
+    } finally {
+      this.#status &= ~STATUS_IBF;
     }
   }
 
   #writeData(data: number): void {
-    if (this.#pendingCommand === 0x60) {
-      this.#pendingCommand = null;
-      this.#commandByte = data & 0xff;
-      this.#syncStatusAndIrq();
-      return;
-    }
+    this.#lastWriteWasCommand = false;
+    this.#status |= STATUS_IBF;
+    try {
+      if (this.#pendingCommand === 0x60) {
+        this.#pendingCommand = null;
+        this.#commandByte = data & 0xff;
+        this.#pumpDeviceQueues();
+        this.#syncStatusAndIrq();
+        return;
+      }
 
-    if (this.#pendingCommand === 0xd1) {
-      this.#pendingCommand = null;
-      this.#setOutputPort(data);
-      this.#syncStatusAndIrq();
-      return;
-    }
+      if (this.#pendingCommand === 0xd1) {
+        this.#pendingCommand = null;
+        this.#setOutputPort(data);
+        this.#syncStatusAndIrq();
+        return;
+      }
 
-    if (this.#pendingCommand === 0xd4) {
-      this.#pendingCommand = null;
-      this.#mouse.receiveByte(data);
+      if (this.#pendingCommand === 0xd2) {
+        this.#pendingCommand = null;
+        // Bypass translation and device state; this is a controller command.
+        this.#enqueue(data, "keyboard");
+        return;
+      }
+
+      if (this.#pendingCommand === 0xd3) {
+        this.#pendingCommand = null;
+        // Same as 0xD2, but marks the byte as mouse-originated (AUX).
+        this.#enqueue(data, "mouse");
+        return;
+      }
+
+      if (this.#pendingCommand === 0xd4) {
+        this.#pendingCommand = null;
+        this.#mouse.receiveByte(data);
+        this.#pumpDeviceQueues();
+        this.#syncStatusAndIrq();
+        return;
+      }
+
+      // Default: send byte to PS/2 keyboard.
+      this.#keyboard.receiveByte(data);
       this.#pumpDeviceQueues();
       this.#syncStatusAndIrq();
-      return;
+    } finally {
+      this.#status &= ~STATUS_IBF;
     }
+  }
 
-    // Send byte to PS/2 keyboard.
-    this.#keyboard.receiveByte(data);
-    this.#pumpDeviceQueues();
-    this.#syncStatusAndIrq();
+  #translationEnabled(): boolean {
+    return (this.#commandByte & 0x40) !== 0;
+  }
+
+  #keyboardPortEnabled(): boolean {
+    // Bit 4: 0=enabled, 1=disabled.
+    return (this.#commandByte & 0x10) === 0;
+  }
+
+  #mousePortEnabled(): boolean {
+    // Bit 5: 0=enabled, 1=disabled.
+    return (this.#commandByte & 0x20) === 0;
   }
 
   #enqueue(value: number, source: OutputSource): void {
@@ -841,16 +1197,32 @@ export class I8042Controller implements PortIoHandler {
 
   #pumpDeviceQueues(): void {
     while (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-      const kb = this.#keyboard.popOutputByte();
-      if (kb !== null) {
-        this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
-        continue;
+      if (this.#keyboardPortEnabled()) {
+        const kb = this.#keyboard.popOutputByte();
+        if (kb !== null) {
+          if (this.#translationEnabled()) {
+            const outs = this.#translator.feed(kb);
+            for (const out of outs) {
+              if (this.#outQueue.length >= MAX_CONTROLLER_OUTPUT_QUEUE) break;
+              this.#outQueue.push({ value: out & 0xff, source: "keyboard" });
+            }
+          } else {
+            this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
+          }
+          // Either we pushed output bytes, or we consumed a prefix byte (F0) that
+          // produced no output. In both cases, keep pumping.
+          continue;
+        }
       }
-      const ms = this.#mouse.popOutputByte();
-      if (ms !== null) {
-        this.#outQueue.push({ value: ms & 0xff, source: "mouse" });
-        continue;
+
+      if (this.#mousePortEnabled()) {
+        const ms = this.#mouse.popOutputByte();
+        if (ms !== null) {
+          this.#outQueue.push({ value: ms & 0xff, source: "mouse" });
+          continue;
+        }
       }
+
       break;
     }
   }
@@ -861,8 +1233,8 @@ export class I8042Controller implements PortIoHandler {
 
     const head = this.#outQueue[0] ?? null;
     const headSource = head?.source ?? null;
-    if (headSource === "mouse") this.#status |= STATUS_MOBF;
-    else this.#status &= ~STATUS_MOBF;
+    if (headSource === "mouse") this.#status |= STATUS_AUX_OBF;
+    else this.#status &= ~STATUS_AUX_OBF;
 
     // i8042 IRQs (IRQ1 keyboard, IRQ12 mouse) behave like edge-triggered sources for the legacy
     // PIC: the controller generates a pulse when it loads a byte into the output buffer.
@@ -900,7 +1272,11 @@ export class I8042Controller implements PortIoHandler {
     w.u8(0x34);
     w.u8(0x32);
     w.u16(IO_SNAPSHOT_DEVICE_VERSION_MAJOR);
-    w.u16(IO_SNAPSHOT_DEVICE_VERSION_MINOR);
+    let flags = IO_SNAPSHOT_DEVICE_VERSION_MINOR;
+    if (this.#lastWriteWasCommand) flags |= 1 << 0;
+    if (this.#translator.sawE0) flags |= 1 << 1;
+    if (this.#translator.sawF0) flags |= 1 << 2;
+    w.u16(flags);
 
     w.u8(this.#status);
     w.u8(this.#commandByte);
@@ -955,6 +1331,10 @@ export class I8042Controller implements PortIoHandler {
     if (deviceMajor !== IO_SNAPSHOT_DEVICE_VERSION_MAJOR) {
       throw new Error(`Unsupported i8042 snapshot device version: ${deviceMajor}.${deviceMinor}.`);
     }
+    const flags = deviceMinor & 0xffff;
+    this.#lastWriteWasCommand = (flags & (1 << 0)) !== 0;
+    this.#translator.sawE0 = (flags & (1 << 1)) !== 0;
+    this.#translator.sawF0 = (flags & (1 << 2)) !== 0;
 
     this.#status = r.u8() & 0xff;
     this.#commandByte = r.u8() & 0xff;

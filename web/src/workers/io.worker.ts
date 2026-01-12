@@ -3273,6 +3273,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         } else {
           // PS/2 convention: positive is up. HID convention: positive is down.
           usbHid?.mouse_move(dx, -dyPs2);
+          i8042?.injectMouseMotion(dx, dyPs2, 0);
         }
         break;
       }
@@ -3282,15 +3283,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           virtioMouse.injectMouseButtons(buttons);
         } else {
           usbHid?.mouse_buttons(buttons);
+          i8042?.injectMouseButtons(buttons);
         }
         break;
       }
       case InputEventType.MouseWheel: {
-        const delta = words[off + 2] | 0;
+        const dz = words[off + 2] | 0;
         if (virtioMouseOk && virtioMouse) {
-          virtioMouse.injectWheel(delta);
+          virtioMouse.injectWheel(dz);
         } else {
-          usbHid?.mouse_wheel(delta);
+          usbHid?.mouse_wheel(dz);
+          i8042?.injectMouseMotion(0, 0, dz);
         }
         break;
       }

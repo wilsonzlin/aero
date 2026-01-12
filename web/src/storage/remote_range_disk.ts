@@ -1298,7 +1298,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
   private scheduleMetaPersist(generation: number): void {
     if (!this.metaDirty) return;
-    if (this.metaPersistTimer !== null) return;
+    // Debounce: keep pushing out the persist timer until writes settle. This avoids emitting
+    // a metadata write per cached chunk during large sequential reads.
+    if (this.metaPersistTimer !== null) {
+      clearTimeout(this.metaPersistTimer);
+      this.metaPersistTimer = null;
+    }
 
     this.metaPersistTimer = setTimeout(() => {
       this.metaPersistTimer = null;

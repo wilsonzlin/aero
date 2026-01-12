@@ -62,8 +62,8 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       expect(result.error).toBeUndefined();
       // i8042 starts with STATUS_SYS (bit2) set and output buffer empty.
       expect((result.status64 ?? 0) & 0x04).toBe(0x04);
-      // Default command byte is 0x00.
-      expect(result.cmdByte).toBe(0x00);
+      // Default command byte matches the canonical Rust model: 0x45.
+      expect(result.cmdByte).toBe(0x45);
 
       // Keyboard reset command (0xFF) should return ACK (0xFA) + self-test pass (0xAA).
       expect(result.kbd).toEqual([0xfa, 0xaa]);

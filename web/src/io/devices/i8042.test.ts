@@ -42,10 +42,15 @@ describe("io/devices/I8042Controller", () => {
 
     const dev = new I8042Controller(irqSink);
 
+    // Disable IRQ1 (bit 0) while leaving translation enabled (bit 6).
+    dev.portWrite(0x0064, 1, 0x60);
+    dev.portWrite(0x0060, 1, 0x44);
+
     dev.injectKeyboardBytes(Uint8Array.from([0x1c]));
 
     expect(irqEvents).toEqual([]);
-    expect(dev.portRead(0x0060, 1)).toBe(0x1c);
+    // 0x1C (Set-2 'A') -> 0x1E (Set-1 'A').
+    expect(dev.portRead(0x0060, 1)).toBe(0x1e);
     expect(irqEvents).toEqual([]);
   });
 
@@ -107,5 +112,78 @@ describe("io/devices/I8042Controller", () => {
     expect(restored.portRead(0x0060, 1)).toBe(0x9c);
     expect(irqEvents).toEqual(["raise:1", "lower:1"]);
     expect(restored.portRead(0x0064, 1) & 0x01).toBe(0x00);
+  });
+
+  it("translates Set-2 keyboard scancodes to Set-1 when translation is enabled", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    // Set-2: KeyA make (0x1C), break (0xF0 0x1C).
+    dev.injectKeyboardBytes(new Uint8Array([0x1c, 0xf0, 0x1c]));
+
+    // First translated byte should be ready and attributed to the keyboard.
+    let st = dev.portRead(0x64, 1);
+    expect(st & 0x01).toBe(0x01); // OBF
+    expect(st & 0x20).toBe(0x00); // AUX_OBF
+    expect(dev.portRead(0x60, 1)).toBe(0x1e); // Set-1 'A' make
+
+    st = dev.portRead(0x64, 1);
+    expect(st & 0x01).toBe(0x01);
+    expect(st & 0x20).toBe(0x00);
+    expect(dev.portRead(0x60, 1)).toBe(0x9e); // Set-1 'A' break (make | 0x80)
+
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(1);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalledWith(12);
+  });
+
+  it("produces PS/2 mouse packets with AUX_OBF set and gates IRQ12 via the command byte", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    // Enable mouse reporting via the controller's "write-to-mouse" command (0xD4).
+    // Default command byte does NOT enable IRQ12; ensure no IRQ is raised.
+    dev.portWrite(0x64, 1, 0xd4);
+    dev.portWrite(0x60, 1, 0xf4);
+
+    let st = dev.portRead(0x64, 1);
+    expect(st & 0x01).toBe(0x01); // OBF
+    expect(st & 0x20).toBe(0x20); // AUX_OBF
+    expect(dev.portRead(0x60, 1)).toBe(0xfa); // ACK
+
+    expect(irqSink.raiseIrq).not.toHaveBeenCalled();
+
+    // Enable IRQ12 (bit 1) while preserving the default 0x45 bits.
+    dev.portWrite(0x64, 1, 0x60);
+    dev.portWrite(0x60, 1, 0x47);
+
+    dev.injectMouseMotion(10, 5, 0);
+
+    const packet: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      st = dev.portRead(0x64, 1);
+      expect(st & 0x01).toBe(0x01);
+      expect(st & 0x20).toBe(0x20);
+      packet.push(dev.portRead(0x60, 1));
+    }
+
+    expect(packet).toEqual([0x08, 10, 5]);
+
+    expect(irqSink.raiseIrq).toHaveBeenCalledWith(12);
+    expect(irqSink.raiseIrq).not.toHaveBeenCalledWith(1);
+    expect(irqSink.lowerIrq).toHaveBeenCalledWith(12);
+  });
+
+  it("supports controller command byte read/write via 0x20/0x60", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new I8042Controller(irqSink);
+
+    dev.portWrite(0x64, 1, 0x20);
+    expect(dev.portRead(0x60, 1)).toBe(0x45);
+
+    dev.portWrite(0x64, 1, 0x60);
+    dev.portWrite(0x60, 1, 0x47);
+
+    dev.portWrite(0x64, 1, 0x20);
+    expect(dev.portRead(0x60, 1)).toBe(0x47);
   });
 });

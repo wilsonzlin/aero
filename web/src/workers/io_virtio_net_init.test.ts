@@ -128,4 +128,3 @@ describe("workers/io_virtio_net_init", () => {
     dev?.destroy();
   });
 });
-
