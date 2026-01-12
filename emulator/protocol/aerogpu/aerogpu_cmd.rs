@@ -1096,7 +1096,9 @@ pub fn decode_cmd_set_shader_constants_f_payload_le(
         reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
     };
 
-    let mut out = Vec::with_capacity(float_count);
+    let mut out = Vec::new();
+    out.try_reserve_exact(float_count)
+        .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
     for i in 0..float_count {
         let off = payload_start + i * 4;
         let bits = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap());

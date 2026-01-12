@@ -224,7 +224,10 @@ pub fn decode_alloc_table_le(
         });
     }
 
-    let mut entries = Vec::with_capacity(entry_count);
+    let mut entries = Vec::new();
+    if entries.try_reserve_exact(entry_count).is_err() {
+        return Err(AerogpuAllocTableDecodeError::CountOutOfBounds);
+    }
     for idx in 0..entry_count {
         let off = header_size_bytes
             .checked_add(
