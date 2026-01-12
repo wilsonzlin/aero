@@ -48,7 +48,7 @@ use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterrupts,
 };
-use aero_platform::io::IoPortBus;
+use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
@@ -248,6 +248,57 @@ impl SystemMemory {
 
     fn clear_dirty(&mut self) {
         self.dirty.clear_dirty();
+    }
+
+    /// Map an MMIO region on the persistent [`PhysicalMemoryBus`] exactly once.
+    ///
+    /// The machine's physical memory bus lives across `Machine::reset()` calls, so MMIO mappings
+    /// are expected to be persistent. Callers may invoke this during every reset; identical
+    /// mappings are treated as idempotent, while unexpected overlaps still panic to avoid silently
+    /// corrupting the address space.
+    #[allow(dead_code)]
+    fn map_mmio_once<F>(&mut self, start: u64, len: u64, build: F)
+    where
+        F: FnOnce() -> Box<dyn memory::MmioHandler>,
+    {
+        if len == 0 {
+            return;
+        }
+
+        let end = start
+            .checked_add(len)
+            .unwrap_or_else(|| panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})"));
+
+        // Fast path: mapping already exists.
+        if self
+            .inner
+            .borrow()
+            .mmio_regions()
+            .iter()
+            .any(|r| r.start == start && r.end == end)
+        {
+            return;
+        }
+
+        let handler = build();
+        let mut inner = self.inner.borrow_mut();
+        match inner.map_mmio(start, len, handler) {
+            Ok(()) => {}
+            Err(MapError::Overlap) => {
+                // Treat identical overlaps as idempotent, but reject unexpected overlaps to avoid
+                // silently corrupting the bus.
+                let already_mapped = inner
+                    .mmio_regions()
+                    .iter()
+                    .any(|r| r.start == start && r.end == end);
+                if !already_mapped {
+                    panic!("unexpected MMIO mapping overlap at 0x{start:016x} (len=0x{len:x})");
+                }
+            }
+            Err(MapError::AddressOverflow) => {
+                panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})")
+            }
+        }
     }
 }
 
@@ -900,45 +951,139 @@ impl Machine {
         self.io = IoPortBus::new();
 
         if self.cfg.enable_pc_platform {
-            let clock = ManualClock::new();
-            let interrupts: Rc<RefCell<PlatformInterrupts>> =
-                Rc::new(RefCell::new(PlatformInterrupts::new()));
+            // PC platform shared device instances must remain stable across resets because MMIO
+            // mappings in the physical memory bus persist. Reset device state in-place while
+            // keeping `Rc` identities stable.
+
+            // Deterministic clock: reset back to 0 ns.
+            let clock = match &self.platform_clock {
+                Some(clock) => {
+                    clock.set_ns(0);
+                    clock.clone()
+                }
+                None => {
+                    let clock = ManualClock::new();
+                    self.platform_clock = Some(clock.clone());
+                    clock
+                }
+            };
+
+            // Interrupt controller complex (PIC + IOAPIC + LAPIC).
+            let interrupts: Rc<RefCell<PlatformInterrupts>> = match &self.interrupts {
+                Some(ints) => {
+                    ints.borrow_mut().reset();
+                    ints.clone()
+                }
+                None => {
+                    let ints = Rc::new(RefCell::new(PlatformInterrupts::new()));
+                    self.interrupts = Some(ints.clone());
+                    ints
+                }
+            };
 
             PlatformInterrupts::register_imcr_ports(&mut self.io, interrupts.clone());
             register_pic8259_on_platform_interrupts(&mut self.io, interrupts.clone());
 
-            let pit: SharedPit8254 = Rc::new(RefCell::new(Pit8254::new()));
+            // PIT 8254.
+            let pit: SharedPit8254 = match &self.pit {
+                Some(pit) => {
+                    *pit.borrow_mut() = Pit8254::new();
+                    pit.clone()
+                }
+                None => {
+                    let pit: SharedPit8254 = Rc::new(RefCell::new(Pit8254::new()));
+                    self.pit = Some(pit.clone());
+                    pit
+                }
+            };
             pit.borrow_mut()
                 .connect_irq0_to_platform_interrupts(interrupts.clone());
             register_pit8254(&mut self.io, pit.clone());
 
+            // RTC CMOS.
             let rtc_irq8 = PlatformIrqLine::isa(interrupts.clone(), 8);
-            let rtc: SharedRtcCmos<ManualClock, PlatformIrqLine> =
-                Rc::new(RefCell::new(RtcCmos::new(clock.clone(), rtc_irq8)));
+            let rtc: SharedRtcCmos<ManualClock, PlatformIrqLine> = match &self.rtc {
+                Some(rtc) => {
+                    *rtc.borrow_mut() = RtcCmos::new(clock.clone(), rtc_irq8);
+                    rtc.clone()
+                }
+                None => {
+                    let rtc: SharedRtcCmos<ManualClock, PlatformIrqLine> =
+                        Rc::new(RefCell::new(RtcCmos::new(clock.clone(), rtc_irq8)));
+                    self.rtc = Some(rtc.clone());
+                    rtc
+                }
+            };
             rtc.borrow_mut()
                 .set_memory_size_bytes(self.cfg.ram_size_bytes);
             register_rtc_cmos(&mut self.io, rtc.clone());
 
-            // Wire ACPI PM to the shared deterministic platform clock so `PM_TMR` progresses only
-            // when the host advances `ManualClock` (via `Machine::tick_platform`).
-            let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
-                AcpiPmConfig::default(),
-                AcpiPmCallbacks {
-                    sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), 9)),
-                    request_power_off: None,
-                },
-                clock.clone(),
-            )));
+            // ACPI PM. Wire SCI to ISA IRQ9.
+            let acpi_pm: SharedAcpiPmIo<ManualClock> = match &self.acpi_pm {
+                Some(acpi_pm) => {
+                    acpi_pm.borrow_mut().reset();
+                    acpi_pm.clone()
+                }
+                None => {
+                    // Wire ACPI PM to the shared deterministic platform clock so `PM_TMR`
+                    // progresses only when the host advances `ManualClock` (via
+                    // `Machine::tick_platform`).
+                    let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+                        AcpiPmConfig::default(),
+                        AcpiPmCallbacks {
+                            sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), 9)),
+                            request_power_off: None,
+                        },
+                        clock.clone(),
+                    )));
+                    self.acpi_pm = Some(acpi_pm.clone());
+                    acpi_pm
+                }
+            };
             register_acpi_pm(&mut self.io, acpi_pm.clone());
 
-            let pci_cfg: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+            // PCI config ports (config mechanism #1).
+            let pci_cfg: SharedPciConfigPorts = match &self.pci_cfg {
+                Some(pci_cfg) => {
+                    *pci_cfg.borrow_mut() = PciConfigPorts::new();
+                    pci_cfg.clone()
+                }
+                None => {
+                    let pci_cfg: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+                    self.pci_cfg = Some(pci_cfg.clone());
+                    pci_cfg
+                }
+            };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
 
-            let pci_intx = Rc::new(RefCell::new(PciIntxRouter::new(
-                PciIntxRouterConfig::default(),
-            )));
+            // PCI INTx router.
+            let pci_intx: Rc<RefCell<PciIntxRouter>> = match &self.pci_intx {
+                Some(pci_intx) => {
+                    *pci_intx.borrow_mut() =
+                        PciIntxRouter::new(PciIntxRouterConfig::default());
+                    pci_intx.clone()
+                }
+                None => {
+                    let pci_intx = Rc::new(RefCell::new(PciIntxRouter::new(
+                        PciIntxRouterConfig::default(),
+                    )));
+                    self.pci_intx = Some(pci_intx.clone());
+                    pci_intx
+                }
+            };
 
-            let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock.clone())));
+            // HPET.
+            let hpet: Rc<RefCell<hpet::Hpet<ManualClock>>> = match &self.hpet {
+                Some(hpet) => {
+                    *hpet.borrow_mut() = hpet::Hpet::new_default(clock.clone());
+                    hpet.clone()
+                }
+                None => {
+                    let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock.clone())));
+                    self.hpet = Some(hpet.clone());
+                    hpet
+                }
+            };
 
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
@@ -946,11 +1091,21 @@ impl Machine {
                     aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
                     Box::new(E1000PciConfigDevice::new()),
                 );
-                Some(Rc::new(RefCell::new(E1000Device::new(mac))))
+
+                match &self.e1000 {
+                    Some(e1000) => {
+                        // Reset in-place while keeping the `Rc` identity stable for any persistent
+                        // MMIO mappings.
+                        *e1000.borrow_mut() = E1000Device::new(mac);
+                        Some(e1000.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(E1000Device::new(mac)))),
+                }
             } else {
                 None
             };
 
+            // Ensure options stay populated (for the first reset).
             self.platform_clock = Some(clock);
             self.interrupts = Some(interrupts);
             self.pit = Some(pit);
@@ -1432,29 +1587,58 @@ impl snapshot::SnapshotTarget for Machine {
         // Newer snapshots store both under a single `DeviceId::PCI` entry using
         // `aero_devices::pci::PciCoreSnapshot`.
         let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
-        let pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
+        let mut pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
+
         if let Some(state) = pci_state {
             if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let mut pci_intx = pci_intx.borrow_mut();
-                let mut core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
-                match snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut core) {
+                // Prefer decoding the combined PCI core wrapper (`PCIC`) first. If decoding fails,
+                // treat `DeviceId::PCI` as the legacy config-ports-only (`PCPT`) payload.
+                let core_result = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let mut pci_intx = pci_intx.borrow_mut();
+                    let mut core = PciCoreSnapshot::new(&mut pci_cfg, &mut pci_intx);
+                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut core)
+                };
+
+                match core_result {
                     Ok(()) => {
                         restored_pci_intx = true;
                     }
                     Err(_) => {
                         // Backward compatibility: some snapshots stored only `PciConfigPorts`
                         // (`PCPT`) under `DeviceId::PCI`.
-                        let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                            &state,
-                            &mut *pci_cfg,
-                        );
+                        //
+                        // If a dedicated `PCI_CFG` entry is also present, prefer it.
+                        if let (Some(pci_cfg), Some(cfg_state)) = (&self.pci_cfg, pci_cfg_state.take())
+                        {
+                            let mut pci_cfg = pci_cfg.borrow_mut();
+                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &cfg_state,
+                                &mut *pci_cfg,
+                            );
+                        } else if let Some(pci_cfg) = &self.pci_cfg {
+                            let mut pci_cfg = pci_cfg.borrow_mut();
+                            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                &state,
+                                &mut *pci_cfg,
+                            );
+                        }
                     }
                 }
             } else if let Some(pci_cfg) = &self.pci_cfg {
+                // Config ports only. Prefer the dedicated `PCI_CFG` entry if present.
                 let mut pci_cfg = pci_cfg.borrow_mut();
-                let _ =
-                    snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
+                if let Some(cfg_state) = pci_cfg_state.take() {
+                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &cfg_state,
+                        &mut *pci_cfg,
+                    );
+                } else {
+                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &state,
+                        &mut *pci_cfg,
+                    );
+                }
             }
         } else if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
             // Backward compatibility: older snapshots stored only config ports under the
