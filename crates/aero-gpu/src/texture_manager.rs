@@ -324,6 +324,29 @@ impl<'a> TextureManager<'a> {
     }
 
     pub fn create_texture(&mut self, key: TextureKey, mut desc: TextureDesc) -> Arc<wgpu::Texture> {
+        // WebGPU validation rejects zero-sized textures and enforces fixed extents for some
+        // dimensions (e.g. D1 textures must be 1x1x1). TextureManager is intentionally a
+        // lightweight utility, but it may be called with untrusted/unchecked descriptors in tests
+        // and higher layers. Sanitize the descriptor so we never trigger wgpu validation panics.
+        match desc.dimension {
+            wgpu::TextureDimension::D1 => {
+                desc.size.width = desc.size.width.max(1);
+                desc.size.height = 1;
+                desc.size.depth_or_array_layers = 1;
+            }
+            wgpu::TextureDimension::D2 => {
+                desc.size.width = desc.size.width.max(1);
+                desc.size.height = desc.size.height.max(1);
+                desc.size.depth_or_array_layers = desc.size.depth_or_array_layers.max(1);
+            }
+            wgpu::TextureDimension::D3 => {
+                desc.size.width = desc.size.width.max(1);
+                desc.size.height = desc.size.height.max(1);
+                desc.size.depth_or_array_layers = desc.size.depth_or_array_layers.max(1);
+            }
+        }
+        desc.sample_count = desc.sample_count.max(1);
+
         // WebGPU requires `mip_level_count` to be within the possible chain length for the given
         // dimensions. Clamp defensively to avoid pathological loops and wgpu validation panics if
         // higher layers pass untrusted values.
@@ -1331,6 +1354,42 @@ mod tests {
                 err,
                 TextureManagerError::ViewArrayRangeOutOfBounds { .. }
             ));
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn create_texture_sanitizes_zero_sized_descriptors() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue().await else {
+                return;
+            };
+            let caps = GpuCapabilities::from_device(&device);
+
+            let mut mgr = TextureManager::new(&device, &queue, caps);
+            mgr.create_texture(
+                1,
+                TextureDesc {
+                    size: wgpu::Extent3d {
+                        width: 0,
+                        height: 0,
+                        depth_or_array_layers: 0,
+                    },
+                    mip_level_count: 0,
+                    sample_count: 0,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    label: None,
+                },
+            );
+
+            let entry = mgr.textures.get(&1).expect("texture must exist");
+            assert_eq!(entry.desc.size.width, 1);
+            assert_eq!(entry.desc.size.height, 1);
+            assert_eq!(entry.desc.size.depth_or_array_layers, 1);
+            assert_eq!(entry.desc.sample_count, 1);
+            assert_eq!(entry.desc.mip_level_count, 1);
         });
     }
 }
