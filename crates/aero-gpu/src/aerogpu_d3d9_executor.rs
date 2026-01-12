@@ -1564,13 +1564,27 @@ impl AerogpuD3d9Executor {
         guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
+        self.execute_cmd_stream_with_ctx_async(
+            context_id,
+            bytes,
+            SubmissionCtx {
+                guest_memory: Some(guest_memory),
+                alloc_table,
+            },
+        )
+        .await
+    }
+
+    async fn execute_cmd_stream_with_ctx_async(
+        &mut self,
+        context_id: u32,
+        bytes: &[u8],
+        mut ctx: SubmissionCtx<'_>,
+    ) -> Result<(), AerogpuD3d9Error> {
         let stream = parse_cmd_stream(bytes)?;
         self.switch_context(context_id);
         let mut pending_writebacks = Vec::new();
-        let mut ctx = SubmissionCtx {
-            guest_memory: Some(guest_memory),
-            alloc_table,
-        };
+
         for cmd in stream.cmds {
             if let Err(err) = self
                 .execute_cmd_async(cmd, &mut ctx, &mut pending_writebacks)
@@ -1581,12 +1595,14 @@ impl AerogpuD3d9Executor {
                 return Err(err);
             }
         }
+
         self.flush()?;
         if !pending_writebacks.is_empty() {
-            let guest_memory = ctx
-                .guest_memory
-                .take()
-                .expect("ctx always contains guest memory for async execution");
+            let Some(guest_memory) = ctx.guest_memory.take() else {
+                return Err(AerogpuD3d9Error::Validation(
+                    "WRITEBACK_DST requires guest memory".into(),
+                ));
+            };
             self.flush_pending_writebacks_async(pending_writebacks, guest_memory)
                 .await?;
         }
@@ -2070,6 +2086,10 @@ impl AerogpuD3d9Executor {
                     )
                 })?;
 
+            // If the JS persistent cache is unavailable (missing APIs, quota/permission errors,
+            // serialization issues, etc.) the shader cache disables persistence for the remainder
+            // of the session. Expose this via stats so browser harnesses can detect when
+            // persistence isn't active.
             self.stats.set_d3d9_shader_cache_disabled(
                 self.persistent_shader_cache.is_persistent_disabled(),
             );

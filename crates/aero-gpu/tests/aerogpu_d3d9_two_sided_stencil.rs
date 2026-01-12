@@ -1,10 +1,11 @@
 mod common;
 
+use std::sync::Arc;
+
 use aero_gpu::AerogpuD3d9Executor;
 use aero_gpu::stats::GpuStats;
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
-use std::sync::Arc;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(cmd::AerogpuCmdStreamHeader, size_bytes);
