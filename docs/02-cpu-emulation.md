@@ -118,6 +118,33 @@ To make the above unambiguous and hard to regress, the tiered runtime uses expli
 
 ---
 
+## Browser Tier-1 JIT compilation pipeline (repo-root harness)
+
+The project includes a browser-only Tier-1 JIT integration that compiles x86 basic blocks into standalone
+WASM modules **inside a worker**:
+
+- **Tiered runtime (Tier-0 + dispatch + cache):** `crates/aero-wasm/src/tiered_vm.rs` (`WasmTieredVm`)
+  - The WASM runtime exports:
+    - `drain_compile_requests()` → entry RIPs that became hot
+    - `install_tier1_block(entry_rip, table_index, code_paddr, byte_len)` → installs compiled blocks
+- **Tier-1 compiler (x86 → WASM):** `crates/aero-jit-wasm` (`aero-jit-wasm`)
+  - Built as a separate wasm-bindgen package (`web/src/wasm/pkg-jit-*`).
+  - Uses its **own private linear memory** (does not import the emulator's shared memory) to avoid
+    undefined behaviour from multiple Rust runtimes aliasing one `WebAssembly.Memory`.
+- **JS glue (repo-root Vite harness):**
+  - CPU worker: `src/workers/cpu-worker.ts` drives `WasmTieredVm` and forwards compile requests.
+  - JIT worker: `src/workers/jit-worker.ts` reads guest bytes from shared guest RAM, calls
+    `compile_tier1_block(...)`, validates the result, and returns either a `WebAssembly.Module` (when
+    structured-cloning is supported) or transferable `wasm_bytes`.
+  - Loader: `web/src/runtime/jit_wasm_loader.ts` loads `aero-jit-wasm` and currently prefers the
+    single-threaded package to avoid wasm-bindgen allocating huge `SharedArrayBuffer`s during
+    instantiation when `--max-memory` is large.
+
+This pipeline is currently used by the repo-root Playwright smoke tests to validate Tier-1 compilation,
+installation, invalidation (self-modifying code), and execution in real browsers.
+
+---
+
 ## Tier-0 interpreter (`interp::tier0`)
 
 Tier-0 is the canonical interpreter and executes directly on:
