@@ -1,5 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
-use firmware::bda::BDA_SCREEN_COLS_ADDR;
+use firmware::bda::{BDA_CURSOR_POS_PAGE0_ADDR, BDA_SCREEN_COLS_ADDR};
 
 fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -40,6 +40,33 @@ fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; 512] {
     i += 2;
     // mov cl, end
     sector[i..i + 2].copy_from_slice(&[0xB1, end]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+fn build_int10_teletype_boot_sector(ch: u8, attr: u8) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ah, 0x0E  ; INT 10h AH=0Eh Teletype output
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x0E]);
+    i += 2;
+    // mov al, ch
+    sector[i..i + 2].copy_from_slice(&[0xB0, ch]);
+    i += 2;
+    // mov bh, 0x00  ; page 0
+    sector[i..i + 2].copy_from_slice(&[0xB7, 0x00]);
+    i += 2;
+    // mov bl, attr
+    sector[i..i + 2].copy_from_slice(&[0xB3, attr]);
     i += 2;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
@@ -326,4 +353,33 @@ fn int10_set_mode_resets_crtc_start_address() {
     // Mode set 03h should reinitialize text state, including resetting the CRTC start address.
     let got_start = read_crtc_start_addr(&mut m);
     assert_eq!(got_start, 0);
+}
+
+#[test]
+fn int10_teletype_output_advances_cursor_and_syncs_to_vga_crtc() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let boot = build_int10_teletype_boot_sector(b'A', 0x00);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Cursor position should have advanced (BDA is authoritative, but we assert the CRTC regs are
+    // also updated).
+    let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
+    let pos_word = m.read_physical_u16(BDA_CURSOR_POS_PAGE0_ADDR);
+    let row = pos_word >> 8;
+    let col = pos_word & 0x00FF;
+    let expected_pos = row.saturating_mul(cols).saturating_add(col);
+
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos, expected_pos);
 }
