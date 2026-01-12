@@ -19,6 +19,7 @@ if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
 rem Internal CI/self-test hook: run the INF AddService parser without admin/side effects.
 rem Not a stable interface; used by tools/guest-tools/tests on Windows runners.
 if /i "%~1"=="/_selftest_inf_addservice" goto :_selftest_inf_addservice
+if /i "%~1"=="/_selftest_validate_storage_service_infs" goto :_selftest_validate_storage_service_infs
 
 pushd "%SCRIPT_DIR%" >nul 2>&1
 if errorlevel 1 (
@@ -194,6 +195,26 @@ if "%~3"=="" (
   exit /b 2
 )
 call :inf_contains_addservice "%~2" "%~3"
+exit /b %ERRORLEVEL%
+
+:_selftest_validate_storage_service_infs
+rem Usage: setup.cmd /_selftest_validate_storage_service_infs <driver_dir> <service>
+rem Runs only the validation logic without requiring admin or touching the system.
+if "%~2"=="" (
+  echo ERROR: Missing driver_dir.
+  exit /b 2
+)
+if "%~3"=="" (
+  echo ERROR: Missing service name.
+  exit /b 2
+)
+set "DRIVER_DIR=%~2"
+set "AERO_VIRTIO_BLK_SERVICE=%~3"
+set "INSTALL_ROOT=%TEMP%\aerogt_selftest_%RANDOM%"
+set "LOG=%INSTALL_ROOT%\install.log"
+if not exist "%INSTALL_ROOT%" mkdir "%INSTALL_ROOT%" >nul 2>&1
+call :init_logging
+call :validate_storage_service_infs
 exit /b %ERRORLEVEL%
 
 :fail
