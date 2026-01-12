@@ -4,7 +4,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 
 - MMU page walking / translation
 - Physical bus routing logic
-- Storage controller emulation (AHCI + IDE)
+- Storage controller emulation (AHCI + IDE + ATAPI)
 - HTTP `Range` header parsing (`aero-http-range`)
 
 ## Prereqs
