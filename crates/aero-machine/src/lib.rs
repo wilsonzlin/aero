@@ -805,7 +805,6 @@ pub struct Machine {
     mmu: aero_mmu::Mmu,
     mem: SystemMemory,
     io: IoPortBus,
-
     // ---------------------------------------------------------------------
     // Host-managed storage overlay references (snapshot DISKS section)
     // ---------------------------------------------------------------------
@@ -834,7 +833,6 @@ pub struct Machine {
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
-
     bios: Bios,
     disk: VecBlockDevice,
     network_backend: Option<Box<dyn NetworkBackend>>,
@@ -1921,7 +1919,6 @@ impl Machine {
             self.e1000 = None;
             self.vga = None;
         }
-
         if self.cfg.enable_serial {
             let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
             register_serial16550(&mut self.io, uart.clone());

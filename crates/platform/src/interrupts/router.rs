@@ -310,6 +310,15 @@ impl PlatformInterrupts {
         }
     }
 
+    /// Returns the current electrical "asserted" level for a given platform GSI.
+    ///
+    /// This reflects the last value applied via [`PlatformInterrupts::raise_irq`],
+    /// [`PlatformInterrupts::lower_irq`], or any `GsiLevelSink` integration
+    /// (e.g. `PciIntxRouter`).
+    pub fn gsi_level(&self, gsi: u32) -> bool {
+        self.gsi_level.get(gsi as usize).copied().unwrap_or(false)
+    }
+
     pub fn ioapic_mmio_read(&self, offset: u64) -> u32 {
         self.ioapic.lock().unwrap().mmio_read(offset, 4) as u32
     }
