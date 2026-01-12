@@ -22,6 +22,10 @@ static NTSTATUS VirtioInputMapUserAddress(
     _Outptr_result_bytebuffer_(Length) PVOID *SystemAddressOut
 )
 {
+    if (UserAddress == NULL || Length == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     PMDL mdl;
     PVOID systemAddress;
 
