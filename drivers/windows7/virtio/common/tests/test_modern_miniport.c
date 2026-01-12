@@ -822,6 +822,16 @@ static void test_setup_queue_enable_readback_failure(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_setup_queue_invalid_device_state(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    memset(&dev, 0, sizeof(dev));
+    st = VirtioPciSetupQueue(&dev, 0, 0x1000, 0x2000, 0x3000);
+    assert(st == STATUS_INVALID_DEVICE_STATE);
+}
+
 static void test_get_num_queues_and_queue_size(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1277,6 +1287,37 @@ static void test_get_queue_notify_address_errors(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_get_queue_notify_address_invalid_parameters(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_notify_off = 1;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciGetQueueNotifyAddress(&dev, 0, NULL);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_read_isr_read_to_clear(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1686,6 +1727,7 @@ int main(void)
     test_setup_queue_programs_addresses_and_enables();
     test_setup_queue_is_per_queue();
     test_setup_queue_enable_readback_failure();
+    test_setup_queue_invalid_device_state();
     test_get_num_queues_and_queue_size();
     test_setup_queue_not_found_when_size_zero();
     test_disable_queue_clears_enable();
@@ -1698,6 +1740,7 @@ int main(void)
     test_get_queue_notify_address_respects_multiplier();
     test_get_queue_notify_address_per_queue();
     test_get_queue_notify_address_errors();
+    test_get_queue_notify_address_invalid_parameters();
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
     test_notify_queue_cache_bounds();
