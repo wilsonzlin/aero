@@ -542,4 +542,92 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn binding_to_layout_entry_rejects_slot_binding_mismatch() {
+        let cb = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_CBUFFER + 1,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::ConstantBuffer {
+                slot: 0,
+                reg_count: 1,
+            },
+        };
+        let err = binding_to_layout_entry(&cb).unwrap_err().to_string();
+        assert!(
+            err.contains("expected @binding("),
+            "unexpected error for cbuffer binding mismatch: {err}"
+        );
+
+        let tex = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_TEXTURE + 1,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::Texture2D { slot: 0 },
+        };
+        let err = binding_to_layout_entry(&tex).unwrap_err().to_string();
+        assert!(
+            err.contains("expected @binding("),
+            "unexpected error for texture binding mismatch: {err}"
+        );
+
+        let sampler = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_SAMPLER + 1,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::Sampler { slot: 0 },
+        };
+        let err = binding_to_layout_entry(&sampler).unwrap_err().to_string();
+        assert!(
+            err.contains("expected @binding("),
+            "unexpected error for sampler binding mismatch: {err}"
+        );
+    }
+
+    #[test]
+    fn binding_to_layout_entry_rejects_out_of_range_slots() {
+        let cb = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_CBUFFER + MAX_CBUFFER_SLOTS,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::ConstantBuffer {
+                slot: MAX_CBUFFER_SLOTS,
+                reg_count: 1,
+            },
+        };
+        let err = binding_to_layout_entry(&cb).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "unexpected error for out-of-range cbuffer: {err}"
+        );
+
+        let tex = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_TEXTURE + MAX_TEXTURE_SLOTS,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::Texture2D {
+                slot: MAX_TEXTURE_SLOTS,
+            },
+        };
+        let err = binding_to_layout_entry(&tex).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "unexpected error for out-of-range texture: {err}"
+        );
+
+        let sampler = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::Sampler {
+                slot: MAX_SAMPLER_SLOTS,
+            },
+        };
+        let err = binding_to_layout_entry(&sampler).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "unexpected error for out-of-range sampler: {err}"
+        );
+    }
 }
