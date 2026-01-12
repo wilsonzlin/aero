@@ -94,6 +94,56 @@ impl MemoryBus for VecMemory {
     fn write_u8(&mut self, addr: u64, value: u8) {
         self.data[addr as usize] = value;
     }
+
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+        let Ok(start) = usize::try_from(paddr) else {
+            buf.fill(0xFF);
+            return;
+        };
+        let Some(end) = start.checked_add(buf.len()) else {
+            buf.fill(0xFF);
+            return;
+        };
+        if start >= self.data.len() {
+            buf.fill(0xFF);
+            return;
+        }
+        let end_clamped = end.min(self.data.len());
+        let copied = end_clamped - start;
+        buf[..copied].copy_from_slice(&self.data[start..end_clamped]);
+        if copied < buf.len() {
+            buf[copied..].fill(0xFF);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+        let Ok(start) = usize::try_from(paddr) else {
+            return;
+        };
+        let Some(end) = start.checked_add(buf.len()) else {
+            return;
+        };
+        if start >= self.data.len() {
+            return;
+        }
+        let end_clamped = end.min(self.data.len());
+        let copied = end_clamped - start;
+        self.data[start..end_clamped].copy_from_slice(&buf[..copied]);
+    }
+
+    fn read_bytes(&mut self, addr: u64, out: &mut [u8]) {
+        self.read_physical(addr, out);
+    }
+
+    fn write_bytes(&mut self, addr: u64, bytes: &[u8]) {
+        self.write_physical(addr, bytes);
+    }
 }
 
 // Allow firmware helpers to operate directly on the canonical guest memory bus.
