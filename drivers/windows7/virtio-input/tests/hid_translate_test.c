@@ -354,6 +354,31 @@ static void test_keyboard_lock_keys_reports(void) {
   expect_report(&cap, 5, expect6, sizeof(expect6));
 }
 
+static void test_keyboard_repeat_does_not_emit(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  /* Repeat for a normal key in the 6-key array (F1). */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  send_key(&t, VIRTIO_INPUT_KEY_F1, 1);
+  send_syn(&t);
+  assert(cap.count == 1);
+  send_key(&t, VIRTIO_INPUT_KEY_F1, 2);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  /* Repeat for a modifier key (LeftShift). */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTSHIFT, 1);
+  send_syn(&t);
+  assert(cap.count == 1);
+  send_key(&t, VIRTIO_INPUT_KEY_LEFTSHIFT, 2);
+  send_syn(&t);
+  assert(cap.count == 1);
+}
+
 static void test_keyboard_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -610,6 +635,7 @@ int main(void) {
   test_keyboard_ctrl_alt_delete_report();
   test_keyboard_unsupported_key_ignored();
   test_keyboard_lock_keys_reports();
+  test_keyboard_repeat_does_not_emit();
   test_keyboard_reports();
   test_keyboard_function_key_reports();
   test_keyboard_function_key_reports_le();
