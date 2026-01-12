@@ -277,7 +277,7 @@ class WebSocketTcpBridge {
           return;
         }
         if (frame.fin) {
-          const payload = Buffer.concat(this.fragmentedChunks);
+          const payload = Buffer.concat(this.fragmentedChunks, this.fragmentedBytes);
           const opcode = this.fragmentedOpcode;
           this.fragmentedOpcode = null;
           this.fragmentedChunks = [];
