@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::{profile, PciInterruptPin};
+use aero_devices::pci::{profile, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
@@ -41,13 +41,21 @@ fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn write_cfg_u16(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    m.io_write(0xCF8, 4, pci_cfg_addr(bus, device, function, offset));
-    m.io_write(0xCFC, 2, u32::from(value));
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        pci_cfg_addr(bus, device, function, offset),
+    );
+    m.io_write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
 fn read_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    m.io_write(0xCF8, 4, pci_cfg_addr(bus, device, function, offset));
-    m.io_read(0xCFC, 4)
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        pci_cfg_addr(bus, device, function, offset),
+    );
+    m.io_read(PCI_CFG_DATA_PORT, 4)
 }
 
 fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {

@@ -712,8 +712,8 @@ fn restore_device_states_falls_back_to_legacy_pci_cfg_when_pci_cfg_snapshot_is_i
     // Put the PCI config ports into a non-default state (the 0xCF8 address latch is part of the
     // `PciConfigMechanism1` snapshot).
     let latch = cfg_addr(PciBdf::new(0, 1, 0), 0x10);
-    src.io_write(0xCF8, 4, latch);
-    assert_eq!(src.io_read(0xCF8, 4), latch);
+    src.io_write(PCI_CFG_ADDR_PORT, 4, latch);
+    assert_eq!(src.io_read(PCI_CFG_ADDR_PORT, 4), latch);
 
     // Provide a valid legacy `DeviceId::PCI` (`PCPT`) payload.
     let legacy_state = {
@@ -738,7 +738,7 @@ fn restore_device_states_falls_back_to_legacy_pci_cfg_when_pci_cfg_snapshot_is_i
     );
 
     // Restore should fall back to the legacy `DeviceId::PCI` payload when `PCI_CFG` is invalid.
-    assert_eq!(restored.io_read(0xCF8, 4), latch);
+    assert_eq!(restored.io_read(PCI_CFG_ADDR_PORT, 4), latch);
 }
 
 #[test]
