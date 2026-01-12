@@ -574,12 +574,23 @@ impl BlockLowerer<'_> {
                     flags: FlagSet::EMPTY,
                 });
 
+                // x86 shift counts for 8/16/32-bit operations are masked to 5 bits (mod 32).
+                // Tier-2 IR shift ops mask by 6 bits (mod 64), so we must apply the x86 mask here.
+                let rhs_masked = self.fresh_temp();
+                self.instrs.push(Instr::BinOp {
+                    dst: rhs_masked,
+                    op: BinOp::And,
+                    lhs: self.value(rhs),
+                    rhs: Operand::Const(31),
+                    flags: FlagSet::EMPTY,
+                });
+
                 let shifted = self.fresh_temp();
                 self.instrs.push(Instr::BinOp {
                     dst: shifted,
                     op,
                     lhs: Operand::Value(lhs_masked),
-                    rhs: self.value(rhs),
+                    rhs: Operand::Value(rhs_masked),
                     flags: FlagSet::EMPTY,
                 });
 
@@ -630,13 +641,24 @@ impl BlockLowerer<'_> {
                     flags: FlagSet::EMPTY,
                 });
 
+                // x86 shift counts for 8/16/32-bit operations are masked to 5 bits (mod 32).
+                // Tier-2 IR shift ops mask by 6 bits (mod 64), so we must apply the x86 mask here.
+                let rhs_masked = self.fresh_temp();
+                self.instrs.push(Instr::BinOp {
+                    dst: rhs_masked,
+                    op: BinOp::And,
+                    lhs: self.value(rhs),
+                    rhs: Operand::Const(31),
+                    flags: FlagSet::EMPTY,
+                });
+
                 // 3) Shift arithmetically by the dynamic rhs.
                 let shifted = self.fresh_temp();
                 self.instrs.push(Instr::BinOp {
                     dst: shifted,
                     op: BinOp::Sar,
                     lhs: Operand::Value(lhs_sext),
-                    rhs: self.value(rhs),
+                    rhs: Operand::Value(rhs_masked),
                     flags: FlagSet::EMPTY,
                 });
 
