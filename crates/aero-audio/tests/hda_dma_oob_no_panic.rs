@@ -262,3 +262,61 @@ fn hda_process_completes_on_oob_posbuf_address() {
     // Should complete without panicking; the POSBUF write is ignored by SafeGuestMemory.
     hda.process(&mut mem, 1);
 }
+
+#[test]
+fn hda_process_completes_on_corb_addr_overflow() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Choose a CORB base such that `corb_base + corbrp*4` overflows.
+    // With CORBRP=0 and CORBWP=1, `process_corb` increments CORBRP to 1 and computes `base + 4`.
+    hda.mmio_write(0x40, 4, 0xffff_fffc); // CORBLBASE = u64::MAX-3 (low 32 bits)
+    hda.mmio_write(0x44, 4, 0xffff_ffff); // CORBUBASE = u64::MAX (high 32 bits)
+    hda.mmio_write(0x50, 4, 0); // RIRBLBASE (unused in this test)
+    hda.mmio_write(0x54, 4, 0); // RIRBUBASE
+
+    // Enable CORB + RIRB DMA engines.
+    hda.mmio_write(0x4c, 1, 0x02); // CORBCTL.RUN
+    hda.mmio_write(0x5c, 1, 0x02); // RIRBCTL.RUN
+
+    // Force one pending CORB entry.
+    hda.mmio_write(0x4a, 2, 0x0000); // CORBRP=0
+    hda.mmio_write(0x48, 2, 0x0001); // CORBWP=1
+
+    // Should not panic (checked_add guards the overflow).
+    hda.process(&mut mem, 0);
+}
+
+#[test]
+fn hda_process_completes_on_rirb_addr_overflow() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // CORB in-bounds with one dummy command.
+    let corb_base = 0x1000u64;
+    mem.write_u32(corb_base, 0);
+    hda.mmio_write(0x40, 4, corb_base); // CORBLBASE
+    hda.mmio_write(0x44, 4, 0); // CORBUBASE
+
+    // Choose an RIRB base such that `rirb_base + rirbwp*8` overflows after the first response.
+    // `write_rirb_response` increments RIRBWP from 0 to 1 and then computes `base + 8`.
+    hda.mmio_write(0x50, 4, 0xffff_fff8); // RIRBLBASE = u64::MAX-7 (low 32 bits)
+    hda.mmio_write(0x54, 4, 0xffff_ffff); // RIRBUBASE = u64::MAX (high 32 bits)
+
+    // Set pointers so the first command is read from entry 0.
+    hda.mmio_write(0x4a, 2, 0x00ff); // CORBRP=0xFF
+    hda.mmio_write(0x48, 2, 0x0000); // CORBWP=0
+
+    // Enable CORB + RIRB DMA engines.
+    hda.mmio_write(0x4c, 1, 0x02); // CORBCTL.RUN
+    hda.mmio_write(0x5c, 1, 0x02); // RIRBCTL.RUN
+
+    // Should not panic (checked_add guards the overflow).
+    hda.process(&mut mem, 0);
+}
