@@ -352,11 +352,42 @@ impl<S: ByteStorage> VhdDisk<S> {
         Ok((sectors_per_block, bitmap_size))
     }
 
+    fn data_region_start(&self) -> DiskResult<u64> {
+        let dyn_hdr = self
+            .dynamic
+            .as_ref()
+            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
+
+        // Dynamic header is always 1024 bytes starting at `footer.data_offset`.
+        let dyn_header_end = self
+            .footer
+            .data_offset
+            .checked_add(1024)
+            .ok_or(DiskError::OutOfBounds)?;
+
+        // The on-disk BAT is sized by `max_table_entries` and must be sector aligned.
+        let bat_bytes = (dyn_hdr.max_table_entries as u64)
+            .checked_mul(4)
+            .ok_or(DiskError::OutOfBounds)?;
+        let bat_size = align_up(bat_bytes, SECTOR_SIZE as u64)?;
+        let bat_end = dyn_hdr
+            .table_offset
+            .checked_add(bat_size)
+            .ok_or(DiskError::OutOfBounds)?;
+
+        Ok(512u64.max(dyn_header_end).max(bat_end))
+    }
+
     fn validate_block_bounds(&mut self, block_start: u64, bitmap_size: u64) -> DiskResult<()> {
         let dyn_hdr = self
             .dynamic
             .as_ref()
             .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
+
+        let data_start = self.data_region_start()?;
+        if block_start < data_start {
+            return Err(DiskError::CorruptImage("vhd block overlaps metadata"));
+        }
 
         let file_len = self.storage.len()?;
         if file_len < 512 {

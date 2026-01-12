@@ -19,6 +19,7 @@ const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 struct Qcow2Header {
     cluster_bits: u32,
     size: u64,
+    header_length: u32,
     l1_entries: u64,
     l1_table_offset: u64,
     refcount_table_offset: u64,
@@ -150,6 +151,7 @@ impl Qcow2Header {
         Ok(Self {
             cluster_bits,
             size,
+            header_length,
             l1_entries: required_l1,
             l1_table_offset,
             refcount_table_offset,
@@ -341,6 +343,81 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         (entry & !(QCOW2_OFLAG_COPIED | QCOW2_OFLAG_COMPRESSED)) & !low_mask
     }
 
+    fn l1_table_end(&self) -> DiskResult<u64> {
+        let bytes = (self.l1_table.len() as u64)
+            .checked_mul(8)
+            .ok_or(DiskError::OutOfBounds)?;
+        self.header
+            .l1_table_offset
+            .checked_add(bytes)
+            .ok_or(DiskError::OutOfBounds)
+    }
+
+    fn refcount_table_end(&self) -> DiskResult<u64> {
+        let bytes = (self.refcount_table.len() as u64)
+            .checked_mul(8)
+            .ok_or(DiskError::OutOfBounds)?;
+        self.header
+            .refcount_table_offset
+            .checked_add(bytes)
+            .ok_or(DiskError::OutOfBounds)
+    }
+
+    fn validate_cluster_not_overlapping_metadata(&self, cluster_offset: u64) -> DiskResult<()> {
+        let cluster_size = self.cluster_size();
+        if !cluster_offset.is_multiple_of(cluster_size) {
+            return Err(DiskError::CorruptImage("qcow2 cluster offset not aligned"));
+        }
+        let cluster_end = cluster_offset
+            .checked_add(cluster_size)
+            .ok_or(DiskError::OutOfBounds)?;
+
+        let header_end = self.header.header_length as u64;
+        if cluster_offset < header_end {
+            return Err(DiskError::CorruptImage("qcow2 cluster overlaps header"));
+        }
+
+        let l1_end = self.l1_table_end()?;
+        if ranges_overlap(
+            cluster_offset,
+            cluster_end,
+            self.header.l1_table_offset,
+            l1_end,
+        ) {
+            return Err(DiskError::CorruptImage("qcow2 cluster overlaps l1 table"));
+        }
+
+        let refcount_end = self.refcount_table_end()?;
+        if ranges_overlap(
+            cluster_offset,
+            cluster_end,
+            self.header.refcount_table_offset,
+            refcount_end,
+        ) {
+            return Err(DiskError::CorruptImage(
+                "qcow2 cluster overlaps refcount table",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_cluster_present(
+        &mut self,
+        cluster_offset: u64,
+        ctx: &'static str,
+    ) -> DiskResult<()> {
+        let cluster_size = self.cluster_size();
+        let end = cluster_offset
+            .checked_add(cluster_size)
+            .ok_or(DiskError::OutOfBounds)?;
+        let len = self.storage.len()?;
+        if end > len {
+            return Err(DiskError::CorruptImage(ctx));
+        }
+        Ok(())
+    }
+
     fn l1_l2_index(&self, guest_cluster_index: u64) -> DiskResult<(usize, usize)> {
         let l2_entries = self.l2_entries_per_table();
         let l1_index = guest_cluster_index / l2_entries;
@@ -361,10 +438,15 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         if (l1_entry & QCOW2_OFLAG_COMPRESSED) != 0 {
             return Err(DiskError::Unsupported("qcow2 compressed l1"));
         }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
+        if (l1_entry & low_mask) != 0 {
+            return Err(DiskError::CorruptImage("qcow2 unaligned l1 entry"));
+        }
         let offset = self.mask_offset(l1_entry);
         if offset == 0 {
             return Err(DiskError::CorruptImage("qcow2 invalid l1 entry"));
         }
+        self.validate_cluster_not_overlapping_metadata(offset)?;
         Ok(Some(offset))
     }
 
@@ -375,17 +457,26 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         if (l2_entry & QCOW2_OFLAG_COMPRESSED) != 0 {
             return Err(DiskError::Unsupported("qcow2 compressed cluster"));
         }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
         if (l2_entry & QCOW2_OFLAG_ZERO) != 0 {
+            if (l2_entry & low_mask) != QCOW2_OFLAG_ZERO || self.mask_offset(l2_entry) != 0 {
+                return Err(DiskError::CorruptImage("qcow2 invalid zero cluster entry"));
+            }
             return Ok(None);
+        }
+        if (l2_entry & low_mask) != 0 {
+            return Err(DiskError::CorruptImage("qcow2 unaligned l2 entry"));
         }
         let offset = self.mask_offset(l2_entry);
         if offset == 0 {
             return Err(DiskError::CorruptImage("qcow2 invalid l2 entry"));
         }
+        self.validate_cluster_not_overlapping_metadata(offset)?;
         Ok(Some(offset))
     }
 
     fn load_l2_table(&mut self, l2_offset: u64) -> DiskResult<Vec<u64>> {
+        self.validate_cluster_present(l2_offset, "qcow2 l2 table truncated")?;
         let cluster_size =
             usize::try_from(self.cluster_size()).map_err(|_| DiskError::OutOfBounds)?;
         let mut buf = vec![0u8; cluster_size];
@@ -527,6 +618,29 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         self.set_refcount(cluster_offset / cluster_size, value)
     }
 
+    fn refcount_block_offset_from_entry(&self, entry: u64) -> DiskResult<Option<u64>> {
+        if entry == 0 {
+            return Ok(None);
+        }
+        if (entry & QCOW2_OFLAG_COMPRESSED) != 0 {
+            return Err(DiskError::Unsupported("qcow2 compressed refcount block"));
+        }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
+        if (entry & low_mask) != 0 {
+            return Err(DiskError::CorruptImage(
+                "qcow2 unaligned refcount block entry",
+            ));
+        }
+        let offset = self.mask_offset(entry);
+        if offset == 0 {
+            return Err(DiskError::CorruptImage(
+                "qcow2 invalid refcount block entry",
+            ));
+        }
+        self.validate_cluster_not_overlapping_metadata(offset)?;
+        Ok(Some(offset))
+    }
+
     fn set_refcount(&mut self, cluster_index: u64, value: u16) -> DiskResult<()> {
         let entries_per_block = self.refcount_entries_per_block();
         let block_index = cluster_index / entries_per_block;
@@ -562,8 +676,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         }
 
         let existing = self.refcount_table[block_index];
-        let existing_offset = self.mask_offset(existing);
-        if existing_offset != 0 {
+        if let Some(existing_offset) = self.refcount_block_offset_from_entry(existing)? {
             self.ensure_refcount_block_cached(existing_offset)?;
             return Ok(existing_offset);
         }
@@ -596,6 +709,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
             return Ok(());
         }
 
+        self.validate_cluster_present(block_offset, "qcow2 refcount block truncated")?;
         let cluster_size =
             usize::try_from(self.cluster_size()).map_err(|_| DiskError::OutOfBounds)?;
         let mut buf = vec![0u8; cluster_size];

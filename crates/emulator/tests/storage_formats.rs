@@ -363,6 +363,60 @@ fn qcow2_write_persists_after_reopen() {
 }
 
 #[test]
+fn qcow2_truncated_l2_table_returns_corrupt_image() {
+    let virtual_size = 1024 * 1024;
+    let cluster_bits = 16u32;
+    let cluster_size = 1u64 << cluster_bits;
+
+    let refcount_table_offset = cluster_size;
+    let l1_table_offset = cluster_size * 2;
+    let refcount_block_offset = cluster_size * 3;
+    let l2_table_offset = cluster_size * 4;
+
+    // Leave the file too short to contain the entire L2 table cluster.
+    let file_len = l2_table_offset + cluster_size / 2;
+    let mut storage = MemStorage::with_len(file_len as usize);
+
+    let mut header = [0u8; 104];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 3); // version
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    write_be_u32(&mut header, 36, 1); // l1_size
+    write_be_u64(&mut header, 40, l1_table_offset);
+    write_be_u64(&mut header, 48, refcount_table_offset);
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+    write_be_u64(&mut header, 72, 0); // incompatible_features
+    write_be_u64(&mut header, 80, 0); // compatible_features
+    write_be_u64(&mut header, 88, 0); // autoclear_features
+    write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+    write_be_u32(&mut header, 100, 104); // header_length
+    storage.write_at(0, &header).unwrap();
+
+    storage
+        .write_at(refcount_table_offset, &refcount_block_offset.to_be_bytes())
+        .unwrap();
+
+    let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
+    storage
+        .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+        .unwrap();
+
+    for cluster_index in 0u64..5 {
+        let off = refcount_block_offset + cluster_index * 2;
+        storage.write_at(off, &1u16.to_be_bytes()).unwrap();
+    }
+
+    let mut disk = emulator::io::storage::formats::Qcow2Disk::open(storage).unwrap();
+    let mut sector = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut sector).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 l2 table truncated")
+    ));
+}
+
+#[test]
 fn qcow2_rejects_oversized_l1_table() {
     const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -549,6 +603,45 @@ fn vhd_dynamic_rejects_oversized_bat() {
     assert!(matches!(
         res,
         Err(DiskError::Unsupported("vhd bat too large"))
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_block_overlapping_metadata() {
+    let virtual_size = 1024 * 1024u64;
+    let block_size = 64 * 1024u32;
+
+    let dyn_header_offset = 512u64;
+    let table_offset = dyn_header_offset + 1024;
+
+    let mut storage = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Point the first BAT entry at the dynamic header (sector 1).
+    storage.write_at(table_offset, &1u32.to_be_bytes()).unwrap();
+
+    // Extend the file so the invalid BAT entry doesn't get rejected only because it would overlap
+    // the EOF footer.
+    let bitmap_size = 512u64;
+    let block_total_size = bitmap_size + block_size as u64;
+    let new_footer_offset = dyn_header_offset + block_total_size;
+
+    storage.set_len(new_footer_offset + 512).unwrap();
+    let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    storage.write_at(new_footer_offset, &footer).unwrap();
+
+    let mut drive = VirtualDrive::open_with_format(
+        DiskFormat::Vhd,
+        storage,
+        512,
+        WriteCachePolicy::WriteThrough,
+    )
+    .unwrap();
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    let err = drive.read_sectors(0, &mut sector).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block overlaps metadata")
     ));
 }
 
