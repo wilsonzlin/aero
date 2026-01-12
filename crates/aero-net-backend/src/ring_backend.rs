@@ -297,6 +297,31 @@ mod tests {
     }
 
     #[test]
+    fn tx_too_large_for_ring_is_counted_as_oversize() {
+        // Ring can only fit a single 1-byte record; any larger record should return PushError::TooLarge.
+        let cap = aero_ipc::ring::record_size(1);
+        let tx = Arc::new(RingBuffer::new(cap));
+        let rx = Arc::new(RingBuffer::new(64));
+        let mut backend = L2TunnelRingBackend::new(tx.clone(), rx);
+
+        // Frame is within backend max_frame_bytes, but larger than the ring's capacity.
+        backend.transmit(vec![0u8; 9]);
+
+        assert_eq!(
+            backend.stats(),
+            L2TunnelRingBackendStats {
+                tx_pushed_frames: 0,
+                tx_dropped_oversize: 1,
+                tx_dropped_full: 0,
+                rx_popped_frames: 0,
+                rx_dropped_oversize: 0,
+                rx_corrupt: 0,
+            }
+        );
+        assert_eq!(tx.try_pop(), Err(PopError::Empty));
+    }
+
+    #[test]
     fn oversized_rx_frames_are_dropped_and_do_not_block_later_frames() {
         let tx = Arc::new(RingBuffer::new(64));
         let rx = Arc::new(RingBuffer::new(64));
