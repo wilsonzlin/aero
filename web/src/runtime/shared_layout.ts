@@ -155,7 +155,11 @@ const WASM_PAGE_BYTES = 64 * 1024;
 const MAX_WASM32_PAGES = 65536;
 
 /**
- * Guest-physical base of the PCI MMIO aperture.
+ * Guest-physical base of the PCI MMIO BAR allocation window used by the web runtime.
+ *
+ * Note: on the canonical PC/Q35 platform, the reserved below-4 GiB PCI/MMIO hole is larger
+ * (`0xC000_0000..0x1_0000_0000`) and includes PCIe ECAM at `0xB000_0000..0xC000_0000`. The web
+ * runtime currently allocates PCI BARs out of the high sub-window starting at `PCI_MMIO_BASE`.
  *
  * Guest RAM is clamped to lie strictly below this address so that any access to
  * `paddr >= GUEST_PCI_MMIO_BASE` is routed to MMIO handlers instead of silently

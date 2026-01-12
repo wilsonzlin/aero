@@ -17,7 +17,7 @@ function sharedMemorySupported(): boolean {
 }
 
 describe("runtime/wasm_guest_layout", () => {
-  it("clamps guest RAM below the PCI MMIO aperture (0xE0000000..0xFFFF_FFFF)", () => {
+  it("clamps guest RAM below the PCI MMIO BAR window (0xE0000000..0xFFFF_FFFF)", () => {
     const layout = computeGuestRamLayout(0xffff_ffff);
     expect(layout.guest_size).toBe(GUEST_PCI_MMIO_BASE);
     expect(layout.guest_base + layout.guest_size).toBeLessThanOrEqual(0x1_0000_0000);

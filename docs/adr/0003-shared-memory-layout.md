@@ -47,8 +47,11 @@ We reserve a fixed, page-aligned region at the bottom of wasm linear memory for 
 - `guest_base` = `align_up(runtime_reserved, 64KiB)` (currently also 128 MiB)
 - `guest_size` is clamped so that:
   - it fits within wasm32's 4 GiB linear-memory maximum: `guest_size ≤ 4GiB - guest_base`
-  - it does **not** overlap the fixed PCI MMIO aperture used by the web I/O worker:
+  - it does **not** overlap the PCI MMIO *BAR allocation window* used by the web runtime:
     `guest_size ≤ PCI_MMIO_BASE` (currently `PCI_MMIO_BASE = 0xE0000000`, i.e. 3.5 GiB)
+    - Note: on the canonical PC/Q35 platform, the reserved below-4 GiB PCI/MMIO hole is larger
+      (`0xC000_0000..0x1_0000_0000`), with PCIe ECAM at `0xB000_0000..0xC000_0000`. The web layout
+      currently treats only the high sub-window as the “PCI MMIO aperture” for BAR assignment.
 
 The guest RAM mapping is:
 
@@ -71,7 +74,7 @@ guest physical address space (32-bit)
 
 0                          guest_size                    PCI_MMIO_BASE          4GiB
 │--------------------------│-----------------------------│----------------------│
-│ guest RAM                │ (reserved / unmapped hole)  │ PCI MMIO aperture    │
+│ guest RAM                │ (reserved / unmapped hole)  │ PCI MMIO BAR window  │
 │                          │                             │ (PCI BARs live here) │
 │--------------------------│-----------------------------│----------------------│
 ```
