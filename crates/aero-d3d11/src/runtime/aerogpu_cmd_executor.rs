@@ -37,6 +37,7 @@ use crate::{
 };
 
 use super::bindings::{BindingState, BoundConstantBuffer, BoundSampler, ShaderStage};
+use super::pipeline_layout_cache::PipelineLayoutCache;
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
@@ -383,6 +384,7 @@ pub struct AerogpuD3d11Executor {
 
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
+    pipeline_layout_cache: PipelineLayoutCache,
     pipeline_cache: PipelineCache,
 
     /// Resources referenced by commands recorded into the current `wgpu::CommandEncoder`.
@@ -588,6 +590,7 @@ impl AerogpuD3d11Executor {
             default_sampler,
             bind_group_layout_cache: BindGroupLayoutCache::new(),
             bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
+            pipeline_layout_cache: PipelineLayoutCache::new(),
             pipeline_cache,
             encoder_used_buffers: HashSet::new(),
             encoder_used_textures: HashSet::new(),
@@ -1408,13 +1411,11 @@ impl AerogpuD3d11Executor {
             .iter()
             .map(|l| l.layout.as_ref())
             .collect();
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aerogpu_cmd pipeline layout"),
-                bind_group_layouts: &layout_refs,
-                push_constant_ranges: &[],
-            });
+        let pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            &pipeline_bindings.layout_key,
+            &layout_refs,
+        );
 
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the render pass.
@@ -1428,7 +1429,7 @@ impl AerogpuD3d11Executor {
                 get_or_create_render_pipeline_for_state(
                     &self.device,
                     &mut self.pipeline_cache,
-                    &pipeline_layout,
+                    pipeline_layout.as_ref(),
                     &mut self.resources,
                     &self.state,
                     pipeline_bindings.layout_key.clone(),

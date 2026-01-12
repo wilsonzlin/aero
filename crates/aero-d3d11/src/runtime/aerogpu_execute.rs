@@ -20,6 +20,7 @@ use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
     PrimitiveTopology, RasterizerState, ScissorRect, VertexBufferBinding, Viewport,
 };
+use super::pipeline_layout_cache::PipelineLayoutCache;
 
 #[derive(Debug)]
 pub struct BufferResource {
@@ -74,6 +75,7 @@ pub struct AerogpuCmdRuntime {
     pub state: D3D11ShadowState,
     pub resources: AerogpuResources,
     pipelines: PipelineCache,
+    pipeline_layout_cache: PipelineLayoutCache,
 }
 
 impl AerogpuCmdRuntime {
@@ -149,6 +151,7 @@ impl AerogpuCmdRuntime {
             state: D3D11ShadowState::default(),
             resources: AerogpuResources::default(),
             pipelines,
+            pipeline_layout_cache: PipelineLayoutCache::new(),
         })
     }
 
@@ -436,6 +439,9 @@ impl AerogpuCmdRuntime {
         } = build_vertex_state(&self.resources, &self.state, &vs.vs_input_signature)?;
 
         let layout_key = PipelineLayoutKey::empty();
+        let pipeline_layout =
+            self.pipeline_layout_cache
+                .get_or_create(&self.device, &layout_key, &[]);
 
         let key = RenderPipelineKey {
             vertex_shader: vs.hash,
@@ -467,12 +473,7 @@ impl AerogpuCmdRuntime {
             &self.device,
             key,
             move |device, vs_module, fs_module| {
-                let pipeline_layout =
-                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("aero-d3d11 aerogpu pipeline layout"),
-                        bind_group_layouts: &[],
-                        push_constant_ranges: &[],
-                    });
+                let pipeline_layout = pipeline_layout.as_ref();
 
                 let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
                     .iter()
@@ -485,7 +486,7 @@ impl AerogpuCmdRuntime {
 
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("aero-d3d11 aerogpu render pipeline"),
-                    layout: Some(&pipeline_layout),
+                    layout: Some(pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: vs_module,
                         entry_point: "vs_main",
