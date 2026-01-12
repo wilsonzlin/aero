@@ -409,9 +409,9 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     );
     const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
 
-    runtime.attach_usb_hid_passthrough_device([0, 1], keyboardDev);
-    runtime.attach_usb_hid_passthrough_device([0, 2], mouseDev);
-    runtime.attach_usb_hid_passthrough_device([0, 3], gamepadDev);
+    runtime.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT], keyboardDev);
+    runtime.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT], mouseDev);
+    runtime.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT], gamepadDev);
 
     // Wrap UhciRuntime into the same shape the helper functions expect.
     const uhci: { io_write(offset: number, size: number, value: number): void; step_frame(): void; tick_1ms(): void } = {
