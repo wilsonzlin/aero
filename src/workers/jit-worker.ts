@@ -93,12 +93,13 @@ function toOwnedArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 function normalizeTier1Compilation(result: unknown, fallbackCodeByteLen: number): Tier1BlockCompilation {
+  const fallbackLen = clampU32(fallbackCodeByteLen);
   // The Tier-1 wasm-bindgen ABI is still evolving. Older builds returned raw `Uint8Array` bytes,
   // while newer ones return a small object with `{ wasm_bytes, code_byte_len, ... }`.
   if (result instanceof Uint8Array) {
     return {
       wasm_bytes: result,
-      code_byte_len: fallbackCodeByteLen,
+      code_byte_len: fallbackLen,
       exit_to_interpreter: false,
     };
   }
@@ -108,10 +109,12 @@ function normalizeTier1Compilation(result: unknown, fallbackCodeByteLen: number)
     if (!(wasmBytes instanceof Uint8Array)) {
       throw new Error('JIT compiler returned unexpected result (missing wasm_bytes Uint8Array)');
     }
-    const codeByteLen =
-      typeof (result as Partial<Tier1BlockCompilation>).code_byte_len === 'number'
-        ? (result as Partial<Tier1BlockCompilation>).code_byte_len!
-        : fallbackCodeByteLen;
+    const codeByteLenRaw = (result as Partial<Tier1BlockCompilation>).code_byte_len;
+    let codeByteLen = fallbackLen;
+    if (typeof codeByteLenRaw === 'number' && Number.isFinite(codeByteLenRaw)) {
+      codeByteLen = clampU32(codeByteLenRaw);
+      if (codeByteLen > fallbackLen) codeByteLen = fallbackLen;
+    }
     const exitToInterp =
       typeof (result as Partial<Tier1BlockCompilation>).exit_to_interpreter === 'boolean'
         ? (result as Partial<Tier1BlockCompilation>).exit_to_interpreter!
