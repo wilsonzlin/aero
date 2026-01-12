@@ -127,7 +127,7 @@ function isTier1CompileError(err: unknown): boolean {
   // to distinguish genuine compilation failures from ABI mismatches (wrong arg types/count) when
   // running against older wasm-pack outputs.
   const message = err instanceof Error ? err.message : String(err);
-  return message.includes('compile_tier1_block:');
+  return message.startsWith('compile_tier1_block:');
 }
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {
@@ -136,6 +136,16 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
       id: req.id,
       entry_rip: req.entry_rip,
       reason: 'JIT worker not initialized with shared memory',
+    });
+    return;
+  }
+
+  if (!Number.isFinite(req.entry_rip) || !Number.isInteger(req.entry_rip) || req.entry_rip < 0 || req.entry_rip > 0xffffffff) {
+    postMessageToCpu({
+      type: 'CompileError',
+      id: req.id,
+      entry_rip: req.entry_rip,
+      reason: `invalid entry_rip: ${String(req.entry_rip)}`,
     });
     return;
   }
@@ -155,7 +165,8 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
   // Clamp to keep the decode window (maxBytes + slack) within the compiler's input cap.
   const maxBytes = Math.min(requestedMaxBytes, MAX_COMPILER_CODE_BYTES - DECODE_WINDOW_SLACK_BYTES);
   const maxInsts = 64;
-  const bitness = req.bitness ?? 0;
+  const bitnessInput = req.bitness;
+  const bitness = bitnessInput === 16 || bitnessInput === 32 || bitnessInput === 64 ? bitnessInput : 0;
 
   let compilation: Tier1BlockCompilation;
   try {
@@ -249,6 +260,19 @@ ctx.addEventListener('message', (ev: MessageEvent<CpuToJitMessage>) => {
       sharedMemory = msg.memory;
       guestBase = clampU32(msg.guest_base);
       guestSize = clampU32(msg.guest_size);
+      // Clamp guestSize to the memory buffer length so mis-sized init payloads cannot create
+      // out-of-bounds TypedArray slices.
+      //
+      // Note: This worker only uses guest_base/guest_size for bounds checks and reads; the main
+      // runtime is authoritative.
+      {
+        const bufLen = sharedMemory.buffer.byteLength;
+        if (guestBase >= bufLen) {
+          guestSize = 0;
+        } else if (guestBase + guestSize > bufLen) {
+          guestSize = Math.max(0, bufLen - guestBase);
+        }
+      }
       // Warm up the compiler module in the background so the first hot block compile has lower latency.
       void loadJitWasmApi().catch(() => {});
       break;
