@@ -109,6 +109,14 @@ function normalizeTier1Compilation(result: unknown, fallbackCodeByteLen: number)
 
   throw new Error('JIT compiler returned unexpected result (expected Uint8Array or { wasm_bytes: Uint8Array, ... })');
 }
+
+function isTier1CompileError(err: unknown): boolean {
+  // Newer aero-jit-wasm builds prefix their error messages with `compile_tier1_block:`. Use that
+  // to distinguish genuine compilation failures from ABI mismatches (wrong arg types/count) when
+  // running against older wasm-pack outputs.
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('compile_tier1_block:');
+}
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {
     postMessageToCpu({
@@ -152,7 +160,10 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
         true, // memory_shared (compiled blocks must import the shared guest memory)
         bitness,
       ) as unknown;
-    } catch {
+    } catch (err) {
+      if (isTier1CompileError(err)) {
+        throw err;
+      }
       // Backwards-compat: older JIT wasm builds used simpler argument lists.
       const compileTier1BlockCompat = api.compile_tier1_block as unknown as (...args: any[]) => unknown;
       try {
