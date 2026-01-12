@@ -47,6 +47,7 @@ pub fn dispatch_interrupt(
         0x13 => handle_int13(bios, cpu, bus, disk),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
+        0x19 => handle_int19(bios, cpu, bus, disk),
         0x1A => handle_int1a(bios, cpu, bus),
         _ => {
             // Safe default: do nothing and return.
@@ -78,6 +79,68 @@ fn handle_int12(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     // amount of memory below the EBDA.
     let base_mem_kb = bus.read_u16(BDA_BASE + 0x13);
     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (base_mem_kb as u64);
+    cpu.rflags &= !FLAG_CF;
+}
+
+fn handle_int19(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
+    // Bootstrap loader.
+    //
+    // INT 19h is traditionally used to re-run the boot sequence without a full POST. The real BIOS
+    // typically does not return to the caller. Our BIOS interrupt dispatch mechanism always
+    // resumes execution at a ROM-stub `IRET`, so we emulate the non-returning control transfer by
+    // installing a new IRET frame on a fresh real-mode stack.
+    //
+    // The stub IRET will:
+    // - pop IP, CS, FLAGS from SS:SP
+    // - clear the BIOS hypercall marker (`pending_bios_int_valid`)
+    //
+    // After IRET, the CPU will begin executing the boot sector at 0000:7C00 with SS:SP reset to
+    // 0000:7C00 (matching POST's boot handoff).
+    const BOOT_ADDR: u64 = 0x7C00;
+    const STACK_AFTER_IRET: u16 = 0x7C00;
+    const STACK_BEFORE_IRET: u16 = STACK_AFTER_IRET.wrapping_sub(6);
+
+    let mut sector = [0u8; 512];
+    match disk.read_sector(0, &mut sector) {
+        Ok(()) => {}
+        Err(_) => {
+            bios.tty_output.extend_from_slice(b"Disk read error\n");
+            cpu.halted = true;
+            return;
+        }
+    }
+    if sector[510] != 0x55 || sector[511] != 0xAA {
+        bios.tty_output.extend_from_slice(b"Invalid boot signature\n");
+        cpu.halted = true;
+        return;
+    }
+
+    bus.write_physical(BOOT_ADDR, &sector);
+
+    // Register setup per BIOS conventions (matches `Bios::boot`).
+    cpu.gpr[gpr::RAX] = 0;
+    cpu.gpr[gpr::RBX] = 0;
+    cpu.gpr[gpr::RCX] = 0;
+    cpu.gpr[gpr::RDX] = bios.config.boot_drive as u64; // DL
+    cpu.gpr[gpr::RSI] = 0;
+    cpu.gpr[gpr::RDI] = 0;
+    cpu.gpr[gpr::RBP] = 0;
+
+    // Use a clean 0000:7C00 stack. We must set SP to 7BFA so the following IRET lands with
+    // SP=7C00.
+    set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
+    cpu.gpr[gpr::RSP] = STACK_BEFORE_IRET as u64;
+
+    // Data segments: most boot sectors expect DS=ES=0.
+    set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
+    set_real_mode_seg(&mut cpu.segments.es, 0x0000);
+
+    // Build the synthetic IRET frame: IP, CS, FLAGS (word each).
+    let frame_base = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(STACK_BEFORE_IRET as u64));
+    bus.write_u16(frame_base, BOOT_ADDR as u16); // IP
+    bus.write_u16(frame_base + 2, 0x0000); // CS
+    bus.write_u16(frame_base + 4, 0x0202); // IF=1 + reserved bit 1
+
     cpu.rflags &= !FLAG_CF;
 }
 
@@ -1104,6 +1167,42 @@ fn build_e820_map(
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, (EBDA_BASE / 1024) as u16);
+    }
+
+    #[test]
+    fn int19_loads_boot_sector_and_installs_iret_frame_to_jump_to_7c00() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0x80,
+            ..BiosConfig::default()
+        });
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        let mut sector = [0u8; 512];
+        sector[0] = 0xAA;
+        sector[1] = 0xBB;
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+        let mut disk = InMemoryDisk::from_boot_sector(sector);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+
+        handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.halted, false);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RDX] as u8, 0x80);
+        assert_eq!(cpu.segments.ss.selector, 0x0000);
+        assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7BFA);
+
+        let loaded = mem.read_bytes(0x7C00, 512);
+        assert_eq!(loaded[0], 0xAA);
+        assert_eq!(loaded[1], 0xBB);
+        assert_eq!(loaded[510], 0x55);
+        assert_eq!(loaded[511], 0xAA);
+
+        // Verify the synthetic IRET frame at 0000:7BFA.
+        assert_eq!(mem.read_u16(0x7BFA), 0x7C00); // IP
+        assert_eq!(mem.read_u16(0x7BFC), 0x0000); // CS
+        assert_eq!(mem.read_u16(0x7BFE), 0x0202); // FLAGS
     }
 
     #[test]
