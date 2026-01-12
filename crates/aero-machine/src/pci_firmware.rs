@@ -7,7 +7,7 @@
 //! 0xCF8/0xCFC port pair, so the adapter just issues those port accesses directly.
 
 use aero_devices::pci::{
-    PciConfigPorts, SharedPciConfigPorts, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+    PciBdf, PciBus, PciConfigPorts, SharedPciConfigPorts, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 
 /// Firmware BIOS [`firmware::bios::PciConfigSpace`] adapter for an owned [`PciConfigPorts`]
@@ -35,6 +35,20 @@ pub struct SharedPciConfigPortsBiosAdapter {
 impl SharedPciConfigPortsBiosAdapter {
     pub fn new(ports: SharedPciConfigPorts) -> Self {
         Self { ports }
+    }
+}
+
+/// Firmware BIOS [`firmware::bios::PciConfigSpace`] adapter for direct access to a [`PciBus`].
+///
+/// This is useful when a caller already has a configured PCI bus but is not modelling the legacy
+/// 0xCF8/0xCFC config ports.
+pub struct PciBusBiosAdapter<'a> {
+    bus: &'a mut PciBus,
+}
+
+impl<'a> PciBusBiosAdapter<'a> {
+    pub fn new(bus: &'a mut PciBus) -> Self {
+        Self { bus }
     }
 }
 
@@ -104,6 +118,20 @@ impl firmware::bios::PciConfigSpace for SharedPciConfigPortsBiosAdapter {
     fn write_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
         let mut ports = self.ports.borrow_mut();
         write_config_dword_via_ports(&mut ports, bus, device, function, offset, value);
+    }
+}
+
+impl firmware::bios::PciConfigSpace for PciBusBiosAdapter<'_> {
+    fn read_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+        let bdf = PciBdf::new(bus, device, function);
+        let offset = u16::from(offset & 0xFC);
+        self.bus.read_config(bdf, offset, 4)
+    }
+
+    fn write_config_dword(&mut self, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+        let bdf = PciBdf::new(bus, device, function);
+        let offset = u16::from(offset & 0xFC);
+        self.bus.write_config(bdf, offset, 4, value);
     }
 }
 
@@ -252,6 +280,33 @@ mod tests {
             .device_config_mut(bdf)
             .unwrap()
             .interrupt_line();
+        assert_eq!(line, 11);
+    }
+
+    #[test]
+    fn firmware_bios_pci_enumeration_programs_interrupt_line_via_pci_bus() {
+        let mut pci_bus = PciBus::new();
+
+        let bdf = PciBdf::new(0, 1, 0);
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
+
+        let mut adapter = PciBusBiosAdapter::new(&mut pci_bus);
+
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
+        let mut cpu = aero_cpu_core::state::CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut disk: Box<dyn BlockDevice> =
+            Box::new(InMemoryDisk::from_boot_sector(boot_sector()));
+
+        let mut bios = Bios::new(BiosConfig {
+            enable_acpi: false,
+            ..BiosConfig::default()
+        });
+
+        bios.post_with_pci(&mut cpu, &mut mem, &mut *disk, Some(&mut adapter));
+
+        let line = pci_bus.device_config_mut(bdf).unwrap().interrupt_line();
         assert_eq!(line, 11);
     }
 }

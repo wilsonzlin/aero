@@ -38,7 +38,9 @@ use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError,
 use memory::{DenseMemory, MapError, MemoryBus as _, PhysicalMemoryBus};
 
 mod pci_firmware;
-pub use pci_firmware::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
+pub use pci_firmware::{
+    PciBusBiosAdapter, PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter,
+};
 
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
