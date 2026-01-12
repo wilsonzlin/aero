@@ -107,6 +107,7 @@ To avoid layout mismatches between HLSL packing and WGSL’s layout rules, repre
 struct Cb0 {
     regs: array<vec4<u32>, CB0_REG_COUNT>;
 }
+// Bind groups are stage-scoped; this example shows a VS cbuffer (`@group(0)`).
 @group(0) @binding(0) var<uniform> cb0: Cb0;
 ```
 
@@ -295,6 +296,8 @@ SM4/5 binds resources using:
 In Aero, the **implemented** SM4/SM5 → WGSL binding model is stage-scoped and deterministic. It is
 shared by the shader translator and the command-stream executor (see
 `crates/aero-d3d11/src/binding_model.rs` and its use in `crates/aero-d3d11/src/shader_translate.rs`).
+This avoids per-shader bespoke layouts: the runtime can bind by `(stage, slot)` without shader-
+specific remapping.
 
 #### Bind groups are stage-scoped
 
@@ -302,7 +305,7 @@ Bind groups map 1:1 to D3D11 shader stages:
 
 - `@group(0)`: vertex shader (VS) resources
 - `@group(1)`: pixel/fragment shader (PS) resources
-- `@group(2)`: compute shader (CS) resources (reserved for future SM5 CS support)
+- `@group(2)`: compute shader (CS) resources
 
 Why stage-scoped?
 
@@ -324,6 +327,13 @@ The base offsets are defined in `crates/aero-d3d11/src/binding_model.rs`:
 - `BINDING_BASE_CBUFFER = 0` for constant buffers (`cb#` / `b#`)
 - `BINDING_BASE_TEXTURE = 32` for SRV textures (`t#`)
 - `BINDING_BASE_SAMPLER = 160` for samplers (`s#`)
+
+The chosen bases intentionally carve out disjoint ranges that align with D3D11 per-stage slot
+counts:
+
+- Constant buffers: 14 slots (0–13) fit within `[0, 32)`.
+- SRVs: 128 slots (0–127) map to `[32, 160)`.
+- Samplers: 16 slots (0–15) map to `[160, 176)`.
 
 Examples:
 
