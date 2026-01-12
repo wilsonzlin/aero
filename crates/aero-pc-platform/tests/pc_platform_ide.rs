@@ -892,3 +892,127 @@ fn pc_platform_ide_atapi_dma_raises_secondary_irq15() {
         interrupts.pic_mut().eoi(pending);
     }
 }
+
+#[test]
+fn pc_platform_ide_secondary_nien_suppresses_irq15_for_atapi_dma() {
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+
+    // Attach ISO with recognizable bytes at sector 0.
+    let mut iso_disk = RawDisk::create(MemBackend::new(), AtapiCdrom::SECTOR_SIZE as u64).unwrap();
+    iso_disk.write_at(0, b"DMATEST!").unwrap();
+    pc.attach_ide_secondary_master_iso(Box::new(iso_disk)).unwrap();
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Program PIC offsets and unmask IRQ2 (cascade) + IRQ15 so we can observe the interrupt.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(15, false);
+    }
+
+    // Enable IO decode + Bus Mastering so BMIDE DMA is allowed.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0, "BAR4 should be programmed by BIOS POST");
+
+    // Select master on secondary channel.
+    pc.io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = pc.io.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+    // Clear any pending IRQ from REQUEST SENSE.
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // PRD table and DMA buffer in guest RAM.
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // One PRD entry: 2048 bytes, EOT.
+    pc.memory.write_u32(prd_addr, dma_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, 2048);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+
+    // Program secondary PRD pointer (BMIDE base + 8 + 4).
+    pc.io.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Disable interrupts on the secondary channel (nIEN=1).
+    pc.io.write(SECONDARY_PORTS.ctrl_base, 1, 0x02);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // Start secondary bus master, direction=read (device -> memory).
+    pc.io.write(bm_base + 8, 1, 0x09);
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let mut out = [0u8; 8];
+    pc.memory.read_physical(dma_buf, &mut out);
+    assert_eq!(&out, b"DMATEST!");
+
+    assert_eq!(
+        pc.interrupts.borrow().pic().get_pending_vector(),
+        None,
+        "IRQ15 should be suppressed when nIEN=1 on secondary channel"
+    );
+
+    // Re-enable interrupts and repeat the transfer; now IRQ15 should be delivered.
+    pc.io.write(SECONDARY_PORTS.ctrl_base, 1, 0x00);
+    // Clear bus master status bits and any stale state.
+    pc.io.write(bm_base + 8, 1, 0);
+    pc.io.write(bm_base + 8 + 2, 1, 0x06); // clear IRQ+ERR
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Reuse the same PRD pointer and issue another READ(10).
+    pc.memory.write_u32(dma_buf, 0);
+    send_atapi_packet(&mut pc, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+    pc.io.write(bm_base + 8, 1, 0x09);
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ15 should be pending after ATAPI DMA completes with nIEN=0");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 15);
+
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(pending);
+        interrupts.pic_mut().eoi(pending);
+    }
+
+    // Clear device interrupt and ensure we don't leave the PIC with stale state.
+    let _ = pc.io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
