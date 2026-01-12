@@ -25,6 +25,7 @@ describe("workers/io_virtio_net_init", () => {
     const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
     const mgr = new DeviceManager(irqSink);
 
+    // Canonical virtio-net BDF: 00:08.0.
     const DEV = 8;
     const cfgAddr = (off: number): number => (0x8000_0000 | (DEV << 11) | (off & 0xfc)) >>> 0;
     const readCfg8 = (off: number): number => {

@@ -157,6 +157,18 @@ export default defineConfig({
     // nested Worker scheduling / Atomics wakeups, causing flakes/timeouts.
     // Run tests in forked processes for deterministic cross-thread behavior.
     pool: "forks",
+    // Vitest defaults its pool size based on `os.cpus()`, which can be extremely large in
+    // sandbox environments (e.g. 192 vCPUs). Spawning that many Node processes can exhaust
+    // memory / pthread resources and crash workers mid-run.
+    //
+    // Cap the fork count so `npm test` remains stable even when the host reports very high
+    // core counts.
+    poolOptions: {
+      forks: {
+        minForks: 1,
+        maxForks: 8,
+      },
+    },
     // Keep Vitest scoped to unit tests under src/, plus any dedicated Vitest
     // suites under `web/test/` (suffixed `.vitest.ts`). The repo also contains:
     //  - `web/test/*.test.ts` which are Node's built-in `node:test` suites
