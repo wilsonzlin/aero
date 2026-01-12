@@ -411,6 +411,69 @@ fn ata_bus_master_dma_read_write_roundtrip() {
 }
 
 #[test]
+fn ata_bus_master_dma_scatter_gather_with_odd_prd_lengths() {
+    // Exercise a PRD scatter/gather list where the first segment length is odd. Real guests should
+    // normally use word-aligned lengths, but the controller should still behave sensibly for
+    // unusual PRDs.
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_add(1);
+    }
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+
+    let prd_addr = 0x1000u64;
+    let buf0 = 0x2000u64;
+    let buf1 = 0x3000u64;
+
+    let len0: u16 = 17;
+    let len1: u16 = SECTOR_SIZE as u16 - len0;
+
+    // Two-entry PRD table that splits one sector across an odd-sized prefix and the remainder.
+    mem.write_u32(prd_addr, buf0 as u32);
+    mem.write_u16(prd_addr + 4, len0);
+    mem.write_u16(prd_addr + 6, 0x0000);
+    mem.write_u32(prd_addr + 8, buf1 as u32);
+    mem.write_u16(prd_addr + 12, len1);
+    mem.write_u16(prd_addr + 14, 0x8000); // EOT
+
+    let bm_base = ide.borrow().bus_master_base();
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Issue READ DMA (LBA 0, 1 sector).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+
+    ioports.write(bm_base, 1, 0x09); // start + read (device -> memory)
+    ide.borrow_mut().tick(&mut mem);
+
+    let mut first = vec![0u8; len0 as usize];
+    mem.read_physical(buf0, &mut first);
+    assert_eq!(first, sector0[..len0 as usize].to_vec());
+
+    let mut rest = vec![0u8; len1 as usize];
+    mem.read_physical(buf1, &mut rest);
+    assert_eq!(rest, sector0[len0 as usize..].to_vec());
+}
+
+#[test]
 fn ata_bus_master_dma_ext_read_write_256_sectors_roundtrip() {
     // Exercise 48-bit sector count handling for DMA EXT commands by transferring 256 sectors
     // (requires writing a non-zero high byte to the sector count register).
