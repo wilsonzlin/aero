@@ -335,11 +335,13 @@ fn uhci_runtime_snapshot_is_deterministic() {
 
     // Attach an external hub plus a couple devices so the snapshot contains nested state.
     let hub_path = serde_wasm_bindgen::to_value(&vec![0u32]).expect("hub path to_value");
-    rt.webhid_attach_hub(hub_path, Some(4))
+    // Hub ports 1..=3 are reserved for synthetic HID devices, so allocate WebHID passthrough on
+    // ports 4+ (and ensure the hub has enough downstream ports).
+    rt.webhid_attach_hub(hub_path, Some(5))
         .expect("attach external hub");
 
     let collections_json = load_mouse_collections_json();
-    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path1 to_value");
+    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path1 to_value");
     rt.webhid_attach_at_path(
         1,
         0x1234,
@@ -349,7 +351,7 @@ fn uhci_runtime_snapshot_is_deterministic() {
         path1,
     )
     .expect("attach WebHID device #1");
-    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 2u32]).expect("path2 to_value");
+    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("path2 to_value");
     rt.webhid_attach_at_path(
         2,
         0x1234,
@@ -591,11 +593,13 @@ fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path(
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 
     let hub_path = serde_wasm_bindgen::to_value(&vec![0u32]).expect("hub path to_value");
-    rt.webhid_attach_hub(hub_path, Some(4))
+    // Hub ports 1..=3 are reserved for synthetic HID devices, so allocate WebHID passthrough on
+    // ports 4+ (and ensure the hub has enough downstream ports).
+    rt.webhid_attach_hub(hub_path, Some(5))
         .expect("attach external hub");
 
     let collections_json = load_mouse_collections_json();
-    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path1 to_value");
+    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path1 to_value");
     rt.webhid_attach_at_path(
         1,
         0x1234,
@@ -625,7 +629,7 @@ fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path(
     assert_ne!(portsc1 & PORTSC_CCS, 0);
 
     // `webhid_attach_at_path` should succeed without requiring another `webhid_attach_hub` call.
-    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 2u32]).expect("path2 to_value");
+    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("path2 to_value");
     rt2.webhid_attach_at_path(
         2,
         0x1234,

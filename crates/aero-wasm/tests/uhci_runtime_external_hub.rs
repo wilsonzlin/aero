@@ -55,8 +55,11 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
         .is_err()
     );
 
-    // Attach two WebHID passthrough devices behind the hub on ports 1 and 2.
-    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path1 to_value");
+    // Attach two WebHID passthrough devices behind the hub.
+    //
+    // Note: hub ports 1..=3 are reserved for Aero's synthetic HID devices (keyboard/mouse/gamepad),
+    // so WebHID passthrough should use port 4+.
+    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path1 to_value");
     rt.webhid_attach_at_path(
         1,
         0x1234,
@@ -67,7 +70,7 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
     )
     .expect("attach WebHID device #1");
 
-    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 2u32]).expect("path2 to_value");
+    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("path2 to_value");
     rt.webhid_attach_at_path(
         2,
         0x1234,
