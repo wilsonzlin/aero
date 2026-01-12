@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::VIRTIO_BLK;
+use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY};
 use aero_pc_platform::PcPlatform;
 use memory::MemoryBus as _;
 
@@ -14,6 +14,12 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(0xCFC, 4)
+}
+
+fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 0x3) * 8;
+    ((read_cfg_u32(pc, bus, device, function, aligned) >> shift) & 0xFF) as u8
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -46,6 +52,52 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     let id = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x00);
     assert_eq!(id & 0xffff, u32::from(VIRTIO_BLK.vendor_id));
     assert_eq!((id >> 16) & 0xffff, u32::from(VIRTIO_BLK.device_id));
+
+    // Validate PCI identity matches the canonical `profile::VIRTIO_BLK` contract.
+    let class_rev = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x08);
+    let revision_id = (class_rev & 0xFF) as u8;
+    let prog_if = ((class_rev >> 8) & 0xFF) as u8;
+    let sub_class = ((class_rev >> 16) & 0xFF) as u8;
+    let base_class = ((class_rev >> 24) & 0xFF) as u8;
+    assert_eq!(revision_id, VIRTIO_BLK.revision_id);
+    assert_eq!(base_class, VIRTIO_BLK.class.base_class);
+    assert_eq!(sub_class, VIRTIO_BLK.class.sub_class);
+    assert_eq!(prog_if, VIRTIO_BLK.class.prog_if);
+
+    let subsystem = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x2C);
+    assert_eq!(subsystem & 0xFFFF, u32::from(VIRTIO_BLK.subsystem_vendor_id));
+    assert_eq!((subsystem >> 16) & 0xFFFF, u32::from(VIRTIO_BLK.subsystem_id));
+
+    let header_bist = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x0C);
+    let header_type = ((header_bist >> 16) & 0xFF) as u8;
+    assert_eq!(header_type, VIRTIO_BLK.header_type);
+
+    // Validate the vendor-specific capability list layout matches the virtio-pci contract.
+    let mut caps: Vec<Vec<u8>> = Vec::new();
+    let mut cap_ptr = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x34);
+    let mut guard = 0usize;
+    while cap_ptr != 0 {
+        guard += 1;
+        assert!(guard <= 16, "capability list too long or cyclic");
+        let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
+        assert_eq!(cap_id, 0x09, "unexpected capability ID at {cap_ptr:#x}");
+        let next = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr.wrapping_add(1));
+        let cap_len = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr.wrapping_add(2));
+        assert!(cap_len >= 2, "invalid capability length");
+        let payload_len = usize::from(cap_len - 2);
+        let mut payload = vec![0u8; payload_len];
+        for (i, b) in payload.iter_mut().enumerate() {
+            let off = cap_ptr.wrapping_add(2).wrapping_add(i as u8);
+            *b = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, off);
+        }
+        caps.push(payload);
+        cap_ptr = next;
+    }
+    assert_eq!(caps.len(), 4);
+    assert_eq!(caps[0].as_slice(), &VIRTIO_CAP_COMMON);
+    assert_eq!(caps[1].as_slice(), &VIRTIO_CAP_NOTIFY);
+    assert_eq!(caps[2].as_slice(), &VIRTIO_CAP_ISR);
+    assert_eq!(caps[3].as_slice(), &VIRTIO_CAP_DEVICE);
 
     let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
     assert_ne!(command & 0x2, 0, "BIOS POST should enable memory decoding");
