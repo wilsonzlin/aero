@@ -209,6 +209,11 @@ bash ./scripts/safe-run.sh cargo test -p aero-net-e1000 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-net-stack --locked
 bash ./scripts/safe-run.sh cargo test -p aero-l2-proxy --locked
 
+# Note: `aero-l2-proxy` can be slow to compile in shared/contended sandboxes.
+# If `safe-run` times out, retry with a larger timeout and/or isolate Cargo state:
+#   AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-l2-proxy --locked
+#   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh cargo test -p aero-l2-proxy --locked
+
 # Run gateway tests
 cd backend/aero-gateway
 npm test
