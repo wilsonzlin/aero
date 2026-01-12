@@ -957,6 +957,14 @@ mod wasm {
             }
         }
 
+        /// Extract the synchronous OPFS backend, if present.
+        ///
+        /// # Warning
+        ///
+        /// [`OpfsStorage::open`] may fall back to async-only variants when sync access handles are
+        /// unavailable. Callers that require a synchronous backend (to back
+        /// `aero_storage::{StorageBackend, VirtualDisk}`) should not assume this returns `Some`.
+        /// Prefer calling [`OpfsBackend::open`] directly and handling `DiskError::NotSupported`.
         pub fn into_sync(self) -> Option<OpfsBackend> {
             match self {
                 Self::Sync(backend) => Some(backend),
@@ -1288,6 +1296,7 @@ mod native {
             Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
         }
 
+        /// Extract the synchronous OPFS backend, if present.
         pub fn into_sync(self) -> Option<OpfsBackend> {
             match self {
                 Self::Sync(backend) => Some(backend),
