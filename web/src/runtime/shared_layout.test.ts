@@ -26,6 +26,7 @@ import {
   allocateSharedMemorySegments,
   computeGuestRamLayout,
   createSharedMemoryViews,
+  readGuestRamLayoutFromStatus,
   ringRegionsForWorker,
   setReadyFlag,
 } from "./shared_layout";
@@ -148,6 +149,14 @@ describe("runtime/shared_layout", () => {
     const layout = computeGuestRamLayout(0xffff_ffff);
     expect(layout.guest_size).toBeLessThanOrEqual(PCI_MMIO_BASE);
     expect(layout.guest_size).toBe(PCI_MMIO_BASE);
+  });
+
+  it("rejects status guest RAM layouts that overlap the PCI MMIO aperture", () => {
+    const status = new Int32Array(new SharedArrayBuffer(STATUS_BYTES));
+    Atomics.store(status, StatusIndex.GuestBase, RUNTIME_RESERVED_BYTES | 0);
+    // Intentionally write a value larger than PCI_MMIO_BASE to validate the guard.
+    Atomics.store(status, StatusIndex.GuestSize, 0xf000_0000 | 0);
+    expect(() => readGuestRamLayoutFromStatus(status)).toThrow(/PCI MMIO/i);
   });
 
   it("falls back to standalone shared framebuffer when guest RAM is too small to embed it", () => {

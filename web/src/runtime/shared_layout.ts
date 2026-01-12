@@ -313,6 +313,11 @@ export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout
   if (guestBase === 0 && guestSize === 0) {
     throw new Error("Guest RAM layout was not initialized in status SAB (guest_base/guest_size are 0).");
   }
+  if (guestSize > PCI_MMIO_BASE) {
+    throw new Error(
+      `Guest RAM overlaps the PCI MMIO aperture: guest_size=0x${guestSize.toString(16)} PCI_MMIO_BASE=0x${PCI_MMIO_BASE.toString(16)}`,
+    );
+  }
 
   // wasm_pages isn't stored; infer from guest size + base.
   const totalBytes = guestBase + guestSize;
