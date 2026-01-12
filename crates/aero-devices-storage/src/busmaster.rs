@@ -102,6 +102,13 @@ pub struct BusMasterChannel {
 }
 
 impl BusMasterChannel {
+    // Defensive cap to prevent pathological PRD tables (e.g. millions of 1-byte entries) from
+    // turning a single synchronous DMA tick into an effectively unbounded loop.
+    //
+    // Real OS drivers use small PRD lists with reasonably-sized segments; treat exceeding this cap
+    // as a PRD table error.
+    const MAX_PRD_ENTRIES_PER_DMA: usize = 65_536;
+
     pub fn new() -> Self {
         Self {
             cmd: 0,
@@ -212,7 +219,15 @@ impl BusMasterChannel {
         }
 
         let mut saw_eot = false;
+        let mut entries_processed = 0usize;
         while remaining > 0 {
+            if entries_processed >= Self::MAX_PRD_ENTRIES_PER_DMA {
+                // We ran out of PRD entries we're willing to process; treat as a malformed/hostile
+                // PRD list (missing EOT / too fragmented).
+                return Err(DmaError::PrdMissingEndOfTable);
+            }
+            entries_processed += 1;
+
             let prd = PrdEntry::read_from(mem, prd_ptr);
             prd_ptr = prd_ptr.wrapping_add(8);
 
