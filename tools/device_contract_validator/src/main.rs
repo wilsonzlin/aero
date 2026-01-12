@@ -1612,7 +1612,7 @@ Signature="$Windows NT$"
             pci_device_id_transitional: None,
             hardware_id_patterns: aerogpu_patterns.iter().map(|s| s.to_string()).collect(),
             driver_service_name: "aerogpu".to_string(),
-            inf_name: "aerogpu.inf".to_string(),
+            inf_name: "aerogpu_dx11.inf".to_string(),
             virtio_device_type: None,
         };
         devices.insert(aero_gpu.device.clone(), aero_gpu);

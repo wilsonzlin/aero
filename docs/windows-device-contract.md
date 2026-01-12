@@ -128,13 +128,13 @@ All numeric values are shown as hexadecimal.
 | virtio-snd | `1AF4:1059` (REV `0x01`) | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aero_virtio_snd` | `aero_virtio_snd.inf` |
 | virtio-input (keyboard) | `1AF4:1052` (REV `0x01`) | `1AF4:0010` | `09/80/00` (input / other) | `aero_virtio_input` | `aero_virtio_input.inf` |
 | virtio-input (mouse) | `1AF4:1052` (REV `0x01`) | `1AF4:0011` | `09/80/00` (input / other) | `aero_virtio_input` | `aero_virtio_input.inf` |
-| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `aerogpu` | `aerogpu.inf` |
+| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `aerogpu` | `aerogpu_dx11.inf` |
 
 Notes:
 
-  - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
+  - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu_dx11.inf` (canonical CI-staged variant)
   - `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` (canonical / current ABI).
-  - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
+  - `aerogpu.inf` is a D3D9-only alternative INF that binds to the same device IDs (useful for bring-up/regression).
   - The deprecated legacy bring-up AeroGPU device model requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
   - Windows service names are case-insensitive. The canonical AeroGPU INFs install the `aerogpu` service (`AddService = aerogpu, ...`).
     The legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` use different casing (for example `AeroGPU`), but this contract normalizes the name to `aerogpu`.

@@ -6,7 +6,7 @@ rem Source of truth: Windows device contract JSON
 rem Generator: scripts/generate-guest-tools-devices-cmd.py
 rem Contract name: aero-windows-pci-device-contract
 rem Contract schema_version: 1
-rem Contract version: 1.0.4
+rem Contract version: 1.0.5
 rem -----------------------------------------------------------------------------
 
 rem This file is sourced by guest-tools\setup.cmd and guest-tools\uninstall.cmd.

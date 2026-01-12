@@ -182,7 +182,10 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     assert_eq!(device_id, AEROGPU_PCI_DEVICE_ID);
 
     assert_eq!(require_json_str(aerogpu, "driver_service_name"), "aerogpu");
-    assert_eq!(require_json_str(aerogpu, "inf_name"), "aerogpu.inf");
+    assert_eq!(
+        require_json_str(aerogpu, "inf_name"),
+        "aerogpu_dx11.inf"
+    );
 
     let expected_hwid_with_subsys = format!(
         "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}",
@@ -219,7 +222,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         "hardware_id_patterns for aero-gpu must not include legacy bring-up HWID {legacy_hwid}; the canonical Windows device contract is A3A0-only (got {patterns:?})",
     );
 
-    let aerogpu_inf_path = root.join("drivers/aerogpu/packaging/win7/aerogpu.inf");
+    let aerogpu_inf_path = root.join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf");
     assert!(
         aerogpu_inf_path.is_file(),
         "expected AeroGPU Win7 INF to exist at {}",
@@ -238,7 +241,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", aerogpu_inf_path.display()));
     assert!(
         aerogpu_inf_text.contains(&expected_hwid_short),
-        "aerogpu.inf must contain {expected_hwid_short:?}"
+        "aerogpu_dx11.inf must contain {expected_hwid_short:?}"
     );
     let expected_add_service = format!(
         "AddService = {}",
@@ -246,7 +249,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     );
     assert!(
         contains_needle(&aerogpu_inf_text, &expected_add_service),
-        "aerogpu.inf must contain {expected_add_service:?} (case-insensitive)"
+        "aerogpu_dx11.inf must contain {expected_add_service:?} (case-insensitive)"
     );
 
     // Keep the human-readable contract document in sync too (at least for the AeroGPU row).
@@ -277,7 +280,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         aerogpu_cells[3]
     );
     assert_eq!(aerogpu_cells[4], "`aerogpu`");
-    assert_eq!(aerogpu_cells[5], "`aerogpu.inf`");
+    assert_eq!(aerogpu_cells[5], "`aerogpu_dx11.inf`");
 
     // Make sure we don't keep stale contract text around under a different name.
     assert!(!contains_needle(&contract_text, "A0E0"));
@@ -288,7 +291,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     assert!(!contains_needle(&contract_text, legacy_vendor_id));
     assert!(!contains_needle(&contract_md_text, legacy_vendor_id));
     // Historical contract drafts used a different INF name; keep the canonical contract pinned to
-    // `drivers/aerogpu/packaging/win7/aerogpu.inf`.
+    // `drivers/aerogpu/packaging/win7/aerogpu_dx11.inf`.
     assert!(!contains_needle(&contract_text, "aero-gpu.inf"));
     assert!(!contains_needle(&contract_md_text, "aero-gpu.inf"));
     // The contract must only reference the canonical driver packages under `drivers/` (not the
@@ -489,7 +492,7 @@ fn windows_device_contract_driver_service_names_match_driver_infs() {
         ),
         (
             "aero-gpu",
-            root.join("drivers/aerogpu/packaging/win7/aerogpu.inf"),
+            root.join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf"),
         ),
     ];
 

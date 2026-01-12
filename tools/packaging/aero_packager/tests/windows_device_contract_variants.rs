@@ -234,7 +234,7 @@ fn virtio_win_device_contract_only_overrides_service_names() -> anyhow::Result<(
         ("virtio-input", "vioinput", "vioinput.inf", Some(18u64)),
         ("virtio-snd", "viosnd", "viosnd.inf", Some(25u64)),
         // AeroGPU is not part of virtio-win; it should remain unchanged.
-        ("aero-gpu", "aerogpu", "aerogpu.inf", None),
+        ("aero-gpu", "aerogpu", "aerogpu_dx11.inf", None),
     ];
 
     for (device_name, virtio_service, virtio_inf, virtio_type) in expected_overrides {
