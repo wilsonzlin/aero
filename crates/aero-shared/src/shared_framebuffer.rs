@@ -500,7 +500,9 @@ impl SharedFramebufferWriter {
     {
         let header = self.shared.header();
 
-        let active = header.active_index.load(Ordering::SeqCst) as usize;
+        // The header lives in shared memory and can be corrupted. Clamp to a valid slot so we
+        // don't panic when computing the back buffer.
+        let active = (header.active_index.load(Ordering::SeqCst) & 1) as usize;
         let back = active ^ 1;
 
         // Safety: producer only writes to the back buffer.
@@ -928,6 +930,27 @@ mod tests {
                 height,
             }]
         );
+    }
+
+    #[test]
+    fn writer_clamps_active_index_when_corrupted() {
+        let layout = SharedFramebufferLayout::new_rgba8(32, 32, 32).unwrap();
+        let mut backing = Backing::new(layout);
+        let shared = backing.shared();
+        shared.header().init(layout);
+
+        // Corrupt the header: active_index must be 0 or 1, but the writer should tolerate other
+        // values by clamping to a valid slot.
+        shared.header().active_index.store(2, Ordering::SeqCst);
+
+        let writer = SharedFramebufferWriter::new(shared);
+        writer.write_frame(|buf, _dirty, _layout| {
+            buf.fill(0xAA);
+        });
+
+        // active_index=2 -> clamped active=0 -> back=1.
+        assert_eq!(shared.header().active_index.load(Ordering::SeqCst), 1);
+        assert_eq!(shared.framebuffer(1)[0], 0xAA);
     }
 }
 
