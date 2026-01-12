@@ -113,6 +113,7 @@ pub struct PcMachine {
     disk: VecBlockDevice,
 
     network_backend: Option<Box<dyn NetworkBackend>>,
+    e1000_mac_addr: Option<[u8; 6]>,
 }
 
 impl PcMachine {
@@ -129,7 +130,31 @@ impl PcMachine {
         .expect("PcMachineConfig derived from `ram_size_bytes` should be valid")
     }
 
+    /// Construct a new PC machine with the E1000 PCI NIC enabled.
+    ///
+    /// This is a convenience wrapper for deterministic native/WASM integration tests that only
+    /// need the PCI-capable platform + E1000 + a network backend bridge.
+    pub fn new_with_e1000(ram_size_bytes: usize, mac: Option<[u8; 6]>) -> Self {
+        Self::new_with_config_and_mac(
+            PcMachineConfig {
+                ram_size_bytes: ram_size_bytes as u64,
+                cpu_count: 1,
+                enable_hda: false,
+                enable_e1000: true,
+            },
+            mac,
+        )
+        .expect("PcMachineConfig derived from `ram_size_bytes` should be valid")
+    }
+
     pub fn new_with_config(cfg: PcMachineConfig) -> Result<Self, MachineError> {
+        Self::new_with_config_and_mac(cfg, None)
+    }
+
+    fn new_with_config_and_mac(
+        cfg: PcMachineConfig,
+        e1000_mac_addr: Option<[u8; 6]>,
+    ) -> Result<Self, MachineError> {
         if cfg.cpu_count != 1 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
@@ -142,6 +167,7 @@ impl PcMachine {
             PcPlatformConfig {
                 enable_hda: cfg.enable_hda,
                 enable_e1000: cfg.enable_e1000,
+                mac_addr: e1000_mac_addr,
                 ..Default::default()
             },
         );
@@ -154,6 +180,7 @@ impl PcMachine {
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
+            e1000_mac_addr,
         };
 
         machine.reset();
@@ -210,6 +237,16 @@ impl PcMachine {
         self.attach_l2_tunnel_rings(tx, rx);
     }
 
+    /// Install/replace the host-side network backend used by any emulated NICs (currently E1000).
+    pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
+        self.network_backend = Some(backend);
+    }
+
+    /// Detach (drop) any currently installed network backend.
+    pub fn detach_network(&mut self) {
+        self.network_backend = None;
+    }
+
     /// Reset the machine and transfer control to firmware POST (boot sector).
     pub fn reset(&mut self) {
         let ram_size = usize::try_from(self.cfg.ram_size_bytes)
@@ -221,6 +258,7 @@ impl PcMachine {
             PcPlatformConfig {
                 enable_hda: self.cfg.enable_hda,
                 enable_e1000: self.cfg.enable_e1000,
+                mac_addr: self.e1000_mac_addr,
                 ..Default::default()
             },
         ));
