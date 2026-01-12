@@ -224,7 +224,10 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 8,
+        // Keep this conservative: each forked Node process spawns its own worker threads.
+        // In heavily sandboxed environments, even a handful of extra threads can push the
+        // process over the pthread/rlimit ceiling and crash the Vitest runner.
+        maxForks: 4,
       },
     },
     // Keep Vitest scoped to unit tests under src/, plus any dedicated Vitest
