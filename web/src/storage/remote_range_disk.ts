@@ -170,10 +170,22 @@ function abortAny(signals: AbortSignal[]): AbortSignal {
 
   // Fallback: create a composite signal. This can attach a small number of listeners over the disk lifetime.
   const controller = new AbortController();
-  const onAbort = () => controller.abort();
+  const onAbort = () => {
+    controller.abort();
+    // Remove any remaining listeners. Without this, a short-lived signal (e.g. per-generation abort)
+    // aborting would leave the listener attached to the long-lived signal (e.g. disk close abort),
+    // which can accumulate if we frequently replace the short-lived signal (clearCache/invalidate).
+    for (const s of signals) {
+      try {
+        s.removeEventListener("abort", onAbort);
+      } catch {
+        // ignore
+      }
+    }
+  };
   for (const s of signals) {
     if (s.aborted) {
-      controller.abort();
+      onAbort();
       break;
     }
     s.addEventListener("abort", onAbort, { once: true });
