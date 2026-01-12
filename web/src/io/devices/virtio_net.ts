@@ -23,6 +23,12 @@ export type VirtioNetPciBridgeLike = {
    * Optional per-tick hook (canonical in current WASM builds).
    */
   tick?: (nowMs?: number) => void;
+  /**
+   * Optional hook for mirroring PCI command register writes into the WASM bridge.
+   *
+   * When present, this is used to enforce DMA gating based on Bus Master Enable.
+   */
+  set_pci_command?(command: number): void;
   irq_level?(): boolean;
   irq_asserted?(): boolean;
   free(): void;
@@ -260,6 +266,17 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   onPciCommandWrite(command: number): void {
     if (this.#destroyed) return;
     this.#pciCommand = command & 0xffff;
+
+    // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
+    const setCmd = this.#bridge.set_pci_command;
+    if (typeof setCmd === "function") {
+      try {
+        setCmd.call(this.#bridge, this.#pciCommand >>> 0);
+      } catch {
+        // ignore device errors during PCI config writes
+      }
+    }
+
     // Interrupt Disable bit can immediately drop INTx level.
     this.#syncIrq();
   }
@@ -318,8 +335,9 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     // PCI Bus Master Enable (command bit 2) gates whether the device is allowed to DMA into guest
     // memory (virtqueue descriptor reads / used-ring writes / RX buffer fills).
     //
-    // The WASM virtio-pci backend does not currently mirror the JS PCI config space, so enforce the
-    // bus-master gate here (mirrors the canonical Rust PC platform behavior).
+    // Mirror/gating note:
+    // - Newer WASM builds can also enforce this via `set_pci_command`, but keep a wrapper-side gate
+    //   so older builds remain correct and we avoid invoking poll/tick unnecessarily.
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
 
     const bridge = this.#bridge;

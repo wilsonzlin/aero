@@ -65,6 +65,8 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     let io_ipc_sab = make_io_ipc_sab();
     let mut bridge = VirtioNetPciBridge::new(guest_base, guest_size, io_ipc_sab, None)
         .expect("VirtioNetPciBridge::new");
+    // Allow the device to DMA into guest memory (virtqueue descriptor reads / used writes).
+    bridge.set_pci_command(0x0004);
 
     // Unknown BAR0 reads should return 0.
     assert_eq!(bridge.mmio_read(0x500, 4), 0);

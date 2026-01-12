@@ -201,9 +201,11 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(mgr.portRead(bar2Base + VIRTIO_PCI_LEGACY_HOST_FEATURES, 4) >>> 0).toBe(0xffff_ffff);
 
       const cmdBefore = cfgReadU16(pciAddr, 0x04);
-      cfgWriteU32(pciAddr, 0x04, (cmdBefore | 0x1) >>> 0);
+      // Enable I/O decoding (bit 0) + Bus Master Enable (bit 2).
+      cfgWriteU32(pciAddr, 0x04, (cmdBefore | 0x5) >>> 0);
       const cmdAfter = cfgReadU16(pciAddr, 0x04);
       expect((cmdAfter & 0x0001) !== 0).toBe(true);
+      expect((cmdAfter & 0x0004) !== 0).toBe(true);
 
       // ---------------------------------------------------------------------------------------
       // Virtio legacy init (feature negotiation).

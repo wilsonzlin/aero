@@ -159,6 +159,7 @@ pub struct VirtioNetPciBridge {
     dev: VirtioPciDevice,
     irq_asserted: Rc<Cell<bool>>,
     legacy_io_size: u32,
+    pci_command: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,7 +296,18 @@ impl VirtioNetPciBridge {
             dev,
             irq_asserted: asserted,
             legacy_io_size,
+            pci_command: 0,
         })
+    }
+
+    /// Mirror the guest-written PCI command register (0x04, low 16 bits) into the WASM device
+    /// wrapper.
+    ///
+    /// This is used to enforce PCI Bus Master Enable gating for DMA. In a JS runtime, the PCI
+    /// configuration space lives in TypeScript (`PciBus`), so the WASM bridge must be updated via
+    /// this explicit hook.
+    pub fn set_pci_command(&mut self, command: u32) {
+        self.pci_command = (command & 0xffff) as u16;
     }
 
     pub fn mmio_read(&mut self, offset: u32, size: u8) -> u32 {
@@ -349,7 +361,10 @@ impl VirtioNetPciBridge {
         // browser runtime we have access to guest RAM in the WASM linear memory, so we can
         // service the notified virtqueue synchronously instead of requiring periodic polling.
         if offset as u64 == VIRTIO_PCI_LEGACY_QUEUE_NOTIFY {
-            self.dev.process_notified_queues(&mut self.mem);
+            // Only DMA when PCI Bus Master Enable is set (command bit 2).
+            if (self.pci_command & (1 << 2)) != 0 {
+                self.dev.process_notified_queues(&mut self.mem);
+            }
         }
     }
 
@@ -371,6 +386,10 @@ impl VirtioNetPciBridge {
 
     /// Process any pending queue work and host-driven events (e.g. `NET_RX` packets).
     pub fn poll(&mut self) {
+        // Only DMA when PCI Bus Master Enable is set (command bit 2).
+        if (self.pci_command & (1 << 2)) == 0 {
+            return;
+        }
         self.dev.poll(&mut self.mem);
     }
 
