@@ -95,7 +95,7 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 | `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
-| `DEVICES` | List of device states (PIC/APIC/PLATFORM_INTERRUPTS/PIT/RTC/I8042/HPET/ACPI_PM/PCI/Disk/VGA/etc) as typed TLVs |
+| `DEVICES` | List of device states (PIC/APIC/PLATFORM_INTERRUPTS/PIT/RTC/I8042/HPET/ACPI_PM/PCI_CFG/PCI_INTX_ROUTER/DISK_CONTROLLER/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
 
