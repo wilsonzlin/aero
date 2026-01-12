@@ -45,6 +45,8 @@ These values are also checked at compile time in WDK builds via:
 - `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_asserts.h`
 - `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h`
 
+Note: some WDK header sets may not expose the `PFND3D10DDI_OPENADAPTER` / `PFND3D11DDI_OPENADAPTER` typedefs. The probe will still print `_OpenAdapter*@N` values by falling back to the canonical `HRESULT(__stdcall*)(D3D10DDIARG_OPENADAPTER*)` signature so the `.def` file can be validated and the expected-header generator can run.
+
 ### 2) Verify UMD exports with `dumpbin`
 
 From a Visual Studio Developer Command Prompt:
