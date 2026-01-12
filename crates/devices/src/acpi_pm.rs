@@ -398,6 +398,24 @@ impl<C: Clock> AcpiPmIo<C> {
 
     fn port_read(&mut self, port: u16, size: u8) -> u32 {
         let size = size.clamp(1, 4);
+
+        // PM_TMR is a free-running counter; multi-byte reads should return a stable value even if
+        // the clock advances between per-byte reads.
+        if port >= self.cfg.pm_tmr_blk
+            && port < self.cfg.pm_tmr_blk + PM_TMR_LEN
+            && (port as u32 + size as u32) <= (self.cfg.pm_tmr_blk + PM_TMR_LEN) as u32
+        {
+            let base_off = (port - self.cfg.pm_tmr_blk) as u32;
+            let v = self.pm_timer_value();
+            let mut out = 0u32;
+            for i in 0..(size as u32) {
+                let shift = (base_off + i) * 8;
+                let b = (v >> shift) & 0xFF;
+                out |= b << (i * 8);
+            }
+            return out;
+        }
+
         let mut out = 0u32;
         for i in 0..(size as u32) {
             let b = self.port_read_u8(port.wrapping_add(i as u16)) as u32;
