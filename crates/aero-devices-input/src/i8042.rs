@@ -978,6 +978,8 @@ impl IoSnapshot for I8042Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn pending_output_queue_is_bounded_during_runtime() {
@@ -1025,5 +1027,46 @@ mod tests {
             dev.pending_output.back().unwrap().value,
             (MAX_PENDING_OUTPUT + 9) as u8
         );
+    }
+
+    #[test]
+    fn irq_pulses_on_output_buffer_refill_after_port60_read() {
+        #[derive(Clone)]
+        struct TestIrqSink {
+            raised: Rc<RefCell<Vec<u8>>>,
+        }
+
+        impl IrqSink for TestIrqSink {
+            fn raise_irq(&mut self, irq: u8) {
+                self.raised.borrow_mut().push(irq);
+            }
+        }
+
+        let raised = Rc::new(RefCell::new(Vec::new()));
+        let mut dev = I8042Controller::new();
+        dev.set_irq_sink(Box::new(TestIrqSink {
+            raised: raised.clone(),
+        }));
+
+        // Inject a single key scancode. The controller should load it into the output buffer and
+        // emit an IRQ1 pulse immediately.
+        dev.inject_key_scancode_bytes(&[0x1c]);
+        assert_eq!(&*raised.borrow(), &[1]);
+        raised.borrow_mut().clear();
+
+        // Inject another key while the output buffer is still full. No new IRQ should be emitted
+        // until the guest reads the first byte.
+        dev.inject_key_scancode_bytes(&[0x32]);
+        assert!(raised.borrow().is_empty());
+
+        // Read port 0x60 to consume the first byte. The controller should immediately refill the
+        // output buffer from the queued key and emit another IRQ1 pulse.
+        let _ = dev.read_port(0x60);
+        assert_eq!(&*raised.borrow(), &[1]);
+        raised.borrow_mut().clear();
+
+        // Reading the final byte should not generate any additional pulses.
+        let _ = dev.read_port(0x60);
+        assert!(raised.borrow().is_empty());
     }
 }
