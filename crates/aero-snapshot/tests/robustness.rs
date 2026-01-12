@@ -871,6 +871,58 @@ fn restore_snapshot_rejects_meta_label_too_long() {
 }
 
 #[test]
+fn restore_snapshot_rejects_meta_label_invalid_utf8() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut meta_payload = Vec::new();
+    meta_payload.extend_from_slice(&1u64.to_le_bytes()); // snapshot_id
+    meta_payload.push(0); // parent_present
+    meta_payload.extend_from_slice(&0u64.to_le_bytes()); // created_unix_ms
+    meta_payload.push(1); // label_present
+    meta_payload.extend_from_slice(&1u32.to_le_bytes()); // label len
+    meta_payload.push(0xFF); // invalid UTF-8 byte
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("label: invalid utf-8")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_meta_label_truncated_string_bytes() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut meta_payload = Vec::new();
+    meta_payload.extend_from_slice(&1u64.to_le_bytes()); // snapshot_id
+    meta_payload.push(0); // parent_present
+    meta_payload.extend_from_slice(&0u64.to_le_bytes()); // created_unix_ms
+    meta_payload.push(1); // label_present
+    meta_payload.extend_from_slice(&1u32.to_le_bytes()); // label len
+    // Missing label byte.
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("label: truncated string bytes")
+    ));
+}
+
+#[test]
 fn restore_snapshot_rejects_disks_base_image_too_long() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(SNAPSHOT_MAGIC);
@@ -892,6 +944,55 @@ fn restore_snapshot_rejects_disks_base_image_too_long() {
     assert!(matches!(
         err,
         SnapshotError::Corrupt("disk base_image too long")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_disks_invalid_utf8() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut disks_payload = Vec::new();
+    disks_payload.extend_from_slice(&1u32.to_le_bytes()); // count
+    disks_payload.extend_from_slice(&0u32.to_le_bytes()); // disk_id
+    disks_payload.extend_from_slice(&1u32.to_le_bytes()); // base_image len
+    disks_payload.push(0xFF); // invalid UTF-8 byte
+    disks_payload.extend_from_slice(&0u32.to_le_bytes()); // overlay_image len
+    push_section(&mut bytes, SectionId::DISKS, 1, 0, &disks_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("disk base_image: invalid utf-8")
+    ));
+}
+
+#[test]
+fn restore_snapshot_rejects_disks_truncated_string_bytes() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    // DISKS payload with base_image length prefix set but no bytes following.
+    let mut disks_payload = Vec::new();
+    disks_payload.extend_from_slice(&1u32.to_le_bytes()); // count
+    disks_payload.extend_from_slice(&0u32.to_le_bytes()); // disk_id
+    disks_payload.extend_from_slice(&1u32.to_le_bytes()); // base_image len
+    push_section(&mut bytes, SectionId::DISKS, 1, 0, &disks_payload);
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::Corrupt("disk base_image: truncated string bytes")
     ));
 }
 

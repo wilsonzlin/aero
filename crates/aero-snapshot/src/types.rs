@@ -11,13 +11,20 @@ fn decode_string_u32_bounded<R: Read>(
     r: &mut R,
     max_len: u32,
     too_long_error: &'static str,
+    truncated_error: &'static str,
+    invalid_utf8_error: &'static str,
 ) -> Result<String> {
     let len = r.read_u32_le()?;
     if len > max_len {
         return Err(SnapshotError::Corrupt(too_long_error));
     }
-    let bytes = r.read_exact_vec(len as usize)?;
-    Ok(String::from_utf8(bytes)?)
+    let mut bytes = Vec::with_capacity(len as usize);
+    let mut limited = r.take(len as u64);
+    limited.read_to_end(&mut bytes)?;
+    if limited.limit() != 0 {
+        return Err(SnapshotError::Corrupt(truncated_error));
+    }
+    String::from_utf8(bytes).map_err(|_| SnapshotError::Corrupt(invalid_utf8_error))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -68,6 +75,8 @@ impl SnapshotMeta {
                 r,
                 limits::MAX_LABEL_LEN,
                 "label too long",
+                "label: truncated string bytes",
+                "label: invalid utf-8",
             )?),
             _ => return Err(SnapshotError::Corrupt("invalid label presence tag")),
         };
@@ -962,11 +971,15 @@ impl DiskOverlayRef {
                 r,
                 limits::MAX_DISK_PATH_LEN,
                 "disk base_image too long",
+                "disk base_image: truncated string bytes",
+                "disk base_image: invalid utf-8",
             )?,
             overlay_image: decode_string_u32_bounded(
                 r,
                 limits::MAX_DISK_PATH_LEN,
                 "disk overlay_image too long",
+                "disk overlay_image: truncated string bytes",
+                "disk overlay_image: invalid utf-8",
             )?,
         })
     }
