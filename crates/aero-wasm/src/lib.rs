@@ -1921,6 +1921,33 @@ impl RunExit {
     }
 }
 
+/// DOM-style mouse button IDs (mirrors `MouseEvent.button`).
+///
+/// This enum exists for JS ergonomics; the canonical machine wrapper also provides explicit helpers
+/// (`Machine::inject_mouse_left/right/middle`) and accepts raw numeric values.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left = 0,
+    Middle = 1,
+    Right = 2,
+}
+
+/// Mouse buttons bit values matching `MouseEvent.buttons`.
+///
+/// This is a "bitflag-like" enum: values can be OR'd together to build a mask.
+///
+/// - bit0 (`0x01`): left
+/// - bit1 (`0x02`): right
+/// - bit2 (`0x04`): middle
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButtons {
+    Left = 0x01,
+    Right = 0x02,
+    Middle = 0x04,
+}
+
 #[wasm_bindgen]
 pub struct Machine {
     inner: aero_machine::Machine,
