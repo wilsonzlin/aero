@@ -71,7 +71,7 @@ mod platform_handle {
         use crate::DiskError;
 
         match err {
-            DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
+            DiskError::NotSupported(_) | DiskError::BackendUnavailable => {
                 io::Error::new(io::ErrorKind::Unsupported, err.to_string())
             }
             DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
@@ -79,11 +79,17 @@ mod platform_handle {
             DiskError::InvalidState(_) => {
                 io::Error::new(io::ErrorKind::BrokenPipe, err.to_string())
             }
-            DiskError::OutOfBounds | DiskError::InvalidBufferLength => {
+            DiskError::UnalignedLength { .. }
+            | DiskError::OutOfBounds { .. }
+            | DiskError::OffsetOverflow => {
                 io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
             }
-            DiskError::CorruptImage(_) => {
+            DiskError::InvalidSparseHeader(_)
+            | DiskError::CorruptSparseImage(_) => {
                 io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+            }
+            DiskError::InvalidConfig(_) => {
+                io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
             }
             DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }

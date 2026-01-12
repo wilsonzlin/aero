@@ -52,16 +52,22 @@ mod wasm {
 
     fn disk_error_from_idb(err: StIdbError) -> DiskError {
         match err {
-            StIdbError::IndexedDbUnavailable => {
-                DiskError::NotSupported("IndexedDB is unavailable in this context".to_string())
-            }
+            StIdbError::IndexedDbUnavailable => DiskError::BackendUnavailable,
             StIdbError::QuotaExceeded => DiskError::QuotaExceeded,
-            StIdbError::OutOfBounds { .. } => DiskError::OutOfBounds,
-            StIdbError::Corrupt(msg) => DiskError::CorruptImage(msg),
-            StIdbError::UnsupportedFormat(version) => {
-                DiskError::Io(format!("unsupported indexeddb format version {version}"))
-            }
-            StIdbError::Js(err) => DiskError::Io(format!("{err:?}")),
+            StIdbError::OutOfBounds {
+                offset,
+                len,
+                capacity,
+            } => DiskError::OutOfBounds {
+                offset,
+                len,
+                capacity,
+            },
+            StIdbError::Corrupt(msg) => DiskError::Io(format!("indexeddb corrupt: {msg}")),
+            StIdbError::UnsupportedFormat(version) => DiskError::NotSupported(format!(
+                "unsupported indexeddb format version {version}"
+            )),
+            StIdbError::Js(err) => opfs_platform::disk_error_from_js(err),
         }
     }
 
@@ -202,10 +208,14 @@ mod wasm {
             }
             let end = offset
                 .checked_add(buf.len() as u64)
-                .ok_or_else(|| DiskError::OutOfBounds)?;
+                .ok_or(DiskError::OffsetOverflow)?;
             let size = self.len()?;
             if end > size {
-                return Err(DiskError::OutOfBounds);
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: buf.len(),
+                    capacity: size,
+                });
             }
             self.read_exact(offset, buf)
         }
@@ -218,7 +228,7 @@ mod wasm {
             }
             let end = offset
                 .checked_add(buf.len() as u64)
-                .ok_or_else(|| DiskError::OutOfBounds)?;
+                .ok_or(DiskError::OffsetOverflow)?;
             self.ensure_capacity(end)?;
             self.write_all(offset, buf)
         }
@@ -261,54 +271,25 @@ mod wasm {
         }
     }
 
-    fn storage_error_from_opfs(err: DiskError) -> aero_storage::DiskError {
-        match err {
-            DiskError::NotSupported(msg) => aero_storage::DiskError::NotSupported(msg),
-            DiskError::QuotaExceeded => aero_storage::DiskError::QuotaExceeded,
-            DiskError::InUse => aero_storage::DiskError::InUse,
-            DiskError::InvalidState(msg) => aero_storage::DiskError::InvalidState(msg),
-            DiskError::Unsupported(msg) => aero_storage::DiskError::NotSupported(msg.to_string()),
-            DiskError::Io(msg) => aero_storage::DiskError::Io(msg),
-            other => aero_storage::DiskError::Io(other.to_string()),
-        }
-    }
-
     impl aero_storage::StorageBackend for OpfsByteStorage {
         fn len(&mut self) -> aero_storage::Result<u64> {
-            OpfsByteStorage::len(self).map_err(storage_error_from_opfs)
+            OpfsByteStorage::len(self)
         }
 
         fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
-            OpfsByteStorage::set_len(self, len).map_err(storage_error_from_opfs)
+            OpfsByteStorage::set_len(self, len)
         }
 
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-            match OpfsByteStorage::read_at(self, offset, buf) {
-                Ok(()) => Ok(()),
-                Err(DiskError::OutOfBounds) => {
-                    let capacity = OpfsByteStorage::len(self).unwrap_or(0);
-                    Err(aero_storage::DiskError::OutOfBounds {
-                        offset,
-                        len: buf.len(),
-                        capacity,
-                    })
-                }
-                Err(err) => Err(storage_error_from_opfs(err)),
-            }
+            OpfsByteStorage::read_at(self, offset, buf)
         }
 
         fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
-            match OpfsByteStorage::write_at(self, offset, buf) {
-                Ok(()) => Ok(()),
-                // `OpfsByteStorage::write_at` uses `OutOfBounds` for integer overflow when
-                // computing `offset + len`.
-                Err(DiskError::OutOfBounds) => Err(aero_storage::DiskError::OffsetOverflow),
-                Err(err) => Err(storage_error_from_opfs(err)),
-            }
+            OpfsByteStorage::write_at(self, offset, buf)
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            OpfsByteStorage::flush(self).map_err(storage_error_from_opfs)
+            OpfsByteStorage::flush(self)
         }
     }
 
@@ -466,7 +447,7 @@ mod wasm {
             Ok(backend)
         }
 
-        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<()> {
+        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<(u64, u64)> {
             if self.closed {
                 return Err(DiskError::InvalidState(
                     "backend already closed".to_string(),
@@ -474,17 +455,27 @@ mod wasm {
             }
 
             if len_bytes as u64 % self.sector_size as u64 != 0 {
-                return Err(DiskError::InvalidBufferLength);
+                return Err(DiskError::UnalignedLength {
+                    len: len_bytes,
+                    alignment: self.sector_size as usize,
+                });
             }
 
-            let sectors = len_bytes as u64 / self.sector_size as u64;
-            let end = lba
-                .checked_add(sectors)
-                .ok_or_else(|| DiskError::OutOfBounds)?;
-            if end > self.total_sectors {
-                return Err(DiskError::OutOfBounds);
+            let offset = lba
+                .checked_mul(self.sector_size as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let end = offset
+                .checked_add(len_bytes as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if end > self.size_bytes {
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: len_bytes,
+                    capacity: self.size_bytes,
+                });
             }
-            Ok(())
+
+            Ok((offset, end))
         }
 
         fn read_exact(&mut self, mut offset: u64, mut buf: &mut [u8]) -> DiskResult<()> {
@@ -534,18 +525,12 @@ mod wasm {
         }
 
         pub fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
-            self.check_io_bounds(lba, buf.len())?;
-            let offset = lba
-                .checked_mul(self.sector_size as u64)
-                .ok_or(DiskError::OutOfBounds)?;
+            let (offset, _) = self.check_io_bounds(lba, buf.len())?;
             self.read_exact(offset, buf)
         }
 
         pub fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
-            self.check_io_bounds(lba, buf.len())?;
-            let offset = lba
-                .checked_mul(self.sector_size as u64)
-                .ok_or(DiskError::OutOfBounds)?;
+            let (offset, _) = self.check_io_bounds(lba, buf.len())?;
             self.write_all(offset, buf)
         }
 
@@ -569,16 +554,16 @@ mod wasm {
 
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
             if self.closed {
-                return Err(aero_storage::DiskError::InvalidState(
+                return Err(DiskError::InvalidState(
                     "backend already closed".to_string(),
                 ));
             }
 
             let end = offset
                 .checked_add(buf.len() as u64)
-                .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+                .ok_or(DiskError::OffsetOverflow)?;
             if end > self.size_bytes {
-                return Err(aero_storage::DiskError::OutOfBounds {
+                return Err(DiskError::OutOfBounds {
                     offset,
                     len: buf.len(),
                     capacity: self.size_bytes,
@@ -586,21 +571,20 @@ mod wasm {
             }
 
             self.read_exact(offset, buf)
-                .map_err(storage_error_from_opfs)
         }
 
         fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
             if self.closed {
-                return Err(aero_storage::DiskError::InvalidState(
+                return Err(DiskError::InvalidState(
                     "backend already closed".to_string(),
                 ));
             }
 
             let end = offset
                 .checked_add(buf.len() as u64)
-                .ok_or(aero_storage::DiskError::OffsetOverflow)?;
+                .ok_or(DiskError::OffsetOverflow)?;
             if end > self.size_bytes {
-                return Err(aero_storage::DiskError::OutOfBounds {
+                return Err(DiskError::OutOfBounds {
                     offset,
                     len: buf.len(),
                     capacity: self.size_bytes,
@@ -608,11 +592,10 @@ mod wasm {
             }
 
             self.write_all(offset, buf)
-                .map_err(storage_error_from_opfs)
         }
 
         fn flush(&mut self) -> aero_storage::Result<()> {
-            OpfsBackend::flush(self).map_err(storage_error_from_opfs)
+            OpfsBackend::flush(self)
         }
     }
 
@@ -693,7 +676,7 @@ mod wasm {
             })
         }
 
-        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<()> {
+        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<(u64, u64)> {
             if self.closed {
                 return Err(DiskError::InvalidState(
                     "backend already closed".to_string(),
@@ -701,17 +684,27 @@ mod wasm {
             }
 
             if len_bytes as u64 % self.sector_size as u64 != 0 {
-                return Err(DiskError::InvalidBufferLength);
+                return Err(DiskError::UnalignedLength {
+                    len: len_bytes,
+                    alignment: self.sector_size as usize,
+                });
             }
 
-            let sectors = len_bytes as u64 / self.sector_size as u64;
-            let end = lba
-                .checked_add(sectors)
-                .ok_or_else(|| DiskError::OutOfBounds)?;
-            if end > self.total_sectors {
-                return Err(DiskError::OutOfBounds);
+            let offset = lba
+                .checked_mul(self.sector_size as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let end = offset
+                .checked_add(len_bytes as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if end > self.size_bytes {
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: len_bytes,
+                    capacity: self.size_bytes,
+                });
             }
-            Ok(())
+
+            Ok((offset, end))
         }
 
         async fn ensure_writable(&mut self) -> DiskResult<&opfs_platform::WritableStream> {
@@ -734,15 +727,8 @@ mod wasm {
         }
 
         pub async fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
-            self.check_io_bounds(lba, buf.len())?;
+            let (offset, end) = self.check_io_bounds(lba, buf.len())?;
             self.flush_writable_if_dirty().await?;
-
-            let offset = lba
-                .checked_mul(self.sector_size as u64)
-                .ok_or(DiskError::OutOfBounds)?;
-            let end = offset
-                .checked_add(buf.len() as u64)
-                .ok_or(DiskError::OutOfBounds)?;
 
             let file_obj = opfs_platform::get_file_obj(&self.file).await?;
             let start = u64_to_f64_checked(offset)?;
@@ -760,11 +746,7 @@ mod wasm {
         }
 
         pub async fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
-            self.check_io_bounds(lba, buf.len())?;
-
-            let offset = lba
-                .checked_mul(self.sector_size as u64)
-                .ok_or(DiskError::OutOfBounds)?;
+            let (offset, _) = self.check_io_bounds(lba, buf.len())?;
 
             let stream = self.ensure_writable().await?.clone();
             opfs_platform::writable_seek(&stream, u64_to_f64_checked(offset)?).await?;
@@ -833,7 +815,7 @@ mod wasm {
             })
         }
 
-        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<()> {
+        fn check_io_bounds(&self, lba: u64, len_bytes: usize) -> DiskResult<(u64, u64)> {
             if self.closed {
                 return Err(DiskError::InvalidState(
                     "backend already closed".to_string(),
@@ -841,24 +823,31 @@ mod wasm {
             }
 
             if len_bytes as u64 % self.sector_size as u64 != 0 {
-                return Err(DiskError::InvalidBufferLength);
+                return Err(DiskError::UnalignedLength {
+                    len: len_bytes,
+                    alignment: self.sector_size as usize,
+                });
             }
 
-            let sectors = len_bytes as u64 / self.sector_size as u64;
-            let end = lba
-                .checked_add(sectors)
-                .ok_or_else(|| DiskError::OutOfBounds)?;
-            if end > self.total_sectors {
-                return Err(DiskError::OutOfBounds);
+            let offset = lba
+                .checked_mul(self.sector_size as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let end = offset
+                .checked_add(len_bytes as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if end > self.size_bytes {
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: len_bytes,
+                    capacity: self.size_bytes,
+                });
             }
-            Ok(())
+
+            Ok((offset, end))
         }
 
         pub async fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
-            self.check_io_bounds(lba, buf.len())?;
-            let offset = lba
-                .checked_mul(self.sector_size as u64)
-                .ok_or(DiskError::OutOfBounds)?;
+            let (offset, _) = self.check_io_bounds(lba, buf.len())?;
             self.inner
                 .read_at(offset, buf)
                 .await
@@ -866,10 +855,7 @@ mod wasm {
         }
 
         pub async fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
-            self.check_io_bounds(lba, buf.len())?;
-            let offset = lba
-                .checked_mul(self.sector_size as u64)
-                .ok_or(DiskError::OutOfBounds)?;
+            let (offset, _) = self.check_io_bounds(lba, buf.len())?;
             self.inner
                 .write_at(offset, buf)
                 .await
