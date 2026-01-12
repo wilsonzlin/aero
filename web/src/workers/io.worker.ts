@@ -34,10 +34,15 @@ import {
   IO_IPC_HID_IN_QUEUE_KIND,
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
+  HIGH_RAM_START,
+  LOW_RAM_END,
   StatusIndex,
   createSharedMemoryViews,
+  guestPaddrToRamOffset,
+  guestRangeInBounds,
   ringRegionsForWorker,
   setReadyFlag,
+  type GuestRamLayout,
   type WorkerRole,
 } from "../runtime/shared_layout";
 import {
@@ -184,6 +189,7 @@ let status!: Int32Array;
 let guestU8!: Uint8Array;
 let guestBase = 0;
 let guestSize = 0;
+let guestLayout: GuestRamLayout | null = null;
 let sharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
 
 function rangesOverlap(aStart: number, aLen: number, bStart: number, bLen: number): boolean {
@@ -3613,6 +3619,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       const views = createSharedMemoryViews(segments);
       status = views.status;
       guestU8 = views.guestU8;
+      guestLayout = views.guestLayout;
       guestBase = views.guestLayout.guest_base >>> 0;
       guestSize = views.guestLayout.guest_size >>> 0;
       sharedFramebuffer = { sab: segments.sharedFramebuffer, offsetBytes: segments.sharedFramebufferOffsetBytes ?? 0 };
@@ -4454,12 +4461,51 @@ function enqueueIoEvent(bytes: Uint8Array, opts?: { bestEffort?: boolean }): voi
 }
 
 function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
-  const guestBytes = BigInt(guestU8.byteLength);
+  const layout = guestLayout;
+  if (!layout) return null;
+
+  const length = len >>> 0;
   if (guestOffset < 0n) return null;
-  const end = guestOffset + BigInt(len >>> 0);
-  if (end > guestBytes) return null;
-  const start = Number(guestOffset);
-  return guestU8.subarray(start, start + (len >>> 0));
+  if (guestOffset > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+
+  // `guestOffset` is a guest physical address. Once PCI/ECAM holes are modeled, guest physical
+  // memory is non-contiguous while `guestU8` remains a flat backing store of RAM bytes.
+  //
+  // Translate guest physical -> backing-store offset (or reject holes/out-of-range).
+  const paddr = Number(guestOffset);
+  if (!Number.isSafeInteger(paddr) || BigInt(paddr) !== guestOffset) return null;
+
+  try {
+    if (!guestRangeInBounds(layout, paddr, length)) return null;
+  } catch {
+    return null;
+  }
+
+  const start = guestPaddrToRamOffset(layout, paddr);
+  if (start === null) {
+    // `guestRangeInBounds` treats certain zero-length boundary addresses as in-bounds (e.g.
+    // `paddr==LOW_RAM_END` or the end of the high-RAM remap window). For disk I/O a zero-length
+    // operation is a no-op; return a deterministic empty view.
+    if (length !== 0) return null;
+
+    if (layout.guest_size <= LOW_RAM_END) {
+      return paddr === layout.guest_size ? guestU8.subarray(layout.guest_size, layout.guest_size) : null;
+    }
+
+    const highLen = layout.guest_size - LOW_RAM_END;
+    const highEnd = HIGH_RAM_START + highLen;
+    if (paddr === highEnd) {
+      return guestU8.subarray(layout.guest_size, layout.guest_size);
+    }
+    if (paddr === LOW_RAM_END) {
+      return guestU8.subarray(LOW_RAM_END, LOW_RAM_END);
+    }
+    return null;
+  }
+
+  const end = start + length;
+  if (end > guestU8.byteLength) return null;
+  return guestU8.subarray(start, end);
 }
 
 function computeAlignedDiskIoRange(
