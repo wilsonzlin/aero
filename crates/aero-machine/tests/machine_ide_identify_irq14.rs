@@ -639,6 +639,147 @@ fn machine_ide_primary_dma_write_wakes_halted_cpu_via_ioapic_in_apic_mode() {
 }
 
 #[test]
+fn machine_ide_secondary_atapi_read10_dma_wakes_halted_cpu_via_ioapic_in_apic_mode() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+    const VECTOR: u8 = 0x64;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on ATAPI DMA on the secondary channel + IOAPIC/LAPIC delivery.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Build a tiny ISO image as a generic VirtualDisk (2048-byte sectors).
+    let iso_sector = AtapiCdrom::SECTOR_SIZE as u64;
+    let iso_capacity = 2 * iso_sector;
+    let mut iso = RawDisk::create(MemBackend::new(), iso_capacity).unwrap();
+    iso.write_at(iso_sector, b"WORLD").unwrap();
+    m.attach_ide_secondary_master_iso(Box::new(iso)).unwrap();
+
+    // Route IOAPIC vector into a real-mode handler that writes a flag byte.
+    let handler_addr = 0x8000u64;
+    let code_base = 0x9000u64;
+    let flag_addr = 0x0500u16;
+    let flag_value = 0xD3_u8;
+
+    install_real_mode_handler(&mut m, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut m, code_base);
+    write_ivt_entry(&mut m, VECTOR, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut m, code_base);
+
+    // Halt the CPU first so the interrupt must wake it.
+    assert!(matches!(m.run_slice(16), RunExit::Halted { .. }));
+
+    // Switch to APIC mode and program IOAPIC redirection entry for GSI15 -> VECTOR.
+    {
+        let interrupts = m
+            .platform_interrupts()
+            .expect("pc platform should provide interrupts");
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_redirection_entry(&mut ints, 15, u32::from(VECTOR), 0);
+    }
+
+    let bdf = IDE_PIIX3.bdf;
+
+    // Read BAR4 so the test is resilient to future default base changes.
+    let bar4_raw = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x20);
+    let bm_base = (bar4_raw & 0xFFFF_FFFC) as u16;
+    assert_ne!(bm_base, 0, "expected IDE BMIDE BAR4 to be programmed");
+
+    // Destination buffer for one 2048-byte ISO sector.
+    let prd_addr = 0x1000u64;
+    let data_buf = 0x2000u64;
+
+    // PRD entry: 2048 bytes, end-of-table.
+    m.write_physical_u32(prd_addr, data_buf as u32);
+    m.write_physical_u16(prd_addr + 4, AtapiCdrom::SECTOR_SIZE as u16);
+    m.write_physical_u16(prd_addr + 6, 0x8000);
+
+    // Clear destination buffer to ensure DMA actually fills it.
+    m.write_physical(data_buf, &[0u8; 8]);
+
+    // Enable only PCI I/O decode for IDE so we can program registers, but keep bus mastering off
+    // to assert BME gating later.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+
+    // Program BMIDE secondary channel: PRDT base + start DMA in the "device -> memory" direction.
+    m.io_write(bm_base + 0x0C, 4, prd_addr as u32);
+    m.io_write(bm_base + 0x0A, 1, 0x06); // clear error/irq bits
+    m.io_write(bm_base + 0x08, 1, 0x09); // start + direction=to-memory
+
+    // Clear the initial UNIT ATTENTION that real ATAPI devices report after media insertion.
+    let mut tur = [0u8; 12];
+    tur[0] = 0x00; // TEST UNIT READY
+    m.io_write(0x176, 1, 0xA0);
+    send_atapi_packet(&mut m, 0x170, 0x00, &tur, 0);
+    let _ = m.io_read(0x177, 1); // clear IRQ
+
+    // Send ATAPI READ(10) for LBA 1, blocks=1, using DMA (features bit0=1).
+    let mut pkt = [0u8; 12];
+    pkt[0] = 0x28; // READ(10)
+    pkt[2..6].copy_from_slice(&1u32.to_be_bytes()); // LBA=1
+    pkt[7..9].copy_from_slice(&1u16.to_be_bytes()); // blocks=1
+
+    m.io_write(0x176, 1, 0xA0);
+    send_atapi_packet(
+        &mut m,
+        0x170,
+        0x01, // DMA requested
+        &pkt,
+        AtapiCdrom::SECTOR_SIZE as u16,
+    );
+
+    // Clear the "packet request" IRQ so we only observe the DMA completion interrupt.
+    let _ = m.io_read(0x177, 1);
+
+    // With bus mastering disabled, the DMA transfer must not complete.
+    for _ in 0..3 {
+        let _ = m.run_slice(256);
+        assert_ne!(
+            m.read_physical_u8(data_buf),
+            b'W',
+            "ATAPI DMA should not run until PCI COMMAND.BME is enabled"
+        );
+        assert_ne!(
+            m.read_physical_u8(u64::from(flag_addr)),
+            flag_value,
+            "IRQ15 should not fire until DMA completes"
+        );
+    }
+
+    // Enable bus mastering: DMA should now complete and raise IOAPIC-delivered IRQ15.
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            let out = m.read_physical_bytes(data_buf, 5);
+            assert_eq!(out.as_slice(), b"WORLD");
+
+            let st = m.io_read(bm_base + 0x0A, 1) as u8;
+            assert_ne!(st & 0x04, 0, "BMIDE secondary status IRQ bit should be set");
+            assert_eq!(st & 0x02, 0, "BMIDE secondary status should not show error");
+            return;
+        }
+    }
+
+    panic!(
+        "ATAPI DMA did not deliver IOAPIC interrupt (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
 fn machine_ide_bmide_bar4_routing_tracks_pci_bar_reprogramming() {
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
 
