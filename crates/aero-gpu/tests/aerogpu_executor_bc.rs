@@ -868,13 +868,13 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
         let mut guest = VecGuestMemory::new(0x1000);
 
         let stream = build_stream(|out| {
-            // CREATE_TEXTURE2D src (handle=1) BC1 12x12 with mip1 = 6x6.
+            // CREATE_TEXTURE2D src (handle=1) BC1 4x4 with mip1 = 2x2.
             emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 1);
                 push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
                 push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32);
-                push_u32(out, 12); // width
-                push_u32(out, 12); // height
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
                 push_u32(out, 2); // mip_levels
                 push_u32(out, 1); // array_layers
                 push_u32(out, 0); // row_pitch_bytes
@@ -883,13 +883,13 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
                 push_u64(out, 0); // reserved0
             });
 
-            // CREATE_TEXTURE2D dst (handle=2) BC1 12x12 with mip1 = 6x6.
+            // CREATE_TEXTURE2D dst (handle=2) BC1 4x4 with mip1 = 2x2.
             emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2);
                 push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
                 push_u32(out, AerogpuFormat::BC1RgbaUnorm as u32);
-                push_u32(out, 12); // width
-                push_u32(out, 12); // height
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
                 push_u32(out, 2); // mip_levels
                 push_u32(out, 1); // array_layers
                 push_u32(out, 0); // row_pitch_bytes
@@ -898,8 +898,8 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
                 push_u64(out, 0); // reserved0
             });
 
-            // COPY_TEXTURE2D: copy the full mip1 (6x6 logical), which requires an 8x8 physical
-            // copy in wgpu/WebGPU.
+            // COPY_TEXTURE2D: copy the full mip1 (2x2 logical), which requires a 4x4 physical copy
+            // in wgpu/WebGPU.
             emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
                 push_u32(out, 2); // dst_texture
                 push_u32(out, 1); // src_texture
@@ -911,8 +911,8 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
                 push_u32(out, 0); // dst_y
                 push_u32(out, 0); // src_x
                 push_u32(out, 0); // src_y
-                push_u32(out, 6); // width (logical mip1)
-                push_u32(out, 6); // height (logical mip1)
+                push_u32(out, 2); // width (logical mip1)
+                push_u32(out, 2); // height (logical mip1)
                 push_u32(out, 0); // flags
                 push_u32(out, 0); // reserved0
             });
