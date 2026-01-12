@@ -236,46 +236,10 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
 
       // Read BAR0 and ensure it's a 64-bit memory BAR.
       const bar0LowInitial = cfgReadU32(pciAddr, 0x10);
-      void cfgReadU32(pciAddr, 0x14);
+      const bar0HighInitial = cfgReadU32(pciAddr, 0x14);
       // Bits 2:1 = 0b10 indicates a 64-bit memory BAR.
       expect(bar0LowInitial & 0x6).toBe(0x4);
-      const oldBar0Base = BigInt(bar0LowInitial & 0xffff_fff0);
-
-      // BAR sizing probe (guest writes all-ones then reads back size mask).
-      // For BAR0 size=0x4000, mask is 0xFFFF_FFFF_FFFF_C000 (low dword includes type bits 0x4).
-      cfgWriteU32(pciAddr, 0x10, 0xffff_ffff);
-      cfgWriteU32(pciAddr, 0x14, 0xffff_ffff);
-      expect(cfgReadU32(pciAddr, 0x10)).toBe(0xffff_c004);
-      expect(cfgReadU32(pciAddr, 0x14)).toBe(0xffff_ffff);
-
-      // Force BAR0 above 4GiB so we exercise the high dword plumbing.
-      const newBarBase = 0x1_0000_0000n; // 4GiB
-      const barAttrBits = bar0LowInitial & 0x0f;
-      const newBar0Low = ((Number(newBarBase & 0xffff_ffffn) & 0xffff_fff0) | barAttrBits) >>> 0;
-      const newBar0High = Number((newBarBase >> 32n) & 0xffff_ffffn) >>> 0;
-      cfgWriteU32(pciAddr, 0x10, newBar0Low);
-      cfgWriteU32(pciAddr, 0x14, newBar0High);
-
-      // Enable PCI memory decoding (Command register bit 1).
-      // Many guests write the full 32-bit dword at 0x04 with the upper (Status)
-      // bits as zero; the TS PCI bus must preserve status bits such as
-      // CAP_LIST used by virtio-pci.
-      const statusBefore = cfgReadU16(pciAddr, 0x06);
-      expect((statusBefore & 0x0010) !== 0).toBe(true);
-
-      const cmd = cfgReadU16(pciAddr, 0x04);
-      cfgWriteU32(pciAddr, 0x04, (cmd | 0x2) >>> 0);
-
-      const statusAfter = cfgReadU16(pciAddr, 0x06);
-      expect((statusAfter & 0x0010) !== 0).toBe(true);
-      const cmdAfter = cfgReadU16(pciAddr, 0x04);
-      expect((cmdAfter & 0x0002) !== 0).toBe(true);
-
-      // Compute mapped MMIO base.
-      const bar0Low = cfgReadU32(pciAddr, 0x10);
-      const bar0High = cfgReadU32(pciAddr, 0x14);
-      const bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
-      expect(bar0Base).toBe(newBarBase);
+      const oldBar0Base = (BigInt(bar0HighInitial) << 32n) | BigInt(bar0LowInitial & 0xffff_fff0);
 
       // Read full PCI config space (for capability parsing).
       const cfg = new Uint8Array(256);
@@ -306,6 +270,54 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(caps.isrLen).toBe(0x0020);
       expect(caps.deviceOff).toBe(0x3000);
       expect(caps.deviceLen).toBe(0x0100);
+
+      // BAR sizing probe (guest writes all-ones then reads back size mask).
+      // For BAR0 size=0x4000, mask is 0xFFFF_FFFF_FFFF_C000 (low dword includes type bits 0x4).
+      cfgWriteU32(pciAddr, 0x10, 0xffff_ffff);
+      cfgWriteU32(pciAddr, 0x14, 0xffff_ffff);
+      expect(cfgReadU32(pciAddr, 0x10)).toBe(0xffff_c004);
+      expect(cfgReadU32(pciAddr, 0x14)).toBe(0xffff_ffff);
+
+      // Restore original BAR0 assignment after the sizing probe.
+      cfgWriteU32(pciAddr, 0x10, bar0LowInitial);
+      cfgWriteU32(pciAddr, 0x14, bar0HighInitial);
+
+      // Enable PCI memory decoding (Command register bit 1).
+      // Many guests write the full 32-bit dword at 0x04 with the upper (Status)
+      // bits as zero; the TS PCI bus must preserve status bits such as
+      // CAP_LIST used by virtio-pci.
+      const statusBefore = cfgReadU16(pciAddr, 0x06);
+      expect((statusBefore & 0x0010) !== 0).toBe(true);
+
+      const cmd = cfgReadU16(pciAddr, 0x04);
+      cfgWriteU32(pciAddr, 0x04, (cmd | 0x2) >>> 0);
+
+      const statusAfter = cfgReadU16(pciAddr, 0x06);
+      expect((statusAfter & 0x0010) !== 0).toBe(true);
+      const cmdAfter = cfgReadU16(pciAddr, 0x04);
+      expect((cmdAfter & 0x0002) !== 0).toBe(true);
+
+      // Compute mapped MMIO base.
+      const bar0LowBeforeRemap = cfgReadU32(pciAddr, 0x10);
+      const bar0HighBeforeRemap = cfgReadU32(pciAddr, 0x14);
+      const bar0BaseBeforeRemap = (BigInt(bar0HighBeforeRemap) << 32n) | BigInt(bar0LowBeforeRemap & 0xffff_fff0);
+      expect(bar0BaseBeforeRemap).toBe(oldBar0Base);
+
+      const commonBaseBeforeRemap = bar0BaseBeforeRemap + BigInt(caps.commonOff!);
+      expect(mmioReadU16(commonBaseBeforeRemap + 0x12n)).toBe(2); // num_queues
+
+      // Force BAR0 above 4GiB so we exercise the high dword plumbing, while PCI MEM decoding is enabled.
+      const newBarBase = 0x1_0000_0000n; // 4GiB
+      const barAttrBits = bar0LowInitial & 0x0f;
+      const newBar0Low = ((Number(newBarBase & 0xffff_ffffn) & 0xffff_fff0) | barAttrBits) >>> 0;
+      const newBar0High = Number((newBarBase >> 32n) & 0xffff_ffffn) >>> 0;
+      cfgWriteU32(pciAddr, 0x10, newBar0Low);
+      cfgWriteU32(pciAddr, 0x14, newBar0High);
+
+      const bar0Low = cfgReadU32(pciAddr, 0x10);
+      const bar0High = cfgReadU32(pciAddr, 0x14);
+      const bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
+      expect(bar0Base).toBe(newBarBase);
 
       const commonBase = bar0Base + BigInt(caps.commonOff!);
       const notifyBase = bar0Base + BigInt(caps.notifyOff!);
