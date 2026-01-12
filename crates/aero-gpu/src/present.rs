@@ -576,16 +576,19 @@ mod tests {
         let call = &presenter.writer().calls[0];
 
         assert_eq!(call.rect, Rect::new(0, 0, width, height));
-        assert_eq!(call.bytes_per_row, 256);
+        assert_eq!(call.bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
 
         let row_bytes = full_row_bytes;
-        assert_eq!(call.data.len(), required_data_len(256, row_bytes, height as usize));
+        assert_eq!(
+            call.data.len(),
+            required_data_len(COPY_BYTES_PER_ROW_ALIGNMENT, row_bytes, height as usize)
+        );
 
         // Row 0 copied into [0..row_bytes].
         assert_eq!(&call.data[0..row_bytes], &frame_data[0..row_bytes]);
         // Row 1 copied into [bytes_per_row..bytes_per_row+row_bytes].
         assert_eq!(
-            &call.data[256..(256 + row_bytes)],
+            &call.data[COPY_BYTES_PER_ROW_ALIGNMENT..(COPY_BYTES_PER_ROW_ALIGNMENT + row_bytes)],
             &frame_data[row_bytes..(row_bytes * 2)]
         );
 
@@ -614,12 +617,12 @@ mod tests {
         let call = &presenter.writer().calls[0];
 
         assert_eq!(call.rect, dirty);
-        assert_eq!(call.bytes_per_row, 256);
+        assert_eq!(call.bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
 
         let row_bytes = dirty.w as usize * bpp;
         assert_eq!(
             call.data.len(),
-            required_data_len(256, row_bytes, dirty.h as usize)
+            required_data_len(COPY_BYTES_PER_ROW_ALIGNMENT, row_bytes, dirty.h as usize)
         );
 
         let row0_src_offset = dirty.y as usize * stride + dirty.x as usize * bpp;
@@ -630,7 +633,7 @@ mod tests {
             &frame_data[row0_src_offset..(row0_src_offset + row_bytes)]
         );
         assert_eq!(
-            &call.data[256..(256 + row_bytes)],
+            &call.data[COPY_BYTES_PER_ROW_ALIGNMENT..(COPY_BYTES_PER_ROW_ALIGNMENT + row_bytes)],
             &frame_data[row1_src_offset..(row1_src_offset + row_bytes)]
         );
 
@@ -684,5 +687,143 @@ mod tests {
                 min_len: ml
             } if len == min_len - 1 && ml == min_len
         ));
+    }
+
+    #[test]
+    fn uploads_multiple_height1_rects_and_telemetry_sums_bytes() {
+        let (width, height, bpp) = (10u32, 3u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let r1 = Rect::new(1, 0, 2, 1);
+        let r2 = Rect::new(5, 2, 3, 1);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+
+        assert_eq!(telemetry.rects_requested, 2);
+        assert_eq!(telemetry.rects_after_merge, 2);
+        assert_eq!(telemetry.rects_uploaded, 2);
+
+        assert_eq!(presenter.writer().calls.len(), 2);
+
+        // merge_and_cap_rects sorts by (y, x) -> r1 then r2.
+        let call1 = &presenter.writer().calls[0];
+        let call2 = &presenter.writer().calls[1];
+
+        assert_eq!(call1.rect, r1);
+        assert_eq!(call2.rect, r2);
+
+        let r1_row_bytes = r1.w as usize * bpp;
+        let r2_row_bytes = r2.w as usize * bpp;
+
+        // Height=1 doesn't require 256-byte alignment.
+        assert_eq!(call1.bytes_per_row, r1_row_bytes);
+        assert_eq!(call2.bytes_per_row, r2_row_bytes);
+
+        let r1_src = r1.y as usize * stride + r1.x as usize * bpp;
+        let r2_src = r2.y as usize * stride + r2.x as usize * bpp;
+
+        assert_eq!(
+            call1.data,
+            frame_data[r1_src..(r1_src + r1_row_bytes)].to_vec()
+        );
+        assert_eq!(
+            call2.data,
+            frame_data[r2_src..(r2_src + r2_row_bytes)].to_vec()
+        );
+
+        let sum = call1.data.len() + call2.data.len();
+        assert_eq!(telemetry.bytes_uploaded, sum);
+        assert_eq!(telemetry.merge_rate(), 0.0);
+    }
+
+    #[test]
+    fn merges_overlapping_dirty_rects_and_reports_telemetry() {
+        let (width, height, bpp) = (20u32, 20u32, 4usize);
+        let stride = 80usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let r1 = Rect::new(0, 0, 10, 10);
+        let r2 = Rect::new(5, 5, 10, 10);
+        let merged = Rect::new(0, 0, 15, 15);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default());
+        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+
+        assert_eq!(telemetry.rects_requested, 2);
+        assert_eq!(telemetry.rects_after_merge, 1);
+        assert_eq!(telemetry.rects_uploaded, 1);
+        assert_eq!(telemetry.merge_rate(), 0.5);
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+        assert_eq!(call.rect, merged);
+        assert_eq!(call.bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
+
+        let row_bytes = merged.w as usize * bpp;
+        let rect_h = merged.h as usize;
+        let expected_len = required_data_len(COPY_BYTES_PER_ROW_ALIGNMENT, row_bytes, rect_h);
+        assert_eq!(call.data.len(), expected_len);
+        assert_eq!(telemetry.bytes_uploaded, expected_len);
+
+        // Spot-check a couple rows to ensure the merged rect is copied correctly.
+        let row0_src = 0 * stride;
+        let row_last_src = (rect_h - 1) * stride;
+        let last_row_dst = (rect_h - 1) * COPY_BYTES_PER_ROW_ALIGNMENT;
+
+        assert_eq!(&call.data[0..row_bytes], &frame_data[row0_src..row0_src + row_bytes]);
+        assert_eq!(
+            &call.data[last_row_dst..(last_row_dst + row_bytes)],
+            &frame_data[row_last_src..row_last_src + row_bytes]
+        );
+    }
+
+    #[test]
+    fn caps_rect_count_and_uploads_bounding_box() {
+        let (width, height, bpp) = (10u32, 10u32, 4usize);
+        let stride = 40usize;
+
+        let full_row_bytes = width as usize * bpp;
+        let frame_len = min_frame_len(stride, height as usize, full_row_bytes);
+        let frame_data = patterned_bytes(frame_len);
+
+        let r1 = Rect::new(0, 0, 1, 1);
+        let r2 = Rect::new(9, 9, 1, 1);
+        let capped = Rect::new(0, 0, width, height);
+
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default())
+            .with_max_rects_per_frame(1);
+        let telemetry = presenter.present(&frame_data, stride, Some(&[r1, r2])).unwrap();
+
+        assert_eq!(telemetry.rects_requested, 2);
+        assert_eq!(telemetry.rects_after_merge, 2);
+        assert_eq!(telemetry.rects_uploaded, 1);
+        assert_eq!(telemetry.merge_rate(), 0.5);
+
+        assert_eq!(presenter.writer().calls.len(), 1);
+        let call = &presenter.writer().calls[0];
+        assert_eq!(call.rect, capped);
+        assert_eq!(call.bytes_per_row, COPY_BYTES_PER_ROW_ALIGNMENT);
+
+        let expected_len =
+            required_data_len(COPY_BYTES_PER_ROW_ALIGNMENT, full_row_bytes, height as usize);
+        assert_eq!(call.data.len(), expected_len);
+        assert_eq!(telemetry.bytes_uploaded, expected_len);
+
+        // Spot-check that padding in the source (none here) and destination layout are handled.
+        assert_eq!(&call.data[0..full_row_bytes], &frame_data[0..full_row_bytes]);
+        let last_row_dst = (height as usize - 1) * COPY_BYTES_PER_ROW_ALIGNMENT;
+        let last_row_src = (height as usize - 1) * stride;
+        assert_eq!(
+            &call.data[last_row_dst..last_row_dst + full_row_bytes],
+            &frame_data[last_row_src..last_row_src + full_row_bytes]
+        );
     }
 }
