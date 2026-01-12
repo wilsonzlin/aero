@@ -17,18 +17,13 @@ use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::usb::uhci::UhciPciDevice;
 use aero_devices::{hpet, i8042};
+use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
-use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_e1000::E1000Device;
-use aero_virtio::devices::blk::VirtioBlk;
-use aero_virtio::memory::{
-    GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
-};
-use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
@@ -36,6 +31,11 @@ use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use aero_virtio::devices::blk::VirtioBlk;
+use aero_virtio::memory::{
+    GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
+};
+use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
 use memory::{DenseMemory, GuestMemory, MmioHandler};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -991,16 +991,24 @@ impl PcPlatform {
     }
 
     pub fn new_with_nvme_disk(ram_size: usize, disk: Box<dyn VirtualDisk + Send>) -> Self {
-        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
-        Self::new_with_config_and_ram_inner(
-            Box::new(ram),
+        Self::new_with_config_and_nvme_disk(
+            ram_size,
             PcPlatformConfig {
                 enable_nvme: true,
                 ..Default::default()
             },
-            None,
-            Some(disk),
+            disk,
         )
+    }
+
+    pub fn new_with_config_and_nvme_disk(
+        ram_size: usize,
+        mut config: PcPlatformConfig,
+        disk: Box<dyn VirtualDisk + Send>,
+    ) -> Self {
+        config.enable_nvme = true;
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram_inner(Box::new(ram), config, None, Some(disk))
     }
 
     pub fn new_with_ahci(ram_size: usize) -> Self {
