@@ -10,6 +10,68 @@
 
 static VOID VioInputSetDeviceKind(_Inout_ PDEVICE_CONTEXT Ctx, _In_ VIOINPUT_DEVICE_KIND Kind);
 
+/*
+ * virtio-input EV_BITS parsing/validation.
+ *
+ * Aero contract v1 requires virtio-input devices to implement
+ * VIRTIO_INPUT_CFG_EV_BITS and advertise a minimum set of supported event
+ * codes (see docs/windows7-virtio-driver-contract.md §3.3.4–§3.3.5).
+ *
+ * The device returns up to 128 bytes of little-endian bitmaps. Bit numbering is
+ * per the virtio-input spec (Linux input ABI): bit <code> corresponds to the
+ * event code value.
+ */
+static __forceinline bool VioInputBitmapTestBit(_In_reads_(128) const UCHAR Bits[128], _In_ uint16_t Code)
+{
+    const uint16_t byteIndex = (uint16_t)(Code / 8u);
+    const uint16_t bitIndex = (uint16_t)(Code % 8u);
+
+    if (byteIndex >= 128u) {
+        return false;
+    }
+
+    return (Bits[byteIndex] & (UCHAR)(1u << bitIndex)) != 0;
+}
+
+typedef struct _VIOINPUT_REQUIRED_EV_CODE {
+    uint16_t Code;
+    PCSTR Name;
+} VIOINPUT_REQUIRED_EV_CODE;
+
+static NTSTATUS VioInputValidateEvBitsRequired(
+    _In_reads_(128) const UCHAR Bits[128],
+    _In_reads_(RequiredCount) const VIOINPUT_REQUIRED_EV_CODE* Required,
+    _In_ SIZE_T RequiredCount,
+    _In_z_ PCSTR What)
+{
+    SIZE_T i;
+    BOOLEAN ok;
+
+    if (Bits == NULL || Required == NULL || RequiredCount == 0 || What == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ok = TRUE;
+    for (i = 0; i < RequiredCount; ++i) {
+        if (!VioInputBitmapTestBit(Bits, Required[i].Code)) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "%s: missing required bit %s (code=%u)\n",
+                What,
+                Required[i].Name ? Required[i].Name : "<unknown>",
+                (ULONG)Required[i].Code);
+            ok = FALSE;
+        }
+    }
+
+    if (!ok) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "%s: device does not satisfy Aero virtio-input EV_BITS contract\n", What);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    return STATUS_SUCCESS;
+}
+
 static VOID VioInputInputLock(_In_opt_ PVOID Context)
 {
     if (Context == NULL) {
@@ -1049,6 +1111,98 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         UCHAR size;
 
         if (deviceContext->DeviceKind == VioInputDeviceKindKeyboard) {
+            /*
+             * Contract v1: keyboard devices MUST implement EV_BITS(EV_KEY) and
+             * advertise at least the minimum required key set.
+             */
+            static const VIOINPUT_REQUIRED_EV_CODE kRequiredKeys[] = {
+                /* KEY_A..KEY_Z */
+                {VIRTIO_INPUT_KEY_A, "KEY_A"},
+                {VIRTIO_INPUT_KEY_B, "KEY_B"},
+                {VIRTIO_INPUT_KEY_C, "KEY_C"},
+                {VIRTIO_INPUT_KEY_D, "KEY_D"},
+                {VIRTIO_INPUT_KEY_E, "KEY_E"},
+                {VIRTIO_INPUT_KEY_F, "KEY_F"},
+                {VIRTIO_INPUT_KEY_G, "KEY_G"},
+                {VIRTIO_INPUT_KEY_H, "KEY_H"},
+                {VIRTIO_INPUT_KEY_I, "KEY_I"},
+                {VIRTIO_INPUT_KEY_J, "KEY_J"},
+                {VIRTIO_INPUT_KEY_K, "KEY_K"},
+                {VIRTIO_INPUT_KEY_L, "KEY_L"},
+                {VIRTIO_INPUT_KEY_M, "KEY_M"},
+                {VIRTIO_INPUT_KEY_N, "KEY_N"},
+                {VIRTIO_INPUT_KEY_O, "KEY_O"},
+                {VIRTIO_INPUT_KEY_P, "KEY_P"},
+                {VIRTIO_INPUT_KEY_Q, "KEY_Q"},
+                {VIRTIO_INPUT_KEY_R, "KEY_R"},
+                {VIRTIO_INPUT_KEY_S, "KEY_S"},
+                {VIRTIO_INPUT_KEY_T, "KEY_T"},
+                {VIRTIO_INPUT_KEY_U, "KEY_U"},
+                {VIRTIO_INPUT_KEY_V, "KEY_V"},
+                {VIRTIO_INPUT_KEY_W, "KEY_W"},
+                {VIRTIO_INPUT_KEY_X, "KEY_X"},
+                {VIRTIO_INPUT_KEY_Y, "KEY_Y"},
+                {VIRTIO_INPUT_KEY_Z, "KEY_Z"},
+
+                /* KEY_0..KEY_9 */
+                {VIRTIO_INPUT_KEY_0, "KEY_0"},
+                {VIRTIO_INPUT_KEY_1, "KEY_1"},
+                {VIRTIO_INPUT_KEY_2, "KEY_2"},
+                {VIRTIO_INPUT_KEY_3, "KEY_3"},
+                {VIRTIO_INPUT_KEY_4, "KEY_4"},
+                {VIRTIO_INPUT_KEY_5, "KEY_5"},
+                {VIRTIO_INPUT_KEY_6, "KEY_6"},
+                {VIRTIO_INPUT_KEY_7, "KEY_7"},
+                {VIRTIO_INPUT_KEY_8, "KEY_8"},
+                {VIRTIO_INPUT_KEY_9, "KEY_9"},
+
+                /* Basic controls. */
+                {VIRTIO_INPUT_KEY_ENTER, "KEY_ENTER"},
+                {VIRTIO_INPUT_KEY_ESC, "KEY_ESC"},
+                {VIRTIO_INPUT_KEY_BACKSPACE, "KEY_BACKSPACE"},
+                {VIRTIO_INPUT_KEY_TAB, "KEY_TAB"},
+                {VIRTIO_INPUT_KEY_SPACE, "KEY_SPACE"},
+
+                /* Modifiers. */
+                {VIRTIO_INPUT_KEY_LEFTSHIFT, "KEY_LEFTSHIFT"},
+                {VIRTIO_INPUT_KEY_RIGHTSHIFT, "KEY_RIGHTSHIFT"},
+                {VIRTIO_INPUT_KEY_LEFTCTRL, "KEY_LEFTCTRL"},
+                {VIRTIO_INPUT_KEY_RIGHTCTRL, "KEY_RIGHTCTRL"},
+                {VIRTIO_INPUT_KEY_LEFTALT, "KEY_LEFTALT"},
+                {VIRTIO_INPUT_KEY_RIGHTALT, "KEY_RIGHTALT"},
+
+                /* Lock. */
+                {VIRTIO_INPUT_KEY_CAPSLOCK, "KEY_CAPSLOCK"},
+
+                /* KEY_F1..KEY_F12 (Linux input ABI). */
+                {59, "KEY_F1"},
+                {60, "KEY_F2"},
+                {61, "KEY_F3"},
+                {62, "KEY_F4"},
+                {63, "KEY_F5"},
+                {64, "KEY_F6"},
+                {65, "KEY_F7"},
+                {66, "KEY_F8"},
+                {67, "KEY_F9"},
+                {68, "KEY_F10"},
+                {87, "KEY_F11"},
+                {88, "KEY_F12"},
+
+                /* Arrows. */
+                {VIRTIO_INPUT_KEY_UP, "KEY_UP"},
+                {VIRTIO_INPUT_KEY_DOWN, "KEY_DOWN"},
+                {VIRTIO_INPUT_KEY_LEFT, "KEY_LEFT"},
+                {VIRTIO_INPUT_KEY_RIGHT, "KEY_RIGHT"},
+
+                /* Navigation/editing cluster. */
+                {VIRTIO_INPUT_KEY_INSERT, "KEY_INSERT"},
+                {VIRTIO_INPUT_KEY_DELETE, "KEY_DELETE"},
+                {VIRTIO_INPUT_KEY_HOME, "KEY_HOME"},
+                {VIRTIO_INPUT_KEY_END, "KEY_END"},
+                {VIRTIO_INPUT_KEY_PAGEUP, "KEY_PAGEUP"},
+                {VIRTIO_INPUT_KEY_PAGEDOWN, "KEY_PAGEDOWN"},
+            };
+
             RtlZeroMemory(bits, sizeof(bits));
             size = 0;
 
@@ -1063,7 +1217,30 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return STATUS_NOT_SUPPORTED;
             }
+
+            status = VioInputValidateEvBitsRequired(bits, kRequiredKeys, RTL_NUMBER_OF(kRequiredKeys), "virtio-input keyboard EV_BITS(EV_KEY)");
+            if (!NT_SUCCESS(status)) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return status;
+            }
         } else {
+            /*
+             * Contract v1: mouse devices MUST implement:
+             *   - EV_BITS(EV_REL) with REL_X, REL_Y, REL_WHEEL
+             *   - EV_BITS(EV_KEY) with BTN_LEFT, BTN_RIGHT, BTN_MIDDLE
+             */
+            static const VIOINPUT_REQUIRED_EV_CODE kRequiredRel[] = {
+                {VIRTIO_INPUT_REL_X, "REL_X"},
+                {VIRTIO_INPUT_REL_Y, "REL_Y"},
+                {VIRTIO_INPUT_REL_WHEEL, "REL_WHEEL"},
+            };
+
+            static const VIOINPUT_REQUIRED_EV_CODE kRequiredButtons[] = {
+                {VIRTIO_INPUT_BTN_LEFT, "BTN_LEFT"},
+                {VIRTIO_INPUT_BTN_RIGHT, "BTN_RIGHT"},
+                {VIRTIO_INPUT_BTN_MIDDLE, "BTN_MIDDLE"},
+            };
+
             RtlZeroMemory(bits, sizeof(bits));
             size = 0;
 
@@ -1079,6 +1256,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 return STATUS_NOT_SUPPORTED;
             }
 
+            status = VioInputValidateEvBitsRequired(bits, kRequiredRel, RTL_NUMBER_OF(kRequiredRel), "virtio-input mouse EV_BITS(EV_REL)");
+            if (!NT_SUCCESS(status)) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return status;
+            }
+
             RtlZeroMemory(bits, sizeof(bits));
             size = 0;
 
@@ -1092,6 +1275,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(EV_KEY) query failed: %!STATUS!\n", status);
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return STATUS_NOT_SUPPORTED;
+            }
+
+            status = VioInputValidateEvBitsRequired(bits, kRequiredButtons, RTL_NUMBER_OF(kRequiredButtons), "virtio-input mouse EV_BITS(EV_KEY)");
+            if (!NT_SUCCESS(status)) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return status;
             }
         }
     }
