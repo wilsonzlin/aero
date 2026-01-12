@@ -503,7 +503,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         // Ensure bitmap is present in the cache so we can update it without cloning.
         let _ = self.load_bitmap(block_start, bitmap_size)?;
 
-        let (byte_offset, new_byte) = {
+        let (byte_offset, old_byte, new_byte) = {
             let entry = self
                 .bitmap_cache
                 .get_mut(&block_start)
@@ -514,16 +514,32 @@ impl<B: StorageBackend> VhdDisk<B> {
             }
             let old = bitmap_vec[byte_index];
             let new = old | mask;
+            // Update the cached bitmap first so subsequent reads in this process observe the
+            // newly-written sector. If writing the bitmap byte back to the backend fails,
+            // we roll this change back below.
             bitmap_vec[byte_index] = new;
             (
                 block_start
                     .checked_add(byte_index as u64)
                     .ok_or(DiskError::OffsetOverflow)?,
+                old,
                 new,
             )
         };
 
-        self.backend.write_at(byte_offset, &[new_byte])?;
+        if new_byte != old_byte {
+            if let Err(e) = self.backend.write_at(byte_offset, &[new_byte]) {
+                // Best-effort rollback so a failed write doesn't leave the in-memory bitmap
+                // claiming the sector is present when the on-disk bitmap was not updated.
+                if let Some(entry) = self.bitmap_cache.get_mut(&block_start) {
+                    let bitmap_vec: &mut Vec<u8> = Arc::make_mut(entry);
+                    if byte_index < bitmap_vec.len() {
+                        bitmap_vec[byte_index] = old_byte;
+                    }
+                }
+                return Err(e);
+            }
+        }
 
         Ok(())
     }
