@@ -1240,6 +1240,15 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             }
         }
         _ => {
+            // Common extension probe: PCI BIOS interface uses AH=0xB1.
+            //
+            // We don't currently expose a PCI BIOS interface surface (callers should use native
+            // config space + ACPI), but returning a conventional status code avoids confusing
+            // legacy probes that expect AH to be set on failure.
+            if ah == 0xB1 {
+                // 0x81 = function not supported.
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | (0x81u64 << 8);
+            }
             cpu.rflags |= FLAG_CF;
         }
     }
@@ -1950,6 +1959,20 @@ mod tests {
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, (EBDA_BASE / 1024) as u16);
+    }
+
+    #[test]
+    fn int1a_pci_bios_probes_report_function_not_supported() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+
+        // PCI BIOS presence check uses AX=B101h.
+        cpu.gpr[gpr::RAX] = 0xB101;
+        handle_int1a(&mut bios, &mut cpu, &mut mem);
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) as u8, 0x81);
     }
 
     #[test]
