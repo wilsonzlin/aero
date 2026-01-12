@@ -24,6 +24,7 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `crates/platform/src/audio/worklet_bridge.rs` — playback `SharedArrayBuffer` ring layout + producer-side helper (`WorkletBridge`).
 - `web/src/platform/audio.ts` — Web Audio output setup + JS ring producer helpers.
 - `web/src/platform/audio-worklet-processor.js` — AudioWorklet playback ring consumer.
+- `web/src/audio/audio_frame_clock.ts` — deterministic time→audio-frame conversion helper used for device/worker tick scheduling (mirrors `crates/aero-audio/src/clock.rs`).
 - `web/src/audio/audio_worklet_ring.ts` + `web/src/platform/audio_worklet_ring_layout.js` — playback ring header layout constants + helper math (shared between producers and the AudioWorklet consumer).
 - `crates/platform/src/audio/mic_bridge.rs` — microphone `SharedArrayBuffer` ring layout + consumer-side helper (`MicBridge`).
 - `web/src/audio/mic_ring.js` + `web/src/audio/mic-worklet-processor.js` — microphone ring helpers + AudioWorklet producer.
