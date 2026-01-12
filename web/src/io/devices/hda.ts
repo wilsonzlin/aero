@@ -329,6 +329,18 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
             this.#clock = new AudioFrameClock(effectiveRate, this.#clock.lastTimeNs);
           }
         }
+
+        // The Rust controller defaults to tracking the capture sample rate to the output sample
+        // rate until the host explicitly configures a distinct capture rate. If the guest is
+        // attached to the mic ring, keep the capture rate pinned to the host mic AudioContext even
+        // when the output rate changes.
+        if (this.#micSampleRateHz > 0) {
+          try {
+            this.#bridge.set_capture_sample_rate_hz(this.#micSampleRateHz);
+          } catch {
+            // ignore
+          }
+        }
       } catch {
         // ignore invalid/missing rate plumbing
       }

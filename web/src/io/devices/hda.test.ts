@@ -186,6 +186,7 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     const attach = vi.fn();
     const detach = vi.fn();
     const setOutputRate = vi.fn();
+    const setCaptureRate = vi.fn();
 
     const bridge: HdaControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),
@@ -193,7 +194,7 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
       step_frames: vi.fn(),
       irq_level: vi.fn(() => false),
       set_mic_ring_buffer: vi.fn(),
-      set_capture_sample_rate_hz: vi.fn(),
+      set_capture_sample_rate_hz: setCaptureRate,
       attach_audio_ring: attach,
       detach_audio_ring: detach,
       set_output_rate_hz: setOutputRate,
@@ -205,9 +206,16 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     const ringBuffer =
       typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
 
+    // Configure a mic capture rate that differs from the output rate, then change the output
+    // rate via setAudioRingBuffer. The wrapper should reassert the capture sample rate so the
+    // WASM device doesn't drift back to tracking output.
+    dev.setCaptureSampleRateHz(44_100);
+    setCaptureRate.mockClear();
+
     dev.setAudioRingBuffer({ ringBuffer, capacityFrames: 128, channelCount: 2, dstSampleRateHz: 48_000 });
     expect(setOutputRate).toHaveBeenCalledWith(48_000);
     expect(attach).toHaveBeenCalledWith(ringBuffer, 128, 2);
+    expect(setCaptureRate).toHaveBeenCalledWith(44_100);
 
     dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 0 });
     expect(detach).toHaveBeenCalled();
