@@ -1399,6 +1399,56 @@ fn vhd_fixed_rejects_data_offset_not_max() {
 }
 
 #[test]
+fn vhd_rejects_footer_cookie_mismatch() {
+    let virtual_size = 64 * 1024u64;
+    let mut backend = make_vhd_fixed_with_pattern();
+
+    // Corrupt the EOF footer cookie without touching any other fields.
+    backend.write_at(virtual_size, b"BADFOOT!").unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd footer cookie mismatch")
+    ));
+}
+
+#[test]
+fn vhd_rejects_invalid_current_size_field() {
+    let virtual_size = 64 * 1024u64;
+    let mut backend = make_vhd_fixed_with_pattern();
+
+    // current_size is at 48..56 in the footer.
+    let footer_offset = virtual_size;
+    let mut footer = [0u8; SECTOR_SIZE];
+    backend.read_at(footer_offset, &mut footer).unwrap();
+    footer[48..56].copy_from_slice(&0u64.to_be_bytes());
+    let checksum = vhd_footer_checksum(&footer);
+    footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+    backend.write_at(footer_offset, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd current_size invalid")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_invalid_dynamic_header_offset_in_footer() {
+    let virtual_size = 64 * 1024u64;
+    let footer = make_vhd_footer(virtual_size, 3, u64::MAX);
+    let mut backend = MemBackend::with_len(SECTOR_SIZE as u64).unwrap();
+    backend.write_at(0, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header offset invalid")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_unallocated_reads_zero_and_writes_allocate() {
     let backend = make_vhd_dynamic_empty(64 * 1024, 16 * 1024);
     let mut disk = VhdDisk::open(backend).unwrap();
@@ -1761,10 +1811,11 @@ fn vhd_rejects_bad_footer_checksum() {
         .write_at((64 * 1024) + (SECTOR_SIZE as u64) - 1, &last)
         .unwrap();
 
-    match VhdDisk::open(backend) {
-        Ok(_) => panic!("expected vhd open to fail"),
-        Err(err) => assert!(matches!(err, DiskError::CorruptImage(_))),
-    }
+    let err = VhdDisk::open(backend).err().expect("expected vhd open to fail");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd footer checksum mismatch")
+    ));
 }
 
 #[test]
