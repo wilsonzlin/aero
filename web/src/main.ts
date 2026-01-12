@@ -23,7 +23,17 @@ import { InputCapture } from "./input/input_capture";
 import { InputEventType, type InputBatchTarget } from "./input/event_queue";
 import { decodeGamepadReport, formatGamepadHat } from "./input/gamepad";
 import { installPerfHud } from "./perf/hud_entry";
-import { HEADER_INDEX_FRAME_COUNTER, HEADER_INDEX_HEIGHT, HEADER_INDEX_WIDTH, wrapSharedFramebuffer } from "./display/framebuffer_protocol";
+import {
+  HEADER_BYTE_LENGTH,
+  HEADER_INDEX_FRAME_COUNTER,
+  HEADER_INDEX_HEIGHT,
+  HEADER_INDEX_STRIDE_BYTES,
+  HEADER_INDEX_WIDTH,
+  addHeaderI32,
+  initFramebufferHeader,
+  storeHeaderI32,
+  wrapSharedFramebuffer,
+} from "./display/framebuffer_protocol";
 import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
@@ -566,6 +576,13 @@ function renderMachinePanel(): HTMLElement {
 
   const output = el("pre", { text: "" });
   const error = el("pre", { text: "" });
+  const vgaInfo = el("pre", { text: "" });
+  const vgaCanvas = el("canvas") as HTMLCanvasElement;
+  vgaCanvas.style.width = "640px";
+  vgaCanvas.style.height = "480px";
+  vgaCanvas.style.border = "1px solid #333";
+  vgaCanvas.style.background = "#000";
+  vgaCanvas.style.imageRendering = "pixelated";
 
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -628,6 +645,25 @@ function renderMachinePanel(): HTMLElement {
       off += 1;
     }
 
+    // Also write a recognizable marker into VGA text memory (0xB8000) so the VGA scanout is
+    // non-blank when the demo runs in environments where the BIOS is otherwise silent.
+    //
+    // mov ax, 0xB800
+    sector.set([0xb8, 0x00, 0xb8], off);
+    off += 3;
+    // mov es, ax
+    sector.set([0x8e, 0xc0], off);
+    off += 2;
+    // xor di, di
+    sector.set([0x31, 0xff], off);
+    off += 2;
+    // mov ax, 0x1f41  (attr 0x1F + 'A')
+    sector.set([0xb8, 0x41, 0x1f], off);
+    off += 3;
+    // stosw
+    sector[off] = 0xab;
+    off += 1;
+
     // hlt
     sector[off] = 0xf4;
 
@@ -642,6 +678,12 @@ function renderMachinePanel(): HTMLElement {
       const machine = new api.Machine(2 * 1024 * 1024);
       machine.set_disk_image(buildSerialBootSector("Hello from aero-machine\\n"));
       machine.reset();
+
+      let vgaPresenter: VgaPresenter | null = null;
+      let vgaShared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
+      let vgaW = 0;
+      let vgaH = 0;
+      let vgaStride = 0;
 
       status.textContent = `Machine ready (WASM ${variant}). Booting…`;
 
@@ -751,6 +793,51 @@ function renderMachinePanel(): HTMLElement {
         status.textContent = `run_slice: kind=${exitKind} executed=${exitExecuted} detail=${exitDetail}`;
         exit.free();
 
+        // Present VGA output (best-effort; optional for older WASM builds).
+        const present = machine.vga_present?.();
+        if (present) {
+          const w = machine.vga_width?.() ?? 0;
+          const h = machine.vga_height?.() ?? 0;
+          const stride = machine.vga_stride_bytes?.() ?? 0;
+          vgaInfo.textContent = w && h ? `vga: ${w}x${h} stride=${stride}` : "vga: (unknown)";
+
+          // Resize the local framebuffer backing store if needed.
+          if (w && h && stride && (w !== vgaW || h !== vgaH || stride !== vgaStride || !vgaShared)) {
+            vgaW = w;
+            vgaH = h;
+            vgaStride = stride;
+
+            const lenBytes = HEADER_BYTE_LENGTH + stride * h;
+            const buf =
+              typeof SharedArrayBuffer !== "undefined"
+                ? new SharedArrayBuffer(lenBytes)
+                : new ArrayBuffer(lenBytes);
+            vgaShared = wrapSharedFramebuffer(buf, 0);
+            initFramebufferHeader(vgaShared.header, { width: w, height: h, strideBytes: stride });
+
+            if (!vgaPresenter) {
+              vgaPresenter = new VgaPresenter(vgaCanvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
+              vgaPresenter.setSharedFramebuffer(vgaShared);
+              vgaPresenter.start();
+            } else {
+              vgaPresenter.setSharedFramebuffer(vgaShared);
+            }
+          }
+
+          const pixels = machine.vga_framebuffer_rgba8888_copy?.() ?? null;
+          if (pixels && vgaShared && vgaStride && vgaH) {
+            // Copy the guest scanout into the shared framebuffer backing store.
+            const expected = vgaStride * vgaH;
+            vgaShared.pixelsU8.set(pixels.subarray(0, expected));
+            storeHeaderI32(vgaShared.header, HEADER_INDEX_WIDTH, vgaW);
+            storeHeaderI32(vgaShared.header, HEADER_INDEX_HEIGHT, vgaH);
+            storeHeaderI32(vgaShared.header, HEADER_INDEX_STRIDE_BYTES, vgaStride);
+            addHeaderI32(vgaShared.header, HEADER_INDEX_FRAME_COUNTER, 1);
+          }
+        } else if (typeof machine.vga_present === "function") {
+          vgaInfo.textContent = "vga: unavailable (machine has no VGA)";
+        }
+
         // `RunExitKind::Completed` is 0. Stop once the guest halts/requests reset/needs assist.
         if (exitKind !== 0) {
           window.clearInterval(timer);
@@ -769,11 +856,13 @@ function renderMachinePanel(): HTMLElement {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Machine (canonical VM) – serial boot demo" }),
+    el("h2", { text: "Machine (canonical VM) – serial + VGA demo" }),
     status,
     el("div", { class: "row" }, canvas),
     vgaInfo,
     output,
+    vgaInfo,
+    vgaCanvas,
     error,
   );
 }
