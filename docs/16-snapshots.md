@@ -132,6 +132,8 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
 - `DeviceId::HPET` (`17`) — HPET timer state
 
+Note: some snapshot producers historically stored `PciConfigPorts` and `PciIntxRouter` as separate entries using `PCI_CFG`/`PCI_INTX`. A canonical full-machine snapshot should prefer wrapping both under a single `DeviceId::PCI` entry (see below) to avoid duplicate key collisions when multiple PCI sub-snapshots share the same `(major, minor)`.
+
 #### USB (`DeviceId::USB`)
 
 For the browser USB stack (guest-visible UHCI controller + runtime/bridge state), store a single device entry:
