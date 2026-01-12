@@ -1,27 +1,57 @@
 use crate::exception::Exception;
 use crate::mem::CpuBus;
 use aero_mmu::{AccessType, MemoryBus, Mmu, TranslateFault};
+use core::fmt;
 
 /// A paging-aware [`CpuBus`] implementation backed by [`aero_mmu::Mmu`].
 ///
 /// The tier-0 interpreter passes *linear* addresses to [`CpuBus`] methods. This
 /// adapter translates them to physical addresses via `aero-mmu` before accessing
 /// the underlying physical bus `B`.
-#[derive(Debug)]
-pub struct PagingBus<B> {
+pub trait IoBus {
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception>;
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
+}
+
+/// Default port-I/O backend that behaves like the old `PagingBus` stub I/O: all
+/// reads return `0` and all writes are ignored.
+#[derive(Clone, Copy, Default)]
+pub struct NoIo;
+
+impl IoBus for NoIo {
+    #[inline]
+    fn io_read(&mut self, _port: u16, _size: u32) -> Result<u64, Exception> {
+        Ok(0)
+    }
+
+    #[inline]
+    fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
+        Ok(())
+    }
+}
+
+pub struct PagingBus<B, IO = NoIo> {
     mmu: Mmu,
     phys: B,
+    io: IO,
     cpl: u8,
     write_chunks: Vec<(u64, usize, usize)>,
 }
 
 const PAGE_SIZE: u64 = 4096;
 
-impl<B> PagingBus<B> {
-    pub fn new(phys: B) -> Self {
+impl<B> PagingBus<B, NoIo> {
+    pub fn new(phys: B) -> PagingBus<B, NoIo> {
+        PagingBus::new_with_io(phys, NoIo)
+    }
+}
+
+impl<B, IO> PagingBus<B, IO> {
+    pub fn new_with_io(phys: B, io: IO) -> PagingBus<B, IO> {
         Self {
             mmu: Mmu::new(),
             phys,
+            io,
             cpl: 0,
             write_chunks: Vec::new(),
         }
@@ -50,6 +80,16 @@ impl<B> PagingBus<B> {
     #[inline]
     pub fn inner_mut(&mut self) -> &mut B {
         &mut self.phys
+    }
+
+    #[inline]
+    pub fn io(&self) -> &IO {
+        &self.io
+    }
+
+    #[inline]
+    pub fn io_mut(&mut self) -> &mut IO {
+        &mut self.io
     }
 
     #[inline]
@@ -276,11 +316,11 @@ impl<B> PagingBus<B> {
 /// write-intent access (and thus may set accessed/dirty bits and fault on
 /// read-only pages). By performing reads with [`AccessType::Write`], we ensure
 /// those permission checks happen.
-struct WriteIntent<'a, B> {
-    bus: &'a mut PagingBus<B>,
+struct WriteIntent<'a, B, IO> {
+    bus: &'a mut PagingBus<B, IO>,
 }
 
-impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
+impl<B: MemoryBus, IO: IoBus> CpuBus for WriteIntent<'_, B, IO> {
     fn sync(&mut self, state: &crate::state::CpuState) {
         self.bus.sync(state);
     }
@@ -354,9 +394,10 @@ impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
     }
 }
 
-impl<B> CpuBus for PagingBus<B>
+impl<B, IO> CpuBus for PagingBus<B, IO>
 where
     B: MemoryBus,
+    IO: IoBus,
 {
     fn sync(&mut self, state: &crate::state::CpuState) {
         state.sync_mmu(&mut self.mmu);
@@ -466,11 +507,23 @@ where
         Ok(buf)
     }
 
-    fn io_read(&mut self, _port: u16, _size: u32) -> Result<u64, Exception> {
-        Ok(0)
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.io.io_read(port, size)
     }
 
-    fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
-        Ok(())
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.io.io_write(port, size, val)
+    }
+}
+
+impl<B: fmt::Debug, IO> fmt::Debug for PagingBus<B, IO> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PagingBus")
+            .field("mmu", &self.mmu)
+            .field("cpl", &self.cpl)
+            .field("phys", &self.phys)
+            // Avoid requiring `IO: Debug` (real backends often aren't).
+            .field("io", &core::any::type_name::<IO>())
+            .finish()
     }
 }

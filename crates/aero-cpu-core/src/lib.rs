@@ -50,7 +50,7 @@ pub mod cpu;
 pub use exception::{AssistReason, Exception};
 pub use interrupts::CpuCore;
 pub use mem::CpuBus;
-pub use paging_bus::PagingBus;
+pub use paging_bus::{IoBus, NoIo, PagingBus};
 pub use state::CpuState;
 
 #[cfg(feature = "legacy-interp")]
