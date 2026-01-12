@@ -12,8 +12,10 @@
 
 mod guest_time;
 pub mod virtual_time;
+mod shared_disk;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
+pub use shared_disk::SharedDisk;
 
 use std::cell::RefCell;
 use std::fmt;
@@ -956,7 +958,7 @@ pub struct Machine {
     vga: Option<Rc<RefCell<VgaDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     bios: Bios,
-    disk: VecBlockDevice,
+    disk: SharedDisk,
     network_backend: Option<Box<dyn NetworkBackend>>,
 
     serial: Option<SharedSerial16550>,
@@ -1037,7 +1039,7 @@ impl Machine {
             vga: None,
             ahci: None,
             bios: Bios::new(BiosConfig::default()),
-            disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
+            disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
             serial: None,
             i8042: None,
@@ -1120,7 +1122,7 @@ impl Machine {
 
     /// Replace the attached disk image.
     pub fn set_disk_image(&mut self, bytes: Vec<u8>) -> Result<(), MachineError> {
-        self.disk = VecBlockDevice::new(bytes)?;
+        self.disk.set_bytes(bytes)?;
         Ok(())
     }
 

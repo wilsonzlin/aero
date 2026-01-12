@@ -12,6 +12,7 @@ aero-devices-storage = { path = "../aero-devices-storage" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-interrupts = { path = "../aero-interrupts" }
+aero-storage = { path = "../aero-storage" }
 aero-mmu = { path = "../aero-mmu" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-pump = { path = "../aero-net-pump" }
@@ -21,7 +22,6 @@ aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 # Machine snapshots include E1000 runtime state via `aero_snapshot::io_snapshot_bridge`, so we
 # must build the NIC model with its `io-snapshot` support enabled.
 aero-net-e1000 = { path = "../aero-net-e1000", features = ["io-snapshot"] }
-aero-storage = { path = "../aero-storage" }
 firmware = { path = "../firmware" }
 memory = { path = "../memory" }
 
