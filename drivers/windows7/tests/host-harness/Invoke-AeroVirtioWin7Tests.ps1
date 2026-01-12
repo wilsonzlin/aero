@@ -669,6 +669,10 @@ function Try-EmitAeroVirtioNetLargeMarker {
     if ($fields["large_ok"] -eq "1") { $status = "PASS" }
     elseif ($fields["large_ok"] -eq "0") { $status = "FAIL" }
   }
+  if ($status -eq "INFO") {
+    if ($line -match "\|PASS(\||$)") { $status = "PASS" }
+    elseif ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
+  }
 
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|$status"
   foreach ($k in @("large_ok", "large_bytes", "large_fnv1a64", "large_mbps")) {

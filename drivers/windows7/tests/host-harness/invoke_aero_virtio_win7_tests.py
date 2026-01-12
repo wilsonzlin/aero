@@ -2397,6 +2397,10 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
         status = "PASS"
     elif fields.get("large_ok") == "0":
         status = "FAIL"
+    elif "PASS" in marker_line.split("|"):
+        status = "PASS"
+    elif "FAIL" in marker_line.split("|"):
+        status = "FAIL"
 
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|{status}"]
     for k in ("large_ok", "large_bytes", "large_fnv1a64", "large_mbps"):
