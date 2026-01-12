@@ -42,10 +42,12 @@ fn should_scan(path: &Path) -> bool {
         "go" | "mod" | "sum" |
         // Assembly / boot sectors.
         "asm" | "S" | "s" |
+        // Firmware tables.
+        "asl" |
         // Native/driver sources.
         "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" | "hlsl" | "wgsl" | "glsl" |
         // Driver/build metadata (plaintext).
-        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" | "reg" | "disabled" |
+        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" | "reg" | "disabled" | "cat" |
         // Config/metadata.
         "toml"
             | "json"
@@ -66,7 +68,7 @@ fn should_scan(path: &Path) -> bool {
         // Common dotfile config.
         "gitignore" | "dockerignore" | "gitattributes" | "nvmrc" | "helmignore" |
         // Misc text-like.
-        "keep" | "gitkeep" | "pem" | "snap" | "wat"
+        "keep" | "gitkeep" | "pem" | "snap" | "wat" | "dat"
     )
 }
 
