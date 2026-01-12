@@ -3,7 +3,7 @@
 This document defines the **canonical, deterministic storage device topology** used for Windows 7
 boot and installation.
 
-The goal is that **controller emulation**, **platform PCI wiring**, and **browser/TypeScript storage
+The goal is that **controller emulation**, **platform PCI wiring**, and **browser storage
 backends** all agree on:
 
 - which controllers exist,

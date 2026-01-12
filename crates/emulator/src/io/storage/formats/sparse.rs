@@ -9,7 +9,8 @@ const AEROSPRS_MAGIC: [u8; 8] = *b"AEROSPRS";
 
 /// Sparse disk images supported by the emulator.
 ///
-/// - `AEROSPAR`: current sparse disk format (also used by the TypeScript OPFS implementation)
+/// - `AEROSPAR`: current sparse disk format (also used by the wasm32 OPFS backend in
+///   `crates/aero-opfs`)
 /// - `AEROSPRS`: legacy format (kept for backwards compatibility + migration)
 pub enum SparseDisk<S> {
     Aerospar(AerosparDisk<S>),
