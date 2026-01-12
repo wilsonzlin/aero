@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { waitForAudioOutputNonSilent } from "./util/audio";
 import { probeOpfsSyncAccessHandle } from "./util/opfs";
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
@@ -396,33 +397,7 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
   );
 
   // Ensure the IO-worker HDA device is producing actual (non-silent) samples after restore.
-  await page.waitForFunction(
-    () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
-      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
-      const samples: Float32Array = out.ringBuffer.samples;
-      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
-      const cc = out.ringBuffer.channelCount | 0;
-      const cap = out.ringBuffer.capacityFrames | 0;
-      if (cc <= 0 || cap <= 0) return false;
-      const write = Atomics.load(writeIndex, 0) >>> 0;
-      const framesToInspect = Math.min(1024, cap);
-      const startFrame = (write - framesToInspect) >>> 0;
-      let maxAbs = 0;
-      for (let i = 0; i < framesToInspect; i++) {
-        const frame = (startFrame + i) % cap;
-        const base = frame * cc;
-        for (let c = 0; c < cc; c++) {
-          const s = samples[base + c] ?? 0;
-          const a = Math.abs(s);
-          if (a > maxAbs) maxAbs = a;
-        }
-      }
-      return maxAbs > 0.01;
-    },
-    { timeout: 10_000 },
-  );
+  await waitForAudioOutputNonSilent(page, "__aeroAudioOutputHdaPciDevice", { threshold: 0.01 });
 
   // Best-effort cleanup: OPFS can persist across runs in some environments.
   // Ignore failures (missing APIs, already deleted, permission issues, etc.).

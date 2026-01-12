@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { DROPPED_SAMPLES_INDEX, HEADER_U32_LEN, READ_POS_INDEX, WRITE_POS_INDEX } from "../../web/src/audio/mic_ring.js";
+import { getAudioOutputMaxAbsSample, waitForAudioOutputNonSilent } from "./util/audio";
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
@@ -20,31 +21,7 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
 
   // Ensure the output ring is being filled with non-silent samples (and that we're not just
   // playing the CPU-worker fallback sine tone with gain=0.1).
-  await page.waitForFunction(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = (globalThis as any).__aeroAudioOutputLoopback;
-    if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
-    const samples: Float32Array = out.ringBuffer.samples;
-    const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
-    const cc = out.ringBuffer.channelCount | 0;
-    const cap = out.ringBuffer.capacityFrames | 0;
-    if (cc <= 0 || cap <= 0) return false;
-    const write = Atomics.load(writeIndex, 0) >>> 0;
-    const framesToInspect = Math.min(1024, cap);
-    const startFrame = (write - framesToInspect) >>> 0;
-    let maxAbs = 0;
-    for (let i = 0; i < framesToInspect; i++) {
-      const frame = (startFrame + i) % cap;
-      const base = frame * cc;
-      for (let c = 0; c < cc; c++) {
-        const s = samples[base + c] ?? 0;
-        const a = Math.abs(s);
-        if (a > maxAbs) maxAbs = a;
-      }
-    }
-    // `src/main.ts` uses synthetic mic gain=0.2; the fallback CPU sine tone uses gain=0.1.
-    return maxAbs > 0.12;
-  });
+  await waitForAudioOutputNonSilent(page, "__aeroAudioOutputLoopback", { threshold: 0.12 });
 
   await page.waitForTimeout(1000);
 
@@ -67,30 +44,10 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
       micWritePos,
       micReadPos,
       micDropped,
-      maxAbsSample: (() => {
-        if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return null;
-        const samples: Float32Array = out.ringBuffer.samples;
-        const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
-        const cc = out.ringBuffer.channelCount | 0;
-        const cap = out.ringBuffer.capacityFrames | 0;
-        if (cc <= 0 || cap <= 0) return null;
-        const write = Atomics.load(writeIndex, 0) >>> 0;
-        const framesToInspect = Math.min(1024, cap);
-        const startFrame = (write - framesToInspect) >>> 0;
-        let maxAbs = 0;
-        for (let i = 0; i < framesToInspect; i++) {
-          const frame = (startFrame + i) % cap;
-          const base = frame * cc;
-          for (let c = 0; c < cc; c++) {
-            const s = samples[base + c] ?? 0;
-            const a = Math.abs(s);
-            if (a > maxAbs) maxAbs = a;
-          }
-        }
-        return maxAbs;
-      })(),
     };
   }, { DROPPED_SAMPLES_INDEX, HEADER_U32_LEN, READ_POS_INDEX, WRITE_POS_INDEX });
+
+  const maxAbs = await getAudioOutputMaxAbsSample(page, "__aeroAudioOutputLoopback");
 
   expect(result.enabled).toBe(true);
   expect(result.state).toBe("running");
@@ -106,6 +63,6 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
   expect(result.micReadPos).toBeGreaterThan(0);
   // Confirm the output is actually being driven by the synthetic mic (gain=0.2),
   // not the CPU-worker fallback sine tone (gain=0.1).
-  expect(result.maxAbsSample).not.toBeNull();
-  expect(result.maxAbsSample as number).toBeGreaterThan(0.12);
+  expect(maxAbs).not.toBeNull();
+  expect(maxAbs as number).toBeGreaterThan(0.12);
 });
