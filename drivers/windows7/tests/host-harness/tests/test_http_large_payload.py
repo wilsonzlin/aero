@@ -211,6 +211,64 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 httpd.shutdown()
                 thread.join(timeout=2)
 
+    def test_large_transfer_does_not_block_other_requests(self) -> None:
+        # Ensure that a stalled large transfer cannot prevent the server from servicing
+        # other requests (ThreadingMixIn).
+        handler = type(
+            "_Handler",
+            (self.harness._QuietHandler,),
+            {
+                "expected_path": "/aero-virtio-selftest",
+                "http_log_path": None,
+                # Keep the connection alive long enough for this test to issue a second request.
+                "socket_timeout_seconds": 5.0,
+                # Try to send in a single large write so the handler is more likely to block
+                # when the client stops reading.
+                "large_chunk_size": 1024 * 1024,
+            },
+        )
+        httpd = self.harness._ReusableTcpServer(("127.0.0.1", 0), handler)
+        port = int(httpd.server_address[1])
+        thread = Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+
+        with httpd:
+            s = None
+            try:
+                s = socket.create_connection(("127.0.0.1", port), timeout=2)
+                # Shrink receive buffer so the server's 1MiB send blocks quickly when we stop reading.
+                try:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+                except OSError:
+                    pass
+
+                s.sendall(b"GET /aero-virtio-selftest-large HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                # Read the response headers only.
+                data = b""
+                while b"\r\n\r\n" not in data and len(data) < 8192:
+                    chunk = s.recv(1024)
+                    if not chunk:
+                        break
+                    data += chunk
+
+                # While the large transfer is in-flight (and likely blocked), ensure the
+                # server can still handle a separate request.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("GET", "/aero-virtio-selftest")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(body, b"OK\n")
+            finally:
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                httpd.shutdown()
+                thread.join(timeout=2)
+
 
 if __name__ == "__main__":
     unittest.main()
