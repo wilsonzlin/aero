@@ -44,6 +44,19 @@ declare global {
    * Note: WebAssembly `i64` values are represented as JS `bigint` in the JS WebAssembly API.
    * Any shim that returns/accepts a wasm `i64` must use `bigint` (not `number`).
    */
+  // These are installed as properties on the global object (via `globalThis.__aero_*`).
+  // Declare them as global vars so TypeScript understands `globalThis.__aero_*` accesses.
+  // eslint-disable-next-line no-var
+  var __aero_jit_call: ((tableIndex: number, cpuPtr: number, jitCtxPtr: number) => bigint) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_io_port_read: ((port: number, size: number) => number) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_io_port_write: ((port: number, size: number, value: number) => void) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_mmio_read: ((addr: bigint, size: number) => number) | undefined;
+  // eslint-disable-next-line no-var
+  var __aero_mmio_write: ((addr: bigint, size: number, value: number) => void) | undefined;
+
   interface WindowOrWorkerGlobalScope {
     /**
      * Tier-1 JIT dispatch hook used by `crates/aero-wasm`'s tiered VM.
