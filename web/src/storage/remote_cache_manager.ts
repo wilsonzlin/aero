@@ -138,6 +138,10 @@ const BASE_CACHE_FILE_NAME = "base.aerospar";
 const OVERLAY_FILE_NAME = "overlay.aerospar";
 const META_FILE_NAME = "meta.json";
 
+// Defensive bound for cache metadata files stored on disk. OPFS/IndexedDB state can become corrupt
+// (or attacker-controlled), so avoid reading/parsing arbitrarily large JSON blobs.
+const MAX_CACHE_META_BYTES = 64 * 1024 * 1024; // 64 MiB
+
 function normalizeOptionalHeader(v: string | null | undefined): string | undefined {
   if (typeof v !== "string") return undefined;
   const trimmed = v.trim();
@@ -196,19 +200,35 @@ function validateMeta(parsed: unknown): RemoteCacheMetaV1 | null {
   if (typeof obj.imageVersion !== "string") return null;
   if (typeof obj.deliveryType !== "string") return null;
   if (!obj.validators || typeof obj.validators !== "object") return null;
-  if (typeof obj.validators.sizeBytes !== "number") return null;
-  if (typeof obj.chunkSizeBytes !== "number") return null;
-  if (typeof obj.createdAtMs !== "number") return null;
-  if (typeof obj.lastAccessedAtMs !== "number") return null;
-  if (obj.accessCounter !== undefined && typeof obj.accessCounter !== "number") return null;
+  const sizeBytes = (obj.validators as Partial<RemoteCacheMetaV1["validators"]>).sizeBytes;
+  if (typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return null;
+  const chunkSizeBytes = obj.chunkSizeBytes;
+  if (typeof chunkSizeBytes !== "number" || !Number.isSafeInteger(chunkSizeBytes) || chunkSizeBytes <= 0) return null;
+  const createdAtMs = obj.createdAtMs;
+  if (typeof createdAtMs !== "number" || !Number.isSafeInteger(createdAtMs) || createdAtMs < 0) return null;
+  const lastAccessedAtMs = obj.lastAccessedAtMs;
+  if (
+    typeof lastAccessedAtMs !== "number" ||
+    !Number.isSafeInteger(lastAccessedAtMs) ||
+    lastAccessedAtMs < 0
+  )
+    return null;
+  if (obj.accessCounter !== undefined) {
+    if (!Number.isSafeInteger(obj.accessCounter) || obj.accessCounter < 0) return null;
+  }
   if (obj.chunkLastAccess !== undefined && (typeof obj.chunkLastAccess !== "object" || obj.chunkLastAccess === null)) {
     return null;
   }
   if (!Array.isArray(obj.cachedRanges)) return null;
+  if (obj.cachedRanges.length > 1_000_000) return null;
   for (const r of obj.cachedRanges) {
     if (!r || typeof r !== "object") return null;
     const rr = r as Partial<ByteRange>;
-    if (typeof rr.start !== "number" || typeof rr.end !== "number") return null;
+    const start = rr.start;
+    const end = rr.end;
+    if (typeof start !== "number" || typeof end !== "number") return null;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return null;
+    if (end > sizeBytes) return null;
   }
   return obj as RemoteCacheMetaV1;
 }
@@ -295,6 +315,10 @@ export class RemoteCacheManager {
       const handle = await dir.getFileHandle(META_FILE_NAME, { create: false });
       const file = await handle.getFile();
       if (file.size === 0) return null;
+      if (file.size > MAX_CACHE_META_BYTES) {
+        // Treat absurdly large meta files as corrupt and allow callers to invalidate.
+        return null;
+      }
       const raw = await file.text();
       if (!raw.trim()) return null;
       const parsed = JSON.parse(raw) as unknown;

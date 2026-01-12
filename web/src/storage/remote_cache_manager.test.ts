@@ -202,4 +202,32 @@ describe("RemoteCacheManager", () => {
     expect(status?.createdAtMs).toBe(2000);
     expect(status?.cachedRanges).toEqual([]);
   });
+
+  it("treats oversized meta.json files as corrupt without attempting to read them", async () => {
+    const root = new MemDir();
+    const mgr = new RemoteCacheManager(root, { now: () => 1234 });
+    const cacheKey = await RemoteCacheManager.deriveCacheKey({
+      imageId: "img-1",
+      version: "v1",
+      deliveryType: remoteRangeDeliveryType(1024),
+    });
+
+    const cacheDir = (await root.getDirectoryHandle(cacheKey, { create: true })) as MemDir;
+
+    class HugeFile extends MemFile {
+      override get size(): number {
+        return 64 * 1024 * 1024 + 1; // just over MAX_CACHE_META_BYTES
+      }
+
+      override async text(): Promise<string> {
+        throw new Error("should not read oversized meta file");
+      }
+    }
+
+    // Inject an oversized meta.json entry.
+    (cacheDir as any).entriesMap.set("meta.json", { kind: "file", file: new HugeFile() });
+
+    const meta = await mgr.readMeta(cacheKey);
+    expect(meta).toBeNull();
+  });
 });
