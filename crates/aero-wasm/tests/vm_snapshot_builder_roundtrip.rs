@@ -43,6 +43,7 @@ fn build_usb_blob(device_version: SnapshotVersion) -> Vec<u8> {
 
 fn build_net_stack_blob(device_version: SnapshotVersion) -> Vec<u8> {
     // Use the canonical 4CC for the user-space network stack snapshot blob.
+    // (`aero_net_stack::NetworkStackSnapshotState` uses `NETS`; older snapshots used `NSTK`.)
     //
     // Note: the wasm snapshot builder only needs the `aero-io-snapshot` header shape so it can
     // extract `device_version` into `DeviceState.version/flags`; the specific 4CC isn't validated

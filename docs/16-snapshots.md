@@ -134,7 +134,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::HPET` (`17`) — HPET timer state (inner `HPET`)
 - `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state (inner `HDA0`)
 - `DeviceId::E1000` (`19`) — Intel E1000 NIC (`aero-net-e1000`, inner `E1K0`)
-- `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NETS`; legacy NAT stack state uses `NETL`)
+- `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NETS`; legacy `NSTK` / `NETL`)
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
@@ -225,7 +225,7 @@ For the browser networking stack (e.g. tunnel/NAT state managed outside the gues
 
 - Outer `DeviceState.id = DeviceId::NET_STACK`
 - `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack.
-  - Canonical in-browser stack (`crates/aero-net-stack`): inner `DEVICE_ID = NETS`
+  - Canonical in-browser stack (`crates/aero-net-stack`): inner `DEVICE_ID = NETS` (legacy `NSTK` accepted)
   - Legacy NAT-based stack state (kept for backward compatibility): inner `DEVICE_ID = NETL`
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
 
