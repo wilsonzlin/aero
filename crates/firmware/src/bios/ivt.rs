@@ -8,6 +8,10 @@ const BDA_EBDA_SEGMENT_OFFSET: u64 = 0x0E; // 0x40E absolute
 const BDA_COM_PORTS_OFFSET: u64 = 0x00; // 0x400 absolute
 const BDA_LPT_PORTS_OFFSET: u64 = 0x08; // 0x408 absolute
 const BDA_EQUIPMENT_WORD_OFFSET: u64 = 0x10; // 0x410 absolute
+const BDA_KEYBOARD_FLAGS_OFFSET: u64 = 0x17; // 0x417 absolute
+const BDA_KEYBOARD_BUF_HEAD_OFFSET: u64 = 0x1A; // 0x41A absolute
+const BDA_KEYBOARD_BUF_TAIL_OFFSET: u64 = 0x1C; // 0x41C absolute
+const BDA_KEYBOARD_BUF_START: u16 = 0x001E; // 0x40:0x1E -> 0x41E absolute
 const BDA_MEM_SIZE_KB_OFFSET: u64 = 0x13; // 0x413 absolute
 
 pub fn init_ivt(bus: &mut dyn BiosBus) {
@@ -65,6 +69,15 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     let equipment: u16 = (1 << 1) | (2 << 4) | (1 << 9);
     bus.write_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET, equipment);
 
+    // Keyboard flags + buffer state.
+    //
+    // We do not model the legacy BDA ring buffer as the source of truth (keyboard input is
+    // buffered in `Bios::keyboard_queue`), but initializing these fields keeps the BDA in a
+    // consistent "no keys pending" state for software that probes them directly.
+    bus.write_u16(BDA_BASE + BDA_KEYBOARD_FLAGS_OFFSET, 0);
+    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START);
+    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET, BDA_KEYBOARD_BUF_START);
+
     // Conventional memory size in KiB (up to EBDA).
     let base_mem_kb = (EBDA_BASE / 1024) as u16;
     bus.write_u16(BDA_BASE + BDA_MEM_SIZE_KB_OFFSET, base_mem_kb);
@@ -94,5 +107,16 @@ mod tests {
         assert_eq!(mem.read_u16(BDA_BASE + BDA_LPT_PORTS_OFFSET + 4), 0);
 
         assert_eq!(mem.read_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET), 0x0222);
+
+        // Keyboard state should start "empty".
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_KEYBOARD_FLAGS_OFFSET), 0);
+        assert_eq!(
+            mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET),
+            BDA_KEYBOARD_BUF_START
+        );
+        assert_eq!(
+            mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET),
+            BDA_KEYBOARD_BUF_START
+        );
     }
 }
