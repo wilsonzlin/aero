@@ -29,6 +29,23 @@ use crate::stats::GpuStats;
 use crate::texture_manager::TextureRegion;
 use crate::{readback_depth32f, readback_rgba8, readback_stencil8};
 
+#[cfg(target_arch = "wasm32")]
+fn compute_wgpu_caps_hash(device: &wgpu::Device, downlevel_flags: wgpu::DownlevelFlags) -> String {
+    // This hash is included in the persistent shader cache key to avoid reusing translation output
+    // across WebGPU capability changes. It does not need to match the JS-side
+    // `computeWebGpuCapsHash`; it only needs to be stable for a given device/browser.
+    const VERSION: &[u8] = b"aerogpu wgpu caps hash v1";
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(VERSION);
+    hasher.update(&device.features().bits().to_le_bytes());
+    hasher.update(&downlevel_flags.bits().to_le_bytes());
+    // `wgpu::Limits` is a large struct without `Serialize`; use a debug representation for a
+    // stable-ish byte stream. Any change here just forces retranslation, which is safe.
+    hasher.update(format!("{:?}", device.limits()).as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
+
 /// Minimal executor for the D3D9 UMD-produced `aerogpu_cmd.h` command stream.
 ///
 /// This is intentionally a bring-up implementation: it focuses on enough
@@ -43,6 +60,12 @@ pub struct AerogpuD3d9Executor {
     /// WASM-only persistent shader translation cache (IndexedDB/OPFS).
     #[cfg(target_arch = "wasm32")]
     persistent_shader_cache: aero_d3d9::runtime::ShaderCache,
+    /// Translation flags used for persistent shader cache lookups (wasm32 only).
+    ///
+    /// This includes a stable per-device capabilities hash so cached artifacts are not reused when
+    /// WebGPU limits/features differ.
+    #[cfg(target_arch = "wasm32")]
+    persistent_shader_cache_flags: aero_d3d9::runtime::ShaderTranslationFlags,
 
     resources: HashMap<u32, Resource>,
     /// Handle indirection table for shared resources.
@@ -930,6 +953,12 @@ impl AerogpuD3d9Executor {
         downlevel_flags: wgpu::DownlevelFlags,
         stats: Arc<GpuStats>,
     ) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        let persistent_shader_cache_flags = aero_d3d9::runtime::ShaderTranslationFlags::new(
+            false,
+            Some(compute_wgpu_caps_hash(&device, downlevel_flags)),
+        );
+
         // The D3D9 token-stream translator packs vertex + pixel constant registers into a single
         // uniform buffer:
         // - c[0..255]   = vertex constants
@@ -1033,6 +1062,8 @@ impl AerogpuD3d9Executor {
             shader_cache: shader::ShaderCache::default(),
             #[cfg(target_arch = "wasm32")]
             persistent_shader_cache: aero_d3d9::runtime::ShaderCache::new(),
+            #[cfg(target_arch = "wasm32")]
+            persistent_shader_cache_flags,
             resources: HashMap::new(),
             resource_handles: HashMap::new(),
             resource_refcounts: HashMap::new(),
@@ -2048,7 +2079,7 @@ impl AerogpuD3d9Executor {
     ) -> Result<(), AerogpuD3d9Error> {
         let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
 
-        let flags = aero_d3d9::runtime::ShaderTranslationFlags::new(false, None);
+        let flags = self.persistent_shader_cache_flags.clone();
 
         // At most one invalidation+retranslate retry for corruption defense.
         let mut invalidated_once = false;
