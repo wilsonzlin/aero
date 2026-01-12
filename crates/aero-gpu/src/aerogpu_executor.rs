@@ -138,6 +138,42 @@ fn texture_copy_layout(
     })
 }
 
+fn upload_resource_texture_row_range(
+    handle: u32,
+    offset_bytes: u64,
+    size_bytes: u64,
+    row_pitch_bytes: u64,
+    rows_in_layout: u32,
+) -> Result<(u32, u32, u32), ExecutorError> {
+    if row_pitch_bytes == 0 {
+        return Err(ExecutorError::Validation(format!(
+            "UPLOAD_RESOURCE texture {handle} is missing row_pitch_bytes"
+        )));
+    }
+    let start_row_u64 = offset_bytes / row_pitch_bytes;
+    let row_count_u64 = size_bytes / row_pitch_bytes;
+    let end_row_u64 = start_row_u64.checked_add(row_count_u64).ok_or_else(|| {
+        ExecutorError::Validation("UPLOAD_RESOURCE texture row range overflow".into())
+    })?;
+    if end_row_u64 > u64::from(rows_in_layout) {
+        return Err(ExecutorError::Validation(format!(
+            "UPLOAD_RESOURCE out of bounds for texture {handle} (rows {start_row_u64}..{end_row_u64}, rows_in_layout={rows_in_layout})"
+        )));
+    }
+
+    Ok((
+        u32::try_from(start_row_u64).map_err(|_| {
+            ExecutorError::Validation("UPLOAD_RESOURCE texture start_row out of range".into())
+        })?,
+        u32::try_from(row_count_u64).map_err(|_| {
+            ExecutorError::Validation("UPLOAD_RESOURCE texture row_count out of range".into())
+        })?,
+        u32::try_from(end_row_u64).map_err(|_| {
+            ExecutorError::Validation("UPLOAD_RESOURCE texture end_row out of range".into())
+        })?,
+    ))
+}
+
 fn mip_dim(base: u32, mip_level: u32) -> u32 {
     // D3D and WebGPU clamp mip dimensions to 1x1 at the tail.
     base.checked_shr(mip_level).unwrap_or(0).max(1)
@@ -2271,16 +2307,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )));
             }
 
-            let start_row = (offset_bytes / row_pitch) as u32;
-            let row_count = (size_bytes / row_pitch) as u32;
-            let end_row = start_row.saturating_add(row_count);
             let full_layout = texture_copy_layout(tex.width, tex.height, tex.format_raw)?;
-            if end_row > full_layout.rows_in_layout {
-                return Err(ExecutorError::Validation(format!(
-                    "UPLOAD_RESOURCE out of bounds for texture {handle} (rows {start_row}..{end_row}, rows_in_layout={})",
-                    full_layout.rows_in_layout
-                )));
-            }
+            let (start_row, row_count, _end_row) = upload_resource_texture_row_range(
+                handle,
+                offset_bytes,
+                size_bytes,
+                row_pitch,
+                full_layout.rows_in_layout,
+            )?;
 
             let origin_y = if is_bc_format(tex.format_raw) {
                 start_row.checked_mul(4).ok_or_else(|| {
@@ -4319,6 +4353,21 @@ mod tests {
         let mut ranges = vec![10u32..12, 0..4, 4..8, 11..15, 20..20];
         coalesce_ranges_u32(&mut ranges);
         assert_eq!(ranges, vec![0..8, 10..15]);
+    }
+
+    #[test]
+    fn upload_resource_texture_row_range_rejects_offset_that_overflows_u32_rows() {
+        let row_pitch_bytes = 16u64;
+        let offset_bytes = row_pitch_bytes * (u64::from(u32::MAX) + 1);
+        let size_bytes = row_pitch_bytes;
+        let err = upload_resource_texture_row_range(1, offset_bytes, size_bytes, row_pitch_bytes, 4)
+            .unwrap_err();
+        match err {
+            ExecutorError::Validation(message) => {
+                assert!(message.contains("out of bounds"), "{message}");
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
     }
 
     #[test]
