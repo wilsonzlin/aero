@@ -8,7 +8,6 @@
 //! and Windows 7 boot (AHCI via `storahci.sys`) when wired into a full emulator.
 
 pub mod ahci;
-pub mod ahci_pci;
 pub mod ide;
 
 pub mod ata;
