@@ -651,6 +651,94 @@ fn snapshot_inspect_prints_meta_and_ram_summary() {
         .stdout(predicate::str::contains("compression: lz4"));
 }
 
+struct UnsetDiskRefSource {
+    ram: Vec<u8>,
+}
+
+impl UnsetDiskRefSource {
+    fn new(ram_len: usize) -> Self {
+        let mut ram = Vec::with_capacity(ram_len);
+        ram.extend((0..ram_len).map(|i| (i as u8).wrapping_mul(29)));
+        Self { ram }
+    }
+}
+
+impl SnapshotSource for UnsetDiskRefSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 3,
+            parent_snapshot_id: None,
+            created_unix_ms: 0,
+            label: Some("xtask-unset-disks".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: 0,
+                base_image: String::new(),
+                overlay_image: String::new(),
+            }],
+        }
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(aero_snapshot::SnapshotError::Corrupt("ram read overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..end]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+fn write_snapshot_with_unset_disk_refs(path: &std::path::Path) {
+    let mut file = fs::File::create(path).unwrap();
+    file.rewind().unwrap();
+    let mut source = UnsetDiskRefSource::new(4096);
+    aero_snapshot::save_snapshot(&mut file, &mut source, SaveOptions::default()).unwrap();
+    file.flush().unwrap();
+}
+
+#[test]
+fn snapshot_inspect_displays_unset_disk_refs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("unset_disks.aerosnap");
+    write_snapshot_with_unset_disk_refs(&snap);
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "inspect", snap.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("DISKS:"))
+        .stdout(predicate::str::contains("count: 1"))
+        .stdout(predicate::str::contains("base_image=\"<unset>\""))
+        .stdout(predicate::str::contains("overlay_image=\"<unset>\""));
+}
+
 #[test]
 fn snapshot_validate_and_deep_validate_succeed() {
     let tmp = tempfile::tempdir().unwrap();
