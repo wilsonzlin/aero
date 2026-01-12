@@ -185,7 +185,7 @@ Inside the guest:
    - Update Driver → Have Disk… → point at the directory containing:
       - `aero_virtio_input.inf`
      - `aero_virtio_input.sys`
-     - `aero_virtio_input.cat`
+      - `aero_virtio_input.cat`
 
 ### 3.3 Verify HID keyboard + mouse enumeration
 
@@ -195,6 +195,26 @@ In Device Manager after install/reboot:
 - **Mice and other pointing devices** contains a **HID-compliant mouse** (driver stack includes `mouhid.sys`, `hidclass.sys`).
 
 (Optional but recommended) Run `hidtest.exe` as described in the QEMU README to validate raw input reports.
+
+### 3.4 Expected pass/fail signals (Windows 7)
+
+These are common “first look” signals when validating the driver end-to-end:
+
+- **Before driver install (expected):**
+  - Device Manager shows the virtio-input PCI function(s) under **Other devices** (often as “PCI Device”).
+  - Typical state: **Code 28** (“drivers for this device are not installed”).
+- **After successful install (expected):**
+  - The virtio-input PCI function(s) bind to `aero_virtio_input.sys` and appear under **Human Interface Devices** (`HIDClass`).
+  - A HID keyboard and HID mouse are present and use the in-box HID stacks:
+    - Keyboard: **Keyboards → HID Keyboard Device** (`kbdhid.sys`, `hidclass.sys`, `hidparse.sys`)
+    - Mouse: **Mice and other pointing devices → HID-compliant mouse** (`mouhid.sys`, `hidclass.sys`, `hidparse.sys`)
+- **Common failures:**
+  - **Code 52**: Windows cannot verify the driver signature (test signing/cert install issue).
+  - **Code 10**: device cannot start (often contract mismatch: wrong `REV`, wrong virtio-pci caps/layout, or wrong virtio-input `ID_NAME` strings).
+
+For detailed troubleshooting (including QEMU-specific notes), see:
+
+- `drivers/windows7/virtio-input/tests/qemu/README.md`
 
 ---
 
@@ -254,13 +274,61 @@ Open the printed URL with a verbose log level (example):
 http://localhost:5173/?log=debug
 ```
 
-### 5.2 Boot a Win7 image with the virtio-input driver installed
+### 5.2 Validate virtio-input PCI exposure (IDs / caps / BAR0) in the browser runtime
+
+Once virtio-input is wired into the web runtime PCI bus, validate the device is exposed exactly as required by:
+
+- `docs/windows7-virtio-driver-contract.md` (AERO-W7-VIRTIO v1), especially:
+  - §1.3 PCI caps
+  - §1.4 fixed BAR0 layout
+  - §3.3 virtio-input
+
+#### What to check (contract v1)
+
+- Two PCI functions with **Vendor/Device** `1AF4:1052`:
+  - function 0: keyboard (`SUBSYS 1AF4:0010`, `header_type = 0x80` multifunction)
+  - function 1: mouse (`SUBSYS 1AF4:0011`)
+- **Revision ID** `0x01` (`REV_01`) on both functions.
+- **BAR0**: 64-bit MMIO, size `0x4000` bytes (via standard PCI BAR sizing probe).
+- **Capability list** is present (PCI Status bit 4 set; cap pointer at `0x34`) and contains the required virtio vendor-specific capabilities:
+  - `cfg_type = 1` COMMON
+  - `cfg_type = 2` NOTIFY (must include `notify_off_multiplier = 4`)
+  - `cfg_type = 3` ISR
+  - `cfg_type = 4` DEVICE
+
+#### How to check (practical approach)
+
+Use the same “CPU ↔ IO worker” technique used by the existing PCI tests to read config space via PCI config mechanism #1 (ports `0xCF8`/`0xCFC`):
+
+- `tests/e2e/io_worker_i8042.spec.ts` (see “PCI config + BAR-backed MMIO dispatch”)
+
+At a high level:
+
+1. From a CPU-context (or a small debug worker), write `0xCF8` to select a B/D/F + config register dword:
+
+   ```text
+   0x8000_0000 | (bus<<16) | (device<<11) | (function<<8) | (reg & 0xFC)
+   ```
+
+2. Read `0xCFC..0xCFF` to get the config dword/word/byte.
+3. Scan bus 0 for `vendor_id == 0x1AF4` and `device_id == 0x1052`.
+4. For BAR0 sizing:
+   - write `0xFFFF_FFFF` to BAR0 low dword (and high dword for 64-bit BARs), then read back the mask and compute size.
+   - expected size: `0x4000`.
+5. Walk the PCI capability list (starting at config offset `0x34`) and confirm virtio vendor caps and their BAR/offset layout.
+
+Expected signal:
+
+- **Pass:** the virtio-input keyboard and mouse functions enumerate and match the contract values above.
+- **Fail:** any drift here usually means the Win7 driver won’t bind (INF is revision-gated) or won’t start (cap parsing/layout checks fail).
+
+### 5.3 Boot a Win7 image with the virtio-input driver installed
 
 1. Boot a Windows 7 image that already has the Aero virtio-input driver installed and working (see §3).
 2. In the Windows guest, confirm the virtio-input devices enumerate (Device Manager):
    - HID keyboard and HID mouse present (or at least the virtio-input PCI functions are present and the driver service is started).
 
-### 5.3 Verify routing switch happens at `DRIVER_OK`
+### 5.4 Verify routing switch happens at `DRIVER_OK`
 
 The intended auto-routing policy is implemented by the input capture pipeline:
 
@@ -275,7 +343,9 @@ Validation steps:
    - keyboard/mouse input continues working
 3. Confirm that new input is being sent via virtio-input (not the fallback path).
 
-### 5.4 Recommended debug signal (when validating routing)
+If you need an explicit “device-ready” signal, `DRIVER_OK` is the virtio status bit `0x04` in the virtio common config `device_status` register (AERO-W7-VIRTIO v1 uses the common config at BAR0 + `0x0000`, and `device_status` at offset `0x14` within that common config block).
+
+### 5.5 Recommended debug signal (when validating routing)
 
 When debugging routing issues, add a one-line log/trace when the virtio-input driver becomes ready:
 
