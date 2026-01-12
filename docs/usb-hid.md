@@ -185,3 +185,8 @@ low nibble of a *single* byte.
 - Examples:
   - `unitExponent = -1` → `0x55 0x0F` (not `0x55 0xFF`)
   - `unitExponent = -2` → `0x55 0x0E`
+
+Also note that Aero’s WebHID passthrough devices are modeled as **USB 1.1 full-speed** HID
+interfaces (UHCI), so interrupt transfers are limited to **64 bytes** per transaction. We currently
+do not support splitting a single HID report across multiple interrupt packets, so input/output
+reports larger than 64 bytes are rejected during normalization/descriptor synthesis.
