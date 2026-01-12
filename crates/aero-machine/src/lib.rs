@@ -53,7 +53,11 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 use aero_devices_storage::ata::AtaDrive;
+use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
+use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
+use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 pub use aero_devices_input::Ps2MouseButton;
 use aero_gpu_vga::{PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
@@ -63,7 +67,7 @@ use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
-    InterruptController as PlatformInterruptController, PlatformInterrupts,
+    InterruptController as PlatformInterruptController, InterruptInput, PlatformInterrupts,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::reset::{ResetKind, ResetLatch};
@@ -621,11 +625,11 @@ impl IdePciConfigDevice {
         //
         // See `docs/05-storage-topology-win7.md`.
         let mut cfg = aero_devices::pci::profile::IDE_PIIX3.build_config_space();
-        cfg.set_bar_base(0, 0x1F0);
+        cfg.set_bar_base(0, u64::from(PRIMARY_PORTS.cmd_base));
         cfg.set_bar_base(1, 0x3F4); // alt-status/dev-ctl at +2 => 0x3F6
-        cfg.set_bar_base(2, 0x170);
+        cfg.set_bar_base(2, u64::from(SECONDARY_PORTS.cmd_base));
         cfg.set_bar_base(3, 0x374); // alt-status/dev-ctl at +2 => 0x376
-        cfg.set_bar_base(4, 0xC000);
+        cfg.set_bar_base(4, u64::from(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE));
         Self { cfg }
     }
 }
@@ -639,6 +643,7 @@ impl PciDevice for IdePciConfigDevice {
         &mut self.cfg
     }
 }
+
 // -----------------------------------------------------------------------------
 // VGA port/MMIO adapters
 // -----------------------------------------------------------------------------
@@ -831,6 +836,97 @@ impl PciBarMmioHandler for MachineAhciMmioBar {
     }
 }
 
+/// Per-port `PortIoDevice` view into a shared PIIX3 IDE controller.
+struct IdePort {
+    pci_cfg: SharedPciConfigPorts,
+    ide: Rc<RefCell<Piix3IdePciDevice>>,
+    bdf: PciBdf,
+    port: u16,
+}
+
+impl IdePort {
+    fn sync_config(&self) {
+        let (command, bar4_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let cfg = bus.device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar4_base = cfg
+                .and_then(|cfg| cfg.bar_range(4))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar4_base)
+        };
+
+        let mut ide = self.ide.borrow_mut();
+        ide.config_mut().set_command(command);
+        if bar4_base != 0 {
+            ide.config_mut().set_bar_base(4, bar4_base);
+        }
+    }
+}
+
+impl aero_platform::io::PortIoDevice for IdePort {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        self.sync_config();
+        self.ide.borrow_mut().io_read(port, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        self.sync_config();
+        self.ide.borrow_mut().io_write(port, size, value);
+    }
+}
+
+/// Bus Master IDE (BAR4) handler registered via the machine's PCI I/O window.
+///
+/// `offset` is interpreted as the device-relative offset within BAR4.
+struct IdeBusMasterBar {
+    pci_cfg: SharedPciConfigPorts,
+    ide: Rc<RefCell<Piix3IdePciDevice>>,
+    bdf: PciBdf,
+}
+
+impl IdeBusMasterBar {
+    fn sync_config(&self) {
+        let (command, bar4_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let cfg = bus.device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar4_base = cfg
+                .and_then(|cfg| cfg.bar_range(4))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar4_base)
+        };
+
+        let mut ide = self.ide.borrow_mut();
+        ide.config_mut().set_command(command);
+        if bar4_base != 0 {
+            ide.config_mut().set_bar_base(4, bar4_base);
+        }
+    }
+}
+
+impl PciIoBarHandler for IdeBusMasterBar {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
+        self.sync_config();
+        let base = { self.ide.borrow().bus_master_base() };
+        let abs_port = base.wrapping_add(offset as u16);
+        self.ide.borrow_mut().io_read(abs_port, size as u8)
+    }
+
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+        self.sync_config();
+        let base = { self.ide.borrow().bus_master_base() };
+        let abs_port = base.wrapping_add(offset as u16);
+        self.ide.borrow_mut().io_write(abs_port, size as u8, value);
+    }
+}
+
 struct E1000PciIoBar {
     dev: Rc<RefCell<E1000Device>>,
 }
@@ -983,6 +1079,7 @@ pub struct Machine {
     e1000: Option<Rc<RefCell<E1000Device>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
+    ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
     bios: Bios,
     disk: SharedDisk,
     network_backend: Option<Box<dyn NetworkBackend>>,
@@ -1063,6 +1160,7 @@ impl Machine {
             e1000: None,
             vga: None,
             ahci: None,
+            ide: None,
             bios: Bios::new(BiosConfig::default()),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
@@ -1410,12 +1508,22 @@ impl Machine {
         self.ahci.clone()
     }
 
+    /// Returns the PIIX3-compatible IDE controller, if present.
+    pub fn ide(&self) -> Option<Rc<RefCell<Piix3IdePciDevice>>> {
+        self.ide.clone()
+    }
+
     /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
-        let Some(ahci) = self.ahci.as_ref() else {
+        self.attach_ahci_drive(0, drive);
+    }
+
+    /// Attach an ATA drive to an AHCI port, if present.
+    pub fn attach_ahci_drive(&mut self, port: usize, drive: AtaDrive) {
+        let Some(ahci) = &self.ahci else {
             return;
         };
-        ahci.borrow_mut().attach_drive(0, drive);
+        ahci.borrow_mut().attach_drive(port, drive);
     }
 
     /// Attach a disk image to the canonical AHCI port 0, if the AHCI controller is enabled.
@@ -1433,6 +1541,81 @@ impl Machine {
             return;
         };
         ahci.borrow_mut().detach_drive(0);
+    }
+
+    /// Attach an ATA drive as the primary master on the IDE controller, if present.
+    pub fn attach_ide_primary_master_drive(&mut self, drive: AtaDrive) {
+        let Some(ide) = &self.ide else {
+            return;
+        };
+        ide.borrow_mut().controller.attach_primary_master_ata(drive);
+    }
+
+    /// Attach an ATAPI CD-ROM device as the secondary master on the IDE controller, if present.
+    pub fn attach_ide_secondary_master_atapi(&mut self, dev: AtapiCdrom) {
+        let Some(ide) = &self.ide else {
+            return;
+        };
+        ide.borrow_mut().controller.attach_secondary_master_atapi(dev);
+    }
+
+    /// Re-attach a host ISO backend to the IDE secondary master ATAPI device without changing
+    /// guest-visible media state.
+    ///
+    /// This is intended for snapshot restore flows: the IDE controller snapshot restores the
+    /// ATAPI device's internal state (tray/sense/media_changed) but drops the host backend.
+    pub fn attach_ide_secondary_master_atapi_backend_for_restore(
+        &mut self,
+        backend: Box<dyn IsoBackend>,
+    ) {
+        let Some(ide) = &self.ide else {
+            return;
+        };
+        ide.borrow_mut()
+            .controller
+            .attach_secondary_master_atapi_backend_for_restore(backend);
+    }
+
+    /// Poll the PIIX3 IDE controller once (process Bus Master DMA).
+    ///
+    /// This is safe to call even when IDE is disabled; it will no-op.
+    pub fn process_ide(&mut self) {
+        let Some(ide) = self.ide.as_ref() else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+        let (command, bar4_base) = self
+            .pci_cfg
+            .as_ref()
+            .map(|pci_cfg| {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let bar4_base = cfg
+                    .and_then(|cfg| cfg.bar_range(4))
+                    .map(|range| range.base)
+                    .unwrap_or(0);
+                (command, bar4_base)
+            })
+            .unwrap_or((0, 0));
+
+        {
+            let mut ide = ide.borrow_mut();
+            ide.config_mut().set_command(command);
+            if bar4_base != 0 {
+                ide.config_mut().set_bar_base(4, bar4_base);
+            }
+            ide.tick(&mut self.mem);
+        }
+    }
+
+    /// Poll all known PCI INTx sources (and legacy ISA IRQ sources like IDE) and drive their
+    /// current levels into the platform interrupt controller.
+    ///
+    /// This does *not* acknowledge any interrupts; it only updates level-triggered lines.
+    pub fn poll_pci_intx_lines(&mut self) {
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     /// Advance deterministic machine/platform time and poll any timer devices.
@@ -1544,79 +1727,106 @@ impl Machine {
     }
 
     fn sync_pci_intx_sources_to_interrupts(&mut self) {
-        let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) else {
+        let Some(interrupts) = &self.interrupts else {
             return;
         };
 
-        // E1000 legacy INTx (level-triggered).
-        if let Some(e1000) = &self.e1000 {
-            let bdf: PciBdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
-            let pin = PciInterruptPin::IntA;
-
-            // Keep the device model's internal PCI command register in sync with the platform PCI
-            // bus so `E1000Device::irq_level` can respect COMMAND.INTX_DISABLE (bit 10) even though
-            // the machine owns the canonical PCI config space.
-            let command = self
-                .pci_cfg
-                .as_ref()
-                .and_then(|pci_cfg| {
-                    let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
-                })
-                .unwrap_or(0);
-            {
-                let mut dev = e1000.borrow_mut();
-                dev.pci_config_write(0x04, 2, u32::from(command));
-            }
-
-            let mut level = e1000.borrow().irq_level();
-
-            // Redundantly gate on the canonical PCI command register as well (defensive).
-            if (command & (1 << 10)) != 0 {
-                level = false;
-            }
-
+        if let Some(pci_intx) = &self.pci_intx {
             let mut pci_intx = pci_intx.borrow_mut();
             let mut interrupts = interrupts.borrow_mut();
-            pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+
+            // E1000 legacy INTx (level-triggered).
+            if let Some(e1000) = &self.e1000 {
+                let bdf: PciBdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                // Keep the device model's internal PCI command register in sync with the platform
+                // PCI bus so `E1000Device::irq_level` can respect COMMAND.INTX_DISABLE (bit 10).
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+                {
+                    let mut dev = e1000.borrow_mut();
+                    dev.pci_config_write(0x04, 2, u32::from(command));
+                }
+
+                let mut level = e1000.borrow().irq_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // ICH9 AHCI legacy INTx (level-triggered).
+            if let Some(ahci) = &self.ahci {
+                let bdf: PciBdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                // Keep the device model's internal PCI command state coherent so
+                // `AhciPciDevice::intx_level()` can apply COMMAND.INTX_DISABLE gating.
+                let (command, bar5_base) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar5_base = cfg
+                            .and_then(|cfg| cfg.bar_range(5))
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        (command, bar5_base)
+                    })
+                    .unwrap_or((0, 0));
+
+                let mut ahci_dev = ahci.borrow_mut();
+                ahci_dev.config_mut().set_command(command);
+                if bar5_base != 0 {
+                    ahci_dev.config_mut().set_bar_base(5, bar5_base);
+                }
+
+                let mut level = ahci_dev.intx_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
         }
 
-        // ICH9 AHCI legacy INTx (level-triggered).
-        if let Some(ahci) = &self.ahci {
-            let bdf: PciBdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-            let pin = PciInterruptPin::IntA;
-
-            let command = self
-                .pci_cfg
-                .as_ref()
-                .and_then(|pci_cfg| {
-                    let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg.bus_mut().device_config(bdf).map(|cfg| cfg.command())
-                })
-                .unwrap_or(0);
-
-            // Keep device-side gating consistent (INTx disable bit) when the same AHCI model is
-            // used standalone.
-            {
-                let mut ahci = ahci.borrow_mut();
-                ahci.config_mut().set_command(command);
-            }
-
-            let mut level = ahci.borrow().intx_level();
-
-            // Respect PCI command register Interrupt Disable bit (bit 10) from the canonical PCI
-            // config space.
-            let intx_disabled = (command & (1 << 10)) != 0;
-            if intx_disabled {
-                level = false;
-            }
-
-            let mut pci_intx = pci_intx.borrow_mut();
+        // IDE legacy compatibility mode uses ISA IRQ14/IRQ15 rather than PCI INTx.
+        if let Some(ide) = &self.ide {
+            let (irq14, irq15) = {
+                let ide = ide.borrow();
+                (
+                    ide.controller.primary_irq_pending(),
+                    ide.controller.secondary_irq_pending(),
+                )
+            };
             let mut interrupts = interrupts.borrow_mut();
-            pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            if irq14 {
+                interrupts.raise_irq(InterruptInput::IsaIrq(14));
+            } else {
+                interrupts.lower_irq(InterruptInput::IsaIrq(14));
+            }
+            if irq15 {
+                interrupts.raise_irq(InterruptInput::IsaIrq(15));
+            } else {
+                interrupts.lower_irq(InterruptInput::IsaIrq(15));
+            }
         }
     }
     /// Take (drain) all serial output accumulated so far.
@@ -2108,16 +2318,28 @@ impl Machine {
             // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
             // multi-function bit set so OSes enumerate the IDE function at 00:01.1 reliably.
             if self.cfg.enable_ide {
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::ISA_PIIX3.bdf,
-                    Box::new(Piix3IsaPciConfigDevice::new()),
-                );
+                let bdf = aero_devices::pci::profile::ISA_PIIX3.bdf;
+                pci_cfg
+                    .borrow_mut()
+                    .bus_mut()
+                    .add_device(bdf, Box::new(Piix3IsaPciConfigDevice::new()));
+            }
+
+            let ide = if self.cfg.enable_ide {
                 pci_cfg.borrow_mut().bus_mut().add_device(
                     aero_devices::pci::profile::IDE_PIIX3.bdf,
                     Box::new(IdePciConfigDevice::new()),
                 );
-            }
-
+                match &self.ide {
+                    Some(ide) => {
+                        *ide.borrow_mut() = Piix3IdePciDevice::new();
+                        Some(ide.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(Piix3IdePciDevice::new()))),
+                }
+            } else {
+                None
+            };
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -2185,10 +2407,8 @@ impl Machine {
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
             // immediately without needing dynamic MMIO unmap/remap support in `PhysicalMemoryBus`.
-            self.mem.map_mmio_once(
-                pci_allocator_cfg.mmio_base,
-                pci_allocator_cfg.mmio_size,
-                || {
+            self.mem
+                .map_mmio_once(pci_allocator_cfg.mmio_base, pci_allocator_cfg.mmio_size, || {
                     let mut router =
                         PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
                     if let Some(ahci) = ahci.clone() {
@@ -2212,8 +2432,7 @@ impl Machine {
                         );
                     }
                     Box::new(router)
-                },
-            );
+                });
 
             // Register a dispatcher for the PCI I/O window used by `PciResourceAllocator`.
             //
@@ -2224,6 +2443,18 @@ impl Machine {
             let io_size = u16::try_from(pci_allocator_cfg.io_size)
                 .expect("PCI IO window size must fit in u16");
             let mut io_router = PciIoBarRouter::new(pci_cfg.clone());
+            if let Some(ide) = ide.clone() {
+                let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+                io_router.register_handler(
+                    bdf,
+                    4,
+                    IdeBusMasterBar {
+                        pci_cfg: pci_cfg.clone(),
+                        ide,
+                        bdf,
+                    },
+                );
+            }
             if let Some(e1000) = e1000.clone() {
                 io_router.register_handler(
                     aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
@@ -2237,6 +2468,63 @@ impl Machine {
                 Box::new(PciIoBarWindow { router: io_router }),
             );
 
+            // Register IDE legacy I/O ports after BIOS POST so the guest-visible PCI command/BAR
+            // state is initialized. Bus Master IDE (BAR4) is routed through the PCI I/O window so
+            // BAR relocation is reflected immediately.
+            if let Some(ide_dev) = ide.as_ref() {
+                let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+
+                // Primary command block (0x1F0..=0x1F7).
+                for port in PRIMARY_PORTS.cmd_base..PRIMARY_PORTS.cmd_base + 8 {
+                    self.io.register(
+                        port,
+                        Box::new(IdePort {
+                            pci_cfg: pci_cfg.clone(),
+                            ide: ide_dev.clone(),
+                            bdf,
+                            port,
+                        }),
+                    );
+                }
+                // Primary control block: 0x3F6..=0x3F7.
+                for port in PRIMARY_PORTS.ctrl_base..PRIMARY_PORTS.ctrl_base + 2 {
+                    self.io.register(
+                        port,
+                        Box::new(IdePort {
+                            pci_cfg: pci_cfg.clone(),
+                            ide: ide_dev.clone(),
+                            bdf,
+                            port,
+                        }),
+                    );
+                }
+
+                // Secondary command block (0x170..=0x177).
+                for port in SECONDARY_PORTS.cmd_base..SECONDARY_PORTS.cmd_base + 8 {
+                    self.io.register(
+                        port,
+                        Box::new(IdePort {
+                            pci_cfg: pci_cfg.clone(),
+                            ide: ide_dev.clone(),
+                            bdf,
+                            port,
+                        }),
+                    );
+                }
+                // Secondary control block: 0x376..=0x377.
+                for port in SECONDARY_PORTS.ctrl_base..SECONDARY_PORTS.ctrl_base + 2 {
+                    self.io.register(
+                        port,
+                        Box::new(IdePort {
+                            pci_cfg: pci_cfg.clone(),
+                            ide: ide_dev.clone(),
+                            bdf,
+                            port,
+                        }),
+                    );
+                }
+            }
+
             // Ensure options stay populated (for the first reset).
             self.platform_clock = Some(clock);
             self.interrupts = Some(interrupts);
@@ -2248,6 +2536,7 @@ impl Machine {
             self.hpet = Some(hpet);
             self.e1000 = e1000;
             self.ahci = ahci;
+            self.ide = ide;
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
@@ -2262,6 +2551,7 @@ impl Machine {
             self.hpet = None;
             self.e1000 = None;
             self.ahci = None;
+            self.ide = None;
         }
         if self.cfg.enable_serial {
             let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
@@ -2432,6 +2722,7 @@ impl Machine {
 
             self.poll_network();
             self.process_ahci();
+            self.process_ide();
 
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one
             // pending external interrupt vector into the CPU core.
@@ -2790,6 +3081,66 @@ impl snapshot::SnapshotSource for Machine {
                 &*e1000.borrow(),
             ));
         }
+        // Storage controller(s).
+        //
+        // Canonical encoding for the outer `DeviceId::DISK_CONTROLLER` entry is the `DSKC` wrapper
+        // (`DiskControllersSnapshot`). This allows a single device entry to carry multiple
+        // different controller snapshots keyed by PCI BDF, avoiding `(id, version, flags)`
+        // collisions when multiple controllers share the same inner `SnapshotVersion`.
+        let mut disk_controllers = DiskControllersSnapshot::new();
+
+        // Note: these models snapshot their own PCI config space state. Since `Machine` maintains a
+        // separate canonical PCI config space for guest enumeration, mirror the live PCI command
+        // (and relevant BAR bases) into the device models before snapshotting so the serialized
+        // device blobs are coherent with the platform PCI state.
+        if let Some(ahci) = &self.ahci {
+            let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let (command, bar5_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar5_base = cfg
+                        .and_then(|cfg| cfg.bar_range(5))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar5_base)
+                };
+                let mut ahci = ahci.borrow_mut();
+                ahci.config_mut().set_command(command);
+                if bar5_base != 0 {
+                    ahci.config_mut().set_bar_base(5, bar5_base);
+                }
+            }
+            disk_controllers.insert(bdf.pack_u16(), ahci.borrow().save_state());
+        }
+        if let Some(ide) = &self.ide {
+            let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let (command, bar4_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar4_base = cfg
+                        .and_then(|cfg| cfg.bar_range(4))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar4_base)
+                };
+                let mut ide = ide.borrow_mut();
+                ide.config_mut().set_command(command);
+                if bar4_base != 0 {
+                    ide.config_mut().set_bar_base(4, bar4_base);
+                }
+            }
+            disk_controllers.insert(bdf.pack_u16(), ide.borrow().save_state());
+        }
+        if !disk_controllers.controllers().is_empty() {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::DISK_CONTROLLER,
+                &disk_controllers,
+            ));
+        }
         if let Some(acpi_pm) = &self.acpi_pm {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::ACPI_PM,
@@ -2934,11 +3285,21 @@ impl snapshot::SnapshotTarget for Machine {
         // state is deterministic (especially for interrupt lines and PCI INTx routing).
         let mut by_id: HashMap<snapshot::DeviceId, snapshot::DeviceState> =
             HashMap::with_capacity(states.len());
+        let mut disk_controller_states: Vec<snapshot::DeviceState> = Vec::new();
         for state in states {
-            // Snapshot format already rejects duplicate (id, version, flags) tuples; for multiple
-            // entries with the same outer ID (forward-compatible versions), prefer the first one.
-            by_id.entry(state.id).or_insert(state);
+            if state.id == snapshot::DeviceId::DISK_CONTROLLER {
+                // `DeviceId::DISK_CONTROLLER` is a logical grouping that can contain multiple
+                // io-snapshot devices (e.g. AHCI v1.0 and IDE v2.0). Preserve all entries so we can
+                // restore each controller deterministically.
+                disk_controller_states.push(state);
+            } else {
+                // Snapshot format already rejects duplicate (id, version, flags) tuples; for
+                // multiple entries with the same outer ID (forward-compatible versions), prefer
+                // the first one.
+                by_id.entry(state.id).or_insert(state);
+            }
         }
+        disk_controller_states.sort_by_key(|s| (s.version, s.flags));
 
         // Firmware snapshot: required for deterministic BIOS interrupt behaviour.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::BIOS) {
@@ -3194,7 +3555,57 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // 4) Restore PIT + RTC + ACPI PM (these can drive IRQ lines during load_state()).
+        // 4) Restore storage controllers (AHCI + IDE). These must be restored after the interrupt
+        // controller + PCI core so any restored interrupt state can be re-driven deterministically.
+        for state in disk_controller_states {
+            // Canonical encoding: `DeviceId::DISK_CONTROLLER` is a `DSKC` wrapper containing nested
+            // controller snapshots keyed by packed PCI BDF. See `docs/16-snapshots.md`.
+            if matches!(state.data.get(8..12), Some(id) if id == b"DSKC") {
+                let mut wrapper = DiskControllersSnapshot::default();
+                if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut wrapper)
+                    .is_ok()
+                {
+                    for (&packed_bdf, nested) in wrapper.controllers() {
+                        if packed_bdf == aero_devices::pci::profile::SATA_AHCI_ICH9.bdf.pack_u16() {
+                            if let Some(ahci) = &self.ahci {
+                                let _ = ahci.borrow_mut().load_state(nested);
+                            }
+                        } else if packed_bdf
+                            == aero_devices::pci::profile::IDE_PIIX3.bdf.pack_u16()
+                        {
+                            if let Some(ide) = &self.ide {
+                                let _ = ide.borrow_mut().load_state(nested);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Backward compatibility: some snapshots stored controllers directly under
+            // `DeviceId::DISK_CONTROLLER` without the `DSKC` wrapper.
+            let mut restored = false;
+            if let Some(ahci) = &self.ahci {
+                if snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    &state,
+                    &mut *ahci.borrow_mut(),
+                )
+                .is_ok()
+                {
+                    restored = true;
+                }
+            }
+            if !restored {
+                if let Some(ide) = &self.ide {
+                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &state,
+                        &mut *ide.borrow_mut(),
+                    );
+                }
+            }
+        }
+
+        // 5) Restore PIT + RTC + ACPI PM (these can drive IRQ lines during load_state()).
         if let (Some(pit), Some(state)) = (&self.pit, by_id.remove(&snapshot::DeviceId::PIT)) {
             let mut pit = pit.borrow_mut();
             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pit);
@@ -3211,7 +3622,7 @@ impl snapshot::SnapshotTarget for Machine {
                 snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *acpi_pm);
         }
 
-        // 5) Restore HPET.
+        // 6) Restore HPET.
         let mut restored_hpet = false;
         if let (Some(hpet), Some(state)) = (&self.hpet, by_id.remove(&snapshot::DeviceId::HPET)) {
             let mut hpet = hpet.borrow_mut();
@@ -3220,8 +3631,8 @@ impl snapshot::SnapshotTarget for Machine {
                     .is_ok();
         }
 
-        // 6) After HPET restore, re-drive any level-triggered lines implied by restored interrupt
-        // status immediately.
+        // 7) After HPET restore, poll once so any level-triggered lines implied by restored
+        // interrupt status are asserted immediately.
         if restored_hpet {
             if let (Some(hpet), Some(interrupts)) = (&self.hpet, &self.interrupts) {
                 let mut hpet = hpet.borrow_mut();

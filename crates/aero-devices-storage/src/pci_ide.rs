@@ -602,6 +602,15 @@ impl IdeController {
         self.bus_master_base = base;
     }
 
+    /// Reset controller state machines + Bus Master registers back to their power-on baselines
+    /// while preserving attached devices/media.
+    pub fn reset(&mut self) {
+        self.primary.reset();
+        self.secondary.reset();
+        self.bus_master[0].reset();
+        self.bus_master[1].reset();
+    }
+
     pub fn attach_primary_master_ata(&mut self, drive: AtaDrive) {
         self.primary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
         self.primary.drive_present[0] = true;

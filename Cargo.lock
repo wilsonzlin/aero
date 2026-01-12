@@ -396,6 +396,7 @@ dependencies = [
  "aero-devices-storage",
  "aero-gpu-vga",
  "aero-interrupts",
+ "aero-io-snapshot",
  "aero-ipc",
  "aero-mmu",
  "aero-net-backend",

@@ -10,6 +10,7 @@ aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-storage = { path = "../aero-storage" }
