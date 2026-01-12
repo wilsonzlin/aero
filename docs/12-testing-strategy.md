@@ -9,6 +9,8 @@ Comprehensive testing is critical for an emulator. We must verify correctness at
 This document describes *what* we test and *why*. For the practical, developer-facing guide to running the full test stack locally (Rust, WASM, TypeScript, Playwright), plus common issues like COOP/COEP and WebGPU gating, see:
 
 - [`TESTING.md`](./TESTING.md)
+- For deterministic manual smoke-test procedures (when automation isn’t sufficient), see:
+  - [`docs/testing/`](./testing/)
 
 ---
 
