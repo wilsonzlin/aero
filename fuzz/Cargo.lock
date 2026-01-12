@@ -127,6 +127,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-interrupts",
  "aero-io-snapshot",
+ "aero-mmu",
  "js-sys",
  "memory",
  "wasm-bindgen",
