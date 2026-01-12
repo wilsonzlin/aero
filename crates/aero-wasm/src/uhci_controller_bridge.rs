@@ -162,6 +162,16 @@ impl MemoryBus for WasmGuestMemory {
     }
 }
 
+struct NoDmaMemory;
+
+impl MemoryBus for NoDmaMemory {
+    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+        buf.fill(0xFF);
+    }
+
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+}
+
 fn validate_port_size(size: u8) -> usize {
     match size {
         1 | 2 | 4 => size as usize,
@@ -328,16 +338,23 @@ impl UhciControllerBridge {
         if frames == 0 {
             return;
         }
-        // Only DMA when PCI Bus Master Enable is set (command bit 2).
-        if (self.pci_command & (1 << 2)) == 0 {
-            return;
-        }
-        let mut mem = WasmGuestMemory {
-            guest_base: self.guest_base,
-            ram_bytes: self.guest_size,
-        };
-        for _ in 0..frames {
-            self.ctrl.tick_1ms(&mut mem);
+        // Only DMA when PCI Bus Master Enable is set (command bit 2). When bus mastering is
+        // disabled the controller should continue advancing its internal frame counter and root hub
+        // state, but it must not be able to read or write guest memory for the schedule.
+        let dma_enabled = (self.pci_command & (1 << 2)) != 0;
+        if dma_enabled {
+            let mut mem = WasmGuestMemory {
+                guest_base: self.guest_base,
+                ram_bytes: self.guest_size,
+            };
+            for _ in 0..frames {
+                self.ctrl.tick_1ms(&mut mem);
+            }
+        } else {
+            let mut mem = NoDmaMemory;
+            for _ in 0..frames {
+                self.ctrl.tick_1ms(&mut mem);
+            }
         }
     }
 

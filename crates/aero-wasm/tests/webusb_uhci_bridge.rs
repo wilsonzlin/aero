@@ -18,8 +18,8 @@ const PORTSC_PR: u32 = 1 << 9;
 
 // PCI command register bit: Bus Master Enable (BME).
 //
-// The WASM UHCI bridges gate DMA/ticking on BME so that devices can't read/write guest RAM unless
-// the guest has explicitly enabled bus mastering via PCI config space.
+// The WASM UHCI bridges gate DMA on BME so that devices can't read/write guest RAM unless the guest
+// has explicitly enabled bus mastering via PCI config space.
 const PCI_COMMAND_BME: u32 = 1 << 2;
 
 const LINK_PTR_T: u32 = 1 << 0;
@@ -221,4 +221,48 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
         "expected at least one queued UsbHostAction"
     );
     assert!(matches!(actions[0], UsbHostAction::ControlIn { .. }));
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_ticks_port_reset_without_pci_bus_master_enable() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x4000);
+
+    let mut bridge =
+        UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
+
+    // Kick a port reset on root port 0 (PORTSC1). This should complete after 50 frames even when
+    // PCI bus mastering is disabled (DMA should be blocked, but internal timers still tick).
+    bridge.io_write(REG_PORTSC1 as u16, 2, PORTSC_PR);
+    assert_ne!(
+        bridge.io_read(REG_PORTSC1 as u16, 2) & PORTSC_PR,
+        0,
+        "expected PORTSC.PR to latch immediately after write"
+    );
+    bridge.step_frames(50);
+    assert_eq!(
+        bridge.io_read(REG_PORTSC1 as u16, 2) & PORTSC_PR,
+        0,
+        "expected PORTSC.PR to clear after 50ms reset window"
+    );
+}
+
+#[wasm_bindgen_test]
+fn webusb_uhci_bridge_ticks_port_reset_without_pci_bus_master_enable() {
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x4000);
+
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
+
+    // Same assertion as above, but for the WebUsbUhciBridge wrapper.
+    bridge.io_write(REG_PORTSC1, 2, PORTSC_PR);
+    assert_ne!(
+        bridge.io_read(REG_PORTSC1, 2) & PORTSC_PR,
+        0,
+        "expected PORTSC.PR to latch immediately after write"
+    );
+    bridge.step_frames(50);
+    assert_eq!(
+        bridge.io_read(REG_PORTSC1, 2) & PORTSC_PR,
+        0,
+        "expected PORTSC.PR to clear after 50ms reset window"
+    );
 }

@@ -36,8 +36,8 @@ const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
 
 // PCI command register bit: Bus Master Enable (BME).
 //
-// The WASM UHCI bridges gate DMA/ticking on BME so that devices can't read/write guest RAM unless
-// the guest has explicitly enabled bus mastering via PCI config space.
+// The WASM UHCI bridges gate DMA on BME so that devices can't read/write guest RAM unless the guest
+// has explicitly enabled bus mastering via PCI config space.
 const PCI_COMMAND_BME: u32 = 1 << 2;
 
 fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
