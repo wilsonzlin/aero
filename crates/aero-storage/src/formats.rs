@@ -91,15 +91,11 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
                 let disk_type = be_u32(&footer[60..64]);
                 if disk_type == 2 {
                     let current_size = be_u64(&footer[48..56]);
-                    let Some(required) = current_size.checked_add((VHD_FOOTER_SIZE as u64) * 2)
-                    else {
-                        return Ok(DiskFormat::Raw);
-                    };
-                    if len < required {
-                        // Likely a fixed VHD without a footer copy (detected via EOF footer below),
-                        // or a false positive. Keep detection conservative.
-                    } else {
-                        return Ok(DiskFormat::Vhd);
+                    if let Some(required) = current_size.checked_add((VHD_FOOTER_SIZE as u64) * 2)
+                    {
+                        if len >= required {
+                            return Ok(DiskFormat::Vhd);
+                        }
                     }
                 } else {
                     return Ok(DiskFormat::Vhd);

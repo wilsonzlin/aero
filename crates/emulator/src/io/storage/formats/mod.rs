@@ -70,11 +70,10 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
             let disk_type = be_u32(&footer[60..64]);
             if disk_type == 2 {
                 let current_size = be_u64(&footer[48..56]);
-                let Some(required) = current_size.checked_add(1024) else {
-                    return Ok(DiskFormat::Raw);
-                };
-                if len >= required {
-                    return Ok(DiskFormat::Vhd);
+                if let Some(required) = current_size.checked_add(1024) {
+                    if len >= required {
+                        return Ok(DiskFormat::Vhd);
+                    }
                 }
             } else {
                 return Ok(DiskFormat::Vhd);
