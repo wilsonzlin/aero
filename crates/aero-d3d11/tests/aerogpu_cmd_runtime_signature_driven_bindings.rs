@@ -443,6 +443,62 @@ fn build_ps_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
+fn build_ps_sample_l_sm5_dxbc(u: f32, v: f32, tex_slot: u32, sampler_slot: u32) -> Vec<u8> {
+    // Variant of `build_ps_sample_l_t0_s0_sm5_dxbc` that samples from a specific texture/sampler
+    // slot. This is useful for exercising the binding model at non-zero / max slot indices.
+    let isgn = build_signature_chunk(&[]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Target",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    // ps_5_0
+    let version_token = 0x50u32;
+
+    let sample_l_opcode_token = 0x46u32 | (14u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o0 = 0x0010_f022u32;
+    let imm_vec4 = 0x0000_f042u32;
+    let imm_scalar = 0x0000_0049u32;
+    let t = 0x0010_0072u32;
+    let s = 0x0010_0062u32;
+
+    let u = u.to_bits();
+    let v = v.to_bits();
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // sample_l o0, l(u,v,0,0), t#, s#, l(0)
+        sample_l_opcode_token,
+        dst_o0,
+        0, // o0 index
+        imm_vec4,
+        u,
+        v,
+        0,
+        0,
+        t,
+        tex_slot,
+        s,
+        sampler_slot,
+        imm_scalar,
+        0, // lod=0
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shex = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shex.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
+}
+
 fn build_ps_cbuffer0_sm5_sig_v1_dxbc() -> Vec<u8> {
     // Equivalent to `build_ps_cbuffer0_sm5_dxbc`, but uses `ISG1`/`OSG1` signature chunks with the
     // 32-byte v1 entry layout.
@@ -829,6 +885,92 @@ fn build_vs_matrix_texcoord_dxbc() -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
+fn build_vs_matrix_pos_cb_slot_sm5_dxbc(cb_slot: u32) -> Vec<u8> {
+    // Minimal VS (vs_5_0) that multiplies POSITION0 by `cb{cb_slot}[0..3]` into SV_Position (o0).
+    //
+    // Token stream:
+    //   dp4 o0.x, v0, cb#[0]
+    //   dp4 o0.y, v0, cb#[1]
+    //   dp4 o0.z, v0, cb#[2]
+    //   dp4 o0.w, v0, cb#[3]
+    //   ret
+    let isgn = build_signature_chunk(&[SigParam {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x07,
+    }]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Position",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    // vs_5_0
+    let version_token = 0x0001_0050u32;
+    let dp4_token = 0x09u32 | (8u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o_x = 0x0010_1022u32;
+    let dst_o_y = 0x0010_2022u32;
+    let dst_o_z = 0x0010_4022u32;
+    let dst_o_w = 0x0010_8022u32;
+
+    let src_v0 = 0x001e_4016u32;
+    let cb = 0x002e_4086u32;
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // dp4 o0.x, v0, cb#[0]
+        dp4_token,
+        dst_o_x,
+        0, // o0
+        src_v0,
+        0, // v0
+        cb,
+        cb_slot,
+        0,
+        // dp4 o0.y, v0, cb#[1]
+        dp4_token,
+        dst_o_y,
+        0,
+        src_v0,
+        0,
+        cb,
+        cb_slot,
+        1,
+        // dp4 o0.z, v0, cb#[2]
+        dp4_token,
+        dst_o_z,
+        0,
+        src_v0,
+        0,
+        cb,
+        cb_slot,
+        2,
+        // dp4 o0.w, v0, cb#[3]
+        dp4_token,
+        dst_o_w,
+        0,
+        src_v0,
+        0,
+        cb,
+        cb_slot,
+        3,
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shex = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shex.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
+}
+
 fn build_ilay_pos3() -> Vec<u8> {
     // Build an ILAY blob that matches the `vs_matrix.dxbc` fixture input signature: POSITION0 only.
     //
@@ -1168,6 +1310,144 @@ fn aerogpu_cmd_runtime_signature_driven_vs_cb0_and_ps_texture_binding() {
         for (i, px) in pixels.chunks_exact(4).enumerate() {
             assert_eq!(px, &[0, 255, 0, 255], "pixel {i}");
         }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_max_slot_resource_bindings() {
+    // Regression test for the binding model at the maximum supported D3D slots:
+    // - VS: cb31 (binds at @binding(31) within @group(0))
+    // - PS: t127 + s15 (bind at @binding(159) + @binding(175) within @group(1))
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const CB: u32 = 5;
+        const TEX: u32 = 6;
+        const SAMPLER: u32 = 7;
+        const RTEX: u32 = 8;
+
+        const VS_CB_SLOT: u32 = 31;
+        const PS_TEX_SLOT: u32 = 127;
+        const PS_SAMPLER_SLOT: u32 = 15;
+
+        rt.create_shader_dxbc(VS, &build_vs_matrix_pos_cb_slot_sm5_dxbc(VS_CB_SLOT))
+            .unwrap();
+        rt.create_shader_dxbc(
+            PS,
+            &build_ps_sample_l_sm5_dxbc(0.0, 0.0, PS_TEX_SLOT, PS_SAMPLER_SLOT),
+        )
+        .unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        rt.create_buffer(
+            CB,
+            std::mem::size_of_val(&identity) as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(CB, 0, bytemuck::bytes_of(&identity))
+            .unwrap();
+        rt.set_vs_constant_buffer(VS_CB_SLOT, Some(CB));
+
+        rt.create_texture2d(
+            TEX,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let green_px: [u8; 4] = [0, 255, 0, 255];
+        let tex_data = [
+            green_px, green_px, //
+            green_px, green_px, //
+        ];
+        rt.write_texture_rgba8(TEX, 2, 2, 2 * 4, bytemuck::bytes_of(&tex_data))
+            .unwrap();
+        rt.set_ps_texture(PS_TEX_SLOT, Some(TEX));
+
+        rt.create_sampler(
+            SAMPLER,
+            &wgpu::SamplerDescriptor {
+                label: Some("aerogpu_cmd_runtime max-slot sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        rt.set_ps_sampler(PS_SAMPLER_SLOT, Some(SAMPLER));
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 255, 0, 255]);
     });
 }
 
