@@ -464,10 +464,16 @@ func digitValue(c byte) (uint64, bool) {
 }
 
 func serializeIPv4(addr uint32) string {
-	return strconv.FormatUint(uint64(addr>>24), 10) + "." +
-		strconv.FormatUint(uint64((addr>>16)&0xff), 10) + "." +
-		strconv.FormatUint(uint64((addr>>8)&0xff), 10) + "." +
-		strconv.FormatUint(uint64(addr&0xff), 10)
+	var buf [15]byte
+	out := buf[:0]
+	out = strconv.AppendUint(out, uint64(addr>>24), 10)
+	out = append(out, '.')
+	out = strconv.AppendUint(out, uint64((addr>>16)&0xff), 10)
+	out = append(out, '.')
+	out = strconv.AppendUint(out, uint64((addr>>8)&0xff), 10)
+	out = append(out, '.')
+	out = strconv.AppendUint(out, uint64(addr&0xff), 10)
+	return string(out)
 }
 
 func serializeIPv6(addr netip.Addr) string {
@@ -505,6 +511,8 @@ func serializeIPv6(addr netip.Addr) string {
 	}
 
 	var out strings.Builder
+	out.Grow(39)
+	var tmp [16]byte
 	needSep := false
 	for i := 0; i < len(segments); i++ {
 		if bestStart != -1 && i == bestStart {
@@ -516,7 +524,7 @@ func serializeIPv6(addr netip.Addr) string {
 		if needSep {
 			out.WriteByte(':')
 		}
-		out.WriteString(strconv.FormatUint(uint64(segments[i]), 16))
+		out.Write(strconv.AppendUint(tmp[:0], uint64(segments[i]), 16))
 		needSep = true
 	}
 
@@ -556,17 +564,19 @@ func splitHostPort(rawHost string) (hostname, port string, ok bool) {
 		return hostname, port, true
 	}
 
-	switch strings.Count(rawHost, ":") {
-	case 0:
+	colon := strings.IndexByte(rawHost, ':')
+	switch colon {
+	case -1:
 		return rawHost, "", true
-	case 1:
-		parts := strings.SplitN(rawHost, ":", 2)
-		if parts[0] == "" || parts[1] == "" {
+	default:
+		// Unbracketed IPv6 literals (and any additional colons) are not valid in
+		// the authority component.
+		if strings.IndexByte(rawHost[colon+1:], ':') != -1 {
 			return "", "", false
 		}
-		return parts[0], parts[1], true
-	default:
-		// Unbracketed IPv6 literals are not valid in the authority component.
-		return "", "", false
+		if colon == 0 || colon+1 >= len(rawHost) {
+			return "", "", false
+		}
+		return rawHost[:colon], rawHost[colon+1:], true
 	}
 }
