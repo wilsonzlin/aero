@@ -156,6 +156,12 @@ This ensures that a snapshot taken between a host keypress and guest consumption
 
 ### Controller Emulation
 
+> Note: the canonical i8042 + PS/2 keyboard/mouse device model lives in
+> [`crates/aero-devices-input`](../crates/aero-devices-input) as
+> `aero_devices_input::I8042Controller` so it can be shared by both native tests
+> and WASM builds. The Rust snippet below is illustrative pseudocode, not the
+> exact implementation.
+
 ```rust
 pub struct I8042Controller {
     // Status register
