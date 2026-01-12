@@ -158,16 +158,16 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
     }
   }
 
-  // VHD: check for a valid footer at end (fixed and dynamic disks).
+  // VHD: check for a *plausible* footer at end (fixed and dynamic disks).
+  //
+  // Note: We intentionally do not require a valid checksum here. A corrupted VHD should still
+  // detect as VHD so that the subsequent conversion/open step can fail with a meaningful error,
+  // instead of silently falling back to treating it as a raw disk.
   if (src.size >= 512) {
     const cookieEnd = await src.readAt(src.size - 512, 8);
     if (ascii(cookieEnd) === "conectix") {
-      try {
-        VhdFooter.parse(await src.readAt(src.size - 512, 512));
-        return "vhd";
-      } catch {
-        // Not a valid footer.
-      }
+      const footer = await src.readAt(src.size - 512, 512);
+      if (looksLikeVhdFooter(footer, src.size)) return "vhd";
     }
   }
 
@@ -176,12 +176,8 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
   if (src.size >= 512) {
     const cookie0 = await src.readAt(0, 8);
     if (ascii(cookie0) === "conectix") {
-      try {
-        VhdFooter.parse(await src.readAt(0, 512));
-        return "vhd";
-      } catch {
-        // Not a valid footer.
-      }
+      const footer = await src.readAt(0, 512);
+      if (looksLikeVhdFooter(footer, src.size)) return "vhd";
     }
   }
 
@@ -734,6 +730,37 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   for (let i = 0; i < a.byteLength; i++) {
     if (a[i] !== b[i]) return false;
   }
+  return true;
+}
+
+function looksLikeVhdFooter(footerBytes: Uint8Array, fileSize: number): boolean {
+  if (footerBytes.byteLength !== 512) return false;
+  if (ascii(footerBytes.subarray(0, 8)) !== "conectix") return false;
+
+  // Fixed file format version for VHD footers.
+  if (readU32BE(footerBytes, 12) !== 0x0001_0000) return false;
+
+  const currentSize = Number(readU64BE(footerBytes, 48));
+  if (!Number.isSafeInteger(currentSize) || currentSize <= 0) return false;
+  if (currentSize % 512 !== 0) return false;
+
+  const diskType = readU32BE(footerBytes, 60);
+  if (diskType !== VHD_TYPE_FIXED && diskType !== VHD_TYPE_DYNAMIC) return false;
+
+  const dataOffsetBig = readU64BE(footerBytes, 16);
+  if (diskType === VHD_TYPE_FIXED) {
+    if (dataOffsetBig !== 0xffff_ffff_ffff_ffffn) return false;
+    const requiredLen = currentSize + 512;
+    if (!Number.isSafeInteger(requiredLen) || fileSize < requiredLen) return false;
+  } else {
+    if (dataOffsetBig === 0xffff_ffff_ffff_ffffn) return false;
+    const dataOffset = Number(dataOffsetBig);
+    if (!Number.isSafeInteger(dataOffset) || dataOffset < 512) return false;
+    if (dataOffset % 512 !== 0) return false;
+    const end = dataOffset + 1024;
+    if (!Number.isSafeInteger(end) || end > fileSize) return false;
+  }
+
   return true;
 }
 

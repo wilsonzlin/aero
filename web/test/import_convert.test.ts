@@ -223,6 +223,35 @@ function buildFixedVhdFixtureWithFooterCopy(): { file: Uint8Array; logical: Uint
   return { file, logical };
 }
 
+function buildFixedVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  // Fixed disks use dataOffset = u64::MAX.
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const fileSize = logicalSize + footerSize;
+  const file = new Uint8Array(fileSize);
+
+  const sector0 = new Uint8Array(512);
+  for (let i = 0; i < sector0.length; i++) sector0[i] = (0x20 + i) & 0xff;
+  file.set(sector0, 0);
+
+  // Footer at end.
+  file.set(footer, fileSize - footerSize);
+
+  const logical = new Uint8Array(logicalSize);
+  logical.set(sector0, 0);
+  return { file, logical };
+}
+
 function buildIsoFixture(): Uint8Array {
   const size = 0x8001 + 5;
   const file = new Uint8Array(size);
@@ -331,6 +360,15 @@ test("detectFormat: does not misclassify VHD cookie without valid footer", async
   // Missing file_format_version, checksum, etc.
   const fmt = await detectFormat(new MemSource(file), "disk.unknown");
   assert.equal(fmt, "raw");
+});
+
+test("detectFormat: VHD checksum mismatch is still detected as vhd", async () => {
+  const { file } = buildFixedVhdFixture();
+  const footerOff = file.byteLength - 512;
+  file[footerOff + 64] ^= 0xff; // corrupt stored checksum
+
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "vhd");
 });
 
 test("convertToAeroSparse: raw roundtrip preserves logical bytes and sparseness", async () => {
