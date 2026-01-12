@@ -64,6 +64,8 @@ const SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS: usize = 1024 * 1024;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pc;
+#[cfg(not(target_arch = "wasm32"))]
+pub use pc::{PcMachine, PcMachineConfig};
 
 /// Configuration for [`Machine`].
 #[derive(Debug, Clone)]

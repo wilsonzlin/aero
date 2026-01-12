@@ -30,6 +30,7 @@ impl E1000PciDevice {
     }
 
     pub fn receive_frame(&mut self, mem: &mut dyn MemoryBus, frame: &[u8]) {
+        // `E1000Device::receive_frame` already flushes pending RX into the guest ring via `poll`.
         self.nic.receive_frame(mem, frame);
     }
 

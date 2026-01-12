@@ -1881,16 +1881,15 @@ mod tests {
 
     #[test]
     fn ioaddr_iodata_interface_maps_to_mmio_registers() {
-        let mut mem = TestMem::new(0x1000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
-        dev.mmio_write_u32(&mut mem, REG_IMS, 0x1234_5678);
+        dev.mmio_write_u32_reg(REG_IMS, 0x1234_5678);
 
-        dev.io_write(&mut mem, 0x0, 4, REG_IMS);
+        dev.io_write_reg(0x0, 4, REG_IMS);
         assert_eq!(dev.io_read(0x4, 4), 0x1234_5678);
 
-        dev.io_write(&mut mem, 0x0, 4, REG_IMC);
-        dev.io_write(&mut mem, 0x4, 4, 0x1234_0000);
+        dev.io_write_reg(0x0, 4, REG_IMC);
+        dev.io_write_reg(0x4, 4, 0x1234_0000);
         assert_eq!(dev.mmio_read_u32(REG_IMS), 0x0000_5678);
     }
 
@@ -1923,7 +1922,8 @@ mod tests {
         mem.write_bytes(0x1000, &desc0.to_bytes());
 
         // Guest updates tail to 1.
-        dev.mmio_write_u32(&mut mem, REG_TDT, 1);
+        dev.mmio_write_u32_reg(REG_TDT, 1);
+        dev.poll(&mut mem);
 
         assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
 
@@ -2249,7 +2249,8 @@ mod tests {
         mem.write_bytes(0x1010, &desc1.to_bytes());
 
         // Guest updates tail to 2.
-        dev.mmio_write_u32(&mut mem, REG_TDT, 2);
+        dev.mmio_write_u32_reg(REG_TDT, 2);
+        dev.poll(&mut mem);
 
         assert!(dev.pop_tx_frame().is_none());
 

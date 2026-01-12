@@ -11,8 +11,8 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-interrupts = { path = "../aero-interrupts" }
+aero-net-e1000 = { path = "../aero-net-e1000" }
 aero-platform = { path = "../platform" }
 aero-pc-constants = { path = "../aero-pc-constants" }
 aero-storage = { path = "../aero-storage" }
-aero-net-e1000 = { path = "../aero-net-e1000" }
 memory = { path = "../memory" }

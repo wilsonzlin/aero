@@ -9,13 +9,14 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-mmu = { path = "../aero-mmu" }
+aero-net-backend = { path = "../aero-net-backend" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
-aero-net-backend = { path = "../aero-net-backend" }
 firmware = { path = "../firmware" }
 memory = { path = "../memory" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aero-ipc = { path = "../aero-ipc" }
 aero-pc-platform = { path = "../aero-pc-platform" }
 
 [dev-dependencies]
