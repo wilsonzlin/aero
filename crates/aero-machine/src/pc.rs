@@ -24,7 +24,7 @@ use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::MapError;
 
 use crate::pci_firmware::SharedPciConfigPortsBiosAdapter;
-use crate::{GuestTime, MachineError, RunExit, VecBlockDevice};
+use crate::{GuestTime, MachineError, RunExit, SharedDisk};
 
 /// Configuration for [`PcMachine`].
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ pub struct PcMachine {
     assist: AssistContext,
     pub bus: PcCpuBus,
     bios: Bios,
-    disk: VecBlockDevice,
+    disk: SharedDisk,
     mapped_roms: HashMap<u64, usize>,
 
     network_backend: Option<PcNetworkBackend>,
@@ -210,7 +210,7 @@ impl PcMachine {
             assist: AssistContext::default(),
             bus: PcCpuBus::new(platform),
             bios: Bios::new(BiosConfig::default()),
-            disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
+            disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
             mapped_roms: HashMap::new(),
             network_backend: None,
         };
@@ -236,8 +236,17 @@ impl PcMachine {
     }
 
     pub fn set_disk_image(&mut self, bytes: Vec<u8>) -> Result<(), MachineError> {
-        self.disk = VecBlockDevice::new(bytes)?;
+        self.disk.set_bytes(bytes)?;
         Ok(())
+    }
+
+    /// Returns a cloneable handle to the machine's canonical disk backend.
+    ///
+    /// This is the same disk used by BIOS INT13 services. Callers that want BIOS and a storage
+    /// controller (AHCI/NVMe/virtio-blk) to share the same image can attach this handle as the
+    /// controller backend.
+    pub fn shared_disk(&self) -> SharedDisk {
+        self.disk.clone()
     }
 
     /// Attach a ring-buffer-backed L2 tunnel network backend.
