@@ -562,7 +562,7 @@ const VHD_TYPE_FIXED = 2;
 const VHD_TYPE_DYNAMIC = 3;
 const VHD_BAT_FREE = 0xffff_ffff;
 const VHD_MAX_BAT_BYTES = 128 * 1024 * 1024;
-const VHD_MAX_BLOCK_BYTES = 64 * 1024 * 1024;
+const VHD_MAX_BLOCK_BYTES = MAX_CONVERT_BLOCK_BYTES;
 const VHD_MAX_BITMAP_BYTES = 32 * 1024 * 1024;
 
 async function convertVhdToSparse(
