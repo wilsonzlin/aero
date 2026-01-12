@@ -382,6 +382,35 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     { timeout: 60_000 },
   );
 
+  // Ensure the IO-worker HDA device is producing actual (non-silent) samples after restore.
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
+      const samples: Float32Array = out.ringBuffer.samples;
+      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
+      const cc = out.ringBuffer.channelCount | 0;
+      const cap = out.ringBuffer.capacityFrames | 0;
+      if (cc <= 0 || cap <= 0) return false;
+      const write = Atomics.load(writeIndex, 0) >>> 0;
+      const framesToInspect = Math.min(1024, cap);
+      const startFrame = (write - framesToInspect) >>> 0;
+      let maxAbs = 0;
+      for (let i = 0; i < framesToInspect; i++) {
+        const frame = (startFrame + i) % cap;
+        const base = frame * cc;
+        for (let c = 0; c < cc; c++) {
+          const s = samples[base + c] ?? 0;
+          const a = Math.abs(s);
+          if (a > maxAbs) maxAbs = a;
+        }
+      }
+      return maxAbs > 0.01;
+    },
+    { timeout: 10_000 },
+  );
+
   // Best-effort cleanup: OPFS can persist across runs in some environments.
   // Ignore failures (missing APIs, already deleted, permission issues, etc.).
   await page.evaluate(async (path) => {
