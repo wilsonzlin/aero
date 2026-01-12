@@ -5,10 +5,20 @@ import { fileURLToPath } from 'node:url';
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? 'http://127.0.0.1:4173';
 const ENTRY_RIP = 0x1000;
 
-const THREADED_AERO_WASM_BINARY = fileURLToPath(new URL('../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm', import.meta.url));
-const HAS_THREADED_AERO_WASM_BINARY = existsSync(THREADED_AERO_WASM_BINARY);
-const JIT_WASM_BINARY = fileURLToPath(new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url));
-const HAS_JIT_WASM_BINARY = existsSync(JIT_WASM_BINARY);
+const THREADED_AERO_WASM_BINARY_RELEASE = fileURLToPath(
+  new URL('../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm', import.meta.url),
+);
+const THREADED_AERO_WASM_BINARY_DEV = fileURLToPath(
+  new URL('../../web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm', import.meta.url),
+);
+const HAS_THREADED_AERO_WASM_BINARY =
+  existsSync(THREADED_AERO_WASM_BINARY_RELEASE) || existsSync(THREADED_AERO_WASM_BINARY_DEV);
+
+const JIT_WASM_BINARY_RELEASE = fileURLToPath(new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url));
+const JIT_WASM_BINARY_DEV = fileURLToPath(
+  new URL('../../web/src/wasm/pkg-jit-single-dev/aero_jit_wasm_bg.wasm', import.meta.url),
+);
+const HAS_JIT_WASM_BINARY = existsSync(JIT_WASM_BINARY_RELEASE) || existsSync(JIT_WASM_BINARY_DEV);
 
 function getPath(obj: unknown, path: string): unknown {
   if (!obj || typeof obj !== 'object') return undefined;
