@@ -906,16 +906,17 @@ See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windo
   shutdown /r /t 0
   ```
  
- 4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
-  
+  4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
+   
   ```bat
   cd C:\path\to\out\packages\aerogpu\x64
-  pnputil -i -a aerogpu.inf
+  :: DX11-capable (recommended; CI stages this by default):
+  pnputil -i -a aerogpu_dx11.inf
   :: or (use the helper script shipped in the package):
   packaging\win7\install.cmd
   ```
- 
- (If you staged the optional D3D10/11 INF, install that INF instead.)
+  
+  (The D3D9-only variant `aerogpu.inf` is not staged in CI packages by default.)
   
  **Note:** x64 requires proper signing/test mode; do not rely on “F8 disable enforcement” as a workflow.
   

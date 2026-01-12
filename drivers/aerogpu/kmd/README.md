@@ -191,9 +191,14 @@ Typical dev install flows:
       packaging\win7\trust_test_cert.cmd
       shutdown /r /t 0
       ```
-  4. After reboot, install the signed INF from the copied package directory:
+  4. After reboot, install the signed driver package from the copied package directory:
       ```bat
-      pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
+      cd C:\path\to\out\packages\aerogpu\x64
+      :: CI packages stage aerogpu_dx11.inf (DX11-capable) by default.
+      :: install.cmd prefers aerogpu_dx11.inf when present at the package root.
+      packaging\win7\install.cmd
+      :: Or install explicitly via pnputil:
+      pnputil -i -a aerogpu_dx11.inf
       ```
 
 - **Legacy (stage packaging folder + sign inside VM):**
