@@ -223,10 +223,12 @@ function parseRunResult(result: unknown): ParsedRunResult {
 
   let instHi =
     readU32Field(result, "retired_instructions_hi") ??
+    readU32Field(result, "retired_hi") ??
     readU32Field(result, "instructions_hi") ??
     readU32Field(result, "insts_hi");
   let instLo =
     readU32Field(result, "retired_instructions_lo") ??
+    readU32Field(result, "retired_lo") ??
     readU32Field(result, "instructions_lo") ??
     readU32Field(result, "insts_lo");
 
