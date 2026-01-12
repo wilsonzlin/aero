@@ -4,6 +4,8 @@ import { getRingBufferLevelFrames, type AudioRingBufferLayout } from "./audio";
 import { restoreAudioWorkletRing, type AudioWorkletRingStateLike } from "./audio_ring_restore";
 import {
   HEADER_U32_LEN,
+  READ_FRAME_INDEX,
+  WRITE_FRAME_INDEX,
   requiredBytes,
   wrapRingBuffer,
 } from "../audio/audio_worklet_ring";

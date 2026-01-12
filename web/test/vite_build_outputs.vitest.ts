@@ -59,12 +59,12 @@ describe("web Vite build outputs", () => {
       const assetsDir = path.join(outDir, "assets");
       const assets = new Set(readdirSync(assetsDir));
 
-      const audioWorklet = [...assets].find((name) => /^audio-worklet-processor-.*\.js$/.test(name));
+      const audioWorklet = [...assets].find((name) => /^audio-worklet-processor(?:-.*)?\.js$/.test(name));
       expect(audioWorklet).toBeTruthy();
       const audioWorkletSource = readFileSync(path.join(assetsDir, audioWorklet!), "utf8");
       expect(audioWorkletSource).toContain("./audio_worklet_ring_layout.js");
 
-      const micWorklet = [...assets].find((name) => /^mic-worklet-processor-.*\.js$/.test(name));
+      const micWorklet = [...assets].find((name) => /^mic-worklet-processor(?:-.*)?\.js$/.test(name));
       expect(micWorklet).toBeTruthy();
       const micWorkletSource = readFileSync(path.join(assetsDir, micWorklet!), "utf8");
       expect(micWorkletSource).toContain("./mic_ring.js");
