@@ -37,6 +37,11 @@ fn write_u16(mem: &mut [u8], addr: u32, value: u16) {
     mem[addr..addr + 2].copy_from_slice(&value.to_le_bytes());
 }
 
+fn read_u16(mem: &[u8], addr: u32) -> u16 {
+    let addr = addr as usize;
+    u16::from_le_bytes([mem[addr], mem[addr + 1]])
+}
+
 fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
     let addr = addr as usize;
     mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
@@ -65,8 +70,8 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     let io_ipc_sab = make_io_ipc_sab();
     let mut bridge = VirtioNetPciBridge::new(guest_base, guest_size, io_ipc_sab, None)
         .expect("VirtioNetPciBridge::new");
-    // Allow the device to DMA into guest memory (virtqueue descriptor reads / used writes).
-    bridge.set_pci_command(0x0004);
+    // PCI Bus Master Enable should start disabled to prevent DMA before the guest explicitly
+    // enables it during PCI enumeration.
 
     // Unknown BAR0 reads should return 0.
     assert_eq!(bridge.mmio_read(0x500, 4), 0);
@@ -172,6 +177,21 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     // platform integration services queues via `poll()`/`process_notified_queues()`.
     bridge.poll();
 
+    assert!(
+        !bridge.irq_asserted(),
+        "irq should remain deasserted while PCI bus mastering is disabled"
+    );
+    assert_eq!(
+        read_u16(guest, tx_used + 2),
+        0,
+        "used.idx should not advance without bus mastering"
+    );
+
+    // Enable bus mastering and retry: the pending notify should now be processed via DMA.
+    bridge.set_pci_command(0x0004);
+    bridge.poll();
+
+    assert_eq!(read_u16(guest, tx_used + 2), 1, "expected used.idx to advance");
     assert!(
         bridge.irq_asserted(),
         "irq should assert after TX completion"

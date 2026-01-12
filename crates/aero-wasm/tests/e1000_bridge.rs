@@ -55,8 +55,8 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
 
     let mut bridge = E1000Bridge::new(guest_base, guest_size, None).expect("E1000Bridge::new");
 
-    // Disable Bus Master Enable (BME) to validate the device model's DMA gating.
-    bridge.set_pci_command(0);
+    // PCI Bus Master Enable (BME) should start disabled so the device model cannot DMA into guest
+    // memory before the guest explicitly enables it during enumeration.
 
     // Enable interrupts for both RX and TX.
     bridge.mmio_write(0x00D0, 4, ICR_RXT0 | ICR_TXDW); // IMS
@@ -80,6 +80,17 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     // Populate RX descriptors with guest buffers.
     write_rx_desc(guest, 0x2000, 0x3000, 0);
     write_rx_desc(guest, 0x2010, 0x3400, 0);
+
+    // With BME disabled, host RX frames should be queued but must not DMA into guest memory yet.
+    let pkt_in = build_test_frame(b"host->guest");
+    guest[0x3000..0x3000 + pkt_in.len()].fill(0xAA);
+    bridge.receive_frame(&Uint8Array::from(pkt_in.as_slice()));
+    assert!(
+        guest[0x3000..0x3000 + pkt_in.len()]
+            .iter()
+            .all(|&b| b == 0xAA),
+        "RX buffer should not be written while PCI bus mastering is disabled"
+    );
 
     // Guest TX: descriptor 0 points at packet buffer 0x4000.
     let pkt_out = build_test_frame(b"guest->host");
@@ -110,19 +121,10 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     tx.copy_to(&mut tx_bytes);
     assert_eq!(tx_bytes, pkt_out);
 
-    assert!(bridge.irq_level(), "expected IRQ asserted after TX completion");
-    let causes = bridge.mmio_read(0x00C0, 4); // ICR (read clears)
-    assert_eq!(causes & ICR_TXDW, ICR_TXDW);
-    assert!(!bridge.irq_level(), "expected IRQ deasserted after ICR read");
-
-    // Host RX: deliver frame into guest ring.
-    let pkt_in = build_test_frame(b"host->guest");
-    bridge.receive_frame(&Uint8Array::from(pkt_in.as_slice()));
     assert_eq!(&guest[0x3000..0x3000 + pkt_in.len()], pkt_in.as_slice());
 
-    assert!(bridge.irq_level(), "expected IRQ asserted after RX delivery");
+    assert!(bridge.irq_level(), "expected IRQ asserted after TX/RX completion");
     let causes = bridge.mmio_read(0x00C0, 4);
-    assert_eq!(causes & ICR_RXT0, ICR_RXT0);
+    assert_eq!(causes & (ICR_TXDW | ICR_RXT0), ICR_TXDW | ICR_RXT0);
     assert!(!bridge.irq_level(), "expected IRQ deasserted after ICR read");
 }
-
