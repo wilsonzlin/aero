@@ -244,6 +244,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
 
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::CorruptImage("bad"));
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

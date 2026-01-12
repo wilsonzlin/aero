@@ -45,7 +45,7 @@ use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550}
 pub use aero_devices_input::Ps2MouseButton;
 use aero_net_backend::NetworkBackend;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
-use aero_platform::interrupts::PlatformInterrupts;
+use aero_platform::interrupts::{InterruptController as PlatformInterruptController, PlatformInterrupts};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
@@ -846,6 +846,26 @@ impl Machine {
 
             // Keep the core's A20 view coherent with the chipset latch.
             self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+
+            // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one
+            // pending external interrupt vector into the CPU core.
+            //
+            // Tier-0 only delivers interrupts that are already present in
+            // `cpu.pending.external_interrupts`; it does not poll an interrupt controller itself.
+            //
+            // Keep this polling bounded so a level-triggered interrupt line that remains asserted
+            // cannot cause an unbounded growth of the external interrupt FIFO when the guest has
+            // interrupts masked (IF=0) or otherwise cannot accept delivery yet.
+            const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
+            if self.cpu.pending.external_interrupts.len() < MAX_QUEUED_EXTERNAL_INTERRUPTS {
+                if let Some(interrupts) = &self.interrupts {
+                    let mut interrupts = interrupts.borrow_mut();
+                    if let Some(vector) = PlatformInterruptController::get_pending(&*interrupts) {
+                        PlatformInterruptController::acknowledge(&mut *interrupts, vector);
+                        self.cpu.pending.inject_external_interrupt(vector);
+                    }
+                }
+            }
 
             let remaining = max_insts - executed;
             let mut bus = Bus {
