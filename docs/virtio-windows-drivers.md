@@ -7,7 +7,7 @@ Enable Aero’s **virtio acceleration path** by making it straightforward to ins
 - **virtio-blk** (storage) *(minimum deliverable)*
 - **virtio-net** (network) *(minimum deliverable)*
 - **virtio-input** (keyboard/mouse/tablet) *(best-effort; PS/2/USB HID remains fallback)*
-- **virtio-snd** (audio) *(optional; HDA/AC’97 remains fallback)*
+- **virtio-snd** (audio) *(optional; HDA remains fallback; AC’97 is legacy-only)*
 
 See also:
 
