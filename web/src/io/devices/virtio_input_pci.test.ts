@@ -46,7 +46,7 @@ function probeMmio64BarSize(cfg: ReturnType<typeof makeCfgIo>, dev: number, fn: 
 }
 
 describe("io/devices/virtio_input PCI config", () => {
-  it("exposes canonical virtio vendor-specific capabilities at 0x40/0x50/0x64/0x74", () => {
+  it("exposes canonical virtio vendor-specific capabilities at 0x50/0x60/0x74/0x84", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
     const pciBus = new PciBus(portBus, mmioBus);
@@ -121,46 +121,46 @@ describe("io/devices/virtio_input PCI config", () => {
       // Capability list present.
       const status = cfg.readU16(10, fn, 0x06);
       expect(status & 0x0010).toBe(0x0010);
-      expect(cfg.readU8(10, fn, 0x34)).toBe(0x40);
+      expect(cfg.readU8(10, fn, 0x34)).toBe(0x50);
 
-      // Cap chain: 0x40 -> 0x50 -> 0x64 -> 0x74 -> 0x00
-      expect(cfg.readU8(10, fn, 0x40)).toBe(0x09);
-      expect(cfg.readU8(10, fn, 0x41)).toBe(0x50);
+      // Cap chain: 0x50 -> 0x60 -> 0x74 -> 0x84 -> 0x00
       expect(cfg.readU8(10, fn, 0x50)).toBe(0x09);
-      expect(cfg.readU8(10, fn, 0x51)).toBe(0x64);
-      expect(cfg.readU8(10, fn, 0x64)).toBe(0x09);
-      expect(cfg.readU8(10, fn, 0x65)).toBe(0x74);
+      expect(cfg.readU8(10, fn, 0x51)).toBe(0x60);
+      expect(cfg.readU8(10, fn, 0x60)).toBe(0x09);
+      expect(cfg.readU8(10, fn, 0x61)).toBe(0x74);
       expect(cfg.readU8(10, fn, 0x74)).toBe(0x09);
-      expect(cfg.readU8(10, fn, 0x75)).toBe(0x00);
+      expect(cfg.readU8(10, fn, 0x75)).toBe(0x84);
+      expect(cfg.readU8(10, fn, 0x84)).toBe(0x09);
+      expect(cfg.readU8(10, fn, 0x85)).toBe(0x00);
 
-      // COMMON_CFG @ 0x40 (cap_len=16)
-      expect(cfg.readU8(10, fn, 0x42)).toBe(16);
-      expect(cfg.readU8(10, fn, 0x43)).toBe(1); // cfg_type
-      expect(cfg.readU8(10, fn, 0x44)).toBe(0); // bar
-      expect(readCapFieldU32(cfg, 10, fn, 0x40, 8)).toBe(0x0000);
-      expect(readCapFieldU32(cfg, 10, fn, 0x40, 12)).toBe(0x0100);
-
-      // NOTIFY_CFG @ 0x50 (cap_len=20, notify_off_multiplier=4)
-      expect(cfg.readU8(10, fn, 0x52)).toBe(20);
-      expect(cfg.readU8(10, fn, 0x53)).toBe(2);
-      expect(cfg.readU8(10, fn, 0x54)).toBe(0);
-      expect(readCapFieldU32(cfg, 10, fn, 0x50, 8)).toBe(0x1000);
+      // COMMON_CFG @ 0x50 (cap_len=16)
+      expect(cfg.readU8(10, fn, 0x52)).toBe(16);
+      expect(cfg.readU8(10, fn, 0x53)).toBe(1); // cfg_type
+      expect(cfg.readU8(10, fn, 0x54)).toBe(0); // bar
+      expect(readCapFieldU32(cfg, 10, fn, 0x50, 8)).toBe(0x0000);
       expect(readCapFieldU32(cfg, 10, fn, 0x50, 12)).toBe(0x0100);
-      expect(readCapFieldU32(cfg, 10, fn, 0x50, 16)).toBe(4);
 
-      // ISR_CFG @ 0x64 (cap_len=16)
-      expect(cfg.readU8(10, fn, 0x66)).toBe(16);
-      expect(cfg.readU8(10, fn, 0x67)).toBe(3);
-      expect(cfg.readU8(10, fn, 0x68)).toBe(0);
-      expect(readCapFieldU32(cfg, 10, fn, 0x64, 8)).toBe(0x2000);
-      expect(readCapFieldU32(cfg, 10, fn, 0x64, 12)).toBe(0x0020);
+      // NOTIFY_CFG @ 0x60 (cap_len=20, notify_off_multiplier=4)
+      expect(cfg.readU8(10, fn, 0x62)).toBe(20);
+      expect(cfg.readU8(10, fn, 0x63)).toBe(2);
+      expect(cfg.readU8(10, fn, 0x64)).toBe(0);
+      expect(readCapFieldU32(cfg, 10, fn, 0x60, 8)).toBe(0x1000);
+      expect(readCapFieldU32(cfg, 10, fn, 0x60, 12)).toBe(0x0100);
+      expect(readCapFieldU32(cfg, 10, fn, 0x60, 16)).toBe(4);
 
-      // DEVICE_CFG @ 0x74 (cap_len=16)
+      // ISR_CFG @ 0x74 (cap_len=16)
       expect(cfg.readU8(10, fn, 0x76)).toBe(16);
-      expect(cfg.readU8(10, fn, 0x77)).toBe(4);
+      expect(cfg.readU8(10, fn, 0x77)).toBe(3);
       expect(cfg.readU8(10, fn, 0x78)).toBe(0);
-      expect(readCapFieldU32(cfg, 10, fn, 0x74, 8)).toBe(0x3000);
-      expect(readCapFieldU32(cfg, 10, fn, 0x74, 12)).toBe(0x0100);
+      expect(readCapFieldU32(cfg, 10, fn, 0x74, 8)).toBe(0x2000);
+      expect(readCapFieldU32(cfg, 10, fn, 0x74, 12)).toBe(0x0020);
+
+      // DEVICE_CFG @ 0x84 (cap_len=16)
+      expect(cfg.readU8(10, fn, 0x86)).toBe(16);
+      expect(cfg.readU8(10, fn, 0x87)).toBe(4);
+      expect(cfg.readU8(10, fn, 0x88)).toBe(0);
+      expect(readCapFieldU32(cfg, 10, fn, 0x84, 8)).toBe(0x3000);
+      expect(readCapFieldU32(cfg, 10, fn, 0x84, 12)).toBe(0x0100);
     }
   });
 });

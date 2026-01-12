@@ -700,7 +700,12 @@ export class PciBus implements PortIoHandler {
   #installCapabilities(config: Uint8Array, caps: ReadonlyArray<PciCapability>): void {
     // PCI spec: capability list lives in the device-specific region after the
     // standard 0x40-byte type-0 header.
-    let nextOff = 0x40;
+    //
+    // Start at 0x50 so Aero's virtio-pci devices expose a stable capability layout
+    // (common/notif/isr/device at fixed offsets). Keeping 0x40..0x4f unused also
+    // leaves room for future standard capabilities (e.g. MSI/MSI-X) without
+    // needing to reshuffle vendor-specific offsets.
+    let nextOff = 0x50;
     let firstPtr = 0;
     let prevPtr = 0;
 

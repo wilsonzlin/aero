@@ -385,7 +385,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_INPUT_MMIO_BAR_SIZE }, null, null, null, null, null];
   readonly capabilities: ReadonlyArray<PciCapability> = [
     // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
-    // The PCI bus will install these starting at 0x40 with 4-byte aligned pointers.
+    // The PCI bus will install these starting at 0x50 with 4-byte aligned pointers.
     virtioVendorCap({ cfgType: 1, bar: 0, offset: 0x0000, length: 0x0100 }), // COMMON_CFG
     virtioVendorCap({ cfgType: 2, bar: 0, offset: 0x1000, length: 0x0100, notifyOffMultiplier: 4 }), // NOTIFY_CFG
     virtioVendorCap({ cfgType: 3, bar: 0, offset: 0x2000, length: 0x0020 }), // ISR_CFG

@@ -75,6 +75,7 @@ import {
   type UsbRingDetachMessage,
   type UsbSelectedMessage,
 } from "../usb/usb_proxy_protocol";
+import { setUsbProxyCompletionRingDispatchPaused } from "../usb/usb_proxy_ring_dispatcher";
 import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
@@ -90,6 +91,7 @@ import {
   isHidAttachMessage,
   isHidDetachMessage,
   isHidInputReportMessage,
+  isHidProxyMessage,
   isHidRingAttachMessage,
   isHidRingInitMessage,
   type HidAttachMessage,
@@ -405,22 +407,52 @@ let snapshotRestoredDeviceBlobs: Array<{ kind: string; bytes: Uint8Array }> = []
 // devices are ticked against this virtual time.
 let ioTickHostLastNowMs: number | null = null;
 let ioTickVirtualNowMs: number | null = null;
-// While the IO worker is snapshot-paused we must not allow any asynchronous host-side completions
-// (e.g. WebUSB) to call into WASM and mutate guest RAM/device state; otherwise snapshot save would
-// race with those writes and become nondeterministic. Queue completion messages and replay them
-// after resume.
-const MAX_QUEUED_USB_COMPLETION_MESSAGES = 4096;
-const queuedUsbCompletionMessages: UsbCompletionMessage[] = [];
+// While the IO worker is snapshot-paused we must not allow any asynchronous messages (e.g. WebUSB
+// completions, WebHID input reports) to call into WASM and mutate guest RAM/device state; otherwise
+// snapshot save would race with those writes and become nondeterministic.
+//
+// Queue the affected messages and replay them after resume.
+const MAX_QUEUED_SNAPSHOT_PAUSED_MESSAGES = 4096;
+const MAX_QUEUED_SNAPSHOT_PAUSED_BYTES = 16 * 1024 * 1024;
+let queuedSnapshotPausedBytes = 0;
+const queuedSnapshotPausedMessages: unknown[] = [];
 
 const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
 let queuedInputBatchBytes = 0;
 const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
 
-function flushQueuedUsbCompletionMessages(): void {
-  if (queuedUsbCompletionMessages.length === 0) return;
-  const queued = queuedUsbCompletionMessages.splice(0, queuedUsbCompletionMessages.length);
+function estimateQueuedSnapshotPausedBytes(msg: unknown): number {
+  // We only estimate byte sizes for the high-frequency, byte-bearing message types.
+  if (isUsbCompletionMessage(msg)) {
+    const completion = msg.completion;
+    if (completion.status === "success" && "data" in completion) {
+      return completion.data.byteLength >>> 0;
+    }
+    return 0;
+  }
+  if (isHidInputReportMessage(msg)) {
+    return msg.data.byteLength >>> 0;
+  }
+  if (isHidPassthroughInputReportMessage(msg)) {
+    return msg.data.byteLength >>> 0;
+  }
+  return 0;
+}
+
+function queueSnapshotPausedMessage(msg: unknown): void {
+  if (queuedSnapshotPausedMessages.length >= MAX_QUEUED_SNAPSHOT_PAUSED_MESSAGES) return;
+  const estimated = estimateQueuedSnapshotPausedBytes(msg);
+  if (queuedSnapshotPausedBytes + estimated > MAX_QUEUED_SNAPSHOT_PAUSED_BYTES) return;
+  queuedSnapshotPausedMessages.push(msg);
+  queuedSnapshotPausedBytes += estimated;
+}
+
+function flushQueuedSnapshotPausedMessages(): void {
+  if (queuedSnapshotPausedMessages.length === 0) return;
+  const queued = queuedSnapshotPausedMessages.splice(0, queuedSnapshotPausedMessages.length);
+  queuedSnapshotPausedBytes = 0;
   for (const msg of queued) {
-    // Replay the completion message to any listeners that were blocked during the snapshot pause.
+    // Replay the message to any listeners that were blocked during the snapshot pause.
     ctx.dispatchEvent(new MessageEvent("message", { data: msg }));
   }
 }
@@ -445,7 +477,7 @@ function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return out.buffer;
 }
 
-// Intercept USB completion messages while snapshot-paused so `WebUsbPassthroughRuntime` (and other
+// Intercept async input-related messages while snapshot-paused so WebUSB/WebHID runtimes (and other
 // listeners) cannot apply them and mutate guest RAM/device state mid-snapshot.
 //
 // Use a capturing listener so we run before any runtime-added `addEventListener("message", ...)`
@@ -455,11 +487,22 @@ ctx.addEventListener(
   (ev) => {
     if (!snapshotPaused) return;
     const data = (ev as MessageEvent<unknown>).data;
-    if (!isUsbCompletionMessage(data)) return;
+    // Input batches are queued separately so buffers can be recycled after processing.
+    if ((data as Partial<InputBatchMessage>)?.type === "in:input-batch") return;
+
+    const shouldQueue =
+      isUsbCompletionMessage(data) ||
+      isUsbSelectedMessage(data) ||
+      isUsbRingAttachMessage(data) ||
+      isUsbRingDetachMessage(data) ||
+      isHidProxyMessage(data) ||
+      isHidPassthroughAttachHubMessage(data) ||
+      isHidPassthroughAttachMessage(data) ||
+      isHidPassthroughDetachMessage(data) ||
+      isHidPassthroughInputReportMessage(data);
+    if (!shouldQueue) return;
     ev.stopImmediatePropagation();
-    if (queuedUsbCompletionMessages.length < MAX_QUEUED_USB_COMPLETION_MESSAGES) {
-      queuedUsbCompletionMessages.push(data);
-    }
+    queueSnapshotPausedMessage(data);
   },
   { capture: true },
 );
@@ -2739,13 +2782,15 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       switch (snapshotMsg.kind) {
         case "vm.snapshot.pause": {
           snapshotPaused = true;
+          setUsbProxyCompletionRingDispatchPaused(true);
           ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
           return;
         }
         case "vm.snapshot.resume": {
           snapshotPaused = false;
-          flushQueuedUsbCompletionMessages();
           flushQueuedInputBatches();
+          flushQueuedSnapshotPausedMessages();
+          setUsbProxyCompletionRingDispatchPaused(false);
           // Ensure the next device tick doesn't interpret wall-clock time spent in
           // snapshot save/restore as elapsed VM time.
           if (typeof performance?.now === "function") {

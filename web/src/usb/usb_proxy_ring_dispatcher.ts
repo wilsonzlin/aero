@@ -15,6 +15,17 @@ type DispatcherEntry = {
 
 const DEFAULT_DRAIN_INTERVAL_MS = 4;
 
+// When the VM runtime is snapshot-paused, the IO worker must not allow async completion delivery
+// (including the SharedArrayBuffer completion-ring fast path) to mutate guest-visible state while
+// the snapshot writer is reading guest RAM/device blobs.
+//
+// The IO worker toggles this flag during `vm.snapshot.pause`/`vm.snapshot.resume`.
+let completionDispatchPaused = false;
+
+export function setUsbProxyCompletionRingDispatchPaused(paused: boolean): void {
+  completionDispatchPaused = Boolean(paused);
+}
+
 // A completion ring is a single-producer (main thread) -> single-consumer (worker thread) queue.
 //
 // The worker side, however, can have multiple runtimes attached to the same MessagePort (e.g.
@@ -26,6 +37,7 @@ const DEFAULT_DRAIN_INTERVAL_MS = 4;
 const completionDispatchers = new WeakMap<SharedArrayBuffer, DispatcherEntry>();
 
 function drain(entry: DispatcherEntry): void {
+  if (completionDispatchPaused) return;
   if (entry.broken) return;
   const { ring, handlers } = entry;
   if (handlers.size === 0) return;
