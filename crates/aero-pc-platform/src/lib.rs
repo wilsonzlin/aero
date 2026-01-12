@@ -16,12 +16,13 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::{hpet, i8042};
+use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_devices_storage::AhciPciDevice;
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
-use aero_platform::interrupts::PlatformInterrupts;
-use aero_platform::io::IoPortBus;
+use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
+use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
 use memory::MmioHandler;
 use std::cell::RefCell;
@@ -51,6 +52,7 @@ pub enum ResetEvent {
 pub struct PcPlatformConfig {
     pub enable_hda: bool,
     pub enable_ahci: bool,
+    pub enable_ide: bool,
 }
 
 struct HdaPciConfigDevice {
@@ -109,6 +111,77 @@ impl PciDevice for AhciPciConfigDevice {
     }
 }
 
+struct IdePciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl IdePciConfigDevice {
+    fn new() -> Self {
+        let mut config = aero_devices::pci::profile::IDE_PIIX3.build_config_space();
+        // Legacy IDE compatibility ports.
+        config.set_bar_base(0, PRIMARY_PORTS.cmd_base as u64);
+        config.set_bar_base(1, 0x3F4); // alt-status/dev-ctl at +2 => 0x3F6
+        config.set_bar_base(2, SECONDARY_PORTS.cmd_base as u64);
+        config.set_bar_base(3, 0x374); // alt-status/dev-ctl at +2 => 0x376
+        config.set_bar_base(4, u64::from(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE));
+        Self { config }
+    }
+}
+
+impl PciDevice for IdePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
+#[derive(Clone)]
+struct PcIdePort {
+    pci_cfg: SharedPciConfigPorts,
+    ide: Rc<RefCell<Piix3IdePciDevice>>,
+    bdf: PciBdf,
+    port: u16,
+}
+
+impl PcIdePort {
+    fn sync_config(&self) {
+        let (command, bar4_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let cfg = bus.device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar4_base = cfg
+                .and_then(|cfg| cfg.bar_range(4))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar4_base)
+        };
+
+        let mut ide = self.ide.borrow_mut();
+        ide.config_mut().set_command(command);
+        if bar4_base != 0 {
+            ide.config_mut().set_bar_base(4, bar4_base);
+        }
+    }
+}
+
+impl PortIoDevice for PcIdePort {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        debug_assert_eq!(port, self.port);
+        self.sync_config();
+        self.ide.borrow_mut().io_read(port, size)
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        debug_assert_eq!(port, self.port);
+        self.sync_config();
+        self.ide.borrow_mut().io_write(port, size, value);
+    }
+}
+
 #[derive(Clone)]
 struct PciMmioWindow {
     base: u64,
@@ -156,11 +229,7 @@ impl PciMmioWindow {
         Some((mem_enabled, bar5))
     }
 
-    fn map_ahci(
-        &mut self,
-        paddr: u64,
-        size: usize,
-    ) -> Option<(Rc<RefCell<AhciPciDevice>>, u64)> {
+    fn map_ahci(&mut self, paddr: u64, size: usize) -> Option<(Rc<RefCell<AhciPciDevice>>, u64)> {
         let ahci = self.ahci.as_ref()?.clone();
         let (mem_enabled, bar5) = self.ahci_bar5()?;
         if !mem_enabled || bar5.base == 0 {
@@ -341,6 +410,7 @@ pub struct PcPlatform {
 
     pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
     pub ahci: Option<Rc<RefCell<AhciPciDevice>>>,
+    pub ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
 
     pci_allocator: PciResourceAllocator,
 
@@ -373,6 +443,16 @@ impl PcPlatform {
             ram_size,
             PcPlatformConfig {
                 enable_ahci: true,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn new_with_ide(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_ide: true,
                 ..Default::default()
             },
         )
@@ -504,9 +584,98 @@ impl PcPlatform {
             None
         };
 
+        let ide = if config.enable_ide {
+            let profile = aero_devices::pci::profile::IDE_PIIX3;
+            let bdf = profile.bdf;
+
+            let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+
+            let mut dev = IdePciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
+
+            Some(ide)
+        } else {
+            None
+        };
+
         {
             let mut pci_cfg = pci_cfg.borrow_mut();
             bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
+        }
+
+        // Register IDE I/O ports after BIOS POST so BAR4 assignments are visible.
+        if let Some(ide_dev) = ide.as_ref() {
+            let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+            let bm_base = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .and_then(|cfg| cfg.bar_range(4))
+                    .and_then(|range| u16::try_from(range.base).ok())
+                    .unwrap_or(Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE)
+            };
+
+            // Legacy command/control ports are fixed. Bus Master ports follow BAR4.
+            for port in PRIMARY_PORTS.cmd_base..PRIMARY_PORTS.cmd_base + 8 {
+                io.register(
+                    port,
+                    Box::new(PcIdePort {
+                        pci_cfg: pci_cfg.clone(),
+                        ide: ide_dev.clone(),
+                        bdf,
+                        port,
+                    }),
+                );
+            }
+            for port in PRIMARY_PORTS.ctrl_base..PRIMARY_PORTS.ctrl_base + 2 {
+                io.register(
+                    port,
+                    Box::new(PcIdePort {
+                        pci_cfg: pci_cfg.clone(),
+                        ide: ide_dev.clone(),
+                        bdf,
+                        port,
+                    }),
+                );
+            }
+            for port in SECONDARY_PORTS.cmd_base..SECONDARY_PORTS.cmd_base + 8 {
+                io.register(
+                    port,
+                    Box::new(PcIdePort {
+                        pci_cfg: pci_cfg.clone(),
+                        ide: ide_dev.clone(),
+                        bdf,
+                        port,
+                    }),
+                );
+            }
+            for port in SECONDARY_PORTS.ctrl_base..SECONDARY_PORTS.ctrl_base + 2 {
+                io.register(
+                    port,
+                    Box::new(PcIdePort {
+                        pci_cfg: pci_cfg.clone(),
+                        ide: ide_dev.clone(),
+                        bdf,
+                        port,
+                    }),
+                );
+            }
+            for port in bm_base..bm_base + 16 {
+                io.register(
+                    port,
+                    Box::new(PcIdePort {
+                        pci_cfg: pci_cfg.clone(),
+                        ide: ide_dev.clone(),
+                        bdf,
+                        port,
+                    }),
+                );
+            }
         }
 
         // Map the PCI MMIO window used by `PciResourceAllocator` so BAR reprogramming is reflected
@@ -567,6 +736,7 @@ impl PcPlatform {
             acpi_pm,
             hda,
             ahci,
+            ide,
             pci_allocator,
             clock,
             pit,
@@ -643,6 +813,35 @@ impl PcPlatform {
         ahci.process(&mut self.memory);
     }
 
+    pub fn process_ide(&mut self) {
+        let Some(ide) = self.ide.as_ref() else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+        let (command, bar4_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar4 = cfg
+                .and_then(|cfg| cfg.bar_range(4))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar4)
+        };
+
+        {
+            let mut ide = ide.borrow_mut();
+            ide.config_mut().set_command(command);
+            if bar4_base != 0 {
+                ide.config_mut().set_bar_base(4, bar4_base);
+            }
+        }
+
+        let mut ide = ide.borrow_mut();
+        ide.tick(&mut self.memory);
+    }
+
     pub fn poll_pci_intx_lines(&mut self) {
         if let Some(hda) = self.hda.as_ref() {
             let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
@@ -703,6 +902,28 @@ impl PcPlatform {
                 level,
                 &mut *self.interrupts.borrow_mut(),
             );
+        }
+
+        if let Some(ide) = self.ide.as_ref() {
+            // IDE legacy mode uses ISA IRQ14/IRQ15 rather than PCI INTx.
+            let (irq14, irq15) = {
+                let ide = ide.borrow();
+                (
+                    ide.controller.primary_irq_pending(),
+                    ide.controller.secondary_irq_pending(),
+                )
+            };
+            let mut interrupts = self.interrupts.borrow_mut();
+            if irq14 {
+                interrupts.raise_irq(InterruptInput::IsaIrq(14));
+            } else {
+                interrupts.lower_irq(InterruptInput::IsaIrq(14));
+            }
+            if irq15 {
+                interrupts.raise_irq(InterruptInput::IsaIrq(15));
+            } else {
+                interrupts.lower_irq(InterruptInput::IsaIrq(15));
+            }
         }
     }
 
