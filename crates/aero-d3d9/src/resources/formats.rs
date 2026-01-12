@@ -339,6 +339,11 @@ pub fn format_info(
     }
 }
 
+pub fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    bytes_per_row.div_ceil(align) * align
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,9 +420,4 @@ mod tests {
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
         assert!(!info.decompress_to_bgra8);
     }
-}
-
-pub fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
-    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    bytes_per_row.div_ceil(align) * align
 }

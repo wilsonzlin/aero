@@ -404,7 +404,7 @@ impl AerogpuCmdRuntime {
         }
 
         let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let repacked = if height > 1 && bytes_per_row % aligned != 0 {
+        let repacked = if height > 1 && !bytes_per_row.is_multiple_of(aligned) {
             let padded_bpr = unpadded_bpr.div_ceil(aligned) * aligned;
             let mut repacked = vec![0u8; (padded_bpr * height) as usize];
             for row in 0..height as usize {

@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(telemetry.bytes_uploaded, expected_len);
 
         // Spot-check a couple rows to ensure the merged rect is copied correctly.
-        let row0_src = 0 * stride;
+        let row0_src = 0;
         let row_last_src = (rect_h - 1) * stride;
         let last_row_dst = (rect_h - 1) * COPY_BYTES_PER_ROW_ALIGNMENT;
 

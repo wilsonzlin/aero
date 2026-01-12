@@ -1478,7 +1478,7 @@ mod tests {
 
         handle_int18(&mut bios, &mut cpu, &mut mem, &mut disk);
 
-        assert_eq!(cpu.halted, false);
+        assert!(!cpu.halted);
         assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7BFA);
         assert_eq!(mem.read_u8(0x7C00), 0xAA);
     }

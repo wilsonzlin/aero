@@ -266,7 +266,7 @@ pub(super) fn build_bind_group(
                                 buffer = provider.dummy_uniform();
                                 offset = 0;
                                 size = None;
-                            } else if offset != 0 && offset % uniform_align != 0 {
+                            } else if offset != 0 && !offset.is_multiple_of(uniform_align) {
                                 if let Some((scratch_id, scratch_buffer)) =
                                     provider.constant_buffer_scratch(*slot)
                                 {
@@ -766,7 +766,7 @@ mod tests {
                 device,
                 &mut bind_group_cache,
                 &layout,
-                &[binding.clone()],
+                std::slice::from_ref(&binding),
                 &provider_too_small,
             )
             .unwrap();
@@ -774,7 +774,7 @@ mod tests {
                 device,
                 &mut bind_group_cache,
                 &layout,
-                &[binding],
+                std::slice::from_ref(&binding),
                 &provider_none,
             )
             .unwrap();
@@ -803,7 +803,7 @@ mod tests {
             // WebGPU spec requires this to be at least 256, but keep the test robust in case wgpu
             // reports a smaller value on some backends.
             let offset = 4u64;
-            if offset == 0 || uniform_align <= 1 || offset % uniform_align == 0 {
+            if uniform_align <= 1 || offset.is_multiple_of(uniform_align) {
                 skip_or_panic(
                     module_path!(),
                     &format!("cannot pick unaligned offset for uniform alignment {uniform_align}"),
@@ -940,7 +940,7 @@ mod tests {
                 device,
                 &mut bind_group_cache,
                 &layout,
-                &[binding.clone()],
+                std::slice::from_ref(&binding),
                 &provider_with_scratch,
             )
             .unwrap();
@@ -948,7 +948,7 @@ mod tests {
                 device,
                 &mut bind_group_cache,
                 &layout,
-                &[binding],
+                std::slice::from_ref(&binding),
                 &provider_without_scratch,
             )
             .unwrap();

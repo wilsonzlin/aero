@@ -315,7 +315,7 @@ fn print_disks_section_summary(file: &mut fs::File, section: &SnapshotSectionInf
                 return s.to_string();
             }
             let mut out: String = s.chars().take(max_chars).collect();
-            out.push_str("…");
+            out.push('…');
             out
         }
 

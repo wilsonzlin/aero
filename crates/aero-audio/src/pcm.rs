@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn parse_hda_format_44k1_base_rate_and_mult_div() {
         // base=44.1k (bit14=1), mult=2 (code 1), div=1 (code 0), bits=24 (code 3), channels=1.
-        let fmt = (1 << 14) | (1 << 11) | (3 << 4) | 0;
+        let fmt = (1 << 14) | (1 << 11) | (3 << 4);
         let parsed = StreamFormat::from_hda_format(fmt);
         assert_eq!(
             parsed,
@@ -478,7 +478,7 @@ mod tests {
         let cases: &[(u16, u8, usize)] =
             &[(0, 8, 1), (1, 16, 2), (2, 20, 4), (3, 24, 4), (4, 32, 4)];
         for &(code, bits, bps) in cases {
-            let fmt = (code << 4) | 0;
+            let fmt = code << 4;
             let parsed = StreamFormat::from_hda_format(fmt);
             assert_eq!(parsed.sample_rate_hz, 48_000);
             assert_eq!(parsed.bits_per_sample, bits);
@@ -490,18 +490,18 @@ mod tests {
     #[test]
     fn parse_hda_format_reserved_codes_fall_back_safely() {
         // Reserved multiplier codes fall back to 1x.
-        let fmt = (4 << 11) | (1 << 4) | 0;
+        let fmt = (4 << 11) | (1 << 4);
         let parsed = StreamFormat::from_hda_format(fmt);
         assert_eq!(parsed.sample_rate_hz, 48_000);
 
         // Divisor codes cover 1..=8; spot-check the upper end.
         // base=48k, mult=4 (code 3), div=8 (code 7) -> 24k.
-        let fmt = (3 << 11) | (7 << 8) | (1 << 4) | 0;
+        let fmt = (3 << 11) | (7 << 8) | (1 << 4);
         let parsed = StreamFormat::from_hda_format(fmt);
         assert_eq!(parsed.sample_rate_hz, 24_000);
 
         // Reserved bits-per-sample codes fall back to 16-bit.
-        let fmt = (5 << 4) | 0;
+        let fmt = 5 << 4;
         let parsed = StreamFormat::from_hda_format(fmt);
         assert_eq!(parsed.bits_per_sample, 16);
         assert_eq!(parsed.bytes_per_sample(), 2);
@@ -534,12 +534,12 @@ mod tests {
         // the implementation's integer arithmetic (truncating division).
         //
         // base=44.1k, mult=1, div=8 => 5512.5 -> 5512 (truncated).
-        let fmt = (1 << 14) | (7 << 8) | (1 << 4) | 0; // 16-bit, 1 channel
+        let fmt = (1 << 14) | (7 << 8) | (1 << 4); // 16-bit, 1 channel
         let parsed = StreamFormat::from_hda_format(fmt);
         assert_eq!(parsed.sample_rate_hz, 5512);
 
         // base=48k, mult=1, div=7 => 6857.142... -> 6857 (truncated).
-        let fmt = (6 << 8) | (1 << 4) | 0;
+        let fmt = (6 << 8) | (1 << 4);
         let parsed = StreamFormat::from_hda_format(fmt);
         assert_eq!(parsed.sample_rate_hz, 6857);
     }
@@ -552,7 +552,7 @@ mod tests {
         // provide full coverage over all multiplier/divisor selector values that the
         // implementation explicitly handles.
         for (mult_code, mult) in [(0u16, 1u32), (1, 2), (2, 3), (3, 4)] {
-            let fmt = (mult_code << 11) | (0 << 8) | (1 << 4) | 0;
+            let fmt = (mult_code << 11) | (1 << 4);
             let parsed = StreamFormat::from_hda_format(fmt);
             assert_eq!(parsed.sample_rate_hz, 48_000 * mult);
         }
@@ -569,7 +569,7 @@ mod tests {
             (7, 8),
         ];
         for &(div_code, div) in expected_divs {
-            let fmt = (0 << 11) | (div_code << 8) | (1 << 4) | 0;
+            let fmt = (div_code << 8) | (1 << 4);
             let parsed = StreamFormat::from_hda_format(fmt);
             assert_eq!(parsed.sample_rate_hz, 48_000 / div);
         }
@@ -1239,7 +1239,7 @@ mod tests {
             channels: 4,
         };
         encode_mono_f32_to_pcm_into(&[0.25], fmt_4ch, &mut out);
-        assert_eq!(out.len(), 1 * 2 * 4);
+        assert_eq!(out.len(), 2 * 4);
         let ch0 = i16::from_le_bytes([out[0], out[1]]);
         let ch1 = i16::from_le_bytes([out[2], out[3]]);
         let ch2 = i16::from_le_bytes([out[4], out[5]]);

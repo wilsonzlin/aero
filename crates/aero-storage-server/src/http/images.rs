@@ -390,8 +390,10 @@ async fn serve_image(
                     meta,
                     range,
                     want_body,
-                    cache_control,
-                    etag.clone(),
+                    DataCacheHeaders {
+                        cache_control,
+                        etag: etag.clone(),
+                    },
                 )
                 .await;
             }
@@ -472,8 +474,10 @@ async fn serve_image(
                 meta,
                 range,
                 want_body,
-                cache_control,
-                etag.clone(),
+                DataCacheHeaders {
+                    cache_control,
+                    etag: etag.clone(),
+                },
             )
             .await;
         }
@@ -621,6 +625,11 @@ async fn full_response(
     response
 }
 
+struct DataCacheHeaders {
+    cache_control: HeaderValue,
+    etag: HeaderValue,
+}
+
 async fn single_range_response(
     state: &ImagesState,
     req_headers: &HeaderMap,
@@ -628,8 +637,7 @@ async fn single_range_response(
     meta: crate::store::ImageMeta,
     range: ByteRange,
     want_body: bool,
-    cache_control: HeaderValue,
-    etag: HeaderValue,
+    cache: DataCacheHeaders,
 ) -> Response {
     let range_len = range.len();
     if want_body {
@@ -691,7 +699,7 @@ async fn single_range_response(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&range_len.to_string()).unwrap(),
     );
-    insert_data_cache_headers(headers, &meta, cache_control, etag);
+    insert_data_cache_headers(headers, &meta, cache.cache_control, cache.etag);
     response
 }
 

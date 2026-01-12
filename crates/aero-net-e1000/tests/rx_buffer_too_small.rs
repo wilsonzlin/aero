@@ -54,7 +54,7 @@ fn build_test_frame(payload_len: usize) -> Vec<u8> {
     frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
     frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
     frame.extend_from_slice(&0x0800u16.to_be_bytes());
-    frame.extend(std::iter::repeat(0xAB).take(payload_len));
+    frame.extend(std::iter::repeat_n(0xAB, payload_len));
     frame
 }
 

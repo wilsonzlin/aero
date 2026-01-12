@@ -9216,8 +9216,10 @@ mod tests {
 
         // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
         let default_sampler = exec.sampler_for_state(D3d9SamplerState::default());
-        let mut non_aniso = D3d9SamplerState::default();
-        non_aniso.max_anisotropy = 16;
+        let non_aniso = D3d9SamplerState {
+            max_anisotropy: 16,
+            ..Default::default()
+        };
         let non_aniso_sampler = exec.sampler_for_state(non_aniso);
         assert!(
             Arc::ptr_eq(&default_sampler, &non_aniso_sampler),
@@ -9231,14 +9233,18 @@ mod tests {
             return;
         }
 
-        let mut aniso_2 = D3d9SamplerState::default();
-        aniso_2.min_filter = d3d9::D3DTEXF_ANISOTROPIC;
-        aniso_2.mag_filter = d3d9::D3DTEXF_ANISOTROPIC;
-        aniso_2.mip_filter = d3d9::D3DTEXF_LINEAR;
-        aniso_2.max_anisotropy = 2;
+        let aniso_2 = D3d9SamplerState {
+            min_filter: d3d9::D3DTEXF_ANISOTROPIC,
+            mag_filter: d3d9::D3DTEXF_ANISOTROPIC,
+            mip_filter: d3d9::D3DTEXF_LINEAR,
+            max_anisotropy: 2,
+            ..Default::default()
+        };
 
-        let mut aniso_16 = aniso_2;
-        aniso_16.max_anisotropy = 16;
+        let aniso_16 = D3d9SamplerState {
+            max_anisotropy: 16,
+            ..aniso_2
+        };
 
         let sampler_2 = exec.sampler_for_state(aniso_2);
         let sampler_16 = exec.sampler_for_state(aniso_16);

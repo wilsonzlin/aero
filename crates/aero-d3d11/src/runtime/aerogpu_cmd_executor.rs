@@ -7260,8 +7260,10 @@ impl AerogpuD3d11Executor {
                                 array_layers: 1,
                                 format: desc.format,
                             },
-                            level,
-                            layer,
+                            TextureSubresource {
+                                mip_level: level,
+                                array_layer: layer,
+                            },
                             level_width.checked_mul(4).ok_or_else(|| {
                                 anyhow!("texture upload: decompressed bytes_per_row overflow")
                             })?,
@@ -8397,12 +8399,17 @@ fn write_texture_layout(
     Ok((bytes_per_row, height))
 }
 
+#[derive(Clone, Copy)]
+struct TextureSubresource {
+    mip_level: u32,
+    array_layer: u32,
+}
+
 fn write_texture_subresource_linear(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     desc: Texture2dDesc,
-    mip_level: u32,
-    array_layer: u32,
+    subresource: TextureSubresource,
     src_bytes_per_row: u32,
     bytes: &[u8],
     force_opaque_alpha: bool,
@@ -8460,11 +8467,11 @@ fn write_texture_subresource_linear(
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture,
-                    mip_level,
+                    mip_level: subresource.mip_level,
                     origin: wgpu::Origin3d {
                         x: 0,
                         y: 0,
-                        z: array_layer,
+                        z: subresource.array_layer,
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
@@ -8484,11 +8491,11 @@ fn write_texture_subresource_linear(
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture,
-                    mip_level,
+                    mip_level: subresource.mip_level,
                     origin: wgpu::Origin3d {
                         x: 0,
                         y: 0,
-                        z: array_layer,
+                        z: subresource.array_layer,
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
@@ -8517,11 +8524,11 @@ fn write_texture_subresource_linear(
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture,
-                    mip_level,
+                    mip_level: subresource.mip_level,
                     origin: wgpu::Origin3d {
                         x: 0,
                         y: 0,
-                        z: array_layer,
+                        z: subresource.array_layer,
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
@@ -8541,11 +8548,11 @@ fn write_texture_subresource_linear(
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture,
-                    mip_level,
+                    mip_level: subresource.mip_level,
                     origin: wgpu::Origin3d {
                         x: 0,
                         y: 0,
-                        z: array_layer,
+                        z: subresource.array_layer,
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
@@ -8579,8 +8586,10 @@ fn write_texture_linear(
         queue,
         texture,
         desc,
-        0,
-        0,
+        TextureSubresource {
+            mip_level: 0,
+            array_layer: 0,
+        },
         src_bytes_per_row,
         bytes,
         force_opaque_alpha,

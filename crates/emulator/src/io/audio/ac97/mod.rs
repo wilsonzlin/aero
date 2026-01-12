@@ -457,7 +457,7 @@ mod tests {
         dev.port_write(0x1100 + NABM_PO_CR as u16, 1, u32::from(CR_RPBM));
 
         let mut mem = PanicMem;
-        let mut sink = Sink::default();
+        let mut sink = Sink;
 
         // With BME clear, wrapper.poll must not touch guest memory.
         dev.poll(&mut mem, &mut sink, 2);

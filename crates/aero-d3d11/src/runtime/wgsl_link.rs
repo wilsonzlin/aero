@@ -58,7 +58,7 @@ pub(crate) fn referenced_ps_input_locations(wgsl: &str) -> BTreeSet<u32> {
         let mut has_digit = false;
         while j < bytes.len() {
             let b = bytes[j];
-            if (b'0'..=b'9').contains(&b) {
+            if b.is_ascii_digit() {
                 has_digit = true;
                 value = value.saturating_mul(10).saturating_add((b - b'0') as u32);
                 j += 1;
