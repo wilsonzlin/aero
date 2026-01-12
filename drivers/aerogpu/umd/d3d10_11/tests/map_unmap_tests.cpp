@@ -3468,6 +3468,82 @@ bool TestSrgbTexture2DFormatPropagation() {
   return true;
 }
 
+bool TestSrgbTexture2DFormatPropagationGuestBacked() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(srgb format propagation guest-backed)")) {
+    return false;
+  }
+
+  struct Case {
+    const char* name;
+    uint32_t dxgi_format;
+    uint32_t expected_format;
+  };
+
+  static constexpr Case kCases[] = {
+      {"DXGI_FORMAT_B8G8R8A8_UNORM_SRGB", kDxgiFormatB8G8R8A8UnormSrgb, AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB},
+      {"DXGI_FORMAT_B8G8R8X8_UNORM_SRGB", kDxgiFormatB8G8R8X8UnormSrgb, AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB},
+      {"DXGI_FORMAT_R8G8B8A8_UNORM_SRGB", kDxgiFormatR8G8B8A8UnormSrgb, AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB},
+  };
+
+  for (const auto& c : kCases) {
+    TestResource tex{};
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/4,
+                                                /*height=*/4,
+                                                c.dxgi_format,
+                                                /*cpu_access_flags=*/AEROGPU_D3D11_CPU_ACCESS_READ,
+                                                &tex),
+               "CreateStagingTexture2DWithFormat(srgb guest-backed)")) {
+      return false;
+    }
+
+    HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+    if (!Check(hr == S_OK, "Flush after CreateResource(srgb tex2d guest-backed)")) {
+      return false;
+    }
+
+    if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+      return false;
+    }
+    const uint8_t* stream = dev.harness.last_stream.data();
+    const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+    CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+      return false;
+    }
+    const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+
+    char msg[256] = {};
+    std::snprintf(msg, sizeof(msg), "CREATE_TEXTURE2D format matches expected for %s", c.name);
+    if (!Check(create_cmd->format == c.expected_format, msg)) {
+      return false;
+    }
+    if (!Check(create_cmd->backing_alloc_id != 0, "guest-backed CREATE_TEXTURE2D backing_alloc_id != 0")) {
+      return false;
+    }
+
+    bool found = false;
+    for (auto h : dev.harness.last_allocs) {
+      if (h == create_cmd->backing_alloc_id) {
+        found = true;
+        break;
+      }
+    }
+    if (!Check(found, "submit alloc list contains guest-backed sRGB texture allocation")) {
+      return false;
+    }
+
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestMapDoNotWaitRespectsFenceCompletion() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/true),
@@ -3612,6 +3688,7 @@ int main() {
   ok &= TestHostOwnedCreateTextureInitialDataUploads();
   ok &= TestGuestBackedCreateTextureInitialDataDirtyRange();
   ok &= TestSrgbTexture2DFormatPropagation();
+  ok &= TestSrgbTexture2DFormatPropagationGuestBacked();
   ok &= TestMapDoNotWaitRespectsFenceCompletion();
 
   if (!ok) {
