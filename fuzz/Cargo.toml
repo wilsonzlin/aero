@@ -122,3 +122,9 @@ name = "fuzz_disk_image_open_auto"
 path = "fuzz_targets/fuzz_disk_image_open_auto.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_disk_image_open_auto_rw"
+path = "fuzz_targets/fuzz_disk_image_open_auto_rw.rs"
+test = false
+doc = false

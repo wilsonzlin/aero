@@ -48,6 +48,9 @@ jobs:
       - name: fuzz_disk_image_open_auto (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_disk_image_open_auto -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
 
+      - name: fuzz_disk_image_open_auto_rw (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_disk_image_open_auto_rw -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_disk_image_open_auto.dict
+
       - name: fuzz_ahci_command (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_ahci_command -- -max_total_time=10
 
