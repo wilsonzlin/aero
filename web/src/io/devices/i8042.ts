@@ -658,7 +658,16 @@ class Ps2Mouse {
  * - Controller commands: 0x20 (read command byte), 0x60 (write command byte),
  *   0xAA (self test), 0xD0/0xD1 (output port), 0xFE (reset pulse)
  * - Keyboard command: 0xFF (reset) -> 0xFA, 0xAA
- * - IRQ1 level signalling when keyboard data is pending and interrupts enabled.
+ * - IRQ1/IRQ12 *edge* signalling when a keyboard/mouse byte becomes available and interrupts are enabled.
+ *
+ * IRQ semantics:
+ * The real i8042 behaves like an edge-triggered source for the legacy PIC: it generates a pulse
+ * when it loads a byte into the output buffer. To model that over the web runtime's
+ * `raiseIrq`/`lowerIrq` API (which represents *line level transitions*), we emit an explicit
+ * pulse (`raiseIrq` then `lowerIrq`) each time the head output byte changes to a keyboard byte
+ * (IRQ1) or mouse byte (IRQ12).
+ *
+ * See `docs/irq-semantics.md`.
  */
 export class I8042Controller implements PortIoHandler {
   static readonly MAX_CONTROLLER_OUTPUT_QUEUE = MAX_CONTROLLER_OUTPUT_QUEUE;
@@ -673,8 +682,7 @@ export class I8042Controller implements PortIoHandler {
   #pendingCommand: number | null = null;
 
   #outQueue: OutputByte[] = [];
-  #irq1Asserted = false;
-  #irq12Asserted = false;
+  #irqLastHead: OutputByte | null = null;
 
   #outputPort = OUTPUT_PORT_RESET;
 
@@ -844,29 +852,29 @@ export class I8042Controller implements PortIoHandler {
     if (this.#outQueue.length > 0) this.#status |= STATUS_OBF;
     else this.#status &= ~STATUS_OBF;
 
-    const headSource = this.#outQueue[0]?.source ?? null;
+    const head = this.#outQueue[0] ?? null;
+    const headSource = head?.source ?? null;
     if (headSource === "mouse") this.#status |= STATUS_MOBF;
     else this.#status &= ~STATUS_MOBF;
 
-    const irqEnabled = (this.#commandByte & 0x01) !== 0;
-    const shouldAssert = irqEnabled && headSource === "keyboard";
-
-    if (shouldAssert && !this.#irq1Asserted) {
-      this.#irq.raiseIrq(1);
-      this.#irq1Asserted = true;
-    } else if (!shouldAssert && this.#irq1Asserted) {
-      this.#irq.lowerIrq(1);
-      this.#irq1Asserted = false;
-    }
-
-    const mouseIrqEnabled = (this.#commandByte & 0x02) !== 0;
-    const shouldAssertMouse = mouseIrqEnabled && headSource === "mouse";
-    if (shouldAssertMouse && !this.#irq12Asserted) {
-      this.#irq.raiseIrq(12);
-      this.#irq12Asserted = true;
-    } else if (!shouldAssertMouse && this.#irq12Asserted) {
-      this.#irq.lowerIrq(12);
-      this.#irq12Asserted = false;
+    // i8042 IRQs (IRQ1 keyboard, IRQ12 mouse) behave like edge-triggered sources for the legacy
+    // PIC: the controller generates a pulse when it loads a byte into the output buffer.
+    //
+    // The web runtime transports IRQs as line level transitions (`raiseIrq`/`lowerIrq`), so we
+    // represent the edge by emitting an explicit pulse each time the head output byte changes.
+    if (head !== this.#irqLastHead) {
+      this.#irqLastHead = head;
+      if (headSource === "keyboard") {
+        if ((this.#commandByte & 0x01) !== 0) {
+          this.#irq.raiseIrq(1);
+          this.#irq.lowerIrq(1);
+        }
+      } else if (headSource === "mouse") {
+        if ((this.#commandByte & 0x02) !== 0) {
+          this.#irq.raiseIrq(12);
+          this.#irq.lowerIrq(12);
+        }
+      }
     }
   }
 
@@ -899,16 +907,6 @@ export class I8042Controller implements PortIoHandler {
   }
 
   loadState(bytes: Uint8Array): void {
-    // Deassert IRQ lines according to current state before overwriting queues.
-    if (this.#irq1Asserted) {
-      this.#irq.lowerIrq(1);
-      this.#irq1Asserted = false;
-    }
-    if (this.#irq12Asserted) {
-      this.#irq.lowerIrq(12);
-      this.#irq12Asserted = false;
-    }
-
     const r = new ByteReader(bytes);
     const m0 = r.u8();
     const m1 = r.u8();
@@ -946,7 +944,10 @@ export class I8042Controller implements PortIoHandler {
     this.#keyboard.loadState(r);
     this.#mouse.loadState(r);
 
-    // Restore derived status bits and IRQ line levels.
+    // Restore derived status bits. Snapshot restore should not emit spurious IRQ pulses for any
+    // already-buffered output byte; pending edge-triggered interrupts must be captured/restored
+    // by the interrupt controller (PIC/APIC) model instead.
+    this.#irqLastHead = this.#outQueue[0] ?? null;
     this.#syncStatusAndIrq();
   }
 

@@ -67,8 +67,10 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
 
       // Keyboard reset command (0xFF) should return ACK (0xFA) + self-test pass (0xAA).
       expect(result.kbd).toEqual([0xfa, 0xaa]);
-      // IRQ1 should pulse high while keyboard bytes are pending.
+      // IRQ1 is edge-triggered: it should pulse once per output byte becoming available.
       expect(result.irqEvents).toEqual([
+        { irq: 1, level: true },
+        { irq: 1, level: false },
         { irq: 1, level: true },
         { irq: 1, level: false },
       ]);

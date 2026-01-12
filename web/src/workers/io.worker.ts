@@ -1813,10 +1813,18 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         hidInRing = null;
       }
 
-      // PCI devices may share IRQ lines. The CPU worker consumes IRQ events as a single
-      // level per line, so we need to "wire-OR" multiple devices in the IO worker.
+      // IRQ delivery between workers models *physical line levels* (asserted vs deasserted)
+      // using discrete `irqRaise`/`irqLower` events (see `docs/irq-semantics.md`).
       //
-      // Use a small refcount per IRQ line: emit `irqRaise` on 0->1 and `irqLower` on 1->0.
+      // Multiple devices may share an IRQ line (e.g. PCI INTx). Model the electrical
+      // "wire-OR" by keeping a refcount per line and only emitting transitions:
+      //   - emit `irqRaise` on 0→1
+      //   - emit `irqLower` on 1→0
+      //
+      // Edge-triggered sources (e.g. i8042) are represented by emitting a pulse
+      // (`raiseIrq()` then `lowerIrq()`); this refcounting ensures the pulse reaches the CPU
+      // worker as a 0→1→0 transition (unless the line is already asserted, which matches
+      // real hardware: you can't observe a rising edge on an already-high line).
       const irqRefCounts = new Uint16Array(256);
       const irqSink: IrqSink = {
         raiseIrq: (irq) => {

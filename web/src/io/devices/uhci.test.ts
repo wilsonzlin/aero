@@ -39,7 +39,7 @@ describe("io/devices/UhciPciDevice", () => {
     expect(bridge.io_write).toHaveBeenCalledWith(0x06, 2, 0xbeef);
   });
 
-  it("steps 1ms frames in tick() and only raises/lowers IRQ on edges", () => {
+  it("treats PCI INTx as a level-triggered IRQ and only emits transitions on edges", () => {
     let irq = false;
     const bridge: UhciControllerBridgeLike = {
       io_read: vi.fn(() => 0),

@@ -6,6 +6,22 @@ import type { MmioHandler } from "./bus/mmio.ts";
 import type { PortIoHandler } from "./bus/portio.ts";
 
 export interface IrqSink {
+  /**
+   * Assert an IRQ line.
+   *
+   * In the web runtime, IRQs are modeled as *physical line levels* (asserted vs deasserted) that
+   * are transported between workers as discrete `irqRaise`/`irqLower` events.
+   *
+   * - **Level-triggered sources** (e.g. PCI INTx devices like UHCI) should call {@link raiseIrq}
+   *   when the device begins asserting the line and {@link lowerIrq} when the condition is
+   *   cleared.
+   * - **Edge-triggered sources** (e.g. i8042 keyboard/mouse on ISA IRQ1/IRQ12) must be represented
+   *   as an explicit pulse: call {@link raiseIrq} immediately followed by {@link lowerIrq} to
+   *   generate a 0→1→0 transition.
+   *
+   * See `docs/irq-semantics.md` for the full contract (including how future PIC/APIC models should
+   * latch edges).
+   */
   raiseIrq(irq: number): void;
   lowerIrq(irq: number): void;
 }
@@ -67,4 +83,3 @@ export class DeviceManager {
     this.mmioBus.write(addr, size, value);
   }
 }
-

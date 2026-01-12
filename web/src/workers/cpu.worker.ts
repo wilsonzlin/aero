@@ -137,10 +137,17 @@ let didIoDemo = false;
 
 let irqBitmapLo = 0;
 let irqBitmapHi = 0;
-// Per-IRQ reference counts so multiple devices can share a legacy PIC line.
-// The I/O worker emits `irqRaise`/`irqLower` as level transitions for each device.
-// Maintaining a refcount avoids one device deasserting an IRQ line while another
-// is still asserting it.
+// Per-IRQ reference counts so multiple devices can share an interrupt input line.
+//
+// The I/O worker transports IRQ activity as discrete `irqRaise`/`irqLower` events which represent
+// *line level transitions* (assert/deassert). We keep a refcount here so:
+// - multiple sources can "wire-OR" onto the same legacy PIC line without one device accidentally
+//   deasserting another device's interrupt, and
+// - we can publish a stable per-line *level* bitmap into shared memory for the WASM CPU core.
+//
+// Note: A level bitmap alone cannot represent edge-triggered interrupts. Edge-triggered devices
+// (e.g. i8042) are represented as explicit pulses (0→1→0 transitions); the eventual PIC/APIC model
+// should latch rising edges so they are not missed even if the line is lowered quickly.
 const irqRefCounts = new Uint16Array(256);
 
 let perfWriter: PerfWriter | null = null;
