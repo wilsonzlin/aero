@@ -136,3 +136,200 @@ export async function fetchWithDiskAccessLease(
 ): Promise<Response> {
   return await fetchWithDiskAccessLeaseForUrl(lease, () => lease.url, init, options);
 }
+
+export type StreamLeaseResponse = {
+  /**
+   * Signed URL for Range-based delivery ("delivery=range").
+   *
+   * NOTE: This is an ephemeral secret and MUST NOT be persisted (IndexedDB/OPFS/localStorage).
+   */
+  url: string;
+  /**
+   * Optional RFC 3339 / ISO 8601 timestamp indicating when the lease expires.
+   * (See: docs/16-disk-image-streaming-auth.md#example-lease-api-response-schema)
+   */
+  expiresAt?: string;
+  /**
+   * Optional chunked disk delivery data (for "delivery=chunked").
+   */
+  chunked?: { delivery?: string; manifestUrl?: string };
+};
+
+function requireNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return trimmed;
+}
+
+function parseStreamLeaseResponse(raw: unknown): StreamLeaseResponse {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("stream lease response must be a JSON object");
+  }
+  const obj = raw as Partial<StreamLeaseResponse> & { chunked?: unknown };
+
+  const url = requireNonEmptyString(obj.url, "stream lease response url");
+
+  const expiresAt =
+    obj.expiresAt === undefined ? undefined : requireNonEmptyString(obj.expiresAt, "stream lease response expiresAt");
+
+  let chunked: StreamLeaseResponse["chunked"] | undefined;
+  if (obj.chunked !== undefined) {
+    if (!obj.chunked || typeof obj.chunked !== "object") {
+      throw new Error("stream lease response chunked must be an object");
+    }
+    const ch = obj.chunked as { delivery?: unknown; manifestUrl?: unknown };
+    const delivery =
+      ch.delivery === undefined ? undefined : requireNonEmptyString(ch.delivery, "stream lease response chunked.delivery");
+    const manifestUrl =
+      ch.manifestUrl === undefined
+        ? undefined
+        : requireNonEmptyString(ch.manifestUrl, "stream lease response chunked.manifestUrl");
+    chunked = {
+      ...(delivery !== undefined ? { delivery } : {}),
+      ...(manifestUrl !== undefined ? { manifestUrl } : {}),
+    };
+  }
+
+  return {
+    url,
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+    ...(chunked !== undefined ? { chunked } : {}),
+  };
+}
+
+function resolveUrlWithOptionalLocationBase(input: string): URL | null {
+  const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+  try {
+    return base ? new URL(input, base) : new URL(input);
+  } catch {
+    return null;
+  }
+}
+
+function resolveForFetch(input: string): string {
+  // In browsers, `fetch()` accepts relative URLs. In Node (tests), it does not.
+  // If we have a `location.href` available, resolve relative inputs against it.
+  const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+  if (base) {
+    try {
+      return new URL(input, base).toString();
+    } catch {
+      // Fall through (fetch will likely throw an Invalid URL error).
+    }
+  }
+  return input;
+}
+
+function isSameOriginOrRelative(url: string): boolean {
+  const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+  if (base) {
+    const u = resolveUrlWithOptionalLocationBase(url);
+    if (!u) return false;
+    return u.origin === new URL(base).origin;
+  }
+
+  // Without `location`, we can't compare origins. Treat non-absolute URLs as "relative"
+  // and therefore safe to use `credentials: "same-origin"`.
+  try {
+    // If this succeeds, it's an absolute URL.
+    new URL(url);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function fetchStreamLease(endpoint: string, fetchFn: typeof fetch): Promise<StreamLeaseResponse> {
+  const parsedEndpoint = resolveUrlWithOptionalLocationBase(endpoint);
+  const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+  if (parsedEndpoint && base) {
+    const origin = new URL(base).origin;
+    if (parsedEndpoint.origin !== origin) {
+      throw new Error(`leaseEndpoint must be same-origin (got ${parsedEndpoint.origin}, expected ${origin})`);
+    }
+  }
+
+  const resp = await fetchFn(resolveForFetch(endpoint), { method: "GET", credentials: "same-origin" });
+  if (!resp.ok) {
+    throw new Error(`failed to fetch stream lease: ${resp.status}`);
+  }
+  return parseStreamLeaseResponse((await resp.json()) as unknown);
+}
+
+/**
+ * Builds a refreshable `DiskAccessLease` from a same-origin API endpoint.
+ *
+ * This is intended for situations where DiskManager metadata cannot store a stable URL
+ * (because all data-plane URLs are short-lived signed URLs).
+ *
+ * SECURITY: When the lease refresh returns a URL that is not same-origin, we default to
+ * `credentials: "omit"` so we never leak ambient cookies to third-party origins. For
+ * same-origin (or relative) URLs, we use `same-origin` so cookie-based auth still works.
+ */
+export function createDiskAccessLeaseFromLeaseEndpoint(
+  leaseEndpoint: string,
+  options: { delivery: "range" | "chunked"; fetchFn?: typeof fetch },
+): DiskAccessLease {
+  const endpoint = leaseEndpoint.trim();
+  if (!endpoint) {
+    throw new Error("leaseEndpoint must not be empty");
+  }
+
+  const fetchFn = options.fetchFn ?? fetch;
+  const delivery = options.delivery;
+
+  let inflight: Promise<DiskAccessLease> | null = null;
+  const lease: DiskAccessLease = {
+    url: "",
+    expiresAt: undefined,
+    credentialsMode: "same-origin",
+    async refresh() {
+      if (inflight) return await inflight;
+      inflight = (async () => {
+        const resp = await fetchStreamLease(endpoint, fetchFn);
+
+        const nextUrl =
+          delivery === "range"
+            ? resp.url
+            : (() => {
+                const chunked = resp.chunked;
+                if (!chunked || typeof chunked.manifestUrl !== "string" || !chunked.manifestUrl.trim()) {
+                  throw new Error("stream lease response missing chunked.manifestUrl");
+                }
+                if (chunked.delivery !== undefined && chunked.delivery !== "chunked") {
+                  throw new Error(`unexpected stream lease chunked.delivery=${String(chunked.delivery)}`);
+                }
+                return chunked.manifestUrl;
+              })();
+
+        lease.url = nextUrl.trim();
+
+        if (resp.expiresAt !== undefined) {
+          const date = new Date(resp.expiresAt);
+          if (!Number.isFinite(date.getTime())) {
+            throw new Error("stream lease response expiresAt is not a valid timestamp");
+          }
+          lease.expiresAt = date;
+        } else {
+          lease.expiresAt = undefined;
+        }
+
+        lease.credentialsMode = isSameOriginOrRelative(lease.url) ? "same-origin" : "omit";
+        return lease;
+      })();
+
+      try {
+        return await inflight;
+      } finally {
+        inflight = null;
+      }
+    },
+  };
+
+  return lease;
+}
