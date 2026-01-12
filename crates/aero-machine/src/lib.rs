@@ -199,7 +199,8 @@ impl MachineConfig {
     /// Alias for [`MachineConfig::win7_storage`].
     ///
     /// This exists as a more explicit "defaults" naming for callers that want to start from the
-    /// canonical Windows 7 storage controller set and then tweak other fields.
+    /// canonical Windows 7 storage controller set and then tweak other fields (for example, opt
+    /// into the E1000 NIC by setting [`MachineConfig::enable_e1000`] to `true`).
     #[must_use]
     pub fn win7_storage_defaults(ram_size_bytes: u64) -> Self {
         Self::win7_storage(ram_size_bytes)
