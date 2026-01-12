@@ -15,7 +15,10 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Detect a virtio network adapter (SetupAPI hardware IDs).
   - Wait for link + DHCP IPv4 address (non-APIPA).
   - DNS resolution (`getaddrinfo`)
-  - HTTP GET to a configurable URL (WinHTTP)
+  - HTTP GET to a configurable URL (WinHTTP) to validate basic connectivity.
+  - Deterministic large HTTP download (`<http_url>-large`) to stress sustained TX/RX throughput and verify data integrity:
+    - downloads **1 MiB** of bytes `0..255` repeating
+    - validates both total bytes read and a fixed hash (FNV-1a 64-bit)
 - **virtio-input**
   - Enumerate HID devices (SetupAPI via `GUID_DEVINTERFACE_HID`).
   - Detect virtio-input devices by matching virtio-input PCI/HID IDs:

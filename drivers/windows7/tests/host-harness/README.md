@@ -238,6 +238,12 @@ only if you explicitly want the base image to be mutated.
 
 - Starts a tiny HTTP server on `127.0.0.1:<HttpPort>`
   - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can HTTP GET `http://10.0.2.2:<HttpPort>/aero-virtio-selftest`.
+  - The harness also serves a deterministic large payload at `http://10.0.2.2:<HttpPort>/aero-virtio-selftest-large`:
+    - HTTP 200
+    - body size: **1 MiB**
+    - bytes: repeating `0..255` pattern
+    - includes a correct `Content-Length`
+    - used by the guest virtio-net selftest to stress sustained TX/RX and validate data integrity (size + hash)
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`)
