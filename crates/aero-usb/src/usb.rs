@@ -416,7 +416,7 @@ impl IoSnapshot for UsbBus {
 
         fn save_device(dev: &dyn UsbDevice) -> Vec<u8> {
             if let Some(hub) = dev.as_any().downcast_ref::<crate::hub::UsbHubDevice>() {
-                return hub.save_state();
+                return hub.save_state_without_downstream();
             }
             if let Some(kb) = dev.as_any().downcast_ref::<crate::hid::UsbHidKeyboard>() {
                 return kb.save_state();

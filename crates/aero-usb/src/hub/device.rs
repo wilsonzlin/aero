@@ -981,88 +981,7 @@ impl IoSnapshot for UsbHubDevice {
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
     fn save_state(&self) -> Vec<u8> {
-        const TAG_ADDRESS: u16 = 1;
-        const TAG_PENDING_ADDRESS: u16 = 2;
-        const TAG_CONFIGURATION: u16 = 3;
-        const TAG_PENDING_CONFIGURATION: u16 = 4;
-        const TAG_REMOTE_WAKEUP: u16 = 5;
-        const TAG_INTERRUPT_HALTED: u16 = 6;
-        const TAG_NUM_PORTS: u16 = 7;
-        const TAG_PORTS: u16 = 8;
-        const TAG_EP0: u16 = 9;
-        const TAG_DOWNSTREAM: u16 = 10;
-
-        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-
-        w.field_u8(TAG_ADDRESS, self.address);
-        if let Some(addr) = self.pending_address {
-            w.field_u8(TAG_PENDING_ADDRESS, addr);
-        }
-        w.field_u8(TAG_CONFIGURATION, self.configuration);
-        if let Some(cfg) = self.pending_configuration {
-            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
-        }
-        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
-        w.field_bool(TAG_INTERRUPT_HALTED, self.interrupt_ep_halted);
-        w.field_u32(TAG_NUM_PORTS, self.ports.len() as u32);
-
-        let mut port_records = Vec::with_capacity(self.ports.len());
-        for port in &self.ports {
-            let rec = Encoder::new()
-                .bool(port.connected)
-                .bool(port.connect_change)
-                .bool(port.enabled)
-                .bool(port.enable_change)
-                .bool(port.suspended)
-                .bool(port.suspend_change)
-                .bool(port.powered)
-                .bool(port.reset)
-                .u8(port.reset_countdown_ms)
-                .bool(port.reset_change)
-                .finish();
-            port_records.push(rec);
-        }
-        w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
-
-        // Snapshot downstream devices (including nested hubs) separately from the port-status
-        // records. This keeps the port-status encoding stable and allows older snapshots (missing
-        // `TAG_DOWNSTREAM`) to restore hub-local state without needing a full topology snapshot.
-        let mut downstream = Encoder::new().u32(self.ports.len() as u32);
-        for port in &self.ports {
-            if let Some(dev) = &port.device {
-                let snap = crate::snapshot::save_device_state(dev.as_ref());
-                downstream = downstream.u32(snap.len() as u32).bytes(&snap);
-            } else {
-                downstream = downstream.u32(0);
-            }
-        }
-        w.field_bytes(TAG_DOWNSTREAM, downstream.finish());
-
-        let stage = match self.ep0.stage {
-            Ep0Stage::Idle => 0u8,
-            Ep0Stage::DataIn => 1,
-            Ep0Stage::DataOut => 2,
-            Ep0Stage::StatusIn => 3,
-            Ep0Stage::StatusOut => 4,
-        };
-        let mut ep0 = Encoder::new().u8(stage).bool(self.ep0.setup.is_some());
-        if let Some(setup) = self.ep0.setup {
-            ep0 = ep0
-                .u8(setup.request_type)
-                .u8(setup.request)
-                .u16(setup.value)
-                .u16(setup.index)
-                .u16(setup.length);
-        }
-        ep0 = ep0
-            .vec_u8(&self.ep0.in_data)
-            .u32(self.ep0.in_offset as u32)
-            .u32(self.ep0.out_expected as u32)
-            .vec_u8(&self.ep0.out_data)
-            .bool(self.ep0.stalled);
-        w.field_bytes(TAG_EP0, ep0.finish());
-
-        w.finish()
+        self.save_state_impl(true)
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
@@ -1259,6 +1178,103 @@ impl IoSnapshot for UsbHubDevice {
         }
 
         Ok(())
+    }
+}
+
+impl UsbHubDevice {
+    pub(crate) fn save_state_without_downstream(&self) -> Vec<u8> {
+        self.save_state_impl(false)
+    }
+
+    fn save_state_impl(&self, include_downstream: bool) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONFIGURATION: u16 = 3;
+        const TAG_PENDING_CONFIGURATION: u16 = 4;
+        const TAG_REMOTE_WAKEUP: u16 = 5;
+        const TAG_INTERRUPT_HALTED: u16 = 6;
+        const TAG_NUM_PORTS: u16 = 7;
+        const TAG_PORTS: u16 = 8;
+        const TAG_EP0: u16 = 9;
+        const TAG_DOWNSTREAM: u16 = 10;
+
+        let mut w = SnapshotWriter::new(
+            <Self as IoSnapshot>::DEVICE_ID,
+            <Self as IoSnapshot>::DEVICE_VERSION,
+        );
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        if let Some(cfg) = self.pending_configuration {
+            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
+        }
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_HALTED, self.interrupt_ep_halted);
+        w.field_u32(TAG_NUM_PORTS, self.ports.len() as u32);
+
+        let mut port_records = Vec::with_capacity(self.ports.len());
+        for port in &self.ports {
+            let rec = Encoder::new()
+                .bool(port.connected)
+                .bool(port.connect_change)
+                .bool(port.enabled)
+                .bool(port.enable_change)
+                .bool(port.suspended)
+                .bool(port.suspend_change)
+                .bool(port.powered)
+                .bool(port.reset)
+                .u8(port.reset_countdown_ms)
+                .bool(port.reset_change)
+                .finish();
+            port_records.push(rec);
+        }
+        w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
+
+        if include_downstream {
+            // Snapshot downstream devices (including nested hubs) separately from the port-status
+            // records. This keeps the port-status encoding stable and allows older snapshots
+            // (missing `TAG_DOWNSTREAM`) to restore hub-local state without needing a full topology
+            // snapshot.
+            let mut downstream = Encoder::new().u32(self.ports.len() as u32);
+            for port in &self.ports {
+                if let Some(dev) = &port.device {
+                    let snap = crate::snapshot::save_device_state(dev.as_ref());
+                    downstream = downstream.u32(snap.len() as u32).bytes(&snap);
+                } else {
+                    downstream = downstream.u32(0);
+                }
+            }
+            w.field_bytes(TAG_DOWNSTREAM, downstream.finish());
+        }
+
+        let stage = match self.ep0.stage {
+            Ep0Stage::Idle => 0u8,
+            Ep0Stage::DataIn => 1,
+            Ep0Stage::DataOut => 2,
+            Ep0Stage::StatusIn => 3,
+            Ep0Stage::StatusOut => 4,
+        };
+        let mut ep0 = Encoder::new().u8(stage).bool(self.ep0.setup.is_some());
+        if let Some(setup) = self.ep0.setup {
+            ep0 = ep0
+                .u8(setup.request_type)
+                .u8(setup.request)
+                .u16(setup.value)
+                .u16(setup.index)
+                .u16(setup.length);
+        }
+        ep0 = ep0
+            .vec_u8(&self.ep0.in_data)
+            .u32(self.ep0.in_offset as u32)
+            .u32(self.ep0.out_expected as u32)
+            .vec_u8(&self.ep0.out_data)
+            .bool(self.ep0.stalled);
+        w.field_bytes(TAG_EP0, ep0.finish());
+
+        w.finish()
     }
 }
 
