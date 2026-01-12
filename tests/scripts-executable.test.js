@@ -231,7 +231,7 @@ test("safe-run.sh can isolate CARGO_HOME to avoid registry lock contention (Linu
   assert.equal(stdout, path.join(repoRoot, ".cargo-home"));
 });
 
-test("safe-run.sh sets rustc codegen-units based on CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
   try {
     const binDir = path.join(tmpRoot, "bin");
@@ -253,13 +253,15 @@ test("safe-run.sh sets rustc codegen-units based on CARGO_BUILD_JOBS (Linux)", {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    assert.match(stdout, /-C codegen-units=1/);
+    assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
+    // Still cap LLVM lld parallelism to match build jobs (default: 1).
+    assert.match(stdout, /-C link-arg=-Wl,--threads=1\b/);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
 
-test("safe-run.sh sets codegen-units based on AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-jobs-"));
   try {
     const binDir = path.join(tmpRoot, "bin");
@@ -281,7 +283,8 @@ test("safe-run.sh sets codegen-units based on AERO_CARGO_BUILD_JOBS (Linux)", { 
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    assert.match(stdout, /-C codegen-units=2/);
+    assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
+    assert.match(stdout, /-C link-arg=-Wl,--threads=2\b/);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }

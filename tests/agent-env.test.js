@@ -157,7 +157,7 @@ test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { ski
   }
 });
 
-test("agent-env: sets rustc codegen-units based on CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
+test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
     const env = { ...process.env };
@@ -174,7 +174,11 @@ test("agent-env: sets rustc codegen-units based on CARGO_BUILD_JOBS", { skip: pr
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    assert.match(stdout, /-C codegen-units=2\b/);
+    assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
+    // On Linux we still cap LLVM lld parallelism to match build jobs.
+    if (process.platform === "linux") {
+      assert.match(stdout, /-C link-arg=-Wl,--threads=2\b/);
+    }
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
