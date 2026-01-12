@@ -2,10 +2,8 @@ use crate::address_filter::AddressFilter;
 use crate::chipset::A20GateHandle;
 use crate::dirty_memory::{DirtyTrackingHandle, DirtyTrackingMemory, DEFAULT_DIRTY_PAGE_SIZE};
 use aero_pc_constants::PCIE_ECAM_BASE;
-use memory::{
-    DenseMemory, GuestMemory, MapError, MappedGuestMemory, MappedRegion, MmioHandler,
-    PhysicalMemoryBus,
-};
+use memory::{DenseMemory, GuestMemory, MapError, MmioHandler, PhysicalMemoryBus};
+use memory::phys::{MappedGuestMemory, MappedRegion};
 use std::sync::Arc;
 
 /// Base address of the system BIOS ROM in the 20-bit real-mode memory window.

@@ -21,7 +21,7 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 
-use aero_snapshot::{CpuState, DeviceState, DiskOverlayRefs, MmuState, SnapshotMeta};
+use aero_snapshot::{CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, SnapshotMeta};
 
 use crate::vm_snapshot_device_kind::{kind_from_device_id, parse_device_kind};
 
