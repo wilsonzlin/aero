@@ -374,7 +374,7 @@ fn handle_int13(
                 return;
             }
             let status = bios.last_int13_status;
-            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | ((status as u64) << 8);
             if status == 0 {
                 cpu.rflags &= !FLAG_CF;
             } else {
@@ -406,9 +406,7 @@ fn handle_int13(
             let cylinders = u32::from(cylinders);
 
             if sector == 0 || sector > spt as u16 || head >= heads || cylinder >= cylinders {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
@@ -512,9 +510,7 @@ fn handle_int13(
             let cylinders = u32::from(cylinders);
 
             if sector == 0 || sector > spt as u16 || head >= heads || cylinder >= cylinders {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
@@ -649,9 +645,7 @@ fn handle_int13(
                 bios.last_int13_status = 0;
                 cpu.rflags &= !FLAG_CF;
             } else {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
             }
         }
         0x42 => {
@@ -661,9 +655,7 @@ fn handle_int13(
                 return;
             }
             if drive < 0x80 {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
@@ -671,24 +663,18 @@ fn handle_int13(
             let dap_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
             let dap_size = bus.read_u8(dap_addr);
             if dap_size != 0x10 && dap_size != 0x18 {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
             if bus.read_u8(dap_addr + 1) != 0 {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
             let count = bus.read_u16(dap_addr + 2) as u64;
             if count == 0 {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
             let buf_off = bus.read_u16(dap_addr + 4);
@@ -705,15 +691,11 @@ fn handle_int13(
             }
 
             let Some(end) = lba.checked_add(count) else {
-                bios.last_int13_status = 0x04;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x04u64 << 8);
+                set_error(bios, cpu, 0x04);
                 return;
             };
             if end > disk.size_in_sectors() {
-                bios.last_int13_status = 0x04;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x04u64 << 8);
+                set_error(bios, cpu, 0x04);
                 return;
             }
 
@@ -722,10 +704,8 @@ fn handle_int13(
                 match disk.read_sector(lba + i, &mut buf) {
                     Ok(()) => bus.write_physical(dst + i * 512, &buf),
                     Err(e) => {
-                        cpu.rflags |= FLAG_CF;
                         let status = disk_err_to_int13_status(e);
-                        bios.last_int13_status = status;
-                        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
+                        set_error(bios, cpu, status);
                         return;
                     }
                 }
@@ -744,9 +724,7 @@ fn handle_int13(
                 return;
             }
             if drive < 0x80 {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
@@ -764,9 +742,7 @@ fn handle_int13(
                 return;
             }
             if drive < 0x80 {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
@@ -774,9 +750,7 @@ fn handle_int13(
             let table_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
             let buf_size = bus.read_u16(table_addr) as usize;
             if buf_size < 0x1A {
-                bios.last_int13_status = 0x01;
-                cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+                set_error(bios, cpu, 0x01);
                 return;
             }
 
@@ -812,9 +786,7 @@ fn handle_int13(
         }
         _ => {
             eprintln!("BIOS: unhandled INT 13h AH={ah:02x}");
-            bios.last_int13_status = 0x01;
-            cpu.rflags |= FLAG_CF;
-            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
+            set_error(bios, cpu, 0x01);
         }
     }
 }
@@ -870,7 +842,7 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             // E820 memory map.
             if (cpu.gpr[gpr::RDX] & 0xFFFF_FFFF) != 0x534D_4150 {
                 cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x86u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x86u64 << 8);
                 return;
             }
             let req_size = (cpu.gpr[gpr::RCX] & 0xFFFF_FFFF) as u32;
@@ -890,7 +862,7 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             let idx = (cpu.gpr[gpr::RBX] & 0xFFFF_FFFF) as usize;
             if idx >= bios.e820_map.len() {
                 cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x86u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x86u64 << 8);
                 return;
             }
             let entry = bios.e820_map[idx];
@@ -955,13 +927,13 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             0x88 => {
                 // Extended memory size (KB above 1MB).
                 let ext_kb = bios.config.memory_size_bytes.saturating_sub(1024 * 1024) / 1024;
-                cpu.gpr[gpr::RAX] = ext_kb.min(0xFFFF);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | ext_kb.min(0xFFFF);
                 cpu.rflags &= !FLAG_CF;
             }
             _ => {
                 eprintln!("BIOS: unhandled INT 15h AX={ax:04x}");
                 cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x86u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x86u64 << 8);
             }
         },
     }
