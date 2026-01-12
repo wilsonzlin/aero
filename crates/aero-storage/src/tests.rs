@@ -395,3 +395,25 @@ fn sparse_open_rejects_huge_allocation_table() {
     let err = open_sparse_err(backend);
     assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
 }
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn sparse_is_block_allocated_does_not_truncate_block_idx() {
+    let backend = MemBackend::new();
+    let mut disk = AeroSparseDisk::create(
+        backend,
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+
+    disk.write_at(0, &[1]).unwrap();
+    assert!(disk.is_block_allocated(0));
+
+    // On 32-bit targets, `u64 as usize` truncates; ensure we don't accidentally treat
+    // this out-of-range block index as block 0.
+    let big_idx = (u32::MAX as u64) + 1;
+    assert!(!disk.is_block_allocated(big_idx));
+}

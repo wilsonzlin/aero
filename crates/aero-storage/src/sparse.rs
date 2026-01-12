@@ -504,13 +504,16 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
         checked_range(offset, buf.len(), self.capacity_bytes())?;
 
         let block_size = self.header.block_size_u64();
+        let block_size_usize: usize = block_size
+            .try_into()
+            .map_err(|_| DiskError::OffsetOverflow)?;
         let mut pos = 0usize;
         while pos < buf.len() {
             let abs = offset + pos as u64;
             let block_idx = abs / block_size;
             let within = (abs % block_size) as usize;
             let remaining = buf.len() - pos;
-            let chunk_len = (block_size as usize - within).min(remaining);
+            let chunk_len = (block_size_usize - within).min(remaining);
 
             let block_idx_usize: usize = block_idx
                 .try_into()
