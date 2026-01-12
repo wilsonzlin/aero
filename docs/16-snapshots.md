@@ -244,7 +244,9 @@ Restore behavior: when restoring the `DSKC` wrapper, snapshot consumers should a
 For the browser USB stack (guest-visible UHCI controller + runtime/bridge state), store a single device entry:
 
 - Outer `DeviceState.id = DeviceId::USB`
-- `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack (inner `DEVICE_ID` examples: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`)
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
+  - Inner `DEVICE_ID` examples: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
+  - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
 
 Restore note: USB snapshots capture guest-visible controller/runtime state only. Any host-side "action" state (e.g. in-flight WebUSB/WebHID requests) should be treated as reset on restore; the host integration is responsible for resuming action execution post-restore.
