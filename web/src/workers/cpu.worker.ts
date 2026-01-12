@@ -1967,7 +1967,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       // The CPU worker tracks some basic perf counters here so we can attribute
       // time spent stalled on the IO worker separately from time spent executing
       // guest instructions.
-      (globalThis as any).__aero_io_port_read = (port: number, size: number) => {
+      globalThis.__aero_io_port_read = (port: number, size: number) => {
         const client = io;
         if (!client) return 0;
         const t0 = performance.now();
@@ -1979,7 +1979,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           perfIoWaitMs += performance.now() - t0;
         }
       };
-      (globalThis as any).__aero_io_port_write = (port: number, size: number, value: number) => {
+      globalThis.__aero_io_port_write = (port: number, size: number, value: number) => {
         const client = io;
         if (!client) return;
         const t0 = performance.now();
@@ -1994,7 +1994,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 
       // WASM-side MMIO glue: the `crates/aero-wasm` Tier-0 VM calls these shims
       // when a guest memory access falls outside the configured guest RAM region.
-      (globalThis as any).__aero_mmio_read = (addr: bigint, size: number) => {
+      globalThis.__aero_mmio_read = (addr: bigint, size: number) => {
         const client = io;
         if (!client) return 0;
         const t0 = performance.now();
@@ -2006,7 +2006,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           perfIoWaitMs += performance.now() - t0;
         }
       };
-      (globalThis as any).__aero_mmio_write = (addr: bigint, size: number, value: number) => {
+      globalThis.__aero_mmio_write = (addr: bigint, size: number, value: number) => {
         const client = io;
         if (!client) return;
         const t0 = performance.now();
@@ -2024,7 +2024,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       // The tiered VM calls out to JS so the CPU worker can execute JIT blocks that were
       // compiled/instantiated out-of-band. Until the worker installs a real dispatch table, keep a
       // safe default that forces an interpreter fallback.
-      (globalThis as any).__aero_jit_call = (_tableIndex: number, cpuPtr: number, _jitCtxPtr: number) => {
+      globalThis.__aero_jit_call = (_tableIndex: number, cpuPtr: number, _jitCtxPtr: number) => {
         // Ensure the tiered runtime treats this as a non-committed execution (the stub did not run
         // any guest instructions).
         //
