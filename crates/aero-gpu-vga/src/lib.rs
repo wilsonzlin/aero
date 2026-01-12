@@ -988,8 +988,19 @@ impl PortIO for VgaDevice {
             }
 
             // CRTC.
+            //
+            // VGA adapters can expose the CRTC register file at either:
+            // - 0x3D4/0x3D5 (color I/O decode), or
+            // - 0x3B4/0x3B5 (mono I/O decode).
+            //
+            // Aero's VGA model keeps a single CRTC register array, so we accept both port bases.
             (0x3D4, 1) => self.crtc_index as u32,
             (0x3D5, 1) => {
+                let idx = (self.crtc_index as usize) % self.crtc.len();
+                self.crtc[idx] as u32
+            }
+            (0x3B4, 1) => self.crtc_index as u32,
+            (0x3B5, 1) => {
                 let idx = (self.crtc_index as usize) % self.crtc.len();
                 self.crtc[idx] as u32
             }
@@ -1010,6 +1021,17 @@ impl PortIO for VgaDevice {
                     0x00
                 };
                 // Bit 3: vertical retrace. Bit 0: display enable (rough approximation).
+                (v | (v >> 3)) as u32
+            }
+            // Mono alias for input status 1.
+            (0x3BA, 1) => {
+                self.attribute_flip_flop_data = false;
+                self.input_status1_vretrace = !self.input_status1_vretrace;
+                let v = if self.input_status1_vretrace {
+                    0x08
+                } else {
+                    0x00
+                };
                 (v | (v >> 3)) as u32
             }
 
@@ -1054,6 +1076,15 @@ impl PortIO for VgaDevice {
             // CRTC.
             (0x3D4, 1) => self.crtc_index = val as u8,
             (0x3D5, 1) => {
+                let idx = (self.crtc_index as usize) % self.crtc.len();
+                if idx <= 0x07 && (self.crtc.get(0x11).copied().unwrap_or(0) & 0x80) != 0 {
+                    return;
+                }
+                self.crtc[idx] = val as u8;
+                self.dirty = true;
+            }
+            (0x3B4, 1) => self.crtc_index = val as u8,
+            (0x3B5, 1) => {
                 let idx = (self.crtc_index as usize) % self.crtc.len();
                 if idx <= 0x07 && (self.crtc.get(0x11).copied().unwrap_or(0) & 0x80) != 0 {
                     return;
