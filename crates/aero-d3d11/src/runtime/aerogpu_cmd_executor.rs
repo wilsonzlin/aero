@@ -5582,7 +5582,8 @@ impl AerogpuD3d11Executor {
         }
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
-        let (wgsl, reflection) = if signatures.isgn.is_some() && signatures.osgn.is_some() {
+        let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
+        let (wgsl, reflection) = if signature_driven {
             let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
             (translated.wgsl, translated.reflection)
         } else {
@@ -5608,7 +5609,13 @@ impl AerogpuD3d11Executor {
         );
 
         let vs_input_signature = if stage == ShaderStage::Vertex {
-            extract_vs_input_signature(&signatures).context("extract VS input signature")?
+            if signature_driven {
+                let module = program.decode().context("decode SM4/5 token stream")?;
+                extract_vs_input_signature_unique_locations(&signatures, &module)
+                    .context("extract VS input signature")?
+            } else {
+                extract_vs_input_signature(&signatures).context("extract VS input signature")?
+            }
         } else {
             Vec::new()
         };
@@ -8077,6 +8084,54 @@ fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::Shade
     }
 }
 
+fn extract_vs_input_signature_unique_locations(
+    signatures: &crate::ShaderSignatures,
+    module: &crate::Sm4Module,
+) -> Result<Vec<VsInputSignatureElement>> {
+    const D3D_NAME_VERTEX_ID: u32 = 6;
+    const D3D_NAME_INSTANCE_ID: u32 = 8;
+
+    let Some(isgn) = signatures.isgn.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut sivs = HashMap::<u32, u32>::new();
+    for decl in &module.decls {
+        if let crate::Sm4Decl::InputSiv { reg, sys_value, .. } = decl {
+            sivs.insert(*reg, *sys_value);
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut next_location = 0u32;
+    for p in &isgn.parameters {
+        let sys_value = sivs
+            .get(&p.register)
+            .copied()
+            .or_else(|| (p.system_value_type != 0).then_some(p.system_value_type));
+
+        let is_builtin = matches!(
+            sys_value,
+            Some(D3D_NAME_VERTEX_ID | D3D_NAME_INSTANCE_ID)
+        ) || p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
+            || p.semantic_name.eq_ignore_ascii_case("SV_InstanceID");
+        if is_builtin {
+            continue;
+        }
+
+        out.push(VsInputSignatureElement {
+            semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
+            semantic_index: p.semantic_index,
+            input_register: p.register,
+            mask: p.mask,
+            shader_location: next_location,
+        });
+        next_location += 1;
+    }
+
+    Ok(out)
+}
+
 fn extract_vs_input_signature(
     signatures: &crate::ShaderSignatures,
 ) -> Result<Vec<VsInputSignatureElement>> {
@@ -8093,6 +8148,8 @@ fn extract_vs_input_signature(
             semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
             semantic_index: p.semantic_index,
             input_register: p.register,
+            mask: p.mask,
+            shader_location: p.register,
         })
         .collect())
 }
@@ -8112,6 +8169,8 @@ fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignature
             semantic_name_hash: key.0,
             semantic_index: key.1,
             input_register: reg,
+            mask: 0xF,
+            shader_location: reg,
         });
     }
 

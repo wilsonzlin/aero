@@ -180,7 +180,7 @@ fn translates_vertex_passthrough_signature_io() {
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@vertex"));
     assert!(translated.wgsl.contains("fn vs_main"));
-    assert!(translated.wgsl.contains("@location(0) v0: vec2<f32>"));
+    assert!(translated.wgsl.contains("@location(0) a0: vec2<f32>"));
     assert!(translated
         .wgsl
         .contains("@builtin(position) pos: vec4<f32>"));
@@ -191,6 +191,77 @@ fn translates_vertex_passthrough_signature_io() {
     assert_eq!(translated.reflection.inputs.len(), 2);
     assert_eq!(translated.reflection.outputs.len(), 2);
     assert!(translated.reflection.bindings.is_empty());
+}
+
+#[test]
+fn translates_vertex_packed_input_signature_by_splitting_locations() {
+    // DXBC vertex input signatures can pack multiple semantics into a single input register (v#)
+    // using disjoint component masks. WebGPU vertex attributes require unique `@location`s, so the
+    // translator must split the packed register into multiple WGSL inputs and reconstruct the
+    // original `v#` register when emitting instructions.
+    let isgn_params = vec![
+        sig_param("POSITION", 0, 0, 0b0011),  // v0.xy
+        sig_param("TEXCOORD", 0, 0, 0b1100),  // v0.zw
+    ];
+    let osgn_params = vec![sig_param("SV_Position", 0, 0, 0b1111)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let src_v0 = SrcOperand {
+        kind: SrcKind::Register(RegisterRef {
+            file: RegFile::Input,
+            index: 0,
+        }),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let src_v0_zw = SrcOperand {
+        kind: SrcKind::Register(RegisterRef {
+            file: RegFile::Input,
+            index: 0,
+        }),
+        swizzle: Swizzle([2, 3, 2, 3]),
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // o0.xy = v0.xy
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask(0b0011)),
+                src: src_v0.clone(),
+            },
+            // o0.zw = v0.zw
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask(0b1100)),
+                src: src_v0_zw,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Two signature parameters -> two distinct WGSL locations.
+    assert!(translated.wgsl.contains("@location(0) a0: vec2<f32>"));
+    assert!(translated.wgsl.contains("@location(1) a1: vec2<f32>"));
+
+    // The packed register reconstruction should reference both inputs.
+    assert!(
+        translated.wgsl.contains("input.a1"),
+        "expected packed input register to reference the second attribute:\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]
@@ -834,7 +905,7 @@ fn translates_vs_system_value_builtins_from_siv_decls() {
     assert!(translated
         .wgsl
         .contains("@builtin(instance_index) instance_id: u32"));
-    assert!(translated.wgsl.contains("@location(2) v2: vec4<f32>"));
+    assert!(translated.wgsl.contains("@location(0) a0: vec4<f32>"));
     assert!(!translated.wgsl.contains("@location(0) v0:"));
 
     let v0 = translated

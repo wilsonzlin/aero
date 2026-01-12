@@ -19,8 +19,7 @@ use crate::input_layout::{
 };
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{
-    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, ShaderTranslation,
-    Sm4Program,
+    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, Sm4Program,
 };
 
 use super::aerogpu_state::{
@@ -462,24 +461,32 @@ impl AerogpuCmdRuntime {
             }
             other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
         };
-
+ 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
-        let vs_input_signature = if stage == ShaderStage::Vertex {
-            extract_vs_input_signature(&signatures).context("extract VS input signature")?
-        } else {
-            Vec::new()
-        };
+        let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
+        let (wgsl, reflection, vs_input_signature) = if signature_driven {
+            let module = program.decode().context("decode SM4/5 token stream")?;
+            let translated =
+                translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).context("translate WGSL")?;
 
-        let (wgsl, reflection) = if signatures.isgn.is_some() && signatures.osgn.is_some() {
-            let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
-            (translated.wgsl, translated.reflection)
+            let vs_input_signature = if stage == ShaderStage::Vertex {
+                extract_vs_input_signature_unique_locations(&signatures, &module)
+                    .context("extract VS input signature")?
+            } else {
+                Vec::new()
+            };
+
+            (translated.wgsl, translated.reflection, vs_input_signature)
         } else {
-            (
-                translate_sm4_to_wgsl_bootstrap(&program)
-                    .context("translate SM4/5 to WGSL")?
-                    .wgsl,
-                ShaderReflection::default(),
-            )
+            let wgsl = translate_sm4_to_wgsl_bootstrap(&program)
+                .context("translate SM4/5 to WGSL")?
+                .wgsl;
+            let vs_input_signature = if stage == ShaderStage::Vertex {
+                extract_vs_input_signature(&signatures).context("extract VS input signature")?
+            } else {
+                Vec::new()
+            };
+            (wgsl, ShaderReflection::default(), vs_input_signature)
         };
 
         // Register into the shared PipelineCache shader-module cache.
@@ -1416,6 +1423,55 @@ fn map_topology(topology: PrimitiveTopology) -> Result<wgpu::PrimitiveTopology> 
     })
 }
 
+fn extract_vs_input_signature_unique_locations(
+    signatures: &crate::ShaderSignatures,
+    module: &crate::Sm4Module,
+) -> Result<Vec<VsInputSignatureElement>> {
+    const D3D_NAME_VERTEX_ID: u32 = 6;
+    const D3D_NAME_INSTANCE_ID: u32 = 8;
+
+    let Some(isgn) = signatures.isgn.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut sivs = HashMap::<u32, u32>::new();
+    for decl in &module.decls {
+        if let crate::Sm4Decl::InputSiv { reg, sys_value, .. } = decl {
+            sivs.insert(*reg, *sys_value);
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut next_location = 0u32;
+
+    for p in &isgn.parameters {
+        let sys_value = sivs
+            .get(&p.register)
+            .copied()
+            .or_else(|| (p.system_value_type != 0).then_some(p.system_value_type));
+
+        let is_builtin = matches!(
+            sys_value,
+            Some(D3D_NAME_VERTEX_ID | D3D_NAME_INSTANCE_ID)
+        ) || p.semantic_name.eq_ignore_ascii_case("SV_VertexID")
+            || p.semantic_name.eq_ignore_ascii_case("SV_InstanceID");
+        if is_builtin {
+            continue;
+        }
+
+        out.push(VsInputSignatureElement {
+            semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
+            semantic_index: p.semantic_index,
+            input_register: p.register,
+            mask: p.mask,
+            shader_location: next_location,
+        });
+        next_location += 1;
+    }
+
+    Ok(out)
+}
+
 fn extract_vs_input_signature(
     signatures: &crate::ShaderSignatures,
 ) -> Result<Vec<VsInputSignatureElement>> {
@@ -1433,6 +1489,8 @@ fn extract_vs_input_signature(
             semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
             semantic_index: p.semantic_index,
             input_register: p.register,
+            mask: p.mask,
+            shader_location: p.register,
         })
         .collect())
 }
@@ -1452,18 +1510,10 @@ fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignature
             semantic_name_hash: key.0,
             semantic_index: key.1,
             input_register: reg,
+            mask: 0xF,
+            shader_location: reg,
         });
     }
 
     out
-}
-
-fn try_translate_sm4_signature_driven(
-    dxbc: &DxbcFile<'_>,
-    program: &Sm4Program,
-    signatures: &crate::ShaderSignatures,
-) -> Result<ShaderTranslation> {
-    let module = program.decode().context("decode SM4/5 token stream")?;
-    translate_sm4_module_to_wgsl(dxbc, &module, signatures)
-        .context("signature-driven SM4/5 translation")
 }

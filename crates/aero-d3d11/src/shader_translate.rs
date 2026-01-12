@@ -74,6 +74,12 @@ pub enum ShaderTranslateError {
         first: String,
         second: String,
     },
+    ConflictingVertexInputPacking {
+        register: u32,
+        component: char,
+        first: String,
+        second: String,
+    },
     InvalidSignatureMask {
         io: &'static str,
         semantic: String,
@@ -113,6 +119,15 @@ impl fmt::Display for ShaderTranslateError {
             } => write!(
                 f,
                 "{io} signature declares multiple parameters for register {register} with incompatible system-value mappings ({first} vs {second})"
+            ),
+            ShaderTranslateError::ConflictingVertexInputPacking {
+                register,
+                component,
+                first,
+                second,
+            } => write!(
+                f,
+                "vertex shader input signature packs multiple semantics into v{register}.{component} ({first} vs {second})"
             ),
             ShaderTranslateError::InvalidSignatureMask {
                 io,
@@ -328,9 +343,25 @@ fn build_io_maps(
     }
 
     let mut inputs: BTreeMap<u32, ParamInfo> = BTreeMap::new();
+    let mut vs_input_fields = Vec::<VsInputField>::new();
+    let mut vs_input_fields_by_register = BTreeMap::<u32, Vec<usize>>::new();
+    let mut next_vs_location = 0u32;
     for p in &isgn.parameters {
         let sys_value = resolve_sys_value_type(p, &input_sivs);
         let info = ParamInfo::from_sig_param("input", p, sys_value)?;
+        if module.stage == ShaderStage::Vertex && info.builtin.is_none() {
+            let location = next_vs_location;
+            next_vs_location += 1;
+            let idx = vs_input_fields.len();
+            vs_input_fields.push(VsInputField {
+                location,
+                info: info.clone(),
+            });
+            vs_input_fields_by_register
+                .entry(p.register)
+                .or_default()
+                .push(idx);
+        }
         match inputs.get_mut(&p.register) {
             Some(existing) => {
                 if existing.sys_value != info.sys_value || existing.builtin != info.builtin {
@@ -482,6 +513,8 @@ fn build_io_maps(
     Ok(IoMaps {
         inputs,
         outputs,
+        vs_input_fields,
+        vs_input_fields_by_register,
         vs_position_register: vs_position_reg,
         ps_position_register: ps_position_reg,
         ps_sv_target0_register: ps_sv_target0_reg,
@@ -560,9 +593,31 @@ impl ParamInfo {
 }
 
 #[derive(Debug, Clone)]
+struct VsInputField {
+    location: u32,
+    info: ParamInfo,
+}
+
+impl VsInputField {
+    fn field_name(&self) -> String {
+        format!("a{}", self.location)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct IoMaps {
     inputs: BTreeMap<u32, ParamInfo>,
     outputs: BTreeMap<u32, ParamInfo>,
+    /// Vertex-stage input fields (one per signature parameter, with unique WGSL locations).
+    ///
+    /// This differs from `inputs`, which is keyed by D3D register index; `ISGN` signatures can pack
+    /// multiple semantics into a single register, but WGSL vertex attributes must have unique
+    /// `@location`s.
+    vs_input_fields: Vec<VsInputField>,
+    /// Mapping from D3D input register index (v#) to the corresponding entries in `vs_input_fields`.
+    ///
+    /// Only populated for vertex shaders.
+    vs_input_fields_by_register: BTreeMap<u32, Vec<usize>>,
     vs_position_register: Option<u32>,
     ps_position_register: Option<u32>,
     ps_sv_target0_register: Option<u32>,
@@ -620,10 +675,7 @@ impl IoMaps {
     fn emit_vs_structs(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
         let has_inputs = self.vs_vertex_id_register.is_some()
             || self.vs_instance_id_register.is_some()
-            || self.inputs.values().any(|p| {
-                Some(p.param.register) != self.vs_vertex_id_register
-                    && Some(p.param.register) != self.vs_instance_id_register
-            });
+            || !self.vs_input_fields.is_empty();
         if has_inputs {
             w.line("struct VsIn {");
             w.indent();
@@ -635,17 +687,12 @@ impl IoMaps {
                 w.line("@builtin(instance_index) instance_id: u32,");
             }
 
-            for p in self.inputs.values() {
-                if Some(p.param.register) == self.vs_vertex_id_register
-                    || Some(p.param.register) == self.vs_instance_id_register
-                {
-                    continue;
-                }
+            for f in &self.vs_input_fields {
                 w.line(&format!(
                     "@location({}) {}: {},",
-                    p.param.register,
-                    p.field_name('v'),
-                    p.wgsl_ty
+                    f.location,
+                    f.field_name(),
+                    f.info.wgsl_ty
                 ));
             }
             w.dedent();
@@ -766,13 +813,77 @@ impl IoMaps {
                     )?;
                     return Ok(expand_to_vec4("f32(input.instance_id)", p));
                 }
-                let p = self.inputs.get(&reg).ok_or(
-                    ShaderTranslateError::SignatureMissingRegister {
+                let field_indices = self
+                    .vs_input_fields_by_register
+                    .get(&reg)
+                    .ok_or(ShaderTranslateError::SignatureMissingRegister {
                         io: "input",
                         register: reg,
-                    },
-                )?;
-                Ok(expand_to_vec4(&format!("input.{}", p.field_name('v')), p))
+                    })?;
+
+                if field_indices.len() == 1 {
+                    let f = &self.vs_input_fields[field_indices[0]];
+                    return Ok(expand_to_vec4(&format!("input.{}", f.field_name()), &f.info));
+                }
+
+                // D3D signatures can pack multiple semantics into the same input register. WebGPU
+                // vertex attributes can't express this directly, so we assign each signature
+                // parameter a unique `@location` and reconstruct the packed register here.
+                let mut comps: [Option<(String, String)>; 4] = [None, None, None, None];
+                for &idx in field_indices {
+                    let f = &self.vs_input_fields[idx];
+                    let semantic =
+                        format!("{}{}", f.info.param.semantic_name, f.info.param.semantic_index);
+                    let base = format!("input.{}", f.field_name());
+
+                    for (dst_comp, bit) in [(0usize, 1u8), (1, 2), (2, 4), (3, 8)] {
+                        if (f.info.param.mask & bit) == 0 {
+                            continue;
+                        }
+
+                        let lane = f
+                            .info
+                            .components
+                            .iter()
+                            .take(f.info.component_count)
+                            .position(|&c| c as usize == dst_comp)
+                            .expect("signature component should exist");
+                        let lane_char = ['x', 'y', 'z', 'w'][lane];
+                        let expr = if f.info.component_count == 1 {
+                            base.clone()
+                        } else {
+                            format!("({base}).{lane_char}")
+                        };
+
+                        if let Some((_, prev_semantic)) = &comps[dst_comp] {
+                            return Err(ShaderTranslateError::ConflictingVertexInputPacking {
+                                register: reg,
+                                component: ['x', 'y', 'z', 'w'][dst_comp],
+                                first: prev_semantic.clone(),
+                                second: semantic,
+                            });
+                        }
+                        comps[dst_comp] = Some((expr, semantic.clone()));
+                    }
+                }
+
+                let mut out = [String::new(), String::new(), String::new(), String::new()];
+                for i in 0..4 {
+                    out[i] = comps[i]
+                        .take()
+                        .map(|(expr, _semantic)| expr)
+                        .unwrap_or_else(|| {
+                            if i == 3 {
+                                "1.0".to_owned()
+                            } else {
+                                "0.0".to_owned()
+                            }
+                        });
+                }
+                Ok(format!(
+                    "vec4<f32>({}, {}, {}, {})",
+                    out[0], out[1], out[2], out[3]
+                ))
             }
             ShaderStage::Pixel => {
                 if Some(reg) == self.ps_position_register {

@@ -108,6 +108,19 @@ pub struct VsInputSignatureElement {
     pub semantic_name_hash: u32,
     pub semantic_index: u32,
     pub input_register: u32,
+    /// Component mask from the DXBC `ISGN` signature (`x=1, y=2, z=4, w=8`).
+    ///
+    /// This is informational for now (the ILAY protocol does not include per-component routing),
+    /// but it is useful when signatures pack multiple semantics into the same input register.
+    pub mask: u8,
+    /// WGSL `@location` / `wgpu::VertexAttribute::shader_location` assigned for this semantic.
+    ///
+    /// Note: This can differ from [`Self::input_register`] because WebGPU requires each vertex
+    /// attribute location to be unique, while D3D signatures can pack multiple semantics into a
+    /// single input register (e.g. one semantic uses `.xy` and another uses `.zw` of the same
+    /// register). In that case, we assign each semantic a unique `shader_location` and reconstruct
+    /// the packed input register in WGSL.
+    pub shader_location: u32,
 }
 
 /// Owned `wgpu::VertexBufferLayout`.
@@ -479,7 +492,7 @@ fn build_signature_map(
                 semantic_name_hash: s.semantic_name_hash,
                 semantic_index: s.semantic_index,
             },
-            s.input_register,
+            s.shader_location,
         );
     }
     out
@@ -487,9 +500,9 @@ fn build_signature_map(
 
 /// Map a D3D10/11 ILAY input layout to WebGPU vertex buffer layouts.
 ///
-/// - Looks up each input element's shader register by `(semantic_name_hash, semantic_index)` in the
+/// - Looks up each input element's shader location by `(semantic_name_hash, semantic_index)` in the
 ///   vertex shader input signature.
-/// - Uses `input_register` as WGSL `@location` / `wgpu::VertexAttribute::shader_location`.
+/// - Uses the signature's `shader_location` as WGSL `@location` / `wgpu::VertexAttribute::shader_location`.
 /// - Resolves `D3D11_APPEND_ALIGNED_ELEMENT` offsets per input slot.
 /// - Applies `slot_strides` to populate `wgpu::VertexBufferLayout::array_stride`.
 ///
@@ -524,14 +537,14 @@ pub fn map_layout_to_shader_locations(
             semantic_name_hash: elem.semantic_name_hash,
             semantic_index: elem.semantic_index,
         };
-        let input_register = *sig_map.get(&key).ok_or(InputLayoutError::MissingSemantic {
+        let shader_location = *sig_map.get(&key).ok_or(InputLayoutError::MissingSemantic {
             semantic_name_hash: elem.semantic_name_hash,
             semantic_index: elem.semantic_index,
         })?;
 
-        if used_locations.insert(input_register, ()).is_some() {
+        if used_locations.insert(shader_location, ()).is_some() {
             return Err(InputLayoutError::DuplicateShaderLocation {
-                shader_location: input_register,
+                shader_location,
             });
         }
 
@@ -594,7 +607,7 @@ pub fn map_layout_to_shader_locations(
         slot.required_stride = slot.required_stride.max(end);
 
         slot.attributes.push(wgpu::VertexAttribute {
-            shader_location: input_register,
+            shader_location,
             offset: offset as u64,
             format: fmt.format,
         });
@@ -692,14 +705,14 @@ pub fn map_layout_to_shader_locations_compact(
             semantic_name_hash: elem.semantic_name_hash,
             semantic_index: elem.semantic_index,
         };
-        let input_register = *sig_map.get(&key).ok_or(InputLayoutError::MissingSemantic {
+        let shader_location = *sig_map.get(&key).ok_or(InputLayoutError::MissingSemantic {
             semantic_name_hash: elem.semantic_name_hash,
             semantic_index: elem.semantic_index,
         })?;
 
-        if used_locations.insert(input_register, ()).is_some() {
+        if used_locations.insert(shader_location, ()).is_some() {
             return Err(InputLayoutError::DuplicateShaderLocation {
-                shader_location: input_register,
+                shader_location,
             });
         }
 
@@ -762,7 +775,7 @@ pub fn map_layout_to_shader_locations_compact(
         slot.required_stride = slot.required_stride.max(end);
 
         slot.attributes.push(wgpu::VertexAttribute {
-            shader_location: input_register,
+            shader_location,
             offset: offset as u64,
             format: fmt.format,
         });
@@ -940,11 +953,15 @@ mod tests {
                 semantic_name_hash: pos_hash,
                 semantic_index: 0,
                 input_register: 0,
+                mask: 0xF,
+                shader_location: 0,
             },
             VsInputSignatureElement {
                 semantic_name_hash: uv_hash,
                 semantic_index: 0,
                 input_register: 1,
+                mask: 0xF,
+                shader_location: 1,
             },
         ];
 
@@ -970,6 +987,66 @@ mod tests {
             mapped[0].attributes[1].format,
             wgpu::VertexFormat::Float32x2
         );
+    }
+
+    #[test]
+    fn maps_packed_signature_registers_to_distinct_shader_locations() {
+        // D3D signatures can pack multiple semantics into one input register. WebGPU vertex
+        // attributes require unique shader locations, so we allow the signature to provide a
+        // `shader_location` that differs from the packed `input_register`.
+        let pos_hash = fnv1a_32(b"POSITION");
+        let uv_hash = fnv1a_32(b"TEXCOORD");
+
+        let mut blob = Vec::new();
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 2); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        // POSITION0: float2 @ offset 0.
+        push_u32(&mut blob, pos_hash);
+        push_u32(&mut blob, 0);
+        push_u32(&mut blob, 16); // R32G32_FLOAT
+        push_u32(&mut blob, 0); // slot 0
+        push_u32(&mut blob, 0); // offset 0
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        // TEXCOORD0: float2 @ offset 8.
+        push_u32(&mut blob, uv_hash);
+        push_u32(&mut blob, 0);
+        push_u32(&mut blob, 16); // R32G32_FLOAT
+        push_u32(&mut blob, 0); // slot 0
+        push_u32(&mut blob, 8); // offset 8
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        let layout = InputLayoutDesc::parse(&blob).expect("parse failed");
+        let signature = [
+            VsInputSignatureElement {
+                semantic_name_hash: pos_hash,
+                semantic_index: 0,
+                input_register: 0,
+                mask: 0b0011,
+                shader_location: 0,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: uv_hash,
+                semantic_index: 0,
+                input_register: 0,
+                mask: 0b1100,
+                shader_location: 1,
+            },
+        ];
+
+        let strides = [16u32];
+        let binding = InputLayoutBinding::new(&layout, &strides);
+        let mapped = map_layout_to_shader_locations(&binding, &signature).expect("mapping failed");
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].attributes.len(), 2);
+        assert_eq!(mapped[0].attributes[0].shader_location, 0);
+        assert_eq!(mapped[0].attributes[1].shader_location, 1);
     }
 
     #[test]
@@ -1007,11 +1084,15 @@ mod tests {
                 semantic_name_hash: uv_hash,
                 semantic_index: 0,
                 input_register: 0,
+                mask: 0xF,
+                shader_location: 0,
             },
             VsInputSignatureElement {
                 semantic_name_hash: pos_hash,
                 semantic_index: 0,
                 input_register: 1,
+                mask: 0xF,
+                shader_location: 1,
             },
         ];
 
@@ -1086,11 +1167,15 @@ mod tests {
                 semantic_name_hash: tex_hash,
                 semantic_index: 0,
                 input_register: 1,
+                mask: 0xF,
+                shader_location: 1,
             },
             VsInputSignatureElement {
                 semantic_name_hash: tex_hash,
                 semantic_index: 1,
                 input_register: 0,
+                mask: 0xF,
+                shader_location: 0,
             },
         ];
 
@@ -1172,6 +1257,8 @@ mod tests {
                 semantic_name_hash: i,
                 semantic_index: 0,
                 input_register: i,
+                mask: 0xF,
+                shader_location: i,
             });
             strides[i as usize] = 4;
         }

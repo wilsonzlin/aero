@@ -52,6 +52,8 @@ fn parses_ilay_pos3_color_fixture_and_maps_to_vs_signature() {
             semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
             semantic_index: p.semantic_index,
             input_register: p.register,
+            mask: p.mask,
+            shader_location: p.register,
         });
     }
 
@@ -106,11 +108,15 @@ fn parses_ilay_pos3_tex2_fixture() {
             semantic_name_hash: pos_hash,
             semantic_index: 0,
             input_register: 0,
+            mask: 0xF,
+            shader_location: 0,
         },
         VsInputSignatureElement {
             semantic_name_hash: uv_hash,
             semantic_index: 0,
             input_register: 1,
+            mask: 0xF,
+            shader_location: 1,
         },
     ];
     let strides = [20u32]; // float3 position + float2 texcoord
