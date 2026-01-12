@@ -594,7 +594,7 @@ static int RunConsumer(int argc, char** argv) {
     ComPtr<ID3D10Resource> res;
     HRESULT hr_res = device->OpenSharedResource(shared_handle, __uuidof(ID3D10Resource), (void**)res.put());
     if (FAILED(hr_res)) {
-      return reporter.FailHresult("OpenSharedResource(ID3D10Texture2D/ID3D10Resource)", hr);
+      return reporter.FailHresult("OpenSharedResource(ID3D10Texture2D/ID3D10Resource)", hr_res);
     }
     hr_res = res->QueryInterface(__uuidof(ID3D10Texture2D), (void**)shared_tex.put());
     if (FAILED(hr_res)) {
