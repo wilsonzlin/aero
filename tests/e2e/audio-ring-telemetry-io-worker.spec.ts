@@ -130,6 +130,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
       timeoutMs = 2_000,
     ): Promise<{ level: number; underrun: number; overrun: number }> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
+      let last = { level: 0, underrun: 0, overrun: 0 };
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
         if (workerError) {
           throw new Error(`IO worker failed: ${workerError}`);
@@ -137,13 +138,16 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
         const level = Atomics.load(status, StatusIndex.AudioBufferLevelFrames) >>> 0;
         const underrun = Atomics.load(status, StatusIndex.AudioUnderrunCount) >>> 0;
         const overrun = Atomics.load(status, StatusIndex.AudioOverrunCount) >>> 0;
+        last = { level, underrun, overrun };
         if (level === expected.level && underrun === expected.underrun && overrun === expected.overrun) {
           return { level, underrun, overrun };
         }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw new Error(
-        `Timed out waiting for audio telemetry status. Expected level=${expected.level} underrun=${expected.underrun} overrun=${expected.overrun}.`,
+        `Timed out waiting for audio telemetry status. ` +
+          `Expected level=${expected.level} underrun=${expected.underrun} overrun=${expected.overrun}. ` +
+          `Last observed level=${last.level} underrun=${last.underrun} overrun=${last.overrun}.`,
       );
     };
 

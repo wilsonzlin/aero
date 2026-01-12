@@ -2258,8 +2258,27 @@ let audioOutChannelCount = 0;
 let audioOutDstSampleRate = 0;
 let audioOutTelemetryActive = false;
 let audioOutTelemetryNextMs = 0;
+let audioOutTelemetryTimer: number | undefined = undefined;
 
 const AUDIO_OUT_TELEMETRY_INTERVAL_MS = 50;
+
+function startAudioOutTelemetryTimer(): void {
+  if (audioOutTelemetryTimer !== undefined) return;
+  const timer = setInterval(() => {
+    // Match the IO tick loop behaviour: when snapshot-paused, freeze device-side
+    // state and avoid writing to shared status.
+    if (snapshotPaused) return;
+    const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+    maybePublishAudioOutTelemetry(now);
+  }, AUDIO_OUT_TELEMETRY_INTERVAL_MS) as unknown as number;
+  (timer as unknown as { unref?: () => void }).unref?.();
+  audioOutTelemetryTimer = timer;
+
+  // Publish once immediately so callers that attach the ring after the IO IPC
+  // server has started don't need to wait for the first interval tick.
+  const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+  maybePublishAudioOutTelemetry(now);
+}
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -3736,6 +3755,7 @@ function startIoIpcServer(): void {
 
   started = true;
   ioServerAbort = new AbortController();
+  startAudioOutTelemetryTimer();
 
   const dispatchTarget: AeroIpcIoDispatchTarget = {
     portRead: (port, size) => {
@@ -4392,6 +4412,10 @@ function shutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
   ioServerAbort?.abort();
+  if (audioOutTelemetryTimer !== undefined) {
+    clearInterval(audioOutTelemetryTimer);
+    audioOutTelemetryTimer = undefined;
+  }
   if (usbPassthroughDebugTimer !== undefined) {
     clearInterval(usbPassthroughDebugTimer);
     usbPassthroughDebugTimer = undefined;
