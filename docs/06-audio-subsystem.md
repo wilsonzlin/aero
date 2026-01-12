@@ -257,6 +257,14 @@ The microphone ring buffer is a mono `Float32Array` backed by a `SharedArrayBuff
 Backpressure policy for mic capture is **keep-latest** (drop the oldest part of the *current block* when partially writing)
 so the guest sees the most recent microphone audio.
 
+#### Attach/resume semantics (stale latency avoidance)
+
+Microphone input is a host resource and is **not serialized in VM snapshots**. The AudioWorklet producer may continue writing
+into the ring while the VM is snapshot-paused, or before the guest capture device has attached as the ring consumer.
+
+To avoid replaying *stale* mic samples (which would manifest as large capture latency after resume), consumers discard any
+already-buffered samples when attaching the ring by advancing `readPos` to the current `writePos` (i.e. `readPos := writePos`).
+
 ### HDA capture exposure (guest)
 
 The canonical `aero-audio` HDA model exposes one capture stream and a microphone pin widget:
