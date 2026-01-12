@@ -108,9 +108,13 @@ Summary: 15 passed, 0 failed, 0 warned, 2 skipped
 
 - `Transfer-Encoding: chunked` on `206` responses (some CDNs mishandle it)
 - Missing `Cross-Origin-Resource-Policy`
+- `Cross-Origin-Resource-Policy` present but with an unexpected value
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
 - `If-Modified-Since` not returning `304` (this check is WARN-only by default)
+- CORS header issues like:
+  - `Access-Control-Allow-Credentials: true` with `Access-Control-Allow-Origin: *`
+  - missing `Vary: Origin` when echoing a specific `Access-Control-Allow-Origin`
 
 ## CORP expectations
 

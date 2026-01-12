@@ -685,7 +685,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=(
             "Fail on 'WARN' conditions (e.g. Transfer-Encoding: chunked on 206, "
             "missing Cross-Origin-Resource-Policy, private caching without no-store, "
-            "If-Range mismatch behavior)"
+            "If-Range mismatch behavior, CORS misconfigurations like Allow-Credentials with '*')"
         ),
     )
     parser.add_argument(
