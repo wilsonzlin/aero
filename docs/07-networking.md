@@ -1119,6 +1119,7 @@ Capture format notes:
 Relevant implementation files:
 
 - UI surface: `web/src/net/trace_ui.ts`
+- `window.aero.netTrace` installer (bridges worker coordinator → global API): `web/src/net/trace_backend.ts`
 - Tunnel forwarder owner (where the capture boundary lives): `web/src/workers/net.worker.ts`
 - Forwarder capture hook semantics: `web/src/net/l2TunnelForwarder.ts`
 - Capture implementation + PCAPNG writer: `web/src/net/net_tracer.ts`, `web/src/net/pcapng.ts`
@@ -1139,6 +1140,9 @@ In the repo’s browser host UI (repo-root Vite app; see `src/main.ts`), there i
 
 If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
 is missing) or the net worker isn't running, enabling or downloading will fail with an error.
+
+Most web hosts install the `window.aero.netTrace` backend by calling
+`installNetTraceBackendOnAeroGlobal(...)` (see `web/src/net/trace_backend.ts`).
 
 OPFS notes:
 
