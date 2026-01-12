@@ -27,3 +27,22 @@ test('readDnsName rejects compression pointer loops', () => {
   const msg = Buffer.from([0xc0, 0x02, 0xc0, 0x00]);
   assert.throws(() => readDnsName(msg, 0), /DNS name pointer loop/);
 });
+
+test('readDnsName rejects overly long compression pointer chains', () => {
+  // Create a chain of pointers where each 2-byte pointer jumps to the next.
+  // This is not a valid DNS encoding per RFC1035 (pointers should point backwards),
+  // but it's a useful defensive test: the parser should not loop for an unbounded
+  // number of pointer hops.
+  const pointerCount = 65; // exceeds our internal cap (64)
+  const terminatorOffset = pointerCount * 2;
+  const msg = Buffer.alloc(terminatorOffset + 1);
+  for (let i = 0; i < pointerCount; i++) {
+    const off = i * 2;
+    const target = (i + 1) * 2;
+    msg[off] = 0xc0;
+    msg[off + 1] = target & 0xff;
+  }
+  msg[terminatorOffset] = 0x00;
+
+  assert.throws(() => readDnsName(msg, 0), /DNS name pointer chain too long/);
+});
