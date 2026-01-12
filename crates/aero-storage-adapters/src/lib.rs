@@ -245,6 +245,35 @@ mod tests {
     }
 
     #[test]
+    fn map_aero_storage_error_to_io_classifies_alignment_and_bounds() {
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::UnalignedLength {
+            len: 1,
+            alignment: 512,
+        });
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::OffsetOverflow);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::InvalidConfig("bad"));
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        let err =
+            map_aero_storage_error_to_io(aero_storage::DiskError::InvalidSparseHeader("bad"));
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::OutOfBounds {
+            offset: 0,
+            len: 1,
+            capacity: 0,
+        });
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::CorruptSparseImage("bad"));
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn map_aero_storage_error_to_io_classifies_browser_storage_failures() {
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::QuotaExceeded);
         assert_eq!(err.kind(), io::ErrorKind::StorageFull);
