@@ -210,7 +210,9 @@ for rel in \
   "scripts/with-timeout.sh"
 do
   path="$REPO_ROOT/$rel"
-  if [[ ! -e "$path" ]]; then
+  # Treat 0-byte scripts as missing too. An empty script is almost always a broken checkout
+  # (and can cause confusing behavior when invoked via `bash`).
+  if [[ ! -s "$path" ]]; then
     MISSING_SCRIPTS+=("$rel")
     continue
   fi
