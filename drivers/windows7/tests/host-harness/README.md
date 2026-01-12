@@ -302,6 +302,8 @@ On the self-hosted runner you need:
 
 The workflow can also optionally exercise the end-to-end virtio-input event delivery path (QMP `input-send-event` + guest
 HID report verification) by setting the workflow input `with_virtio_input_events=true`.
+This requires a guest image provisioned with `--test-input-events` (for example via
+`New-AeroWin7TestImage.ps1 -TestInputEvents`) so the guest selftest enables the `virtio-input-events` read loop.
 
 ### Invoking the workflow
 
