@@ -274,13 +274,13 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
 - `pfnDrawIndexedPrimitiveUP` (returns `D3DERR_NOTAVAILABLE`)
-- `pfnGetSoftwareVertexProcessing`, `pfnGetTransform`, `pfnGetClipPlane`, `pfnGetViewport`, `pfnGetScissorRect`
+- `pfnGetSoftwareVertexProcessing`, `pfnGetTransform`, `pfnGetClipPlane`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
-  `pfnGetRenderTarget` / `pfnGetDepthStencil`, `pfnGetTexture`, `pfnGetTextureStageState`, `pfnGetSamplerState`,
-  `pfnGetRenderState`, `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`, `pfnGetNPatchMode`,
-  `pfnGetFVF` / `pfnGetVertexDecl` (returns `D3DERR_NOTAVAILABLE`)
-- `pfnGetStreamSource` / `pfnGetStreamSourceFreq`, `pfnGetIndices`, `pfnGetShader`, `pfnGetShaderConstF/I/B`
+  `pfnGetTextureStageState`,
+  `pfnGetPaletteEntries` / `pfnGetCurrentTexturePalette`, `pfnGetNPatchMode`
+  (returns `D3DERR_NOTAVAILABLE`)
+- `pfnGetStreamSourceFreq`, `pfnGetShaderConstI/B`
   (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating

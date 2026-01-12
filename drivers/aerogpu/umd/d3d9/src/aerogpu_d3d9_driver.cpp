@@ -9909,6 +9909,615 @@ struct aerogpu_d3d9_impl_pfnValidateDevice<Ret(*)(Args...)> {
   }
 };
 
+// -----------------------------------------------------------------------------
+// Minimal D3D9 "Get*" state DDIs
+// -----------------------------------------------------------------------------
+// Many D3D9 runtimes can call these (directly or indirectly via state blocks).
+// Return the UMD's cached state for the subset we currently track.
+
+template <typename T>
+uint32_t d3d9_to_u32(T v) {
+  if constexpr (std::is_enum_v<T>) {
+    using Under = std::underlying_type_t<T>;
+    return static_cast<uint32_t>(static_cast<Under>(v));
+  } else if constexpr (std::is_integral_v<T>) {
+    return static_cast<uint32_t>(v);
+  } else {
+    return 0u;
+  }
+}
+
+template <typename T>
+void d3d9_write_u32(T* out, uint32_t v) {
+  if (!out) {
+    return;
+  }
+  using OutT = std::remove_reference_t<decltype(*out)>;
+  if constexpr (std::is_enum_v<OutT>) {
+    *out = static_cast<OutT>(v);
+  } else if constexpr (std::is_integral_v<OutT>) {
+    *out = static_cast<OutT>(v);
+  } else {
+    (void)v;
+  }
+}
+
+template <typename HandleT>
+void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
+  if (!out) {
+    return;
+  }
+  out->pDrvPrivate = pDrvPrivate;
+}
+
+template <typename StateT, typename ValueT>
+HRESULT device_get_render_state_impl(D3DDDI_HDEVICE hDevice, StateT state, ValueT* pValue) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetRenderState,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(state)),
+                      d3d9_trace_arg_ptr(pValue),
+                      0);
+  if (!hDevice.pDrvPrivate || !pValue) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint32_t s = d3d9_to_u32(state);
+  if (s >= 256) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  d3d9_write_u32(pValue, dev->render_states[s]);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_render_state_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_render_state_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename StateT, typename ValueT>
+HRESULT device_get_sampler_state_impl(D3DDDI_HDEVICE hDevice, StageT stage, StateT state, ValueT* pValue) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetSamplerState,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(d3d9_to_u32(stage), d3d9_to_u32(state)),
+                      d3d9_trace_arg_ptr(pValue),
+                      0);
+  if (!hDevice.pDrvPrivate || !pValue) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t ss = d3d9_to_u32(state);
+  if (st >= 16 || ss >= 16) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pValue, dev->sampler_states[st][ss]);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_sampler_state_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 4) {
+    return device_get_sampler_state_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename HandleT>
+HRESULT device_get_texture_impl(D3DDDI_HDEVICE hDevice, StageT stage, HandleT* phTexture) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetTexture,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(stage)),
+                      d3d9_trace_arg_ptr(phTexture),
+                      0);
+  if (!hDevice.pDrvPrivate || !phTexture) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stage);
+  if (st >= 16) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_handle(phTexture, dev->textures[st]);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_texture_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_texture_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename SlotT, typename HandleT>
+HRESULT device_get_render_target_impl(D3DDDI_HDEVICE hDevice, SlotT slot, HandleT* phSurface) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetRenderTarget,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(slot)),
+                      d3d9_trace_arg_ptr(phSurface),
+                      0);
+  if (!hDevice.pDrvPrivate || !phSurface) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t idx = d3d9_to_u32(slot);
+  if (idx >= 4) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_handle(phSurface, dev->render_targets[idx]);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_render_target_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_render_target_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename HandleT>
+HRESULT device_get_depth_stencil_impl(D3DDDI_HDEVICE hDevice, HandleT* phSurface) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetDepthStencil,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(phSurface),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !phSurface) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_handle(phSurface, dev->depth_stencil);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_depth_stencil_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_depth_stencil_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ViewportT>
+HRESULT device_get_viewport_impl(D3DDDI_HDEVICE hDevice, ViewportT* pViewport) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetViewport,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pViewport),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pViewport) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  pViewport->X = static_cast<decltype(pViewport->X)>(dev->viewport.X);
+  pViewport->Y = static_cast<decltype(pViewport->Y)>(dev->viewport.Y);
+  pViewport->Width = static_cast<decltype(pViewport->Width)>(dev->viewport.Width);
+  pViewport->Height = static_cast<decltype(pViewport->Height)>(dev->viewport.Height);
+  pViewport->MinZ = static_cast<decltype(pViewport->MinZ)>(dev->viewport.MinZ);
+  pViewport->MaxZ = static_cast<decltype(pViewport->MaxZ)>(dev->viewport.MaxZ);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_viewport_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_viewport_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename RectT, typename BoolT>
+HRESULT device_get_scissor_rect_impl(D3DDDI_HDEVICE hDevice, RectT* pRect, BoolT* pEnabled) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetScissorRect,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pRect),
+                      d3d9_trace_arg_ptr(pEnabled),
+                      0);
+  if (!hDevice.pDrvPrivate || !pRect) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pRect = dev->scissor_rect;
+  if (pEnabled) {
+    d3d9_write_u32(pEnabled, static_cast<uint32_t>(dev->scissor_enabled));
+  }
+  return trace.ret(S_OK);
+}
+
+template <typename RectT>
+HRESULT device_get_scissor_rect_impl(D3DDDI_HDEVICE hDevice, RectT* pRect) {
+  return device_get_scissor_rect_impl(hDevice, pRect, static_cast<BOOL*>(nullptr));
+}
+
+template <typename... Args>
+HRESULT device_get_scissor_rect_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_scissor_rect_impl(args...);
+  } else if constexpr (sizeof...(Args) == 3) {
+    return device_get_scissor_rect_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StreamT, typename HandleT, typename OffsetT, typename StrideT>
+HRESULT device_get_stream_source_impl(
+    D3DDDI_HDEVICE hDevice,
+    StreamT stream,
+    HandleT* phVb,
+    OffsetT* pOffset,
+    StrideT* pStride) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetStreamSource,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(stream)),
+                      d3d9_trace_arg_ptr(phVb),
+                      d3d9_trace_pack_u32_u32(d3d9_trace_arg_ptr(pOffset) != 0 ? 1u : 0u,
+                                              d3d9_trace_arg_ptr(pStride) != 0 ? 1u : 0u));
+  if (!hDevice.pDrvPrivate || !phVb || !pOffset || !pStride) {
+    return trace.ret(E_INVALIDARG);
+  }
+  const uint32_t st = d3d9_to_u32(stream);
+  if (st >= 16) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const DeviceStateStream& ss = dev->streams[st];
+  d3d9_write_handle(phVb, ss.vb);
+  d3d9_write_u32(pOffset, ss.offset_bytes);
+  d3d9_write_u32(pStride, ss.stride_bytes);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_stream_source_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 5) {
+    return device_get_stream_source_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename HandleT, typename FormatT, typename OffsetT>
+HRESULT device_get_indices_impl(D3DDDI_HDEVICE hDevice, HandleT* phIb, FormatT* pFormat, OffsetT* pOffset) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetIndices,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(phIb),
+                      d3d9_trace_arg_ptr(pFormat),
+                      d3d9_trace_arg_ptr(pOffset));
+  if (!hDevice.pDrvPrivate || !phIb || !pFormat || !pOffset) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_handle(phIb, dev->index_buffer);
+  *pFormat = static_cast<FormatT>(dev->index_format);
+  d3d9_write_u32(pOffset, dev->index_offset_bytes);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_indices_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 4) {
+    return device_get_indices_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename HandleT>
+HRESULT device_get_shader_impl(D3DDDI_HDEVICE hDevice, StageT stage, HandleT* phShader) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetShader,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(d3d9_to_u32(stage)),
+                      d3d9_trace_arg_ptr(phShader),
+                      0);
+  if (!hDevice.pDrvPrivate || !phShader) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  Shader* sh = (d3d9_to_u32(stage) == kD3d9ShaderStageVs) ? dev->user_vs : dev->user_ps;
+  phShader->pDrvPrivate = sh;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_shader_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_get_shader_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename StageT, typename StartT, typename DataT, typename CountT>
+HRESULT device_get_shader_const_f_impl(
+    D3DDDI_HDEVICE hDevice,
+    StageT stage,
+    StartT start_reg,
+    DataT* pData,
+    CountT vec4_count) {
+  const uint32_t st = d3d9_to_u32(stage);
+  const uint32_t start = d3d9_to_u32(start_reg);
+  const uint32_t count = d3d9_to_u32(vec4_count);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetShaderConstF,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (start >= 256) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const float* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
+  const uint32_t read_regs = std::min(count, 256u - start);
+  std::memcpy(pData, src + start * 4, static_cast<size_t>(read_regs) * 4 * sizeof(float));
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_shader_const_f_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 5) {
+    return device_get_shader_const_f_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename ValueT>
+HRESULT device_get_fvf_impl(D3DDDI_HDEVICE hDevice, ValueT* pFvf) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetFVF,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(pFvf),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pFvf) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  d3d9_write_u32(pFvf, dev->fvf);
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_fvf_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_fvf_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename HandleT>
+HRESULT device_get_vertex_decl_impl(D3DDDI_HDEVICE hDevice, HandleT* phDecl) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetVertexDecl,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_arg_ptr(phDecl),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !phDecl) {
+    return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  phDecl->pDrvPrivate = dev->vertex_decl;
+  return trace.ret(S_OK);
+}
+
+template <typename... Args>
+HRESULT device_get_vertex_decl_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_vertex_decl_impl(args...);
+  }
+  return D3DERR_NOTAVAILABLE;
+}
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetViewport;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetViewport<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetViewport(Args... args) {
+    return static_cast<Ret>(device_get_viewport_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetViewport<Ret(*)(Args...)> {
+  static Ret pfnGetViewport(Args... args) {
+    return static_cast<Ret>(device_get_viewport_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetScissorRect;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetScissorRect<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetScissorRect(Args... args) {
+    return static_cast<Ret>(device_get_scissor_rect_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetScissorRect<Ret(*)(Args...)> {
+  static Ret pfnGetScissorRect(Args... args) {
+    return static_cast<Ret>(device_get_scissor_rect_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetRenderTarget;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetRenderTarget<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetRenderTarget(Args... args) {
+    return static_cast<Ret>(device_get_render_target_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetRenderTarget<Ret(*)(Args...)> {
+  static Ret pfnGetRenderTarget(Args... args) {
+    return static_cast<Ret>(device_get_render_target_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetDepthStencil;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetDepthStencil<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetDepthStencil(Args... args) {
+    return static_cast<Ret>(device_get_depth_stencil_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetDepthStencil<Ret(*)(Args...)> {
+  static Ret pfnGetDepthStencil(Args... args) {
+    return static_cast<Ret>(device_get_depth_stencil_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetTexture;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetTexture<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetTexture(Args... args) {
+    return static_cast<Ret>(device_get_texture_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetTexture<Ret(*)(Args...)> {
+  static Ret pfnGetTexture(Args... args) {
+    return static_cast<Ret>(device_get_texture_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetSamplerState;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetSamplerState<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetSamplerState(Args... args) {
+    return static_cast<Ret>(device_get_sampler_state_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetSamplerState<Ret(*)(Args...)> {
+  static Ret pfnGetSamplerState(Args... args) {
+    return static_cast<Ret>(device_get_sampler_state_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetRenderState;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetRenderState<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetRenderState(Args... args) {
+    return static_cast<Ret>(device_get_render_state_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetRenderState<Ret(*)(Args...)> {
+  static Ret pfnGetRenderState(Args... args) {
+    return static_cast<Ret>(device_get_render_state_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetStreamSource;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetStreamSource<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetStreamSource(Args... args) {
+    return static_cast<Ret>(device_get_stream_source_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetStreamSource<Ret(*)(Args...)> {
+  static Ret pfnGetStreamSource(Args... args) {
+    return static_cast<Ret>(device_get_stream_source_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetIndices;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetIndices<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetIndices(Args... args) {
+    return static_cast<Ret>(device_get_indices_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetIndices<Ret(*)(Args...)> {
+  static Ret pfnGetIndices(Args... args) {
+    return static_cast<Ret>(device_get_indices_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetShader;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShader<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetShader(Args... args) {
+    return static_cast<Ret>(device_get_shader_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShader<Ret(*)(Args...)> {
+  static Ret pfnGetShader(Args... args) {
+    return static_cast<Ret>(device_get_shader_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetShaderConstF;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShaderConstF<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetShaderConstF(Args... args) {
+    return static_cast<Ret>(device_get_shader_const_f_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetShaderConstF<Ret(*)(Args...)> {
+  static Ret pfnGetShaderConstF(Args... args) {
+    return static_cast<Ret>(device_get_shader_const_f_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetFVF;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetFVF<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetFVF(Args... args) {
+    return static_cast<Ret>(device_get_fvf_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetFVF<Ret(*)(Args...)> {
+  static Ret pfnGetFVF(Args... args) {
+    return static_cast<Ret>(device_get_fvf_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetVertexDecl;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetVertexDecl<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetVertexDecl(Args... args) {
+    return static_cast<Ret>(device_get_vertex_decl_dispatch(args...));
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetVertexDecl<Ret(*)(Args...)> {
+  static Ret pfnGetVertexDecl(Args... args) {
+    return static_cast<Ret>(device_get_vertex_decl_dispatch(args...));
+  }
+};
+
 #endif // _WIN32 && AEROGPU_D3D9_USE_WDK_DDI
 
 HRESULT AEROGPU_D3D9_CALL device_blt(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_BLT* pBlt) {
@@ -13137,13 +13746,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                            aerogpu_d3d9_stub_pfnGetClipPlane<decltype(pDeviceFuncs->pfnGetClipPlane)>::pfnGetClipPlane);
   }
   if constexpr (aerogpu_has_member_pfnGetViewport<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetViewport,
-                           aerogpu_d3d9_stub_pfnGetViewport<decltype(pDeviceFuncs->pfnGetViewport)>::pfnGetViewport);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetViewport,
+        aerogpu_d3d9_impl_pfnGetViewport<decltype(pDeviceFuncs->pfnGetViewport)>::pfnGetViewport);
   }
   if constexpr (aerogpu_has_member_pfnGetScissorRect<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetScissorRect,
-                           aerogpu_d3d9_stub_pfnGetScissorRect<decltype(
-                               pDeviceFuncs->pfnGetScissorRect)>::pfnGetScissorRect);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetScissorRect,
+        aerogpu_d3d9_impl_pfnGetScissorRect<decltype(pDeviceFuncs->pfnGetScissorRect)>::pfnGetScissorRect);
   }
   if constexpr (aerogpu_has_member_pfnBeginStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -13168,18 +13778,19 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                                pDeviceFuncs->pfnGetLightEnable)>::pfnGetLightEnable);
   }
   if constexpr (aerogpu_has_member_pfnGetRenderTarget<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetRenderTarget,
-                           aerogpu_d3d9_stub_pfnGetRenderTarget<decltype(
-                               pDeviceFuncs->pfnGetRenderTarget)>::pfnGetRenderTarget);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetRenderTarget,
+        aerogpu_d3d9_impl_pfnGetRenderTarget<decltype(pDeviceFuncs->pfnGetRenderTarget)>::pfnGetRenderTarget);
   }
   if constexpr (aerogpu_has_member_pfnGetDepthStencil<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetDepthStencil,
-                           aerogpu_d3d9_stub_pfnGetDepthStencil<decltype(
-                               pDeviceFuncs->pfnGetDepthStencil)>::pfnGetDepthStencil);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetDepthStencil,
+        aerogpu_d3d9_impl_pfnGetDepthStencil<decltype(pDeviceFuncs->pfnGetDepthStencil)>::pfnGetDepthStencil);
   }
   if constexpr (aerogpu_has_member_pfnGetTexture<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetTexture,
-                           aerogpu_d3d9_stub_pfnGetTexture<decltype(pDeviceFuncs->pfnGetTexture)>::pfnGetTexture);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetTexture,
+        aerogpu_d3d9_impl_pfnGetTexture<decltype(pDeviceFuncs->pfnGetTexture)>::pfnGetTexture);
   }
   if constexpr (aerogpu_has_member_pfnGetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetTextureStageState,
@@ -13187,14 +13798,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                                pDeviceFuncs->pfnGetTextureStageState)>::pfnGetTextureStageState);
   }
   if constexpr (aerogpu_has_member_pfnGetSamplerState<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetSamplerState,
-                           aerogpu_d3d9_stub_pfnGetSamplerState<decltype(
-                               pDeviceFuncs->pfnGetSamplerState)>::pfnGetSamplerState);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetSamplerState,
+        aerogpu_d3d9_impl_pfnGetSamplerState<decltype(pDeviceFuncs->pfnGetSamplerState)>::pfnGetSamplerState);
   }
   if constexpr (aerogpu_has_member_pfnGetRenderState<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetRenderState,
-                           aerogpu_d3d9_stub_pfnGetRenderState<decltype(
-                               pDeviceFuncs->pfnGetRenderState)>::pfnGetRenderState);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetRenderState,
+        aerogpu_d3d9_impl_pfnGetRenderState<decltype(pDeviceFuncs->pfnGetRenderState)>::pfnGetRenderState);
   }
   if constexpr (aerogpu_has_member_pfnGetPaletteEntries<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetPaletteEntries,
@@ -13211,16 +13822,19 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                            aerogpu_d3d9_stub_pfnGetNPatchMode<decltype(pDeviceFuncs->pfnGetNPatchMode)>::pfnGetNPatchMode);
   }
   if constexpr (aerogpu_has_member_pfnGetFVF<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetFVF, aerogpu_d3d9_stub_pfnGetFVF<decltype(pDeviceFuncs->pfnGetFVF)>::pfnGetFVF);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetFVF,
+        aerogpu_d3d9_impl_pfnGetFVF<decltype(pDeviceFuncs->pfnGetFVF)>::pfnGetFVF);
   }
   if constexpr (aerogpu_has_member_pfnGetVertexDecl<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetVertexDecl,
-                           aerogpu_d3d9_stub_pfnGetVertexDecl<decltype(pDeviceFuncs->pfnGetVertexDecl)>::pfnGetVertexDecl);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetVertexDecl,
+        aerogpu_d3d9_impl_pfnGetVertexDecl<decltype(pDeviceFuncs->pfnGetVertexDecl)>::pfnGetVertexDecl);
   }
   if constexpr (aerogpu_has_member_pfnGetStreamSource<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetStreamSource,
-                           aerogpu_d3d9_stub_pfnGetStreamSource<decltype(
-                               pDeviceFuncs->pfnGetStreamSource)>::pfnGetStreamSource);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetStreamSource,
+        aerogpu_d3d9_impl_pfnGetStreamSource<decltype(pDeviceFuncs->pfnGetStreamSource)>::pfnGetStreamSource);
   }
   if constexpr (aerogpu_has_member_pfnGetStreamSourceFreq<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetStreamSourceFreq,
@@ -13230,16 +13844,17 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnGetIndices<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGetIndices,
-        aerogpu_d3d9_stub_pfnGetIndices<decltype(pDeviceFuncs->pfnGetIndices)>::pfnGetIndices);
+        aerogpu_d3d9_impl_pfnGetIndices<decltype(pDeviceFuncs->pfnGetIndices)>::pfnGetIndices);
   }
   if constexpr (aerogpu_has_member_pfnGetShader<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetShader,
-                           aerogpu_d3d9_stub_pfnGetShader<decltype(pDeviceFuncs->pfnGetShader)>::pfnGetShader);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetShader,
+        aerogpu_d3d9_impl_pfnGetShader<decltype(pDeviceFuncs->pfnGetShader)>::pfnGetShader);
   }
   if constexpr (aerogpu_has_member_pfnGetShaderConstF<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstF,
-                           aerogpu_d3d9_stub_pfnGetShaderConstF<decltype(
-                               pDeviceFuncs->pfnGetShaderConstF)>::pfnGetShaderConstF);
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetShaderConstF,
+        aerogpu_d3d9_impl_pfnGetShaderConstF<decltype(pDeviceFuncs->pfnGetShaderConstF)>::pfnGetShaderConstF);
   }
   if constexpr (aerogpu_has_member_pfnGetShaderConstI<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetShaderConstI,
