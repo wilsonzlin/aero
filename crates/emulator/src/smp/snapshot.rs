@@ -103,7 +103,11 @@ fn decode_smp_cpu_internal(data: &[u8]) -> Result<SmpCpuInternal> {
         return Err(SnapshotError::Corrupt("pending interrupt queue too large"));
     }
 
-    let mut pending_interrupts = vec![0u8; pending_len];
+    let mut pending_interrupts = Vec::new();
+    pending_interrupts
+        .try_reserve_exact(pending_len)
+        .map_err(|_| SnapshotError::OutOfMemory { len: pending_len })?;
+    pending_interrupts.resize(pending_len, 0);
     r.read_exact(&mut pending_interrupts)?;
 
     Ok(SmpCpuInternal {
