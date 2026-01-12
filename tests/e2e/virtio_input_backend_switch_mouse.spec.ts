@@ -17,8 +17,14 @@ async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Pro
   const check = async (wasmPath: string, jsPath: string): Promise<boolean> => {
     const wasm = await page.request.get(`${BASE_URL}${wasmPath}`);
     if (!wasm.ok()) return false;
+    // Vite's dev server can return `index.html` for missing assets (200 + text/html). Treat that as missing.
+    const wasmContentType = wasm.headers()["content-type"] ?? "";
+    if (wasmContentType.includes("text/html")) return false;
     const js = await page.request.get(`${BASE_URL}${jsPath}`);
-    return js.ok();
+    if (!js.ok()) return false;
+    const jsContentType = js.headers()["content-type"] ?? "";
+    if (jsContentType.includes("text/html")) return false;
+    return true;
   };
 
   if (await check("/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded/aero_wasm.js")) {
@@ -554,7 +560,13 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
       });
 
       if (!initRes.virtioOk) {
-        return { initRes, dx, dyPs2, virtioAvailable: false };
+        const id = (initRes?.idDword ?? 0) >>> 0;
+        const subsys = (initRes?.subsysDword ?? 0) >>> 0;
+        const found = initRes?.foundMouseBdf as { bus: number; device: number; function: number } | null | undefined;
+        const foundStr = found ? `${found.bus}:${found.device}.${found.function}` : "not found";
+        throw new Error(
+          `virtio-input mouse PCI function is unavailable at canonical BDF 0:10.1 (id=0x${id.toString(16)} subsys=0x${subsys.toString(16)}; scan=${foundStr})`,
+        );
       }
 
       // Phase 1: virtio driver_ok is false; mouse goes through i8042 AUX output.
@@ -566,25 +578,13 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
       await sendMouseMoveBatch(dx, dyPs2);
       const phase2 = await cpuCall("collectAfterPhase2");
 
-      return { initRes, dx, dyPs2, phase1, virtioInit, phase2, virtioAvailable: true };
+      return { initRes, dx, dyPs2, phase1, virtioInit, phase2 };
     } finally {
       cpuWorker.terminate();
       ioWorker.terminate();
       URL.revokeObjectURL(cpuUrl);
     }
   });
-
-  if (!result.virtioAvailable) {
-    const id = (result.initRes?.idDword ?? 0) >>> 0;
-    const subsys = (result.initRes?.subsysDword ?? 0) >>> 0;
-    const found = result.initRes?.foundMouseBdf as { bus: number; device: number; function: number } | null | undefined;
-    const foundStr = found ? `${found.bus}:${found.device}.${found.function}` : "not found";
-    const message = `virtio-input mouse PCI function is unavailable at canonical BDF 0:10.1 (id=0x${id.toString(16)} subsys=0x${subsys.toString(16)}; scan=${foundStr})`;
-    if (process.env.CI) {
-      throw new Error(message);
-    }
-    test.skip(true, message);
-  }
 
   expect(result.initRes.idDword >>> 0).toBe(0x1052_1af4);
   expect(result.initRes.subsysDword >>> 0).toBe(0x0011_1af4);
