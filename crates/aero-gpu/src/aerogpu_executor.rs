@@ -3785,6 +3785,78 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn create_device_queue(
+        required_features: wgpu::Features,
+    ) -> Option<(wgpu::Device, wgpu::Queue)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir().join(format!(
+                    "aero-gpu-aerogpu-executor-xdg-runtime-{}",
+                    std::process::id()
+                ));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        };
+
+        let adapter = adapter?;
+        if !adapter.features().contains(required_features) {
+            return None;
+        }
+
+        adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-gpu aerogpu_executor test device"),
+                    required_features,
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .ok()
+    }
+
     #[test]
     fn is_x8_format_includes_srgb_variants() {
         assert!(is_x8_format(pci::AerogpuFormat::B8G8R8X8Unorm as u32));
@@ -3943,5 +4015,40 @@ mod tests {
             }
             other => panic!("expected validation error, got {other:?}"),
         }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn create_texture2d_bc_falls_back_when_dimensions_not_block_aligned_even_if_bc_enabled() {
+        pollster::block_on(async {
+            let Some((device, queue)) =
+                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
+            else {
+                // Adapter/device does not support BC compression; nothing to validate here.
+                return;
+            };
+
+            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+            exec.exec_create_texture2d(
+                CreateTexture2dArgs {
+                    texture_handle: 1,
+                    usage_flags: cmd::AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: pci::AerogpuFormat::BC1RgbaUnorm as u32,
+                    width: 9,
+                    height: 9,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes: 0,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+                None,
+            )
+            .expect("CREATE_TEXTURE2D must succeed");
+
+            let tex = exec.textures.get(&1).expect("texture must exist");
+            assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
+        });
     }
 }

@@ -6848,16 +6848,84 @@ impl AerogpuD3d11Executor {
                 .map_err(|_| anyhow!("texture upload: BC rows out of range"))?;
             let src_row_pitch = bytes_per_row as usize;
 
-            let repack_padded_bpr = if blocks_h > 1 {
-                let padded_bpr = unpadded_bpr
-                    .checked_add(aligned - 1)
-                    .map(|v| v / aligned)
-                    .and_then(|v| v.checked_mul(aligned))
-                    .ok_or_else(|| anyhow!("texture upload: BC padded bytes_per_row overflow"))?;
-                (bytes_per_row != padded_bpr).then_some(padded_bpr)
+            let padded_bpr = if blocks_h > 1 {
+                Some(
+                    unpadded_bpr
+                        .checked_add(aligned - 1)
+                        .map(|v| v / aligned)
+                        .and_then(|v| v.checked_mul(aligned))
+                        .ok_or_else(|| {
+                            anyhow!("texture upload: BC padded bytes_per_row overflow")
+                        })?,
+                )
             } else {
                 None
             };
+
+            // If the tight BC stride isn't aligned for multi-row writes, avoid the 256-byte
+            // alignment requirement by uploading one block row at a time (each upload has a single
+            // block row, so it does not require `bytes_per_row` alignment).
+            if let Some(padded_bpr) = padded_bpr {
+                if unpadded_bpr != padded_bpr {
+                    let row_len_usize: usize = unpadded_bpr
+                        .try_into()
+                        .map_err(|_| anyhow!("texture upload: BC bytes_per_row out of range"))?;
+                    let mut row_buf = vec![0u8; row_len_usize];
+                    for block_row in 0..blocks_h_usize {
+                        let row_offset = u64::try_from(block_row)
+                            .ok()
+                            .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
+                            .ok_or_else(|| {
+                                anyhow!("texture upload: BC row offset overflows u64")
+                            })?;
+                        let src_addr = gpa
+                            .checked_add(row_offset)
+                            .ok_or_else(|| anyhow!("texture upload: BC address overflows u64"))?;
+                        guest_mem
+                            .read(src_addr, &mut row_buf)
+                            .map_err(anyhow_guest_mem)?;
+
+                        let origin_y_texels = (block_row as u32)
+                            .checked_mul(4)
+                            .ok_or_else(|| anyhow!("texture upload: BC origin.y overflow"))?;
+                        let remaining_height =
+                            height.checked_sub(origin_y_texels).ok_or_else(|| {
+                                anyhow!("texture upload: BC origin exceeds mip height")
+                            })?;
+                        let chunk_height_texels = remaining_height.min(4);
+
+                        queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture,
+                                mip_level,
+                                origin: wgpu::Origin3d {
+                                    x: 0,
+                                    y: origin_y_texels,
+                                    z: array_layer,
+                                },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &row_buf,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(unpadded_bpr),
+                                rows_per_image: Some(1),
+                            },
+                            wgpu::Extent3d {
+                                width,
+                                height: chunk_height_texels,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    }
+
+                    return Ok(());
+                }
+            }
+
+            let repack_padded_bpr = padded_bpr.and_then(|padded_bpr| {
+                (blocks_h > 1 && bytes_per_row != padded_bpr).then_some(padded_bpr)
+            });
 
             if let Some(padded_bpr) = repack_padded_bpr {
                 let padded_bpr_usize: usize = padded_bpr

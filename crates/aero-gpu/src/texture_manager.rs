@@ -857,3 +857,108 @@ fn upload_with_alignment(
     );
     ctx.queue.submit([encoder.finish()]);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir().join(format!(
+                    "aero-gpu-texture-manager-xdg-runtime-{}",
+                    std::process::id()
+                ));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        };
+
+        let adapter = adapter?;
+
+        adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-gpu texture_manager test device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .ok()
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn create_texture_bc_falls_back_when_dimensions_not_block_aligned() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue().await else {
+                return;
+            };
+
+            let mut caps = GpuCapabilities::from_device(&device);
+            // Simulate a BC-enabled device even if the underlying adapter doesn't support BC: the
+            // texture must still fall back based on its dimensions.
+            caps.supports_bc_texture_compression = true;
+
+            let mut mgr = TextureManager::new(&device, &queue, caps);
+            mgr.create_texture(
+                1,
+                TextureDesc::new_2d(
+                    9,
+                    9,
+                    TextureFormat::Bc1RgbaUnorm,
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+            );
+
+            let entry = mgr.textures.get(&1).expect("texture must exist");
+            assert_eq!(entry.selection.actual, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(
+                entry.selection.upload_transform,
+                TextureUploadTransform::Bc1ToRgba8
+            );
+        });
+    }
+}

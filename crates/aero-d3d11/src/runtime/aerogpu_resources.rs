@@ -240,12 +240,7 @@ impl AerogpuResourceManager {
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let bc_enabled = bc_enabled
-            && wgpu_compressed_texture_dimensions_compatible(
-                linear_format,
-                width,
-                height,
-                mip_levels,
-            )?;
+            && wgpu_compressed_texture_dimensions_compatible(linear_format, width, height, mip_levels)?;
         let (texture_format, upload_transform) =
             select_texture_format_for_device(linear_format, bc_enabled)?;
 
@@ -1516,7 +1511,9 @@ mod tests {
         assert_eq!(texture_total_size_bytes(&desc).unwrap(), 32);
     }
 
-    async fn create_device_queue() -> Result<Option<(wgpu::Device, wgpu::Queue)>> {
+    async fn create_device_queue(
+        required_features: wgpu::Features,
+    ) -> Result<Option<(wgpu::Device, wgpu::Queue)>> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1569,11 +1566,15 @@ mod tests {
             return Ok(None);
         };
 
+        if !adapter.features().contains(required_features) {
+            return Ok(None);
+        }
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("aero-d3d11 aerogpu_resources test device"),
-                    required_features: wgpu::Features::empty(),
+                    required_features,
                     required_limits: wgpu::Limits::downlevel_defaults(),
                 },
                 None,
@@ -1662,7 +1663,7 @@ mod tests {
     #[test]
     fn upload_bc1_texture_with_cpu_decompression() -> Result<()> {
         pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue().await? else {
+            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await? else {
                 return Ok(());
             };
 
@@ -1726,6 +1727,44 @@ mod tests {
             }
 
             assert_eq!(readback, expected);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn create_texture2d_bc_falls_back_when_dimensions_not_block_aligned_even_if_bc_enabled(
+    ) -> Result<()> {
+        pollster::block_on(async {
+            let Some((device, queue)) =
+                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await?
+            else {
+                // Adapter/device does not support BC compression; nothing to validate here.
+                return Ok(());
+            };
+
+            let mut mgr = AerogpuResourceManager::new(device, queue);
+            mgr.create_texture2d(
+                1,
+                Texture2dCreateDesc {
+                    usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                    format: AerogpuFormat::BC1RgbaUnorm as u32,
+                    width: 9,
+                    height: 9,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    row_pitch_bytes: 0,
+                    backing_alloc_id: 0,
+                    backing_offset_bytes: 0,
+                },
+            )?;
+
+            let tex = mgr.texture2d(1)?;
+            assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc1RgbaUnorm);
+            assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+            assert_eq!(
+                tex.desc.upload_transform,
+                TextureUploadTransform::Bc1ToRgba8
+            );
             Ok(())
         })
     }
