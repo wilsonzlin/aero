@@ -1624,6 +1624,9 @@ impl AerogpuD3d11Executor {
                 | OPCODE_CREATE_TEXTURE2D
                 | OPCODE_DESTROY_RESOURCE
                 | OPCODE_RESOURCE_DIRTY_RANGE
+                | OPCODE_UPLOAD_RESOURCE
+                | OPCODE_COPY_BUFFER
+                | OPCODE_COPY_TEXTURE2D
                 | OPCODE_CREATE_SAMPLER
                 | OPCODE_DESTROY_SAMPLER
                 | OPCODE_CREATE_SHADER_DXBC
@@ -1764,6 +1767,42 @@ impl AerogpuD3d11Executor {
                 }
                 let flags = read_u32_le(cmd_bytes, 8)?;
                 if flags != 0 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_UPLOAD_RESOURCE {
+                // UPLOAD_RESOURCE requires ending the pass to preserve ordering relative to draw
+                // commands, unless the upload is a no-op (size_bytes == 0).
+                if cmd_bytes.len() < 32 {
+                    break;
+                }
+                let size_bytes = read_u64_le(cmd_bytes, 24)?;
+                if size_bytes != 0 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_COPY_BUFFER {
+                // COPY_BUFFER requires ending the pass, unless it is a no-op (size_bytes == 0).
+                if cmd_bytes.len() < 48 {
+                    break;
+                }
+                let size_bytes = read_u64_le(cmd_bytes, 32)?;
+                if size_bytes != 0 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_COPY_TEXTURE2D {
+                // COPY_TEXTURE2D requires ending the pass, unless it is a no-op (width==0 ||
+                // height==0).
+                if cmd_bytes.len() < 64 {
+                    break;
+                }
+                let width = read_u32_le(cmd_bytes, 48)?;
+                let height = read_u32_le(cmd_bytes, 52)?;
+                if width != 0 && height != 0 {
                     break;
                 }
             }
@@ -2649,6 +2688,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
                 OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes)?,
                 OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes)?,
+                OPCODE_UPLOAD_RESOURCE | OPCODE_COPY_BUFFER | OPCODE_COPY_TEXTURE2D => {}
                 OPCODE_CLEAR => {}
                 OPCODE_SET_VERTEX_BUFFERS => {
                     let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
