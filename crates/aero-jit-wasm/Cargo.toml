@@ -13,9 +13,7 @@ wasm-threaded = []
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 aero-jit-x86 = { path = "../aero-jit-x86" }
 wasm-bindgen = "0.2"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
