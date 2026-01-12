@@ -42,17 +42,49 @@ impl SparseHeader {
         if buf[..8] != SPARSE_MAGIC {
             return Err(DiskError::CorruptImage("sparse magic mismatch"));
         }
-        let version = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+        let version = u32::from_le_bytes(
+            buf[8..12]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
         if version != SPARSE_VERSION {
             return Err(DiskError::Unsupported("sparse version"));
         }
-        let sector_size = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-        let block_size = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-        let total_sectors = u64::from_le_bytes(buf[20..28].try_into().unwrap());
-        let table_offset = u64::from_le_bytes(buf[28..36].try_into().unwrap());
-        let table_entries = u64::from_le_bytes(buf[36..44].try_into().unwrap());
-        let journal_offset = u64::from_le_bytes(buf[44..52].try_into().unwrap());
-        let data_offset = u64::from_le_bytes(buf[52..60].try_into().unwrap());
+        let sector_size = u32::from_le_bytes(
+            buf[12..16]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
+        let block_size = u32::from_le_bytes(
+            buf[16..20]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
+        let total_sectors = u64::from_le_bytes(
+            buf[20..28]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
+        let table_offset = u64::from_le_bytes(
+            buf[28..36]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
+        let table_entries = u64::from_le_bytes(
+            buf[36..44]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
+        let journal_offset = u64::from_le_bytes(
+            buf[44..52]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
+        let data_offset = u64::from_le_bytes(
+            buf[52..60]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse header truncated"))?,
+        );
 
         if sector_size != 512 && sector_size != 4096 {
             return Err(DiskError::Unsupported("sector size (expected 512 or 4096)"));
@@ -165,8 +197,16 @@ impl JournalRecord {
             return Ok(Self::empty());
         }
         let state = buf[4];
-        let logical_block = u64::from_le_bytes(buf[8..16].try_into().unwrap());
-        let physical_offset = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+        let logical_block = u64::from_le_bytes(
+            buf[8..16]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse journal truncated"))?,
+        );
+        let physical_offset = u64::from_le_bytes(
+            buf[16..24]
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("sparse journal truncated"))?,
+        );
         Ok(Self {
             state,
             logical_block,
@@ -240,12 +280,19 @@ impl<S: ByteStorage> SparseDisk<S> {
         Ok(Self {
             storage,
             header,
-            table: vec![0u64; table_entries_usize],
+            table: {
+                let mut table = Vec::new();
+                table
+                    .try_reserve_exact(table_entries_usize)
+                    .map_err(|_| DiskError::QuotaExceeded)?;
+                table.resize(table_entries_usize, 0);
+                table
+            },
         })
     }
 
     pub fn open(mut storage: S) -> DiskResult<Self> {
-        let mut header_buf = vec![0u8; HEADER_SIZE as usize];
+        let mut header_buf = [0u8; HEADER_SIZE as usize];
         storage.read_at(0, &mut header_buf)?;
         let header = SparseHeader::decode(&header_buf)?;
 
@@ -261,18 +308,47 @@ impl<S: ByteStorage> SparseDisk<S> {
         if table_bytes > MAX_TABLE_BYTES {
             return Err(DiskError::Unsupported("allocation table too large"));
         }
-        let table_bytes_usize: usize = table_bytes
-            .try_into()
-            .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
-        let mut table_buf = vec![0u8; table_bytes_usize];
-        storage.read_at(header.table_offset, &mut table_buf)?;
         let table_entries_usize: usize = header
             .table_entries
             .try_into()
             .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
-        let mut table = Vec::with_capacity(table_entries_usize);
-        for chunk in table_buf.chunks_exact(8) {
-            table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+
+        // Read the allocation table without allocating an additional full-size temporary buffer.
+        //
+        // This keeps opens lightweight even for large-but-valid tables, and prevents aborting on
+        // OOM for corrupt images that claim extreme table sizes.
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(table_entries_usize)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        let table_bytes_usize: usize = table_bytes
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("allocation table too large"))?;
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(64 * 1024)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        buf.resize(64 * 1024, 0);
+        let mut remaining = table_bytes_usize;
+        let mut off = header.table_offset;
+        while remaining > 0 {
+            let read_len = remaining.min(buf.len());
+            match storage.read_at(off, &mut buf[..read_len]) {
+                Ok(()) => {}
+                Err(DiskError::OutOfBounds) => {
+                    return Err(DiskError::CorruptImage("allocation table out of bounds"));
+                }
+                Err(e) => return Err(e),
+            }
+            for chunk in buf[..read_len].chunks_exact(8) {
+                let bytes: [u8; 8] = chunk
+                    .try_into()
+                    .map_err(|_| DiskError::CorruptImage("allocation table decode error"))?;
+                table.push(u64::from_le_bytes(bytes));
+            }
+            off = off
+                .checked_add(read_len as u64)
+                .ok_or(DiskError::OutOfBounds)?;
+            remaining -= read_len;
         }
 
         let mut disk = Self {
