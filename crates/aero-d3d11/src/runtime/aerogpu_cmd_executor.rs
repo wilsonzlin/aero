@@ -97,6 +97,10 @@ const OPCODE_DRAW_INDEXED: u32 = AerogpuCmdOpcode::DrawIndexed as u32;
 const OPCODE_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 const OPCODE_PRESENT_EX: u32 = AerogpuCmdOpcode::PresentEx as u32;
 
+const OPCODE_EXPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ExportSharedSurface as u32;
+const OPCODE_IMPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ImportSharedSurface as u32;
+const OPCODE_RELEASE_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ReleaseSharedSurface as u32;
+
 const OPCODE_FLUSH: u32 = AerogpuCmdOpcode::Flush as u32;
 
 const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
@@ -122,6 +126,161 @@ pub struct PresentEvent {
     pub flags: u32,
     pub d3d9_present_flags: Option<u32>,
     pub presented_render_target: Option<u32>,
+}
+
+/// Shared surface bookkeeping for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+///
+/// This is the host-side equivalent of the Win7 KMD/UMD shared-resource protocol:
+/// - `EXPORT` associates a stable `share_token` with an existing resource handle.
+/// - `IMPORT` creates a new handle aliasing the exported resource.
+/// - `RELEASE_SHARED_SURFACE` removes the token mapping and retires it (imports must fail).
+/// - `DESTROY_RESOURCE` decrements refcounts and destroys the underlying resource only when the
+///   final handle (original or alias) is released.
+#[derive(Debug, Default)]
+struct SharedSurfaceTable {
+    /// `share_token -> underlying resource handle`.
+    by_token: HashMap<u64, u32>,
+    /// Tokens that were released (or otherwise removed) and must not be reused.
+    retired_tokens: HashSet<u64>,
+    /// `handle -> underlying resource handle`.
+    ///
+    /// - Original resources are stored as `handle -> handle`
+    /// - Imported aliases are stored as `alias_handle -> underlying_handle`
+    handles: HashMap<u32, u32>,
+    /// `underlying handle -> refcount`.
+    refcounts: HashMap<u32, u32>,
+}
+
+impl SharedSurfaceTable {
+    fn retire_tokens_for_underlying(&mut self, underlying: u32) {
+        let to_retire: Vec<u64> = self
+            .by_token
+            .iter()
+            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
+            .collect();
+        for token in to_retire {
+            self.by_token.remove(&token);
+            self.retired_tokens.insert(token);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.by_token.clear();
+        self.retired_tokens.clear();
+        self.handles.clear();
+        self.refcounts.clear();
+    }
+
+    fn register_handle(&mut self, handle: u32) {
+        if handle == 0 {
+            return;
+        }
+        if self.handles.contains_key(&handle) {
+            return;
+        }
+        self.handles.insert(handle, handle);
+        *self.refcounts.entry(handle).or_insert(0) += 1;
+    }
+
+    fn resolve_handle(&self, handle: u32) -> u32 {
+        self.handles.get(&handle).copied().unwrap_or(handle)
+    }
+
+    fn export(&mut self, resource_handle: u32, share_token: u64) -> Result<()> {
+        if resource_handle == 0 {
+            bail!("EXPORT_SHARED_SURFACE: invalid resource handle 0");
+        }
+        if share_token == 0 {
+            bail!("EXPORT_SHARED_SURFACE: invalid share_token 0");
+        }
+        if self.retired_tokens.contains(&share_token) {
+            bail!(
+                "EXPORT_SHARED_SURFACE: share_token 0x{share_token:016X} was previously released"
+            );
+        }
+        let underlying = self
+            .handles
+            .get(&resource_handle)
+            .copied()
+            .ok_or_else(|| anyhow!("EXPORT_SHARED_SURFACE: unknown resource handle {resource_handle}"))?;
+
+        if let Some(&existing) = self.by_token.get(&share_token) {
+            if existing != underlying {
+                bail!(
+                    "EXPORT_SHARED_SURFACE: share_token 0x{share_token:016X} already exported (existing={existing} new={underlying})"
+                );
+            }
+            return Ok(());
+        }
+
+        self.by_token.insert(share_token, underlying);
+        Ok(())
+    }
+
+    fn import(&mut self, out_handle: u32, share_token: u64) -> Result<()> {
+        if out_handle == 0 {
+            bail!("IMPORT_SHARED_SURFACE: invalid out_resource_handle 0");
+        }
+        if share_token == 0 {
+            bail!("IMPORT_SHARED_SURFACE: invalid share_token 0");
+        }
+        let Some(&underlying) = self.by_token.get(&share_token) else {
+            bail!(
+                "IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)"
+            );
+        };
+
+        if !self.refcounts.contains_key(&underlying) {
+            bail!(
+                "IMPORT_SHARED_SURFACE: share_token 0x{share_token:016X} refers to destroyed handle {underlying}"
+            );
+        }
+
+        if let Some(&existing) = self.handles.get(&out_handle) {
+            if existing != underlying {
+                bail!(
+                    "IMPORT_SHARED_SURFACE: out_resource_handle {out_handle} already bound (existing={existing} new={underlying})"
+                );
+            }
+            return Ok(());
+        }
+
+        self.handles.insert(out_handle, underlying);
+        *self.refcounts.entry(underlying).or_insert(0) += 1;
+        Ok(())
+    }
+
+    fn release_token(&mut self, share_token: u64) {
+        if share_token == 0 {
+            return;
+        }
+        self.by_token.remove(&share_token);
+        self.retired_tokens.insert(share_token);
+    }
+
+    /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if tracked.
+    fn destroy_handle(&mut self, handle: u32) -> Option<(u32, bool)> {
+        if handle == 0 {
+            return None;
+        }
+
+        let underlying = self.handles.remove(&handle)?;
+        let Some(count) = self.refcounts.get_mut(&underlying) else {
+            // Table invariant broken (handle tracked but no refcount entry). Treat as last-ref so
+            // callers can clean up the underlying resource instead of leaking it.
+            self.retire_tokens_for_underlying(underlying);
+            return Some((underlying, true));
+        };
+
+        *count = count.saturating_sub(1);
+        if *count != 0 {
+            return Some((underlying, false));
+        }
+
+        self.refcounts.remove(&underlying);
+        self.retire_tokens_for_underlying(underlying);
+        Some((underlying, true))
+    }
 }
 
 struct CmdStreamCtx<'a, 'b> {
@@ -371,6 +530,7 @@ pub struct AerogpuD3d11Executor {
 
     resources: AerogpuD3d11Resources,
     state: AerogpuD3d11State,
+    shared_surfaces: SharedSurfaceTable,
 
     bindings: BindingState,
     legacy_constants: HashMap<ShaderStage, wgpu::Buffer>,
@@ -583,6 +743,7 @@ impl AerogpuD3d11Executor {
             queue,
             resources: AerogpuD3d11Resources::default(),
             state: AerogpuD3d11State::default(),
+            shared_surfaces: SharedSurfaceTable::default(),
             bindings,
             legacy_constants,
             cbuffer_scratch: HashMap::new(),
@@ -608,6 +769,7 @@ impl AerogpuD3d11Executor {
     pub fn reset(&mut self) {
         self.resources = AerogpuD3d11Resources::default();
         self.state = AerogpuD3d11State::default();
+        self.shared_surfaces.clear();
         self.pipeline_cache.clear();
         self.cbuffer_scratch.clear();
         self.encoder_used_buffers.clear();
@@ -653,6 +815,7 @@ impl AerogpuD3d11Executor {
     }
 
     pub fn texture_size(&self, texture_id: u32) -> Result<(u32, u32)> {
+        let texture_id = self.shared_surfaces.resolve_handle(texture_id);
         let texture = self
             .resources
             .textures
@@ -662,6 +825,7 @@ impl AerogpuD3d11Executor {
     }
 
     pub async fn read_texture_rgba8(&self, texture_id: u32) -> Result<Vec<u8>> {
+        let texture_id = self.shared_surfaces.resolve_handle(texture_id);
         let texture = self
             .resources
             .textures
@@ -1306,6 +1470,9 @@ impl AerogpuD3d11Executor {
             OPCODE_CLEAR => self.exec_clear(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_PRESENT => self.exec_present(encoder, cmd_bytes, report),
             OPCODE_PRESENT_EX => self.exec_present_ex(encoder, cmd_bytes, report),
+            OPCODE_EXPORT_SHARED_SURFACE => self.exec_export_shared_surface(cmd_bytes),
+            OPCODE_IMPORT_SHARED_SURFACE => self.exec_import_shared_surface(cmd_bytes),
+            OPCODE_RELEASE_SHARED_SURFACE => self.exec_release_shared_surface(cmd_bytes),
             OPCODE_FLUSH => self.exec_flush(encoder),
             // Known-but-ignored state that should not crash bring-up.
             OPCODE_SET_RENDER_STATE => Ok(()),
@@ -1883,7 +2050,7 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() < 32 {
                     break;
                 }
-                let handle = read_u32_le(cmd_bytes, 8)?;
+                let handle = self.shared_surfaces.resolve_handle(read_u32_le(cmd_bytes, 8)?);
                 let size_bytes = read_u64_le(cmd_bytes, 24)?;
                 if size_bytes != 0 {
                     if self.resources.buffers.contains_key(&handle) {
@@ -1931,7 +2098,7 @@ impl AerogpuD3d11Executor {
                 if cmd_bytes.len() < 16 {
                     break;
                 }
-                let handle = read_u32_le(cmd_bytes, 8)?;
+                let handle = self.shared_surfaces.resolve_handle(read_u32_le(cmd_bytes, 8)?);
                 let mut needs_break = false;
 
                 if render_targets.contains(&handle) || depth_stencil.is_some_and(|ds| ds == handle)
@@ -2341,6 +2508,7 @@ impl AerogpuD3d11Executor {
                     let slot = read_u32_le(cmd_bytes, 12)?;
                     let texture = read_u32_le(cmd_bytes, 16)?;
                     if texture != 0 {
+                        let texture = self.shared_surfaces.resolve_handle(texture);
                         let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
                             break;
                         };
@@ -2387,6 +2555,7 @@ impl AerogpuD3d11Executor {
                         needs_break = true;
                         break;
                     }
+                    let buffer = self.shared_surfaces.resolve_handle(buffer);
 
                     let stride_bytes = u32::from_le(binding.stride_bytes);
                     let current_stride = self
@@ -2419,14 +2588,15 @@ impl AerogpuD3d11Executor {
 
             if opcode == OPCODE_SET_INDEX_BUFFER {
                 // `struct aerogpu_cmd_set_index_buffer` (24 bytes)
-                if cmd_bytes.len() >= 12 {
-                    let buffer = read_u32_le(cmd_bytes, 8)?;
-                    if buffer != 0 {
-                        if let Some(buf) = self.resources.buffers.get(&buffer) {
-                            if buf.backing.is_some()
-                                && buf.dirty.is_some()
-                                && self.encoder_used_buffers.contains(&buffer)
-                            {
+                    if cmd_bytes.len() >= 12 {
+                        let buffer = read_u32_le(cmd_bytes, 8)?;
+                        if buffer != 0 {
+                            let buffer = self.shared_surfaces.resolve_handle(buffer);
+                            if let Some(buf) = self.resources.buffers.get(&buffer) {
+                                if buf.backing.is_some()
+                                    && buf.dirty.is_some()
+                                    && self.encoder_used_buffers.contains(&buffer)
+                                {
                                 break;
                             }
                         }
@@ -2489,6 +2659,7 @@ impl AerogpuD3d11Executor {
                             if buffer == 0 || buffer == legacy_constants_buffer_id(stage) {
                                 continue;
                             }
+                            let buffer = self.shared_surfaces.resolve_handle(buffer);
                             if let Some(buf) = self.resources.buffers.get(&buffer) {
                                 if buf.backing.is_some()
                                     && buf.dirty.is_some()
@@ -3174,6 +3345,7 @@ impl AerogpuD3d11Executor {
         }
 
         self.resources.buffers.insert(buffer_handle, res);
+        self.shared_surfaces.register_handle(buffer_handle);
         Ok(())
     }
 
@@ -3282,6 +3454,7 @@ impl AerogpuD3d11Executor {
                 host_shadow: None,
             },
         );
+        self.shared_surfaces.register_handle(texture_handle);
         Ok(())
     }
 
@@ -3295,34 +3468,105 @@ impl AerogpuD3d11Executor {
         }
         let handle = read_u32_le(cmd_bytes, 8)?;
 
-        self.resources.buffers.remove(&handle);
-        self.resources.textures.remove(&handle);
-        self.encoder_used_buffers.remove(&handle);
-        self.encoder_used_textures.remove(&handle);
+        if let Some((underlying, last_ref)) = self.shared_surfaces.destroy_handle(handle) {
+            if last_ref {
+                self.resources.buffers.remove(&underlying);
+                self.resources.textures.remove(&underlying);
+                self.encoder_used_buffers.remove(&underlying);
+                self.encoder_used_textures.remove(&underlying);
 
-        // Clean up bindings in state.
-        self.state.render_targets.retain(|&rt| rt != handle);
-        if self.state.depth_stencil == Some(handle) {
-            self.state.depth_stencil = None;
-        }
-        for slot in &mut self.state.vertex_buffers {
-            if slot.is_some_and(|b| b.buffer == handle) {
-                *slot = None;
+                // Clean up bindings in state.
+                self.state.render_targets.retain(|&rt| rt != underlying);
+                if self.state.depth_stencil == Some(underlying) {
+                    self.state.depth_stencil = None;
+                }
+                for slot in &mut self.state.vertex_buffers {
+                    if slot.is_some_and(|b| b.buffer == underlying) {
+                        *slot = None;
+                    }
+                }
+                if self.state.index_buffer.is_some_and(|b| b.buffer == underlying) {
+                    self.state.index_buffer = None;
+                }
+                for stage in [
+                    ShaderStage::Vertex,
+                    ShaderStage::Pixel,
+                    ShaderStage::Compute,
+                ] {
+                    let stage_bindings = self.bindings.stage_mut(stage);
+                    stage_bindings.clear_texture_handle(underlying);
+                    stage_bindings.clear_constant_buffer_handle(underlying);
+                }
+            }
+        } else {
+            // Untracked handle; treat as a best-effort destroy (robustness).
+            self.resources.buffers.remove(&handle);
+            self.resources.textures.remove(&handle);
+            self.encoder_used_buffers.remove(&handle);
+            self.encoder_used_textures.remove(&handle);
+
+            self.state.render_targets.retain(|&rt| rt != handle);
+            if self.state.depth_stencil == Some(handle) {
+                self.state.depth_stencil = None;
+            }
+            for slot in &mut self.state.vertex_buffers {
+                if slot.is_some_and(|b| b.buffer == handle) {
+                    *slot = None;
+                }
+            }
+            if self.state.index_buffer.is_some_and(|b| b.buffer == handle) {
+                self.state.index_buffer = None;
+            }
+            for stage in [
+                ShaderStage::Vertex,
+                ShaderStage::Pixel,
+                ShaderStage::Compute,
+            ] {
+                let stage_bindings = self.bindings.stage_mut(stage);
+                stage_bindings.clear_texture_handle(handle);
+                stage_bindings.clear_constant_buffer_handle(handle);
             }
         }
-        if self.state.index_buffer.is_some_and(|b| b.buffer == handle) {
-            self.state.index_buffer = None;
-        }
-        for stage in [
-            ShaderStage::Vertex,
-            ShaderStage::Pixel,
-            ShaderStage::Compute,
-        ] {
-            let stage_bindings = self.bindings.stage_mut(stage);
-            stage_bindings.clear_texture_handle(handle);
-            stage_bindings.clear_constant_buffer_handle(handle);
-        }
 
+        Ok(())
+    }
+
+    fn exec_export_shared_surface(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        // struct aerogpu_cmd_export_shared_surface (24 bytes)
+        if cmd_bytes.len() < 24 {
+            bail!(
+                "EXPORT_SHARED_SURFACE: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
+        }
+        let resource_handle = read_u32_le(cmd_bytes, 8)?;
+        let share_token = read_u64_le(cmd_bytes, 16)?;
+        self.shared_surfaces.export(resource_handle, share_token)
+    }
+
+    fn exec_import_shared_surface(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        // struct aerogpu_cmd_import_shared_surface (24 bytes)
+        if cmd_bytes.len() < 24 {
+            bail!(
+                "IMPORT_SHARED_SURFACE: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
+        }
+        let out_handle = read_u32_le(cmd_bytes, 8)?;
+        let share_token = read_u64_le(cmd_bytes, 16)?;
+        self.shared_surfaces.import(out_handle, share_token)
+    }
+
+    fn exec_release_shared_surface(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        // struct aerogpu_cmd_release_shared_surface (24 bytes)
+        if cmd_bytes.len() < 24 {
+            bail!(
+                "RELEASE_SHARED_SURFACE: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
+        }
+        let share_token = read_u64_le(cmd_bytes, 8)?;
+        self.shared_surfaces.release_token(share_token);
         Ok(())
     }
 
@@ -3337,6 +3581,7 @@ impl AerogpuD3d11Executor {
         let handle = read_u32_le(cmd_bytes, 8)?;
         let offset = read_u64_le(cmd_bytes, 16)?;
         let size = read_u64_le(cmd_bytes, 24)?;
+        let handle = self.shared_surfaces.resolve_handle(handle);
 
         if let Some(buf) = self.resources.buffers.get_mut(&handle) {
             let end = offset.saturating_add(size).min(buf.size);
@@ -3355,7 +3600,7 @@ impl AerogpuD3d11Executor {
     ) -> Result<()> {
         let (cmd, data) = decode_cmd_upload_resource_payload_le(cmd_bytes)
             .map_err(|e| anyhow!("UPLOAD_RESOURCE: invalid payload: {e:?}"))?;
-        let handle = cmd.resource_handle;
+        let handle = self.shared_surfaces.resolve_handle(cmd.resource_handle);
         let offset = cmd.offset_bytes;
         let size = cmd.size_bytes;
 
@@ -3384,6 +3629,7 @@ impl AerogpuD3d11Executor {
         if size == 0 {
             return Ok(());
         }
+        let handle = self.shared_surfaces.resolve_handle(handle);
 
         if let Some((buffer_size, buffer_gpu_size)) = self
             .resources
@@ -3708,8 +3954,8 @@ impl AerogpuD3d11Executor {
             .map_err(|e| anyhow!("COPY_BUFFER: invalid payload: {e:?}"))?;
         // `AerogpuCmdCopyBuffer` is `repr(C, packed)` (ABI mirror); copy out fields before use to
         // avoid taking references to packed fields.
-        let dst_buffer = cmd.dst_buffer;
-        let src_buffer = cmd.src_buffer;
+        let dst_buffer = self.shared_surfaces.resolve_handle(cmd.dst_buffer);
+        let src_buffer = self.shared_surfaces.resolve_handle(cmd.src_buffer);
         let dst_offset_bytes = cmd.dst_offset_bytes;
         let src_offset_bytes = cmd.src_offset_bytes;
         let size_bytes = cmd.size_bytes;
@@ -3912,8 +4158,8 @@ impl AerogpuD3d11Executor {
             .map_err(|e| anyhow!("COPY_TEXTURE2D: invalid payload: {e:?}"))?;
         // `AerogpuCmdCopyTexture2d` is `repr(C, packed)` (ABI mirror); copy out fields before use
         // to avoid taking references to packed fields.
-        let dst_texture = cmd.dst_texture;
-        let src_texture = cmd.src_texture;
+        let dst_texture = self.shared_surfaces.resolve_handle(cmd.dst_texture);
+        let src_texture = self.shared_surfaces.resolve_handle(cmd.src_texture);
         let dst_mip_level = cmd.dst_mip_level;
         let dst_array_layer = cmd.dst_array_layer;
         let src_mip_level = cmd.src_mip_level;
@@ -4473,7 +4719,11 @@ impl AerogpuD3d11Executor {
 
         let stage = ShaderStage::from_aerogpu_u32(stage_raw)
             .ok_or_else(|| anyhow!("SET_TEXTURE: unknown shader stage {stage_raw}"))?;
-        let texture = if texture == 0 { None } else { Some(texture) };
+        let texture = if texture == 0 {
+            None
+        } else {
+            Some(self.shared_surfaces.resolve_handle(texture))
+        };
         self.bindings.stage_mut(stage).set_texture(slot, texture);
         Ok(())
     }
@@ -4659,14 +4909,15 @@ impl AerogpuD3d11Executor {
 
         for i in 0..buffer_count {
             let base = 24 + i * 16;
-            let buffer = read_u32_le(cmd_bytes, base)?;
+            let buffer_raw = read_u32_le(cmd_bytes, base)?;
             let offset_bytes = read_u32_le(cmd_bytes, base + 4)?;
             let size_bytes = read_u32_le(cmd_bytes, base + 8)?;
             // reserved0 @ +12 ignored.
 
-            let bound = if buffer == 0 {
+            let bound = if buffer_raw == 0 {
                 None
             } else {
+                let buffer = self.shared_surfaces.resolve_handle(buffer_raw);
                 Some(BoundConstantBuffer {
                     buffer,
                     offset: offset_bytes as u64,
@@ -4756,13 +5007,13 @@ impl AerogpuD3d11Executor {
             if seen_gap {
                 bail!("SET_RENDER_TARGETS: render target slot {i} is set after an earlier slot was unbound (gaps are not supported yet)");
             }
-            colors.push(tex_id);
+            colors.push(self.shared_surfaces.resolve_handle(tex_id));
         }
         self.state.render_targets = colors;
         self.state.depth_stencil = if depth_stencil == 0 {
             None
         } else {
-            Some(depth_stencil)
+            Some(self.shared_surfaces.resolve_handle(depth_stencil))
         };
         Ok(())
     }
@@ -4836,7 +5087,12 @@ impl AerogpuD3d11Executor {
         }
 
         for (i, binding) in bindings.iter().copied().enumerate() {
-            let buffer = u32::from_le(binding.buffer);
+            let buffer_raw = u32::from_le(binding.buffer);
+            let buffer = if buffer_raw == 0 {
+                0
+            } else {
+                self.shared_surfaces.resolve_handle(buffer_raw)
+            };
             let stride_bytes = u32::from_le(binding.stride_bytes);
             let offset_bytes = u64::from(u32::from_le(binding.offset_bytes));
 
@@ -4869,6 +5125,7 @@ impl AerogpuD3d11Executor {
             self.state.index_buffer = None;
             return Ok(());
         }
+        let buffer = self.shared_surfaces.resolve_handle(buffer);
 
         let format = match format_u32 {
             0 => wgpu::IndexFormat::Uint16,
@@ -5172,7 +5429,12 @@ impl AerogpuD3d11Executor {
         }
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;
-        let presented_render_target = self.state.render_targets.first().copied();
+        let presented_render_target = self
+            .state
+            .render_targets
+            .first()
+            .copied()
+            .map(|h| self.shared_surfaces.resolve_handle(h));
         report.presents.push(PresentEvent {
             scanout_id,
             flags,
@@ -5199,7 +5461,12 @@ impl AerogpuD3d11Executor {
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;
         let d3d9_present_flags = read_u32_le(cmd_bytes, 16)?;
-        let presented_render_target = self.state.render_targets.first().copied();
+        let presented_render_target = self
+            .state
+            .render_targets
+            .first()
+            .copied()
+            .map(|h| self.shared_surfaces.resolve_handle(h));
         report.presents.push(PresentEvent {
             scanout_id,
             flags,
