@@ -8,6 +8,8 @@ mod types;
 
 #[cfg(feature = "io-snapshot")]
 pub mod io_snapshot_bridge;
+#[cfg(feature = "io-snapshot")]
+pub use crate::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 
 pub use crate::cpu_core::{
     apply_cpu_internal_state_to_cpu_core, apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core,

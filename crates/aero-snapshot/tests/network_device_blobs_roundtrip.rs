@@ -7,11 +7,10 @@ use aero_net_stack::packet::MacAddr;
 use aero_net_stack::{
     DnsCacheEntrySnapshot, NetworkStackSnapshotState, TcpConnectionSnapshot, TcpConnectionStatus,
 };
-use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 use aero_snapshot::{
-    restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
-    MmuState, Result, SaveOptions, SnapshotError as AeroSnapshotError, SnapshotMeta, SnapshotSource,
-    SnapshotTarget,
+    apply_io_snapshot_to_device, device_state_from_io_snapshot, restore_snapshot, save_snapshot,
+    Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, Result, SaveOptions,
+    SnapshotError as AeroSnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
 // E1000 register offsets (subset) used to perturb the device into a non-default state.
