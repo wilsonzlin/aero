@@ -513,6 +513,8 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
             self.pm1_en = v;
         }
         if let Some(v) = r.u16(TAG_PM1_CNT)? {
+            // Restore PM1a_CNT directly. Snapshot loads must not replay guest port writes
+            // as those may trigger host callbacks (e.g. S5 shutdown via SLP_TYP/SLP_EN).
             self.pm1_cnt = v;
         }
 
@@ -538,7 +540,6 @@ impl<C: Clock> IoSnapshot for AcpiPmIo<C> {
 
         // Re-drive SCI based on the restored latch/enabled state.
         self.update_sci();
-
         Ok(())
     }
 }
