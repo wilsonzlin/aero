@@ -122,6 +122,12 @@ const DEFAULT_TLB_SALT: u64 = 0x1234_5678_9abc_def0;
 /// other Tier-2 metadata slots.
 const COMMIT_FLAG_OFFSET: u32 = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
 const COMMIT_FLAG_BYTES: u32 = 4;
+const _: () = {
+    // Commit flag is a `u32` slot at a stable offset after the Tier-2 context region.
+    assert!(COMMIT_FLAG_BYTES == 4);
+    assert!(COMMIT_FLAG_OFFSET == TIER2_CTX_OFFSET + TIER2_CTX_SIZE);
+    assert!(COMMIT_FLAG_OFFSET % 4 == 0);
+};
 
 /// Exported Tier-1 JIT ABI layout constants.
 ///
