@@ -254,12 +254,13 @@ func portInRanges(port uint16, ranges []PortRange) bool {
 }
 
 func ipInNets(ip net.IP, nets []*net.IPNet) bool {
+	ip4 := ip.To4()
+	var ip16 net.IP
 	for _, n := range nets {
 		if n == nil {
 			continue
 		}
 		if n.IP.To4() != nil {
-			ip4 := ip.To4()
 			if ip4 == nil {
 				continue
 			}
@@ -268,7 +269,9 @@ func ipInNets(ip net.IP, nets []*net.IPNet) bool {
 			}
 			continue
 		}
-		ip16 := ip.To16()
+		if ip16 == nil {
+			ip16 = ip.To16()
+		}
 		if ip16 == nil {
 			continue
 		}
