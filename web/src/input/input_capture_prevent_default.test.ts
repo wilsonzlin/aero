@@ -116,4 +116,80 @@ describe("InputCapture preventDefault policy", () => {
       expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("releases captured mouse buttons even if mouseup occurs outside the canvas (drag-out)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      // Simulate the canvas being focused (capture active).
+      (capture as any).hasFocus = true;
+
+      const downPreventDefault = vi.fn();
+      const downStopPropagation = vi.fn();
+      (capture as any).handleMouseDown({
+        button: 0,
+        preventDefault: downPreventDefault,
+        stopPropagation: downStopPropagation,
+        timeStamp: 0,
+        target: canvas,
+      } as unknown as MouseEvent);
+
+      expect(downPreventDefault).toHaveBeenCalledTimes(1);
+      expect(downStopPropagation).toHaveBeenCalledTimes(1);
+      expect((capture as any).mouseButtons).toBe(1);
+      expect((capture as any).queue.size).toBe(1);
+
+      const upPreventDefault = vi.fn();
+      const upStopPropagation = vi.fn();
+      (capture as any).handleMouseUp({
+        button: 0,
+        preventDefault: upPreventDefault,
+        stopPropagation: upStopPropagation,
+        timeStamp: 1,
+        // Not the canvas: common when the user drags outside the VM and releases.
+        target: {},
+      } as unknown as MouseEvent);
+
+      expect(upPreventDefault).toHaveBeenCalledTimes(1);
+      expect(upStopPropagation).toHaveBeenCalledTimes(1);
+      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as any).queue.size).toBe(2);
+    });
+  });
+
+  it("does not swallow mouseup events outside the canvas when the VM was not tracking that button", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      (capture as any).hasFocus = true;
+
+      const upPreventDefault = vi.fn();
+      const upStopPropagation = vi.fn();
+      (capture as any).handleMouseUp({
+        button: 0,
+        preventDefault: upPreventDefault,
+        stopPropagation: upStopPropagation,
+        timeStamp: 0,
+        target: {},
+      } as unknown as MouseEvent);
+
+      expect(upPreventDefault).toHaveBeenCalledTimes(0);
+      expect(upStopPropagation).toHaveBeenCalledTimes(0);
+      expect((capture as any).queue.size).toBe(0);
+    });
+  });
 });
