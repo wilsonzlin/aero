@@ -578,7 +578,11 @@ async fn token_required_query_and_subprotocol() {
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
         "sec-websocket-protocol",
-        HeaderValue::from_static("aero-l2-tunnel-v1, aero-l2-token.sekrit"),
+        HeaderValue::from_str(&format!(
+            "{TUNNEL_SUBPROTOCOL}, {}sekrit",
+            aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX
+        ))
+        .unwrap(),
     );
     req.headers_mut()
         .insert("origin", HeaderValue::from_static("https://any.test"));
@@ -653,7 +657,11 @@ async fn api_key_auth_mode_accepts_query_and_subprotocol_tokens() {
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
         "sec-websocket-protocol",
-        HeaderValue::from_static("aero-l2-tunnel-v1, aero-l2-token.sekrit"),
+        HeaderValue::from_str(&format!(
+            "{TUNNEL_SUBPROTOCOL}, {}sekrit",
+            aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX
+        ))
+        .unwrap(),
     );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;
@@ -772,7 +780,11 @@ async fn jwt_auth_accepts_query_and_subprotocol_tokens() {
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
         "sec-websocket-protocol",
-        HeaderValue::from_str(&format!("aero-l2-tunnel-v1, aero-l2-token.{token}")).unwrap(),
+        HeaderValue::from_str(&format!(
+            "{TUNNEL_SUBPROTOCOL}, {}{token}",
+            aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX
+        ))
+        .unwrap(),
     );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Close(None)).await;

@@ -13,6 +13,14 @@ pub const L2_TUNNEL_VERSION: u8 = 0x03;
 // - web/src/shared/l2TunnelProtocol.ts
 pub const L2_TUNNEL_SUBPROTOCOL: &str = "aero-l2-tunnel-v1";
 
+// Optional auth token WebSocket subprotocol prefix (see docs/l2-tunnel-protocol.md).
+//
+// Clients MAY offer an additional `Sec-WebSocket-Protocol` value
+// `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`. The server still
+// negotiates `aero-l2-tunnel-v1` for framing; the token entry is used only for
+// upgrade-time authentication.
+pub const L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX: &str = "aero-l2-token.";
+
 pub const L2_TUNNEL_HEADER_LEN: usize = 4;
 
 pub const L2_TUNNEL_TYPE_FRAME: u8 = 0x00;

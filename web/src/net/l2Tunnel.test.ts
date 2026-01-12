@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PONG,
+  L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX,
   L2_TUNNEL_VERSION,
   decodeL2Message,
   encodeError,
@@ -426,7 +427,10 @@ describe("net/l2Tunnel", () => {
     try {
       client.connect();
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
-      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+      expect(FakeWebSocket.last?.protocols).toEqual([
+        L2_TUNNEL_SUBPROTOCOL,
+        `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`,
+      ]);
 
       FakeWebSocket.last?.open();
       expect(events[0]?.type).toBe("open");
@@ -463,7 +467,10 @@ describe("net/l2Tunnel", () => {
     try {
       client.connect();
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?foo=bar");
-      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+      expect(FakeWebSocket.last?.protocols).toEqual([
+        L2_TUNNEL_SUBPROTOCOL,
+        `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`,
+      ]);
 
       FakeWebSocket.last?.open();
       expect(events[0]?.type).toBe("open");
@@ -496,7 +503,10 @@ describe("net/l2Tunnel", () => {
     try {
       client.connect();
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit");
-      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+      expect(FakeWebSocket.last?.protocols).toEqual([
+        L2_TUNNEL_SUBPROTOCOL,
+        `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`,
+      ]);
 
       FakeWebSocket.last?.open();
       expect(events[0]?.type).toBe("open");
@@ -533,7 +543,10 @@ describe("net/l2Tunnel", () => {
     try {
       client.connect();
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit&foo=bar");
-      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+      expect(FakeWebSocket.last?.protocols).toEqual([
+        L2_TUNNEL_SUBPROTOCOL,
+        `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`,
+      ]);
 
       FakeWebSocket.last?.open();
       expect(events[0]?.type).toBe("open");
@@ -551,7 +564,7 @@ describe("net/l2Tunnel", () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
-    FakeWebSocket.nextProtocol = "aero-l2-token.sekrit";
+    FakeWebSocket.nextProtocol = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`;
     resetFakeWebSocket();
     g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
 

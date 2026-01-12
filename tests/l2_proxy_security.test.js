@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 
 import { WebSocket } from "../tools/minimal_ws.js";
-import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.ts";
+import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
@@ -213,7 +213,7 @@ test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TI
     await waitForClose(ok.ws);
 
     const protoOk = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
-      protocols: [L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"],
+      protocols: [L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`],
       headers: { origin: "https://app.example.com" },
     });
     assert.equal(protoOk.ok, true);
@@ -336,7 +336,7 @@ test("token auth mode accepts ?apiKey= and subprotocol credentials", { timeout: 
     await waitForClose(ok.ws);
 
     const protoOk = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
-      protocols: [L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"],
+      protocols: [L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`],
     });
     assert.equal(protoOk.ok, true);
     protoOk.ws.close(1000, "done");

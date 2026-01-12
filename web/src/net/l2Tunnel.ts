@@ -5,6 +5,7 @@ import {
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_SUBPROTOCOL,
+  L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX,
   decodeStructuredErrorPayload,
   decodeL2Message,
   encodeL2Frame,
@@ -14,7 +15,6 @@ import {
 
 export { L2_TUNNEL_SUBPROTOCOL };
 export const L2_TUNNEL_DATA_CHANNEL_LABEL = "l2";
-const L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX = "aero-l2-token.";
 
 // RFC 6455: Sec-WebSocket-Protocol values must be HTTP "tokens".
 // https://www.rfc-editor.org/rfc/rfc6455#section-4.1

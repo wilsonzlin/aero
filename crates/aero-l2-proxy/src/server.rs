@@ -1291,7 +1291,7 @@ fn token_present_in_subprotocol(headers: &HeaderMap) -> bool {
 
     value.split(',').map(str::trim).any(|proto| {
         proto
-            .strip_prefix("aero-l2-token.")
+            .strip_prefix(aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX)
             .is_some_and(|v| !v.is_empty())
     })
 }
@@ -1386,7 +1386,7 @@ fn token_from_subprotocol(headers: &HeaderMap) -> Option<String> {
 
     value.split(',').map(str::trim).find_map(|proto| {
         proto
-            .strip_prefix("aero-l2-token.")
+            .strip_prefix(aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX)
             .filter(|v| !v.is_empty())
             .map(|v| v.to_string())
     })

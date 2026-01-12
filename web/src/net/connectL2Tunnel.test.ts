@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { L2_TUNNEL_SUBPROTOCOL, type L2TunnelEvent } from "./l2Tunnel";
 import { connectL2Tunnel } from "./connectL2Tunnel";
+import { L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX } from "../shared/l2TunnelProtocol.ts";
 
 type WebSocketConstructor = new (url: string, protocols?: string | string[]) => WebSocket;
 
@@ -418,7 +419,10 @@ describe("net/connectL2Tunnel", () => {
 
     try {
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
-      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+      expect(FakeWebSocket.last?.protocols).toEqual([
+        L2_TUNNEL_SUBPROTOCOL,
+        `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`,
+      ]);
     } finally {
       tunnel.close();
       globalThis.fetch = originalFetch;
