@@ -284,6 +284,99 @@ fn pc_platform_uhci_dma_writes_mark_dirty_pages_when_enabled() {
 }
 
 #[test]
+fn pc_platform_gates_uhci_dma_on_pci_bus_master_enable() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let uhci = pc.uhci.as_ref().expect("UHCI should be enabled").clone();
+    let bdf = USB_UHCI_PIIX3.bdf;
+
+    const FRAME_LIST_BASE: u64 = 0x3000;
+    const TD_ADDR: u64 = 0x4000;
+    const LINK_PTR_TERMINATE: u32 = 1;
+    const TD_STATUS_ACTIVE: u32 = 1 << 23;
+    const TD_STATUS_CRC_TIMEOUT: u32 = 1 << 18;
+
+    // Frame list entry 0 points at our test TD.
+    pc.memory
+        .write_physical(FRAME_LIST_BASE, &(TD_ADDR as u32).to_le_bytes());
+
+    // TD layout: link, status/control, token, buffer.
+    pc.memory
+        .write_physical(TD_ADDR, &LINK_PTR_TERMINATE.to_le_bytes());
+    pc.memory
+        .write_physical(TD_ADDR + 4, &TD_STATUS_ACTIVE.to_le_bytes());
+
+    // Token: PID=IN (0x69), dev_addr=1 (no device attached), endpoint=0, max_len_field=0x7ff.
+    let token = 0x69u32 | (1u32 << 8) | (0x7ffu32 << 21);
+    pc.memory.write_physical(TD_ADDR + 8, &token.to_le_bytes());
+    pc.memory.write_physical(TD_ADDR + 12, &0u32.to_le_bytes());
+
+    // Disable Bus Mastering (but keep I/O decoding enabled) so UHCI DMA is gated off.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    let command_no_bme = command & !(1 << 2);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command_no_bme,
+    );
+    // Propagate the updated PCI command register into the UHCI model.
+    pc.tick(0);
+
+    // Program controller registers directly; I/O routing is tested elsewhere.
+    {
+        let mut dev = uhci.borrow_mut();
+        dev.controller_mut()
+            .io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE as u32);
+        dev.controller_mut().io_write(REG_FRNUM, 2, 0);
+        dev.controller_mut()
+            .io_write(REG_USBCMD, 2, u32::from(USBCMD_RS | USBCMD_MAXP));
+    }
+
+    uhci.borrow_mut().tick_1ms(&mut pc.memory);
+
+    let status = pc.memory.read_u32(TD_ADDR + 4);
+    assert_ne!(
+        status & TD_STATUS_ACTIVE,
+        0,
+        "TD should remain active when DMA is gated off"
+    );
+    assert_eq!(
+        status & TD_STATUS_CRC_TIMEOUT,
+        0,
+        "TD should not be updated when DMA is gated off"
+    );
+
+    // Reset FRNUM so the next tick uses frame list entry 0 again.
+    uhci.borrow_mut().controller_mut().io_write(REG_FRNUM, 2, 0);
+
+    // Enable bus mastering and retry; the pending TD should now be processed.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command_no_bme | (1 << 2),
+    );
+    pc.tick(0);
+    uhci.borrow_mut().tick_1ms(&mut pc.memory);
+
+    let status = pc.memory.read_u32(TD_ADDR + 4);
+    assert_eq!(
+        status & TD_STATUS_ACTIVE,
+        0,
+        "TD should complete once bus mastering is enabled"
+    );
+    assert_ne!(
+        status & TD_STATUS_CRC_TIMEOUT,
+        0,
+        "TD should record a CRC/timeout error when no device is attached"
+    );
+}
+
+#[test]
 fn pc_platform_routes_uhci_intx_via_pic_in_legacy_mode() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bar4_base = read_uhci_bar4_base(&mut pc);
