@@ -436,7 +436,7 @@ lint:
 
   if [[ -f "Cargo.toml" ]]; then
     echo "==> Rust: cargo clippy"
-    cargo clippy --locked --all-targets --all-features
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
   else
     echo "==> Rust: Cargo.toml not found; skipping cargo clippy"
   fi

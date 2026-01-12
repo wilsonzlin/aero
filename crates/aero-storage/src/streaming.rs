@@ -1063,11 +1063,17 @@ impl StreamingDisk {
                 .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
         );
         if let Some(validator) = &self.inner.validator {
-            headers.insert(
-                IF_RANGE,
-                HeaderValue::from_str(validator)
-                    .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
-            );
+            // RFC 9110 disallows weak ETags in `If-Range`. Some servers respond to
+            // `If-Range: W/"..."` by ignoring the Range and returning a full 200 OK.
+            // Avoid misclassifying the server as not supporting Range by omitting `If-Range`
+            // when the validator is a weak ETag.
+            if !validator_is_weak_etag(validator) {
+                headers.insert(
+                    IF_RANGE,
+                    HeaderValue::from_str(validator)
+                        .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
+                );
+            }
         }
         let req = self
             .inner
@@ -1115,6 +1121,19 @@ impl StreamingDisk {
             return Err(StreamingDiskError::HttpStatus {
                 status: resp.status().as_u16(),
             });
+        }
+
+        if let Some(expected) = &self.inner.validator {
+            let actual = extract_validator(resp.headers());
+            if actual
+                .as_deref()
+                .is_some_and(|validator| validator != expected.as_str())
+            {
+                return Err(StreamingDiskError::ValidatorMismatch {
+                    expected: Some(expected.clone()),
+                    actual,
+                });
+            }
         }
 
         if let Some(encoding) = resp
@@ -1281,6 +1300,10 @@ fn extract_validator(headers: &HeaderMap) -> Option<String> {
                 .and_then(|v| v.to_str().ok())
                 .map(|v| v.to_string())
         })
+}
+
+fn validator_is_weak_etag(validator: &str) -> bool {
+    validator.trim_start().starts_with("W/")
 }
 
 fn cache_backend_looks_populated(
