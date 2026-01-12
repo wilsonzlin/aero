@@ -86,3 +86,7 @@ The driver must not blindly dereference these addresses. The virtio-input driver
   (`IoAllocateMdl` + `MmProbeAndLockPages` + `MmGetSystemAddressForMdlSafe`), and releasing MDLs on
   request cleanup.
 - Keeping a fast path for `KernelMode` requests.
+
+This also applies to `IRP_MJ_CREATE` extended attributes (EA buffers). HID collection opens can
+provide a `HidCollection` EA, and the EA buffer may be a user pointer; the driver maps it before
+parsing.
