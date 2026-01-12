@@ -553,8 +553,8 @@ impl Machine {
 
     /// Inject relative mouse motion into the i8042 controller, if present.
     ///
-    /// `dx`/`dy` are in PS/2 coordinates: +X is right, +Y is down (browser-style). The underlying
-    /// PS/2 mouse model handles coordinate inversion as needed.
+    /// `dx` is positive to the right and `dy` is positive down (browser-style). The underlying PS/2
+    /// mouse model converts this into PS/2 packet coordinates (+Y is up).
     pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         if let Some(ctrl) = &self.i8042 {
             ctrl.borrow_mut().inject_mouse_motion(dx, dy, wheel);
