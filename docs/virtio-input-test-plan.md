@@ -49,16 +49,11 @@ bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_inpu
 Alternative (name-filter based; useful when you don’t remember the test binary name; may match 0 tests):
 
 ```bash
-# Required by this test plan (or equivalent).
 # NOTE: `cargo test -- <pattern>` is a name filter. Always confirm the output says
 # `running N tests` with N > 0; if you see `running 0 tests`, use `--test virtio_input`.
-./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
-
-# Practical equivalent in this repo (matches the `virtio_input` test binary name):
 ./scripts/safe-run.sh cargo test -p aero-virtio --locked -- virtio_input
 
 # Without safe-run.sh (no timeout / mem limit):
-cargo test -p aero-virtio --locked -- tests::virtio_input
 cargo test -p aero-virtio --locked -- virtio_input
 ```
 
@@ -413,6 +408,18 @@ Once virtio-input is wired into the web runtime PCI bus, validate the device is 
   - `cfg_type = 4` DEVICE
 
 #### How to check (practical approach)
+
+If you're working on the **TypeScript PCI device implementation** itself (as opposed to the full runtime wiring), the fastest check is the unit test:
+
+```bash
+# Runs in the `web/` workspace (Vitest).
+npm -w web run test:unit -- src/io/devices/virtio_input_pci.test.ts
+```
+
+Expected signal:
+
+- **Pass:** test exits with code `0`.
+- **Fail:** the assertion output will usually point directly at the drift (wrong IDs, wrong cap chain offsets, wrong BAR0 size, etc).
 
 Use the same “CPU ↔ IO worker” technique used by the existing PCI tests to read config space via PCI config mechanism #1 (ports `0xCF8`/`0xCFC`):
 
