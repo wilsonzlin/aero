@@ -7399,4 +7399,15 @@ mod tests {
             assert!(exec.encoder_has_commands);
         });
     }
+
+    #[test]
+    fn aerogpu_format_is_x8_includes_srgb_variants() {
+        assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_B8G8R8X8_UNORM));
+        assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_R8G8B8X8_UNORM));
+        assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB));
+        assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB));
+
+        assert!(!aerogpu_format_is_x8(AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB));
+        assert!(!aerogpu_format_is_x8(AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB));
+    }
 }

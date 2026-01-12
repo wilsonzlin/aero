@@ -8355,6 +8355,17 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn is_x8_format_includes_srgb_variants() {
+        assert!(super::is_x8_format(AerogpuFormat::B8G8R8X8Unorm as u32));
+        assert!(super::is_x8_format(AerogpuFormat::R8G8B8X8Unorm as u32));
+        assert!(super::is_x8_format(AerogpuFormat::B8G8R8X8UnormSrgb as u32));
+        assert!(super::is_x8_format(AerogpuFormat::R8G8B8X8UnormSrgb as u32));
+
+        assert!(!super::is_x8_format(AerogpuFormat::B8G8R8A8UnormSrgb as u32));
+        assert!(!super::is_x8_format(AerogpuFormat::R8G8B8A8UnormSrgb as u32));
+    }
+
+    #[test]
     fn d3d9_cull_mode_mapping_tracks_front_ccw() {
         let map = AerogpuD3d9Executor::map_d3d9_cull_mode;
 

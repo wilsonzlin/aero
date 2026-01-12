@@ -3496,6 +3496,17 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn is_x8_format_includes_srgb_variants() {
+        assert!(is_x8_format(pci::AerogpuFormat::B8G8R8X8Unorm as u32));
+        assert!(is_x8_format(pci::AerogpuFormat::R8G8B8X8Unorm as u32));
+        assert!(is_x8_format(pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32));
+        assert!(is_x8_format(pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32));
+
+        assert!(!is_x8_format(pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32));
+        assert!(!is_x8_format(pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32));
+    }
+
     fn build_alloc_table_with_stride(entries: &[(u32, u64, u64)], entry_stride: u32) -> Vec<u8> {
         let size_bytes =
             ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 + entries.len() as u32 * entry_stride;

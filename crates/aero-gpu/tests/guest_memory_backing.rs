@@ -1976,11 +1976,8 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
             .write(alloc_table_gpa, &alloc_table_bytes)
             .expect("write alloc table");
 
-        // 2x2 BGRAX texture with padded rows (row_pitch=12, row_bytes=8) and a non-zero backing
-        // offset. Fill with a sentinel to prove we only overwrite the single target texel.
         let backing_bytes = (BACKING_OFFSET_BYTES + ROW_PITCH_BYTES * 2) as usize;
         let sentinel = vec![0xEEu8; backing_bytes];
-        guest.write(DST_GPA, &sentinel).expect("write dst sentinel");
 
         let mut upload = vec![0u8; (ROW_PITCH_BYTES * 2) as usize];
         // Row 0 (y=0): pixel(0,0)=[1,2,3,0] pixel(1,0)=[4,5,6,0]
@@ -1989,86 +1986,103 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
         let row1 = ROW_PITCH_BYTES as usize;
         upload[row1..row1 + 8].copy_from_slice(&[7, 8, 9, 0, 10, 11, 12, 0]);
 
-        let stream = build_stream(|out| {
-            // Source texture (handle=3) host-owned.
-            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
-                push_u32(out, 3); // texture_handle
-                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, AerogpuFormat::B8G8R8X8Unorm as u32); // format
-                push_u32(out, 2); // width
-                push_u32(out, 2); // height
-                push_u32(out, 1); // mip_levels
-                push_u32(out, 1); // array_layers
-                push_u32(out, ROW_PITCH_BYTES); // row_pitch_bytes
-                push_u32(out, 0); // backing_alloc_id
-                push_u32(out, 0); // backing_offset_bytes
-                push_u64(out, 0); // reserved0
-            });
-            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
-                push_u32(out, 3); // resource_handle
-                push_u32(out, 0); // reserved0
-                push_u64(out, 0); // offset_bytes
-                push_u64(out, upload.len() as u64); // size_bytes
-                out.extend_from_slice(&upload);
-            });
-
-            // Destination texture (handle=4) guest-backed with padding and backing offset.
-            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
-                push_u32(out, 4); // texture_handle
-                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, AerogpuFormat::B8G8R8X8Unorm as u32); // format
-                push_u32(out, 2); // width
-                push_u32(out, 2); // height
-                push_u32(out, 1); // mip_levels
-                push_u32(out, 1); // array_layers
-                push_u32(out, ROW_PITCH_BYTES); // row_pitch_bytes
-                push_u32(out, ALLOC_DST); // backing_alloc_id
-                push_u32(out, BACKING_OFFSET_BYTES); // backing_offset_bytes
-                push_u64(out, 0); // reserved0
-            });
-
-            // Copy src pixel (0,1) into dst pixel (1,0) (with writeback).
-            emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
-                push_u32(out, 4); // dst_texture
-                push_u32(out, 3); // src_texture
-                push_u32(out, 0); // dst_mip_level
-                push_u32(out, 0); // dst_array_layer
-                push_u32(out, 0); // src_mip_level
-                push_u32(out, 0); // src_array_layer
-                push_u32(out, 1); // dst_x
-                push_u32(out, 0); // dst_y
-                push_u32(out, 0); // src_x
-                push_u32(out, 1); // src_y
-                push_u32(out, 1); // width
-                push_u32(out, 1); // height
-                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST); // flags
-                push_u32(out, 0); // reserved0
-            });
-        });
-
         let cmd_gpa = 0x9000u64;
-        guest.write(cmd_gpa, &stream).expect("write command stream");
-
-        let report = exec.process_submission_from_guest_memory(
-            &mut guest,
-            cmd_gpa,
-            stream.len() as u32,
-            alloc_table_gpa,
-            alloc_table_bytes.len() as u32,
-        );
-        assert!(
-            report.is_ok(),
-            "executor report had errors: {:#?}",
-            report.events
-        );
-
-        let mut readback = vec![0u8; backing_bytes];
-        guest.read(DST_GPA, &mut readback).expect("read writeback");
-
-        let mut expected = sentinel;
         let pixel_off = (BACKING_OFFSET_BYTES + 4) as usize;
-        expected[pixel_off..pixel_off + 4].copy_from_slice(&[7, 8, 9, 255]);
-        assert_eq!(readback, expected);
+        let formats = [
+            AerogpuFormat::B8G8R8X8Unorm,
+            AerogpuFormat::B8G8R8X8UnormSrgb,
+            AerogpuFormat::R8G8B8X8Unorm,
+            AerogpuFormat::R8G8B8X8UnormSrgb,
+        ];
+
+        for (case_idx, format) in formats.iter().copied().enumerate() {
+            // 2x2 {BGRAX/RGBAX} texture with padded rows (row_pitch=12, row_bytes=8) and a non-zero
+            // backing offset. Fill with a sentinel to prove we only overwrite the single target
+            // texel.
+            guest.write(DST_GPA, &sentinel).expect("write dst sentinel");
+
+            let src_handle = 100 + (case_idx as u32) * 2;
+            let dst_handle = src_handle + 1;
+
+            let stream = build_stream(|out| {
+                // Source texture host-owned.
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, src_handle); // texture_handle
+                    push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                    push_u32(out, format as u32); // format
+                    push_u32(out, 2); // width
+                    push_u32(out, 2); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, ROW_PITCH_BYTES); // row_pitch_bytes
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+                emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                    push_u32(out, src_handle); // resource_handle
+                    push_u32(out, 0); // reserved0
+                    push_u64(out, 0); // offset_bytes
+                    push_u64(out, upload.len() as u64); // size_bytes
+                    out.extend_from_slice(&upload);
+                });
+
+                // Destination texture guest-backed with padding and backing offset.
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, dst_handle); // texture_handle
+                    push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                    push_u32(out, format as u32); // format
+                    push_u32(out, 2); // width
+                    push_u32(out, 2); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, ROW_PITCH_BYTES); // row_pitch_bytes
+                    push_u32(out, ALLOC_DST); // backing_alloc_id
+                    push_u32(out, BACKING_OFFSET_BYTES); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                // Copy src pixel (0,1) into dst pixel (1,0) (with writeback).
+                emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                    push_u32(out, dst_handle); // dst_texture
+                    push_u32(out, src_handle); // src_texture
+                    push_u32(out, 0); // dst_mip_level
+                    push_u32(out, 0); // dst_array_layer
+                    push_u32(out, 0); // src_mip_level
+                    push_u32(out, 0); // src_array_layer
+                    push_u32(out, 1); // dst_x
+                    push_u32(out, 0); // dst_y
+                    push_u32(out, 0); // src_x
+                    push_u32(out, 1); // src_y
+                    push_u32(out, 1); // width
+                    push_u32(out, 1); // height
+                    push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST); // flags
+                    push_u32(out, 0); // reserved0
+                });
+            });
+
+            guest.write(cmd_gpa, &stream).expect("write command stream");
+
+            let report = exec.process_submission_from_guest_memory(
+                &mut guest,
+                cmd_gpa,
+                stream.len() as u32,
+                alloc_table_gpa,
+                alloc_table_bytes.len() as u32,
+            );
+            assert!(
+                report.is_ok(),
+                "executor report had errors for format {format:?}: {:#?}",
+                report.events
+            );
+
+            let mut readback = vec![0u8; backing_bytes];
+            guest.read(DST_GPA, &mut readback).expect("read writeback");
+
+            let mut expected = sentinel.clone();
+            expected[pixel_off..pixel_off + 4].copy_from_slice(&[7, 8, 9, 255]);
+            assert_eq!(readback, expected, "format {format:?}");
+        }
     });
 }
 
