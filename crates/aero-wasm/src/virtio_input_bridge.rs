@@ -213,7 +213,9 @@ mod wasm {
  
             let mem_len = wasm_memory_byte_len();
             let guest_base_u64 = u64::from(guest_base);
-            if guest_base_u64 >= mem_len {
+            // Allow `guest_base == wasm_mem_len` when `guest_size == 0` (empty guest RAM) to match
+            // the `guest_ram_layout` contract used by other WASM bridges.
+            if guest_base_u64 > mem_len {
                 return Err(js_error(format!(
                     "Guest RAM mapping out of bounds: guest_base=0x{guest_base:x} wasm_mem=0x{mem_len:x}"
                 )));
