@@ -1404,16 +1404,21 @@ impl AerogpuD3d11Executor {
             bail!("shader {ps_handle} is not a pixel shader");
         }
 
-        let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+        let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
             [vs.reflection.bindings.as_slice(), ps.reflection.bindings.as_slice()],
         )?;
 
+        // `PipelineLayoutKey` is used both for pipeline-layout caching and as part of the pipeline
+        // cache key. Avoid cloning the underlying Vec by moving it out of `pipeline_bindings`.
+        let layout_key =
+            std::mem::replace(&mut pipeline_bindings.layout_key, PipelineLayoutKey::empty());
+
         let pipeline_layout = {
             let device = &self.device;
             let cache = &mut self.pipeline_layout_cache;
-            cache.get_or_create_with(&pipeline_bindings.layout_key, || {
+            cache.get_or_create_with(&layout_key, || {
                 let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
                     .group_layouts
                     .iter()
@@ -1442,7 +1447,7 @@ impl AerogpuD3d11Executor {
                     pipeline_layout.as_ref(),
                     &mut self.resources,
                     &self.state,
-                    pipeline_bindings.layout_key.clone(),
+                    layout_key,
                 )?;
             (
                 pipeline as *const wgpu::RenderPipeline,
