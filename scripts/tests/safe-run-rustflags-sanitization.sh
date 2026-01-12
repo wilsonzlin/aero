@@ -76,6 +76,19 @@ cp "${REPO_ROOT}/scripts/safe-run.sh" "${test_repo}/scripts/"
 cp "${REPO_ROOT}/scripts/with-timeout.sh" "${test_repo}/scripts/"
 cp "${REPO_ROOT}/scripts/run_limited.sh" "${test_repo}/scripts/"
 
+# Create a stub `cargo` binary so we can exercise safe-run's cargo-specific logic without doing
+# any real compilation (keeps this test fast + independent of Rust toolchain installs).
+mkdir -p "${test_repo}/bin"
+cat >"${test_repo}/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf "RUSTFLAGS=%s\n" "${RUSTFLAGS:-}"
+printf "WASM_RUSTFLAGS=%s\n" "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}"
+printf "AARCH64_RUSTFLAGS=%s\n" "${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-}"
+EOF
+chmod +x "${test_repo}/bin/cargo"
+
 ###############################################################################
 # Case 1: Wrapper command with contaminated global RUSTFLAGS.
 ###############################################################################
@@ -83,12 +96,12 @@ out="$(
   AERO_TIMEOUT=30 \
   AERO_MEM_LIMIT=unlimited \
   CARGO_BUILD_JOBS=7 \
-  CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu \
+  CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu \
   RUSTFLAGS="-C link-arg=-Wl,--threads=99 -Clink-arg=--threads=100 -C opt-level=2" \
   bash "${test_repo}/scripts/safe-run.sh" bash -c '
     printf "RUSTFLAGS=%s\n" "${RUSTFLAGS}"
     printf "WASM_RUSTFLAGS=%s\n" "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS}"
-    printf "TARGET_RUSTFLAGS=%s\n" "${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS}"
+    printf "TARGET_RUSTFLAGS=%s\n" "${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS}"
   '
 )"
 
@@ -109,7 +122,7 @@ out="$(
   AERO_TIMEOUT=30 \
   AERO_MEM_LIMIT=unlimited \
   CARGO_BUILD_JOBS=7 \
-  CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu \
+  CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu \
   RUSTFLAGS="-C opt-level=2 -C link-arg=-Wl,--threads=99" \
   CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="-C link-arg=-Wl,--threads=9 -C opt-level=3" \
   bash "${test_repo}/scripts/safe-run.sh" bash -c '
@@ -126,5 +139,30 @@ assert_contains "rewrites-wasm32-wl-threads-into-wasm-threads" "${wasm_rustflags
 assert_contains "preserves-existing-wasm32-flags" "${wasm_rustflags}" "opt-level=3"
 assert_not_contains "rewritten-wasm32-flags-do-not-contain-wl-threads" "${wasm_rustflags}" "-Wl,--threads="
 
-echo "All safe-run rustflags sanitization checks passed."
+###############################################################################
+# Case 3: Direct `cargo` invocation (exercise is_cargo_cmd parsing of `--target`).
+#
+# When running safe-run as `safe-run.sh cargo ...`, it should:
+# - strip `--threads` flags from global RUSTFLAGS
+# - set per-target rustflags for the *explicit* `--target` triple
+# - keep wasm32 per-target rustflags in wasm-compatible form (`--threads=...`, not `-Wl,--threads=...`)
+###############################################################################
+out="$(
+  AERO_TIMEOUT=30 \
+  AERO_MEM_LIMIT=unlimited \
+  CARGO_BUILD_JOBS=7 \
+  RUSTFLAGS="-C link-arg=-Wl,--threads=99 -C opt-level=2" \
+  PATH="${test_repo}/bin:${PATH}" \
+  bash "${test_repo}/scripts/safe-run.sh" cargo build --target aarch64-unknown-linux-gnu
+)"
 
+rustflags="$(printf '%s\n' "${out}" | sed -n 's/^RUSTFLAGS=//p')"
+wasm_rustflags="$(printf '%s\n' "${out}" | sed -n 's/^WASM_RUSTFLAGS=//p')"
+aarch64_rustflags="$(printf '%s\n' "${out}" | sed -n 's/^AARCH64_RUSTFLAGS=//p')"
+
+assert_eq "cargo-path-strips-thread-flags-from-global-rustflags" "${rustflags}" "-C opt-level=2"
+assert_contains "cargo-path-injects-explicit-target-threads-cap" "${aarch64_rustflags}" "-Wl,--threads=7"
+assert_contains "cargo-path-injects-wasm32-threads-cap" "${wasm_rustflags}" "--threads=7"
+assert_not_contains "cargo-path-wasm32-flags-do-not-use-wl-indirection" "${wasm_rustflags}" "-Wl,--threads="
+
+echo "All safe-run rustflags sanitization checks passed."
