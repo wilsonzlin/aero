@@ -133,6 +133,13 @@ impl NetworkBackend for PcNetworkBackend {
         }
     }
 
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        match self {
+            PcNetworkBackend::Ring(backend) => backend.l2_ring_stats(),
+            PcNetworkBackend::Other(backend) => backend.l2_ring_stats(),
+        }
+    }
+
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         match self {
             PcNetworkBackend::Ring(backend) => backend.poll_receive(),
@@ -278,10 +285,7 @@ impl PcMachine {
 
     /// Return statistics for the currently attached `NET_TX`/`NET_RX` ring backend (if present).
     pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        match self.network_backend.as_ref()? {
-            PcNetworkBackend::Ring(backend) => Some(backend.stats()),
-            PcNetworkBackend::Other(_) => None,
-        }
+        self.network_backend.as_ref()?.l2_ring_stats()
     }
 
     /// Reset the machine and transfer control to firmware POST (boot sector).
