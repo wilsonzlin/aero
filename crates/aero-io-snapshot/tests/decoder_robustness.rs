@@ -1,5 +1,5 @@
 use aero_io_snapshot::io::state::codec::Decoder;
-use aero_io_snapshot::io::state::{SnapshotError, SnapshotReader};
+use aero_io_snapshot::io::state::{SnapshotError, SnapshotReader, SnapshotVersion, SnapshotWriter};
 
 #[test]
 fn decoder_vec_bytes_does_not_preallocate_on_large_count() {
@@ -143,4 +143,48 @@ fn snapshot_reader_rejects_unsupported_format_major() {
         err,
         SnapshotError::UnsupportedFormatVersion { .. }
     ));
+}
+
+#[test]
+fn snapshot_reader_ensure_device_major_rejects_mismatch() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let w = SnapshotWriter::new(DEVICE_ID, SnapshotVersion::new(2, 0));
+    let bytes = w.finish();
+
+    let r = SnapshotReader::parse(&bytes, DEVICE_ID).unwrap();
+    let err = r.ensure_device_major(1).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::UnsupportedDeviceMajorVersion {
+            found: 2,
+            supported: 1,
+        }
+    );
+}
+
+#[test]
+fn snapshot_reader_bool_rejects_invalid_value() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut w = SnapshotWriter::new(DEVICE_ID, SnapshotVersion::new(1, 0));
+    w.field_bytes(1, vec![2]); // invalid bool
+    let bytes = w.finish();
+
+    let r = SnapshotReader::parse(&bytes, DEVICE_ID).unwrap();
+    let err = r.bool(1).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("bool"));
+}
+
+#[test]
+fn snapshot_reader_u16_rejects_wrong_length() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut w = SnapshotWriter::new(DEVICE_ID, SnapshotVersion::new(1, 0));
+    w.field_bytes(1, vec![0]); // wrong length for u16
+    let bytes = w.finish();
+
+    let r = SnapshotReader::parse(&bytes, DEVICE_ID).unwrap();
+    let err = r.u16(1).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("u16"));
 }
