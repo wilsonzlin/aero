@@ -107,6 +107,7 @@ const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 pub struct AerogpuCmdCacheStats {
     pub samplers: CacheStats,
     pub bind_group_layouts: CacheStats,
+    pub pipeline_layouts: CacheStats,
     pub bind_groups: CacheStats,
 }
 
@@ -387,7 +388,7 @@ pub struct AerogpuD3d11Executor {
 
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
-    pipeline_layout_cache: PipelineLayoutCache,
+    pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
     pipeline_cache: PipelineCache,
 
     /// Resources referenced by commands recorded into the current `wgpu::CommandEncoder`.
@@ -647,6 +648,7 @@ impl AerogpuD3d11Executor {
         AerogpuCmdCacheStats {
             samplers: self.sampler_cache.stats(),
             bind_group_layouts: self.bind_group_layout_cache.stats(),
+            pipeline_layouts: self.pipeline_layout_cache.stats(),
             bind_groups: self.bind_group_cache.stats(),
         }
     }
@@ -1409,16 +1411,22 @@ impl AerogpuD3d11Executor {
             [&vs, &ps],
         )?;
 
-        let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
-            .group_layouts
-            .iter()
-            .map(|l| l.layout.as_ref())
-            .collect();
-        let pipeline_layout = self.pipeline_layout_cache.get_or_create(
-            &self.device,
-            &pipeline_bindings.layout_key,
-            &layout_refs,
-        );
+        let pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            cache.get_or_create_with(pipeline_bindings.layout_key.clone(), || {
+                let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
+                    .group_layouts
+                    .iter()
+                    .map(|l| l.layout.as_ref())
+                    .collect();
+                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu_cmd pipeline layout"),
+                    bind_group_layouts: &layout_refs,
+                    push_constant_ranges: &[],
+                }))
+            })
+        };
 
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the render pass.

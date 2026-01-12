@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
@@ -75,7 +76,7 @@ pub struct AerogpuCmdRuntime {
     pub state: D3D11ShadowState,
     pub resources: AerogpuResources,
     pipelines: PipelineCache,
-    pipeline_layout_cache: PipelineLayoutCache,
+    pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
 }
 
 impl AerogpuCmdRuntime {
@@ -439,9 +440,12 @@ impl AerogpuCmdRuntime {
         } = build_vertex_state(&self.resources, &self.state, &vs.vs_input_signature)?;
 
         let layout_key = PipelineLayoutKey::empty();
-        let pipeline_layout =
-            self.pipeline_layout_cache
-                .get_or_create(&self.device, &layout_key, &[]);
+        let pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            layout_key.clone(),
+            &[],
+            Some("aero-d3d11 aerogpu pipeline layout"),
+        );
 
         let key = RenderPipelineKey {
             vertex_shader: vs.hash,
