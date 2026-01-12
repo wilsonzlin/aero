@@ -391,6 +391,9 @@ npm ci
 
 # Ensure the Rust→WASM packages exist (virtio-input uses the WASM device model).
 # This builds any missing packages (single + threaded) via the `web/` workspace scripts.
+#
+# If this fails due to missing `wasm-pack` / pinned Rust toolchains, the easiest fix is:
+#   just setup
 npm run wasm:ensure
 
 cargo xtask web dev
