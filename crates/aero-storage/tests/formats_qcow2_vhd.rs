@@ -739,6 +739,27 @@ fn qcow2_write_rejects_data_cluster_pointing_past_eof() {
 }
 
 #[test]
+fn qcow2_write_rejects_shared_data_cluster() {
+    let cluster_size = 1u64 << 12;
+    let refcount_block_offset = cluster_size * 3;
+
+    let mut backend = make_qcow2_with_pattern();
+
+    // The fixture's first data cluster is at cluster index 5 (offset = cluster_size * 5).
+    backend
+        .write_at(refcount_block_offset + 5 * 2, &2u16.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("qcow2 shared cluster")
+    ));
+}
+
+#[test]
 fn qcow2_rejects_unaligned_refcount_block_entry() {
     let cluster_size = 1u64 << 12;
     let refcount_table_offset = cluster_size;

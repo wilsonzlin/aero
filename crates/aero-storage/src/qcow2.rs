@@ -747,6 +747,45 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         self.set_refcount(cluster_offset / cluster_size, value)
     }
 
+    fn refcount_for_offset(&mut self, cluster_offset: u64) -> Result<u16> {
+        let cluster_size = self.cluster_size();
+        if !cluster_offset.is_multiple_of(cluster_size) {
+            return Err(DiskError::CorruptImage("qcow2 cluster offset not aligned"));
+        }
+        self.refcount_for_cluster(cluster_offset / cluster_size)
+    }
+
+    fn refcount_for_cluster(&mut self, cluster_index: u64) -> Result<u16> {
+        let entries_per_block = self.refcount_entries_per_block();
+        let block_index = cluster_index / entries_per_block;
+        let entry_index = cluster_index % entries_per_block;
+
+        let block_index: usize = block_index
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 image too large"))?;
+        let entry_index: usize = entry_index
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 image too large"))?;
+        if block_index >= self.refcount_table.len() {
+            return Err(DiskError::Unsupported("qcow2 refcount table too small"));
+        }
+
+        let table_entry = self.refcount_table[block_index];
+        let Some(block_offset) = self.refcount_block_offset_from_entry(table_entry)? else {
+            return Ok(0);
+        };
+
+        self.ensure_refcount_block_cached(block_offset)?;
+        let block = self
+            .refcount_cache
+            .get(&block_offset)
+            .ok_or(DiskError::CorruptImage("qcow2 refcount cache missing"))?;
+        if entry_index >= block.len() {
+            return Err(DiskError::CorruptImage("qcow2 refcount entry out of range"));
+        }
+        Ok(block[entry_index])
+    }
+
     fn set_refcount(&mut self, cluster_index: u64, value: u16) -> Result<()> {
         let entries_per_block = self.refcount_entries_per_block();
         let block_index = cluster_index / entries_per_block;
@@ -988,6 +1027,15 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
             let data_cluster = match existing {
                 Some(off) => {
                     self.validate_cluster_present(off, "qcow2 data cluster truncated")?;
+                    let refcount = self.refcount_for_offset(off)?;
+                    if refcount == 0 {
+                        return Err(DiskError::CorruptImage(
+                            "qcow2 data cluster has zero refcount",
+                        ));
+                    }
+                    if refcount != 1 {
+                        return Err(DiskError::Unsupported("qcow2 shared cluster"));
+                    }
                     off
                 }
                 None => self.ensure_data_cluster(guest_cluster_index)?,
