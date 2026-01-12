@@ -66,6 +66,18 @@ If you suspect the app is failing early, you can also use:
 set AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1
 ```
 
+#### Identify the first stubbed DDI hit
+
+When you suspect the runtime or `dwm.exe` is calling an unimplemented DDI, a useful setup is:
+
+```cmd
+set AEROGPU_D3D9_TRACE=1
+set AEROGPU_D3D9_TRACE_MODE=unique
+set AEROGPU_D3D9_TRACE_FILTER=stub
+set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
+set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
+```
+
 ### Dump triggers (on-demand)
 
 The trace buffer is only dumped when triggered:
