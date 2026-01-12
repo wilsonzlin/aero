@@ -384,6 +384,44 @@ test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (L
   }
 });
 
+test("safe-run.sh uses wasm lld threads flag when building wasm32 targets (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-lld-threads-wasm-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.AERO_CODEGEN_UNITS;
+    delete env.CARGO_BUILD_TARGET;
+    delete env.RUSTFLAGS;
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    // Use an explicit `--target` flag to ensure safe-run does not inject the native-only
+    // `-Wl,--threads=` form, which breaks `rust-lld -flavor wasm` link steps.
+    const stdout = execFileSync(
+      path.join(repoRoot, "scripts/safe-run.sh"),
+      ["cargo", "--target", "wasm32-unknown-unknown"],
+      {
+        cwd: repoRoot,
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    assert.match(stdout, /-C link-arg=--threads=1\b/);
+    assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm build not to use -Wl,--threads=; got: ${stdout}`);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh retries Cargo when it hits fork EAGAIN under contention (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-retry-fork-eagain-"));
   try {
