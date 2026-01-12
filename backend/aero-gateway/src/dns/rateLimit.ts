@@ -41,6 +41,10 @@ export class TokenBucketRateLimiter {
     return true;
   }
 
+  bucketCount(): number {
+    return this.buckets.size;
+  }
+
   private maybePrune(now: number) {
     if (this.buckets.size <= 10_000) return;
 
