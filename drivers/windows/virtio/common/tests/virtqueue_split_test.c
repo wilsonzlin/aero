@@ -780,6 +780,244 @@ static void TestGetUsedClearsOutputsOnNotFound(void)
 	free(vq);
 }
 
+static void TestCorruptFreeHeadOutOfRange(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+	const size_t dma_align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+
+	UINT8 buf[8];
+	VIRTQ_SG sg[1];
+	UINT16 head;
+	UINT16 saved_free_head;
+	UINT16 saved_num_free;
+	NTSTATUS st;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf;
+	sg[0].len = sizeof(buf);
+	sg[0].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+	saved_free_head = vq->free_head;
+	saved_num_free = vq->num_free;
+
+	/* Corrupt the internal free list head to an out-of-range value. */
+	vq->free_head = qsz;
+
+	st = VirtqSplitAddBuffer(vq, sg, 1, (void *)0x1, &head);
+	ASSERT_TRUE(!NT_SUCCESS(st));
+	ASSERT_TRUE(st == STATUS_IO_DEVICE_ERROR || st == STATUS_INVALID_PARAMETER);
+
+	/* The failed call must not mutate queue state. */
+	ASSERT_EQ_U16(vq->num_free, saved_num_free);
+	ASSERT_EQ_U16(vq->free_head, qsz);
+
+	/* Restore the corruption and ensure the free list is still intact. */
+	vq->free_head = saved_free_head;
+	AssertRingFreeListIntact(vq);
+
+	FreeAligned(ring);
+	free(vq);
+}
+
+static void TestCorruptFreeListNextOutOfRangeRollsBack(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+	const size_t dma_align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+
+	UINT8 buf1[8], buf2[8], buf3[8];
+	VIRTQ_SG sg[3];
+	UINT16 saved_free_head;
+	UINT16 saved_num_free;
+	UINT16 saved_next;
+	UINT16 head;
+	NTSTATUS st;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf1;
+	sg[0].len = sizeof(buf1);
+	sg[0].write = FALSE;
+
+	sg[1].addr = (UINT64)(uintptr_t)buf2;
+	sg[1].len = sizeof(buf2);
+	sg[1].write = TRUE;
+
+	sg[2].addr = (UINT64)(uintptr_t)buf3;
+	sg[2].len = sizeof(buf3);
+	sg[2].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+	saved_free_head = vq->free_head;
+	saved_num_free = vq->num_free;
+
+	/*
+	 * Corrupt a free-list next pointer. Before hardening, allocating a
+	 * multi-descriptor chain would eventually index past vq->desc[].
+	 */
+	saved_next = vq->desc[1].next;
+	vq->desc[1].next = qsz;
+
+	st = VirtqSplitAddBuffer(vq, sg, 3, (void *)0x2, &head);
+	ASSERT_TRUE(!NT_SUCCESS(st));
+	ASSERT_TRUE(st == STATUS_IO_DEVICE_ERROR || st == STATUS_INVALID_PARAMETER);
+
+	/* Ensure any partial allocations were rolled back. */
+	ASSERT_EQ_U16(vq->num_free, saved_num_free);
+	ASSERT_EQ_U16(vq->free_head, saved_free_head);
+
+	/* Restore the corruption and ensure the free list is still intact. */
+	vq->desc[1].next = saved_next;
+	AssertRingFreeListIntact(vq);
+
+	FreeAligned(ring);
+	free(vq);
+}
+
+static void TestCorruptFreeListUnexpectedNoDescMidAllocRollsBack(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+	const size_t dma_align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+
+	UINT8 buf1[8], buf2[8];
+	VIRTQ_SG sg[2];
+	UINT16 saved_free_head;
+	UINT16 saved_num_free;
+	UINT16 saved_next;
+	UINT16 head;
+	NTSTATUS st;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf1;
+	sg[0].len = sizeof(buf1);
+	sg[0].write = FALSE;
+
+	sg[1].addr = (UINT64)(uintptr_t)buf2;
+	sg[1].len = sizeof(buf2);
+	sg[1].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+	saved_free_head = vq->free_head;
+	saved_num_free = vq->num_free;
+
+	/*
+	 * Truncate the free list unexpectedly so a multi-descriptor allocation sees
+	 * VIRTQ_SPLIT_NO_DESC mid-chain.
+	 */
+	saved_next = vq->desc[0].next;
+	vq->desc[0].next = VIRTQ_SPLIT_NO_DESC;
+
+	st = VirtqSplitAddBuffer(vq, sg, 2, (void *)0x3, &head);
+	ASSERT_TRUE(!NT_SUCCESS(st));
+	ASSERT_TRUE(st == STATUS_IO_DEVICE_ERROR || st == STATUS_INVALID_PARAMETER);
+
+	/* Ensure any partial allocations were rolled back. */
+	ASSERT_EQ_U16(vq->num_free, saved_num_free);
+	ASSERT_EQ_U16(vq->free_head, saved_free_head);
+
+	/* Restore the corruption and ensure the free list is still intact. */
+	vq->desc[0].next = saved_next;
+	AssertRingFreeListIntact(vq);
+
+	FreeAligned(ring);
+	free(vq);
+}
+
+static void TestCorruptIndirectFreeHeadOutOfRange(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+	const size_t dma_align = 16;
+
+	const UINT16 table_count = 2;
+	const UINT16 max_desc = 4;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+	size_t pool_bytes = (size_t)table_count * (size_t)max_desc * sizeof(VIRTQ_DESC);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+	void *pool = AllocAlignedZero(dma_align, pool_bytes);
+
+	UINT8 buf1[8], buf2[8];
+	VIRTQ_SG sg[2];
+	UINT16 saved_indirect_free_head;
+	UINT16 saved_indirect_num_free;
+	UINT16 head;
+	NTSTATUS st;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+	ASSERT_TRUE(pool != NULL);
+
+	sg[0].addr = (UINT64)(uintptr_t)buf1;
+	sg[0].len = sizeof(buf1);
+	sg[0].write = FALSE;
+
+	sg[1].addr = (UINT64)(uintptr_t)buf2;
+	sg[1].len = sizeof(buf2);
+	sg[1].write = TRUE;
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, TRUE, ring, (UINT64)(uintptr_t)ring, align, pool,
+					     (UINT64)(uintptr_t)pool, table_count, max_desc)));
+
+	/* Force indirect for sg_count=2. */
+	vq->indirect_threshold = 1;
+
+	saved_indirect_free_head = vq->indirect_free_head;
+	saved_indirect_num_free = vq->indirect_num_free;
+
+	/* Corrupt the indirect free-list head to an out-of-range value. */
+	vq->indirect_free_head = vq->indirect_table_count;
+
+	st = VirtqSplitAddBuffer(vq, sg, 2, (void *)0x4, &head);
+	ASSERT_TRUE(!NT_SUCCESS(st));
+	ASSERT_TRUE(st == STATUS_IO_DEVICE_ERROR || st == STATUS_INVALID_PARAMETER);
+
+	/* The failed call must not mutate queue state. */
+	ASSERT_EQ_U16(vq->indirect_num_free, saved_indirect_num_free);
+	ASSERT_EQ_U16(vq->indirect_free_head, vq->indirect_table_count);
+
+	/* Restore the corruption and ensure indirect allocations still work. */
+	vq->indirect_free_head = saved_indirect_free_head;
+	ASSERT_EQ_U16(vq->indirect_num_free, saved_indirect_num_free);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitAddBuffer(vq, sg, 2, (void *)0x5, &head)));
+	ASSERT_TRUE((vq->desc[head].flags & VIRTQ_DESC_F_INDIRECT) != 0);
+	AssertIndirectFreeListIntact(vq);
+
+	FreeAligned(pool);
+	FreeAligned(ring);
+	free(vq);
+}
+
 int main(void)
 {
 	TestDirectChainAddFree();
@@ -795,6 +1033,10 @@ int main(void)
 	TestIndirectDescriptors();
 	TestIndirectPoolExhaustionFallsBackToDirect();
 	TestGetUsedClearsOutputsOnNotFound();
+	TestCorruptFreeHeadOutOfRange();
+	TestCorruptFreeListNextOutOfRangeRollsBack();
+	TestCorruptFreeListUnexpectedNoDescMidAllocRollsBack();
+	TestCorruptIndirectFreeHeadOutOfRange();
 
 	printf("virtqueue_split_test: all tests passed\n");
 	return 0;

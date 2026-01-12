@@ -57,22 +57,53 @@ static __inline void VirtqSplitInitStorage(VIRTQ_SPLIT *vq)
 	vq->head_indirect = (UINT16 *)(base + head_indirect_off);
 }
 
-static __inline UINT16 VirtqSplitAllocDesc(VIRTQ_SPLIT *vq)
+static __inline NTSTATUS VirtqSplitAllocDesc(VIRTQ_SPLIT *vq, UINT16 *desc_idx_out)
 {
 	UINT16 head;
+	UINT16 next;
 
-	if (vq->num_free == 0 || vq->free_head == VIRTQ_SPLIT_NO_DESC) {
-		return VIRTQ_SPLIT_NO_DESC;
+	if (vq == NULL || desc_idx_out == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	*desc_idx_out = VIRTQ_SPLIT_NO_DESC;
+
+	/*
+	 * vq->num_free and vq->free_head must be consistent. Any mismatch is treated
+	 * as internal corruption because it can lead to out-of-bounds descriptor
+	 * table accesses.
+	 */
+	if (vq->num_free == 0) {
+		if (vq->free_head != VIRTQ_SPLIT_NO_DESC) {
+			return STATUS_IO_DEVICE_ERROR;
+		}
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	if (vq->free_head == VIRTQ_SPLIT_NO_DESC) {
+		return STATUS_IO_DEVICE_ERROR;
 	}
 
 	head = vq->free_head;
-	vq->free_head = vq->desc[head].next;
+	if (head >= vq->qsz) {
+		return STATUS_IO_DEVICE_ERROR;
+	}
+
+	next = vq->desc[head].next;
+	if (next != VIRTQ_SPLIT_NO_DESC && next >= vq->qsz) {
+		return STATUS_IO_DEVICE_ERROR;
+	}
+
+	vq->free_head = next;
 	vq->num_free--;
-	return head;
+	*desc_idx_out = head;
+	return STATUS_SUCCESS;
 }
 
 static __inline VOID VirtqSplitFreeDesc(VIRTQ_SPLIT *vq, UINT16 desc_idx)
 {
+	if (vq == NULL || desc_idx >= vq->qsz) {
+		return;
+	}
 	vq->desc[desc_idx].next = vq->free_head;
 	vq->free_head = desc_idx;
 	vq->num_free++;
@@ -88,26 +119,58 @@ static __inline UINT64 VirtqSplitIndirectTablePa(const VIRTQ_SPLIT *vq, UINT16 t
 	return vq->indirect_pool_pa + (UINT64)((size_t)table_idx * vq->indirect_table_stride);
 }
 
-static __inline UINT16 VirtqSplitAllocIndirectTable(VIRTQ_SPLIT *vq)
+static __inline NTSTATUS VirtqSplitAllocIndirectTable(VIRTQ_SPLIT *vq, UINT16 *table_idx_out)
 {
 	UINT16 table_idx;
+	UINT16 next;
 	VIRTQ_DESC *table;
 
-	if (!vq->indirect || vq->indirect_num_free == 0 || vq->indirect_free_head == VIRTQ_SPLIT_NO_DESC) {
-		return VIRTQ_SPLIT_NO_DESC;
+	if (vq == NULL || table_idx_out == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	*table_idx_out = VIRTQ_SPLIT_NO_DESC;
+
+	if (!vq->indirect || vq->indirect_pool_va == NULL || vq->indirect_table_count == 0) {
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	if (vq->indirect_num_free == 0) {
+		if (vq->indirect_free_head != VIRTQ_SPLIT_NO_DESC) {
+			return STATUS_IO_DEVICE_ERROR;
+		}
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	if (vq->indirect_free_head == VIRTQ_SPLIT_NO_DESC) {
+		return STATUS_IO_DEVICE_ERROR;
 	}
 
 	table_idx = vq->indirect_free_head;
-	table = VirtqSplitIndirectTable(vq, table_idx);
-	vq->indirect_free_head = table[0].next;
-	vq->indirect_num_free--;
+	if (table_idx >= vq->indirect_table_count) {
+		return STATUS_IO_DEVICE_ERROR;
+	}
 
-	return table_idx;
+	table = VirtqSplitIndirectTable(vq, table_idx);
+	next = table[0].next;
+	if (next != VIRTQ_SPLIT_NO_DESC && next >= vq->indirect_table_count) {
+		return STATUS_IO_DEVICE_ERROR;
+	}
+
+	vq->indirect_free_head = next;
+	vq->indirect_num_free--;
+	*table_idx_out = table_idx;
+	return STATUS_SUCCESS;
 }
 
 static __inline VOID VirtqSplitFreeIndirectTable(VIRTQ_SPLIT *vq, UINT16 table_idx)
 {
 	VIRTQ_DESC *table;
+
+	if (vq == NULL || vq->indirect_pool_va == NULL || vq->indirect_table_count == 0) {
+		return;
+	}
+	if (table_idx >= vq->indirect_table_count) {
+		return;
+	}
 
 	table = VirtqSplitIndirectTable(vq, table_idx);
 	table[0].next = vq->indirect_free_head;
@@ -120,9 +183,25 @@ static VOID VirtqSplitFreeChain(VIRTQ_SPLIT *vq, UINT16 head)
 	UINT16 idx = head;
 	UINT16 safety = 0;
 
+	if (vq == NULL || vq->qsz == 0 || head >= vq->qsz) {
+		return;
+	}
+
 	while (idx != VIRTQ_SPLIT_NO_DESC && safety++ < vq->qsz) {
-		UINT16 flags = vq->desc[idx].flags;
-		UINT16 next = (flags & VIRTQ_DESC_F_NEXT) ? vq->desc[idx].next : VIRTQ_SPLIT_NO_DESC;
+		UINT16 flags;
+		UINT16 next;
+
+		if (idx >= vq->qsz) {
+			break;
+		}
+
+		flags = vq->desc[idx].flags;
+		next = (flags & VIRTQ_DESC_F_NEXT) ? vq->desc[idx].next : VIRTQ_SPLIT_NO_DESC;
+		if (next != VIRTQ_SPLIT_NO_DESC && next >= vq->qsz) {
+			/* Corrupted descriptor chain; free what we can and stop. */
+			next = VIRTQ_SPLIT_NO_DESC;
+			flags = (UINT16)(flags & (UINT16)~VIRTQ_DESC_F_NEXT);
+		}
 
 		VirtqSplitFreeDesc(vq, idx);
 
@@ -273,6 +352,7 @@ VOID VirtqSplitReset(VIRTQ_SPLIT *vq)
 NTSTATUS VirtqSplitAddBuffer(VIRTQ_SPLIT *vq, const VIRTQ_SG *sg, UINT16 sg_count, void *cookie,
 			     UINT16 *head_out)
 {
+	NTSTATUS st;
 	UINT16 head;
 	UINT16 i;
 	BOOLEAN want_indirect;
@@ -298,15 +378,22 @@ NTSTATUS VirtqSplitAddBuffer(VIRTQ_SPLIT *vq, const VIRTQ_SG *sg, UINT16 sg_coun
 			return STATUS_INSUFFICIENT_RESOURCES;
 		}
 
-		table_idx = VirtqSplitAllocIndirectTable(vq);
-		if (table_idx == VIRTQ_SPLIT_NO_DESC) {
-			/* Pool exhausted; fall back to direct if possible. */
-			want_indirect = FALSE;
+		st = VirtqSplitAllocIndirectTable(vq, &table_idx);
+		if (!NT_SUCCESS(st)) {
+			/*
+			 * Pool exhausted -> fall back to direct if possible.
+			 * Corruption -> fail fast to avoid OOB reads.
+			 */
+			if (st == STATUS_INSUFFICIENT_RESOURCES) {
+				want_indirect = FALSE;
+			} else {
+				return st;
+			}
 		} else {
-			head = VirtqSplitAllocDesc(vq);
-			if (head == VIRTQ_SPLIT_NO_DESC) {
+			st = VirtqSplitAllocDesc(vq, &head);
+			if (!NT_SUCCESS(st)) {
 				VirtqSplitFreeIndirectTable(vq, table_idx);
-				return STATUS_INSUFFICIENT_RESOURCES;
+				return st;
 			}
 
 			table = VirtqSplitIndirectTable(vq, table_idx);
@@ -340,9 +427,9 @@ NTSTATUS VirtqSplitAddBuffer(VIRTQ_SPLIT *vq, const VIRTQ_SG *sg, UINT16 sg_coun
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 
-	head = VirtqSplitAllocDesc(vq);
-	if (head == VIRTQ_SPLIT_NO_DESC) {
-		return STATUS_INSUFFICIENT_RESOURCES;
+	st = VirtqSplitAllocDesc(vq, &head);
+	if (!NT_SUCCESS(st)) {
+		return st;
 	}
 
 	{
@@ -356,7 +443,20 @@ NTSTATUS VirtqSplitAddBuffer(VIRTQ_SPLIT *vq, const VIRTQ_SG *sg, UINT16 sg_coun
 			d->len = sg[i].len;
 
 			if (i + 1 < sg_count) {
-				UINT16 next = VirtqSplitAllocDesc(vq);
+				UINT16 next;
+				st = VirtqSplitAllocDesc(vq, &next);
+				if (!NT_SUCCESS(st)) {
+					/*
+					 * Unexpected allocation failure indicates a corrupted
+					 * free list (e.g. broken next pointers). Roll back any
+					 * descriptors already allocated so the queue remains in
+					 * a consistent state.
+					 */
+					d->flags = flags;
+					d->next = 0;
+					VirtqSplitFreeChain(vq, head);
+					return st;
+				}
 				flags |= VIRTQ_DESC_F_NEXT;
 				d->flags = flags;
 				d->next = next;
