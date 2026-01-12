@@ -2,7 +2,7 @@ mod images;
 
 use axum::{
     extract::State,
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -20,7 +20,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/healthz", get(healthz))
-        .route("/ready", get(readyz))
+        .route("/ready", get(ready))
         .route("/readyz", get(readyz))
         .route("/version", get(version))
         .merge(images::router())
@@ -45,8 +45,30 @@ async fn healthz(State(state): State<AppState>, req_headers: HeaderMap) -> Respo
     resp
 }
 
+async fn ready(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
+    ready_response(state, req_headers).await
+}
+
 async fn readyz(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
-    let mut resp = Json(StatusResponse { status: "ok" }).into_response();
+    ready_response(state, req_headers).await
+}
+
+async fn ready_response(state: AppState, req_headers: HeaderMap) -> Response {
+    let ready = state.store.list_images().await.is_ok();
+
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    let mut resp = (
+        status,
+        Json(StatusResponse {
+            status: if ready { "ok" } else { "error" },
+        }),
+    )
+        .into_response();
     insert_cors_headers(resp.headers_mut(), &state, &req_headers);
     resp
 }
