@@ -105,6 +105,19 @@ class SetupInfAddServiceTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            ansi_ok_inline_comment_inf = tmp_path / "ok-ansi-inline-comment.inf"
+            ansi_ok_inline_comment_inf.write_text(
+                "\r\n".join(
+                    [
+                        "; UTF-8/ANSI INF fixture (inline comment before comma)",
+                        "[DefaultInstall.NT]",
+                        f"AddService = {service}; some comment, 0x00000002, Service_Inst",
+                    ]
+                )
+                + "\r\n",
+                encoding="utf-8",
+            )
+
             ansi_commented_inf = tmp_path / "commented-ansi.inf"
             ansi_commented_inf.write_text(
                 "\r\n".join(
@@ -148,6 +161,16 @@ class SetupInfAddServiceTests(unittest.TestCase):
                 ansi_ok_tabs.returncode,
                 0,
                 msg=f"expected ok-ansi-tabs.inf to match AddService={service} (exit 0), got {ansi_ok_tabs.returncode}. Output:\n{ansi_ok_tabs.stdout}",
+            )
+
+            ansi_ok_inline_comment = self._run_selftest(setup_cmd, ansi_ok_inline_comment_inf, service)
+            self.assertEqual(
+                ansi_ok_inline_comment.returncode,
+                0,
+                msg=(
+                    f"expected ok-ansi-inline-comment.inf to match AddService={service} (exit 0), got {ansi_ok_inline_comment.returncode}. "
+                    f"Output:\n{ansi_ok_inline_comment.stdout}"
+                ),
             )
 
             ansi_commented = self._run_selftest(setup_cmd, ansi_commented_inf, service)
@@ -330,6 +353,37 @@ class SetupInfAddServiceTests(unittest.TestCase):
                 result.returncode,
                 0,
                 msg=f"expected validation to succeed for ANSI INF with tabs, got {result.returncode}. Output:\n{result.stdout}",
+            )
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows cmd.exe")
+    def test_validate_storage_service_infs_handles_inline_comment_before_comma(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        setup_cmd = repo_root / "guest-tools" / "setup.cmd"
+        self.assertTrue(setup_cmd.exists(), f"missing setup.cmd at: {setup_cmd}")
+
+        service = "viostor"
+
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-inf-validate-") as tmp:
+            tmp_path = Path(tmp)
+
+            ansi_inf = tmp_path / "ansi-inline-comment.inf"
+            ansi_inf.write_text(
+                "\r\n".join(
+                    [
+                        "; ANSI/UTF-8 INF fixture (inline comment before comma)",
+                        "[DefaultInstall.NT]",
+                        f"AddService = {service}; comment, 0x00000002, Service_Inst",
+                    ]
+                )
+                + "\r\n",
+                encoding="utf-8",
+            )
+
+            result = self._run_validate_selftest(setup_cmd, tmp_path, service)
+            self.assertEqual(
+                result.returncode,
+                0,
+                msg=f"expected validation to succeed for inline-comment AddService, got {result.returncode}. Output:\n{result.stdout}",
             )
 
     @unittest.skipUnless(os.name == "nt", "requires Windows cmd.exe")
