@@ -2897,6 +2897,39 @@ inline D3DDDIVIEWPORTINFO viewport_effective_locked(Device* dev) {
   return vp;
 }
 
+// Effective scissor rect for GetScissorRect and state blocks:
+// - If the app explicitly set a rect, preserve it (even if empty).
+// - Otherwise, if the current rect is unset/empty, fall back to the effective
+//   viewport rect so enabling scissor without SetScissorRect behaves like the
+//   D3D9 default (no clipping).
+//
+// Callers must hold `Device::mutex`.
+inline RECT scissor_rect_effective_locked(Device* dev) {
+  RECT r = {0, 0, 0, 0};
+  if (!dev) {
+    return r;
+  }
+  r = dev->scissor_rect;
+  if (dev->scissor_rect_user_set) {
+    return r;
+  }
+  if (r.right > r.left && r.bottom > r.top) {
+    return r;
+  }
+  const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
+  const int32_t x = static_cast<int32_t>(vp.X);
+  const int32_t y = static_cast<int32_t>(vp.Y);
+  const int32_t w = static_cast<int32_t>(vp.Width);
+  const int32_t h = static_cast<int32_t>(vp.Height);
+  if (w > 0 && h > 0) {
+    r.left = static_cast<LONG>(x);
+    r.top = static_cast<LONG>(y);
+    r.right = static_cast<LONG>(x + w);
+    r.bottom = static_cast<LONG>(y + h);
+  }
+  return r;
+}
+
 inline void stateblock_record_scissor_locked(Device* dev, const RECT& rect, BOOL enabled) {
   if (!dev || !dev->recording_state_block) {
     return;
@@ -9756,7 +9789,7 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->viewport_set = true;
     sb->viewport = viewport_effective_locked(dev);
     sb->scissor_set = true;
-    sb->scissor_rect = dev->scissor_rect;
+    sb->scissor_rect = scissor_rect_effective_locked(dev);
     sb->scissor_rect_user_set = dev->scissor_rect_user_set;
     sb->scissor_enabled = dev->scissor_enabled;
 
@@ -9993,7 +10026,7 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
     sb->viewport = viewport_effective_locked(dev);
   }
   if (sb->scissor_set) {
-    sb->scissor_rect = dev->scissor_rect;
+    sb->scissor_rect = scissor_rect_effective_locked(dev);
     sb->scissor_rect_user_set = dev->scissor_rect_user_set;
     sb->scissor_enabled = dev->scissor_enabled;
   }
@@ -12497,7 +12530,7 @@ HRESULT device_get_scissor_rect_impl(D3DDDI_HDEVICE hDevice, RectT* pRect, BoolT
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (pRect) {
-    *pRect = dev->scissor_rect;
+    *pRect = scissor_rect_effective_locked(dev);
   }
   if (pEnabled) {
     d3d9_write_u32(pEnabled, static_cast<uint32_t>(dev->scissor_enabled));

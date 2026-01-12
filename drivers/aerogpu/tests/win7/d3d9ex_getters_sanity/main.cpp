@@ -213,6 +213,26 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
     }
   }
 
+  // Validate the default scissor rect (also expected to be full backbuffer).
+  {
+    RECT default_scissor;
+    ZeroMemory(&default_scissor, sizeof(default_scissor));
+    hr = dev->GetScissorRect(&default_scissor);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetScissorRect (default)", hr);
+    }
+    if (default_scissor.left != 0 || default_scissor.top != 0 ||
+        default_scissor.right != kWidth || default_scissor.bottom != kHeight) {
+      return reporter.Fail("default scissor rect mismatch: got {%ld,%ld,%ld,%ld} expected {0,0,%d,%d}",
+                           default_scissor.left,
+                           default_scissor.top,
+                           default_scissor.right,
+                           default_scissor.bottom,
+                           kWidth,
+                           kHeight);
+    }
+  }
+
   D3DVIEWPORT9 vp;
   ZeroMemory(&vp, sizeof(vp));
   vp.X = 1;
