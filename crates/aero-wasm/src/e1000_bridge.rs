@@ -49,20 +49,23 @@ fn validate_pci_size(size: u32) -> usize {
 #[derive(Clone, Copy)]
 struct LinearGuestMemory {
     guest_base: u32,
-    guest_size: u32,
+    ram_bytes: u64,
 }
 
 impl LinearGuestMemory {
-    fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
-        let paddr_u32 = u32::try_from(paddr).ok()?;
-        if paddr_u32 >= self.guest_size {
+    #[inline]
+    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
+        let end = ram_offset.checked_add(len as u64)?;
+        if end > self.ram_bytes {
             return None;
         }
-        let end = paddr_u32.checked_add(len as u32)?;
-        if end > self.guest_size {
-            return None;
-        }
-        self.guest_base.checked_add(paddr_u32)
+        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
+        u32::try_from(linear).ok().map(|v| v as *const u8)
+    }
+
+    #[inline]
+    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
+        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
     }
 }
 
@@ -72,17 +75,52 @@ impl MemoryBus for LinearGuestMemory {
             return;
         }
 
-        // Out-of-bounds reads return 0.
-        let Some(linear) = self.translate(paddr, buf.len()) else {
-            buf.fill(0);
-            return;
-        };
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
 
-        // Safety: `translate` validates the access is within the configured guest
-        // region, and the guest region is bounds-checked against the wasm linear
-        // memory size in `E1000Bridge::new`.
-        unsafe {
-            core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
+                        buf[off..].fill(0);
+                        return;
+                    };
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes` and the
+                    // guest region is bounds-checked against the wasm linear memory size in
+                    // `E1000Bridge::new`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    buf[off..off + len].fill(0xFF);
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    // Preserve existing semantics: out-of-range reads return 0.
+                    buf[off..off + len].fill(0);
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => {
+                    buf[off..].fill(0);
+                    return;
+                }
+            };
         }
     }
 
@@ -91,16 +129,47 @@ impl MemoryBus for LinearGuestMemory {
             return;
         }
 
-        // Out-of-bounds writes are ignored.
-        let Some(linear) = self.translate(paddr, buf.len()) else {
-            return;
-        };
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
 
-        // Safety: `translate` validates the access is within the configured guest
-        // region, and the guest region is bounds-checked against the wasm linear
-        // memory size in `E1000Bridge::new`.
-        unsafe {
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
+                        return;
+                    };
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes` and the
+                    // guest region is bounds-checked against the wasm linear memory size in
+                    // `E1000Bridge::new`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    // Open bus: writes are ignored.
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    // Preserve existing semantics: out-of-range writes are ignored.
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => return,
+            };
         }
     }
 }
@@ -152,9 +221,6 @@ impl E1000Bridge {
             DEFAULT_MAC_ADDR
         };
 
-        let guest_size_u32 = u32::try_from(guest_size_u64)
-            .map_err(|_| js_error("guest_size does not fit in u32"))?;
-
         let dev = E1000Device::new(mac_addr);
         // Leave PCI COMMAND.BME (bit 2) disabled by default. The JS PCI bus mirrors guest config
         // writes into this device model via `pci_config_write` / `set_pci_command`, and the E1000
@@ -164,7 +230,7 @@ impl E1000Bridge {
             dev,
             mem: LinearGuestMemory {
                 guest_base,
-                guest_size: guest_size_u32,
+                ram_bytes: guest_size_u64,
             },
         })
     }

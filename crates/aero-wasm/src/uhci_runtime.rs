@@ -37,7 +37,7 @@ fn js_error(message: &str) -> JsValue {
 
 struct LinearGuestMemory {
     guest_base: u32,
-    guest_size: u32,
+    ram_bytes: u64,
 }
 
 impl LinearGuestMemory {
@@ -46,12 +46,17 @@ impl LinearGuestMemory {
         let mem_bytes = pages.saturating_mul(64 * 1024);
 
         // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
-        let guest_size_u64 = u64::from(guest_size).min(crate::guest_layout::PCI_MMIO_BASE);
-        let guest_size: u32 = guest_size_u64
-            .try_into()
-            .map_err(|_| js_error("guest_size does not fit in u32"))?;
+        //
+        // For parity with other wasm-bindgen APIs, accept `guest_size == 0` as a "use the remainder
+        // of linear memory" sentinel.
+        let guest_size_u64 = if guest_size == 0 {
+            mem_bytes.saturating_sub(guest_base as u64)
+        } else {
+            u64::from(guest_size)
+        }
+        .min(crate::guest_layout::PCI_MMIO_BASE);
 
-        let end = guest_base as u64 + guest_size as u64;
+        let end = guest_base as u64 + guest_size_u64;
         if end > mem_bytes {
             return Err(js_error(&format!(
                 "Guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_mem_bytes=0x{mem_bytes:x}"
@@ -60,44 +65,124 @@ impl LinearGuestMemory {
 
         Ok(Self {
             guest_base,
-            guest_size,
+            ram_bytes: guest_size_u64,
         })
     }
 
-    fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
-        let paddr_u32 = u32::try_from(paddr).ok()?;
-        if paddr_u32 >= self.guest_size {
+    #[inline]
+    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
+        let end = ram_offset.checked_add(len as u64)?;
+        if end > self.ram_bytes {
             return None;
         }
-        let end = paddr_u32.checked_add(len as u32)?;
-        if end > self.guest_size {
-            return None;
-        }
-        self.guest_base.checked_add(paddr_u32)
+        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
+        u32::try_from(linear).ok().map(|v| v as *const u8)
+    }
+
+    #[inline]
+    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
+        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
     }
 }
 
 impl MemoryBus for LinearGuestMemory {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        let Some(linear) = self.translate(paddr, buf.len()) else {
-            buf.fill(0);
+        if buf.is_empty() {
             return;
-        };
+        }
 
-        unsafe {
-            let src = core::slice::from_raw_parts(linear as *const u8, buf.len());
-            buf.copy_from_slice(src);
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
+
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
+                        buf[off..].fill(0);
+                        return;
+                    };
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
+                    // RAM size.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    buf[off..off + len].fill(0xFF);
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    buf[off..off + len].fill(0);
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => {
+                    buf[off..].fill(0);
+                    return;
+                }
+            };
         }
     }
 
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        let Some(linear) = self.translate(paddr, buf.len()) else {
+        if buf.is_empty() {
             return;
-        };
+        }
 
-        unsafe {
-            let dst = core::slice::from_raw_parts_mut(linear as *mut u8, buf.len());
-            dst.copy_from_slice(buf);
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
+
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
+                        return;
+                    };
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
+                    // RAM size.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    // Open bus: writes are ignored.
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    // Preserve existing semantics: out-of-range writes are ignored.
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => return,
+            };
         }
     }
 }
@@ -638,7 +723,9 @@ impl UhciRuntime {
                             }
                         })
                         .ok_or_else(|| {
-                            js_error("Invalid UsbHostCompletion: data must be a Uint8Array or number[]")
+                            js_error(
+                                "Invalid UsbHostCompletion: data must be a Uint8Array or number[]",
+                            )
                         })?;
                     out.push(b);
                 }
@@ -702,7 +789,9 @@ impl UhciRuntime {
                 result: match status.as_str() {
                     "success" => {
                         let bytes_written = Reflect::get(&obj, &JsValue::from_str("bytesWritten"))
-                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing bytesWritten"))?
+                            .map_err(|_| {
+                                js_error("Invalid UsbHostCompletion: missing bytesWritten")
+                            })?
                             .as_f64()
                             .and_then(|v| {
                                 if v.is_finite()
@@ -716,7 +805,9 @@ impl UhciRuntime {
                                 }
                             })
                             .ok_or_else(|| {
-                                js_error("Invalid UsbHostCompletion: bytesWritten must be a u32 number")
+                                js_error(
+                                    "Invalid UsbHostCompletion: bytesWritten must be a u32 number",
+                                )
                             })?;
                         UsbHostCompletionOut::Success { bytes_written }
                     }
@@ -742,7 +833,9 @@ impl UhciRuntime {
                 result: match status.as_str() {
                     "success" => {
                         let bytes_written = Reflect::get(&obj, &JsValue::from_str("bytesWritten"))
-                            .map_err(|_| js_error("Invalid UsbHostCompletion: missing bytesWritten"))?
+                            .map_err(|_| {
+                                js_error("Invalid UsbHostCompletion: missing bytesWritten")
+                            })?
                             .as_f64()
                             .and_then(|v| {
                                 if v.is_finite()
@@ -756,7 +849,9 @@ impl UhciRuntime {
                                 }
                             })
                             .ok_or_else(|| {
-                                js_error("Invalid UsbHostCompletion: bytesWritten must be a u32 number")
+                                js_error(
+                                    "Invalid UsbHostCompletion: bytesWritten must be a u32 number",
+                                )
                             })?;
                         UsbHostCompletionOut::Success { bytes_written }
                     }
@@ -1316,14 +1411,13 @@ impl UhciRuntime {
             // of whether a device is actually attached in memory. If we blindly attach all JS-owned
             // passthrough devices here, we can end up with "hidden" devices (device present but
             // connected=false) that later reappear after an upstream hub bus reset.
-            let expected_ports =
-                match Self::external_hub_ports_with_snapshot_devices(hub_state) {
-                    Ok(ports) => ports,
-                    Err(err) => {
-                        self.reset_for_snapshot_restore();
-                        return Err(err);
-                    }
-                };
+            let expected_ports = match Self::external_hub_ports_with_snapshot_devices(hub_state) {
+                Ok(ports) => ports,
+                Err(err) => {
+                    self.reset_for_snapshot_restore();
+                    return Err(err);
+                }
+            };
 
             for hub_port in expected_ports {
                 // Avoid clobbering WebHID devices restored from the snapshot.
@@ -1396,75 +1490,115 @@ impl UhciRuntime {
     fn external_hub_ports_with_snapshot_devices(hub_state: &[u8]) -> Result<Vec<u8>, JsValue> {
         const TAG_PORTS: u16 = 6;
 
-        let r = SnapshotReader::parse(hub_state, UsbHubDevice::DEVICE_ID)
-            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+        let r = SnapshotReader::parse(hub_state, UsbHubDevice::DEVICE_ID).map_err(|e| {
+            js_error(&format!(
+                "Invalid UHCI runtime snapshot external hub state: {e}"
+            ))
+        })?;
         r.ensure_device_major(UsbHubDevice::DEVICE_VERSION.major)
-            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            .map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
 
         let Some(buf) = r.bytes(TAG_PORTS) else {
             return Ok(Vec::new());
         };
 
         let mut d = Decoder::new(buf);
-        let port_records = d
-            .vec_bytes()
-            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-        d.finish()
-            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+        let port_records = d.vec_bytes().map_err(|e| {
+            js_error(&format!(
+                "Invalid UHCI runtime snapshot external hub state: {e}"
+            ))
+        })?;
+        d.finish().map_err(|e| {
+            js_error(&format!(
+                "Invalid UHCI runtime snapshot external hub state: {e}"
+            ))
+        })?;
 
         let mut ports = Vec::new();
         for (idx, rec) in port_records.iter().enumerate() {
             let mut pd = Decoder::new(rec);
             // Keep this in sync with `UsbHubDevice::save_state` (`crates/aero-usb/src/hub.rs`).
-            let _connected = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _connect_change = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _enabled = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _enable_change = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _suspended = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _suspend_change = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _powered = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _reset = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _reset_countdown_ms = pd
-                .u8()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let _reset_change = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
-            let has_device_state = pd
-                .bool()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            let _connected = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _connect_change = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _enabled = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _enable_change = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _suspended = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _suspend_change = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _powered = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _reset = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _reset_countdown_ms = pd.u8().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let _reset_change = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+            let has_device_state = pd.bool().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
             if has_device_state {
-                let len = pd
-                    .u32()
-                    .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?
-                    as usize;
-                let _ = pd
-                    .bytes(len)
-                    .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+                let len = pd.u32().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid UHCI runtime snapshot external hub state: {e}"
+                    ))
+                })? as usize;
+                let _ = pd.bytes(len).map_err(|e| {
+                    js_error(&format!(
+                        "Invalid UHCI runtime snapshot external hub state: {e}"
+                    ))
+                })?;
             }
-            pd.finish()
-                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot external hub state: {e}")))?;
+            pd.finish().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
 
             if has_device_state {
-                let port = (idx + 1)
-                    .try_into()
-                    .map_err(|_| js_error("UHCI runtime snapshot external hub has too many ports"))?;
+                let port = (idx + 1).try_into().map_err(|_| {
+                    js_error("UHCI runtime snapshot external hub has too many ports")
+                })?;
                 ports.push(port);
             }
         }

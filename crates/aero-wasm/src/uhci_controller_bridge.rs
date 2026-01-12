@@ -42,24 +42,23 @@ fn wasm_memory_byte_len() -> u64 {
 #[derive(Clone, Copy)]
 struct WasmGuestMemory {
     guest_base: u32,
-    guest_size: u64,
+    ram_bytes: u64,
 }
 
 impl WasmGuestMemory {
     #[inline]
-    fn linear_ptr(&self, paddr: u64, len: usize) -> Option<*const u8> {
-        let len_u64 = len as u64;
-        let end = paddr.checked_add(len_u64)?;
-        if end > self.guest_size {
+    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
+        let end = ram_offset.checked_add(len as u64)?;
+        if end > self.ram_bytes {
             return None;
         }
-        let linear = (self.guest_base as u64).checked_add(paddr)?;
+        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
         u32::try_from(linear).ok().map(|v| v as *const u8)
     }
 
     #[inline]
-    fn linear_ptr_mut(&self, paddr: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(paddr, len)? as *mut u8)
+    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
+        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
     }
 }
 
@@ -68,29 +67,50 @@ impl MemoryBus for WasmGuestMemory {
         if buf.is_empty() {
             return;
         }
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
 
-        // If the request goes out of bounds, read as much as possible and fill the rest with 0.
-        let Some(max_len) = self.guest_size.checked_sub(paddr) else {
-            buf.fill(0);
-            return;
-        };
-        let copy_len = buf.len().min(max_len.min(usize::MAX as u64) as usize);
-        if copy_len == 0 {
-            buf.fill(0);
-            return;
-        }
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
+                        buf[off..].fill(0);
+                        return;
+                    };
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
+                    // RAM size.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    buf[off..off + len].fill(0xFF);
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    buf[off..off + len].fill(0);
+                    len
+                }
+            };
 
-        let Some(ptr) = self.linear_ptr(paddr, copy_len) else {
-            buf.fill(0);
-            return;
-        };
-
-        // Safety: `linear_ptr` bounds-checks against the configured guest region.
-        unsafe {
-            core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), copy_len);
-        }
-        if copy_len < buf.len() {
-            buf[copy_len..].fill(0);
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => {
+                    buf[off..].fill(0);
+                    return;
+                }
+            };
         }
     }
 
@@ -98,22 +118,46 @@ impl MemoryBus for WasmGuestMemory {
         if buf.is_empty() {
             return;
         }
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
 
-        let Some(max_len) = self.guest_size.checked_sub(paddr) else {
-            return;
-        };
-        let copy_len = buf.len().min(max_len.min(usize::MAX as u64) as usize);
-        if copy_len == 0 {
-            return;
-        }
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
+                        return;
+                    };
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
+                    // RAM size.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    // Open bus: writes are ignored.
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    // Preserve existing semantics: out-of-range writes are ignored.
+                    len
+                }
+            };
 
-        let Some(ptr) = self.linear_ptr_mut(paddr, copy_len) else {
-            return;
-        };
-
-        // Safety: `linear_ptr_mut` bounds-checks against the configured guest region.
-        unsafe {
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, copy_len);
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => return,
+            };
         }
     }
 }
@@ -290,7 +334,7 @@ impl UhciControllerBridge {
         }
         let mut mem = WasmGuestMemory {
             guest_base: self.guest_base,
-            guest_size: self.guest_size,
+            ram_bytes: self.guest_size,
         };
         for _ in 0..frames {
             self.ctrl.tick_1ms(&mut mem);
