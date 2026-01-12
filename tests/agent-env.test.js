@@ -84,6 +84,60 @@ test("agent-env: AERO_ISOLATE_CARGO_HOME expands ~ using HOME", { skip: process.
   }
 });
 
+test("agent-env: sets AERO_ALLOW_UNSUPPORTED_NODE when Node major differs from .nvmrc", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const currentMajor = Number(process.versions.node.split(".")[0]);
+    const differentMajor = Number.isFinite(currentMajor) ? currentMajor + 1 : 999;
+    fs.writeFileSync(path.join(repoRoot, ".nvmrc"), `${differentMajor}.0.0\n`, "utf8");
+
+    const env = { ...process.env };
+    delete env.AERO_ALLOW_UNSUPPORTED_NODE;
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "${AERO_ALLOW_UNSUPPORTED_NODE:-}"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout, "1");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test(
+  "agent-env: does not override an explicit AERO_ALLOW_UNSUPPORTED_NODE value when .nvmrc major mismatches",
+  { skip: process.platform === "win32" },
+  () => {
+    const repoRoot = setupTempRepo();
+    try {
+      const currentMajor = Number(process.versions.node.split(".")[0]);
+      const differentMajor = Number.isFinite(currentMajor) ? currentMajor + 1 : 999;
+      fs.writeFileSync(path.join(repoRoot, ".nvmrc"), `${differentMajor}.0.0\n`, "utf8");
+
+      const stdout = execFileSync(
+        "bash",
+        ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "${AERO_ALLOW_UNSUPPORTED_NODE:-}"'],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            AERO_ALLOW_UNSUPPORTED_NODE: "0",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+
+      assert.equal(stdout, "0");
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  },
+);
+
 test("agent-env: clears sccache rustc wrapper variables", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
