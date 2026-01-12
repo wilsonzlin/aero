@@ -84,6 +84,7 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d11Executor> {
         return None;
     }
 
+    let backend = adapter.get_info().backend;
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
@@ -96,7 +97,7 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d11Executor> {
         .await
         .ok()?;
 
-    Some(AerogpuD3d11Executor::new(device, queue))
+    Some(AerogpuD3d11Executor::new(device, queue, backend))
 }
 
 #[test]
@@ -203,4 +204,3 @@ fn d3d11_bc_mip_upload_and_copy_pad_small_mips() {
         .expect("BC mip upload + small-mip copy should succeed");
     exec.poll_wait();
 }
-

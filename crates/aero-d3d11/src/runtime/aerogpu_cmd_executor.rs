@@ -536,6 +536,7 @@ impl Default for AerogpuD3d11State {
 pub struct AerogpuD3d11Executor {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    backend: wgpu::Backend,
 
     resources: AerogpuD3d11Resources,
     state: AerogpuD3d11State,
@@ -579,7 +580,7 @@ pub struct AerogpuD3d11Executor {
 }
 
 impl AerogpuD3d11Executor {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, backend: wgpu::Backend) -> Self {
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu_cmd dummy texture"),
             size: wgpu::Extent3d {
@@ -686,6 +687,7 @@ impl AerogpuD3d11Executor {
         Self {
             device,
             queue,
+            backend,
             resources: AerogpuD3d11Resources::default(),
             state: AerogpuD3d11State::default(),
             shared_surfaces: SharedSurfaceTable::default(),
@@ -759,6 +761,7 @@ impl AerogpuD3d11Executor {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
+        let backend = adapter.get_info().backend;
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
@@ -771,11 +774,15 @@ impl AerogpuD3d11Executor {
             )
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-        Ok(Self::new(device, queue))
+        Ok(Self::new(device, queue, backend))
     }
 
     pub fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    pub fn backend(&self) -> wgpu::Backend {
+        self.backend
     }
 
     pub fn reset(&mut self) {
@@ -4834,22 +4841,6 @@ impl AerogpuD3d11Executor {
             None
         };
 
-        // Some wgpu backends (notably GL) struggle with `copy_texture_to_texture` on BC-compressed
-        // textures. When the source is guest-backed we can sidestep the GPU copy path by reading the
-        // relevant BC blocks directly from guest memory and uploading them into the destination.
-        //
-        // This keeps CI deterministic (where we prefer the GL backend) while still allowing native
-        // BC textures on backends where compressed copies are reliable.
-        let bc_copy_from_guest = bc_block_bytes(src_desc.format).is_some() && src_backing.is_some();
-        if bc_copy_from_guest {
-            // We're about to call `queue.write_texture`, which is ordered relative to `queue.submit`.
-            // Flush any previously recorded commands so the write cannot reorder ahead of them.
-            self.submit_encoder_if_has_commands(
-                encoder,
-                "aerogpu_cmd encoder before BC COPY_TEXTURE2D guest upload",
-            );
-        }
-
         // Ensure the source texture reflects any CPU writes from guest memory before copying.
         self.ensure_texture_uploaded(encoder, src_texture, allocs, guest_mem)?;
 
@@ -4857,45 +4848,24 @@ impl AerogpuD3d11Executor {
             self.ensure_texture_uploaded(encoder, dst_texture, allocs, guest_mem)?;
         }
 
-        if bc_copy_from_guest {
-            let Some(src_backing) = src_backing else {
-                unreachable!("bc_copy_from_guest implies src_backing.is_some()");
-            };
-            let block_bytes = bc_block_bytes(src_desc.format)
-                .expect("bc_copy_from_guest implies src_desc is block-compressed");
+        let is_bc = bc_block_bytes(src_desc.format).is_some();
+        let bc_copy_requires_cpu_fallback = is_bc && matches!(self.backend, wgpu::Backend::Gl);
 
-            let guest_layout = compute_guest_texture_layout(
-                src_format_u32,
-                src_desc.width,
-                src_desc.height,
-                src_desc.mip_level_count,
-                src_desc.array_layers,
-                src_row_pitch_bytes,
-            )
-            .context("COPY_TEXTURE2D: compute guest layout for BC fallback")?;
+        if bc_copy_requires_cpu_fallback {
+            // wgpu's GL backend has historically been unreliable when executing
+            // `CommandEncoder::copy_texture_to_texture` for BC-compressed textures.
+            //
+            // For correctness and determinism we route BC copies through CPU-visible bytes and then
+            // re-upload with `Queue::write_texture`. This is only viable when the BC block stream is
+            // available on the CPU:
+            // - guest-backed sources: authoritative bytes live in guest memory
+            // - `UPLOAD_RESOURCE` sources: authoritative bytes live in `host_shadow`
+            //
+            // If neither is available (GPU-only BC source), we fail fast instead of attempting a
+            // backend-dependent compressed copy.
 
-            allocs.validate_range(
-                src_backing.alloc_id,
-                src_backing.offset_bytes,
-                guest_layout.total_size,
-            )?;
-            let base_gpa = allocs
-                .gpa(src_backing.alloc_id)?
-                .checked_add(src_backing.offset_bytes)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src backing GPA overflow"))?;
-
-            let layer_offset = guest_layout
-                .layer_stride
-                .checked_mul(src_array_layer as u64)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src layer offset overflow"))?;
-            let mip_offset = *guest_layout
-                .mip_offsets
-                .get(src_mip_level as usize)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip offset"))?;
-            let src_row_pitch = *guest_layout
-                .mip_row_pitches
-                .get(src_mip_level as usize)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip row pitch"))?;
+            let block_bytes =
+                bc_block_bytes(src_desc.format).expect("bc_copy_requires_cpu_fallback implies BC");
 
             let src_block_x = src_x / 4;
             let src_block_y = src_y / 4;
@@ -4911,81 +4881,355 @@ impl AerogpuD3d11Executor {
             let row_bytes_usize: usize = row_bytes
                 .try_into()
                 .map_err(|_| anyhow!("COPY_TEXTURE2D: BC row byte size out of range"))?;
-            let src_row_pitch_usize: usize = src_row_pitch
+            let blocks_h_usize: usize = blocks_h
                 .try_into()
-                .map_err(|_| anyhow!("COPY_TEXTURE2D: BC src row pitch out of range"))?;
-            let src_x_bytes: usize = (src_block_x as usize)
-                .checked_mul(block_bytes as usize)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
-            if src_x_bytes
-                .checked_add(row_bytes_usize)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row range overflow"))?
-                > src_row_pitch_usize
-            {
-                bail!("COPY_TEXTURE2D: src row pitch too small for BC copy region");
+                .map_err(|_| anyhow!("COPY_TEXTURE2D: BC block row count out of range"))?;
+
+            // Gather BC blocks for the copy region into a tight per-block-row buffer. We write one
+            // block row at a time to avoid wgpu's 256-byte `bytes_per_row` alignment requirement for
+            // multi-row writes.
+            let region_len = row_bytes_usize
+                .checked_mul(blocks_h_usize)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC region buffer size overflow"))?;
+            let mut region_blocks = vec![0u8; region_len];
+
+            if let Some(src_backing) = src_backing {
+                // Source is guest-backed: pull BC blocks from guest memory.
+                let guest_layout = compute_guest_texture_layout(
+                    src_format_u32,
+                    src_desc.width,
+                    src_desc.height,
+                    src_desc.mip_level_count,
+                    src_desc.array_layers,
+                    src_row_pitch_bytes,
+                )
+                .context("COPY_TEXTURE2D: compute guest layout for BC fallback")?;
+
+                allocs.validate_range(
+                    src_backing.alloc_id,
+                    src_backing.offset_bytes,
+                    guest_layout.total_size,
+                )?;
+                let base_gpa = allocs
+                    .gpa(src_backing.alloc_id)?
+                    .checked_add(src_backing.offset_bytes)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src backing GPA overflow"))?;
+
+                let layer_offset = guest_layout
+                    .layer_stride
+                    .checked_mul(src_array_layer as u64)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src layer offset overflow"))?;
+                let mip_offset = *guest_layout
+                    .mip_offsets
+                    .get(src_mip_level as usize)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip offset"))?;
+                let src_row_pitch = *guest_layout
+                    .mip_row_pitches
+                    .get(src_mip_level as usize)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: missing src mip row pitch"))?;
+
+                let src_row_pitch_usize: usize = src_row_pitch
+                    .try_into()
+                    .map_err(|_| anyhow!("COPY_TEXTURE2D: BC src row pitch out of range"))?;
+                let src_x_bytes: usize = (src_block_x as usize)
+                    .checked_mul(block_bytes as usize)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
+                if src_x_bytes
+                    .checked_add(row_bytes_usize)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row range overflow"))?
+                    > src_row_pitch_usize
+                {
+                    bail!("COPY_TEXTURE2D: src row pitch too small for BC copy region");
+                }
+
+                for block_row in 0..blocks_h {
+                    let dst_start = (block_row as usize)
+                        .checked_mul(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC dst offset overflow"))?;
+                    let dst_end = dst_start
+                        .checked_add(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC dst end overflow"))?;
+                    let dst_slice = region_blocks
+                        .get_mut(dst_start..dst_end)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC region buffer too small"))?;
+
+                    let src_row_index = u64::from(
+                        src_block_y
+                            .checked_add(block_row)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row index overflow"))?,
+                    );
+                    let src_row_offset = src_row_index
+                        .checked_mul(src_row_pitch as u64)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row offset overflow"))?;
+                    let src_addr = base_gpa
+                        .checked_add(layer_offset)
+                        .and_then(|v| v.checked_add(mip_offset))
+                        .and_then(|v| v.checked_add(src_row_offset))
+                        .and_then(|v| v.checked_add(src_x_bytes as u64))
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src address overflow"))?;
+
+                    guest_mem
+                        .read(src_addr, dst_slice)
+                        .map_err(anyhow_guest_mem)?;
+                }
+            } else {
+                // Source is not guest-backed; require a CPU shadow from `UPLOAD_RESOURCE`.
+                if src_mip_level != 0 || src_array_layer != 0 {
+                    bail!(
+                        "COPY_TEXTURE2D: BC copy on GL requires a guest-backed source or an UPLOAD_RESOURCE shadow for src_mip_level=0/src_array_layer=0 (got mip={} layer={}). Consider setting AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 (CPU decompression fallback) or using a non-GL backend.",
+                        src_mip_level,
+                        src_array_layer
+                    );
+                }
+
+                let src_shadow = self
+                    .resources
+                    .textures
+                    .get(&src_texture)
+                    .and_then(|t| t.host_shadow.as_deref())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "COPY_TEXTURE2D: BC copy on GL requires a guest-backed source or a prior full UPLOAD_RESOURCE to establish a CPU shadow (src_texture={src_texture}). If this is a GPU-only BC texture, consider setting AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 (CPU decompression fallback) or using a non-GL backend."
+                        )
+                    })?;
+
+                // `host_shadow` stores mip0/layer0 in guest linear layout.
+                let format_layout = aerogpu_texture_format_layout(src_format_u32)
+                    .context("COPY_TEXTURE2D: compute BC shadow format layout")?;
+                let src_bytes_per_row = if src_row_pitch_bytes != 0 {
+                    src_row_pitch_bytes
+                } else {
+                    format_layout
+                        .bytes_per_row_tight(src_desc.width)
+                        .context("COPY_TEXTURE2D: compute BC shadow bytes_per_row")?
+                };
+
+                let src_bpr_usize: usize = src_bytes_per_row
+                    .try_into()
+                    .map_err(|_| anyhow!("COPY_TEXTURE2D: BC shadow bytes_per_row out of range"))?;
+                let src_x_bytes: usize = (src_block_x as usize)
+                    .checked_mul(block_bytes as usize)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src_x byte offset overflow"))?;
+                if src_x_bytes
+                    .checked_add(row_bytes_usize)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row range overflow"))?
+                    > src_bpr_usize
+                {
+                    bail!("COPY_TEXTURE2D: BC shadow row pitch too small for copy region");
+                }
+
+                for block_row in 0..blocks_h {
+                    let dst_start = (block_row as usize)
+                        .checked_mul(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC dst offset overflow"))?;
+                    let dst_end = dst_start
+                        .checked_add(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC dst end overflow"))?;
+                    let dst_slice = region_blocks
+                        .get_mut(dst_start..dst_end)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC region buffer too small"))?;
+
+                    let src_row_index: usize = src_block_y
+                        .checked_add(block_row)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row index overflow"))?
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: BC src row index out of range"))?;
+                    let src_start = src_row_index
+                        .checked_mul(src_bpr_usize)
+                        .and_then(|v| v.checked_add(src_x_bytes))
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow src offset overflow"))?;
+                    let src_end = src_start
+                        .checked_add(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow src end overflow"))?;
+                    dst_slice.copy_from_slice(
+                        src_shadow.get(src_start..src_end).ok_or_else(|| {
+                            anyhow!("COPY_TEXTURE2D: BC shadow too small for copy region")
+                        })?,
+                    );
+                }
             }
 
-            let dst = self
-                .resources
-                .textures
-                .get(&dst_texture)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
+            // We're about to call `queue.write_texture`, which is ordered relative to `queue.submit`.
+            // Flush any previously recorded commands so the write cannot reorder ahead of them.
+            self.submit_encoder_if_has_commands(
+                encoder,
+                "aerogpu_cmd encoder before BC COPY_TEXTURE2D CPU fallback",
+            );
 
-            let mut row_buf = vec![0u8; row_bytes_usize];
-            for block_row in 0..blocks_h {
-                let origin_y_texels = dst_y
-                    .checked_add(block_row.saturating_mul(4))
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst origin.y overflow"))?;
+            {
+                let dst = self
+                    .resources
+                    .textures
+                    .get(&dst_texture)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
 
-                let src_row_index = (src_block_y + block_row) as u64;
-                let src_row_offset = src_row_index
-                    .checked_mul(src_row_pitch as u64)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row offset overflow"))?;
-                let src_addr = base_gpa
-                    .checked_add(layer_offset)
-                    .and_then(|v| v.checked_add(mip_offset))
-                    .and_then(|v| v.checked_add(src_row_offset))
-                    .and_then(|v| v.checked_add(src_x_bytes as u64))
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src address overflow"))?;
-
-                guest_mem
-                    .read(src_addr, &mut row_buf)
-                    .map_err(anyhow_guest_mem)?;
-
-                // WebGPU requires BC uploads to use the physical (block-rounded) height even when
-                // the copy reaches the edge of a smaller-than-a-block mip.
+                // WebGPU requires BC uploads to use the physical (block-rounded) extents. This is
+                // observable for small mips (e.g. a 2x2 mip still occupies a full 4x4 BC block).
                 let chunk_height_texels = 4;
 
-                self.queue.write_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &dst.texture,
-                        mip_level: dst_mip_level,
-                        origin: wgpu::Origin3d {
-                            x: dst_x,
-                            y: origin_y_texels,
-                            z: dst_array_layer,
+                for block_row in 0..blocks_h {
+                    let origin_y_texels = dst_y
+                        .checked_add(
+                            block_row
+                                .checked_mul(4)
+                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst origin.y overflow"))?,
+                        )
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst origin.y overflow"))?;
+
+                    let src_start = (block_row as usize)
+                        .checked_mul(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row offset overflow"))?;
+                    let src_end = src_start
+                        .checked_add(row_bytes_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC src row end overflow"))?;
+                    let row_bytes_slice = region_blocks
+                        .get(src_start..src_end)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC region buffer too small"))?;
+
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &dst.texture,
+                            mip_level: dst_mip_level,
+                            origin: wgpu::Origin3d {
+                                x: dst_x,
+                                y: origin_y_texels,
+                                z: dst_array_layer,
+                            },
+                            aspect: wgpu::TextureAspect::All,
                         },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &row_buf,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: Some(row_bytes),
-                        rows_per_image: Some(1),
-                    },
-                    wgpu::Extent3d {
-                        width: copy_width_texels,
-                        height: chunk_height_texels,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                        row_bytes_slice,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(row_bytes),
+                            rows_per_image: Some(1),
+                        },
+                        wgpu::Extent3d {
+                            width: copy_width_texels,
+                            height: chunk_height_texels,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
             }
 
             // The destination GPU texture content has changed; discard any pending "dirty" marker
             // that would otherwise cause us to overwrite the copy with stale guest-memory contents.
-            if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
-                dst.dirty = false;
-                dst.host_shadow = None;
+            if let Some(dst_res) = self.resources.textures.get_mut(&dst_texture) {
+                dst_res.dirty = false;
+
+                // For non-guest-backed BC textures, maintain/update the CPU shadow so that later
+                // BC copies on GL can still source blocks without relying on the GPU copy path.
+                if dst_res.backing.is_none() && dst_mip_level == 0 && dst_array_layer == 0 {
+                    let format_layout = aerogpu_texture_format_layout(dst_format_u32).context(
+                        "COPY_TEXTURE2D: compute dst format layout for BC shadow update",
+                    )?;
+                    let dst_bytes_per_row = if dst_row_pitch_bytes != 0 {
+                        dst_row_pitch_bytes
+                    } else {
+                        format_layout
+                            .bytes_per_row_tight(dst_desc.width)
+                            .context("COPY_TEXTURE2D: compute dst bytes_per_row")?
+                    };
+                    let dst_rows_u32 = format_layout.rows(dst_desc.height);
+                    let dst_bpr_usize: usize = dst_bytes_per_row.try_into().map_err(|_| {
+                        anyhow!("COPY_TEXTURE2D: dst bytes_per_row out of range")
+                    })?;
+                    let dst_rows_usize: usize = dst_rows_u32
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: dst rows out of range"))?;
+                    let dst_shadow_len = dst_bpr_usize
+                        .checked_mul(dst_rows_usize)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst shadow size overflows usize"))?;
+
+                    let full_copy = dst_x == 0
+                        && dst_y == 0
+                        && width == dst_desc.width
+                        && height == dst_desc.height;
+
+                    if dst_res.host_shadow.is_none() && full_copy {
+                        dst_res.host_shadow = Some(vec![0u8; dst_shadow_len]);
+                    }
+
+                    if let Some(shadow) = dst_res.host_shadow.as_mut() {
+                        if shadow.len() != dst_shadow_len {
+                            dst_res.host_shadow = None;
+                        } else {
+                            let dst_block_x = dst_x / 4;
+                            let dst_block_y = dst_y / 4;
+                            let dst_x_bytes: usize = (dst_block_x as usize)
+                                .checked_mul(block_bytes as usize)
+                                .ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow")
+                                })?;
+                            if dst_x_bytes
+                                .checked_add(row_bytes_usize)
+                                .ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst shadow row range overflow")
+                                })?
+                                > dst_bpr_usize
+                            {
+                                dst_res.host_shadow = None;
+                            } else {
+                                for block_row in 0..blocks_h {
+                                    let src_start = (block_row as usize)
+                                        .checked_mul(row_bytes_usize)
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow src row offset overflow"
+                                            )
+                                        })?;
+                                    let src_end = src_start
+                                        .checked_add(row_bytes_usize)
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow src row end overflow"
+                                            )
+                                        })?;
+
+                                    let dst_row_index: usize = dst_block_y
+                                        .checked_add(block_row)
+                                        .ok_or_else(|| {
+                                            anyhow!("COPY_TEXTURE2D: BC shadow dst row index overflow")
+                                        })?
+                                        .try_into()
+                                        .map_err(|_| {
+                                            anyhow!("COPY_TEXTURE2D: BC shadow dst row index out of range")
+                                        })?;
+                                    let dst_start = dst_row_index
+                                        .checked_mul(dst_bpr_usize)
+                                        .and_then(|v| v.checked_add(dst_x_bytes))
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow dst row offset overflow"
+                                            )
+                                        })?;
+                                    let dst_end = dst_start
+                                        .checked_add(row_bytes_usize)
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow dst row end overflow"
+                                            )
+                                        })?;
+
+                                    shadow
+                                        .get_mut(dst_start..dst_end)
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow dst buffer too small"
+                                            )
+                                        })?
+                                        .copy_from_slice(
+                                            region_blocks.get(src_start..src_end).ok_or_else(
+                                                || anyhow!("COPY_TEXTURE2D: BC region buffer too small"),
+                                            )?,
+                                        );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    dst_res.host_shadow = None;
+                }
             }
 
             // If the destination is guest-backed we intentionally leave its backing store stale;

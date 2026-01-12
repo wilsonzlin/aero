@@ -52,6 +52,11 @@ fn negotiated_features_for_available(
     // wgpu's GL backend has had correctness issues with native block-compressed texture paths on
     // some platforms (notably Linux CI software adapters). Treat compression as disabled
     // regardless of adapter feature bits to keep tests deterministic.
+    //
+    // Note: callers can still explicitly enable `TEXTURE_COMPRESSION_BC` on GL (bypassing this
+    // negotiated path). In that configuration, Aero must avoid relying on
+    // `CommandEncoder::copy_texture_to_texture` for BC textures; see the CPU/staging fallbacks in
+    // `aerogpu_cmd_executor`.
     if !disable_texture_compression && !backend_is_gl {
         // Texture compression is optional but beneficial (guest textures, DDS, etc).
         // Request only features the adapter advertises, otherwise `request_device` will fail.
