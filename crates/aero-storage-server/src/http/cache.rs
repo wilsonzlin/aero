@@ -72,7 +72,13 @@ where
             );
         } else {
             let trimmed = etag.trim();
-            if looks_like_etag(trimmed) {
+            if !trimmed.is_ascii() {
+                let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+                tracing::warn!(
+                    etag = ?etag_for_log.as_ref(),
+                    "store-provided ETag is not ASCII; using fallback"
+                );
+            } else if looks_like_etag(trimmed) {
                 match HeaderValue::from_str(trimmed) {
                     Ok(v) => {
                         // `HeaderValue::from_str` allows obs-text, but our conditional request logic
