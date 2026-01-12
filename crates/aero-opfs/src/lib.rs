@@ -1,18 +1,25 @@
 //! Origin Private File System (OPFS) storage backends for Aero (wasm32).
 //!
 //! This crate provides wasm32 implementations of `aero-storage` traits on top of browser
-//! persistence APIs:
+//! persistence APIs.
 //!
-//! - [`OpfsByteStorage`] implements [`aero_storage::StorageBackend`] using OPFS
-//!   `FileSystemSyncAccessHandle` when available (fast, synchronous in a Worker).
-//! - [`OpfsBackend`] implements [`aero_storage::VirtualDisk`] for sector-oriented I/O.
-//! - [`OpfsSyncFile`] wraps `FileSystemSyncAccessHandle` with a cursor and implements
+//! The primary, boot-critical storage path is OPFS `FileSystemSyncAccessHandle` (fast and
+//! synchronous in a Dedicated Worker). Some additional backends (async OPFS APIs, IndexedDB)
+//! exist as async-only fallbacks for host-side tooling and environments where sync handles
+//! are unavailable.
+//!
+//! Main types:
+//!
+//! - [`OpfsByteStorage`]: implements [`aero_storage::StorageBackend`] using OPFS
+//!   `FileSystemSyncAccessHandle` when available.
+//! - [`OpfsBackend`]: implements [`aero_storage::VirtualDisk`] for disk-oriented I/O.
+//! - [`OpfsStorage`]: convenience wrapper that chooses the best available persistence backend
+//!   (sync OPFS when possible; otherwise async fallbacks).
+//! - [`OpfsSyncFile`]: wraps `FileSystemSyncAccessHandle` with a cursor and implements
 //!   `std::io::{Read, Write, Seek}` for streaming snapshot read/write.
 //!
 //! Most APIs are meaningful only on wasm32; non-wasm builds provide stubs that return
 //! [`DiskError::NotSupported`].
-
-//! Browser storage backends for Aero (OPFS + IndexedDB).
 //!
 //! ## Errors
 //!
