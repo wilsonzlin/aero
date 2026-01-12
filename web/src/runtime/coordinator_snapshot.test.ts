@@ -291,8 +291,8 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
     await flushMicrotasks();
 
-    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
-    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
+    const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: netResume.message.requestId, ok: true });
 
     await expect(promise).resolves.toBeUndefined();
   });
