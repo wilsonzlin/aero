@@ -191,6 +191,31 @@ real Win7-era WDK header set, see the tooling-only probe:
 
 - `tools/wdk_abi_probe/`
 
+## Win7 WDK ABI verification (recommended)
+
+The Win7 D3D10/D3D11 runtimes load the UMD by **ABI contract**: exported entrypoint
+names/calling conventions, and the exact layout of the D3D10DDI/D3D11DDI structs
+passed across the boundary (notably the adapter/device/context function tables).
+
+To make ABI drift obvious *before* debugging a Win7 loader crash, the repo includes:
+
+- A standalone **WDK ABI probe** tool:
+  - `tools/wdk_abi_probe/`
+- Optional **compile-time ABI asserts** wired into WDK builds:
+  - `src/aerogpu_d3d10_11_wdk_abi_asserts.h` (inert unless `AEROGPU_UMD_USE_WDK_HEADERS=1`)
+
+The checked-in expected ABI snapshot lives in:
+
+- `src/aerogpu_d3d10_11_wdk_abi_expected.h`
+
+The Visual Studio project enables strict ABI enforcement automatically for WDK-header builds by defining:
+
+- `AEROGPU_D3D10_11_WDK_ABI_ENFORCE_EXPECTED` (set when `/p:AeroGpuUseWdkHeaders=1`).
+
+If you intentionally update the WDK/toolchain and ABI asserts start failing, regenerate the expected header from probe output using:
+
+- `tools/wdk_abi_probe/gen_expected_header.py` (see `tools/wdk_abi_probe/README.md`).
+
 #### Quick validation
 
 From a Visual Studio Developer Command Prompt, inspect the DLL exports:
