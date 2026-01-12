@@ -87,7 +87,7 @@ python3 drivers/aerogpu/umd/d3d10_11/tools/wdk_abi_probe/gen_expected_header.py 
   --out drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h
 ```
 
-If your probe output contains `offsetof(...) = <n/a>` entries for optional members, you can pass `--allow-na` to omit those macros from the generated header.
+If your probe output contains `offsetof(...) = <n/a>` entries for optional members, you can pass `--allow-na` to omit those macros from the generated header. (This applies to both the default curated output and `--all` mode.)
 
 Optional: pass `--all` to emit *all* parsed `sizeof(...)`/`offsetof(...)` values from the probe output, not just the curated “high-value anchors”. This can be useful when expanding the set of ABI checks without hand-editing the header.
 
