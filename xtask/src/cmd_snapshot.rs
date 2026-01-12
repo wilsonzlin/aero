@@ -12,7 +12,8 @@ use crate::error::{Result, XtaskError};
 const MAX_DEVICE_COUNT: u32 = 4096;
 const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
 const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
-const MAX_CPU_COUNT: u32 = 4096;
+// Keep in sync with `aero_snapshot`'s restore-time MAX_CPU_COUNT (currently 256).
+const MAX_CPU_COUNT: u32 = 256;
 const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
 const MAX_DISK_REFS: u32 = 256;
 const MAX_DISK_PATH_LEN: u32 = 64 * 1024;

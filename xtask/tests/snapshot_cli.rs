@@ -361,6 +361,62 @@ fn read_u64_le(bytes: &[u8]) -> u64 {
     u64::from_le_bytes(bytes[..8].try_into().unwrap())
 }
 
+struct ManyCpuSource;
+
+impl SnapshotSource for ManyCpuSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 11,
+            parent_snapshot_id: Some(10),
+            created_unix_ms: 0,
+            label: Some("xtask-too-many-cpus".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        // One more than the `aero-snapshot` restore-time MAX_CPU_COUNT (256) so validation matches
+        // what restore would accept.
+        let mut cpus = Vec::with_capacity(257);
+        for apic_id in 0..257u32 {
+            cpus.push(VcpuSnapshot {
+                apic_id,
+                cpu: CpuState::default(),
+                internal_state: Vec::new(),
+            });
+        }
+        cpus
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        0
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
 fn corrupt_first_vcpu_internal_len(snapshot: &mut [u8]) {
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
     let cpus = index
@@ -1413,6 +1469,23 @@ fn snapshot_validate_rejects_zero_cpu_count() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("missing CPU entry"));
+}
+
+#[test]
+fn snapshot_validate_rejects_too_many_cpus() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("too_many_cpus.aerosnap");
+
+    let mut source = ManyCpuSource;
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("too many CPUs"));
 }
 
 struct LargeDirtySource;
