@@ -105,17 +105,20 @@ pub fn prp_segments(
         return Err(PrpError::Invalid);
     }
 
-    let mut segments = Vec::new();
     let first_offset = (prp1 % page_size as u64) as usize;
     let first_len = total_len.min(page_size - first_offset);
-    segments.push((prp1, first_len));
 
     let mut remaining = total_len - first_len;
+    let additional_pages = remaining.div_ceil(page_size);
+    let mut segments = Vec::new();
+    segments
+        .try_reserve_exact(1 + additional_pages)
+        .map_err(|_| PrpError::Invalid)?;
+    segments.push((prp1, first_len));
     if remaining == 0 {
         return Ok(segments);
     }
 
-    let additional_pages = remaining.div_ceil(page_size);
     if additional_pages == 1 {
         if !is_page_aligned(prp2, page_size) {
             return Err(PrpError::Invalid);
@@ -174,11 +177,19 @@ pub fn dma_read(
         return Err(PrpError::Invalid);
     }
     let segments = prp_segments(mem, prp1, prp2, total_len, page_size)?;
-    let mut buf = vec![0u8; total_len];
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(total_len)
+        .map_err(|_| PrpError::Invalid)?;
+    buf.resize(total_len, 0);
     let mut offset = 0usize;
     for (addr, len) in segments {
-        mem.read_physical(addr, &mut buf[offset..offset + len]);
-        offset += len;
+        let end = offset.checked_add(len).ok_or(PrpError::Invalid)?;
+        let dst = buf.get_mut(offset..end).ok_or(PrpError::Invalid)?;
+        mem.read_physical(addr, dst);
+        offset = end;
+    }
+    if offset != total_len {
+        return Err(PrpError::Invalid);
     }
     Ok(buf)
 }
@@ -196,8 +207,13 @@ pub fn dma_write(
     let segments = prp_segments(mem, prp1, prp2, data.len(), page_size)?;
     let mut offset = 0usize;
     for (addr, len) in segments {
-        mem.write_physical(addr, &data[offset..offset + len]);
-        offset += len;
+        let end = offset.checked_add(len).ok_or(PrpError::Invalid)?;
+        let src = data.get(offset..end).ok_or(PrpError::Invalid)?;
+        mem.write_physical(addr, src);
+        offset = end;
+    }
+    if offset != data.len() {
+        return Err(PrpError::Invalid);
     }
     Ok(())
 }

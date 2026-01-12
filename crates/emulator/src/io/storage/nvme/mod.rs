@@ -603,7 +603,11 @@ impl NvmeController {
         if len > NVME_MAX_DMA_BYTES {
             return (0, NvmeStatus::invalid_field());
         }
-        let mut data = vec![0u8; len];
+        let mut data = Vec::new();
+        if data.try_reserve_exact(len).is_err() {
+            return (0, NvmeStatus::invalid_field());
+        }
+        data.resize(len, 0);
         if self.disk.read_sectors(slba, &mut data).is_err() {
             return (0, NvmeStatus::invalid_field());
         }
