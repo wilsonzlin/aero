@@ -1308,7 +1308,6 @@ impl IoSnapshot for NvmePciDevice {
 mod tests {
     use super::*;
     use aero_storage::{MemBackend, RawDisk, VirtualDisk as StorageVirtualDisk, SECTOR_SIZE};
-    use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
     use std::sync::{Arc, Mutex};
 
     struct TestMem {
@@ -1441,8 +1440,7 @@ mod tests {
     #[test]
     fn pci_bar0_probe_and_program() {
         let disk = TestDisk::new(1024);
-        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-        let mut dev = NvmePciDevice::new(Box::new(backend));
+        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)));
 
         dev.pci_write_u32(0x10, 0xffff_ffff);
         let mask_lo = dev.pci_read_u32(0x10);
@@ -1466,8 +1464,7 @@ mod tests {
     #[test]
     fn registers_enable_sets_rdy() {
         let disk = TestDisk::new(1024);
-        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-        let mut ctrl = NvmeController::new(Box::new(backend));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
         let mut mem = TestMem::new(1024 * 1024);
 
         ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem); // 16/16 queues
@@ -1481,8 +1478,7 @@ mod tests {
     #[test]
     fn aqa_fields_map_to_admin_queue_sizes() {
         let disk = TestDisk::new(1024);
-        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-        let mut ctrl = NvmeController::new(Box::new(backend));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
         let mut mem = TestMem::new(1024 * 1024);
 
         // ASQS = 8 entries, ACQS = 4 entries (both are 0-based in AQA).
@@ -1498,8 +1494,7 @@ mod tests {
     #[test]
     fn admin_identify_controller_writes_data_and_completion() {
         let disk = TestDisk::new(1024);
-        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-        let mut ctrl = NvmeController::new(Box::new(backend));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
         let mut mem = TestMem::new(1024 * 1024);
 
         let asq = 0x10000;
@@ -1533,8 +1528,7 @@ mod tests {
     fn create_io_queues_and_rw_roundtrip() {
         let disk = TestDisk::new(1024);
         let disk_state = disk.clone();
-        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-        let mut ctrl = NvmeController::new(Box::new(backend));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -1621,8 +1615,7 @@ mod tests {
     #[test]
     fn cq_phase_toggles_on_wrap() {
         let disk = TestDisk::new(1024);
-        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-        let mut ctrl = NvmeController::new(Box::new(backend));
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)));
         let mut mem = TestMem::new(2 * 1024 * 1024);
 
         let asq = 0x10000;
