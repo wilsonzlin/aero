@@ -568,12 +568,36 @@ impl AerogpuCmdRuntime {
         self.state.bindings.vs.constant_buffers[slot] = buffer;
     }
 
+    pub fn set_ps_constant_buffer(&mut self, slot: u32, buffer: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.ps.constant_buffers.len() <= slot {
+            self.state.bindings.ps.constant_buffers.resize(slot + 1, None);
+        }
+        self.state.bindings.ps.constant_buffers[slot] = buffer;
+    }
+
+    pub fn set_vs_texture(&mut self, slot: u32, texture: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.vs.textures.len() <= slot {
+            self.state.bindings.vs.textures.resize(slot + 1, None);
+        }
+        self.state.bindings.vs.textures[slot] = texture;
+    }
+
     pub fn set_ps_texture(&mut self, slot: u32, texture: Option<AerogpuHandle>) {
         let slot = slot as usize;
         if self.state.bindings.ps.textures.len() <= slot {
             self.state.bindings.ps.textures.resize(slot + 1, None);
         }
         self.state.bindings.ps.textures[slot] = texture;
+    }
+
+    pub fn set_vs_sampler(&mut self, slot: u32, sampler: Option<AerogpuHandle>) {
+        let slot = slot as usize;
+        if self.state.bindings.vs.samplers.len() <= slot {
+            self.state.bindings.vs.samplers.resize(slot + 1, None);
+        }
+        self.state.bindings.vs.samplers[slot] = sampler;
     }
 
     pub fn set_ps_sampler(&mut self, slot: u32, sampler: Option<AerogpuHandle>) {
