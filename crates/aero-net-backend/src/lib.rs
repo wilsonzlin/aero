@@ -95,11 +95,15 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for std::rc::Rc<std::cell::RefCe
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         self.borrow_mut().poll_receive()
     }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        self.borrow().l2_ring_stats()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::NetworkBackend;
+    use super::{L2TunnelRingBackendStats, NetworkBackend};
 
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -121,6 +125,13 @@ mod tests {
             fn poll_receive(&mut self) -> Option<Vec<u8>> {
                 self.rx.pop_front()
             }
+
+            fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+                Some(L2TunnelRingBackendStats {
+                    tx_pushed_frames: 1,
+                    ..Default::default()
+                })
+            }
         }
 
         let inner = Rc::new(RefCell::new(Backend::default()));
@@ -129,6 +140,13 @@ mod tests {
         let mut backend = inner.clone();
         backend.transmit(vec![1, 2, 3]);
 
+        assert_eq!(
+            backend.l2_ring_stats(),
+            Some(L2TunnelRingBackendStats {
+                tx_pushed_frames: 1,
+                ..Default::default()
+            })
+        );
         assert_eq!(backend.poll_receive(), Some(vec![9, 9, 9]));
         assert_eq!(backend.poll_receive(), None);
 
