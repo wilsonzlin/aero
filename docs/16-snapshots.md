@@ -552,6 +552,8 @@ The intended browser persistence flow is:
    - **Import snapshot:** load a snapshot from a user-selected file.
 
 OPFS access is via `navigator.storage.getDirectory()` and `FileSystemFileHandle` APIs (see `docs/05-storage-subsystem.md` for OPFS notes).
+See also the repo-wide disk/backend trait mapping in
+[`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 
 ### Streaming snapshots (multi-GB)
 
