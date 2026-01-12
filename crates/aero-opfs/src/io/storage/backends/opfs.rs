@@ -790,9 +790,9 @@ mod wasm {
     /// As a guardrail, this type intentionally does **not** implement
     /// [`aero_storage::StorageBackend`]:
     ///
-    /// ```compile_fail
+    /// ```compile_fail,E0277
     /// use aero_storage::StorageBackend;
-    /// use aero_opfs::OpfsIndexedDbBackend;
+    /// use aero_opfs::io::storage::backends::opfs::OpfsIndexedDbBackend;
     ///
     /// fn assert_sync_backend<T: StorageBackend>() {}
     ///
@@ -1290,9 +1290,9 @@ mod native {
     /// IndexedDB is async-only and this type intentionally does **not** implement
     /// [`aero_storage::StorageBackend`] (see `docs/19-indexeddb-storage-story.md`):
     ///
-    /// ```compile_fail
+    /// ```compile_fail,E0277
     /// use aero_storage::StorageBackend;
-    /// use aero_opfs::OpfsIndexedDbBackend;
+    /// use aero_opfs::io::storage::backends::opfs::OpfsIndexedDbBackend;
     ///
     /// fn assert_sync_backend<T: StorageBackend>() {}
     ///
