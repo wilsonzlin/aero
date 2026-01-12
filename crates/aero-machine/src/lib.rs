@@ -1863,7 +1863,17 @@ impl Machine {
                 Box::new(VgaPortWindow { vga: vga.clone() }),
             );
             self.io
-                .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga }));
+                .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
+
+            // Map the VBE/SVGA linear framebuffer (fixed physical address in `aero_gpu_vga`).
+            let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
+            let lfb_len = vga.borrow().vram().len() as u64;
+            self.mem.map_mmio_once(lfb_base, lfb_len, || {
+                Box::new(VgaLegacyMmio {
+                    base: lfb_base,
+                    vga: vga.clone(),
+                })
+            });
         } else if !self.cfg.enable_vga {
             self.vga = None;
         }
