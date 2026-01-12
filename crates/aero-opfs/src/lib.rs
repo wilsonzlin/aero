@@ -12,6 +12,13 @@
 //! Most APIs are meaningful only on wasm32; non-wasm builds provide stubs that return
 //! [`DiskError::NotSupported`].
 
+//! Browser storage backends for Aero (OPFS + IndexedDB).
+//!
+//! ## Errors
+//!
+//! All public APIs in this crate use the canonical [`DiskError`] type from
+//! [`aero_storage`], re-exported here for convenience.
+
 pub mod io;
 pub mod platform;
 
