@@ -146,6 +146,63 @@ fn snapshot_reader_rejects_unsupported_format_major() {
 }
 
 #[test]
+fn snapshot_reader_rejects_truncated_header() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let bytes = b"AERO".to_vec();
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject truncated header"),
+        Err(err) => err,
+    };
+    assert_eq!(err, SnapshotError::UnexpectedEof);
+}
+
+#[test]
+fn snapshot_reader_rejects_truncated_tlv_header() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(&DEVICE_ID);
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    // Start a TLV but truncate it (need 6 bytes for tag+len).
+    bytes.push(0x01);
+
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject truncated TLV header"),
+        Err(err) => err,
+    };
+    assert_eq!(err, SnapshotError::UnexpectedEof);
+}
+
+#[test]
+fn snapshot_reader_rejects_truncated_tlv_payload() {
+    const DEVICE_ID: [u8; 4] = *b"TEST";
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format version minor
+    bytes.extend_from_slice(&DEVICE_ID);
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device version major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device version minor
+
+    // TLV: tag=1, len=4, but omit payload.
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&4u32.to_le_bytes());
+
+    let err = match SnapshotReader::parse(&bytes, DEVICE_ID) {
+        Ok(_) => panic!("expected SnapshotReader::parse to reject truncated TLV payload"),
+        Err(err) => err,
+    };
+    assert_eq!(err, SnapshotError::UnexpectedEof);
+}
+
+#[test]
 fn snapshot_reader_ensure_device_major_rejects_mismatch() {
     const DEVICE_ID: [u8; 4] = *b"TEST";
 
