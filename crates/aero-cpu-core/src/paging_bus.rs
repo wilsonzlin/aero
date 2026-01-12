@@ -3,8 +3,6 @@ use crate::mem::CpuBus;
 use aero_mmu::{AccessType, MemoryBus, Mmu, TranslateFault};
 use core::fmt;
 
-const SCRATCH_SIZE: usize = 4096;
-
 /// A paging-aware [`CpuBus`] implementation backed by [`aero_mmu::Mmu`].
 ///
 /// The tier-0 interpreter passes *linear* addresses to [`CpuBus`] methods. This
@@ -54,50 +52,6 @@ pub struct PagingBus<B, IO = NoIo> {
 
 const PAGE_SIZE: u64 = 4096;
 
-/// Wrapper that forwards MMU page-walk reads but discards writes.
-///
-/// This is used by `PagingBus` bulk-ops preflight to ensure that declining a bulk
-/// optimization (`Ok(false)`) does not mutate guest-visible state (e.g. paging
-/// accessed/dirty bits) or internal MMU state (we run translation against a
-/// cloned MMU).
-struct NoWriteBus<'a, B> {
-    inner: &'a mut B,
-}
-
-impl<B: MemoryBus> MemoryBus for NoWriteBus<'_, B> {
-    #[inline]
-    fn read_u8(&mut self, paddr: u64) -> u8 {
-        self.inner.read_u8(paddr)
-    }
-
-    #[inline]
-    fn read_u16(&mut self, paddr: u64) -> u16 {
-        self.inner.read_u16(paddr)
-    }
-
-    #[inline]
-    fn read_u32(&mut self, paddr: u64) -> u32 {
-        self.inner.read_u32(paddr)
-    }
-
-    #[inline]
-    fn read_u64(&mut self, paddr: u64) -> u64 {
-        self.inner.read_u64(paddr)
-    }
-
-    #[inline]
-    fn write_u8(&mut self, _paddr: u64, _value: u8) {}
-
-    #[inline]
-    fn write_u16(&mut self, _paddr: u64, _value: u16) {}
-
-    #[inline]
-    fn write_u32(&mut self, _paddr: u64, _value: u32) {}
-
-    #[inline]
-    fn write_u64(&mut self, _paddr: u64, _value: u64) {}
-}
-
 impl<B> PagingBus<B, NoIo> {
     pub fn new(phys: B) -> PagingBus<B, NoIo> {
         PagingBus::new_with_io(phys, NoIo)
@@ -138,47 +92,6 @@ impl<B, IO> PagingBus<B, IO> {
     #[inline]
     pub fn inner_mut(&mut self) -> &mut B {
         &mut self.phys
-    }
-
-    fn preflight_range_with_mmu(
-        &mut self,
-        mmu: &mut Mmu,
-        vaddr: u64,
-        len: usize,
-        access: AccessType,
-    ) -> Result<(), Exception>
-    where
-        B: MemoryBus,
-    {
-        if len == 0 {
-            return Ok(());
-        }
-
-        let mut phys = NoWriteBus {
-            inner: &mut self.phys,
-        };
-
-        let mut offset = 0usize;
-        while offset < len {
-            let addr = vaddr.wrapping_add(offset as u64);
-            match mmu.translate(&mut phys, addr, access, self.cpl) {
-                Ok(_paddr) => {}
-                Err(TranslateFault::PageFault(pf)) => {
-                    return Err(Exception::PageFault {
-                        addr: pf.addr,
-                        error_code: pf.error_code,
-                    });
-                }
-                Err(TranslateFault::NonCanonical(_addr)) => return Err(Exception::gp0()),
-            }
-
-            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
-            let page_rem = (PAGE_SIZE as usize) - page_off;
-            let chunk_len = page_rem.min(len - offset);
-            offset += chunk_len;
-        }
-
-        Ok(())
     }
 
     #[inline]
@@ -628,124 +541,6 @@ where
 
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
         self.io.io_write(port, size, val)
-    }
-
-    fn supports_bulk_copy(&self) -> bool {
-        true
-    }
-
-    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
-        if len == 0 || dst == src {
-            return Ok(true);
-        }
-
-        // Bounds-check ranges up-front so overlap detection doesn't panic/overflow.
-        let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
-        let src_end = src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
-        let dst_end = dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
-
-        // Translation preflight against a cloned MMU and a write-suppressing bus so
-        // that returning `Ok(false)` never mutates guest-visible state (paging A/D
-        // bits, CR2, etc).
-        let mut mmu = self.mmu.clone();
-        if let Err(e) = self.preflight_range_with_mmu(&mut mmu, src, len, AccessType::Read) {
-            if matches!(e, Exception::PageFault { .. } | Exception::GeneralProtection(_)) {
-                return Ok(false);
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.preflight_range_with_mmu(&mut mmu, dst, len, AccessType::Write) {
-            if matches!(e, Exception::PageFault { .. } | Exception::GeneralProtection(_)) {
-                return Ok(false);
-            }
-            return Err(e);
-        }
-
-        let overlap = src < dst_end && dst < src_end;
-        let copy_backward = overlap && dst > src;
-
-        let mut scratch = [0u8; SCRATCH_SIZE];
-
-        if copy_backward {
-            let mut remaining = len;
-            while remaining != 0 {
-                let chunk_len = SCRATCH_SIZE.min(remaining);
-                let offset = remaining - chunk_len;
-
-                let src_addr = src.wrapping_add(offset as u64);
-                let dst_addr = dst.wrapping_add(offset as u64);
-
-                self.read_bytes_access(src_addr, &mut scratch[..chunk_len], AccessType::Read)?;
-                self.write_bytes_access(dst_addr, &scratch[..chunk_len], AccessType::Write)?;
-
-                remaining = offset;
-            }
-        } else {
-            let mut offset = 0usize;
-            while offset < len {
-                let chunk_len = SCRATCH_SIZE.min(len - offset);
-
-                let src_addr = src.wrapping_add(offset as u64);
-                let dst_addr = dst.wrapping_add(offset as u64);
-
-                self.read_bytes_access(src_addr, &mut scratch[..chunk_len], AccessType::Read)?;
-                self.write_bytes_access(dst_addr, &scratch[..chunk_len], AccessType::Write)?;
-
-                offset += chunk_len;
-            }
-        }
-
-        Ok(true)
-    }
-
-    fn supports_bulk_set(&self) -> bool {
-        true
-    }
-
-    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
-        if repeat == 0 || pattern.is_empty() {
-            return Ok(true);
-        }
-
-        let total = pattern
-            .len()
-            .checked_mul(repeat)
-            .ok_or(Exception::MemoryFault)?;
-
-        // Bounds-check destination range without panicking on overflow.
-        let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
-        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
-
-        let mut mmu = self.mmu.clone();
-        if let Err(e) = self.preflight_range_with_mmu(&mut mmu, dst, total, AccessType::Write) {
-            if matches!(e, Exception::PageFault { .. } | Exception::GeneralProtection(_)) {
-                return Ok(false);
-            }
-            return Err(e);
-        }
-
-        let mut scratch = [0u8; SCRATCH_SIZE];
-        let pat_len = pattern.len();
-
-        let mut written = 0usize;
-        while written < total {
-            let chunk_len = SCRATCH_SIZE.min(total - written);
-            let pat_off = written % pat_len;
-
-            if pat_len == 1 {
-                scratch[..chunk_len].fill(pattern[0]);
-            } else {
-                for i in 0..chunk_len {
-                    scratch[i] = pattern[(pat_off + i) % pat_len];
-                }
-            }
-
-            let addr = dst.wrapping_add(written as u64);
-            self.write_bytes_access(addr, &scratch[..chunk_len], AccessType::Write)?;
-            written += chunk_len;
-        }
-
-        Ok(true)
     }
 }
 
