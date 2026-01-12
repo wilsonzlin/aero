@@ -352,3 +352,40 @@ fn aerogpu_ci_package_manifest_includes_wow64_umds_for_dx11_inf() {
         );
     }
 }
+
+#[test]
+fn aerogpu_ci_package_manifest_stages_only_dx11_inf_at_package_root() {
+    let repo_root = repo_root();
+
+    let manifest_path = repo_root.join("drivers/aerogpu/ci-package.json");
+    let manifest_text = read_file(&manifest_path);
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .unwrap_or_else(|err| panic!("{}: failed to parse JSON: {err}", manifest_path.display()));
+
+    let inf_files: Vec<String> = manifest_json
+        .get("infFiles")
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("{}: expected `infFiles` array", manifest_path.display()))
+        .iter()
+        .map(|value| {
+            value.as_str().unwrap_or_else(|| {
+                panic!(
+                    "{}: infFiles entries must be strings; found {value:?}",
+                    manifest_path.display()
+                )
+            })
+        })
+        .map(str::to_string)
+        .collect();
+
+    // CI staging policy: keep the AeroGPU package root unambiguous by staging only the DX11-capable
+    // INF there. (Staging both aerogpu.inf and aerogpu_dx11.inf at the root means both match the same
+    // HWID, which can confuse installs and driver selection unless carefully ranked.)
+    let expected = vec!["packaging/win7/aerogpu_dx11.inf".to_string()];
+    assert_eq!(
+        inf_files,
+        expected,
+        "{path}: expected infFiles={expected:?} (single-INF policy). Found: {inf_files:?}",
+        path = manifest_path.display()
+    );
+}
