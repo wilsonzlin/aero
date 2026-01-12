@@ -13,7 +13,10 @@ backends** all agree on:
   **IDE channel IRQ14/IRQ15** for ATA/ATAPI).
 
 If you change this topology (BDFs, attachment points, or INTx routing), you must update this doc
-and the corresponding unit test (`crates/devices/tests/win7_storage_topology.rs`).
+and the corresponding tests:
+
+- `crates/devices/tests/win7_storage_topology.rs` (PCI profile constants + INTx routing)
+- `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs` (platform integration wiring)
 
 ---
 
@@ -34,6 +37,10 @@ and the corresponding unit test (`crates/devices/tests/win7_storage_topology.rs`
 
 Rationale: Windows 7 requires hotfixes and/or vendor drivers for NVMe (e.g. KB2990941). For
 compatibility-first defaults, keep NVMe disabled unless explicitly opted into by a config/feature.
+
+Implementation note (Rust): `aero_pc_platform::PcPlatform::new_with_win7_storage(...)` is a
+convenience constructor that enables this controller set at the canonical BDFs for integration
+tests and bring-up.
 
 ---
 
