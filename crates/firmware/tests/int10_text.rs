@@ -62,7 +62,7 @@ fn int10_teletype_backspace_wraps_to_previous_line_when_at_col0() {
     // Cursor at (row=1, col=0).
     cpu.set_ax(0x0200);
     cpu.set_bx(0x0000);
-    cpu.set_dx((1u16 << 8) | 0u16);
+    cpu.set_dx(1u16 << 8);
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (1, 0));
 

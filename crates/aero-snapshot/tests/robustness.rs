@@ -1349,8 +1349,8 @@ fn restore_snapshot_rejects_cpu_v2_extension_too_large() {
             .sections
             .iter()
             .find(|s| s.id == SectionId::CPU)
+            .copied()
             .expect("CPU section missing")
-            .clone()
     };
     assert!(
         cpu.len >= 8,

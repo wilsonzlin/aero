@@ -85,9 +85,7 @@ impl PciIoBarRouter {
         let bus = pci_cfg.bus_mut();
 
         let check = |route: &PciIoBarRoute| -> Option<u64> {
-            let Some(cfg) = bus.device_config(route.bdf) else {
-                return None;
-            };
+            let cfg = bus.device_config(route.bdf)?;
 
             // COMMAND.IO (bit 0) gates I/O BAR decoding.
             if (cfg.command() & 0x1) == 0 {
