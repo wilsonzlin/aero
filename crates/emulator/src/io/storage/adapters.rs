@@ -81,7 +81,6 @@ fn aero_err_from_emu_byte_err(
         DiskError::InvalidState(msg) => aero_storage::DiskError::InvalidState(msg),
         DiskError::BackendUnavailable => aero_storage::DiskError::BackendUnavailable,
         DiskError::Io(msg) => aero_storage::DiskError::Io(msg),
-        other => aero_storage::DiskError::Io(other.to_string()),
     }
 }
 
