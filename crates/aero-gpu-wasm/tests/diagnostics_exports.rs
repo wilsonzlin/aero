@@ -18,15 +18,19 @@ fn get_gpu_stats_returns_object_with_expected_counters() {
         "recoveries_attempted",
         "recoveries_succeeded",
         "surface_reconfigures",
-        // D3D9 shader cache counters (WG-010).
-        "translate_calls",
-        "persistent_hits",
-        "persistent_misses",
+        // D3D9 shader translation + cache counters (WG-010(D)).
         "d3d9_shader_translate_calls",
         "d3d9_shader_cache_persistent_hits",
         "d3d9_shader_cache_persistent_misses",
-        "d3d9TranslatorCacheVersion",
+        "d3d9_shader_cache_memory_hits",
+        "d3d9_shader_cache_disabled",
+        // D3D9 translator cache key versioning.
         "d3d9_translator_cache_version",
+        "d3d9TranslatorCacheVersion",
+        // Legacy/demo keys.
+        "translate_calls",
+        "persistent_hits",
+        "persistent_misses",
     ] {
         let value = Reflect::get(&stats, &JsValue::from_str(key)).expect("Reflect::get");
         assert!(
