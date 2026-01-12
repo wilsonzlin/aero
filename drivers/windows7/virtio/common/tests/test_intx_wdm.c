@@ -373,6 +373,47 @@ static void test_isr_defensive_null_isr_register(void)
     VirtioIntxDisconnect(&intx);
 }
 
+static void test_dpc_queue_stub_counters(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestResetKeRemoveQueueDpcCounts();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    /* Spurious interrupt -> no DPC queued. */
+    isr_reg = 0;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 0);
+
+    /* Two interrupts while DPC queued -> 2 insert attempts, only 1 successful. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    isr_reg = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+
+    assert(WdkTestGetKeInsertQueueDpcCount() == 2);
+    assert(WdkTestGetKeInsertQueueDpcSuccessCount() == 1);
+    assert(WdkTestGetKeInsertQueueDpcFailCount() == 1);
+
+    /* Disconnect should attempt to remove the queued DPC once and succeed once. */
+    VirtioIntxDisconnect(&intx);
+    assert(WdkTestGetKeRemoveQueueDpcCount() == 1);
+    assert(WdkTestGetKeRemoveQueueDpcSuccessCount() == 1);
+    assert(WdkTestGetKeRemoveQueueDpcFailCount() == 0);
+
+    /* Second disconnect should not touch the (now zeroed) KDPC. */
+    VirtioIntxDisconnect(&intx);
+    assert(WdkTestGetKeRemoveQueueDpcCount() == 1);
+}
+
 static void test_null_callbacks_safe(void)
 {
     VIRTIO_INTX intx;
@@ -825,6 +866,7 @@ int main(void)
     test_spurious_interrupt();
     test_isr_defensive_null_service_context();
     test_isr_defensive_null_isr_register();
+    test_dpc_queue_stub_counters();
     test_null_callbacks_safe();
     test_spurious_interrupt_does_not_affect_pending();
     test_unknown_isr_bits_no_callbacks_without_evt_dpc();

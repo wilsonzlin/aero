@@ -23,6 +23,12 @@ static ULONG g_io_connect_interrupt_count = 0;
 static ULONG g_io_disconnect_interrupt_count = 0;
 static ULONG g_ke_delay_execution_thread_count = 0;
 static ULONG g_ke_stall_execution_processor_count = 0;
+static ULONG g_ke_insert_queue_dpc_count = 0;
+static ULONG g_ke_insert_queue_dpc_success_count = 0;
+static ULONG g_ke_insert_queue_dpc_fail_count = 0;
+static ULONG g_ke_remove_queue_dpc_count = 0;
+static ULONG g_ke_remove_queue_dpc_success_count = 0;
+static ULONG g_ke_remove_queue_dpc_fail_count = 0;
 
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
@@ -133,13 +139,17 @@ BOOLEAN KeInsertQueueDpc(_Inout_ PKDPC Dpc, _In_opt_ PVOID SystemArgument1, _In_
         return FALSE;
     }
 
+    g_ke_insert_queue_dpc_count++;
+
     if (Dpc->Inserted != FALSE) {
+        g_ke_insert_queue_dpc_fail_count++;
         return FALSE;
     }
 
     Dpc->Inserted = TRUE;
     Dpc->SystemArgument1 = SystemArgument1;
     Dpc->SystemArgument2 = SystemArgument2;
+    g_ke_insert_queue_dpc_success_count++;
     return TRUE;
 }
 
@@ -149,13 +159,17 @@ BOOLEAN KeRemoveQueueDpc(_Inout_ PKDPC Dpc)
         return FALSE;
     }
 
+    g_ke_remove_queue_dpc_count++;
+
     if (Dpc->Inserted == FALSE) {
+        g_ke_remove_queue_dpc_fail_count++;
         return FALSE;
     }
 
     Dpc->Inserted = FALSE;
     Dpc->SystemArgument1 = NULL;
     Dpc->SystemArgument2 = NULL;
+    g_ke_remove_queue_dpc_success_count++;
     return TRUE;
 }
 
@@ -272,6 +286,50 @@ ULONG WdkTestGetIoDisconnectInterruptCount(VOID)
 VOID WdkTestResetIoDisconnectInterruptCount(VOID)
 {
     g_io_disconnect_interrupt_count = 0;
+}
+
+ULONG WdkTestGetKeInsertQueueDpcCount(VOID)
+{
+    return g_ke_insert_queue_dpc_count;
+}
+
+ULONG WdkTestGetKeInsertQueueDpcSuccessCount(VOID)
+{
+    return g_ke_insert_queue_dpc_success_count;
+}
+
+ULONG WdkTestGetKeInsertQueueDpcFailCount(VOID)
+{
+    return g_ke_insert_queue_dpc_fail_count;
+}
+
+VOID WdkTestResetKeInsertQueueDpcCounts(VOID)
+{
+    g_ke_insert_queue_dpc_count = 0;
+    g_ke_insert_queue_dpc_success_count = 0;
+    g_ke_insert_queue_dpc_fail_count = 0;
+}
+
+ULONG WdkTestGetKeRemoveQueueDpcCount(VOID)
+{
+    return g_ke_remove_queue_dpc_count;
+}
+
+ULONG WdkTestGetKeRemoveQueueDpcSuccessCount(VOID)
+{
+    return g_ke_remove_queue_dpc_success_count;
+}
+
+ULONG WdkTestGetKeRemoveQueueDpcFailCount(VOID)
+{
+    return g_ke_remove_queue_dpc_fail_count;
+}
+
+VOID WdkTestResetKeRemoveQueueDpcCounts(VOID)
+{
+    g_ke_remove_queue_dpc_count = 0;
+    g_ke_remove_queue_dpc_success_count = 0;
+    g_ke_remove_queue_dpc_fail_count = 0;
 }
 
 BOOLEAN WdkTestTriggerInterrupt(_In_ PKINTERRUPT InterruptObject)

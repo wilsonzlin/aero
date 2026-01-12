@@ -412,3 +412,13 @@ ULONG WdkTestGetIoConnectInterruptCount(VOID);
 VOID WdkTestResetIoConnectInterruptCount(VOID);
 ULONG WdkTestGetIoDisconnectInterruptCount(VOID);
 VOID WdkTestResetIoDisconnectInterruptCount(VOID);
+
+ULONG WdkTestGetKeInsertQueueDpcCount(VOID);
+ULONG WdkTestGetKeInsertQueueDpcSuccessCount(VOID);
+ULONG WdkTestGetKeInsertQueueDpcFailCount(VOID);
+VOID WdkTestResetKeInsertQueueDpcCounts(VOID);
+
+ULONG WdkTestGetKeRemoveQueueDpcCount(VOID);
+ULONG WdkTestGetKeRemoveQueueDpcSuccessCount(VOID);
+ULONG WdkTestGetKeRemoveQueueDpcFailCount(VOID);
+VOID WdkTestResetKeRemoveQueueDpcCounts(VOID);
