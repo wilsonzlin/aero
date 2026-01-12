@@ -79,7 +79,17 @@ pub fn is_not_modified(
         return false;
     };
 
-    resource_last_modified <= ims_time
+    // HTTP dates have 1-second resolution. Filesystems often provide sub-second mtimes, but our
+    // `Last-Modified` header (and thus `If-Modified-Since`) cannot represent that. Compare at
+    // second granularity to avoid false negatives where the resource's mtime has sub-second data
+    // that gets truncated when formatting/parsing the HTTP date.
+    let Ok(resource_secs) = resource_last_modified.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    let Ok(ims_secs) = ims_time.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    resource_secs.as_secs() <= ims_secs.as_secs()
 }
 
 fn if_none_match_matches(if_none_match: &HeaderValue, current_etag: &str) -> bool {
@@ -167,5 +177,21 @@ mod tests {
 
         assert_eq!(e1, e2);
         assert!(e1.starts_with("W/\"") && e1.ends_with('\"'));
+    }
+
+    #[test]
+    fn if_modified_since_ignores_subsecond_precision() {
+        let mut headers = HeaderMap::new();
+        let last_modified = UNIX_EPOCH + Duration::from_secs(123) + Duration::from_nanos(456);
+        let header_value = httpdate::fmt_http_date(last_modified);
+        headers.insert(
+            header::IF_MODIFIED_SINCE,
+            HeaderValue::from_str(&header_value).unwrap(),
+        );
+
+        assert!(
+            is_not_modified(&headers, None, Some(last_modified)),
+            "expected If-Modified-Since to match even when the resource mtime has sub-second precision"
+        );
     }
 }
