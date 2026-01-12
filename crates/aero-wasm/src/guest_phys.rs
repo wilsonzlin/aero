@@ -219,6 +219,12 @@ mod tests {
             GuestRamRange::OutOfBounds
         );
 
+        // The range API also rejects accesses that span the hole -> high-RAM boundary.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE - 2, 4),
+            GuestRamRange::OutOfBounds
+        );
+
         // Out of range beyond the end of high RAM.
         assert_eq!(
             translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE + 0x2000, 1),

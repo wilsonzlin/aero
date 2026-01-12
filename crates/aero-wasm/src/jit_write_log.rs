@@ -98,7 +98,9 @@ impl GuestWriteLog {
 
     /// Drain the log into `f`.
     ///
-    /// If the log overflowed, calls `f(0, guest_size)` once (clamped to `usize`).
+    /// If the log overflowed, calls `f` with a coarse invalidation covering the entire guest
+    /// region. When the region length exceeds `usize::MAX`, the invalidation is split into multiple
+    /// `(paddr, len)` chunks.
     pub(crate) fn drain_to(&mut self, guest_size: u64, mut f: impl FnMut(u64, usize)) {
         if self.overflowed {
             self.overflowed = false;
