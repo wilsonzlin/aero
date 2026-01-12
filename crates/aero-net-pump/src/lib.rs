@@ -594,7 +594,6 @@ mod tests {
         pump.poll(&mut mem);
         assert_eq!(mem.read_vec(bufs[2], frames[2].len()), frames[2]);
     }
-
     #[test]
     fn rx_budget_prevents_infinite_backend_loop() {
         #[derive(Default)]

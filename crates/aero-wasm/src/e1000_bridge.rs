@@ -179,7 +179,7 @@ impl E1000Bridge {
         if end > E1000_MMIO_SIZE {
             return;
         }
-        self.dev.mmio_write(offset as u64, size, value);
+        self.dev.mmio_write_reg(offset as u64, size, value);
     }
 
     pub fn io_read(&mut self, offset: u32, size: u32) -> u32 {
@@ -203,7 +203,7 @@ impl E1000Bridge {
         if end > E1000_IO_SIZE {
             return;
         }
-        self.dev.io_write(offset, size, value);
+        self.dev.io_write_reg(offset, size, value);
     }
 
     /// Update the device model's PCI command register (offset 0x04, low 16 bits).

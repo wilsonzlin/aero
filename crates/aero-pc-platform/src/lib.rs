@@ -1994,6 +1994,16 @@ impl PcPlatform {
         }
 
         // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        //
+        // The E1000 device model also consults its own internal PCI config-space image when
+        // deciding whether to perform DMA. Keep the model in sync with the platform's canonical
+        // PCI config space so the same device can be reused in both "standalone PCI" and
+        // `PcPlatform` integrations.
+        {
+            let mut dev = e1000.borrow_mut();
+            dev.pci_config_write(0x04, 2, u32::from(command));
+        }
+
         let bus_master_enabled = (command & (1 << 2)) != 0;
         {
             // Keep the E1000 model's internal PCI command register in sync with the platform's PCI

@@ -645,12 +645,14 @@ impl E1000Device {
         self.mmio_write_u32_aligned_reg(aligned, merged);
     }
 
-    /// Write to the device MMIO BAR (register-only).
+    /// Write to the device MMIO BAR (legacy DMA-capable API).
     ///
-    /// DMA side effects (descriptor reads/writes, RX buffer writes, etc.) are
-    /// deferred to [`poll`].
-    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u32) {
+    /// This preserves the older `mmio_write(&mut dyn MemoryBus, ..)` behavior where
+    /// doorbell-like writes immediately kick TX/RX DMA. The write itself remains
+    /// register-only; DMA occurs via an implicit [`poll`] call.
+    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
         self.mmio_write_reg(offset, size, value);
+        self.poll(mem);
     }
 
     pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
@@ -661,8 +663,8 @@ impl E1000Device {
         self.mmio_write_reg(offset as u64, 4, value);
     }
 
-    pub fn mmio_write_u32(&mut self, offset: u32, value: u32) {
-        self.mmio_write(offset as u64, 4, value);
+    pub fn mmio_write_u32(&mut self, mem: &mut dyn MemoryBus, offset: u32, value: u32) {
+        self.mmio_write(mem, offset as u64, 4, value);
     }
 
     /// Read from the device's I/O BAR (IOADDR/IODATA window).
@@ -712,11 +714,14 @@ impl E1000Device {
         }
     }
 
-    /// Write to the device's I/O BAR (IOADDR/IODATA window) (register-only).
+    /// Write to the device's I/O BAR (IOADDR/IODATA window) (legacy DMA-capable API).
     ///
-    /// DMA side effects are deferred to [`poll`].
-    pub fn io_write(&mut self, offset: u32, size: usize, value: u32) {
+    /// This preserves the older `io_write(&mut dyn MemoryBus, ..)` behavior where
+    /// register writes immediately kick DMA. The write itself remains register-only;
+    /// DMA occurs via an implicit [`poll`] call.
+    pub fn io_write(&mut self, mem: &mut dyn MemoryBus, offset: u32, size: usize, value: u32) {
         self.io_write_reg(offset, size, value);
+        self.poll(mem);
     }
 
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
@@ -1749,13 +1754,13 @@ mod tests {
     fn ioaddr_iodata_interface_maps_to_mmio_registers() {
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
-        dev.mmio_write_u32(REG_IMS, 0x1234_5678);
+        dev.mmio_write_u32_reg(REG_IMS, 0x1234_5678);
 
-        dev.io_write(0x0, 4, REG_IMS);
+        dev.io_write_reg(0x0, 4, REG_IMS);
         assert_eq!(dev.io_read(0x4, 4), 0x1234_5678);
 
-        dev.io_write(0x0, 4, REG_IMC);
-        dev.io_write(0x4, 4, 0x1234_0000);
+        dev.io_write_reg(0x0, 4, REG_IMC);
+        dev.io_write_reg(0x4, 4, 0x1234_0000);
         assert_eq!(dev.mmio_read_u32(REG_IMS), 0x0000_5678);
     }
 
@@ -1789,7 +1794,7 @@ mod tests {
         mem.write_bytes(0x1000, &desc0.to_bytes());
 
         // Guest updates tail to 1.
-        dev.mmio_write_u32(REG_TDT, 1);
+        dev.mmio_write_u32_reg(REG_TDT, 1);
         dev.poll(&mut mem);
 
         assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
@@ -1852,6 +1857,7 @@ mod tests {
     fn register_only_doorbells_do_not_touch_guest_memory_until_poll() {
         let mut mem = TestMem::new(0x40_000);
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
         let mut panic_mem = PanicMem;
         dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
@@ -2239,7 +2245,7 @@ mod tests {
         mem.write_bytes(0x1010, &desc1.to_bytes());
 
         // Guest updates tail to 2.
-        dev.mmio_write_u32(REG_TDT, 2);
+        dev.mmio_write_u32_reg(REG_TDT, 2);
         dev.poll(&mut mem);
 
         assert!(dev.pop_tx_frame().is_none());
@@ -2304,11 +2310,11 @@ mod tests {
         let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
         // Set up TX ring at 0x1000 with 4 descriptors.
-        dev.mmio_write_u32(REG_TDBAL, 0x1000);
-        dev.mmio_write_u32(REG_TDLEN, (TxDesc::LEN as u32) * 4);
-        dev.mmio_write_u32(REG_TDH, 0);
-        dev.mmio_write_u32(REG_TDT, 0);
-        dev.mmio_write_u32(REG_TCTL, TCTL_EN);
+        dev.mmio_write_u32_reg(REG_TDBAL, 0x1000);
+        dev.mmio_write_u32_reg(REG_TDLEN, (TxDesc::LEN as u32) * 4);
+        dev.mmio_write_u32_reg(REG_TDH, 0);
+        dev.mmio_write_u32_reg(REG_TDT, 0);
+        dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
 
         // Packet buffer at 0x2000.
         let pkt = [0x11u8; MIN_L2_FRAME_LEN];
@@ -2326,7 +2332,7 @@ mod tests {
         mem.write_bytes(0x1000, &desc0.to_bytes());
 
         // With bus mastering disabled, advancing the tail must not trigger any DMA.
-        dev.mmio_write_u32(REG_TDT, 1);
+        dev.mmio_write_u32_reg(REG_TDT, 1);
         dev.poll(&mut mem);
 
         assert!(dev.pop_tx_frame().is_none());
@@ -2350,9 +2356,9 @@ mod tests {
         // Touch some state (including collections) so the snapshot isn't trivial.
         dev.pci_write_u32(0x10, 0xffff_ffff);
         dev.pci_write_u32(0x14, 0xffff_ffff);
-        dev.mmio_write_u32(REG_IMS, ICR_RXT0 | ICR_TXDW);
-        dev.mmio_write_u32(0x9000, 0xDEAD_BEEF);
-        dev.mmio_write_u32(0x9004, 0xC0FF_EE00);
+        dev.mmio_write_u32_reg(REG_IMS, ICR_RXT0 | ICR_TXDW);
+        dev.mmio_write_u32_reg(0x9000, 0xDEAD_BEEF);
+        dev.mmio_write_u32_reg(0x9004, 0xC0FF_EE00);
 
         dev.eeprom[10] = 0x1234;
         dev.phy[1] = 0x5678;
@@ -2388,13 +2394,13 @@ mod tests {
         let mut b = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
         // Same keys/values but inserted in different order.
-        a.mmio_write_u32(0x9000, 1);
-        a.mmio_write_u32(0x9004, 2);
-        a.mmio_write_u32(0x9008, 3);
+        a.mmio_write_u32_reg(0x9000, 1);
+        a.mmio_write_u32_reg(0x9004, 2);
+        a.mmio_write_u32_reg(0x9008, 3);
 
-        b.mmio_write_u32(0x9008, 3);
-        b.mmio_write_u32(0x9004, 2);
-        b.mmio_write_u32(0x9000, 1);
+        b.mmio_write_u32_reg(0x9008, 3);
+        b.mmio_write_u32_reg(0x9004, 2);
+        b.mmio_write_u32_reg(0x9000, 1);
 
         assert_eq!(a.save_state(), b.save_state());
     }

@@ -189,14 +189,14 @@ fn tso_context_descriptor_segments_and_inserts_checksums() {
     dev.pci_config_write(0x04, 2, 0x4);
     let mut dma = TestDma::new(0x80_000);
 
-    dev.mmio_write_u32(REG_IMS, ICR_TXDW);
+    dev.mmio_write_u32_reg(REG_IMS, ICR_TXDW);
 
-    dev.mmio_write_u32(REG_TDBAL, 0x1000);
-    dev.mmio_write_u32(REG_TDBAH, 0);
-    dev.mmio_write_u32(REG_TDLEN, 16 * 8);
-    dev.mmio_write_u32(REG_TDH, 0);
-    dev.mmio_write_u32(REG_TDT, 0);
-    dev.mmio_write_u32(REG_TCTL, TCTL_EN);
+    dev.mmio_write_u32_reg(REG_TDBAL, 0x1000);
+    dev.mmio_write_u32_reg(REG_TDBAH, 0);
+    dev.mmio_write_u32_reg(REG_TDLEN, 16 * 8);
+    dev.mmio_write_u32_reg(REG_TDH, 0);
+    dev.mmio_write_u32_reg(REG_TDT, 0);
+    dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
 
     let frame = build_ipv4_tcp_frame(4000);
     dma.write(0x4000, &frame);
@@ -212,7 +212,7 @@ fn tso_context_descriptor_segments_and_inserts_checksums() {
         TXD_POPTS_IXSM | TXD_POPTS_TXSM,
     );
 
-    dev.mmio_write_u32(REG_TDT, 2);
+    dev.mmio_write_u32_reg(REG_TDT, 2);
     dev.poll(&mut dma);
 
     assert_ne!(
@@ -274,14 +274,14 @@ fn checksum_offload_udp_inserts_checksums() {
     dev.pci_config_write(0x04, 2, 0x4);
     let mut dma = TestDma::new(0x40_000);
 
-    dev.mmio_write_u32(REG_IMS, ICR_TXDW);
+    dev.mmio_write_u32_reg(REG_IMS, ICR_TXDW);
 
-    dev.mmio_write_u32(REG_TDBAL, 0x2000);
-    dev.mmio_write_u32(REG_TDBAH, 0);
-    dev.mmio_write_u32(REG_TDLEN, 16 * 8);
-    dev.mmio_write_u32(REG_TDH, 0);
-    dev.mmio_write_u32(REG_TDT, 0);
-    dev.mmio_write_u32(REG_TCTL, TCTL_EN);
+    dev.mmio_write_u32_reg(REG_TDBAL, 0x2000);
+    dev.mmio_write_u32_reg(REG_TDBAH, 0);
+    dev.mmio_write_u32_reg(REG_TDLEN, 16 * 8);
+    dev.mmio_write_u32_reg(REG_TDH, 0);
+    dev.mmio_write_u32_reg(REG_TDT, 0);
+    dev.mmio_write_u32_reg(REG_TCTL, TCTL_EN);
 
     let payload = b"hello world";
     let frame = build_ipv4_udp_frame(payload);
@@ -298,7 +298,7 @@ fn checksum_offload_udp_inserts_checksums() {
         TXD_POPTS_IXSM | TXD_POPTS_TXSM,
     );
 
-    dev.mmio_write_u32(REG_TDT, 2);
+    dev.mmio_write_u32_reg(REG_TDT, 2);
     dev.poll(&mut dma);
 
     assert_ne!(
