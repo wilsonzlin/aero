@@ -205,7 +205,9 @@ Restore note: USB snapshots capture guest-visible controller/runtime state only.
 For the browser networking stack (e.g. tunnel/NAT state managed outside the guest-visible NIC device model), store a single device entry:
 
 - Outer `DeviceState.id = DeviceId::NET_STACK`
-- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack (inner `DEVICE_ID = NETS`)
+- `DeviceState.data = aero-io-snapshot` TLV blob produced by the networking stack.
+  - Canonical in-browser stack (`crates/aero-net-stack`): inner `DEVICE_ID = NSTK`
+  - Legacy NAT-based stack state (kept for backward compatibility): inner `DEVICE_ID = NETL`
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)`
 
 Restore note: `NET_STACK` snapshots capture *guest-visible* stack/backend bookkeeping (e.g. DHCP/DNS cache and connection bookkeeping) but **must not** attempt to bit-restore host resources. On restore, integrations should treat the following as reset and drop/recreate them:
