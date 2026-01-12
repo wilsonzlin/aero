@@ -132,13 +132,14 @@ describe("runtime/coordinator", () => {
       droppedBytes: 9,
     });
 
-    await expect(promise).resolves.toEqual({
-      enabled: true,
-      records: 123,
-      bytes: 4567,
-      droppedRecords: 3,
-      droppedBytes: 9,
-    });
+    const stats = await promise;
+    expect(stats.kind).toBe("net.trace.status");
+    expect(stats.requestId).toBe(requestId);
+    expect(stats.enabled).toBe(true);
+    expect(stats.records).toBe(123);
+    expect(stats.bytes).toBe(4567);
+    expect(stats.droppedRecords).toBe(3);
+    expect(stats.droppedBytes).toBe(9);
   });
 
   it("rejects pending net trace requests when the net worker is terminated", async () => {
@@ -154,7 +155,7 @@ describe("runtime/coordinator", () => {
     await expect(promise).rejects.toThrow(/net worker restarted/i);
   });
 
-  it("rejects pending net trace status requests when the net worker is terminated", async () => {
+  it("rejects pending net trace stats requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
     const shared = createSharedMemoryViews(segments);

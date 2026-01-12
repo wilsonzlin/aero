@@ -162,7 +162,7 @@ export type NetTraceTakePcapngMessage = {
   requestId: number;
 };
 
-export type NetTraceStatusRequestMessage = {
+export type NetTraceStatusMessage = {
   kind: "net.trace.status";
   requestId: number;
 };
@@ -173,14 +173,14 @@ export type NetTracePcapngMessage = {
   bytes: ArrayBuffer;
 };
 
-export type NetTraceStatusMessage = {
+export type NetTraceStatusResponseMessage = {
   kind: "net.trace.status";
   requestId: number;
   enabled: boolean;
   records: number;
   bytes: number;
-  droppedRecords: number;
-  droppedBytes: number;
+  droppedRecords?: number;
+  droppedBytes?: number;
 };
 
 export type CoordinatorToWorkerPostMessage =
@@ -192,7 +192,7 @@ export type CoordinatorToWorkerPostMessage =
   | NetTraceDisableMessage
   | NetTraceClearMessage
   | NetTraceTakePcapngMessage
-  | NetTraceStatusRequestMessage;
+  | NetTraceStatusMessage;
 
 /**
  * Cursor image update forwarded from an emulation worker (typically CPU/WASM) to the coordinator.
@@ -233,4 +233,4 @@ export type WorkerToCoordinatorPostMessage =
   | CursorSetImageMessage
   | CursorSetStateMessage
   | NetTracePcapngMessage
-  | NetTraceStatusMessage;
+  | NetTraceStatusResponseMessage;

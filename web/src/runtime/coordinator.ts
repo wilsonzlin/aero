@@ -28,7 +28,7 @@ import {
   type NetTraceEnableMessage,
   type NetTracePcapngMessage,
   type NetTraceStatusMessage,
-  type NetTraceStatusRequestMessage,
+  type NetTraceStatusResponseMessage,
   type NetTraceTakePcapngMessage,
   MessageType,
   type ProtocolMessage,
@@ -157,7 +157,7 @@ type PendingNetTraceRequest = {
 };
 
 type PendingNetTraceStatusRequest = {
-  resolve: (stats: { enabled: boolean; records: number; bytes: number; droppedRecords: number; droppedBytes: number }) => void;
+  resolve: (msg: NetTraceStatusResponseMessage) => void;
   reject: (err: Error) => void;
   timeout: number;
 };
@@ -803,14 +803,14 @@ export class WorkerCoordinator {
     net.postMessage({ kind: "net.trace.clear" } satisfies NetTraceClearMessage);
   }
 
-  getNetTraceStats(timeoutMs = 1000): Promise<{ enabled: boolean; records: number; bytes: number; droppedRecords: number; droppedBytes: number }> {
+  getNetTraceStats(timeoutMs = 1000): Promise<NetTraceStatusResponseMessage> {
     const net = this.workers.net?.worker;
     if (!net) {
       return Promise.reject(new Error("Cannot get network trace stats: net worker is not running."));
     }
 
     const requestId = this.nextNetTraceRequestId++;
-    return new Promise<{ enabled: boolean; records: number; bytes: number; droppedRecords: number; droppedBytes: number }>((resolve, reject) => {
+    return new Promise<NetTraceStatusResponseMessage>((resolve, reject) => {
       const timer = globalThis.setTimeout(() => {
         this.pendingNetTraceStatusRequests.delete(requestId);
         reject(new Error(`Timed out waiting for net trace stats (requestId=${requestId})`));
@@ -825,7 +825,7 @@ export class WorkerCoordinator {
       this.pendingNetTraceStatusRequests.set(requestId, pending);
 
       try {
-        net.postMessage({ kind: "net.trace.status", requestId } satisfies NetTraceStatusRequestMessage);
+        net.postMessage({ kind: "net.trace.status", requestId } satisfies NetTraceStatusMessage);
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceStatusRequests.delete(requestId);
@@ -1188,7 +1188,9 @@ export class WorkerCoordinator {
       const info = this.workers[role];
       if (!info) continue;
       if (role === "net") {
-        this.rejectAllPendingNetTraceRequests(new Error("Net worker stopped while a trace request was pending."));
+        const err = new Error("Net worker stopped while a trace request was pending.");
+        this.rejectAllPendingNetTraceRequests(err);
+        this.rejectAllPendingNetTraceStatusRequests(err);
       }
       void this.trySendCommand(info, { kind: "shutdown" });
       info.worker.terminate();
@@ -1286,7 +1288,9 @@ export class WorkerCoordinator {
     if (!shared || !info) return;
 
     if (role === "net") {
-      this.rejectAllPendingNetTraceRequests(new Error("Net worker restarted while a trace request was pending."));
+      const err = new Error("Net worker restarted while a trace request was pending.");
+      this.rejectAllPendingNetTraceRequests(err);
+      this.rejectAllPendingNetTraceStatusRequests(err);
     }
 
     setReadyFlag(shared.status, role, false);
@@ -1466,27 +1470,19 @@ export class WorkerCoordinator {
       return;
     }
 
-    const maybeNetTraceStatus = data as Partial<NetTraceStatusMessage>;
+    const maybeNetTraceStatus = data as Partial<NetTraceStatusResponseMessage>;
     if (
       maybeNetTraceStatus?.kind === "net.trace.status" &&
       typeof maybeNetTraceStatus.requestId === "number" &&
       typeof maybeNetTraceStatus.enabled === "boolean" &&
       typeof maybeNetTraceStatus.records === "number" &&
-      typeof maybeNetTraceStatus.bytes === "number" &&
-      typeof maybeNetTraceStatus.droppedRecords === "number" &&
-      typeof maybeNetTraceStatus.droppedBytes === "number"
+      typeof maybeNetTraceStatus.bytes === "number"
     ) {
       const pending = this.pendingNetTraceStatusRequests.get(maybeNetTraceStatus.requestId);
       if (!pending) return;
       clearTimeout(pending.timeout);
       this.pendingNetTraceStatusRequests.delete(maybeNetTraceStatus.requestId);
-      pending.resolve({
-        enabled: maybeNetTraceStatus.enabled,
-        records: maybeNetTraceStatus.records,
-        bytes: maybeNetTraceStatus.bytes,
-        droppedRecords: maybeNetTraceStatus.droppedRecords,
-        droppedBytes: maybeNetTraceStatus.droppedBytes,
-      });
+      pending.resolve(maybeNetTraceStatus as NetTraceStatusResponseMessage);
       return;
     }
 
@@ -1668,6 +1664,15 @@ export class WorkerCoordinator {
       }
       this.pendingNetTraceStatusRequests.clear();
     }
+  }
+
+  private rejectAllPendingNetTraceStatusRequests(error: Error): void {
+    if (this.pendingNetTraceStatusRequests.size === 0) return;
+    for (const [requestId, pending] of this.pendingNetTraceStatusRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(`${error.message} (requestId=${requestId})`));
+    }
+    this.pendingNetTraceStatusRequests.clear();
   }
 
   private maybeMarkRunning(): void {
