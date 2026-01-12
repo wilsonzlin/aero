@@ -1239,7 +1239,8 @@ filters. Common ones when debugging guest bring-up:
 - `tcp` / `udp` / `icmp`
 
 Because the capture uses a single Ethernet interface (`guest-eth0`) with direction encoded via
-`epb_flags`, you can view both inbound/outbound packets together in normal Wireshark flows.
+`epb_flags`, you can view both inbound/outbound packets together in normal Wireshark flows. Use the packet
+direction field plus “Follow Stream” and normal display filters as needed.
 
 #### Automation API (`window.aero.netTrace`)
 
