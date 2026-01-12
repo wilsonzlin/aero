@@ -170,14 +170,19 @@ if (bytesRead != sizeof(cfg)) {
 
 > If you later need to *write* config registers (rare for virtio modern), the symmetric API is `NdisMSetBusData`.
 
-### 2.2) Locate BAR0 as `CmResourceTypeMemory` in `PNDIS_RESOURCE_LIST`
+### 2.2) Locate BAR0 as `CmResourceTypeMemory` / `CmResourceTypeMemoryLarge` in `PNDIS_RESOURCE_LIST`
 
 `AllocatedResources` is a `PNDIS_RESOURCE_LIST` (NDIS typedef over `CM_PARTIAL_RESOURCE_LIST`).
 Scan its `PartialDescriptors[]` for memory resources.
 
 Most virtio-pci modern devices expose the main MMIO BAR as a `CmResourceTypeMemory` range.
 
-Pseudocode:
+On some **x64** systems, PCI MMIO ranges (especially BARs mapped **above 4 GiB**) can be reported as `CmResourceTypeMemoryLarge` instead. In that case, you must:
+
+1. Select the correct union member (`u.Memory40/48/64`) based on `Flags` (`CM_RESOURCE_MEMORY_LARGE_40/48/64`), and
+2. Decode the length back to bytes (the `Length40/48/64` fields are scaled units in the WDK).
+
+Pseudocode (WinDDK 7600 compatible):
 
 ```c
 typedef struct _ADAPTER {
@@ -187,6 +192,54 @@ typedef struct _ADAPTER {
     PUCHAR Bar0Va; // mapped VA for BAR0 MMIO
 } ADAPTER;
 
+static BOOLEAN GetMemoryRangeFromDescriptor(
+    _In_  const CM_PARTIAL_RESOURCE_DESCRIPTOR* d,
+    _Out_ NDIS_PHYSICAL_ADDRESS* OutPa,
+    _Out_ ULONG* OutLen)
+{
+    if (d == NULL || OutPa == NULL || OutLen == NULL) {
+        return FALSE;
+    }
+
+    if (d->Type == CmResourceTypeMemory) {
+        *OutPa = d->u.Memory.Start;
+        *OutLen = d->u.Memory.Length;
+        return TRUE;
+    }
+
+    if (d->Type == CmResourceTypeMemoryLarge) {
+        ULONGLONG lenBytes = 0;
+        USHORT large = d->Flags & (CM_RESOURCE_MEMORY_LARGE_40 | CM_RESOURCE_MEMORY_LARGE_48 | CM_RESOURCE_MEMORY_LARGE_64);
+
+        switch (large) {
+            case CM_RESOURCE_MEMORY_LARGE_40:
+                *OutPa = d->u.Memory40.Start;
+                lenBytes = ((ULONGLONG)d->u.Memory40.Length40) << 8;   // 256B units
+                break;
+            case CM_RESOURCE_MEMORY_LARGE_48:
+                *OutPa = d->u.Memory48.Start;
+                lenBytes = ((ULONGLONG)d->u.Memory48.Length48) << 16;  // 64KiB units
+                break;
+            case CM_RESOURCE_MEMORY_LARGE_64:
+                *OutPa = d->u.Memory64.Start;
+                lenBytes = ((ULONGLONG)d->u.Memory64.Length64) << 32;  // 4GiB units
+                break;
+            default:
+                return FALSE;
+        }
+
+        // NDIS maps an ULONG length; reject descriptors that decode beyond that.
+        if (lenBytes > 0xFFFFFFFFull) {
+            return FALSE;
+        }
+
+        *OutLen = (ULONG)lenBytes;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static BOOLEAN GetMemoryRangeFromNdisResources(
     _In_  PNDIS_RESOURCE_LIST Resources,
     _Out_ NDIS_PHYSICAL_ADDRESS* OutPa,
@@ -195,15 +248,9 @@ static BOOLEAN GetMemoryRangeFromNdisResources(
     ULONG i;
     for (i = 0; i < Resources->Count; i++) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR d = &Resources->PartialDescriptors[i];
-
-        if (d->Type == CmResourceTypeMemory) {
-            *OutPa = d->u.Memory.Start;
-            *OutLen = d->u.Memory.Length;
+        if (GetMemoryRangeFromDescriptor(d, OutPa, OutLen)) {
             return TRUE;
         }
-
-        // Optional robustness: handle CmResourceTypeMemoryLarge on x64.
-        // (Most virtio BARs are <4GiB, so CmResourceTypeMemory is typical.)
     }
     return FALSE;
 }
