@@ -522,6 +522,10 @@ fn win7_aerogpu_dx11_infs_have_better_feature_score_than_d3d9_infs() {
             root.join("drivers/aerogpu/packaging/win7/legacy/aerogpu.inf"),
             root.join("drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf"),
         ),
+        (
+            root.join("drivers/aerogpu/legacy/aerogpu.inf"),
+            root.join("drivers/aerogpu/legacy/aerogpu_dx11.inf"),
+        ),
     ];
 
     for (d3d9_inf_path, dx11_inf_path) in cases {
