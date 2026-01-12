@@ -29,6 +29,17 @@ fn vhd_footer_checksum(raw: &[u8; 512]) -> u32 {
     !sum
 }
 
+fn vhd_dynamic_header_checksum(raw: &[u8; 1024]) -> u32 {
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (36..40).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
 fn make_qcow2_empty(virtual_size: u64) -> MemBackend {
     assert_eq!(virtual_size % SECTOR as u64, 0);
 
@@ -168,6 +179,8 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     write_be_u32(&mut dyn_header, 24, 0x0001_0000);
     write_be_u32(&mut dyn_header, 28, max_table_entries);
     write_be_u32(&mut dyn_header, 32, block_size);
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
     storage.write_at(dyn_header_offset, &dyn_header).unwrap();
 
     let bat = vec![0xFFu8; bat_size as usize];

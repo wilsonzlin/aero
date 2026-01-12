@@ -29,6 +29,17 @@ fn vhd_footer_checksum(raw: &[u8; SECTOR_SIZE]) -> u32 {
     !sum
 }
 
+fn vhd_dynamic_header_checksum(raw: &[u8; 1024]) -> u32 {
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (36..40).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
 fn make_qcow2_empty(virtual_size: u64) -> MemBackend {
     assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
 
@@ -400,6 +411,8 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     write_be_u32(&mut dyn_header, 24, 0x0001_0000);
     write_be_u32(&mut dyn_header, 28, max_table_entries);
     write_be_u32(&mut dyn_header, 32, block_size);
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
     backend.write_at(dyn_header_offset, &dyn_header).unwrap();
 
     let bat = vec![0xFFu8; bat_size as usize];
@@ -1728,6 +1741,8 @@ fn vhd_rejects_absurd_bat_size() {
     write_be_u32(&mut dyn_header, 24, 0x0001_0000);
     write_be_u32(&mut dyn_header, 28, required_entries as u32); // max_table_entries
     write_be_u32(&mut dyn_header, 32, block_size); // block_size
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
     backend.write_at(dyn_header_offset, &dyn_header).unwrap();
 
     let err = VhdDisk::open(backend).err().expect("expected error");
@@ -1881,6 +1896,13 @@ fn vhd_dynamic_rejects_truncated_bat_when_max_table_entries_exceeds_file() {
     backend
         .write_at(dyn_header_offset + 28, &130u32.to_be_bytes())
         .unwrap();
+    // Update the dynamic header checksum so we exercise the intended BAT truncation path.
+    let mut dyn_header = [0u8; 1024];
+    backend.read_at(dyn_header_offset, &mut dyn_header).unwrap();
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    backend
+        .write_at(dyn_header_offset + 36, &checksum.to_be_bytes())
+        .unwrap();
 
     let err = VhdDisk::open(backend).err().expect("expected error");
     assert!(matches!(err, DiskError::CorruptImage("vhd bat truncated")));
@@ -1896,6 +1918,12 @@ fn vhd_dynamic_rejects_bat_overlapping_dynamic_header() {
     let dyn_header_offset = SECTOR_SIZE as u64;
     backend
         .write_at(dyn_header_offset + 16, &dyn_header_offset.to_be_bytes())
+        .unwrap();
+    let mut dyn_header = [0u8; 1024];
+    backend.read_at(dyn_header_offset, &mut dyn_header).unwrap();
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    backend
+        .write_at(dyn_header_offset + 36, &checksum.to_be_bytes())
         .unwrap();
 
     let err = VhdDisk::open(backend).err().expect("expected error");
@@ -1915,6 +1943,12 @@ fn vhd_dynamic_rejects_bat_overlapping_footer_copy() {
     let dyn_header_offset = SECTOR_SIZE as u64;
     backend
         .write_at(dyn_header_offset + 16, &0u64.to_be_bytes())
+        .unwrap();
+    let mut dyn_header = [0u8; 1024];
+    backend.read_at(dyn_header_offset, &mut dyn_header).unwrap();
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    backend
+        .write_at(dyn_header_offset + 36, &checksum.to_be_bytes())
         .unwrap();
 
     let err = VhdDisk::open(backend).err().expect("expected error");

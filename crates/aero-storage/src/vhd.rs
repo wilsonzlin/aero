@@ -104,6 +104,7 @@ impl VhdDynamicHeader {
         }
         let max_table_entries = be_u32(&raw[28..32]);
         let block_size = be_u32(&raw[32..36]);
+        let expected_checksum = be_u32(&raw[36..40]);
 
         if !table_offset.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd bat offset misaligned"));
@@ -113,6 +114,13 @@ impl VhdDynamicHeader {
         }
         if block_size == 0 || !(block_size as u64).is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd block_size invalid"));
+        }
+
+        let actual_checksum = vhd_checksum_dynamic_header(raw);
+        if expected_checksum != actual_checksum {
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header checksum mismatch",
+            ));
         }
 
         Ok(Self {
@@ -939,6 +947,19 @@ fn vhd_checksum_footer(raw: &[u8; SECTOR_SIZE]) -> u32 {
     let mut sum: u32 = 0;
     for (i, b) in raw.iter().enumerate() {
         if (64..68).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
+fn vhd_checksum_dynamic_header(raw: &[u8; 1024]) -> u32 {
+    // Same algorithm as the footer checksum: one's complement sum of all bytes with the checksum
+    // field itself (36..40) treated as zero.
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (36..40).contains(&i) {
             continue;
         }
         sum = sum.wrapping_add(*b as u32);
