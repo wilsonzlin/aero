@@ -375,6 +375,16 @@ fuzz_target!(|data: &[u8]| {
     cmd_bad_cmd_size_align[header_size..header_size + 4].copy_from_slice(&0u32.to_le_bytes());
     cmd_bad_cmd_size_align[header_size + 4..header_size + 8].copy_from_slice(&10u32.to_le_bytes());
     fuzz_cmd_stream(&cmd_bad_cmd_size_align);
+    // Packet overruns stream: header size_bytes is small but the first packet declares a larger
+    // size.
+    let mut cmd_overruns = vec![0u8; header_size + cmd::AerogpuCmdHdr::SIZE_BYTES];
+    cmd_overruns[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_overruns[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    cmd_overruns[8..12]
+        .copy_from_slice(&((header_size + cmd::AerogpuCmdHdr::SIZE_BYTES) as u32).to_le_bytes());
+    cmd_overruns[header_size..header_size + 4].copy_from_slice(&0u32.to_le_bytes());
+    cmd_overruns[header_size + 4..header_size + 8].copy_from_slice(&12u32.to_le_bytes());
+    fuzz_cmd_stream(&cmd_overruns);
 
     // Synthetic command stream: a fixed sequence of minimal valid packets using the fuzzer input
     // as filler. This ensures we consistently exercise a broad set of typed decoders.
@@ -1182,6 +1192,19 @@ fuzz_target!(|data: &[u8]| {
     let cmd_proc_invalid_create_buf = w.finish();
     fuzz_command_processor(&cmd_proc_invalid_create_buf, None);
 
+    // - InvalidCreateBuffer: size_bytes must be 4-byte aligned.
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 4, /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
+    let mut cmd_proc_invalid_create_buf_align = w.finish();
+    let pkt = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    if let Some(v) = cmd_proc_invalid_create_buf_align.get_mut(pkt + 16..pkt + 24) {
+        v.copy_from_slice(&6u64.to_le_bytes());
+    }
+    fuzz_command_processor(&cmd_proc_invalid_create_buf_align, None);
+
     // - UnknownAllocId: allocation table does not contain backing_alloc_id
     let mut w = AerogpuCmdWriter::new();
     w.create_buffer(
@@ -1215,6 +1238,20 @@ fuzz_target!(|data: &[u8]| {
     w.resource_dirty_range(buf_handle, /*offset_bytes=*/ 0, /*size_bytes=*/ 8);
     let cmd_proc_resource_oob = w.finish();
     fuzz_command_processor(&cmd_proc_resource_oob, Some(&allocs));
+
+    // - SizeOverflow: dirty range offset+size arithmetic overflow.
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(
+        buf_handle, /*usage_flags=*/ 0, /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ alloc_id, /*backing_offset_bytes=*/ 0,
+    );
+    w.resource_dirty_range(
+        buf_handle,
+        /*offset_bytes=*/ u64::MAX,
+        /*size_bytes=*/ 1,
+    );
+    let cmd_proc_dirty_overflow = w.finish();
+    fuzz_command_processor(&cmd_proc_dirty_overflow, Some(&allocs));
 
     // - InvalidCreateTexture2d: guest-backed textures require non-zero row_pitch_bytes
     let mut w = AerogpuCmdWriter::new();
