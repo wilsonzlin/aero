@@ -8,6 +8,8 @@ use aero_storage_server::{store::LocalFsImageStore, AppState};
 #[cfg(not(target_arch = "wasm32"))]
 use axum::http::HeaderValue;
 #[cfg(not(target_arch = "wasm32"))]
+use std::io;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -17,8 +19,38 @@ use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
 #[cfg(not(target_arch = "wasm32"))]
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn tokio_worker_threads_from_env() -> Option<usize> {
+    let raw = match std::env::var("AERO_TOKIO_WORKER_THREADS") {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    match raw.parse::<usize>() {
+        Ok(n) if n > 0 => Some(n),
+        _ => {
+            eprintln!(
+                "warning: invalid AERO_TOKIO_WORKER_THREADS value: {raw:?} (expected positive integer); using Tokio default"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_tokio_runtime() -> io::Result<tokio::runtime::Runtime> {
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    if let Some(n) = tokio_worker_threads_from_env() {
+        builder.worker_threads(n);
+    }
+    builder.enable_all().build()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn main() -> anyhow::Result<()> {
+    build_tokio_runtime()?.block_on(async_main())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn async_main() -> anyhow::Result<()> {
     let config = Config::load();
     init_tracing(&config.log_level)?;
 
