@@ -69,20 +69,46 @@ export function resolveVmSnapshotRestoreFromOpfsExport(api: WasmApi): VmSnapshot
 }
 
 export function parseAeroIoSnapshotVersion(bytes: Uint8Array): { version: number; flags: number } {
-  // `aero-io-snapshot` TLV header begins with "AERO" and stores `SnapshotVersion { major, minor }`
-  // in the final 4 bytes of the 16-byte header.
-  if (
-    bytes.byteLength >= 16 &&
-    bytes[0] === 0x41 &&
-    bytes[1] === 0x45 &&
-    bytes[2] === 0x52 &&
-    bytes[3] === 0x4f
-  ) {
-    const major = (bytes[12]! | (bytes[13]! << 8)) >>> 0;
-    const minor = (bytes[14]! | (bytes[15]! << 8)) >>> 0;
-    return { version: major, flags: minor };
+  // `aero-io-snapshot` TLV blobs begin with a 16-byte header:
+  //   magic[4] = "AERO"
+  //   format_version: u16 major, u16 minor
+  //   device_id: [u8; 4]
+  //   device_version: u16 major, u16 minor
+  //
+  // However, some legacy JS device snapshots (e.g. the JS i8042 controller model) also start with
+  // "AERO" but use a different, shorter header:
+  //   magic[4] = "AERO"
+  //   version: u16
+  //   flags: u16
+  //
+  // This helper tries to detect the `aero-io-snapshot` header by checking that the 4-byte device id
+  // region looks like an ASCII tag, and falls back to the legacy header otherwise.
+  if (bytes.byteLength >= 4 && bytes[0] === 0x41 && bytes[1] === 0x45 && bytes[2] === 0x52 && bytes[3] === 0x4f) {
+    if (bytes.byteLength >= 16) {
+      const tag0 = bytes[8] ?? 0;
+      const tag1 = bytes[9] ?? 0;
+      const tag2 = bytes[10] ?? 0;
+      const tag3 = bytes[11] ?? 0;
+      const isAsciiTag = (b: number): boolean =>
+        (b >= 0x30 && b <= 0x39) || // 0-9
+        (b >= 0x41 && b <= 0x5a) || // A-Z
+        (b >= 0x61 && b <= 0x7a) || // a-z
+        b === 0x5f; // _
+      if (isAsciiTag(tag0) && isAsciiTag(tag1) && isAsciiTag(tag2) && isAsciiTag(tag3)) {
+        const major = (bytes[12]! | (bytes[13]! << 8)) >>> 0;
+        const minor = (bytes[14]! | (bytes[15]! << 8)) >>> 0;
+        return { version: major, flags: minor };
+      }
+    }
+
+    if (bytes.byteLength >= 8) {
+      const version = (bytes[4]! | (bytes[5]! << 8)) >>> 0;
+      const flags = (bytes[6]! | (bytes[7]! << 8)) >>> 0;
+      return { version, flags };
+    }
   }
-  // Fallback for legacy/unknown payloads: treat as v1 with no flags.
+
+  // Fallback for unknown payloads: treat as v1 with no flags.
   return { version: 1, flags: 0 };
 }
 

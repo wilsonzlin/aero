@@ -87,6 +87,11 @@ describe("workers/vm_snapshot_wasm", () => {
     bytes[1] = 0x45;
     bytes[2] = 0x52;
     bytes[3] = 0x4f;
+    // device_id = "UHRT"
+    bytes[8] = 0x55;
+    bytes[9] = 0x48;
+    bytes[10] = 0x52;
+    bytes[11] = 0x54;
     // major=0x0201, minor=0x0403
     bytes[12] = 0x01;
     bytes[13] = 0x02;
@@ -95,5 +100,30 @@ describe("workers/vm_snapshot_wasm", () => {
 
     expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 0x0201, flags: 0x0403 });
     expect(parseAeroIoSnapshotVersion(new Uint8Array())).toEqual({ version: 1, flags: 0 });
+  });
+
+  it("parses legacy AERO-prefixed device snapshot header when present", () => {
+    const bytes = new Uint8Array(16);
+    bytes[0] = 0x41;
+    bytes[1] = 0x45;
+    bytes[2] = 0x52;
+    bytes[3] = 0x4f;
+    // legacy header version=0x0201, flags=0x0403
+    bytes[4] = 0x01;
+    bytes[5] = 0x02;
+    bytes[6] = 0x03;
+    bytes[7] = 0x04;
+    // Non-ASCII bytes in the "device id" slot should cause fallback to the legacy header parse.
+    bytes[8] = 0x04;
+    bytes[9] = 0x45;
+    bytes[10] = 0x01;
+    bytes[11] = 0xff;
+    // Would be interpreted as device_version by the io-snapshot parser; ensure we don't use it.
+    bytes[12] = 0xaa;
+    bytes[13] = 0xbb;
+    bytes[14] = 0xcc;
+    bytes[15] = 0xdd;
+
+    expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 0x0201, flags: 0x0403 });
   });
 });

@@ -516,6 +516,9 @@ impl JitBackend for WasmJitBackend {
         JitBlockExit {
             next_rip,
             exit_to_interpreter,
+            // The browser Tier-1 backend does not currently roll back architectural state on exits;
+            // blocks always commit their effects before returning (including `ExitToInterpreter`
+            // terminators which are emitted as the sentinel return value).
             committed: true,
         }
     }

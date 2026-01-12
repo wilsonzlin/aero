@@ -90,7 +90,7 @@ fn decode_mmu_state(bytes: &[u8]) -> Result<MmuState, JsValue> {
 }
 
 fn device_version_flags_from_aero_io_snapshot(bytes: &[u8]) -> (u16, u16) {
-    // `aero-io-snapshot` format starts with a 16-byte header (see `aero-io-snapshot` crate):
+    // Preferred path: `aero-io-snapshot` format uses a 16-byte header (see `aero-io-snapshot`):
     // - magic: b"AERO" (4 bytes)
     // - format_version: u16 major, u16 minor
     // - device_id: [u8; 4]
@@ -98,16 +98,39 @@ fn device_version_flags_from_aero_io_snapshot(bytes: &[u8]) -> (u16, u16) {
     //
     // We store the device version pair in the VM snapshot's `DeviceState` version/flags fields so
     // that future VM-level logic can interpret the contained device blob without re-parsing it.
-    const HEADER_LEN: usize = 16;
-    if bytes.len() < HEADER_LEN {
+    //
+    // Legacy path: some JS-only device snapshots also start with "AERO" but use a shorter header:
+    // - magic: b"AERO" (4 bytes)
+    // - version: u16
+    // - flags: u16
+    //
+    // Detect the io-snapshot header by checking that the 4-byte device id region looks like an
+    // ASCII tag.
+    const IO_HEADER_LEN: usize = 16;
+    if bytes.len() < 4 || &bytes[0..4] != b"AERO" {
         return (1, 0);
     }
-    if &bytes[0..4] != b"AERO" {
-        return (1, 0);
+
+    if bytes.len() >= IO_HEADER_LEN {
+        let id = &bytes[8..12];
+        let is_ascii_tag = id.iter().all(|b| match *b {
+            b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' => true,
+            _ => false,
+        });
+        if is_ascii_tag {
+            let major = u16::from_le_bytes([bytes[12], bytes[13]]);
+            let minor = u16::from_le_bytes([bytes[14], bytes[15]]);
+            return (major, minor);
+        }
     }
-    let major = u16::from_le_bytes([bytes[12], bytes[13]]);
-    let minor = u16::from_le_bytes([bytes[14], bytes[15]]);
-    (major, minor)
+
+    if bytes.len() >= 8 {
+        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+        let flags = u16::from_le_bytes([bytes[6], bytes[7]]);
+        return (version, flags);
+    }
+
+    (1, 0)
 }
 
 fn parse_device_kind(kind: &str) -> Option<DeviceId> {
