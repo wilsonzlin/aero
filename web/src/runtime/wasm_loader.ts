@@ -403,7 +403,14 @@ export interface WasmApi {
          */
         inject_ps2_mouse_motion?(dx: number, dy: number, wheel: number): void;
         /**
-         * Set PS/2 mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+         * Set PS/2 mouse button state as a bitmask matching DOM `MouseEvent.buttons` (low 5 bits):
+         * - bit0 (`0x01`): left
+         * - bit1 (`0x02`): right
+         * - bit2 (`0x04`): middle
+         * - bit3 (`0x08`): back / side (only emitted if the guest enabled IntelliMouse Explorer, device ID `0x04`)
+         * - bit4 (`0x10`): forward / extra (same note as bit3)
+         *
+         * This is an alias for {@link inject_mouse_buttons} (same mapping).
          *
          * Optional for older WASM builds.
          */
@@ -859,9 +866,11 @@ export interface WasmApi {
          * - `0`: left
          * - `1`: middle
          * - `2`: right
+         * - `3`: back
+         * - `4`: forward
          *
-         * Tip: when available, prefer `api.MouseButton.Left/Middle/Right` for a stable mapping
-         * reference.
+         * Tip: when available, prefer `api.MouseButton.Left/Middle/Right/Back/Forward` for a stable
+         * mapping reference.
          */
         inject_mouse_button?(button: number, pressed: boolean): void;
         /**
@@ -869,8 +878,10 @@ export interface WasmApi {
          * - bit0 (`0x01`): left
          * - bit1 (`0x02`): right
          * - bit2 (`0x04`): middle
+         * - bit3 (`0x08`): back
+         * - bit4 (`0x10`): forward
          *
-         * Tip: when available, prefer building masks by OR'ing `api.MouseButtons.Left/Right/Middle`.
+         * Tip: when available, prefer building masks by OR'ing `api.MouseButtons.Left/Right/Middle/Back/Forward`.
          */
         inject_mouse_buttons_mask?(mask: number): void;
         /**
@@ -878,6 +889,8 @@ export interface WasmApi {
          * - bit0 (`0x01`): left
          * - bit1 (`0x02`): right
          * - bit2 (`0x04`): middle
+         * - bit3 (`0x08`): back / side (only emitted if the guest enabled IntelliMouse Explorer, device ID `0x04`)
+         * - bit4 (`0x10`): forward / extra (same note as bit3)
          *
          * Optional for older WASM builds; prefer {@link inject_mouse_buttons_mask} (same mapping).
          */
@@ -885,6 +898,8 @@ export interface WasmApi {
         inject_mouse_left?(pressed: boolean): void;
         inject_mouse_right?(pressed: boolean): void;
         inject_mouse_middle?(pressed: boolean): void;
+        inject_mouse_back?(pressed: boolean): void;
+        inject_mouse_forward?(pressed: boolean): void;
         /**
          * Attach/detach the canonical machine network backend via Aero IPC rings.
          *
