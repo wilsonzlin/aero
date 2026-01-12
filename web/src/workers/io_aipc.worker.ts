@@ -5,6 +5,7 @@ import { queueKind } from "../ipc/layout.ts";
 import { encodeEvent } from "../ipc/protocol.ts";
 import { DeviceManager } from "../io/device_manager.ts";
 import { I8042Controller } from "../io/devices/i8042.ts";
+import { PciMultifunctionTestDeviceFn0, PciMultifunctionTestDeviceFn1 } from "../io/devices/pci_multifunction_test_device.ts";
 import { PciTestDevice } from "../io/devices/pci_test_device.ts";
 import { UART_COM1, Uart16550 } from "../io/devices/uart16550.ts";
 import { AeroIpcIoServer } from "../io/ipc/aero_ipc_io.ts";
@@ -97,6 +98,11 @@ ctx.onmessage = (ev: MessageEvent<IoAipcWorkerInitMessage>) => {
 
   if (devices.includes("pci_test")) {
     mgr.registerPciDevice(new PciTestDevice());
+  }
+
+  if (devices.includes("pci_multifn_test")) {
+    const fn0 = mgr.registerPciDevice(new PciMultifunctionTestDeviceFn0());
+    mgr.registerPciDevice(new PciMultifunctionTestDeviceFn1(), { device: fn0.device, function: 1 });
   }
 
   if (devices.includes("uart16550")) {

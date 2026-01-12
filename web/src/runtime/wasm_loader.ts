@@ -51,6 +51,8 @@ export type VirtioNetPciBridgeHandle = {
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
     poll(): void;
+    tick?(nowMs?: number): void;
+    irq_level?(): boolean;
     irq_asserted(): boolean;
     free(): void;
 };

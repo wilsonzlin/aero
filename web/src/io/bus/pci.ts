@@ -44,9 +44,13 @@ export interface PciDevice {
    */
   readonly subsystemVendorId?: number;
   /**
-   * Subsystem ID (SSID) @ 0x2E.
+   * PCI Subsystem Device ID (type 0 header, offset 0x2E..0x2F).
    *
-   * If omitted, defaults to {@link deviceId}.
+   * Alias: {@link subsystemId} (legacy name).
+   */
+  readonly subsystemDeviceId?: number;
+  /**
+   * Legacy alias for {@link subsystemDeviceId}.
    */
   readonly subsystemId?: number;
   /**
@@ -271,11 +275,11 @@ export class PciBus implements PortIoHandler {
     // Subsystem IDs (type 0 header).
     // Default to the device's own vendor/device IDs (improves guest driver matching).
     const subsystemVendorId = (device.subsystemVendorId ?? device.vendorId) & 0xffff;
-    const subsystemId = (device.subsystemId ?? device.deviceId) & 0xffff;
+    const subsystemDeviceId = (device.subsystemDeviceId ?? device.subsystemId ?? device.deviceId) & 0xffff;
     config[0x2c] = subsystemVendorId & 0xff;
     config[0x2d] = (subsystemVendorId >>> 8) & 0xff;
-    config[0x2e] = subsystemId & 0xff;
-    config[0x2f] = (subsystemId >>> 8) & 0xff;
+    config[0x2e] = subsystemDeviceId & 0xff;
+    config[0x2f] = (subsystemDeviceId >>> 8) & 0xff;
 
     // Interrupt line/pin.
     config[0x3c] = (device.irqLine ?? 0x00) & 0xff;
