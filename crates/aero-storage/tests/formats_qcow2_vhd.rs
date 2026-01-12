@@ -610,6 +610,47 @@ fn qcow2_rejects_compressed_refcount_block_entry() {
 }
 
 #[test]
+fn qcow2_rejects_nonzero_refcount_entry_with_zero_offset() {
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_refcount_entry = QCOW2_OFLAG_COPIED; // non-zero, but offset=0
+    backend
+        .write_at(refcount_table_offset, &bad_refcount_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 invalid refcount block entry")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_invalid_zero_cluster_entry() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    // ZERO flag plus another low bit is invalid.
+    let bad_zero_entry = QCOW2_OFLAG_ZERO | 2;
+    backend
+        .write_at(l2_table_offset, &bad_zero_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 invalid zero cluster entry")
+    ));
+}
+
+#[test]
 fn qcow2_v2_open_write_and_reopen_roundtrip() {
     let backend = make_qcow2_v2_empty(64 * 1024);
     let mut disk = Qcow2Disk::open(backend).unwrap();

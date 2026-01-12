@@ -588,6 +588,11 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             self.ensure_refcount_block_cached(existing_offset)?;
             return Ok(existing_offset);
         }
+        if existing != 0 {
+            return Err(DiskError::CorruptImage(
+                "qcow2 invalid refcount block entry",
+            ));
+        }
 
         let cluster_size = self.cluster_size();
         let new_block_offset = self.allocate_cluster_raw()?;
