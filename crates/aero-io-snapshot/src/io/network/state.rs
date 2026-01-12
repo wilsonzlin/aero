@@ -74,7 +74,7 @@ pub enum TcpRestorePolicy {
 /// implementation in [`aero-net-stack`](https://crates.io/crates/aero-net-stack) and does **not**
 /// match its internal state.
 ///
-/// New code should snapshot [`aero_net_stack::NetworkStack`] directly (device id `b"NSTK"`).
+/// New code should snapshot [`aero_net_stack::NetworkStack`] directly (device id `b"NETS"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyNetworkStackState {
     pub mac_addr: [u8; 6],
@@ -87,7 +87,7 @@ pub struct LegacyNetworkStackState {
 
 #[deprecated(
     note = "Legacy NAT-based network snapshot state (device id b\"NETL\"). \
-            Snapshot aero_net_stack::NetworkStack (device id b\"NSTK\") instead."
+            Snapshot aero_net_stack::NetworkStack (device id b\"NETS\") instead."
 )]
 pub type NetworkStackState = LegacyNetworkStackState;
 
@@ -134,7 +134,7 @@ impl LegacyNetworkStackState {
 }
 
 impl IoSnapshot for LegacyNetworkStackState {
-    // NOTE: This is intentionally *not* `b"NSTK"` to avoid colliding with the canonical
+    // NOTE: This is intentionally *not* `b"NETS"` to avoid colliding with the canonical
     // `aero_net_stack::NetworkStack` snapshot encoding.
     const DEVICE_ID: [u8; 4] = *b"NETL";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);

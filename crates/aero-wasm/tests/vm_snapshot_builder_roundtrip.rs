@@ -47,7 +47,7 @@ fn build_net_stack_blob(device_version: SnapshotVersion) -> Vec<u8> {
     // Note: the wasm snapshot builder only needs the `aero-io-snapshot` header shape so it can
     // extract `device_version` into `DeviceState.version/flags`; the specific 4CC isn't validated
     // here.
-    let mut w = SnapshotWriter::new(*b"NSTK", device_version);
+    let mut w = SnapshotWriter::new(*b"NETS", device_version);
     w.field_u32(1, 0xDEAD_BEEF);
     w.finish()
 }

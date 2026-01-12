@@ -331,7 +331,7 @@ fn networking_device_blobs_roundtrip_through_aero_snapshot_container() {
     assert_eq!(&e1000_resaved.data[..4], b"AERO");
     assert_eq!(&net_stack_resaved.data[..4], b"AERO");
     // Double-check the trait is actually in use (not an accidental dummy blob).
-    assert_eq!(<NetworkStack as IoSnapshot>::DEVICE_ID, *b"NSTK");
+    assert_eq!(<NetworkStack as IoSnapshot>::DEVICE_ID, *b"NETS");
 }
 
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
