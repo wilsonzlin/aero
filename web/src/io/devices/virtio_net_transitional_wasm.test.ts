@@ -41,8 +41,21 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
       bridge = new AnyCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab);
     }
 
+    const legacyRead =
+      typeof bridge.legacy_io_read === "function"
+        ? bridge.legacy_io_read
+        : typeof (bridge as any).io_read === "function"
+          ? (bridge as any).io_read
+          : null;
+    const legacyWrite =
+      typeof bridge.legacy_io_write === "function"
+        ? bridge.legacy_io_write
+        : typeof (bridge as any).io_write === "function"
+          ? (bridge as any).io_write
+          : null;
+
     // Older WASM builds may not implement legacy IO accessors; treat transitional mode as unsupported.
-    if (typeof bridge.io_read !== "function" || typeof bridge.io_write !== "function") {
+    if (!legacyRead || !legacyWrite) {
       try {
         bridge.free();
       } catch {
@@ -53,7 +66,7 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
     // Newer builds may expose `io_read`/`io_write` even for modern-only devices; detect whether the
     // legacy register block is actually enabled.
     try {
-      const probe = bridge.io_read(0, 4) >>> 0;
+      const probe = legacyRead.call(bridge, 0, 4) >>> 0;
       if (probe === 0xffff_ffff) {
         bridge.free();
         return;
@@ -96,7 +109,7 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
     expect(hostFeatures).not.toBe(0xffff_ffff);
 
     // And legacy writes should not throw.
-    expect(() => bridge.io_write(0x04, 4, 0x0000_0000)).not.toThrow();
+    expect(() => legacyWrite.call(bridge, 0x04, 4, 0x0000_0000)).not.toThrow();
 
     dev.destroy();
   });
