@@ -30,11 +30,11 @@ cargo +"$nightly" fuzz run fuzz_ide
 cargo +"$nightly" fuzz run fuzz_piix3_ide_pci
 cargo +"$nightly" fuzz run fuzz_ide_busmaster
 cargo +"$nightly" fuzz run fuzz_http_range
-  cargo +"$nightly" fuzz run fuzz_atapi
-  cargo +"$nightly" fuzz run fuzz_aerosparse_open
-  cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
-  cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
-  cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_atapi
+cargo +"$nightly" fuzz run fuzz_aerosparse_open
+cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
+cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
+cargo +"$nightly" fuzz run fuzz_aerogpu_parse
 ```
 
 To run time-bounded:
@@ -105,6 +105,9 @@ cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
 # AeroSparse image parsing/open + bounded IO against corrupt images
 cd fuzz && cargo fuzz run fuzz_aerosparse_open -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000
+
+# Auto-detect + open (raw/aerosparse/qcow2/vhd) + bounded IO
+cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
 cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
