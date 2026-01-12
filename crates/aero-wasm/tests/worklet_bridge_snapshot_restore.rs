@@ -522,7 +522,7 @@ fn virtio_snd_pci_bridge_attach_mic_ring_discards_buffered_samples() {
     let mut guest = vec![0u8; 0x4000];
     let guest_base = guest.as_mut_ptr() as u32;
     let guest_size = guest.len() as u32;
-    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size).unwrap();
+    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size, None).unwrap();
 
     snd.set_mic_ring_buffer(Some(sab.clone())).unwrap();
 
@@ -543,7 +543,7 @@ fn virtio_snd_pci_bridge_save_load_restores_worklet_ring_and_clears_samples() {
     let guest_base = guest.as_mut_ptr() as u32;
     let guest_size = guest.len() as u32;
 
-    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size).unwrap();
+    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size, None).unwrap();
 
     let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
     let sab = ring.shared_buffer();
@@ -589,7 +589,7 @@ fn virtio_snd_pci_bridge_deferred_ring_restore_applies_on_attach() {
     let guest_base = guest.as_mut_ptr() as u32;
     let guest_size = guest.len() as u32;
 
-    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size).unwrap();
+    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size, None).unwrap();
 
     let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
     let sab = ring.shared_buffer();

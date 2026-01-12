@@ -80,6 +80,15 @@ export type VirtioNetPciBridgeHandle = {
 export type VirtioSndPciBridgeHandle = {
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
+    /**
+     * Legacy virtio-pci (0.9) I/O port register accessors (BAR2).
+     *
+     * Optional for older WASM builds and for modern-only devices.
+     */
+    legacy_io_read?(offset: number, size: number): number;
+    legacy_io_write?(offset: number, size: number, value: number): void;
+    io_read?(offset: number, size: number): number;
+    io_write?(offset: number, size: number, value: number): void;
     poll(): void;
     /**
      * Update the device model's PCI command register (offset 0x04, low 16 bits).
@@ -208,9 +217,18 @@ export interface WasmApi {
     /**
      * Guest-visible virtio-input device exposed via virtio-pci (BAR0 MMIO).
      */
-    VirtioInputPciDevice?: new (guestBase: number, guestSize: number, kind: "keyboard" | "mouse") => {
+    VirtioInputPciDevice?: new (
+        guestBase: number,
+        guestSize: number,
+        kind: "keyboard" | "mouse",
+        transportMode?: unknown,
+    ) => {
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
+        legacy_io_read?(offset: number, size: number): number;
+        legacy_io_write?(offset: number, size: number, value: number): void;
+        io_read?(offset: number, size: number): number;
+        io_write?(offset: number, size: number, value: number): void;
         poll(): void;
         /**
          * Update the device model's PCI command register (offset 0x04, low 16 bits).
@@ -377,7 +395,11 @@ export interface WasmApi {
      *
      * Optional until all deployed WASM builds include virtio-snd support.
      */
-    VirtioSndPciBridge?: new (guestBase: number, guestSize: number) => VirtioSndPciBridgeHandle;
+    VirtioSndPciBridge?: new (
+        guestBase: number,
+        guestSize: number,
+        transportMode?: unknown,
+    ) => VirtioSndPciBridgeHandle;
 
     /**
      * Legacy i8042 (PS/2 keyboard + mouse) controller bridge.

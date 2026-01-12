@@ -5,6 +5,10 @@
 //! and DMA buffers live in guest RAM inside the shared WASM linear memory; guest physical address 0
 //! maps to `guest_base` (see `guest_ram_layout`).
 //!
+//! This bridge can optionally enable the virtio-pci legacy I/O port register block (BAR2), either:
+//! - as a *transitional* device (legacy + modern), or
+//! - as a legacy-only device (legacy BAR2 with modern capabilities disabled).
+//!
 //! Audio output is delivered to the browser via the canonical AudioWorklet `SharedArrayBuffer` ring
 //! buffer (`aero_platform::audio::worklet_bridge::WorkletBridge`). Microphone capture samples are
 //! consumed from the canonical mic ring buffer (`aero_platform::audio::mic_bridge::MicBridge`).
@@ -29,7 +33,9 @@ use aero_platform::interrupts::msi::MsiMessage;
 
 use aero_virtio::devices::snd::{VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{InterruptSink, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice};
+use aero_virtio::pci::{
+    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice,
+};
 
 use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
 
@@ -340,9 +346,67 @@ pub struct VirtioSndPciBridge {
     mem: WasmGuestMemory,
     dev: VirtioPciDevice,
     irq_asserted: Rc<Cell<bool>>,
+    legacy_io_size: u32,
     pci_command: u16,
 
     pending_audio_ring_state: Option<AudioWorkletRingState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VirtioSndPciTransportMode {
+    ModernOnly,
+    Transitional,
+    LegacyOnly,
+}
+
+impl VirtioSndPciTransportMode {
+    fn parse_js(value: Option<JsValue>) -> Result<Self, JsValue> {
+        let Some(value) = value else {
+            return Ok(Self::ModernOnly);
+        };
+
+        // Be permissive: accept both numeric and string modes so JS callers can use enums
+        // without needing a specific exported type.
+        if value.is_null() || value.is_undefined() {
+            return Ok(Self::ModernOnly);
+        }
+
+        if let Some(b) = value.as_bool() {
+            return Ok(if b {
+                Self::Transitional
+            } else {
+                Self::ModernOnly
+            });
+        }
+
+        if let Some(n) = value.as_f64() {
+            let n = n as i32;
+            return match n {
+                0 => Ok(Self::ModernOnly),
+                1 => Ok(Self::Transitional),
+                2 => Ok(Self::LegacyOnly),
+                _ => Err(js_error(format!(
+                    "invalid virtio-snd pci transport mode: {n}"
+                ))),
+            };
+        }
+
+        if let Some(s) = value.as_string() {
+            let s = s.trim().to_ascii_lowercase();
+            return match s.as_str() {
+                "" | "modern" | "modern-only" | "modern_only" => Ok(Self::ModernOnly),
+                "transitional" => Ok(Self::Transitional),
+                "legacy" | "legacy-only" | "legacy_only" => Ok(Self::LegacyOnly),
+                _ => Err(js_error(format!(
+                    "invalid virtio-snd pci transport mode: {s}"
+                ))),
+            };
+        }
+
+        Err(js_error(
+            "invalid virtio-snd pci transport mode: expected string or number",
+        ))
+    }
 }
 
 #[wasm_bindgen]
@@ -353,8 +417,16 @@ impl VirtioSndPciBridge {
     ///   begins (see `guest_ram_layout`).
     /// - `guest_size` is the guest RAM size in bytes. Pass `0` to use "the remainder of linear
     ///   memory" as guest RAM.
+    /// - `transport_mode` optionally selects the virtio-pci transport to expose:
+    ///   - `"modern"` / `0` (default): modern-only (Aero Win7 virtio contract v1)
+    ///   - `"transitional"` / `1`: modern + legacy I/O port BAR
+    ///   - `"legacy"` / `2`: legacy I/O port BAR only (modern caps disabled)
     #[wasm_bindgen(constructor)]
-    pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
+    pub fn new(
+        guest_base: u32,
+        guest_size: u32,
+        transport_mode: Option<JsValue>,
+    ) -> Result<Self, JsValue> {
         let mem = WasmGuestMemory::new(guest_base, guest_size)?;
 
         let asserted = Rc::new(Cell::new(false));
@@ -365,12 +437,26 @@ impl VirtioSndPciBridge {
         let output = OptionalWorkletSink::default();
         let capture = OptionalMicCaptureSource::default();
         let snd = VirtioSnd::new_with_capture(output, capture);
-        let dev = VirtioPciDevice::new(Box::new(snd), Box::new(irq));
+
+        let transport_mode = VirtioSndPciTransportMode::parse_js(transport_mode)?;
+        let dev = match transport_mode {
+            VirtioSndPciTransportMode::ModernOnly => {
+                VirtioPciDevice::new(Box::new(snd), Box::new(irq))
+            }
+            VirtioSndPciTransportMode::Transitional => {
+                VirtioPciDevice::new_transitional(Box::new(snd), Box::new(irq))
+            }
+            VirtioSndPciTransportMode::LegacyOnly => {
+                VirtioPciDevice::new_legacy_only(Box::new(snd), Box::new(irq))
+            }
+        };
+        let legacy_io_size = dev.legacy_io_size().min(u64::from(u32::MAX)) as u32;
 
         Ok(Self {
             mem,
             dev,
             irq_asserted: asserted,
+            legacy_io_size,
             pci_command: 0,
             pending_audio_ring_state: None,
         })
@@ -426,6 +512,59 @@ impl VirtioSndPciBridge {
         if self.bus_master_enabled() {
             self.dev.process_notified_queues(&mut self.mem);
         }
+    }
+
+    /// Read from the legacy virtio-pci (0.9) I/O port register block (BAR2).
+    pub fn legacy_io_read(&mut self, offset: u32, size: u8) -> u32 {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return 0,
+        };
+        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        if self.legacy_io_size == 0 || end > self.legacy_io_size {
+            return 0xffff_ffff;
+        }
+        let mut buf = [0u8; 4];
+        self.dev.legacy_io_read(offset as u64, &mut buf[..size]);
+        u32::from_le_bytes(buf)
+    }
+
+    /// Write to the legacy virtio-pci (0.9) I/O port register block (BAR2).
+    pub fn legacy_io_write(&mut self, offset: u32, size: u8, value: u32) {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
+        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        if self.legacy_io_size == 0 || end > self.legacy_io_size {
+            return;
+        }
+        let bytes = value.to_le_bytes();
+        self.dev.legacy_io_write(offset as u64, &bytes[..size]);
+
+        // Legacy queue notifications are expected to be "immediate" from the guest's perspective
+        // (in real hardware, the kick causes the device to begin DMA). In the browser runtime we
+        // have access to guest RAM in the WASM linear memory, so we can service the notified
+        // virtqueue synchronously instead of requiring periodic polling.
+        if offset as u64 == VIRTIO_PCI_LEGACY_QUEUE_NOTIFY && self.bus_master_enabled() {
+            self.dev.process_notified_queues(&mut self.mem);
+        }
+    }
+
+    /// Back-compat alias for `legacy_io_read` (mirrors `VirtioNetPciBridge`).
+    pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+        if !matches!(size, 1 | 2 | 4) {
+            return 0xffff_ffff;
+        }
+        self.legacy_io_read(offset, size)
+    }
+
+    /// Back-compat alias for `legacy_io_write` (mirrors `VirtioNetPciBridge`).
+    pub fn io_write(&mut self, offset: u32, size: u8, value: u32) {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
+        self.legacy_io_write(offset, size, value);
     }
 
     /// Process pending virtqueue work and deliver interrupts.
@@ -649,7 +788,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn host_provided_sample_rates_are_clamped_to_avoid_oom() {
-        let mut bridge = VirtioSndPciBridge::new(0x1000, 0).unwrap();
+        let mut bridge = VirtioSndPciBridge::new(0x1000, 0, None).unwrap();
 
         bridge.set_host_sample_rate_hz(u32::MAX).unwrap();
         assert_eq!(
