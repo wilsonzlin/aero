@@ -184,11 +184,11 @@ class WebSocketTcpMuxBridge {
 
   start(head: Buffer): void {
     if (head.length > 0) {
-      this.wsBuffer = Buffer.concat([this.wsBuffer, head]);
+      this.wsBuffer = this.wsBuffer.length === 0 ? head : Buffer.concat([this.wsBuffer, head]);
     }
 
     this.wsSocket.on("data", (data) => {
-      this.wsBuffer = Buffer.concat([this.wsBuffer, data]);
+      this.wsBuffer = this.wsBuffer.length === 0 ? data : Buffer.concat([this.wsBuffer, data]);
       this.drainWebSocketFrames();
     });
     this.wsSocket.on("error", () => this.close());
