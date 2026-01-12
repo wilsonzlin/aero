@@ -527,6 +527,10 @@ impl IdeController {
         self.bus_master_base
     }
 
+    pub fn set_bus_master_base(&mut self, base: u16) {
+        self.bus_master_base = base;
+    }
+
     pub fn attach_primary_master_ata(&mut self, drive: AtaDrive) {
         self.primary.devices[0] = Some(IdeDevice::Ata(drive));
         self.bus_master[0].set_drive_dma_capable(0, true);
@@ -964,7 +968,23 @@ impl Piix3IdePciDevice {
     }
 
     pub fn bus_master_base(&self) -> u16 {
-        self.controller.bus_master_base()
+        self.config
+            .bar_range(4)
+            .and_then(|range| u16::try_from(range.base).ok())
+            .unwrap_or_else(|| self.controller.bus_master_base())
+    }
+
+    fn sync_bus_master_base_from_config(&mut self) {
+        let Some(range) = self.config.bar_range(4) else {
+            return;
+        };
+        if range.base == 0 {
+            return;
+        }
+        let Ok(base) = u16::try_from(range.base) else {
+            return;
+        };
+        self.controller.set_bus_master_base(base);
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus) {
@@ -972,10 +992,12 @@ impl Piix3IdePciDevice {
     }
 
     pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
+        self.sync_bus_master_base_from_config();
         self.controller.io_read(port, size)
     }
 
     pub fn io_write(&mut self, port: u16, size: u8, value: u32) {
+        self.sync_bus_master_base_from_config();
         self.controller.io_write(port, size, value)
     }
 }
@@ -1048,4 +1070,3 @@ pub fn register_piix3_ide_ports(bus: &mut IoPortBus, ide: SharedPiix3IdePciDevic
         bus.register(port, Box::new(Piix3IdePort::new(ide.clone(), port)));
     }
 }
-
