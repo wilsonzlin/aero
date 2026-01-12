@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AudioFrameClock } from "./audio_frame_clock";
+import { AudioFrameClock, perfNowMsToNs } from "./audio_frame_clock";
 
 describe("AudioFrameClock", () => {
   function tick60HzNs(tickIndex: number): bigint {
@@ -106,5 +106,17 @@ describe("AudioFrameClock", () => {
 
     // Only 0.5s elapsed since the last accepted time.
     expect(clock.advanceTo(1_500_000_000n)).toBe(500);
+  });
+});
+
+describe("perfNowMsToNs", () => {
+  it("converts integer milliseconds exactly (including large epoch-ms inputs)", () => {
+    const ms = 1_700_000_000_000; // ~2023-11-14 in epoch ms
+    expect(perfNowMsToNs(ms)).toBe(1_700_000_000_000_000_000n);
+  });
+
+  it("converts fractional milliseconds via floor(perfNowMs*1e6)", () => {
+    expect(perfNowMsToNs(16.666_666)).toBe(16_666_666n);
+    expect(perfNowMsToNs(16.666_667)).toBe(16_666_667n);
   });
 });

@@ -23,9 +23,29 @@ function toBigIntNs(nowNs: number | bigint): bigint {
 export function perfNowMsToNs(perfNowMs: number): bigint {
   if (!Number.isFinite(perfNowMs)) throw new Error(`perfNowMs must be finite, got ${String(perfNowMs)}`);
   if (perfNowMs < 0) throw new Error(`perfNowMs must be >= 0, got ${perfNowMs}`);
-  // `performance.now()` is relative to the page/worker time origin, so this stays
-  // well below `Number.MAX_SAFE_INTEGER` for typical sessions.
-  return BigInt(Math.floor(perfNowMs * 1e6));
+
+  // Fast path: if `perfNowMs` is already an integer millisecond timestamp
+  // (e.g. `Date.now()`), convert without going through floating-point
+  // multiplication so large epoch millisecond values remain exact.
+  if (Number.isSafeInteger(perfNowMs)) {
+    return BigInt(perfNowMs) * 1_000_000n;
+  }
+
+  // Common case: `performance.now()` is relative to the page/worker time origin,
+  // so `perfNowMs * 1e6` stays below `Number.MAX_SAFE_INTEGER` for typical
+  // sessions (<~104 days). Use a single multiply+floor to avoid introducing extra
+  // rounding error from splitting integer/fractional components.
+  const maxMsForSafeMul = Number.MAX_SAFE_INTEGER / 1e6;
+  if (perfNowMs <= maxMsForSafeMul) {
+    return BigInt(Math.floor(perfNowMs * 1e6));
+  }
+
+  // Fallback: extremely long-running sessions with sub-ms precision. Convert the
+  // integer milliseconds exactly, then add the fractional microseconds.
+  const msInt = Math.floor(perfNowMs);
+  const fracMs = perfNowMs - msInt;
+  const fracUs = Math.floor(fracMs * 1e6);
+  return BigInt(msInt) * 1_000_000n + BigInt(Math.max(0, Math.min(999_999, fracUs)));
 }
 
 /**
@@ -95,4 +115,3 @@ export class AudioFrameClock {
     return frames > max ? Number.MAX_SAFE_INTEGER : Number(frames);
   }
 }
-
