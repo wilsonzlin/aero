@@ -240,6 +240,7 @@ impl HubPort {
 pub struct UsbHubDevice {
     configuration: u8,
     remote_wakeup_enabled: bool,
+    upstream_suspended: bool,
     ports: Vec<HubPort>,
     interrupt_bitmap_len: usize,
     interrupt_ep_halted: bool,
@@ -266,6 +267,7 @@ impl UsbHubDevice {
         Self {
             configuration: 0,
             remote_wakeup_enabled: false,
+            upstream_suspended: false,
             ports: (0..num_ports).map(|_| HubPort::new()).collect(),
             interrupt_bitmap_len,
             interrupt_ep_halted: false,
@@ -325,6 +327,7 @@ impl UsbDeviceModel for UsbHubDevice {
     fn reset(&mut self) {
         self.configuration = 0;
         self.remote_wakeup_enabled = false;
+        self.upstream_suspended = false;
         self.interrupt_ep_halted = false;
 
         for port in &mut self.ports {
@@ -576,6 +579,7 @@ impl UsbDeviceModel for UsbHubDevice {
                     {
                         return ControlResponse::Stall;
                     }
+                    let upstream_suspended = self.upstream_suspended;
                     let Some(port) = self.port_mut(setup.w_index) else {
                         return ControlResponse::Stall;
                     };
@@ -586,6 +590,10 @@ impl UsbDeviceModel for UsbHubDevice {
                         }
                         HUB_PORT_FEATURE_SUSPEND => {
                             port.set_suspended(true);
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_POWER => {
@@ -605,6 +613,7 @@ impl UsbDeviceModel for UsbHubDevice {
                     {
                         return ControlResponse::Stall;
                     }
+                    let upstream_suspended = self.upstream_suspended;
                     let Some(port) = self.port_mut(setup.w_index) else {
                         return ControlResponse::Stall;
                     };
@@ -615,6 +624,10 @@ impl UsbDeviceModel for UsbHubDevice {
                         }
                         HUB_PORT_FEATURE_SUSPEND => {
                             port.set_suspended(false);
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_POWER => {
@@ -679,6 +692,39 @@ impl UsbDeviceModel for UsbHubDevice {
 
     fn as_hub_mut(&mut self) -> Option<&mut dyn UsbHub> {
         Some(self)
+    }
+
+    fn set_suspended(&mut self, suspended: bool) {
+        self.upstream_suspended = suspended;
+        for port in &mut self.ports {
+            if let Some(dev) = port.device.as_mut() {
+                dev.model_mut().set_suspended(suspended || port.suspended);
+            }
+        }
+    }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        if self.configuration == 0 {
+            return false;
+        }
+
+        // If the upstream link is suspended and a downstream device requests remote wakeup,
+        // propagate the resume event upstream.
+        if !self.upstream_suspended {
+            return false;
+        }
+        for port in &mut self.ports {
+            if !(port.enabled && port.powered) {
+                continue;
+            }
+            if let Some(dev) = port.device.as_mut() {
+                if dev.model_mut().poll_remote_wakeup() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 

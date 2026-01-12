@@ -3155,9 +3155,14 @@ mod proptests {
     fn collections_strategy() -> impl Strategy<Value = Vec<HidCollectionInfo>> {
         // Important: avoid the mixed Report ID case (some reports have id 0 while others have a
         // non-zero id) since it's invalid HID and causes ambiguity on the wire.
-        any::<bool>().prop_flat_map(|use_report_ids| {
-            collection_strategy(3, use_report_ids).prop_map(|root| vec![root])
-        })
+        any::<bool>()
+            .prop_flat_map(|use_report_ids| {
+                collection_strategy(3, use_report_ids).prop_map(|root| vec![root])
+            })
+            .prop_filter(
+                "generated collections must satisfy validate_collections",
+                |collections| validate_collections(collections).is_ok(),
+            )
     }
 
     fn normalize_reports(reports: &mut Vec<HidReportInfo>) {

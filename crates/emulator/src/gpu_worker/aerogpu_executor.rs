@@ -924,6 +924,16 @@ fn decode_alloc_table(
         ));
         return (None, Vec::new());
     }
+    if desc
+        .alloc_table_gpa
+        .checked_add(u64::from(desc.alloc_table_size_bytes))
+        .is_none()
+    {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::AddressOverflow,
+        ));
+        return (None, Vec::new());
+    }
 
     let header = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
 
@@ -1012,7 +1022,7 @@ fn decode_alloc_table(
         };
 
         let entry = AeroGpuAllocEntry::read_from(mem, entry_gpa);
-        if entry.alloc_id == 0 || entry.size_bytes == 0 || entry.gpa == 0 {
+        if entry.alloc_id == 0 || entry.size_bytes == 0 {
             decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
                 AeroGpuAllocTableDecodeError::InvalidEntry,
             ));
@@ -1113,37 +1123,25 @@ fn decode_cmd_stream(
         return (Some(header), Vec::new());
     }
 
-    let Ok(cmd_size) = usize::try_from(desc.cmd_size_bytes) else {
-        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-            AeroGpuCmdStreamDecodeError::TooLarge,
-        ));
-        return (None, Vec::new());
-    };
-
-    let mut cmd_stream = Vec::new();
-    if cmd_stream.try_reserve_exact(cmd_size).is_err() {
-        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-            AeroGpuCmdStreamDecodeError::TooLarge,
-        ));
-        return (None, Vec::new());
-    }
-    cmd_stream.resize(cmd_size, 0u8);
-    mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
-
-    if cmd_stream.len() < ProtocolCmdStreamHeader::SIZE_BYTES {
+    let cmd_size = desc.cmd_size_bytes as usize;
+    if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::TooSmall,
         ));
-        return (None, cmd_stream);
+        let mut bytes = vec![0u8; cmd_size];
+        mem.read_physical(desc.cmd_gpa, &mut bytes);
+        return (None, bytes);
     }
 
-    let header = match decode_cmd_stream_header_le(&cmd_stream) {
+    let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+    mem.read_physical(desc.cmd_gpa, &mut prefix);
+    let header = match decode_cmd_stream_header_le(&prefix) {
         Ok(header) => AeroGpuCmdStreamHeader::from(header),
         Err(_) => {
             decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
                 AeroGpuCmdStreamDecodeError::BadHeader,
             ));
-            return (None, cmd_stream);
+            return (None, prefix.to_vec());
         }
     };
 
@@ -1152,6 +1150,19 @@ fn decode_cmd_stream(
             AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
         ));
     }
+
+    // Forward-compat: `cmd_size_bytes` is the backing buffer size, while the stream header's
+    // `size_bytes` is the number of bytes used.
+    let capture_size = header.size_bytes.min(desc.cmd_size_bytes) as usize;
+    let mut cmd_stream = Vec::new();
+    if cmd_stream.try_reserve_exact(capture_size).is_err() {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+        return (Some(header), Vec::new());
+    }
+    cmd_stream.resize(capture_size, 0u8);
+    mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
 
     (Some(header), cmd_stream)
 }
