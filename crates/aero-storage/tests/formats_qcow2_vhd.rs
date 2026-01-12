@@ -768,6 +768,45 @@ fn qcow2_rejects_nonzero_refcount_entry_with_zero_offset() {
 }
 
 #[test]
+fn qcow2_rejects_refcount_block_overlapping_l1_table() {
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+    let l1_table_offset = cluster_size * 2;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    backend
+        .write_at(refcount_table_offset, &l1_table_offset.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 cluster overlaps l1 table")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_refcount_block_overlapping_refcount_table() {
+    let cluster_size = 1u64 << 12;
+    let refcount_table_offset = cluster_size;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    backend
+        .write_at(refcount_table_offset, &refcount_table_offset.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 cluster overlaps refcount table")
+    ));
+}
+
+#[test]
 fn qcow2_rejects_invalid_zero_cluster_entry() {
     let cluster_size = 1u64 << 12;
     let l2_table_offset = cluster_size * 4;

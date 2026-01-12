@@ -669,6 +669,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         }
         let existing_offset = self.mask_offset(existing);
         if existing_offset != 0 {
+            self.validate_cluster_not_overlapping_metadata(existing_offset)?;
             self.ensure_refcount_block_cached(existing_offset)?;
             return Ok(existing_offset);
         }
