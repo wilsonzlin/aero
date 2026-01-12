@@ -146,6 +146,585 @@ static D3DMATRIX MulMat4RowMajor(const D3DMATRIX& a, const D3DMATRIX& b) {
   return out;
 }
 
+static int TestCreateStateBlockAll(aerogpu_test::TestReporter& reporter,
+                                   IDirect3DDevice9Ex* dev,
+                                   int width,
+                                   int height,
+                                   const D3DMATRIX& world_a) {
+  if (!dev) {
+    return reporter.Fail("TestCreateStateBlockAll: device is null");
+  }
+
+  HRESULT hr = S_OK;
+
+  ComPtr<IDirect3DStateBlock9> sb_all;
+
+  ComPtr<IDirect3DVertexBuffer9> vb_0;
+  hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb_0.put(), NULL);
+  if (FAILED(hr) || !vb_0) {
+    return reporter.FailHresult("CreateVertexBuffer (CreateStateBlock all vb_0)", hr);
+  }
+  ComPtr<IDirect3DVertexBuffer9> vb_1;
+  hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb_1.put(), NULL);
+  if (FAILED(hr) || !vb_1) {
+    return reporter.FailHresult("CreateVertexBuffer (CreateStateBlock all vb_1)", hr);
+  }
+  const UINT vb_offset_0 = 8;
+  const UINT vb_stride_0 = 16;
+  const UINT vb_offset_1 = 16;
+  const UINT vb_stride_1 = 32;
+
+  ComPtr<IDirect3DIndexBuffer9> ib_0;
+  hr = dev->CreateIndexBuffer(256, 0, D3DFMT_INDEX16, D3DPOOL_DEFAULT, ib_0.put(), NULL);
+  if (FAILED(hr) || !ib_0) {
+    return reporter.FailHresult("CreateIndexBuffer (CreateStateBlock all ib_0)", hr);
+  }
+  ComPtr<IDirect3DIndexBuffer9> ib_1;
+  hr = dev->CreateIndexBuffer(256, 0, D3DFMT_INDEX16, D3DPOOL_DEFAULT, ib_1.put(), NULL);
+  if (FAILED(hr) || !ib_1) {
+    return reporter.FailHresult("CreateIndexBuffer (CreateStateBlock all ib_1)", hr);
+  }
+
+  ComPtr<IDirect3DTexture9> tex_0;
+  hr = dev->CreateTexture(16, 16, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex_0.put(), NULL);
+  if (FAILED(hr) || !tex_0) {
+    return reporter.FailHresult("CreateTexture (CreateStateBlock all tex_0)", hr);
+  }
+  ComPtr<IDirect3DTexture9> tex_1;
+  hr = dev->CreateTexture(16, 16, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex_1.put(), NULL);
+  if (FAILED(hr) || !tex_1) {
+    return reporter.FailHresult("CreateTexture (CreateStateBlock all tex_1)", hr);
+  }
+
+  ComPtr<IDirect3DSurface9> rt_0;
+  hr = dev->CreateRenderTarget(width,
+                               height,
+                               D3DFMT_X8R8G8B8,
+                               D3DMULTISAMPLE_NONE,
+                               0,
+                               FALSE,
+                               rt_0.put(),
+                               NULL);
+  if (FAILED(hr) || !rt_0) {
+    return reporter.FailHresult("CreateRenderTarget (CreateStateBlock all rt_0)", hr);
+  }
+  ComPtr<IDirect3DSurface9> rt_1;
+  hr = dev->CreateRenderTarget(width,
+                               height,
+                               D3DFMT_X8R8G8B8,
+                               D3DMULTISAMPLE_NONE,
+                               0,
+                               FALSE,
+                               rt_1.put(),
+                               NULL);
+  if (FAILED(hr) || !rt_1) {
+    return reporter.FailHresult("CreateRenderTarget (CreateStateBlock all rt_1)", hr);
+  }
+
+  ComPtr<IDirect3DSurface9> ds_0;
+  hr = dev->CreateDepthStencilSurface(width,
+                                      height,
+                                      D3DFMT_D24S8,
+                                      D3DMULTISAMPLE_NONE,
+                                      0,
+                                      FALSE,
+                                      ds_0.put(),
+                                      NULL);
+  if (FAILED(hr) || !ds_0) {
+    return reporter.FailHresult("CreateDepthStencilSurface (CreateStateBlock all ds_0)", hr);
+  }
+  ComPtr<IDirect3DSurface9> ds_1;
+  hr = dev->CreateDepthStencilSurface(width,
+                                      height,
+                                      D3DFMT_D24S8,
+                                      D3DMULTISAMPLE_NONE,
+                                      0,
+                                      FALSE,
+                                      ds_1.put(),
+                                      NULL);
+  if (FAILED(hr) || !ds_1) {
+    return reporter.FailHresult("CreateDepthStencilSurface (CreateStateBlock all ds_1)", hr);
+  }
+
+  // Baseline state (0).
+  const DWORD z_enable_0 = (DWORD)D3DZB_FALSE;
+  const DWORD samp_addr_u_0 = (DWORD)D3DTADDRESS_MIRROR;
+  const DWORD colorop_0 = (DWORD)D3DTOP_SUBTRACT;
+  const DWORD fvf_0 = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
+  const int vs_i_0[4] = {100, 101, 102, 103};
+  const BOOL ps_b_0[2] = {FALSE, TRUE};
+
+  D3DVIEWPORT9 vp_0;
+  ZeroMemory(&vp_0, sizeof(vp_0));
+  vp_0.X = 5;
+  vp_0.Y = 6;
+  vp_0.Width = 64;
+  vp_0.Height = 65;
+  vp_0.MinZ = 0.125f;
+  vp_0.MaxZ = 0.875f;
+
+  RECT scissor_0;
+  scissor_0.left = 1;
+  scissor_0.top = 2;
+  scissor_0.right = 70;
+  scissor_0.bottom = 80;
+
+  D3DMATRIX world_0 = world_a;
+  world_0._11 = 9.0f;
+  world_0._22 = 10.0f;
+
+  D3DMATERIAL9 mat_0;
+  ZeroMemory(&mat_0, sizeof(mat_0));
+  mat_0.Diffuse.r = 0.1f;
+  mat_0.Diffuse.g = 0.2f;
+  mat_0.Diffuse.b = 0.3f;
+  mat_0.Diffuse.a = 0.4f;
+  mat_0.Power = 8.0f;
+
+  hr = dev->SetRenderState(D3DRS_ZENABLE, z_enable_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, samp_addr_u_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(0, ADDRESSU) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, colorop_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(0, COLOROP) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetViewport(&vp_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetScissorRect(&scissor_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetScissorRect (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetTexture(0, tex_0.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture(0) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetRenderTarget(0, rt_0.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderTarget(0) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetDepthStencilSurface(ds_0.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetDepthStencilSurface (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetStreamSource(0, vb_0.get(), vb_offset_0, vb_stride_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(0) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetIndices(ib_0.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetIndices (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetFVF(fvf_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetFVF (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_WORLD, &world_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTransform(D3DTS_WORLD) (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetVertexShaderConstantI(60, vs_i_0, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShaderConstantI (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetPixelShaderConstantB(71, ps_b_0, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantB (pre CreateStateBlock all)", hr);
+  }
+  hr = dev->SetMaterial(&mat_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetMaterial (pre CreateStateBlock all)", hr);
+  }
+
+  hr = dev->CreateStateBlock(D3DSBT_ALL, sb_all.put());
+  if (FAILED(hr) || !sb_all) {
+    return reporter.FailHresult("CreateStateBlock(D3DSBT_ALL)", hr);
+  }
+
+  // State (1) used for clobber and Capture().
+  const DWORD z_enable_1 = (DWORD)D3DZB_TRUE;
+  const DWORD samp_addr_u_1 = (DWORD)D3DTADDRESS_CLAMP;
+  const DWORD colorop_1 = (DWORD)D3DTOP_MODULATE;
+  const DWORD fvf_1 = D3DFVF_XYZRHW | D3DFVF_TEX1;
+  const int vs_i_1[4] = {-100, -101, -102, -103};
+  const BOOL ps_b_1[2] = {TRUE, TRUE};
+
+  D3DVIEWPORT9 vp_1 = vp_0;
+  vp_1.X = 15;
+  vp_1.Y = 16;
+  vp_1.Width = 128;
+  vp_1.Height = 129;
+  vp_1.MinZ = 0.25f;
+  vp_1.MaxZ = 1.0f;
+
+  RECT scissor_1;
+  scissor_1.left = 5;
+  scissor_1.top = 6;
+  scissor_1.right = 50;
+  scissor_1.bottom = 60;
+
+  D3DMATRIX world_1 = world_a;
+  world_1._11 = -9.0f;
+  world_1._22 = -10.0f;
+
+  D3DMATERIAL9 mat_1 = mat_0;
+  mat_1.Diffuse.r = 0.9f;
+  mat_1.Diffuse.g = 0.8f;
+  mat_1.Diffuse.b = 0.7f;
+  mat_1.Diffuse.a = 0.6f;
+  mat_1.Power = 16.0f;
+
+  // Clobber to state (1).
+  hr = dev->SetRenderState(D3DRS_ZENABLE, z_enable_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, samp_addr_u_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(0, ADDRESSU) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, colorop_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(0, COLOROP) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetViewport(&vp_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetScissorRect(&scissor_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetScissorRect (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetTexture(0, tex_1.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture(0) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetRenderTarget(0, rt_1.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderTarget(0) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetDepthStencilSurface(ds_1.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetDepthStencilSurface (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetStreamSource(0, vb_1.get(), vb_offset_1, vb_stride_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(0) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetIndices(ib_1.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetIndices (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetFVF(fvf_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetFVF (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_WORLD, &world_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTransform(D3DTS_WORLD) (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetVertexShaderConstantI(60, vs_i_1, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShaderConstantI (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetPixelShaderConstantB(71, ps_b_1, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantB (clobber pre Apply all baseline)", hr);
+  }
+  hr = dev->SetMaterial(&mat_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetMaterial (clobber pre Apply all baseline)", hr);
+  }
+
+  hr = sb_all->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock::Apply (all baseline)", hr);
+  }
+
+  // Verify baseline (0) restored.
+  DWORD got = 0;
+  hr = dev->GetRenderState(D3DRS_ZENABLE, &got);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetRenderState(D3DRS_ZENABLE) (after Apply all baseline)", hr);
+  }
+  if (got != z_enable_0) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: ZENABLE got=%lu expected=%lu",
+                         (unsigned long)got,
+                         (unsigned long)z_enable_0);
+  }
+  got = 0;
+  hr = dev->GetSamplerState(0, D3DSAMP_ADDRESSU, &got);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetSamplerState(0, ADDRESSU) (after Apply all baseline)", hr);
+  }
+  if (got != samp_addr_u_0) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: Sampler ADDRESSU got=%lu expected=%lu",
+                         (unsigned long)got,
+                         (unsigned long)samp_addr_u_0);
+  }
+  got = 0;
+  hr = dev->GetTextureStageState(0, D3DTSS_COLOROP, &got);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetTextureStageState(0, COLOROP) (after Apply all baseline)", hr);
+  }
+  if (got != colorop_0) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: TextureStage COLOROP got=%lu expected=%lu",
+                         (unsigned long)got,
+                         (unsigned long)colorop_0);
+  }
+
+  D3DVIEWPORT9 got_vp;
+  ZeroMemory(&got_vp, sizeof(got_vp));
+  hr = dev->GetViewport(&got_vp);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetViewport (after Apply all baseline)", hr);
+  }
+  if (got_vp.X != vp_0.X || got_vp.Y != vp_0.Y ||
+      got_vp.Width != vp_0.Width || got_vp.Height != vp_0.Height ||
+      !NearlyEqual(got_vp.MinZ, vp_0.MinZ, 1e-6f) ||
+      !NearlyEqual(got_vp.MaxZ, vp_0.MaxZ, 1e-6f)) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: Viewport");
+  }
+
+  got = 0;
+  hr = dev->GetRenderState(D3DRS_SCISSORTESTENABLE, &got);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetRenderState(D3DRS_SCISSORTESTENABLE) (after Apply all baseline)", hr);
+  }
+  if (got != TRUE) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: SCISSORTESTENABLE got=%lu expected=%lu",
+                         (unsigned long)got,
+                         (unsigned long)TRUE);
+  }
+  RECT got_scissor;
+  ZeroMemory(&got_scissor, sizeof(got_scissor));
+  hr = dev->GetScissorRect(&got_scissor);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetScissorRect (after Apply all baseline)", hr);
+  }
+  if (got_scissor.left != scissor_0.left || got_scissor.top != scissor_0.top ||
+      got_scissor.right != scissor_0.right || got_scissor.bottom != scissor_0.bottom) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: ScissorRect");
+  }
+
+  ComPtr<IDirect3DBaseTexture9> got_tex;
+  hr = dev->GetTexture(0, got_tex.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetTexture(0) (after Apply all baseline)", hr);
+  }
+  if (got_tex.get() != tex_0.get()) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: Texture(0) got=%p expected=%p",
+                         got_tex.get(),
+                         tex_0.get());
+  }
+
+  ComPtr<IDirect3DSurface9> got_rt;
+  hr = dev->GetRenderTarget(0, got_rt.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetRenderTarget(0) (after Apply all baseline)", hr);
+  }
+  if (got_rt.get() != rt_0.get()) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: RenderTarget(0) got=%p expected=%p",
+                         got_rt.get(),
+                         rt_0.get());
+  }
+
+  ComPtr<IDirect3DSurface9> got_ds;
+  hr = dev->GetDepthStencilSurface(got_ds.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetDepthStencilSurface (after Apply all baseline)", hr);
+  }
+  if (got_ds.get() != ds_0.get()) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: DepthStencilSurface got=%p expected=%p",
+                         got_ds.get(),
+                         ds_0.get());
+  }
+
+  ComPtr<IDirect3DVertexBuffer9> got_vb;
+  UINT got_offset = 0;
+  UINT got_stride = 0;
+  hr = dev->GetStreamSource(0, got_vb.put(), &got_offset, &got_stride);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetStreamSource(0) (after Apply all baseline)", hr);
+  }
+  if (got_vb.get() != vb_0.get() || got_offset != vb_offset_0 || got_stride != vb_stride_0) {
+    return reporter.Fail(
+        "CreateStateBlock ALL baseline mismatch: StreamSource(0) got={vb=%p off=%u stride=%u} expected={vb=%p off=%u stride=%u}",
+        got_vb.get(),
+        (unsigned)got_offset,
+        (unsigned)got_stride,
+        vb_0.get(),
+        (unsigned)vb_offset_0,
+        (unsigned)vb_stride_0);
+  }
+
+  ComPtr<IDirect3DIndexBuffer9> got_ib;
+  hr = dev->GetIndices(got_ib.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetIndices (after Apply all baseline)", hr);
+  }
+  if (got_ib.get() != ib_0.get()) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: Indices got=%p expected=%p", got_ib.get(), ib_0.get());
+  }
+
+  DWORD got_fvf = 0;
+  hr = dev->GetFVF(&got_fvf);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetFVF (after Apply all baseline)", hr);
+  }
+  if (got_fvf != fvf_0) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: FVF got=0x%08lX expected=0x%08lX",
+                         (unsigned long)got_fvf,
+                         (unsigned long)fvf_0);
+  }
+
+  D3DMATRIX got_world;
+  ZeroMemory(&got_world, sizeof(got_world));
+  hr = dev->GetTransform(D3DTS_WORLD, &got_world);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetTransform(D3DTS_WORLD) (after Apply all baseline)", hr);
+  }
+  if (!MatrixEqual(got_world, world_0)) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: WORLD matrix");
+  }
+
+  int got_vs_i[4] = {};
+  hr = dev->GetVertexShaderConstantI(60, got_vs_i, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetVertexShaderConstantI (after Apply all baseline)", hr);
+  }
+  if (std::memcmp(got_vs_i, vs_i_0, sizeof(vs_i_0)) != 0) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: VertexShaderConstantI");
+  }
+
+  BOOL got_ps_b[2] = {};
+  hr = dev->GetPixelShaderConstantB(71, got_ps_b, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetPixelShaderConstantB (after Apply all baseline)", hr);
+  }
+  for (int i = 0; i < 2; ++i) {
+    const BOOL a = ps_b_0[i] ? TRUE : FALSE;
+    const BOOL b = got_ps_b[i] ? TRUE : FALSE;
+    if (a != b) {
+      return reporter.Fail("CreateStateBlock ALL baseline mismatch: PixelShaderConstantB[%d] got=%d expected=%d",
+                           i,
+                           (int)b,
+                           (int)a);
+    }
+  }
+
+  D3DMATERIAL9 got_mat;
+  ZeroMemory(&got_mat, sizeof(got_mat));
+  hr = dev->GetMaterial(&got_mat);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetMaterial (after Apply all baseline)", hr);
+  }
+  if (!MaterialNearlyEqual(got_mat, mat_0, 1e-6f)) {
+    return reporter.Fail("CreateStateBlock ALL baseline mismatch: Material");
+  }
+
+  // Capture state (1), clobber back to baseline, Apply, and spot-check.
+  hr = dev->SetRenderState(D3DRS_ZENABLE, z_enable_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE) (pre Capture all)", hr);
+  }
+  hr = dev->SetTexture(0, tex_1.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture(0) (pre Capture all)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_WORLD, &world_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTransform(D3DTS_WORLD) (pre Capture all)", hr);
+  }
+  hr = dev->SetMaterial(&mat_1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetMaterial (pre Capture all)", hr);
+  }
+
+  hr = sb_all->Capture();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock::Capture (all)", hr);
+  }
+
+  hr = dev->SetRenderState(D3DRS_ZENABLE, z_enable_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE) (clobber pre Apply all)", hr);
+  }
+  hr = dev->SetTexture(0, tex_0.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture(0) (clobber pre Apply all)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_WORLD, &world_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTransform(D3DTS_WORLD) (clobber pre Apply all)", hr);
+  }
+  hr = dev->SetMaterial(&mat_0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetMaterial (clobber pre Apply all)", hr);
+  }
+
+  hr = sb_all->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock::Apply (all)", hr);
+  }
+
+  got = 0;
+  hr = dev->GetRenderState(D3DRS_ZENABLE, &got);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetRenderState(D3DRS_ZENABLE) (after Apply all)", hr);
+  }
+  if (got != z_enable_1) {
+    return reporter.Fail("CreateStateBlock ALL restore mismatch: ZENABLE got=%lu expected=%lu",
+                         (unsigned long)got,
+                         (unsigned long)z_enable_1);
+  }
+
+  ComPtr<IDirect3DBaseTexture9> got_tex1;
+  hr = dev->GetTexture(0, got_tex1.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetTexture(0) (after Apply all)", hr);
+  }
+  if (got_tex1.get() != tex_1.get()) {
+    return reporter.Fail("CreateStateBlock ALL restore mismatch: Texture(0) got=%p expected=%p",
+                         got_tex1.get(),
+                         tex_1.get());
+  }
+
+  ZeroMemory(&got_world, sizeof(got_world));
+  hr = dev->GetTransform(D3DTS_WORLD, &got_world);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetTransform(D3DTS_WORLD) (after Apply all)", hr);
+  }
+  if (!MatrixEqual(got_world, world_1)) {
+    return reporter.Fail("CreateStateBlock ALL restore mismatch: WORLD matrix");
+  }
+
+  ZeroMemory(&got_mat, sizeof(got_mat));
+  hr = dev->GetMaterial(&got_mat);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetMaterial (after Apply all)", hr);
+  }
+  if (!MaterialNearlyEqual(got_mat, mat_1, 1e-6f)) {
+    return reporter.Fail("CreateStateBlock ALL restore mismatch: Material");
+  }
+
+  return 0;
+}
+
 static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   const char* kTestName = "d3d9_get_state_roundtrip";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -3598,6 +4177,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
             "INFO: %s: skipping CreateStateBlock GetGammaRamp validate (mismatch; runtime may ignore gamma ramp in windowed mode)",
             kTestName);
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // CreateStateBlock + Capture round-trip (all): verify D3DSBT_ALL includes both
+  // vertex and pixel state.
+  // ---------------------------------------------------------------------------
+  {
+    const int rc = TestCreateStateBlockAll(reporter, dev.get(), kWidth, kHeight, world_a);
+    if (rc != 0) {
+      return rc;
     }
   }
 
