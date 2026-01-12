@@ -120,6 +120,14 @@ export type RemoteChunkedDiskOptions = {
  */
 export type RemoteChunkedDiskOpenOptions = Omit<RemoteChunkedDiskOptions, "store">;
 
+/**
+ * Minimal async byte-store interface used by the chunked remote disk cache.
+ *
+ * This exists so the implementation can be tested against an in-memory store without depending on
+ * OPFS. It is not intended to be a general disk interface; prefer `AsyncSectorDisk` for disks.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface BinaryStore {
   read(path: string): Promise<Uint8Array<ArrayBuffer> | null>;
   write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void>;

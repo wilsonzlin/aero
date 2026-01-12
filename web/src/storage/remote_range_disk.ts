@@ -32,6 +32,18 @@ type RemoteRangeDiskCacheMeta = RemoteCacheMetaV1;
 
 const META_PERSIST_DEBOUNCE_MS = 50;
 
+/**
+ * Remote Range disk sparse cache interface.
+ *
+ * This is a specialized extension of `AsyncSectorDisk` that exposes sparse-block operations for
+ * the remote Range streaming cache implementation.
+ *
+ * Canonical trait note:
+ * Prefer taking `AsyncSectorDisk` at API boundaries unless the caller explicitly needs sparse
+ * allocation semantics.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface RemoteRangeDiskSparseCache extends AsyncSectorDisk {
   readonly blockSizeBytes: number;
   isBlockAllocated(blockIndex: number): boolean;
@@ -45,12 +57,30 @@ export interface RemoteRangeDiskSparseCache extends AsyncSectorDisk {
   getAllocatedBytes(): number;
 }
 
+/**
+ * Factory interface for opening/creating a `RemoteRangeDiskSparseCache`.
+ *
+ * Canonical trait note:
+ * Prefer taking `AsyncSectorDisk` at most boundaries; this factory is intentionally specialized
+ * to the remote range disk caching implementation.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface RemoteRangeDiskSparseCacheFactory {
   open(cacheId: string): Promise<RemoteRangeDiskSparseCache>;
   create(cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }): Promise<RemoteRangeDiskSparseCache>;
   delete?(cacheId: string): Promise<void>;
 }
 
+/**
+ * Persisted metadata store used by the remote range disk cache implementation.
+ *
+ * Canonical trait note:
+ * This is *not* a general disk backend interface; it exists to keep the remote range disk cache
+ * implementation testable and decoupled from OPFS/IndexedDB details.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface RemoteRangeDiskMetadataStore {
   read(cacheId: string): Promise<RemoteRangeDiskCacheMeta | null>;
   write(cacheId: string, meta: RemoteRangeDiskCacheMeta): Promise<void>;

@@ -1,3 +1,13 @@
+/**
+ * Refreshable lease for accessing remote disk bytes (e.g. signed URLs).
+ *
+ * Canonical trait note:
+ *
+ * This interface is part of the async browser “host layer” around remote disk delivery. It is
+ * not a disk abstraction itself; the canonical TS disk interface is `AsyncSectorDisk`.
+ *
+ * See `docs/20-storage-trait-consolidation.md`.
+ */
 export interface DiskAccessLease {
   /**
    * Ephemeral URL to fetch bytes from. For signed-URL auth, this includes the signature

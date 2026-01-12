@@ -52,6 +52,13 @@ pub enum StoreError {
 }
 
 #[async_trait::async_trait]
+/// Disk image store abstraction used by `aero-storage-server`.
+///
+/// This trait is server-side (async) and is not intended to be used as a general-purpose disk
+/// abstraction for the emulator/device stack. For in-process synchronous disk image formats and
+/// controller/device integration, prefer `aero_storage::{StorageBackend, VirtualDisk}`.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait ImageStore: Send + Sync {
     /// List available images (control-plane catalog).
     async fn list_images(&self) -> Result<Vec<ImageCatalogEntry>, StoreError>;

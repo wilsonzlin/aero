@@ -58,10 +58,23 @@ See also:
 - `st_idb::io::storage::DiskBackend` (async, byte-addressed backend used by the IndexedDB block store + cache)\
   Defined in: [`crates/st-idb/src/io/storage/mod.rs`](../crates/st-idb/src/io/storage/mod.rs)
 
+### Rust (asynchronous, server-side)
+
+- `aero_storage_server::store::ImageStore` (async, byte-stream access for serving disk images over HTTP)\
+  Defined in: [`crates/aero-storage-server/src/store/mod.rs`](../crates/aero-storage-server/src/store/mod.rs)
+
 ### TypeScript (asynchronous, browser-oriented)
 
 - `AsyncSectorDisk` (async, sector-addressed)\
   Defined in: [`web/src/storage/disk.ts`](../web/src/storage/disk.ts)
+- `SparseBlockDisk` (async, sector-addressed + fixed-size block operations for sparse/overlay disks)\
+  Defined in: [`web/src/storage/sparse_block_disk.ts`](../web/src/storage/sparse_block_disk.ts)
+- `RemoteRangeDiskSparseCache` / `RemoteRangeDiskSparseCacheFactory` / `RemoteRangeDiskMetadataStore` (async, remote Range disk cache abstractions)\
+  Defined in: [`web/src/storage/remote_range_disk.ts`](../web/src/storage/remote_range_disk.ts)
+- `BinaryStore` (async, byte store abstraction used by the chunked remote disk implementation)\
+  Defined in: [`web/src/storage/remote_chunked_disk.ts`](../web/src/storage/remote_chunked_disk.ts)
+- `DiskAccessLease` (async, refreshable “signed URL lease” used by remote disk readers)\
+  Defined in: [`web/src/storage/disk_access_lease.ts`](../web/src/storage/disk_access_lease.ts)
 
 ---
 
