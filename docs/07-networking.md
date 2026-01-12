@@ -1143,6 +1143,7 @@ Relevant implementation files:
 - Forwarder capture hook semantics: `web/src/net/l2TunnelForwarder.ts`
 - Capture implementation + PCAPNG writer: `web/src/net/net_tracer.ts`, `web/src/net/pcapng.ts`
 - Coordinator API + message types (worker runtime): `web/src/runtime/coordinator.ts`, `web/src/runtime/protocol.ts`
+- Shared type definition for the global API: `shared/aero_api.ts` (`AeroNetTraceApi`)
 
 #### UI workflow (“Network trace (PCAPNG)” panel)
 
