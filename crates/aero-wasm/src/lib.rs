@@ -278,7 +278,9 @@ mod jit_abi_constants_tests {
 
     use js_sys::{Reflect, Uint32Array};
 
-    use aero_cpu_core::state::{CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT};
+    use aero_cpu_core::state::{
+        CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
+    };
     use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
     use aero_jit_x86::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
 
@@ -297,6 +299,8 @@ mod jit_abi_constants_tests {
 
         assert_eq!(read_u32(&obj, "cpu_state_size"), CPU_STATE_SIZE as u32);
         assert_eq!(read_u32(&obj, "cpu_state_align"), CPU_STATE_ALIGN as u32);
+        assert_eq!(read_u32(&obj, "cpu_rip_off"), CPU_RIP_OFF as u32);
+        assert_eq!(read_u32(&obj, "cpu_rflags_off"), CPU_RFLAGS_OFF as u32);
 
         assert_eq!(
             read_u32(&obj, "jit_ctx_ram_base_offset"),
@@ -331,6 +335,13 @@ mod jit_abi_constants_tests {
             .dyn_into::<Uint32Array>()
             .expect("cpu_gpr_off must be Uint32Array");
         assert_eq!(gpr.length() as usize, GPR_COUNT);
+        for (i, expected) in CPU_GPR_OFF.iter().enumerate() {
+            assert_eq!(
+                gpr.get_index(i as u32),
+                *expected as u32,
+                "CPU_GPR_OFF[{i}] mismatch"
+            );
+        }
     }
 }
 
