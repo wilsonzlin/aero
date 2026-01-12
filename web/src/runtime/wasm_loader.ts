@@ -445,6 +445,13 @@ export interface WasmApi {
     WasmVm?: new (guestBase: number, guestSize: number) => {
         reset_real_mode(entryIp: number): void;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
+        /**
+         * Deterministic CPU/MMU snapshot for the minimal Tier-0 VM loop.
+         *
+         * Optional for older WASM builds.
+         */
+        save_state_v2?: () => { cpu: Uint8Array; mmu: Uint8Array };
+        load_state_v2?: (cpu: Uint8Array, mmu: Uint8Array) => void;
         free(): void;
     };
 

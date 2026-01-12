@@ -19,6 +19,9 @@ mod runtime_alloc;
 #[cfg(target_arch = "wasm32")]
 mod vm;
 
+#[cfg(target_arch = "wasm32")]
+pub use vm::WasmVm;
+
 #[cfg(any(target_arch = "wasm32", test))]
 mod demo_renderer;
 

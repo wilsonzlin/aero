@@ -602,6 +602,7 @@ dependencies = [
  "aero-opfs",
  "aero-platform",
  "aero-shared",
+ "aero-snapshot",
  "aero-usb",
  "js-sys",
  "linked_list_allocator",

@@ -12,6 +12,8 @@
 
 use wasm_bindgen::prelude::*;
 
+use js_sys::{Object, Reflect, Uint8Array};
+
 use aero_cpu_core::{
     CpuBus, CpuCore, Exception,
     assist::AssistContext,
@@ -23,6 +25,18 @@ use aero_cpu_core::{
 };
 
 use crate::{RunExit, RunExitKind};
+
+fn js_error(message: impl AsRef<str>) -> JsValue {
+    js_sys::Error::new(message.as_ref()).into()
+}
+
+/// Upper bound for snapshot blobs passed into `load_state_v2`.
+///
+/// CPU/MMU state is typically <2KiB, but the v2 CPU encoding has a length-prefixed extension
+/// mechanism that allows for forward-compatible growth. We keep the limit reasonably generous so
+/// future additions do not immediately break older runtimes, while still guarding against
+/// accidental OOMs from absurd inputs.
+const MAX_STATE_BLOB_LEN: usize = 4 * 1024 * 1024;
 
 #[wasm_bindgen]
 extern "C" {
@@ -384,5 +398,80 @@ impl WasmVm {
             executed: executed.min(u64::from(u32::MAX)) as u32,
             detail: String::new(),
         }
+    }
+
+    /// Serialize the current CPU/MMU execution state (v2 encoding).
+    ///
+    /// Returns a JS object `{ cpu: Uint8Array, mmu: Uint8Array }` that can be persisted by the
+    /// CPU worker and later restored via [`WasmVm::load_state_v2`].
+    pub fn save_state_v2(&self) -> Result<JsValue, JsValue> {
+        let cpu_state = aero_snapshot::cpu_state_from_cpu_core(&self.cpu.state);
+        let mmu_state = aero_snapshot::mmu_state_from_cpu_core(&self.cpu.state);
+
+        let mut cpu = Vec::new();
+        cpu_state
+            .encode_v2(&mut cpu)
+            .map_err(|e| js_error(&format!("Failed to encode CPU state: {e}")))?;
+
+        let mut mmu = Vec::new();
+        mmu_state
+            .encode_v2(&mut mmu)
+            .map_err(|e| js_error(&format!("Failed to encode MMU state: {e}")))?;
+
+        let cpu_js = Uint8Array::from(cpu.as_slice());
+        let mmu_js = Uint8Array::from(mmu.as_slice());
+
+        let obj = Object::new();
+        let cpu_key = JsValue::from_str("cpu");
+        let mmu_key = JsValue::from_str("mmu");
+
+        Reflect::set(&obj, &cpu_key, cpu_js.as_ref())
+            .map_err(|_| js_error("Failed to build snapshot object (cpu)"))?;
+        Reflect::set(&obj, &mmu_key, mmu_js.as_ref())
+            .map_err(|_| js_error("Failed to build snapshot object (mmu)"))?;
+
+        Ok(obj.into())
+    }
+
+    /// Restore CPU/MMU execution state produced by [`WasmVm::save_state_v2`].
+    ///
+    /// This only restores architecturally visible CPU state. Any non-snapshotted runtime
+    /// bookkeeping (pending interrupts, assist logs, etc) is cleared to safe defaults so the
+    /// next [`WasmVm::run_slice`] is deterministic.
+    pub fn load_state_v2(&mut self, cpu: &[u8], mmu: &[u8]) -> Result<(), JsValue> {
+        if cpu.len() > MAX_STATE_BLOB_LEN {
+            return Err(js_error(&format!(
+                "CPU state blob too large: {} bytes (max {MAX_STATE_BLOB_LEN})",
+                cpu.len()
+            )));
+        }
+        if mmu.len() > MAX_STATE_BLOB_LEN {
+            return Err(js_error(&format!(
+                "MMU state blob too large: {} bytes (max {MAX_STATE_BLOB_LEN})",
+                mmu.len()
+            )));
+        }
+
+        let cpu_state = aero_snapshot::CpuState::decode_v2(&mut std::io::Cursor::new(cpu))
+            .map_err(|e| js_error(&format!("Failed to decode CPU state: {e}")))?;
+        let mmu_state = aero_snapshot::MmuState::decode_v2(&mut std::io::Cursor::new(mmu))
+            .map_err(|e| js_error(&format!("Failed to decode MMU state: {e}")))?;
+
+        aero_snapshot::apply_cpu_state_to_cpu_core(&cpu_state, &mut self.cpu.state);
+        aero_snapshot::apply_mmu_state_to_cpu_core(&mmu_state, &mut self.cpu.state);
+
+        // Reset runtime bookkeeping that is intentionally not part of the snapshot encoding.
+        self.cpu.pending = Default::default();
+        self.assist.invlpg_log.clear();
+
+        // Restore deterministic TSC/time bookkeeping.
+        let tsc_hz = self.cpu.time.tsc_hz();
+        self.cpu.time = aero_cpu_core::time::TimeSource::new_deterministic(tsc_hz);
+        self.cpu.time.set_tsc(mmu_state.tsc);
+        // Keep the ABI-visible MSR state coherent with the time source (some instructions read
+        // `state.msr.tsc` directly after advancing).
+        self.cpu.state.msr.tsc = mmu_state.tsc;
+
+        Ok(())
     }
 }
