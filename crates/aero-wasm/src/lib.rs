@@ -191,6 +191,62 @@ pub fn version() -> u32 {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Tier-1 JIT ABI constants (browser integration)
+// -------------------------------------------------------------------------------------------------
+
+/// Return the Tier-1 JIT ABI constants that JS glue code must agree on.
+///
+/// These values are derived from `aero_cpu_core::state` and define the in-memory
+/// ABI between:
+/// - the interpreter / JIT runtime (Rust, inside `aero-wasm`), and
+/// - dynamically generated Tier-1 blocks (WASM) executed via `__aero_jit_call`,
+///   plus any JS-side rollback/snapshot logic.
+///
+/// Keeping these values sourced from Rust avoids silently breaking browser
+/// integration if `CpuState` layout changes.
+#[wasm_bindgen]
+pub fn jit_abi_constants() -> JsValue {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use aero_cpu_core::state::{
+            CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
+        };
+        use js_sys::Uint32Array;
+
+        let obj = Object::new();
+
+        let set_u32 = |key: &str, value: u32| {
+            Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from(value))
+                .expect("Reflect::set should succeed on a fresh object");
+        };
+
+        set_u32("cpu_state_size", CPU_STATE_SIZE as u32);
+        set_u32("cpu_state_align", CPU_STATE_ALIGN as u32);
+        set_u32("cpu_rip_off", CPU_RIP_OFF as u32);
+        set_u32("cpu_rflags_off", CPU_RFLAGS_OFF as u32);
+
+        let mut gpr_off_u32 = [0u32; GPR_COUNT];
+        for (i, off) in CPU_GPR_OFF.iter().enumerate() {
+            gpr_off_u32[i] = *off as u32;
+        }
+        let gpr_arr = Uint32Array::from(&gpr_off_u32[..]);
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("cpu_gpr_off"),
+            &gpr_arr.into(),
+        )
+        .expect("Reflect::set(cpu_gpr_off) should succeed on a fresh object");
+
+        obj.into()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        JsValue::NULL
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
 // Guest RAM vs runtime layout contract
 // -------------------------------------------------------------------------------------------------
 

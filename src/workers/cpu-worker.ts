@@ -33,16 +33,10 @@ type CpuWorkerStartMessage = {
 
 const ENTRY_RIP = 0x1000;
 
-// Tier-1 JIT ABI constants (mirrors `aero_cpu_core::state`).
-// If these drift, rollback will restore the wrong byte window.
-const CPU_STATE_SIZE = 1072;
-const CPU_RAX_OFF = 0;
-const CPU_RIP_OFF = 128;
-
 // Tier-1 JIT call status slot (mirrors `crates/aero-jit-x86/src/jit_ctx.rs` + `crates/aero-wasm/src/tiered_vm.rs`).
 //
 // Layout (relative to `cpuPtr`):
-//   CpuState (CPU_STATE_SIZE)
+//   CpuState (cpu_state_size bytes, sourced from `api.jit_abi_constants()`)
 //   JitContext (header + inline TLB)
 //   Tier-2 ctx (12 bytes)
 //   commit_flag (u32)
@@ -54,7 +48,6 @@ const JIT_TLB_ENTRIES = 256;
 const JIT_TLB_ENTRY_BYTES = 16;
 const JIT_CTX_TOTAL_BYTES = JIT_CTX_HEADER_BYTES + JIT_TLB_ENTRIES * JIT_TLB_ENTRY_BYTES;
 const TIER2_CTX_BYTES = 12;
-const COMMIT_FLAG_OFFSET = CPU_STATE_SIZE + JIT_CTX_TOTAL_BYTES + TIER2_CTX_BYTES;
 
 // Tier-1 "exit to interpreter" sentinel return value (`u64::MAX` encoded as `i64`).
 const JIT_EXIT_SENTINEL_I64 = -1n;
@@ -188,6 +181,46 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  const jitAbiFn = api.jit_abi_constants;
+  if (typeof jitAbiFn !== 'function') {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: 'Missing jit_abi_constants export from aero-wasm; rebuild the WASM package.',
+    });
+    return;
+  }
+
+  const jitAbi = jitAbiFn();
+  const cpu_state_size = readMaybeNumber(jitAbi, 'cpu_state_size') >>> 0;
+  const cpu_state_align = readMaybeNumber(jitAbi, 'cpu_state_align') >>> 0;
+  const cpu_rip_off = readMaybeNumber(jitAbi, 'cpu_rip_off') >>> 0;
+  const cpu_rflags_off = readMaybeNumber(jitAbi, 'cpu_rflags_off') >>> 0;
+  const cpu_gpr_off = (jitAbi as any)?.cpu_gpr_off;
+  if (
+    !cpu_state_size ||
+    !cpu_state_align ||
+    !cpu_rip_off ||
+    !cpu_rflags_off ||
+    !(cpu_gpr_off instanceof Uint32Array) ||
+    cpu_gpr_off.length !== 16
+  ) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_abi_constants payload from aero-wasm: ${JSON.stringify({
+        cpu_state_size,
+        cpu_state_align,
+        cpu_rip_off,
+        cpu_rflags_off,
+        cpu_gpr_off_type: cpu_gpr_off?.constructor?.name,
+        cpu_gpr_off_len: cpu_gpr_off?.length,
+      })}`,
+    });
+    return;
+  }
+
+  const cpu_rax_off = cpu_gpr_off[0]! >>> 0;
+  const COMMIT_FLAG_OFFSET = cpu_state_size + JIT_CTX_TOTAL_BYTES + TIER2_CTX_BYTES;
+
   const desiredGuestBytes = DEFAULT_GUEST_RAM_BYTES;
   const layout = api.guest_ram_layout(desiredGuestBytes);
   const guest_base = layout.guest_base >>> 0;
@@ -245,7 +278,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     activeWriteLog = writeLog;
 
     // Snapshot the CpuState ABI region so we can roll back partial side effects on runtime exit.
-    const cpuSnapshot = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+    const cpuSnapshot = memU8.slice(cpuPtr, cpuPtr + cpu_state_size);
 
     let rawRet: unknown;
     try {
@@ -502,13 +535,12 @@ async function runTieredVm(iterations: number, threshold: number) {
       const preRax = 0x1111222233334444n;
       const preRip = 0x5555666677778888n;
       const preStore = 0xdeadbeef;
-
       const initState = () => {
-        dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
-        dv.setBigUint64(cpuPtr + CPU_RIP_OFF, preRip, true);
+        dv.setBigUint64(cpuPtr + cpu_rax_off, preRax, true);
+        dv.setBigUint64(cpuPtr + cpu_rip_off, preRip, true);
         dv.setUint32(storeLinear, preStore, true);
         refreshMemU8();
-        return memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+        return memU8.slice(cpuPtr, cpuPtr + cpu_state_size);
       };
 
       const callAndAssertRollback = (
@@ -520,10 +552,10 @@ async function runTieredVm(iterations: number, threshold: number) {
         const tableIndex = nextTableIndex++;
         jitFns[tableIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
           // Mutate the CpuState ABI region.
-          const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
-          dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 1n, true);
-          const rip = dv.getBigUint64(cpu_ptr + CPU_RIP_OFF, true);
-          dv.setBigUint64(cpu_ptr + CPU_RIP_OFF, rip + 1n, true);
+          const rax = dv.getBigUint64(cpu_ptr + cpu_rax_off, true);
+          dv.setBigUint64(cpu_ptr + cpu_rax_off, rax + 1n, true);
+          const rip = dv.getBigUint64(cpu_ptr + cpu_rip_off, true);
+          dv.setBigUint64(cpu_ptr + cpu_rip_off, rip + 1n, true);
 
           // Guest RAM store goes through the helper so it is logged.
           env.mem_write_u32(cpu_ptr, BigInt(storeAddr), 0x12345678);
@@ -551,7 +583,7 @@ async function runTieredVm(iterations: number, threshold: number) {
         if (ret !== JIT_EXIT_SENTINEL_I64) return false;
 
         refreshMemU8();
-        const cpuAfter = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+        const cpuAfter = memU8.slice(cpuPtr, cpuPtr + cpu_state_size);
         const storeAfter = dv.getUint32(storeLinear, true);
         const commitAfter = dv.getUint32(cpuPtr + COMMIT_FLAG_OFFSET, true);
 
@@ -578,12 +610,12 @@ async function runTieredVm(iterations: number, threshold: number) {
       // to 1 on entry for non-rollback paths.
       const committedIndex = nextTableIndex++;
       jitFns[committedIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
-        const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
-        dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 2n, true);
+        const rax = dv.getBigUint64(cpu_ptr + cpu_rax_off, true);
+        dv.setBigUint64(cpu_ptr + cpu_rax_off, rax + 2n, true);
         return JIT_EXIT_SENTINEL_I64;
       };
       dv.setUint32(cpuPtr + COMMIT_FLAG_OFFSET, 0, true);
-      dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
+      dv.setBigUint64(cpuPtr + cpu_rax_off, preRax, true);
       const retCommitted = (
         globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint }
       ).__aero_jit_call(committedIndex, cpuPtr, 0);

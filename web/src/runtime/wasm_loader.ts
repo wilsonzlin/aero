@@ -65,6 +65,19 @@ export interface WasmApi {
     mem_store_u32: (offset: number, value: number) => void;
     mem_load_u32: (offset: number) => number;
     /**
+     * Tier-1 JIT ABI constants (mirrors `aero_cpu_core::state`).
+     *
+     * This is used by browser workers that need to snapshot/restore CpuState when
+     * rolling back a JIT block that exits to the interpreter.
+     */
+    jit_abi_constants?: () => {
+        readonly cpu_state_size: number;
+        readonly cpu_state_align: number;
+        readonly cpu_rip_off: number;
+        readonly cpu_rflags_off: number;
+        readonly cpu_gpr_off: Uint32Array;
+    };
+    /**
      * Aero IPC ring helpers for working directly with an AIPC `SharedArrayBuffer`.
      *
      * Optional for older WASM builds.
@@ -985,6 +998,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        jit_abi_constants: mod.jit_abi_constants,
         MouseButton: mod.MouseButton,
         MouseButtons: mod.MouseButtons,
         VirtioInputPciDevice: mod.VirtioInputPciDevice,
