@@ -28,6 +28,25 @@ impl JitBackend for FixedExitBackend {
     }
 }
 
+#[derive(Debug)]
+struct OneShotBackend {
+    exit: JitBlockExit,
+    executed: bool,
+}
+
+impl JitBackend for OneShotBackend {
+    type Cpu = Vcpu<FlatTestBus>;
+
+    fn execute(&mut self, _table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+        assert!(
+            !self.executed,
+            "unexpected repeated JIT execution: exit_to_interpreter should force an interpreter step"
+        );
+        self.executed = true;
+        self.exit
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct FirstExitSecondPanicBackend {
     first_exit: JitBlockExit,
@@ -151,6 +170,72 @@ fn committed_exit_to_interpreter_advances_tsc_and_forces_one_interpreter_step() 
     }
     // No extra retirement/time advancement from the no-op interpreter.
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc + u64::from(insts));
+}
+
+#[test]
+fn rollback_exit_to_interpreter_forces_one_interpreter_step() {
+    let entry_rip = 0x1000u64;
+
+    let backend = OneShotBackend {
+        exit: JitBlockExit {
+            // Roll back and re-execute from the same RIP.
+            next_rip: entry_rip,
+            exit_to_interpreter: true,
+            committed: false,
+        },
+        executed: false,
+    };
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+    let jit = JitRuntime::new(config, backend, NullCompileSink);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+
+    // Install a compiled handle for `entry_rip` so the dispatcher would normally try to run it
+    // again on the next step unless the `exit_to_interpreter` sticky flag is respected.
+    {
+        let jit = dispatcher.jit_mut();
+        let mut meta = jit.make_meta(0, 0);
+        meta.instruction_count = 5;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index: 0,
+            meta,
+        });
+    }
+
+    let mut core = CpuCore::new(CpuMode::Real);
+    core.state.set_rip(entry_rip);
+    let bus = FlatTestBus::new(0x20000);
+    let mut cpu = Vcpu::new(core, bus);
+
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, 0);
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+
+    // Must run interpreter once (and *not* execute the JIT block again).
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Interpreter);
+            assert_eq!(instructions_retired, 0);
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
 }
 
 #[test]
