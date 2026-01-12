@@ -78,7 +78,7 @@ const DEBUG_SYNC_TAIL_GUARD_BYTES = 64;
 const JIT_EXIT_SENTINEL_I64 = -1n;
 
 type HostExitState = { mmio_exit: boolean; jit_exit: boolean; page_fault: boolean };
-type WriteLogEntry = { addr: number; size: number; old_value_bytes: Uint8Array };
+type WriteLogEntry = { addr: number; size: number; paddr: bigint; old_value_bytes: Uint8Array };
 
 function hostExitStateShouldRollback(state: HostExitState): boolean {
   return state.mmio_exit || state.jit_exit || state.page_fault;
@@ -101,6 +101,17 @@ const WASM_PAGE_BYTES = 64 * 1024;
 const RUNTIME_RESERVED_BYTES = 128 * 1024 * 1024;
 const DEFAULT_GUEST_RAM_BYTES = 16 * 1024 * 1024;
 const X86_PAGE_BYTES = 4096;
+
+// PC/Q35 guest physical layout constants.
+//
+// When the configured guest RAM exceeds LOW_RAM_END, the range [LOW_RAM_END..HIGH_RAM_START) is a
+// PCI/ECAM/MMIO hole, and the remaining RAM bytes are remapped above 4GiB starting at HIGH_RAM_START.
+//
+// Keep these in sync with:
+// - `crates/aero-wasm/src/guest_phys.rs`
+// - `web/src/runtime/shared_layout.ts`
+const LOW_RAM_END = 0xb000_0000n;
+const HIGH_RAM_START = 0x1_0000_0000n;
 
 type JsPageVersionSnapshot = { page: number; version: number };
 type JsCompiledBlockMeta = { code_paddr: number; byte_len: number; page_versions: JsPageVersionSnapshot[] };
@@ -605,6 +616,53 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  // Guest physical -> backing RAM translation (PC/Q35).
+  //
+  // Tier-1 blocks and their JS imports operate on *guest physical addresses*. When guest RAM grows
+  // beyond `LOW_RAM_END`, the Q35 layout inserts an ECAM/PCI/MMIO hole below 4GiB and remaps the
+  // remaining RAM above 4GiB. The wasm linear-memory backing store is still contiguous, so JS-side
+  // helpers must translate physical addresses back into that backing store.
+  const guest_size_u64 = BigInt(guest_size);
+  const hasHighRamRemap = guest_size_u64 > LOW_RAM_END;
+
+  const guestPaddrToRamOffset = (paddr: bigint): bigint | null => {
+    const addr = asU64(paddr);
+    if (!hasHighRamRemap) {
+      return addr < guest_size_u64 ? addr : null;
+    }
+
+    if (addr < LOW_RAM_END) return addr;
+
+    const highLen = guest_size_u64 - LOW_RAM_END;
+    const highEnd = HIGH_RAM_START + highLen;
+    if (addr >= HIGH_RAM_START && addr < highEnd) {
+      return LOW_RAM_END + (addr - HIGH_RAM_START);
+    }
+
+    // Hole or out-of-range.
+    return null;
+  };
+
+  const guestPaddrToLinear = (paddr: bigint, len: number): number | null => {
+    const n = len >>> 0;
+    if (n === 0) return guest_base;
+
+    const baseOff = guestPaddrToRamOffset(paddr);
+    if (baseOff === null) return null;
+
+    if (n !== 1) {
+      const lastPaddr = asU64(paddr) + BigInt(n - 1);
+      const lastOff = guestPaddrToRamOffset(lastPaddr);
+      if (lastOff === null) return null;
+      // Ensure the translation is contiguous for the entire range (reject hole crossings).
+      if (baseOff + BigInt(n - 1) !== lastOff) return null;
+    }
+
+    const offNum = Number(baseOff);
+    if (!Number.isFinite(offNum) || offNum < 0 || offNum + n > guest_size) return null;
+    return guest_base + offNum;
+  };
+
   // Install JS-side tier-1 call table that the WASM tiered runtime imports via `globalThis.__aero_jit_call`.
   // Slots are recycled on cache eviction so the table stays bounded.
   const jitFns: Array<((cpu_ptr: number, jit_ctx_ptr: number) => bigint) | undefined> = [];
@@ -694,8 +752,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       // Notify the tiered runtime of committed guest writes so it can bump code page versions for
       // self-modifying code invalidation. We intentionally skip this on rolled-back exits.
       for (const entry of writeLog) {
-        const paddr = entry.addr - guest_base;
-        if (paddr >= 0) onGuestWrite(BigInt(paddr), entry.size);
+        onGuestWrite(entry.paddr, entry.size);
       }
     }
 
@@ -801,54 +858,121 @@ async function runTieredVm(iterations: number, threshold: number) {
     }
   }
 
-  const logWrite = (linearAddr: number, size: number) => {
+  const logWrite = (linearAddr: number, size: number, paddr: bigint) => {
     const log = activeWriteLog;
     if (!log) return;
     refreshMemU8();
-    log.push({ addr: linearAddr, size, old_value_bytes: memU8.slice(linearAddr, linearAddr + size) });
+    log.push({
+      addr: linearAddr,
+      size,
+      paddr,
+      old_value_bytes: memU8.slice(linearAddr, linearAddr + size),
+    });
+  };
+
+  const readGuestU8 = (paddr: bigint): number => {
+    refreshMemU8();
+    const linear = guestPaddrToLinear(paddr, 1);
+    if (linear === null) return 0;
+    return dv.getUint8(linear);
+  };
+
+  const readGuestU16 = (paddr: bigint): number => {
+    refreshMemU8();
+    const linear = guestPaddrToLinear(paddr, 2);
+    if (linear !== null) return dv.getUint16(linear, true);
+    return readGuestU8(paddr) | (readGuestU8(asU64(paddr) + 1n) << 8);
+  };
+
+  const readGuestU32 = (paddr: bigint): number => {
+    refreshMemU8();
+    const linear = guestPaddrToLinear(paddr, 4);
+    if (linear !== null) return dv.getUint32(linear, true) >>> 0;
+    return (
+      readGuestU8(paddr) |
+      (readGuestU8(asU64(paddr) + 1n) << 8) |
+      (readGuestU8(asU64(paddr) + 2n) << 16) |
+      (readGuestU8(asU64(paddr) + 3n) << 24)
+    ) >>> 0;
+  };
+
+  const readGuestU64 = (paddr: bigint): bigint => {
+    refreshMemU8();
+    const linear = guestPaddrToLinear(paddr, 8);
+    if (linear !== null) return dv.getBigUint64(linear, true);
+    let out = 0n;
+    for (let i = 0n; i < 8n; i++) {
+      out |= BigInt(readGuestU8(asU64(paddr) + i)) << (i * 8n);
+    }
+    return out;
+  };
+
+  const writeGuestU8 = (paddr: bigint, value: number): void => {
+    refreshMemU8();
+    const paddrU64 = asU64(paddr);
+    const linear = guestPaddrToLinear(paddrU64, 1);
+    if (linear === null) return;
+    logWrite(linear, 1, paddrU64);
+    dv.setUint8(linear, value & 0xff);
+    // If the helper is used outside a JIT block (unlikely), still bump code versions.
+    if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 1);
   };
 
   // Tier-1 imports required by generated blocks (even if the smoke block doesn't use them).
   const env = {
     memory,
-    mem_read_u8: (_cpuPtr: number, addr: bigint) => dv.getUint8(guest_base + u64ToNumber(addr)),
-    mem_read_u16: (_cpuPtr: number, addr: bigint) => dv.getUint16(guest_base + u64ToNumber(addr), true),
-    mem_read_u32: (_cpuPtr: number, addr: bigint) => dv.getUint32(guest_base + u64ToNumber(addr), true) | 0,
-    mem_read_u64: (_cpuPtr: number, addr: bigint) => asI64(dv.getBigUint64(guest_base + u64ToNumber(addr), true)),
+    mem_read_u8: (_cpuPtr: number, addr: bigint) => readGuestU8(addr),
+    mem_read_u16: (_cpuPtr: number, addr: bigint) => readGuestU16(addr),
+    mem_read_u32: (_cpuPtr: number, addr: bigint) => readGuestU32(addr) | 0,
+    mem_read_u64: (_cpuPtr: number, addr: bigint) => asI64(readGuestU64(addr)),
     // Tier-2 codegen may optionally import this for code-version guards. It returns a u32 encoded as i64.
     code_page_version: (_cpuPtr: number, _page: bigint) => 0n,
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
-      const off = u64ToNumber(addr);
-      if (off >= guest_size) return;
-      const linear = guest_base + off;
-      logWrite(linear, 1);
-      dv.setUint8(linear, value & 0xff);
-      // If the helper is used outside a JIT block (unlikely), still bump code versions.
-      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 1);
+      writeGuestU8(addr, value);
     },
     mem_write_u16: (_cpuPtr: number, addr: bigint, value: number) => {
-      const off = u64ToNumber(addr);
-      if (off + 2 > guest_size) return;
-      const linear = guest_base + off;
-      logWrite(linear, 2);
-      dv.setUint16(linear, value & 0xffff, true);
-      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 2);
+      refreshMemU8();
+      const paddrU64 = asU64(addr);
+      const linear = guestPaddrToLinear(paddrU64, 2);
+      if (linear !== null) {
+        logWrite(linear, 2, paddrU64);
+        dv.setUint16(linear, value & 0xffff, true);
+        if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 2);
+        return;
+      }
+      writeGuestU8(paddrU64, value);
+      writeGuestU8(paddrU64 + 1n, value >>> 8);
     },
     mem_write_u32: (_cpuPtr: number, addr: bigint, value: number) => {
-      const off = u64ToNumber(addr);
-      if (off + 4 > guest_size) return;
-      const linear = guest_base + off;
-      logWrite(linear, 4);
-      dv.setUint32(linear, value >>> 0, true);
-      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 4);
+      refreshMemU8();
+      const paddrU64 = asU64(addr);
+      const linear = guestPaddrToLinear(paddrU64, 4);
+      if (linear !== null) {
+        logWrite(linear, 4, paddrU64);
+        dv.setUint32(linear, value >>> 0, true);
+        if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 4);
+        return;
+      }
+      writeGuestU8(paddrU64, value);
+      writeGuestU8(paddrU64 + 1n, value >>> 8);
+      writeGuestU8(paddrU64 + 2n, value >>> 16);
+      writeGuestU8(paddrU64 + 3n, value >>> 24);
     },
     mem_write_u64: (_cpuPtr: number, addr: bigint, value: bigint) => {
-      const off = u64ToNumber(addr);
-      if (off + 8 > guest_size) return;
-      const linear = guest_base + off;
-      logWrite(linear, 8);
-      dv.setBigUint64(linear, asU64(value), true);
-      if (!activeWriteLog && onGuestWrite) onGuestWrite(addr, 8);
+      refreshMemU8();
+      const paddrU64 = asU64(addr);
+      const linear = guestPaddrToLinear(paddrU64, 8);
+      if (linear !== null) {
+        logWrite(linear, 8, paddrU64);
+        dv.setBigUint64(linear, asU64(value), true);
+        if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 8);
+        return;
+      }
+      // Fallback: bytewise write (for hole straddles / oob).
+      const v = asU64(value);
+      for (let i = 0n; i < 8n; i++) {
+        writeGuestU8(paddrU64 + i, Number((v >> (i * 8n)) & 0xffn));
+      }
     },
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
       const vaddrU = asU64(vaddr);
@@ -860,8 +984,8 @@ async function runTieredVm(iterations: number, threshold: number) {
       const tlbSalt = dv.getBigUint64(jitCtxPtr + jitCtxTlbSaltOffset, true);
       const tag = asU64((vpn ^ tlbSalt) | 1n);
 
-      const isRam = vaddrU < BigInt(guest_size);
       const physBase = vaddrU & ~0xfffn;
+      const isRam = guestPaddrToLinear(physBase, X86_PAGE_BYTES) !== null;
       const flags =
         BigInt(jitTlbFlagRead) |
         BigInt(jitTlbFlagWrite) |
