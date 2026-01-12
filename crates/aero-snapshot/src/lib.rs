@@ -200,12 +200,9 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
                 }
 
                 fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-                    self.len = self
-                        .len
-                        .checked_add(buf.len() as u64)
-                        .ok_or_else(|| {
-                            std::io::Error::new(std::io::ErrorKind::Other, "length overflow")
-                        })?;
+                    self.len = self.len.checked_add(buf.len() as u64).ok_or_else(|| {
+                        std::io::Error::new(std::io::ErrorKind::Other, "length overflow")
+                    })?;
                     Ok(())
                 }
 

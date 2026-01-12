@@ -345,7 +345,9 @@ mod tests {
 
         // Attach a keyboard and force-enable the port so it is reachable at address 0.
         let keyboard = UsbHidKeyboardHandle::new();
-        dev.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+        dev.controller
+            .hub_mut()
+            .attach(0, Box::new(keyboard.clone()));
         dev.controller.hub_mut().force_enable_for_tests(0);
 
         // Configure the device and enable remote wakeup.

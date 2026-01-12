@@ -56,4 +56,3 @@ fn rgba8_uploader_noops_on_zero_extent() {
         );
     });
 }
-
