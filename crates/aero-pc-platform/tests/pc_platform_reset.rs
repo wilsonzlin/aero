@@ -3,7 +3,7 @@ use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, ResetEvent};
-use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -209,4 +209,90 @@ fn pc_platform_reset_resets_ide_controller_state() {
         0,
         "Bus Master IDE PRD pointer should be cleared on reset"
     );
+}
+
+#[test]
+fn pc_platform_reset_clears_ide_nien_and_allows_irq14_delivery() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Enable legacy I/O decoding so we can program the device control register (nIEN).
+    let bdf = IDE_PIIX3.bdf;
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base, 0);
+
+    // Mask IDE interrupts via the device control register.
+    pc.io.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    pc.reset();
+
+    // Re-enable bus mastering and I/O decode in case the post-reset BIOS chose a different policy.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+    let bm_base_after = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+    assert_ne!(bm_base_after, 0);
+
+    // Unmask IRQ2 (cascade) and IRQ14 so we can observe primary IDE IRQ delivery via the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(14, false);
+    }
+
+    // PRD table at 0x1000: one entry, end-of-table, 512 bytes.
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+    pc.memory.write_u32(prd_addr, read_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+    pc.io.write(bm_base_after + 4, 4, prd_addr as u32);
+
+    // Issue READ DMA (LBA 0, 1 sector) and start bus master.
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+    pc.io.write(bm_base_after, 1, 0x09);
+
+    pc.process_ide();
+    pc.poll_pci_intx_lines();
+
+    let mut out = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out, b"BOOT");
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ14 should be pending after reset clears nIEN");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 14);
+
+    // Consume and EOI the interrupt so subsequent assertions are not affected by PIC latching.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(pending);
+        interrupts.pic_mut().eoi(pending);
+    }
+
+    // Clear the IDE device interrupt by reading the status register.
+    let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
