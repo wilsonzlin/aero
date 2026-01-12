@@ -85,6 +85,7 @@ import {
   type VmSnapshotResumedMessage,
 } from "../runtime/snapshot_protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
+import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
 import { AeroIpcIoClient } from "../io/ipc/aero_ipc_io";
 import {
   IRQ_REFCOUNT_SATURATED,
@@ -1340,30 +1341,7 @@ async function initWasmInBackground(
     //
     // This enables shared-memory integration where JS + WASM + other workers
     // all observe the same guest RAM.
-    //
-    // Probe within guest RAM (not the runtime-reserved low region of the wasm
-    // linear memory) so we don't risk clobbering the Rust/WASM runtime.
-    const memProbeGuestOffset = 0x100;
-    const memProbeLinearOffset = guestU8.byteOffset + memProbeGuestOffset;
-    const memView = new DataView(guestMemory.buffer);
-    const prev = memView.getUint32(memProbeLinearOffset, true);
-
-    const a = 0x11223344;
-    memView.setUint32(memProbeLinearOffset, a, true);
-    const gotA = api.mem_load_u32(memProbeLinearOffset);
-    if (gotA !== a) {
-      throw new Error(`WASM guestMemory wiring failed: JS wrote 0x${a.toString(16)}, WASM read 0x${gotA.toString(16)}.`);
-    }
-
-    const b = 0x55667788;
-    api.mem_store_u32(memProbeLinearOffset, b);
-    const gotB = memView.getUint32(memProbeLinearOffset, true);
-    if (gotB !== b) {
-      throw new Error(`WASM guestMemory wiring failed: WASM wrote 0x${b.toString(16)}, JS read 0x${gotB.toString(16)}.`);
-    }
-
-    // Restore the previous value so we don't permanently dirty guest RAM.
-    memView.setUint32(memProbeLinearOffset, prev, true);
+    assertWasmMemoryWiring({ api, memory: guestMemory, context: "cpu.worker" });
 
     wasmApi = api;
     cpuDemo = null;
