@@ -125,12 +125,14 @@ AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
     aerogpu_d3d10_11_abi_stdcall_stack_bytes<aerogpu_d3d10_11_openadapter10_fn>::value ==
         AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter10 do not match expected value");
+#if defined(_MSC_VER)
 __if_exists(PFND3D10DDI_OPENADAPTER) {
   AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
       aerogpu_d3d10_11_abi_stdcall_stack_bytes<PFND3D10DDI_OPENADAPTER>::value ==
           AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_STDCALL_BYTES,
       "WDK x86 stdcall stack bytes for PFND3D10DDI_OPENADAPTER do not match expected value");
 }
+#endif
   #endif
 
   #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES)
@@ -140,6 +142,7 @@ AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
     aerogpu_d3d10_11_abi_stdcall_stack_bytes<aerogpu_d3d10_11_openadapter10_2_fn>::value ==
         AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter10_2 do not match expected value");
+#if defined(_MSC_VER)
 __if_exists(PFND3D10DDI_OPENADAPTER) {
   // Some WDKs do not expose a distinct typedef for the 10.1 OpenAdapter export.
   AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
@@ -165,6 +168,7 @@ __if_exists(PFND3D10_1DDI_OPENADAPTER) {
           AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER10_2_STDCALL_BYTES,
       "WDK x86 stdcall stack bytes for PFND3D10_1DDI_OPENADAPTER (OpenAdapter10_2) do not match expected value");
 }
+#endif
   #endif
 
   #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES)
@@ -174,6 +178,7 @@ AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
     aerogpu_d3d10_11_abi_stdcall_stack_bytes<aerogpu_d3d10_11_openadapter11_fn>::value ==
         AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter11 do not match expected value");
+#if defined(_MSC_VER)
 __if_exists(PFND3D11DDI_OPENADAPTER) {
   AEROGPU_D3D10_11_ABI_STATIC_ASSERT(
       aerogpu_d3d10_11_abi_stdcall_stack_bytes<PFND3D11DDI_OPENADAPTER>::value ==
@@ -186,6 +191,7 @@ __if_exists(PFND3D11DDI_OPENADAPTER11) {
           AEROGPU_D3D10_11_WDK_ABI_EXPECT_OPENADAPTER11_STDCALL_BYTES,
       "WDK x86 stdcall stack bytes for PFND3D11DDI_OPENADAPTER11 do not match expected value");
 }
+#endif
   #endif
 #endif // _M_IX86 && __cplusplus
 
@@ -210,7 +216,7 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hRTAdapter)
-  #if defined(__cplusplus)
+  #if defined(_MSC_VER) && defined(__cplusplus)
 __if_exists(D3D10DDIARG_OPENADAPTER::hRTAdapter) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
                                        hRTAdapter,
@@ -226,7 +232,7 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterCallbacks)
-  #if defined(__cplusplus)
+  #if defined(_MSC_VER) && defined(__cplusplus)
 __if_exists(D3D10DDIARG_OPENADAPTER::pAdapterCallbacks) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D10DDIARG_OPENADAPTER,
                                        pAdapterCallbacks,
@@ -315,7 +321,7 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_ADAPTERFUNCS,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceContextSize)
-  #if defined(__cplusplus)
+  #if defined(_MSC_VER) && defined(__cplusplus)
 __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_ADAPTERFUNCS,
                                        pfnCalcPrivateDeviceContextSize,
@@ -428,7 +434,7 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICEFUNCS,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnRotateResourceIdentities)
-  #if defined(__cplusplus)
+  #if defined(_MSC_VER) && defined(__cplusplus)
 __if_exists(D3D11DDI_DEVICEFUNCS::pfnRotateResourceIdentities) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICEFUNCS,
                                        pfnRotateResourceIdentities,
@@ -460,7 +466,7 @@ AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICECONTEXTFUNCS,
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnPresent)
-  #if defined(__cplusplus)
+  #if defined(_MSC_VER) && defined(__cplusplus)
 __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnPresent) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(D3D11DDI_DEVICECONTEXTFUNCS,
                                        pfnPresent,
@@ -470,7 +476,7 @@ __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnPresent) {
 #endif
 
 #if defined(AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnRotateResourceIdentities)
-  #if defined(__cplusplus)
+  #if defined(_MSC_VER) && defined(__cplusplus)
 __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnRotateResourceIdentities) {
   AEROGPU_D3D10_11_WDK_ASSERT_OFFSETOF(
       D3D11DDI_DEVICECONTEXTFUNCS,
