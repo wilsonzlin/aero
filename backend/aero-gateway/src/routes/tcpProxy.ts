@@ -440,26 +440,29 @@ function encodeFrame(opcode: number, payload: Buffer): Buffer {
   const length = payload.length;
 
   if (length < 126) {
-    const header = Buffer.alloc(2);
-    header[0] = finOpcode;
-    header[1] = length;
-    return Buffer.concat([header, payload]);
+    const out = Buffer.allocUnsafe(2 + length);
+    out[0] = finOpcode;
+    out[1] = length;
+    payload.copy(out, 2);
+    return out;
   }
 
   if (length < 65536) {
-    const header = Buffer.alloc(4);
-    header[0] = finOpcode;
-    header[1] = 126;
-    header.writeUInt16BE(length, 2);
-    return Buffer.concat([header, payload]);
+    const out = Buffer.allocUnsafe(4 + length);
+    out[0] = finOpcode;
+    out[1] = 126;
+    out.writeUInt16BE(length, 2);
+    payload.copy(out, 4);
+    return out;
   }
 
-  const header = Buffer.alloc(10);
-  header[0] = finOpcode;
-  header[1] = 127;
-  header.writeUInt32BE(0, 2);
-  header.writeUInt32BE(length, 6);
-  return Buffer.concat([header, payload]);
+  const out = Buffer.allocUnsafe(10 + length);
+  out[0] = finOpcode;
+  out[1] = 127;
+  out.writeUInt32BE(0, 2);
+  out.writeUInt32BE(length, 6);
+  payload.copy(out, 10);
+  return out;
 }
 
 export async function resolveTcpProxyTarget(
