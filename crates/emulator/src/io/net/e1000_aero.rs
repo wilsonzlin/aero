@@ -183,7 +183,10 @@ mod tests {
 
         // Disable legacy INTx delivery via PCI command bit 10.
         dev.config_write(0x04, 2, (1 << 1) | (1 << 10));
-        assert!(dev.nic.irq_level(), "device model still asserts IRQ internally");
+        assert!(
+            !dev.nic.irq_level(),
+            "device model must gate IRQ when INTX is disabled"
+        );
         assert!(!dev.irq_level(), "wrapper must suppress IRQ when INTX is disabled");
     }
 
