@@ -264,6 +264,42 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("supports same-origin relative gateway URLs that already include legacy /eth (session endpoint is a sibling)", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+    const originalLocation = (globalThis as unknown as Record<string, unknown>).location;
+
+    const fetchMock = vi.fn(async () => {
+      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+    (globalThis as unknown as Record<string, unknown>).location = { href: "https://gateway.example.com/app/index.html" };
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("/base/eth", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+    });
+
+    try {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
+      expect(url).toBe("https://gateway.example.com/base/session");
+
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/eth");
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+      if (originalLocation === undefined) delete (globalThis as { location?: unknown }).location;
+      else (globalThis as unknown as Record<string, unknown>).location = originalLocation;
+    }
+  });
+
   it("ws mode connects to /l2 and requests aero-l2-tunnel-v1 subprotocol", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
