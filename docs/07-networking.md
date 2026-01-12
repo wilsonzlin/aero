@@ -1147,6 +1147,15 @@ is missing) or the net worker isn't running, enabling or downloading will fail w
 Most web hosts install the `window.aero.netTrace` backend by calling
 `installNetTraceBackendOnAeroGlobal(...)` (see `web/src/net/trace_backend.ts`).
 
+If you are building a custom web host and want the automation API for DevTools or Playwright-style
+scripts, ensure you call this after creating the worker coordinator:
+
+```ts
+import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
+
+installNetTraceBackendOnAeroGlobal(workerCoordinator);
+```
+
 OPFS notes:
 
 - OPFS is origin-scoped browser storage (`navigator.storage.getDirectory()`); it is convenient for
