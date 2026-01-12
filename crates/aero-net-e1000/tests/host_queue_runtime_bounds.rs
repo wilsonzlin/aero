@@ -1,3 +1,5 @@
+#![cfg(feature = "io-snapshot")]
+
 use aero_net_e1000::{E1000Device, MAX_L2_FRAME_LEN, MIN_L2_FRAME_LEN};
 use memory::MemoryBus;
 
