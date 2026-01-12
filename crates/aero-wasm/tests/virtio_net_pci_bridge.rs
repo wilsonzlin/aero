@@ -63,7 +63,7 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
     let io_ipc_sab = make_io_ipc_sab();
-    let mut bridge = VirtioNetPciBridge::new(guest_base, guest_size, io_ipc_sab)
+    let mut bridge = VirtioNetPciBridge::new(guest_base, guest_size, io_ipc_sab, None)
         .expect("VirtioNetPciBridge::new");
 
     // Unknown BAR0 reads should return 0.
