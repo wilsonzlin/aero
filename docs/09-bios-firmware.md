@@ -750,7 +750,7 @@ impl Bios {
         let low_ram_end = total_memory.min(PCIE_ECAM_BASE);
 
         let mut map = vec![
-            // Conventional memory (0 - 640KB)
+            // Conventional memory (0 - 0x9F000 = 636KiB)
             E820Entry {
                 base: 0x0000_0000,
                 length: 0x0009_F000,
@@ -764,7 +764,7 @@ impl Bios {
                 region_type: E820_RESERVED,
                 extended_attributes: 1,
             },
-            // Video memory and ROM (640KB - 1MB)
+            // Video memory and ROM (0xA0000 - 1MiB)
             E820Entry {
                 base: 0x000A_0000,
                 length: 0x0006_0000,
