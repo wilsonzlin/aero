@@ -151,6 +151,17 @@ fn assemble_ps_mov_sat_neg_c0() -> Vec<u32> {
     out
 }
 
+fn assemble_ps_mrt_solid_color() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // mov oC0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // mov oC1, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 1, 0xF), enc_src(2, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_vs_passthrough_sm3() -> Vec<u32> {
     let mut out = assemble_vs_passthrough();
     out[0] = 0xFFFE0300; // vs_3_0
@@ -334,6 +345,24 @@ fn translates_ps3_ifc_def_to_wgsl() {
     assert!(wgsl.wgsl.contains("if ("));
     assert!(wgsl.wgsl.contains("} else {"));
     assert!(wgsl.wgsl.contains("let c0: vec4<f32>"));
+}
+
+#[test]
+fn translates_ps_mrt_outputs_to_wgsl() {
+    let ps_bytes = to_bytes(&assemble_ps_mrt_solid_color());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir);
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("@location(1) oC1"));
 }
 
 fn build_vertex_decl_pos_tex_color() -> state::VertexDecl {

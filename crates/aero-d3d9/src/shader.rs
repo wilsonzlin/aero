@@ -910,6 +910,30 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                 }
             }
             let has_inputs = !inputs_by_reg.is_empty();
+            let mut color_outputs = BTreeSet::<u16>::new();
+            for &reg in &ir.used_outputs {
+                if reg.file == RegisterFile::ColorOut {
+                    color_outputs.insert(reg.index);
+                }
+            }
+            // D3D9 pixel shaders conceptually write at least oC0. Keep the generated WGSL stable
+            // by always emitting location(0), even if the shader bytecode never assigns it.
+            color_outputs.insert(0);
+
+            wgsl.push_str("struct PsOutput {\n");
+            for &idx in &color_outputs {
+                let reg = Register {
+                    file: RegisterFile::ColorOut,
+                    index: idx,
+                };
+                wgsl.push_str(&format!(
+                    "  @location({}) {}: vec4<f32>,\n",
+                    idx,
+                    reg_var_name(reg)
+                ));
+            }
+            wgsl.push_str("};\n\n");
+
             if has_inputs {
                 wgsl.push_str("struct PsInput {\n");
                 for reg in &inputs_by_reg {
@@ -922,13 +946,11 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     }
                 }
                 wgsl.push_str("};\n\n");
-                wgsl.push_str(
-                    "@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n",
-                );
+                wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n");
             } else {
                 // WGSL does not permit empty structs, so if the shader uses no varyings we
                 // omit the input parameter entirely.
-                wgsl.push_str("@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n");
+                wgsl.push_str("@fragment\nfn fs_main() -> PsOutput {\n");
             }
             for i in 0..ir.temp_count {
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
@@ -953,14 +975,24 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     wgsl_f32(val[3])
                 ));
             }
-            wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n\n");
+            for &idx in &color_outputs {
+                wgsl.push_str(&format!(
+                    "  var oC{}: vec4<f32> = vec4<f32>(0.0);\n",
+                    idx
+                ));
+            }
+            wgsl.push('\n');
 
             let mut indent = 1usize;
             for inst in &ir.ops {
                 emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32, const_base);
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
-            wgsl.push_str("  return oC0;\n}\n");
+            wgsl.push_str("  var out: PsOutput;\n");
+            for &idx in &color_outputs {
+                wgsl.push_str(&format!("  out.oC{} = oC{};\n", idx, idx));
+            }
+            wgsl.push_str("  return out;\n}\n");
 
             WgslOutput {
                 wgsl,
