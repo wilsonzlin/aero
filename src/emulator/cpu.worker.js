@@ -3,6 +3,14 @@
 import { ErrorCode, EmulatorError, outOfMemory, resourceLimitExceeded, serializeError } from "../errors.js";
 import { SizedLruCache } from "../resourceLimits.js";
 import { nowMs, sleep, yieldToEventLoop } from "../utils.js";
+import {
+  CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  DROPPED_SAMPLES_INDEX as MIC_DROPPED_SAMPLES_INDEX,
+  HEADER_BYTES as MIC_HEADER_BYTES,
+  HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+  READ_POS_INDEX as MIC_READ_POS_INDEX,
+  WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
+} from "../../web/src/audio/mic_ring.js";
 
 const ctx = /** @type {DedicatedWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
@@ -112,9 +120,9 @@ function attachMicRingBuffer(ringBuffer, sampleRate) {
     throw new EmulatorError(ErrorCode.InvalidConfig, "mic ringBuffer must be a SharedArrayBuffer or null.");
   }
 
-  micHeader = new Uint32Array(ringBuffer, 0, 4);
-  micSamples = new Float32Array(ringBuffer, 16);
-  micCapacity = micHeader[3] >>> 0;
+  micHeader = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
+  micSamples = new Float32Array(ringBuffer, MIC_HEADER_BYTES);
+  micCapacity = Atomics.load(micHeader, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
   if (!micCapacity) micCapacity = micSamples.length;
   if (micCapacity !== micSamples.length) {
     // Be permissive: clamp to whichever is smaller to avoid OOB reads.
@@ -130,12 +138,12 @@ function attachMicRingBuffer(ringBuffer, sampleRate) {
 function consumeMicSamples() {
   if (!micHeader || !micSamples || !micTmp || micCapacity === 0) return;
 
-  const writePos = Atomics.load(micHeader, 0) >>> 0;
-  const readPos = Atomics.load(micHeader, 1) >>> 0;
+  const writePos = Atomics.load(micHeader, MIC_WRITE_POS_INDEX) >>> 0;
+  const readPos = Atomics.load(micHeader, MIC_READ_POS_INDEX) >>> 0;
   const available = (writePos - readPos) >>> 0;
   if (available === 0) {
     micLastRms = 0;
-    micLastDropped = Atomics.load(micHeader, 2) >>> 0;
+    micLastDropped = Atomics.load(micHeader, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
     return;
   }
 
@@ -149,7 +157,7 @@ function consumeMicSamples() {
     micTmp.set(micSamples.subarray(0, remaining), firstPart);
   }
 
-  Atomics.store(micHeader, 1, (readPos + toRead) >>> 0);
+  Atomics.store(micHeader, MIC_READ_POS_INDEX, (readPos + toRead) >>> 0);
 
   let sumSq = 0;
   for (let i = 0; i < toRead; i++) {
@@ -157,7 +165,7 @@ function consumeMicSamples() {
     sumSq += s * s;
   }
   micLastRms = Math.sqrt(sumSq / toRead);
-  micLastDropped = Atomics.load(micHeader, 2) >>> 0;
+  micLastDropped = Atomics.load(micHeader, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
 }
 
 function fatal(err) {
