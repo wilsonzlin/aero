@@ -100,7 +100,12 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
             }
             if buf_len > max_merge {
                 self.backend.read_sectors(lba, bufs[idx])?;
-                lba = lba.saturating_add((buf_len / sector_size) as u64);
+                let sectors = (buf_len / sector_size) as u64;
+                lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                    lba,
+                    sectors,
+                    capacity_sectors: self.backend.total_sectors(),
+                })?;
                 idx += 1;
                 continue;
             }
@@ -115,10 +120,17 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
                         sector_size: sector_size as u32,
                     });
                 }
-                if merged_len != 0 && merged_len + next_len > max_merge {
-                    break;
+                if merged_len != 0 {
+                    let next_merged = merged_len
+                        .checked_add(next_len)
+                        .ok_or(DiskError::Unsupported("coalesced IO too large"))?;
+                    if next_merged > max_merge {
+                        break;
+                    }
+                    merged_len = next_merged;
+                } else {
+                    merged_len = next_len;
                 }
-                merged_len += next_len;
                 idx += 1;
             }
 
@@ -135,7 +147,12 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
                 }
             }
 
-            lba = lba.saturating_add((merged_len / sector_size) as u64);
+            let sectors = (merged_len / sector_size) as u64;
+            lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.backend.total_sectors(),
+            })?;
         }
         Ok(())
     }
@@ -158,7 +175,12 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
             }
             if buf_len > max_merge {
                 self.backend.write_sectors(lba, bufs[idx])?;
-                lba = lba.saturating_add((buf_len / sector_size) as u64);
+                let sectors = (buf_len / sector_size) as u64;
+                lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                    lba,
+                    sectors,
+                    capacity_sectors: self.backend.total_sectors(),
+                })?;
                 idx += 1;
                 continue;
             }
@@ -173,10 +195,17 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
                         sector_size: sector_size as u32,
                     });
                 }
-                if merged_len != 0 && merged_len + next_len > max_merge {
-                    break;
+                if merged_len != 0 {
+                    let next_merged = merged_len
+                        .checked_add(next_len)
+                        .ok_or(DiskError::Unsupported("coalesced IO too large"))?;
+                    if next_merged > max_merge {
+                        break;
+                    }
+                    merged_len = next_merged;
+                } else {
+                    merged_len = next_len;
                 }
-                merged_len += next_len;
                 idx += 1;
             }
 
@@ -193,7 +222,12 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
                 self.backend.write_sectors(lba, &self.scratch)?;
             }
 
-            lba = lba.saturating_add((merged_len / sector_size) as u64);
+            let sectors = (merged_len / sector_size) as u64;
+            lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.backend.total_sectors(),
+            })?;
         }
         Ok(())
     }

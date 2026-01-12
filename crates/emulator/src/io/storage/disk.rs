@@ -81,8 +81,13 @@ pub trait DiskBackend {
                 });
             }
             let sectors = (buf.len() / sector_size as usize) as u64;
+            let next_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors(),
+            })?;
             self.read_sectors(lba, buf)?;
-            lba = lba.saturating_add(sectors);
+            lba = next_lba;
         }
         Ok(())
     }
@@ -100,8 +105,13 @@ pub trait DiskBackend {
                 });
             }
             let sectors = (buf.len() / sector_size as usize) as u64;
+            let next_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors(),
+            })?;
             self.write_sectors(lba, buf)?;
-            lba = lba.saturating_add(sectors);
+            lba = next_lba;
         }
         Ok(())
     }
@@ -274,6 +284,22 @@ impl VirtualDrive {
         }
         Ok(sectors)
     }
+
+    fn check_range_sectors(&self, lba: u64, sectors: u64) -> DiskResult<()> {
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors,
+        })?;
+        if end > self.total_sectors {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl DiskBackend for VirtualDrive {
@@ -300,14 +326,50 @@ impl DiskBackend for VirtualDrive {
     }
 
     fn readv_sectors(&mut self, lba: u64, bufs: &mut [&mut [u8]]) -> DiskResult<()> {
-        let bytes: usize = bufs.iter().map(|b| b.len()).sum();
-        self.check_range(lba, bytes)?;
+        let sector_size = self.sector_size as usize;
+        let mut sectors_total: u64 = 0;
+        for buf in bufs.iter() {
+            let len = buf.len();
+            if !len.is_multiple_of(sector_size) {
+                return Err(DiskError::UnalignedBuffer {
+                    len,
+                    sector_size: self.sector_size,
+                });
+            }
+            let sectors = (len / sector_size) as u64;
+            sectors_total = sectors_total
+                .checked_add(sectors)
+                .ok_or(DiskError::OutOfRange {
+                    lba,
+                    sectors: u64::MAX,
+                    capacity_sectors: self.total_sectors,
+                })?;
+        }
+        self.check_range_sectors(lba, sectors_total)?;
         self.backend.readv_sectors(lba, bufs)
     }
 
     fn writev_sectors(&mut self, lba: u64, bufs: &[&[u8]]) -> DiskResult<()> {
-        let bytes: usize = bufs.iter().map(|b| b.len()).sum();
-        self.check_range(lba, bytes)?;
+        let sector_size = self.sector_size as usize;
+        let mut sectors_total: u64 = 0;
+        for buf in bufs.iter() {
+            let len = buf.len();
+            if !len.is_multiple_of(sector_size) {
+                return Err(DiskError::UnalignedBuffer {
+                    len,
+                    sector_size: self.sector_size,
+                });
+            }
+            let sectors = (len / sector_size) as u64;
+            sectors_total = sectors_total
+                .checked_add(sectors)
+                .ok_or(DiskError::OutOfRange {
+                    lba,
+                    sectors: u64::MAX,
+                    capacity_sectors: self.total_sectors,
+                })?;
+        }
+        self.check_range_sectors(lba, sectors_total)?;
         self.backend.writev_sectors(lba, bufs)
     }
 }
