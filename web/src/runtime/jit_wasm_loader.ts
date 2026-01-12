@@ -17,6 +17,10 @@ export interface JitWasmApi {
     maxBytes: number,
     inlineTlb: boolean,
     memoryShared: boolean,
+    /**
+     * Guest code bitness (16/32/64). Optional for backwards compatibility; when omitted, the
+     * compiler defaults to 64-bit.
+     */
     bitness?: number,
   ) => Tier1BlockCompilation;
 }
