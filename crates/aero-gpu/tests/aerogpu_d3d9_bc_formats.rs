@@ -111,10 +111,12 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
 
         // Find any adapter that supports native BC sampling.
         //
-        // Note: on Linux CI we prefer GL, but most CI environments only have software adapters
-        // (e.g. llvmpipe) where BC texture compression is often unreliable. Avoid selecting CPU
-        // adapters on Linux so the direct-BC tests skip instead of producing false failures.
-        let allow_software_adapter = !cfg!(target_os = "linux");
+        // Note: on Linux CI we prefer GL, but some software OpenGL adapters (e.g. Mesa llvmpipe)
+        // may advertise BC support yet produce incorrect results for direct BC uploads/sampling.
+        // To avoid flaky failures, skip CPU adapters *specifically on the GL backend*; we still
+        // allow CPU adapters on other backends (e.g. Vulkan software paths) where BC may be
+        // implemented correctly.
+        let disallow_cpu_gl = cfg!(target_os = "linux");
         for adapter in instance.enumerate_adapters(backends) {
             if !adapter
                 .features()
@@ -122,7 +124,11 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
             {
                 continue;
             }
-            if !allow_software_adapter && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+            let info = adapter.get_info();
+            if disallow_cpu_gl
+                && info.backend == wgpu::Backend::Gl
+                && info.device_type == wgpu::DeviceType::Cpu
+            {
                 continue;
             }
 
