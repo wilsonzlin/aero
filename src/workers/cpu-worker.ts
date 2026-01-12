@@ -510,7 +510,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       // Pick deterministic addresses in guest RAM that are not touched by the hot-loop code at 0x1000.
       // We use guest RAM as a scratch region for the Tier-1 ABI buffer (CpuState + jit_ctx + tier2_ctx + commit flag).
       const cpuPtr = (guest_base + 0xa000) >>> 0;
-      const jitCtxPtr = (cpuPtr + CPU_STATE_SIZE) >>> 0;
+      const jitCtxPtr = (cpuPtr + cpu_state_size) >>> 0;
       if (cpuPtr + COMMIT_FLAG_OFFSET + 4 > guest_base + guest_size) return false;
 
       // Initialize the minimal JitContext header expected by our `mmu_translate` stub.
