@@ -45,22 +45,22 @@ function readU32LE(buf: Uint8Array, off: number): number {
 }
 
 type VirtioPciCaps = {
-  commonOff: number;
-  notifyOff: number;
-  notifyMult: number;
-  isrOff: number;
-  deviceOff: number;
+  commonOff: number | null;
+  notifyOff: number | null;
+  notifyMult: number | null;
+  isrOff: number | null;
+  deviceOff: number | null;
 };
 
 function parseVirtioPciCaps(cfg: Uint8Array): VirtioPciCaps {
   // Capabilities pointer.
   let ptr = cfg[0x34] ?? 0;
   const caps: VirtioPciCaps = {
-    commonOff: 0,
-    notifyOff: 0,
-    notifyMult: 0,
-    isrOff: 0,
-    deviceOff: 0,
+    commonOff: null,
+    notifyOff: null,
+    notifyMult: null,
+    isrOff: null,
+    deviceOff: null,
   };
 
   // Guard against malformed/cyclic lists.
@@ -235,15 +235,18 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       }
 
       const caps = parseVirtioPciCaps(cfg);
-      expect(caps.commonOff).not.toBe(0);
-      expect(caps.notifyOff).not.toBe(0);
-      expect(caps.isrOff).not.toBe(0);
-      expect(caps.deviceOff).not.toBe(0);
+      // Note: common config is at offset 0x0000 in the Aero virtio-net PCI contract,
+      // so we must treat `0` as a valid offset (use `null` as the "not found" sentinel).
+      expect(caps.commonOff).not.toBeNull();
+      expect(caps.notifyOff).not.toBeNull();
+      expect(caps.isrOff).not.toBeNull();
+      expect(caps.deviceOff).not.toBeNull();
+      expect(caps.notifyMult).not.toBeNull();
       expect(caps.notifyMult).not.toBe(0);
 
-      const commonBase = bar0Base + BigInt(caps.commonOff);
-      const notifyBase = bar0Base + BigInt(caps.notifyOff);
-      const deviceBase = bar0Base + BigInt(caps.deviceOff);
+      const commonBase = bar0Base + BigInt(caps.commonOff!);
+      const notifyBase = bar0Base + BigInt(caps.notifyOff!);
+      const deviceBase = bar0Base + BigInt(caps.deviceOff!);
 
       // -----------------------------------------------------------------------------------------
       // Virtio modern init (feature negotiation).
@@ -330,7 +333,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       guestWriteU32(txUsed + 8, 0);
 
       // Notify queue 1.
-      const txNotifyAddr = notifyBase + BigInt(txNotifyOff) * BigInt(caps.notifyMult);
+      const txNotifyAddr = notifyBase + BigInt(txNotifyOff) * BigInt(caps.notifyMult!);
       mmioWriteU16(txNotifyAddr, 1);
       dev.tick(0);
 
@@ -363,7 +366,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       guestWriteU32(rxUsed + 4, 0);
       guestWriteU32(rxUsed + 8, 0);
 
-      const rxNotifyAddr = notifyBase + BigInt(rxNotifyOff) * BigInt(caps.notifyMult);
+      const rxNotifyAddr = notifyBase + BigInt(rxNotifyOff) * BigInt(caps.notifyMult!);
       mmioWriteU16(rxNotifyAddr, 0);
 
       // Some implementations may poll NET_RX on tick rather than directly on notify.
