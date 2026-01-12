@@ -277,9 +277,11 @@ GATEWAY_PERF_EXTREME_CV_THRESHOLD=0.5 \
     --out-dir gateway-perf-results/compare
 ```
 
-## Scenario runner (PF-008 macrobench framework)
+## Scenario runner (benchmark suite infrastructure)
 
-The scenario runner provides an extensible plugin interface so we can evolve from microbenchmarks to full-system macrobenchmarks (boot time, desktop FPS, app launch time) once the emulator can boot OS images.
+The scenario runner provides an extensible plugin interface for running benchmark scenarios (both `micro` and `macro`).
+
+PF-008 uses this runner for guest CPU throughput benchmarks (the `guest_cpu` scenario) and for future full-system macrobenchmarks (boot time, desktop FPS, app launch time) once the emulator can boot OS images.
 
 ### Milestones and readiness signals
 
@@ -303,7 +305,33 @@ node --experimental-strip-types bench/runner.ts --list
 Run a scenario:
 
 ```bash
+node --experimental-strip-types bench/runner.ts guest_cpu
 node --experimental-strip-types bench/runner.ts noop
+```
+
+Common scenario IDs:
+
+- `guest_cpu`: guest CPU throughput benchmark (PF-008; headless browser scenario)
+- `storage_io`: storage I/O benchmark suite (see “Storage I/O benchmark suite” above)
+- `system_boot`: boots a full OS image (requires `--disk-image`)
+- `noop`: minimal smoke test / harness validation
+
+### Guest CPU throughput benchmark (`guest_cpu`)
+
+The `guest_cpu` scenario runs the guest CPU throughput benchmark in a headless Chromium session and executes:
+
+`window.aero.bench.runGuestCpuBench({ variant, mode, seconds })`
+
+Artifacts written to the output directory:
+
+- `guest_cpu_bench.json` (raw benchmark report)
+- `perf_export.json` (from `window.aero.perf.export()`, if available)
+- `report.json` (scenario runner summary + key metrics)
+
+Run locally:
+
+```bash
+node --experimental-strip-types bench/runner.ts guest_cpu
 ```
 
 ### Disk images (local-only)
