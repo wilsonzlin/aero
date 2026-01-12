@@ -2086,11 +2086,20 @@ impl Machine {
                 match &self.ahci {
                     Some(ahci) => {
                         // Reset in-place while keeping the `Rc` identity stable for any persistent
-                        // MMIO mappings.
-                        *ahci.borrow_mut() = AhciPciDevice::new(1);
+                        // MMIO mappings. This intentionally preserves any attached disk backends.
+                        ahci.borrow_mut().reset();
                         Some(ahci.clone())
                     }
-                    None => Some(Rc::new(RefCell::new(AhciPciDevice::new(1)))),
+                    None => {
+                        let ahci = Rc::new(RefCell::new(AhciPciDevice::new(1)));
+                        // On first initialization, attach the machine's canonical disk backend to
+                        // AHCI port 0 so BIOS INT13 and controller-driven access see consistent
+                        // bytes by default.
+                        let drive = AtaDrive::new(Box::new(self.disk.clone()))
+                            .expect("machine disk should be 512-byte aligned");
+                        ahci.borrow_mut().attach_drive(0, drive);
+                        Some(ahci)
+                    }
                 }
             } else {
                 None
@@ -2239,11 +2248,6 @@ impl Machine {
             self.hpet = Some(hpet);
             self.e1000 = e1000;
             self.ahci = ahci;
-
-            // Attach the machine's canonical disk backend to any enabled storage controllers so
-            // BIOS INT13 reads and controller-driven access (AHCI/NVMe/virtio-blk) see consistent
-            // bytes.
-            self.attach_shared_disk_to_storage_controllers();
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
