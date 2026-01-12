@@ -65,17 +65,19 @@ use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats,
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;
 use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
+use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, InterruptInput, PlatformInterrupts,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
+use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
     DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, GuestMemoryMapping, MapError,
-    MappedGuestMemory, MemoryBus as _, MmioHandler, PhysicalMemoryBus,
+    MappedGuestMemory, MemoryBus as _, MmioHandler,
 };
 
 mod pci_firmware;
@@ -305,7 +307,7 @@ impl BlockDevice for VecBlockDevice {
 
 struct SystemMemory {
     a20: A20GateHandle,
-    inner: RefCell<PhysicalMemoryBus>,
+    bus: PlatformMemoryBus,
     dirty: DirtyTracker,
     mapped_roms: HashMap<u64, usize>,
     mapped_mmio: Vec<(u64, u64)>,
@@ -347,23 +349,16 @@ impl SystemMemory {
         } else {
             Box::new(ram)
         };
-        let inner = PhysicalMemoryBus::new(ram);
+        let filter = AddressFilter::new(a20.clone());
+        let bus = PlatformMemoryBus::with_ram(filter, ram);
 
         Ok(Self {
             a20,
-            inner: RefCell::new(inner),
+            bus,
             dirty,
             mapped_roms: HashMap::new(),
             mapped_mmio: Vec::new(),
         })
-    }
-
-    fn translate_a20(&self, addr: u64) -> u64 {
-        if self.a20.enabled() {
-            addr
-        } else {
-            addr & !(1u64 << 20)
-        }
     }
 
     fn take_dirty_pages(&mut self) -> Vec<u64> {
@@ -374,7 +369,7 @@ impl SystemMemory {
         self.dirty.clear_dirty();
     }
 
-    /// Map an MMIO region on the persistent [`PhysicalMemoryBus`] exactly once.
+    /// Map an MMIO region on the persistent physical memory bus exactly once.
     ///
     /// The machine's physical memory bus lives across `Machine::reset()` calls, so MMIO mappings
     /// are expected to be persistent. Callers may invoke this during every reset; identical
@@ -399,28 +394,18 @@ impl SystemMemory {
         }
 
         let handler = build();
-        let mut inner = self.inner.borrow_mut();
-        match inner.map_mmio(start, len, handler) {
-            Ok(()) => {
-                self.mapped_mmio.push((start, end));
-            }
+        match self.bus.map_mmio(start, len, handler) {
+            Ok(()) => self.mapped_mmio.push((start, end)),
             Err(MapError::Overlap) => {
-                // Treat identical overlaps as idempotent, but reject unexpected overlaps to avoid
-                // silently corrupting the bus.
-                let already_mapped = inner
-                    .mmio_regions()
-                    .iter()
-                    .any(|r| r.start == start && r.end == end);
-                if already_mapped {
-                    self.mapped_mmio.push((start, end));
-                } else {
-                    panic!("unexpected MMIO mapping overlap at 0x{start:016x} (len=0x{len:x})");
-                }
+                // This should not happen for well-behaved callers because we short-circuit based
+                // on `mapped_mmio` above. If it does, something attempted to create a conflicting
+                // mapping; panic rather than silently corrupt the address space.
+                panic!("unexpected MMIO mapping overlap at 0x{start:016x} (len=0x{len:x})");
             }
             Err(MapError::AddressOverflow) => {
                 panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})")
             }
-        }
+        };
     }
 }
 
@@ -447,56 +432,30 @@ impl FirmwareMemory for SystemMemory {
             return;
         }
 
-        let mut inner = self.inner.borrow_mut();
-        match inner.map_rom(base, rom) {
+        match self.bus.map_rom(base, rom) {
             Ok(()) => {
                 self.mapped_roms.insert(base, len);
             }
             Err(MapError::Overlap) => {
-                // BIOS resets may re-map the same ROM windows. Treat identical overlaps as
-                // idempotent, but reject unexpected overlaps to avoid silently corrupting the bus.
-                let already_mapped = inner
-                    .rom_regions()
-                    .iter()
-                    .any(|r| r.start == base && r.data.len() == len);
-                if already_mapped {
-                    self.mapped_roms.insert(base, len);
-                } else {
-                    panic!("unexpected ROM mapping overlap at 0x{base:016x}");
-                }
+                // This should not happen for well-behaved callers because we short-circuit based
+                // on `mapped_roms` above. If it does, something attempted to create a conflicting
+                // mapping; panic rather than silently corrupt the address space.
+                panic!("unexpected ROM mapping overlap at 0x{base:016x}");
             }
             Err(MapError::AddressOverflow) => {
                 panic!("ROM mapping overflow at 0x{base:016x} (len=0x{len:x})")
             }
-        }
+        };
     }
 }
 
 impl memory::MemoryBus for SystemMemory {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if self.a20.enabled() {
-            self.inner.borrow_mut().read_physical(paddr, buf);
-            return;
-        }
-
-        let mut inner = self.inner.borrow_mut();
-        for (i, slot) in buf.iter_mut().enumerate() {
-            let addr = self.translate_a20(paddr.wrapping_add(i as u64));
-            *slot = inner.read_physical_u8(addr);
-        }
+        self.bus.read_physical(paddr, buf);
     }
 
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        if self.a20.enabled() {
-            self.inner.borrow_mut().write_physical(paddr, buf);
-            return;
-        }
-
-        let mut inner = self.inner.borrow_mut();
-        for (i, byte) in buf.iter().copied().enumerate() {
-            let addr = self.translate_a20(paddr.wrapping_add(i as u64));
-            inner.write_physical_u8(addr, byte);
-        }
+        self.bus.write_physical(paddr, buf);
     }
 }
 
@@ -3245,7 +3204,7 @@ impl snapshot::SnapshotSource for Machine {
         // guest-physical MMIO holes). When RAM is remapped above 4GiB to make room for the PCIe
         // ECAM/PCI hole, translate dense RAM offsets into the corresponding guest-physical
         // addresses.
-        let ram = &self.mem.inner.borrow().ram;
+        let ram = self.mem.bus.ram();
         if self.cfg.ram_size_bytes <= low_ram_end || buf.is_empty() {
             ram.read_into(offset, buf)
                 .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
@@ -3770,7 +3729,7 @@ impl snapshot::SnapshotTarget for Machine {
             return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
         }
 
-        let ram = &mut self.mem.inner.borrow_mut().ram;
+        let ram = self.mem.bus.ram_mut();
         if self.cfg.ram_size_bytes <= low_ram_end || data.is_empty() {
             ram.write_from(offset, data)
                 .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
@@ -4398,15 +4357,15 @@ mod tests {
         ];
 
         {
-            let mut phys = m.mem.inner.borrow_mut();
-            phys.write_physical_u32(pd_base, (pt_base as u32) | flags);
-            phys.write_physical_u32(pt_base, (code_page as u32) | flags);
-            phys.write_physical_u32(pt_base + 4, (page_a as u32) | flags);
+            let mem = &mut m.mem;
+            mem.write_u32(pd_base, (pt_base as u32) | flags);
+            mem.write_u32(pt_base, (code_page as u32) | flags);
+            mem.write_u32(pt_base + 4, (page_a as u32) | flags);
 
-            phys.write_physical_u32(page_a, 0x1111_1111);
-            phys.write_physical_u32(page_b, 0x2222_2222);
+            mem.write_u32(page_a, 0x1111_1111);
+            mem.write_u32(page_b, 0x2222_2222);
 
-            phys.write_physical(code_page, &code);
+            mem.write_physical(code_page, &code);
         }
 
         // Jump directly into 32-bit paging mode without relying on BIOS/boot code.
@@ -4426,10 +4385,7 @@ mod tests {
         let snap = m.take_snapshot_full().unwrap();
 
         // Patch the PTE so linear 0x1000 now maps to page B.
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical_u32(pt_base + 4, (page_b as u32) | flags);
+        m.mem.write_u32(pt_base + 4, (page_b as u32) | flags);
 
         // Run the rest of the code, which executes INVLPG + a second load to populate the TLB with
         // the page-B mapping.
@@ -4980,10 +4936,7 @@ mod tests {
 
         // Simulate a DMA/device write by bypassing the CPU memory wrapper and writing directly to
         // the underlying physical bus.
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(0x2000, &[0xAA, 0xBB, 0xCC, 0xDD]);
+        m.mem.write_physical(0x2000, &[0xAA, 0xBB, 0xCC, 0xDD]);
 
         assert_eq!(m.mem.take_dirty_pages(), vec![2]);
 
@@ -5005,7 +4958,7 @@ mod tests {
         // physical bus RAM backend.
         let addr = 0x2000u64;
         let data = [0xAAu8, 0xBB, 0xCC, 0xDD];
-        src.mem.inner.borrow_mut().write_physical(addr, &data);
+        src.mem.write_physical(addr, &data);
 
         // Take a dirty snapshot diff and ensure the restored VM observes the change.
         let diff = src.take_snapshot_dirty().unwrap();
@@ -5082,7 +5035,7 @@ mod tests {
             (segment & 0xFF) as u8,
             (segment >> 8) as u8,
         ];
-        m.mem.inner.borrow_mut().write_physical(addr, &bytes);
+        m.mem.write_physical(addr, &bytes);
     }
 
     fn init_real_mode_cpu(m: &mut Machine, entry_ip: u16, rflags: u64) {
@@ -5126,19 +5079,17 @@ mod tests {
         // mov byte ptr [0x2000], 0xAA
         // iret
         const HANDLER_IP: u16 = 0x1100;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        m.mem.write_physical(
+            u64::from(HANDLER_IP),
+            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
+        );
         write_ivt_entry(&mut m, 0x20, HANDLER_IP, 0x0000);
 
         // Program CPU at 0x1000 with a small NOP sled.
         const ENTRY_IP: u16 = 0x1000;
         m.mem
-            .inner
-            .borrow_mut()
             .write_physical(u64::from(ENTRY_IP), &[0x90, 0x90, 0x90, 0x90, 0x90]);
-        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+        m.mem.write_physical(0x2000, &[0x00]);
 
         init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
 
@@ -5189,19 +5140,16 @@ mod tests {
 
         // Simple handler for IRQ0 (vector 0x20): write a byte to RAM and IRET.
         const HANDLER_IP: u16 = 0x1100;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        m.mem.write_physical(
+            u64::from(HANDLER_IP),
+            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
+        );
         write_ivt_entry(&mut m, 0x20, HANDLER_IP, 0x0000);
 
         // Program CPU at 0x1000 with enough NOPs to cover the instruction budgets below.
         const ENTRY_IP: u16 = 0x1000;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
-        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+        m.mem.write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+        m.mem.write_physical(0x2000, &[0x00]);
 
         init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
         m.cpu.pending.inhibit_interrupts_for_one_instruction();
@@ -5265,13 +5213,10 @@ mod tests {
         let redtbl_low = 0x10u32 + GSI * 2;
         let redtbl_high = redtbl_low + 1;
 
-        {
-            let mut bus = m.mem.inner.borrow_mut();
-            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_low);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_high);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, 0);
-        }
+        m.mem.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+        m.mem.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+        m.mem.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+        m.mem.write_u32(IOAPIC_MMIO_BASE + 0x10, 0);
 
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
@@ -5288,18 +5233,10 @@ mod tests {
         );
 
         // Smoke test LAPIC + HPET MMIO mappings as well.
-        let svr = m
-            .mem
-            .inner
-            .borrow_mut()
-            .read_physical_u32(LAPIC_MMIO_BASE + 0xF0);
+        let svr = m.mem.read_u32(LAPIC_MMIO_BASE + 0xF0);
         assert_eq!(svr & 0x1FF, 0x1FF);
 
-        let caps = m
-            .mem
-            .inner
-            .borrow_mut()
-            .read_physical_u64(hpet::HPET_MMIO_BASE);
+        let caps = m.mem.read_u64(hpet::HPET_MMIO_BASE);
         assert_eq!((caps >> 16) & 0xFFFF, 0x8086);
     }
 
@@ -5318,8 +5255,6 @@ mod tests {
 
         const ENTRY_IP: u16 = 0x1000;
         m.mem
-            .inner
-            .borrow_mut()
             .write_physical(u64::from(ENTRY_IP), &[0x90, 0x90, 0x90, 0x90]);
         init_real_mode_cpu(&mut m, ENTRY_IP, 0);
 
@@ -5379,18 +5314,15 @@ mod tests {
         // mov byte ptr [0x2000], 0xAA
         // iret
         const HANDLER_IP: u16 = 0x1100;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        m.mem.write_physical(
+            u64::from(HANDLER_IP),
+            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
+        );
         write_ivt_entry(&mut m, expected_vector, HANDLER_IP, 0x0000);
 
         const ENTRY_IP: u16 = 0x1000;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
-        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+        m.mem.write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+        m.mem.write_physical(0x2000, &[0x00]);
 
         // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
         {
@@ -5520,10 +5452,7 @@ mod tests {
         handler.extend_from_slice(&[0xBA, iodata_port as u8, (iodata_port >> 8) as u8]); // mov dx, iodata_port
         handler.extend_from_slice(&[0x66, 0xED]); // in eax, dx
         handler.push(0xCF); // iret
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(HANDLER_IP), &handler);
+        m.mem.write_physical(u64::from(HANDLER_IP), &handler);
         write_ivt_entry(&mut m, expected_vector, HANDLER_IP, 0x0000);
 
         // Guest program:
@@ -5570,11 +5499,8 @@ mod tests {
         // HLT (twice so we can observe wakeup + re-halt deterministically).
         code.extend_from_slice(&[0xF4, 0xF4]);
 
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(ENTRY_IP), &code);
-        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+        m.mem.write_physical(u64::from(ENTRY_IP), &code);
+        m.mem.write_physical(0x2000, &[0x00]);
 
         init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
 
@@ -5612,32 +5538,26 @@ mod tests {
         let low: u32 = u32::from(VECTOR) | (1 << 13) | (1 << 15); // polarity low + level triggered
         let redtbl_low = 0x10u32 + gsi * 2;
         let redtbl_high = redtbl_low + 1;
-        {
-            let mut bus = m.mem.inner.borrow_mut();
-            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_low);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE, redtbl_high);
-            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, 0);
-        }
+        m.mem.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+        m.mem.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+        m.mem.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+        m.mem.write_u32(IOAPIC_MMIO_BASE + 0x10, 0);
 
         // Install a trivial real-mode ISR for the vector.
         //
         // mov byte ptr [0x2000], 0xAA
         // iret
         const HANDLER_IP: u16 = 0x1100;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        m.mem.write_physical(
+            u64::from(HANDLER_IP),
+            &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
+        );
         write_ivt_entry(&mut m, VECTOR, HANDLER_IP, 0x0000);
 
         // Program CPU at 0x1000 with enough NOPs to cover the instruction budgets below.
         const ENTRY_IP: u16 = 0x1000;
-        m.mem
-            .inner
-            .borrow_mut()
-            .write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
-        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+        m.mem.write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+        m.mem.write_physical(0x2000, &[0x00]);
 
         init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
 
@@ -5779,7 +5699,7 @@ mod tests {
         let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
 
         // Write packet bytes into guest RAM.
-        m.mem.inner.borrow_mut().write_physical(pkt_base, &frame);
+        m.mem.write_physical(pkt_base, &frame);
 
         // Legacy TX descriptor: buffer_addr + length + cmd(EOP|RS).
         let mut desc = [0u8; 16];
@@ -5790,20 +5710,19 @@ mod tests {
         desc[12] = 0; // status
         desc[13] = 0; // CSS
         desc[14..16].copy_from_slice(&0u16.to_le_bytes());
-        m.mem.inner.borrow_mut().write_physical(tx_ring_base, &desc);
+        m.mem.write_physical(tx_ring_base, &desc);
 
         // Program E1000 TX registers over MMIO (BAR0).
         {
-            let mem = &mut *m.mem.inner.borrow_mut();
-            mem.write_u32(bar0_base + 0x3800, tx_ring_base as u32); // TDBAL
-            mem.write_u32(bar0_base + 0x3804, 0); // TDBAH
-            mem.write_u32(bar0_base + 0x3808, 16 * 4); // TDLEN (4 descriptors)
-            mem.write_u32(bar0_base + 0x3810, 0); // TDH
-            mem.write_u32(bar0_base + 0x3818, 0); // TDT
-            mem.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
+            m.mem.write_u32(bar0_base + 0x3800, tx_ring_base as u32); // TDBAL
+            m.mem.write_u32(bar0_base + 0x3804, 0); // TDBAH
+            m.mem.write_u32(bar0_base + 0x3808, 16 * 4); // TDLEN (4 descriptors)
+            m.mem.write_u32(bar0_base + 0x3810, 0); // TDH
+            m.mem.write_u32(bar0_base + 0x3818, 0); // TDT
+            m.mem.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
 
             // Doorbell: advance tail to include descriptor 0.
-            mem.write_u32(bar0_base + 0x3818, 1); // TDT = 1
+            m.mem.write_u32(bar0_base + 0x3818, 1); // TDT = 1
         }
 
         // Enable PCI decoding but keep bus mastering disabled.
@@ -5920,7 +5839,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut bus = PhysicalMemoryBus::new(Box::new(mapped));
+        let mut bus = memory::PhysicalMemoryBus::new(Box::new(mapped));
 
         // Writing to high RAM at 4GiB should succeed and be observable via the same address.
         bus.write_physical(FOUR_GIB, &[0xAA]);
