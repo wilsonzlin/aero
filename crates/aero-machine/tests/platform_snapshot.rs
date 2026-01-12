@@ -769,6 +769,62 @@ fn restore_device_states_prefers_pci_intx_router_over_legacy_pci_entry() {
 }
 
 #[test]
+fn restore_device_states_falls_back_to_legacy_pci_intx_when_pci_intx_router_snapshot_is_invalid() {
+    let src = Machine::new(pc_machine_config()).unwrap();
+    let pci_intx = src.pci_intx_router().expect("pc platform enabled");
+
+    let bdf = PciBdf::new(0, 1, 0);
+
+    // Canonical INTx state: assert only INTA#.
+    {
+        let mut pci_intx = pci_intx.borrow_mut();
+        let mut sink = RecordingSink::default();
+        pci_intx.assert_intx(bdf, PciInterruptPin::IntA, &mut sink);
+    }
+    let mut bad_canonical_state = {
+        let pci_intx = pci_intx.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+            snapshot::DeviceId::PCI_INTX_ROUTER,
+            &*pci_intx,
+        )
+    };
+    // Corrupt the outer version so `apply_io_snapshot_to_device` rejects it.
+    bad_canonical_state.version = bad_canonical_state.version.wrapping_add(1);
+
+    // Legacy INTx state: additionally assert INTB#.
+    {
+        let mut pci_intx = pci_intx.borrow_mut();
+        let mut sink = RecordingSink::default();
+        pci_intx.assert_intx(bdf, PciInterruptPin::IntB, &mut sink);
+    }
+    let expected_legacy_events = {
+        let pci_intx = pci_intx.borrow();
+        let mut sink = RecordingSink::default();
+        pci_intx.sync_levels_to_sink(&mut sink);
+        sink.events
+    };
+    let legacy_state = {
+        let pci_intx = pci_intx.borrow();
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_intx)
+    };
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    snapshot::SnapshotTarget::restore_device_states(
+        &mut restored,
+        vec![legacy_state, bad_canonical_state],
+    );
+
+    let restored_events = {
+        let pci_intx = restored.pci_intx_router().expect("pc platform enabled");
+        let pci_intx = pci_intx.borrow();
+        let mut sink = RecordingSink::default();
+        pci_intx.sync_levels_to_sink(&mut sink);
+        sink.events
+    };
+    assert_eq!(restored_events, expected_legacy_events);
+}
+
+#[test]
 fn restore_device_states_does_not_sync_pci_intx_when_intx_snapshot_is_invalid() {
     let src = Machine::new(pc_machine_config()).unwrap();
     let interrupts = src.platform_interrupts().unwrap();
