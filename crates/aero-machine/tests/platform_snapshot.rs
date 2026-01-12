@@ -138,17 +138,21 @@ fn reverse_devices_section(bytes: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn snapshot_source_emits_pci_cfg_device_id_for_config_ports() {
+fn snapshot_source_emits_single_pci_entry_for_pci_core() {
     let m = Machine::new(pc_machine_config()).unwrap();
     let devices = snapshot::SnapshotSource::device_states(&m);
 
     assert!(
-        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI_CFG),
-        "machine snapshot should include a PCI_CFG entry when pc platform is enabled"
+        devices.iter().any(|d| d.id == snapshot::DeviceId::PCI),
+        "machine snapshot should include a PCI entry when pc platform is enabled"
     );
     assert!(
-        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI),
-        "machine snapshot should not emit the legacy DeviceId::PCI for PCI config ports"
+        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI_CFG),
+        "machine snapshot should not emit a separate DeviceId::PCI_CFG entry for config ports"
+    );
+    assert!(
+        devices.iter().all(|d| d.id != snapshot::DeviceId::PCI_INTX),
+        "machine snapshot should not emit a separate DeviceId::PCI_INTX entry for the INTx router"
     );
 }
 
@@ -451,9 +455,10 @@ fn restore_device_states_accepts_legacy_pci_device_id_for_pci_cfg_state() {
 }
 
 #[test]
-fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
+fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
     let mut src = Machine::new(pc_machine_config()).unwrap();
     let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
+    let pci_intx = src.pci_intx_router().expect("pc platform enabled");
 
     struct TestDev {
         cfg: PciConfigSpace,
@@ -486,18 +491,17 @@ fn restore_device_states_prefers_pci_cfg_over_legacy_pci_entry() {
     // Canonical state: BAR0 = 0x8000_0000.
     cfg_write(&mut src, bdf, 0x10, 4, 0x8000_0000);
     let canonical_state = {
-        let pci_cfg = pci_cfg.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-            snapshot::DeviceId::PCI_CFG,
-            &*pci_cfg,
-        )
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let mut pci_intx = pci_intx.borrow_mut();
+        let core = aero_devices::pci::PciCoreSnapshot::new(&mut *pci_cfg, &mut *pci_intx);
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &core)
     };
 
-    // Legacy state: BAR0 = 0x9000_0000.
+    // Legacy state: BAR0 = 0x9000_0000 stored under the old dedicated `PCI_CFG` device id.
     cfg_write(&mut src, bdf, 0x10, 4, 0x9000_0000);
     let legacy_state = {
         let pci_cfg = pci_cfg.borrow();
-        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI, &*pci_cfg)
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::PCI_CFG, &*pci_cfg)
     };
 
     // Restore into a fresh machine and ensure the canonical state wins even if the legacy entry
