@@ -67,6 +67,11 @@ This framing enables **backward-compatible schema evolution**:
 
 - `DEVICES` entries are written in canonical order: `(device_id, device_version, device_flags)`.
 - `DISKS` entries are written in canonical order: `disk_id`.
+  - `disk_id` is a **stable virtual disk slot identifier** used by host integrations to re-open
+    disk backends after restore (it is not an OS-visible enumerator).
+  - Canonical Windows 7 storage topology mapping (see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md)):
+    - `disk_id = 0` → AHCI ICH9 port 0 HDD
+    - `disk_id = 1` → IDE PIIX3 secondary master ATAPI CD-ROM
 - `CPUS` entries are written in canonical order: ascending `apic_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
 
@@ -345,8 +350,30 @@ In the `crates/aero-devices-storage` stack this means:
 
 The platform/coordinator must **re-attach** the appropriate disks/ISOs after restore (based on external configuration) before resuming guest execution.
 
-For deterministic guest bring-up, reattachment should follow the same canonical topology/attachment mapping used at initial boot; for Windows 7 this is documented in [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
-That document also defines the canonical snapshot `DISKS` `disk_id` mapping (`DiskOverlayRefs`) for Win7 restore.
+#### `DISKS` section: `DiskOverlayRefs` + stable `disk_id`
+
+The snapshot `DISKS` section encodes external disk image references as
+`aero_snapshot::DiskOverlayRefs`:
+
+- Each entry is a `DiskOverlayRef { disk_id, base_image, overlay_image }`.
+- `base_image` / `overlay_image` are **opaque host identifiers** (e.g. a remote object key, a URL,
+  or an OPFS path) and are not interpreted by `aero-snapshot`.
+
+On restore, the snapshot adapter receives these refs via
+`SnapshotTarget::restore_disk_overlays(...)`. Since storage controller `load_state()` drops host
+backends, the host/platform must:
+
+1. Use the `DiskOverlayRefs` entries to re-open the referenced base+overlay images (or other disk
+   backends).
+2. Use the stable `disk_id` mapping to attach each reopened backend to the correct controller/port
+   before resuming guest execution.
+
+For deterministic guest bring-up, reattachment must follow the same canonical
+topology/attachment mapping used at initial boot; for Windows 7 this includes the stable `disk_id`
+mapping documented in [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
+
+If the topology or `disk_id` mapping changes, update that document and the corresponding guard
+tests (notably `crates/aero-machine/tests/machine_disk_overlays_snapshot.rs`).
 
 ATAPI note: the guest-visible “disc present” state is snapshotted explicitly (independent of whether a host ISO backend is currently attached), so reattaching an ISO backend does not implicitly “insert media” from the guest’s perspective.
 

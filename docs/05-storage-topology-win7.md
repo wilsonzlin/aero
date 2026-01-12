@@ -18,6 +18,7 @@ and the corresponding tests:
 - `crates/devices/tests/win7_storage_topology.rs` (PCI profile constants + INTx routing)
 - `crates/aero-pc-platform/tests/pc_platform_win7_storage.rs` (platform integration wiring)
 - `crates/aero-pc-platform/tests/windows7_storage_topology.rs` (end-to-end AHCI + ATAPI read tests)
+- `crates/aero-machine/tests/machine_disk_overlays_snapshot.rs` (snapshot `DISKS` disk_id mapping guard test)
 
 ---
 
@@ -70,6 +71,7 @@ AHCI HDD (port 0) and an IDE/ATAPI CD-ROM (secondary master) so tests can valida
 - The **primary VM disk image** (the installed OS disk) is attached to:
   - **Controller:** ICH9 AHCI (`SATA_AHCI_ICH9`)
   - **Port:** `0`
+  - **Snapshot `disk_id`:** `0`
 
 Notes:
 - The AHCI device model can support multiple ports, but the **canonical Win7 topology** attaches
@@ -84,6 +86,7 @@ Notes:
   - **Controller:** PIIX3 IDE (`IDE_PIIX3`)
   - **Channel:** secondary
   - **Drive:** master
+  - **Snapshot `disk_id`:** `1`
 
 This matches the explicit attachment API in the IDE model:
 `aero_devices_storage::pci_ide::IdeController::attach_secondary_master_atapi(...)`.
@@ -124,6 +127,8 @@ This mapping is implemented as stable constants in the canonical machine integra
 
 These `disk_id` values are part of the Win7 platform ABI: changing them breaks deterministic
 snapshot restore unless all producers/consumers are updated in lockstep.
+
+Guard test: `crates/aero-machine/tests/machine_disk_overlays_snapshot.rs`.
 
 ---
 
