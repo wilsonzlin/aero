@@ -172,6 +172,9 @@ In the worker-based web runtime, device blobs are exchanged as `{ kind: string, 
 For forward compatibility, the runtime also supports a fallback spelling for unknown device IDs:
 
 - `device.<id>` (e.g. `device.1234`) → `DeviceId(<id>)`
+  - `<id>` is a **decimal `u32`** in the range `0..=4294967295`.
+  - The wire grammar is intentionally restricted to **ASCII digits only** (`^[0-9]+$`; no `+`/`-`).
+  - Parsers may accept leading zeros, but canonical encoders should emit `device.<id>` without leading zeros.
 
 | DeviceId enum | Numeric id | Web runtime `kind` | Notes |
 |---|---:|---|---|

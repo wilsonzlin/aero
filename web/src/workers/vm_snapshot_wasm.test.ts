@@ -129,6 +129,12 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId("device.4294967296")).toBeNull();
     // Negative IDs are not valid in the `device.<id>` spelling.
     expect(vmSnapshotDeviceKindToId("device.-1")).toBeNull();
+    // `u32::from_str` accepts `+1`, but the web runtime grammar intentionally restricts
+    // `device.<id>` to ASCII digits so the wire spelling is unambiguous.
+    expect(vmSnapshotDeviceKindToId("device.+1")).toBeNull();
+    // Leading zeros are accepted (parsed numerically), but re-encoding canonicalizes them away.
+    expect(vmSnapshotDeviceKindToId("device.00999")).toBe(999);
+    expect(vmSnapshotDeviceIdToKind(999)).toBe("device.999");
 
     expect(vmSnapshotDeviceKindToId("unknown")).toBeNull();
   });
