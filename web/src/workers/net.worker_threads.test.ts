@@ -444,6 +444,37 @@ describe("workers/net.worker (worker_threads)", () => {
       expect(received).not.toBeNull();
       expect(arraysEqual(received!, rxFrame)).toBe(true);
 
+      // `net.trace.export_pcapng` is a non-draining snapshot.
+      const snapshotPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.pcapng" &&
+          (msg as { requestId?: unknown }).requestId === 2,
+        10000,
+      ) as Promise<{ kind: string; requestId: number; bytes: ArrayBuffer }>;
+      worker.postMessage({ kind: "net.trace.export_pcapng", requestId: 2 });
+      const snapshotMsg = await snapshotPromise;
+      expect(snapshotMsg.bytes).toBeInstanceOf(ArrayBuffer);
+
+      const snapshotParsed = parsePcapng(new Uint8Array(snapshotMsg.bytes));
+      const snapshotTx = snapshotParsed.packets.find((p) => arraysEqual(p.payload, txFrame));
+      const snapshotRx = snapshotParsed.packets.find((p) => arraysEqual(p.payload, rxFrame));
+      expect(snapshotTx).toBeTruthy();
+      expect(snapshotRx).toBeTruthy();
+
+      const statusAfterSnapshotPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.status" &&
+          (msg as { requestId?: unknown }).requestId === 101,
+        10000,
+      ) as Promise<{ enabled?: boolean; records?: number; bytes?: number }>;
+      worker.postMessage({ kind: "net.trace.status", requestId: 101 });
+      const statusAfterSnapshot = await statusAfterSnapshotPromise;
+      expect(statusAfterSnapshot.enabled).toBe(true);
+      expect(statusAfterSnapshot.records).toBe(2);
+      expect(statusAfterSnapshot.bytes).toBe(txFrame.byteLength + rxFrame.byteLength);
+
       // Disabling tracing should prevent subsequent frames from being captured.
       worker.postMessage({ kind: "net.trace.disable" });
       const statusDisabledPromise = waitForWorkerMessage(

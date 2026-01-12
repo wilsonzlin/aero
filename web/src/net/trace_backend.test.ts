@@ -18,6 +18,7 @@ describe("net/trace_backend", () => {
       isNetTraceEnabled: () => true,
       setNetTraceEnabled: () => {},
       takeNetTracePcapng: async () => new Uint8Array([1, 2, 3]),
+      exportNetTracePcapng: async () => new Uint8Array([4, 5, 6]),
       clearNetTrace: () => {},
       getNetTraceStats: async () => ({ enabled: true, records: 1, bytes: 2, droppedRecords: 3, droppedBytes: 4 }),
     };
@@ -30,8 +31,10 @@ describe("net/trace_backend", () => {
     expect(netTrace).toBeTruthy();
     expect(typeof netTrace.getStats).toBe("function");
     expect(typeof netTrace.clearCapture).toBe("function");
+    expect(typeof netTrace.exportPcapng).toBe("function");
 
     await expect(netTrace.getStats()).resolves.toEqual({ enabled: true, records: 1, bytes: 2, droppedRecords: 3, droppedBytes: 4 });
+    await expect(netTrace.exportPcapng()).resolves.toEqual(new Uint8Array([4, 5, 6]));
   });
 
   it("repairs non-object window.aero values", () => {
@@ -39,6 +42,7 @@ describe("net/trace_backend", () => {
       isNetTraceEnabled: () => false,
       setNetTraceEnabled: () => {},
       takeNetTracePcapng: async () => new Uint8Array(),
+      exportNetTracePcapng: async () => new Uint8Array(),
       clearNetTrace: () => {},
       getNetTraceStats: async () => ({ enabled: false, records: 0, bytes: 0, droppedRecords: 0, droppedBytes: 0 }),
     };

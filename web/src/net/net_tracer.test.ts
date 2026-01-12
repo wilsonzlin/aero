@@ -123,6 +123,16 @@ describe("NetTracer", () => {
     expect(countEpbs(tracer.takePcapng())).toBe(0);
   });
 
+  it("exportPcapng does not drain the capture", () => {
+    const tracer = new NetTracer();
+    tracer.enable();
+    tracer.recordEthernet("guest_tx", new Uint8Array([9, 9, 9]), 1n);
+    expect(countEpbs(tracer.exportPcapng())).toBe(1);
+    expect(tracer.stats().records).toBe(1);
+    expect(countEpbs(tracer.exportPcapng())).toBe(1);
+    expect(tracer.stats().records).toBe(1);
+  });
+
   it("enforces maxBytes by dropping new frames", () => {
     const tracer = new NetTracer({ maxBytes: 6 });
     tracer.enable();

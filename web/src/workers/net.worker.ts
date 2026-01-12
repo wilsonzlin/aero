@@ -639,7 +639,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     const msg = ev.data as
       | Partial<WorkerInitMessage | ConfigUpdateMessage>
       | Partial<{ kind: "net.trace.enable" | "net.trace.disable" | "net.trace.clear" }>
-      | Partial<{ kind: "net.trace.take_pcapng" | "net.trace.status"; requestId: number }>
+      | Partial<{ kind: "net.trace.take_pcapng" | "net.trace.export_pcapng" | "net.trace.status"; requestId: number }>
       | undefined;
     if (!msg) return;
 
@@ -677,7 +677,26 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const bytes = tracer.takePcapng();
       if (shouldIgnorePostMessageResponses()) return;
       // Ensure we transfer an ArrayBuffer (not a SharedArrayBuffer-backed view).
-      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const buf =
+        bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+          ? bytes.buffer
+          : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      if (shouldIgnorePostMessageResponses()) return;
+      ctx.postMessage({ kind: "net.trace.pcapng", requestId, bytes: buf }, [buf]);
+      return;
+    }
+
+    if (msg.kind === "net.trace.export_pcapng") {
+      const requestId = (msg as { requestId?: unknown }).requestId;
+      if (typeof requestId !== "number") return;
+      if (shouldIgnorePostMessageResponses()) return;
+      const bytes = tracer.exportPcapng();
+      if (shouldIgnorePostMessageResponses()) return;
+      // Ensure we transfer an ArrayBuffer (not a SharedArrayBuffer-backed view).
+      const buf =
+        bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+          ? bytes.buffer
+          : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       if (shouldIgnorePostMessageResponses()) return;
       ctx.postMessage({ kind: "net.trace.pcapng", requestId, bytes: buf }, [buf]);
       return;

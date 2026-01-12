@@ -162,6 +162,12 @@ export type NetTraceTakePcapngMessage = {
   requestId: number;
 };
 
+export type NetTraceExportPcapngMessage = {
+  // Non-draining snapshot export.
+  kind: "net.trace.export_pcapng";
+  requestId: number;
+};
+
 export type NetTraceStatusMessage = {
   kind: "net.trace.status";
   requestId: number;
@@ -192,6 +198,7 @@ export type CoordinatorToWorkerPostMessage =
   | NetTraceDisableMessage
   | NetTraceClearMessage
   | NetTraceTakePcapngMessage
+  | NetTraceExportPcapngMessage
   | NetTraceStatusMessage;
 
 /**

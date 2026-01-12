@@ -25,6 +25,7 @@ export function installNetTraceBackendOnAeroGlobal(coordinator: WorkerCoordinato
     enable: () => coordinator.setNetTraceEnabled(true),
     disable: () => coordinator.setNetTraceEnabled(false),
     downloadPcapng: () => coordinator.takeNetTracePcapng(),
+    exportPcapng: () => coordinator.exportNetTracePcapng(),
     clear: () => coordinator.clearNetTrace(),
     getStats: () => coordinator.getNetTraceStats(),
     // Legacy alias kept for older UIs that still call `clearCapture()`.

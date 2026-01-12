@@ -13,6 +13,8 @@ export interface NetTraceBackend {
   enable(): void;
   disable(): void;
   downloadPcapng(): Promise<Uint8Array>;
+  // Non-draining snapshot export (optional).
+  exportPcapng?(): Promise<Uint8Array>;
 
   clear?(): void | Promise<void>;
   getStats?(): NetTraceStats | Promise<NetTraceStats>;
@@ -104,6 +106,33 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     }
   });
 
+  const downloadSnapshotButton = backend.exportPcapng ? document.createElement("button") : null;
+  if (downloadSnapshotButton) {
+    downloadSnapshotButton.textContent = "Download snapshot (PCAPNG)";
+    downloadSnapshotButton.addEventListener("click", async () => {
+      status.textContent = "";
+      try {
+        const bytes = await backend.exportPcapng!();
+        const bytesForIo: Uint8Array<ArrayBuffer> =
+          bytes.buffer instanceof ArrayBuffer
+            ? (bytes as Uint8Array<ArrayBuffer>)
+            : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+        const blob = new Blob([bytesForIo], { type: "application/vnd.tcpdump.pcap" });
+        const url = URL.createObjectURL(blob);
+        try {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `aero-net-snapshot-${new Date().toISOString().replace(/[:.]/g, "-")}.pcapng`;
+          a.click();
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    });
+  }
+
   const opfsPath = document.createElement("input");
   opfsPath.type = "text";
   opfsPath.value = "captures/aero-net-trace.pcapng";
@@ -158,6 +187,9 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     buttonRow.appendChild(clearButton);
   }
   buttonRow.appendChild(downloadButton);
+  if (downloadSnapshotButton) {
+    buttonRow.appendChild(downloadSnapshotButton);
+  }
   buttonRow.appendChild(saveButton);
   wrapper.appendChild(buttonRow);
 

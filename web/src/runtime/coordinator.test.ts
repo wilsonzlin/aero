@@ -105,6 +105,35 @@ describe("runtime/coordinator", () => {
     expect(Array.from(actualBytes)).toEqual(Array.from(expectedBytes));
   });
 
+  it("roundtrips net.trace.export_pcapng request/response through the coordinator", async () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("net", segments);
+
+    const netInfo = (coordinator as any).workers.net as { instanceId: number; worker: MockWorker };
+    const netWorker = netInfo.worker;
+
+    const promise = coordinator.exportNetTracePcapng();
+
+    const lastPosted = netWorker.posted.at(-1)?.message as { kind?: unknown; requestId?: unknown } | undefined;
+    expect(lastPosted?.kind).toBe("net.trace.export_pcapng");
+    expect(typeof lastPosted?.requestId).toBe("number");
+    const requestId = lastPosted!.requestId as number;
+
+    const expectedBytes = new Uint8Array([0x61, 0x65, 0x72, 0x6f]); // "aero"
+    (coordinator as any).onWorkerMessage("net", netInfo.instanceId, {
+      kind: "net.trace.pcapng",
+      requestId,
+      bytes: expectedBytes.buffer,
+    });
+
+    const actualBytes = await promise;
+    expect(actualBytes).toBeInstanceOf(Uint8Array);
+    expect(Array.from(actualBytes)).toEqual(Array.from(expectedBytes));
+  });
+
   it("roundtrips net.trace.status request/response through the coordinator", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });

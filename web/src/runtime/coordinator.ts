@@ -26,6 +26,7 @@ import {
   type NetTraceClearMessage,
   type NetTraceDisableMessage,
   type NetTraceEnableMessage,
+  type NetTraceExportPcapngMessage,
   type NetTracePcapngMessage,
   type NetTraceStatusMessage,
   type NetTraceStatusResponseMessage,
@@ -857,6 +858,37 @@ export class WorkerCoordinator {
 
       try {
         net.postMessage({ kind: "net.trace.take_pcapng", requestId } satisfies NetTraceTakePcapngMessage);
+      } catch (err) {
+        clearTimeout(pending.timeout);
+        this.pendingNetTraceRequests.delete(requestId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  exportNetTracePcapng(timeoutMs = 10_000): Promise<Uint8Array<ArrayBuffer>> {
+    const net = this.workers.net?.worker;
+    if (!net) {
+      return Promise.reject(new Error("Cannot export network trace: net worker is not running."));
+    }
+
+    const requestId = this.nextNetTraceRequestId++;
+    return new Promise<Uint8Array<ArrayBuffer>>((resolve, reject) => {
+      const timer = globalThis.setTimeout(() => {
+        this.pendingNetTraceRequests.delete(requestId);
+        reject(new Error(`Timed out waiting for net trace capture (requestId=${requestId})`));
+      }, timeoutMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+
+      const pending: PendingNetTraceRequest = {
+        resolve,
+        reject: reject as (err: Error) => void,
+        timeout: timer as unknown as number,
+      };
+      this.pendingNetTraceRequests.set(requestId, pending);
+
+      try {
+        net.postMessage({ kind: "net.trace.export_pcapng", requestId } satisfies NetTraceExportPcapngMessage);
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceRequests.delete(requestId);
