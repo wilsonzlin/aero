@@ -26,7 +26,10 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
+use crate::binding_model::{
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
@@ -43,8 +46,8 @@ const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
 // WGSL/WebGPU binding number (samplers live at an offset), so the executor must accept and track
 // slots up to 127 even if only a smaller subset is used by a given shader.
-const DEFAULT_MAX_TEXTURE_SLOTS: usize = 128;
-const DEFAULT_MAX_SAMPLER_SLOTS: usize = 16;
+const DEFAULT_MAX_TEXTURE_SLOTS: usize = MAX_TEXTURE_SLOTS as usize;
+const DEFAULT_MAX_SAMPLER_SLOTS: usize = MAX_SAMPLER_SLOTS as usize;
 // D3D10/11 exposes 14 constant buffer slots (0..13) per shader stage.
 const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 14;
 const LEGACY_CONSTANTS_SIZE_BYTES: u64 = 4096 * 16;
@@ -5712,9 +5715,11 @@ fn build_pipeline_bindings_info(
             if let Some(existing) = group_map.get_mut(&binding.binding) {
                 if existing.kind != binding.kind {
                     bail!(
-                        "binding @group({}) @binding({}) kind mismatch across shaders",
+                        "binding @group({}) @binding({}) kind mismatch across shaders ({:?} vs {:?})",
                         binding.group,
-                        binding.binding
+                        binding.binding,
+                        existing.kind,
+                        binding.kind,
                     );
                 }
                 existing.visibility |= binding.visibility;
@@ -5770,6 +5775,12 @@ fn build_pipeline_bindings_info(
 fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLayoutEntry> {
     let ty = match &binding.kind {
         crate::BindingKind::ConstantBuffer { slot, reg_count } => {
+            if *slot >= MAX_CBUFFER_SLOTS {
+                bail!(
+                    "cbuffer slot {slot} is out of range for binding model (max {})",
+                    MAX_CBUFFER_SLOTS - 1
+                );
+            }
             let expected = BINDING_BASE_CBUFFER + slot;
             if binding.binding != expected {
                 bail!(
@@ -5784,6 +5795,12 @@ fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLa
             }
         }
         crate::BindingKind::Texture2D { slot } => {
+            if *slot >= MAX_TEXTURE_SLOTS {
+                bail!(
+                    "texture slot {slot} is out of range for binding model (max {})",
+                    MAX_TEXTURE_SLOTS - 1
+                );
+            }
             let expected = BINDING_BASE_TEXTURE + slot;
             if binding.binding != expected {
                 bail!(
@@ -5798,6 +5815,12 @@ fn binding_to_layout_entry(binding: &crate::Binding) -> Result<wgpu::BindGroupLa
             }
         }
         crate::BindingKind::Sampler { slot } => {
+            if *slot >= MAX_SAMPLER_SLOTS {
+                bail!(
+                    "sampler slot {slot} is out of range for binding model (max {})",
+                    MAX_SAMPLER_SLOTS - 1
+                );
+            }
             let expected = BINDING_BASE_SAMPLER + slot;
             if binding.binding != expected {
                 bail!(
