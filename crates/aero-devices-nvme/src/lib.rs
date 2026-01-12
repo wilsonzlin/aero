@@ -20,6 +20,8 @@
 
 use std::collections::HashMap;
 
+use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
+use aero_devices::pci::{profile, PciBarDefinition, PciConfigSpace, PciConfigSpaceState, PciDevice};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -1139,110 +1141,44 @@ fn prp_segments(
     Ok(segs)
 }
 
-/// Minimal PCI config space model for the NVMe controller.
-#[derive(Debug, Clone, Default)]
-pub struct PciConfig {
-    bar0: u64,
-    bar0_probe: bool,
-    command: u16,
-    status: u16,
-    interrupt_line: u8,
-}
-
-impl PciConfig {
-    pub const VENDOR_ID: u16 = 0x1b36;
-    pub const DEVICE_ID: u16 = 0x0010;
-
-    pub fn bar0_base(&self) -> u64 {
-        self.bar0
-    }
-
-    pub fn read_u32(&mut self, offset: u16, bar0_size: u64) -> u32 {
-        match offset {
-            0x00 => (Self::DEVICE_ID as u32) << 16 | (Self::VENDOR_ID as u32),
-            0x04 => (self.status as u32) << 16 | (self.command as u32),
-            0x08 => (0x01u32 << 24) | (0x08u32 << 16) | (0x02u32 << 8), // NVMe class code
-            0x0c => 0,                                                  // header type 0x00
-            0x10 => {
-                if self.bar0_probe {
-                    let size = bar0_size.max(0x10);
-                    let mask_low = (!(size.saturating_sub(1)) as u32) & 0xffff_fff0;
-                    // bits 2:1 = 0b10 indicate a 64-bit MMIO BAR.
-                    mask_low | 0x4
-                } else {
-                    (self.bar0 as u32 & 0xffff_fff0) | 0x4
-                }
-            }
-            0x14 => {
-                if self.bar0_probe {
-                    let size = bar0_size.max(0x10);
-                    (!(size.saturating_sub(1)) >> 32) as u32
-                } else {
-                    (self.bar0 >> 32) as u32
-                }
-            }
-            0x3c => (1u32 << 8) | (self.interrupt_line as u32), // INTA#
-            _ => 0,
-        }
-    }
-
-    pub fn write_u32(&mut self, offset: u16, value: u32) {
-        match offset {
-            0x04 => {
-                self.command = value as u16;
-                self.status = (value >> 16) as u16;
-            }
-            0x10 => {
-                if value == 0xffff_ffff {
-                    self.bar0_probe = true;
-                } else {
-                    self.bar0_probe = false;
-                    let low = u64::from(value & 0xffff_fff0);
-                    self.bar0 = (self.bar0 & 0xffff_ffff_0000_0000) | low;
-                }
-            }
-            0x14 => {
-                if value == 0xffff_ffff {
-                    self.bar0_probe = true;
-                } else {
-                    self.bar0_probe = false;
-                    let high = (value as u64) << 32;
-                    self.bar0 = (self.bar0 & 0x0000_0000_ffff_ffff) | high;
-                }
-            }
-            0x3c => {
-                self.interrupt_line = (value & 0xff) as u8;
-            }
-            _ => {}
-        }
-    }
-}
-
 /// NVMe PCI device model (PCI config space + BAR0 MMIO registers).
 pub struct NvmePciDevice {
-    pub pci: PciConfig,
+    config: PciConfigSpace,
     pub controller: NvmeController,
 }
 
 impl NvmePciDevice {
     pub fn new(disk: Box<dyn DiskBackend>) -> Self {
+        let controller = NvmeController::new(disk);
+        let mut config = profile::NVME_CONTROLLER.build_config_space();
+        config.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: controller.bar0_len(),
+                prefetchable: false,
+            },
+        );
         Self {
-            pci: PciConfig::default(),
-            controller: NvmeController::new(disk),
+            config,
+            controller,
         }
     }
 
     pub fn irq_level(&self) -> bool {
+        // PCI command bit 10 disables legacy INTx assertion.
+        let intx_disabled = (self.config.command() & (1 << 10)) != 0;
+        if intx_disabled {
+            return false;
+        }
         self.controller.intx_level
     }
 
     pub fn pci_read_u32(&mut self, offset: u16) -> u32 {
-        let bar0_size = self.controller.bar0_len();
-        self.pci.read_u32(offset, bar0_size)
+        self.config.read(offset, 4)
     }
 
     pub fn pci_write_u32(&mut self, offset: u16, value: u32) {
-        self.pci.write_u32(offset, value);
+        self.config.write(offset, 4, value);
     }
 
     pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
@@ -1254,9 +1190,19 @@ impl NvmePciDevice {
     }
 }
 
+impl PciDevice for NvmePciDevice {
+    fn config(&self) -> &PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut PciConfigSpace {
+        &mut self.config
+    }
+}
+
 impl IoSnapshot for NvmePciDevice {
     const DEVICE_ID: [u8; 4] = *b"NVMP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_PCI: u16 = 1;
@@ -1264,14 +1210,12 @@ impl IoSnapshot for NvmePciDevice {
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
-        let pci = Encoder::new()
-            .u64(self.pci.bar0)
-            .bool(self.pci.bar0_probe)
-            .u16(self.pci.command)
-            .u16(self.pci.status)
-            .u8(self.pci.interrupt_line)
-            .finish();
-        w.field_bytes(TAG_PCI, pci);
+        let pci = self.config.snapshot_state();
+        let mut pci_enc = Encoder::new().bytes(&pci.bytes);
+        for i in 0..6 {
+            pci_enc = pci_enc.u64(pci.bar_base[i]).bool(pci.bar_probe[i]);
+        }
+        w.field_bytes(TAG_PCI, pci_enc.finish());
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
 
         w.finish()
@@ -1285,15 +1229,45 @@ impl IoSnapshot for NvmePciDevice {
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
         if let Some(buf) = r.bytes(TAG_PCI) {
-            let mut d = Decoder::new(buf);
-            self.pci.bar0 = d.u64()?;
-            self.pci.bar0_probe = d.bool()?;
-            self.pci.command = d.u16()?;
-            self.pci.status = d.u16()?;
-            self.pci.interrupt_line = d.u8()?;
-            d.finish()?;
-        } else {
-            self.pci = PciConfig::default();
+            match r.header().device_version.minor {
+                0 => {
+                    // Backward-compat: NVMP 1.0 stored a bespoke PCI config model.
+                    let mut d = Decoder::new(buf);
+                    let bar0 = d.u64()?;
+                    let bar0_probe = d.bool()?;
+                    let command = d.u16()?;
+                    let status = d.u16()?;
+                    let interrupt_line = d.u8()?;
+                    d.finish()?;
+
+                    let mut state = self.config.snapshot_state();
+                    state.bytes[0x04..0x06].copy_from_slice(&command.to_le_bytes());
+                    state.bytes[0x06..0x08].copy_from_slice(&status.to_le_bytes());
+                    state.bytes[PciConfigSpace::INTERRUPT_LINE_OFFSET as usize] = interrupt_line;
+                    state.bar_base[0] = bar0;
+                    state.bar_probe[0] = bar0_probe;
+                    self.config.restore_state(&state);
+                }
+                _ => {
+                    let mut d = Decoder::new(buf);
+                    let mut config_bytes = [0u8; PCI_CONFIG_SPACE_SIZE];
+                    config_bytes.copy_from_slice(d.bytes(PCI_CONFIG_SPACE_SIZE)?);
+
+                    let mut bar_base = [0u64; 6];
+                    let mut bar_probe = [false; 6];
+                    for i in 0..6 {
+                        bar_base[i] = d.u64()?;
+                        bar_probe[i] = d.bool()?;
+                    }
+                    d.finish()?;
+
+                    self.config.restore_state(&PciConfigSpaceState {
+                        bytes: config_bytes,
+                        bar_base,
+                        bar_probe,
+                    });
+                }
+            }
         }
 
         if let Some(buf) = r.bytes(TAG_CONTROLLER) {
@@ -1460,7 +1434,8 @@ mod tests {
 
         assert_eq!(
             dev.pci_read_u32(0x00),
-            (PciConfig::DEVICE_ID as u32) << 16 | (PciConfig::VENDOR_ID as u32)
+            (profile::PCI_DEVICE_ID_QEMU_NVME as u32) << 16
+                | (profile::PCI_VENDOR_ID_REDHAT_QEMU as u32)
         );
         assert_eq!(dev.pci_read_u32(0x08), 0x01_08_02_00);
     }

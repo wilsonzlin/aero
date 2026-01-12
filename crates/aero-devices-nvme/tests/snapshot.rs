@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices_nvme::{AeroStorageDiskAdapter, NvmeController};
+use aero_devices::pci::PciDevice;
+use aero_devices_nvme::{AeroStorageDiskAdapter, NvmePciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus;
@@ -120,8 +121,19 @@ fn read_cqe(mem: &mut TestMem, addr: u64) -> CqEntry {
 #[test]
 fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let disk = SharedDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    // Program some PCI config-space state so the snapshot exercises `PciConfigSpaceState`.
+    dev.config_mut().write(0x04, 2, 0x0006); // memory + bus master
+    dev.config_mut().write(0x10, 4, 0xfebf_0000);
+    dev.config_mut().write(0x14, 4, 0);
+    // Leave BAR0 in probe mode so the snapshot must preserve the BAR probe flag too.
+    dev.config_mut().write(0x10, 4, 0xffff_ffff);
+    dev.config_mut().write(0x3c, 1, 0x55); // interrupt line
+    let pci_state_before = dev.config().snapshot_state();
 
     let asq = 0x10000;
     let acq = 0x20000;
@@ -130,10 +142,10 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let write_buf = 0x60000;
     let read_buf = 0x61000;
 
-    ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-    ctrl.mmio_write(0x0028, 8, asq, &mut mem);
-    ctrl.mmio_write(0x0030, 8, acq, &mut mem);
-    ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+    dev.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
+    dev.mmio_write(0x0028, 8, asq, &mut mem);
+    dev.mmio_write(0x0030, 8, acq, &mut mem);
+    dev.mmio_write(0x0014, 4, 1, &mut mem);
 
     // Create IO CQ (qid=1, size=16, PC+IEN).
     let mut cmd = build_command(0x05);
@@ -142,7 +154,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
     mem.write_physical(asq, &cmd);
-    ctrl.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
+    dev.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
 
     // Create IO SQ (qid=1, size=16, CQID=1).
     let mut cmd = build_command(0x01);
@@ -151,10 +163,10 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
     mem.write_physical(asq + 64, &cmd);
-    ctrl.mmio_write(0x1000, 4, 2, &mut mem); // SQ0 tail = 2
+    dev.mmio_write(0x1000, 4, 2, &mut mem); // SQ0 tail = 2
 
     // Consume admin CQ completions so INTx level reflects IO CQ only.
-    ctrl.mmio_write(0x1004, 4, 2, &mut mem);
+    dev.mmio_write(0x1004, 4, 2, &mut mem);
 
     // WRITE 1 sector at LBA 0 (completion left pending in the IO CQ).
     let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
@@ -168,20 +180,27 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
     mem.write_physical(io_sq, &cmd);
-    ctrl.mmio_write(0x1008, 4, 1, &mut mem); // SQ1 tail = 1
+    dev.mmio_write(0x1008, 4, 1, &mut mem); // SQ1 tail = 1
 
-    assert!(ctrl.intx_level);
+    assert!(dev.irq_level());
 
-    let snap = ctrl.save_state();
+    let snap = dev.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored =
-        NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
+    assert_eq!(
+        restored.config().snapshot_state(),
+        pci_state_before,
+        "PCI config-space state should survive NVMe device snapshot/restore"
+    );
+
     // Pending completion should keep INTx asserted.
-    assert!(restored.intx_level);
+    assert!(restored.irq_level());
 
     let cqe = read_cqe(&mut mem2, io_cq);
     assert_eq!(cqe.cid, 0x10);
@@ -190,7 +209,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
 
     // Consume completion and ensure INTx deasserts.
     restored.mmio_write(0x100c, 4, 1, &mut mem2); // CQ1 head = 1
-    assert!(!restored.intx_level);
+    assert!(!restored.irq_level());
 
     // READ it back after restore.
     let mut cmd = build_command(0x02);
@@ -216,7 +235,9 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
 #[test]
 fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let disk = SharedDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -224,10 +245,10 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let io_cq = 0x40000;
     let io_sq = 0x50000;
 
-    ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
-    ctrl.mmio_write(0x0028, 8, asq, &mut mem);
-    ctrl.mmio_write(0x0030, 8, acq, &mut mem);
-    ctrl.mmio_write(0x0014, 4, 1, &mut mem);
+    dev.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
+    dev.mmio_write(0x0028, 8, asq, &mut mem);
+    dev.mmio_write(0x0030, 8, acq, &mut mem);
+    dev.mmio_write(0x0014, 4, 1, &mut mem);
 
     // Create IO CQ (qid=1, size=2, PC+IEN).
     let mut cmd = build_command(0x05);
@@ -236,7 +257,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cdw10(&mut cmd, (1u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
     mem.write_physical(asq, &cmd);
-    ctrl.mmio_write(0x1000, 4, 1, &mut mem);
+    dev.mmio_write(0x1000, 4, 1, &mut mem);
 
     // Create IO SQ (qid=1, size=2, CQID=1).
     let mut cmd = build_command(0x01);
@@ -245,10 +266,10 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cdw10(&mut cmd, (1u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
     mem.write_physical(asq + 64, &cmd);
-    ctrl.mmio_write(0x1000, 4, 2, &mut mem);
+    dev.mmio_write(0x1000, 4, 2, &mut mem);
 
     // Consume admin CQ completions (2 entries).
-    ctrl.mmio_write(0x1004, 4, 2, &mut mem);
+    dev.mmio_write(0x1004, 4, 2, &mut mem);
 
     let sq_tail_db = 0x1008;
     let cq_head_db = 0x100c;
@@ -258,30 +279,31 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_cid(&mut cmd, 0x10);
     set_nsid(&mut cmd, 1);
     mem.write_physical(io_sq, &cmd);
-    ctrl.mmio_write(sq_tail_db, 4, 1, &mut mem);
-    assert!(ctrl.intx_level);
+    dev.mmio_write(sq_tail_db, 4, 1, &mut mem);
+    assert!(dev.irq_level());
 
-    ctrl.mmio_write(cq_head_db, 4, 1, &mut mem);
-    assert!(!ctrl.intx_level);
+    dev.mmio_write(cq_head_db, 4, 1, &mut mem);
+    assert!(!dev.irq_level());
 
     // 2) FLUSH at SQ slot 1, CQ slot 1, phase=1 (tail wraps and toggles phase for the *next* CQE).
     let mut cmd = build_command(0x00);
     set_cid(&mut cmd, 0x11);
     set_nsid(&mut cmd, 1);
     mem.write_physical(io_sq + 64, &cmd);
-    ctrl.mmio_write(sq_tail_db, 4, 0, &mut mem);
-    assert!(ctrl.intx_level);
+    dev.mmio_write(sq_tail_db, 4, 0, &mut mem);
+    assert!(dev.irq_level());
 
     // Snapshot while CQ tail has wrapped (phase has toggled) but CQE#2 is still pending.
-    let snap = ctrl.save_state();
+    let snap = dev.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored =
-        NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
-    assert!(restored.intx_level);
+    assert!(restored.irq_level());
 
     let cqe = read_cqe(&mut mem2, io_cq + 16);
     assert_eq!(cqe.cid, 0x11);
@@ -290,7 +312,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
 
     // Consume CQE#2 (head wraps to 0).
     restored.mmio_write(cq_head_db, 4, 0, &mut mem2);
-    assert!(!restored.intx_level);
+    assert!(!restored.irq_level());
 
     // 3) Next FLUSH should reuse CQ slot 0 with phase=0 (because the tail wrapped after CQE#2).
     let mut cmd = build_command(0x00);
