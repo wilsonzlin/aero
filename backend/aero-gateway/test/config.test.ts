@@ -104,3 +104,11 @@ test('loadConfig: UDP relay jwt auth requires UDP_RELAY_JWT_SECRET when configur
 test('loadConfig: UDP relay base URL is validated when set', () => {
   assert.throws(() => loadConfig({ UDP_RELAY_BASE_URL: 'not-a-url' }), /Invalid UDP_RELAY_BASE_URL/i);
 });
+
+test('loadConfig accepts ws(s) UDP_RELAY_BASE_URL schemes', () => {
+  assert.equal(loadConfig({ UDP_RELAY_BASE_URL: 'ws://relay.example.com' }).UDP_RELAY_BASE_URL, 'ws://relay.example.com');
+  assert.equal(
+    loadConfig({ UDP_RELAY_BASE_URL: 'wss://relay.example.com' }).UDP_RELAY_BASE_URL,
+    'wss://relay.example.com',
+  );
+});
