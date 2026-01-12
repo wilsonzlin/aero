@@ -80,7 +80,12 @@ function sliceCodeWindow(entryRip: number, maxBytes: number): Uint8Array {
 }
 
 function toOwnedArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-  // Always copy into an ArrayBuffer-backed view so:
+  // Ensure the payload is backed by a detached-transferable ArrayBuffer (not SharedArrayBuffer),
+  // and ideally owns exactly the byte range being transferred.
+  if (bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes as Uint8Array<ArrayBuffer>;
+  }
+  // Fallback: copy into a fresh ArrayBuffer so:
   // - WebAssembly.validate/compile accept it under `ES2024.SharedMemory` libs
   // - We never accidentally transfer/detach a large wasm memory buffer
   // - It is safe to transfer the exact wasm bytes payload.
