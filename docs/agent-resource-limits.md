@@ -113,7 +113,7 @@ These don't enforce hard limits but reduce memory spikes:
 ```bash
 export CARGO_BUILD_JOBS=1       # Limit parallel rustc (agent default; raise if your sandbox allows)
 export RUSTC_WORKER_THREADS=1   # Limit rustc's internal worker pool (avoid "WouldBlock" rustc ICEs)
-export RUSTFLAGS="-C codegen-units=4"  # Reduce per-crate parallelism
+export RUSTFLAGS="-C codegen-units=1"  # Minimize per-crate parallelism (improves reliability under thread/process limits)
 ```
 
 `bash ./scripts/safe-run.sh` also includes a small backoff + retry loop for Cargo commands when it
@@ -142,7 +142,7 @@ Recommended memory-friendly Cargo settings live in environment variables (next s
 export CARGO_BUILD_JOBS=1
 export RUSTC_WORKER_THREADS=1   # Limit rustc internal worker threads (reliability under contention)
 export RAYON_NUM_THREADS=1      # Keep rayon pools aligned with Cargo parallelism
-export RUSTFLAGS="-C codegen-units=4"
+export RUSTFLAGS="-C codegen-units=1"
 export CARGO_INCREMENTAL=1
 
 # Node (if running JS/TS tooling)
@@ -307,7 +307,7 @@ Common memory-hungry operations:
 | `wasm-pack build`       | 4-8 GB       | Usually fine                        |
 | Playwright + Chrome     | 2-4 GB       | `PW_TEST_WORKERS=1`                 |
 | `cargo doc`             | 4-8 GB       | Run alone if needed                 |
-| Linking large binaries  | 4-8 GB       | `-C codegen-units=4` helps          |
+| Linking large binaries  | 4-8 GB       | lower codegen parallelism (`-C codegen-units=1`) helps |
 
 
 If you're doing something unusual (like building with `-j16`), wrap it in a memory limit.

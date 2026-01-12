@@ -163,8 +163,9 @@ test("agent-env: sets rustc codegen-units based on CARGO_BUILD_JOBS", { skip: pr
     const env = { ...process.env };
     delete env.RUSTFLAGS;
     delete env.CARGO_BUILD_JOBS;
-    delete env.AERO_CARGO_BUILD_JOBS;
+    env.AERO_CARGO_BUILD_JOBS = "2";
     delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.AERO_CODEGEN_UNITS;
 
     const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
       cwd: repoRoot,
@@ -173,7 +174,7 @@ test("agent-env: sets rustc codegen-units based on CARGO_BUILD_JOBS", { skip: pr
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    assert.match(stdout, /-C codegen-units=1/);
+    assert.match(stdout, /-C codegen-units=2\b/);
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -187,6 +188,7 @@ test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: proce
     delete env.CARGO_BUILD_JOBS;
     delete env.AERO_CARGO_BUILD_JOBS;
     env.AERO_RUST_CODEGEN_UNITS = "2";
+    delete env.AERO_CODEGEN_UNITS;
 
     const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
       cwd: repoRoot,
@@ -195,7 +197,26 @@ test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: proce
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    assert.match(stdout, /-C codegen-units=2/);
+    assert.match(stdout, /-C codegen-units=2\b/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: preserves an explicit codegen-units setting in RUSTFLAGS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env, RUSTFLAGS: "-C codegen-units=2" };
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.ok(stdout.includes("codegen-units=2"), `expected RUSTFLAGS to keep codegen-units=2, got: ${stdout}`);
+    assert.ok(!stdout.includes("codegen-units=1"), `expected RUSTFLAGS not to add codegen-units=1, got: ${stdout}`);
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
