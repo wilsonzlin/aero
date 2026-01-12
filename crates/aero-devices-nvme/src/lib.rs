@@ -1540,7 +1540,10 @@ impl IoSnapshot for NvmePciDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_storage::{MemBackend, RawDisk, VirtualDisk as StorageVirtualDisk, SECTOR_SIZE};
+    use aero_storage::{
+        AeroSparseConfig, AeroSparseDisk, MemBackend, RawDisk, VirtualDisk as StorageVirtualDisk,
+        SECTOR_SIZE,
+    };
     use std::sync::{Arc, Mutex};
 
     struct TestMem {
@@ -1602,6 +1605,65 @@ mod tests {
     }
 
     impl StorageVirtualDisk for TestDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.lock().capacity_bytes()
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            self.lock().read_at(offset, buf)
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+            self.lock().write_at(offset, buf)
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            *self
+                .flushed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+            self.lock().flush()
+        }
+    }
+
+    #[derive(Clone)]
+    struct TestSparseDisk {
+        inner: Arc<Mutex<AeroSparseDisk<MemBackend>>>,
+        flushed: Arc<Mutex<u32>>,
+    }
+
+    impl TestSparseDisk {
+        fn new(sectors: u64) -> Self {
+            let capacity_bytes = sectors * SECTOR_SIZE as u64;
+            let disk = AeroSparseDisk::create(
+                MemBackend::new(),
+                AeroSparseConfig {
+                    disk_size_bytes: capacity_bytes,
+                    block_size_bytes: 1024 * 1024,
+                },
+            )
+            .unwrap();
+            Self {
+                inner: Arc::new(Mutex::new(disk)),
+                flushed: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn lock(&self) -> std::sync::MutexGuard<'_, AeroSparseDisk<MemBackend>> {
+            self.inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+
+        fn flush_count(&self) -> u32 {
+            *self
+                .flushed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+    }
+
+    impl StorageVirtualDisk for TestSparseDisk {
         fn capacity_bytes(&self) -> u64 {
             self.lock().capacity_bytes()
         }
@@ -1882,6 +1944,91 @@ mod tests {
         let cqe = read_cqe(&mut mem, io_cq + 16);
         assert_eq!(cqe.cid, 0x11);
         assert_eq!(cqe.status & !0x1, 0);
+
+        let mut out = vec![0u8; sector_size];
+        mem.read_physical(read_buf, &mut out);
+        assert_eq!(out, payload);
+
+        // FLUSH.
+        let mut cmd = build_command(0x00);
+        set_cid(&mut cmd, 0x12);
+        set_nsid(&mut cmd, 1);
+        mem.write_physical(io_sq + 2 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 3);
+        ctrl.process(&mut mem);
+        assert_eq!(disk_state.flush_count(), 1);
+
+        // Sanity: disk image contains the written sector.
+        let mut disk = disk_state.clone();
+        let mut data = vec![0u8; sector_size];
+        disk.read_at(0, &mut data).unwrap();
+        assert_eq!(data, payload.as_slice());
+    }
+
+    #[test]
+    fn create_io_queues_and_rw_roundtrip_sparse_disk() {
+        let disk = TestSparseDisk::new(1024);
+        let disk_state = disk.clone();
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut mem = TestMem::new(2 * 1024 * 1024);
+        let sector_size = 512usize;
+
+        let asq = 0x10000;
+        let acq = 0x20000;
+        let io_cq = 0x40000;
+        let io_sq = 0x50000;
+        let write_buf = 0x60000;
+        let read_buf = 0x61000;
+
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
+
+        // Create IO CQ (qid=1, size=16, PC+IEN).
+        let mut cmd = build_command(0x05);
+        set_cid(&mut cmd, 1);
+        set_prp1(&mut cmd, io_cq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 0x3);
+        mem.write_physical(asq, &cmd);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
+
+        // Create IO SQ (qid=1, size=16, CQID=1).
+        let mut cmd = build_command(0x01);
+        set_cid(&mut cmd, 2);
+        set_prp1(&mut cmd, io_sq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 1);
+        mem.write_physical(asq + 64, &cmd);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
+
+        // WRITE 1 sector at LBA 0.
+        let payload: Vec<u8> = (0..sector_size as u32).map(|v| (v & 0xff) as u8).collect();
+        mem.write_physical(write_buf, &payload);
+
+        let mut cmd = build_command(0x01);
+        set_cid(&mut cmd, 0x10);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, write_buf);
+        set_cdw10(&mut cmd, 0); // slba low
+        set_cdw11(&mut cmd, 0); // slba high
+        set_cdw12(&mut cmd, 0); // nlb = 0
+        mem.write_physical(io_sq, &cmd);
+        ctrl.mmio_write(0x1008, 4, 1); // SQ1 tail = 1
+        ctrl.process(&mut mem);
+
+        // READ it back.
+        let mut cmd = build_command(0x02);
+        set_cid(&mut cmd, 0x11);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, read_buf);
+        set_cdw12(&mut cmd, 0);
+        mem.write_physical(io_sq + 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 2); // SQ1 tail = 2
+        ctrl.process(&mut mem);
 
         let mut out = vec![0u8; sector_size];
         mem.read_physical(read_buf, &mut out);
