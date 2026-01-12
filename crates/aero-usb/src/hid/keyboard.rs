@@ -793,10 +793,10 @@ pub(super) static HID_REPORT_DESCRIPTOR: [u8; 63] = [
     0x95, 0x06, // Report Count (6)
     0x75, 0x08, // Report Size (8)
     0x15, 0x00, // Logical Minimum (0)
-    0x25, 0x65, // Logical Maximum (101)
+    0x25, 0x89, // Logical Maximum (137)
     0x05, 0x07, // Usage Page (Keyboard/Keypad)
     0x19, 0x00, // Usage Minimum (0)
-    0x29, 0x65, // Usage Maximum (101)
+    0x29, 0x89, // Usage Maximum (137)
     0x81, 0x00, // Input (Data,Array,Abs) Key arrays (6 bytes)
     0xc0, // End Collection
 ];
@@ -887,6 +887,26 @@ mod tests {
         let ep = &cfg[27..34];
         assert_eq!(ep[1], USB_DESCRIPTOR_TYPE_ENDPOINT);
         assert_eq!(ep[2], INTERRUPT_IN_EP);
+    }
+
+    #[test]
+    fn report_descriptor_allows_hid_usages_up_to_intl_yen() {
+        // The shared keyboard fixture includes IntlYen (0x89) and IntlRo (0x87). Ensure the
+        // key-array item in our keyboard report descriptor allows usages up to 0x89, otherwise
+        // those keys can be dropped by HID parsers as out-of-range values.
+        const EXPECTED: [u8; 8] = [0x15, 0x00, 0x25, 0x89, 0x05, 0x07, 0x19, 0x00];
+        assert!(
+            HID_REPORT_DESCRIPTOR
+                .windows(EXPECTED.len())
+                .any(|w| w == EXPECTED),
+            "HID report descriptor should contain the key-array range item with LogicalMax=0x89"
+        );
+        assert!(
+            HID_REPORT_DESCRIPTOR
+                .windows(4)
+                .any(|w| w == [0x19, 0x00, 0x29, 0x89]),
+            "HID report descriptor should contain the key-array UsageMax=0x89"
+        );
     }
 
     #[test]
