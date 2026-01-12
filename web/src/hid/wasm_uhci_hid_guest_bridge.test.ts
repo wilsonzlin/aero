@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import { WasmUhciHidGuestBridge, type UhciRuntimeHidApi } from "./wasm_uhci_hid_guest_bridge";
 import type { HidAttachMessage } from "./hid_proxy_protocol";
+import {
+  EXTERNAL_HUB_ROOT_PORT,
+  UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
+  remapLegacyRootPortToExternalHubPort,
+} from "../usb/uhci_external_hub";
 
 describe("hid/WasmUhciHidGuestBridge", () => {
   it("uses webhid_attach_at_path when guestPath includes a downstream hub port", () => {
@@ -28,13 +32,14 @@ describe("hid/WasmUhciHidGuestBridge", () => {
 
     const guest = new WasmUhciHidGuestBridge({ uhci, host });
 
+    const guestPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT] as const;
     const attach: HidAttachMessage = {
       type: "hid.attach",
       deviceId: 1,
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Demo",
-      guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
+      guestPath: [...guestPath],
       collections: [{ some: "collection" }] as any,
       hasInterruptOut: false,
     };
@@ -46,7 +51,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       attach.productId,
       attach.productName,
       attach.collections,
-      attach.guestPath,
+      [...guestPath],
     );
     expect(webhid_attach).not.toHaveBeenCalled();
   });
@@ -86,13 +91,14 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     };
     guest.attach(attach);
 
+    const expectedPath = [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(1)] as const;
     expect(webhid_attach_at_path).toHaveBeenCalledWith(
       attach.deviceId,
       attach.vendorId,
       attach.productId,
       attach.productName,
       attach.collections,
-      [0, 5],
+      [...expectedPath],
     );
     expect(webhid_attach).not.toHaveBeenCalled();
   });
@@ -132,13 +138,14 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     };
     guest.attach(attach);
 
+    const expectedPath = [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(1)] as const;
     expect(webhid_attach_at_path).toHaveBeenCalledWith(
       attach.deviceId,
       attach.vendorId,
       attach.productId,
       attach.productName,
       attach.collections,
-      [0, 5],
+      [...expectedPath],
     );
     expect(webhid_attach).not.toHaveBeenCalled();
   });
