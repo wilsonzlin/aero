@@ -1747,6 +1747,7 @@ dependencies = [
  "font8x8",
  "hyper 0.14.32",
  "image",
+ "lru",
  "memory",
  "pollster",
  "proptest",

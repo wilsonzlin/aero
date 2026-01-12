@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
+
+use lru::LruCache;
 
 use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
@@ -15,6 +17,9 @@ const SECTOR_SIZE: u32 = 512;
 // Hard caps to avoid absurd allocations from untrusted images.
 const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
+
+// Bound bitmap caching when reading large fully-allocated dynamic VHDs.
+const VHD_BITMAP_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
 #[derive(Debug, Clone)]
 struct VhdFooter {
@@ -140,7 +145,7 @@ pub struct VhdDisk<S> {
     footer: VhdFooter,
     dynamic: Option<VhdDynamicHeader>,
     bat: Vec<u32>,
-    bitmap_cache: HashMap<u64, Vec<u8>>,
+    bitmap_cache: LruCache<u64, Vec<u8>>,
     fixed_data_offset: u64,
 }
 
@@ -190,7 +195,7 @@ impl<S: ByteStorage> VhdDisk<S> {
                     footer,
                     dynamic: None,
                     bat: Vec::new(),
-                    bitmap_cache: HashMap::new(),
+                    bitmap_cache: LruCache::new(NonZeroUsize::MIN),
                     fixed_data_offset,
                 })
             }
@@ -309,12 +314,26 @@ impl<S: ByteStorage> VhdDisk<S> {
                     remaining -= read_len;
                 }
 
+                // Size bitmap caching based on the bitmap size for this image.
+                let sectors_per_block = (dynamic.block_size as u64) / SECTOR_SIZE as u64;
+                let bitmap_bytes = sectors_per_block.div_ceil(8);
+                let bitmap_size = align_up(bitmap_bytes, SECTOR_SIZE as u64)?;
+                if bitmap_size > MAX_BITMAP_BYTES {
+                    return Err(DiskError::Unsupported("vhd bitmap too large"));
+                }
+                let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
+                let cap_entries = cap_entries
+                    .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
+                    .max(1);
+                let cap = NonZeroUsize::new(cap_entries)
+                    .ok_or(DiskError::Unsupported("vhd bitmap cache size is zero"))?;
+
                 Ok(Self {
                     storage,
                     footer,
                     dynamic: Some(dynamic),
                     bat,
-                    bitmap_cache: HashMap::new(),
+                    bitmap_cache: LruCache::new(cap),
                     fixed_data_offset: 0,
                 })
             }
@@ -450,13 +469,13 @@ impl<S: ByteStorage> VhdDisk<S> {
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         let mut bitmap = vec![0u8; bytes];
         self.storage.read_at(block_start, &mut bitmap)?;
-        self.bitmap_cache.insert(block_start, bitmap.clone());
+        let _ = self.bitmap_cache.push(block_start, bitmap.clone());
         Ok(bitmap)
     }
 
     fn store_bitmap(&mut self, block_start: u64, bitmap: Vec<u8>) -> DiskResult<()> {
         self.storage.write_at(block_start, &bitmap)?;
-        self.bitmap_cache.insert(block_start, bitmap);
+        let _ = self.bitmap_cache.push(block_start, bitmap);
         Ok(())
     }
 
@@ -515,8 +534,9 @@ impl<S: ByteStorage> VhdDisk<S> {
         self.storage.write_at(new_footer_offset, &footer.raw)?;
         self.storage.flush()?;
 
-        self.bitmap_cache
-            .insert(old_footer_offset, vec![0u8; bitmap_size_usize]);
+        let _ = self
+            .bitmap_cache
+            .push(old_footer_offset, vec![0u8; bitmap_size_usize]);
         Ok(old_footer_offset)
     }
 }
