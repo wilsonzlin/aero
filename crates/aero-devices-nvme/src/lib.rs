@@ -1197,6 +1197,23 @@ impl IoSnapshot for NvmeController {
         }
 
         self.pending_sq_tail.clear();
+        if self.csts & 1 != 0 {
+            // Doorbell writes are tracked in `pending_sq_tail` so DMA processing can be deferred
+            // out of the MMIO handler. The snapshot state does not include the pending doorbell
+            // map; reconstruct it deterministically from the restored queue head/tail pointers so
+            // a restore taken between a doorbell write and the next `process()` call can still make
+            // forward progress.
+            if let Some(sq) = self.admin_sq.as_ref() {
+                if sq.head != sq.tail {
+                    self.pending_sq_tail.insert(0, sq.tail);
+                }
+            }
+            for (qid, sq) in &self.io_sqs {
+                if sq.head != sq.tail {
+                    self.pending_sq_tail.insert(*qid, sq.tail);
+                }
+            }
+        }
 
         // Recompute derived INTx level so it stays coherent with restored masks + queue state.
         self.refresh_intx_level();

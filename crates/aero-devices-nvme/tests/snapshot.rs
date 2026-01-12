@@ -239,6 +239,68 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
 }
 
 #[test]
+fn snapshot_restore_replays_unprocessed_admin_sq_doorbell() {
+    // NVMe MMIO doorbells defer DMA processing into `NvmeController::process()`. A snapshot can be
+    // taken between a doorbell write and the next processing step; ensure restore can still make
+    // forward progress (i.e. we don't lose the doorbell).
+    let disk = SharedDisk::new(1024);
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let id_buf = 0x30000;
+
+    dev.controller.mmio_write(0x0024, 4, 0x000f_000f);
+    dev.controller.mmio_write(0x0028, 8, asq);
+    dev.controller.mmio_write(0x0030, 8, acq);
+    dev.controller.mmio_write(0x0014, 4, 1);
+
+    // Admin IDENTIFY controller (CNS=1).
+    let mut cmd = build_command(0x06);
+    set_cid(&mut cmd, 0x1234);
+    set_prp1(&mut cmd, id_buf);
+    set_cdw10(&mut cmd, 0x01);
+    mem.write_physical(asq, &cmd);
+
+    // Ring the SQ0 tail doorbell but do not call `process()` yet.
+    dev.controller.mmio_write(0x1000, 4, 1);
+    assert!(
+        !dev.irq_level(),
+        "no completion should be pending before processing the admin SQ"
+    );
+
+    let snap = dev.save_state();
+    let mem_snap = mem.clone();
+
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    restored.load_state(&snap).unwrap();
+
+    let mut mem2 = mem_snap;
+    assert!(
+        !restored.irq_level(),
+        "restored device should not assert INTx until the deferred SQ processing runs"
+    );
+
+    restored.process(&mut mem2);
+    assert!(restored.irq_level(), "processing should post a completion and assert INTx");
+
+    let cqe = read_cqe(&mut mem2, acq);
+    assert_eq!(cqe.cid, 0x1234);
+    assert_eq!(cqe.status & 0x1, 1);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut vid_bytes = [0u8; 2];
+    mem2.read_physical(id_buf, &mut vid_bytes);
+    let vid = u16::from_le_bytes(vid_bytes);
+    assert_eq!(vid, 0x1b36);
+}
+
+#[test]
 fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let disk = SharedDisk::new(1024);
     let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
