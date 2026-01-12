@@ -6,7 +6,7 @@ Windows 7 uses **Intel HD Audio (HDA)** as the primary audio interface. Aero emu
 
 ## Manual Windows 7 smoke test (in-box HDA driver)
 
-Once the HDA controller is wired into the real worker runtime, use the manual checklist at:
+To validate Windows 7 audio using the in-box HDA driver, use the manual checklist at:
 
 - [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md)
 
