@@ -1217,23 +1217,30 @@ impl Machine {
     /// - bit 2: middle
     pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
         let buttons = buttons & 0x07;
-        // `ps2_mouse_buttons` is a host-side cache used to compute transitions. Certain lifecycle
-        // events (e.g. snapshot restore) can make the cached value stale relative to the guest
-        // device state; in that case we "invalidate" the cache by setting any bits outside the
-        // 3-button mask and force a full resync on the next injection call.
-        let force = (self.ps2_mouse_buttons & !0x07) != 0;
-        let changed = (self.ps2_mouse_buttons ^ buttons) & 0x07;
-        if !force && changed == 0 {
+
+        // `ps2_mouse_buttons` is a host-side cache used to compute transitions from an absolute
+        // button mask. Prefer the authoritative guest device state when the i8042 controller is
+        // present: the guest can reset/reconfigure the mouse independently, making the cached value
+        // stale.
+        let prev = if let Some(ctrl) = &self.i8042 {
+            ctrl.borrow().mouse_buttons_mask() & 0x07
+        } else {
+            self.ps2_mouse_buttons & 0x07
+        };
+        let changed = prev ^ buttons;
+        if changed == 0 {
+            // Keep the cache coherent (and clear any invalid marker, e.g. post snapshot restore).
+            self.ps2_mouse_buttons = buttons;
             return;
         }
 
-        if force || (changed & 0x01) != 0 {
+        if (changed & 0x01) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Left, (buttons & 0x01) != 0);
         }
-        if force || (changed & 0x02) != 0 {
+        if (changed & 0x02) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Right, (buttons & 0x02) != 0);
         }
-        if force || (changed & 0x04) != 0 {
+        if (changed & 0x04) != 0 {
             self.inject_mouse_button(Ps2MouseButton::Middle, (buttons & 0x04) != 0);
         }
 
@@ -2341,9 +2348,9 @@ impl snapshot::SnapshotTarget for Machine {
         // and drives snapshot restore directly via `aero_snapshot::restore_snapshot`.
         self.detach_network();
         // `inject_ps2_mouse_buttons` maintains a host-side "previous buttons" cache to synthesize
-        // per-button transitions from an absolute mask. Snapshot restore rewinds guest time, so
-        // force the next injection call to re-sync all 3 buttons (including transitions to the
-        // released state) regardless of the cached value.
+        // per-button transitions from an absolute mask. Snapshot restore rewinds guest time and
+        // restores guest device state; invalidate the cache so the next injection call can re-sync
+        // correctly even if the guest mouse state differs from the cached host value.
         self.ps2_mouse_buttons = 0xFF;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
@@ -3239,6 +3246,55 @@ mod tests {
         assert_ne!(ctrl.borrow_mut().read_port(0x64) & 0x01, 0);
         let released_packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(released_packet, vec![0x08, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn inject_ps2_mouse_buttons_resyncs_after_guest_mouse_reset() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Enable mouse reporting so button injections generate stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        // Set left pressed; cache should now reflect pressed.
+        m.inject_ps2_mouse_buttons(0x01);
+        let pressed_packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(pressed_packet, vec![0x09, 0x00, 0x00]);
+        assert_eq!(m.ps2_mouse_buttons, 0x01);
+
+        // Guest resets the mouse (D4 FF). This clears the device-side button image, but not the
+        // host-side cache.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xFF);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xAA); // self-test pass
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x00); // device id
+
+        // Re-enable reporting after reset (D4 F4).
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        // Re-apply the same absolute button mask. This should not be a no-op: the device state was
+        // reset, so we expect a new packet with left pressed.
+        m.inject_ps2_mouse_buttons(0x01);
+        let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(packet, vec![0x09, 0x00, 0x00]);
     }
 
     #[test]
