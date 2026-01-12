@@ -102,7 +102,8 @@ There are two independent implementations of `KeyboardEvent.code → HID usage`:
 - Rust: `crates/aero-usb/src/hid/usage.rs::keyboard_code_to_usage`
 - TypeScript: `web/src/input/hid_usage.ts::keyboardCodeToHidUsage`
 
-To prevent drift between them, we keep a shared fixture of representative mappings at:
+To prevent drift between them, we keep a shared fixture of supported mappings (including full
+alphanumeric ranges like `KeyA..KeyZ`, `Digit0..Digit9`, and `F1..F12`) at:
 
 - `docs/fixtures/hid_usage_keyboard.json`
 
@@ -117,8 +118,8 @@ When adding support for a new key code:
 2. Update **both** mapping functions.
 3. Run `cargo test -p aero-usb` and `npm -w web run test:unit`.
 
-(The mapping is still not intended to be exhaustive; alphanumeric ranges like `KeyA..KeyZ`,
-`Digit1..Digit0`, and `F1..F12` are handled algorithmically.)
+(The mapping is still not intended to be exhaustive, but the fixture is intentionally thorough so a
+change on either side requires updating the shared list.)
 
 ### Report model (boot keyboard)
 
