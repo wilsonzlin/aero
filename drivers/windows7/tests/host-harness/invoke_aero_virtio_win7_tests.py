@@ -62,6 +62,7 @@ from typing import Optional
 class _QuietHandler(http.server.BaseHTTPRequestHandler):
     expected_path: str = "/aero-virtio-selftest"
     http_log_path: Optional[Path] = None
+    large_body: bytes = bytes(range(256)) * (1024 * 1024 // 256)
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == self.expected_path:
@@ -70,7 +71,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
         elif self.path == self.expected_path + "-large":
             # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
-            body = bytes(range(256)) * (1024 * 1024 // 256)
+            body = self.large_body
             content_type = "application/octet-stream"
             self.send_response(200)
         else:

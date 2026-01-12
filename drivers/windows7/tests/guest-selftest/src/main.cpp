@@ -2368,6 +2368,7 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
   uint64_t hash = kFnvOffsetBasis;
   bool read_ok = true;
   std::vector<uint8_t> buf(64 * 1024);
+  PerfTimer timer;
 
   for (;;) {
     DWORD available = 0;
@@ -2401,8 +2402,11 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
   WinHttpCloseHandle(connect);
   WinHttpCloseHandle(session);
 
-  log.Logf("virtio-net: HTTP GET large done url=%s status=%lu bytes_read=%llu fnv1a64=0x%016llx%s",
-           WideToUtf8(url).c_str(), status, static_cast<unsigned long long>(total_read),
+  const double sec = std::max(0.000001, timer.SecondsSinceStart());
+  const double mbps = (static_cast<double>(total_read) / (1024.0 * 1024.0)) / sec;
+  log.Logf("virtio-net: HTTP GET large done url=%s status=%lu bytes_read=%llu sec=%.2f mbps=%.2f "
+           "fnv1a64=0x%016llx%s",
+           WideToUtf8(url).c_str(), status, static_cast<unsigned long long>(total_read), sec, mbps,
            static_cast<unsigned long long>(hash),
            has_content_len ? "" : " (missing Content-Length)");
 

@@ -117,6 +117,30 @@ function Start-AeroSelftestHttpServer {
   return $listener
 }
 
+$script:AeroSelftestLargePayload = $null
+function Get-AeroSelftestLargePayload {
+  # Lazily construct a deterministic 1 MiB payload (0..255 repeating).
+  #
+  # Avoid doing 1M PowerShell loop iterations for every request; this keeps the
+  # harness responsive while the guest is downloading the body.
+  if ($null -ne $script:AeroSelftestLargePayload) { return $script:AeroSelftestLargePayload }
+
+  $size = 1048576
+  $payload = New-Object byte[] $size
+
+  $pattern = New-Object byte[] 256
+  for ($i = 0; $i -lt 256; $i++) {
+    $pattern[$i] = [byte]$i
+  }
+
+  for ($offset = 0; $offset -lt $size; $offset += 256) {
+    [System.Buffer]::BlockCopy($pattern, 0, $payload, $offset, 256)
+  }
+
+  $script:AeroSelftestLargePayload = $payload
+  return $payload
+}
+
 function Try-HandleAeroHttpRequest {
   param(
     [Parameter(Mandatory = $true)] $Listener,
@@ -152,11 +176,7 @@ function Try-HandleAeroHttpRequest {
     if ($ok -and $large) {
       # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
       $contentType = "application/octet-stream"
-      $size = 1048576
-      $bodyBytes = New-Object byte[] $size
-      for ($i = 0; $i -lt $size; $i++) {
-        $bodyBytes[$i] = [byte]($i % 256)
-      }
+      $bodyBytes = Get-AeroSelftestLargePayload
     } else {
       $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
       $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
