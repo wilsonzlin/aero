@@ -68,6 +68,19 @@ describe("restoreAudioWorkletRing", () => {
     expect(getRingBufferLevelFrames(ring)).toBe(8);
   });
 
+  it("treats snapshot capacityFrames=0 as unknown and still clamps using ring capacity", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    const state: AudioWorkletRingStateLike = { capacityFrames: 0, readPos: 0, writePos: 100 };
+    restoreAudioWorkletRing(ring, state);
+
+    expect(Atomics.load(ring.readIndex, 0)).toBe(92);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(100);
+    expect(getRingBufferLevelFrames(ring)).toBe(8);
+    expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
+  });
+
   it("treats read/write positions as wrapping u32 counters", () => {
     const ring = createTestRingBuffer(1, 8);
     ring.samples.fill(1);
