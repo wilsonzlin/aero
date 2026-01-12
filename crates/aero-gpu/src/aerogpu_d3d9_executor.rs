@@ -133,14 +133,14 @@ struct ContextState {
 }
 
 impl ContextState {
-    fn new(device: &wgpu::Device, downlevel_flags: wgpu::DownlevelFlags) -> Self {
+    fn new(device: &wgpu::Device, default_sampler: Arc<wgpu::Sampler>) -> Self {
         Self {
             constants_buffer: create_constants_buffer(device),
             bind_group: None,
             bind_group_dirty: true,
-            samplers_vs: create_default_samplers(device, downlevel_flags),
+            samplers_vs: std::array::from_fn(|_| default_sampler.clone()),
             sampler_state_vs: std::array::from_fn(|_| D3d9SamplerState::default()),
-            samplers_ps: create_default_samplers(device, downlevel_flags),
+            samplers_ps: std::array::from_fn(|_| default_sampler.clone()),
             sampler_state_ps: std::array::from_fn(|_| D3d9SamplerState::default()),
             state: create_default_state(),
         }
@@ -742,6 +742,7 @@ fn create_default_state() -> State {
         ..Default::default()
     };
     state.render_states = create_default_render_states();
+    state.sampler_states_vs = create_default_sampler_states_ps();
     state.sampler_states_ps = create_default_sampler_states_ps();
     state
 }
@@ -803,16 +804,15 @@ fn build_alpha_test_wgsl_variant(
     Ok(out)
 }
 
-fn create_default_samplers(
+fn create_default_sampler(
     device: &wgpu::Device,
     downlevel_flags: wgpu::DownlevelFlags,
-) -> [Arc<wgpu::Sampler>; MAX_SAMPLERS] {
-    let sampler = Arc::new(create_wgpu_sampler(
+) -> Arc<wgpu::Sampler> {
+    Arc::new(create_wgpu_sampler(
         device,
         downlevel_flags,
         &D3d9SamplerState::default(),
-    ));
-    std::array::from_fn(|_| sampler.clone())
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1068,10 +1068,13 @@ impl AerogpuD3d9Executor {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CLEAR_SCISSOR_WGSL)),
         });
 
-        let samplers_vs = create_default_samplers(&device, downlevel_flags);
-        let samplers_ps = create_default_samplers(&device, downlevel_flags);
+        let default_sampler = create_default_sampler(&device, downlevel_flags);
+        let samplers_vs = std::array::from_fn(|_| default_sampler.clone());
+        let samplers_ps = std::array::from_fn(|_| default_sampler.clone());
         let sampler_state_vs = std::array::from_fn(|_| D3d9SamplerState::default());
         let sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
+        let mut sampler_cache = HashMap::new();
+        sampler_cache.insert(D3d9SamplerState::default(), default_sampler.clone());
 
         Self {
             device,
@@ -1095,7 +1098,7 @@ impl AerogpuD3d9Executor {
             sampler_state_vs,
             samplers_ps,
             sampler_state_ps,
-            sampler_cache: HashMap::new(),
+            sampler_cache,
             pipelines: HashMap::new(),
             alpha_test_pixel_shaders: HashMap::new(),
             clear_shader,
@@ -1137,8 +1140,11 @@ impl AerogpuD3d9Executor {
         self.sampler_state_vs = std::array::from_fn(|_| D3d9SamplerState::default());
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
         self.sampler_cache.clear();
-        self.samplers_vs = create_default_samplers(&self.device, self.downlevel_flags);
-        self.samplers_ps = create_default_samplers(&self.device, self.downlevel_flags);
+        let default_sampler = create_default_sampler(&self.device, self.downlevel_flags);
+        self.sampler_cache
+            .insert(D3d9SamplerState::default(), default_sampler.clone());
+        self.samplers_vs = std::array::from_fn(|_| default_sampler.clone());
+        self.samplers_ps = std::array::from_fn(|_| default_sampler.clone());
         self.state = create_default_state();
         self.encoder = None;
 
@@ -1587,10 +1593,12 @@ impl AerogpuD3d9Executor {
             return;
         }
 
-        let mut next = self
-            .contexts
-            .remove(&context_id)
-            .unwrap_or_else(|| ContextState::new(&self.device, self.downlevel_flags));
+        let mut next = if let Some(ctx) = self.contexts.remove(&context_id) {
+            ctx
+        } else {
+            let default_sampler = self.sampler_for_state(D3d9SamplerState::default());
+            ContextState::new(&self.device, default_sampler)
+        };
 
         std::mem::swap(&mut self.constants_buffer, &mut next.constants_buffer);
         std::mem::swap(&mut self.bind_group, &mut next.bind_group);
@@ -7228,11 +7236,17 @@ impl AerogpuD3d9Executor {
 
         if let Some(state) = new_sampler_state {
             let sampler = self.sampler_for_state(state);
-            if is_vertex {
-                self.samplers_vs[slot] = sampler;
+            let stage_sampler = if is_vertex {
+                &mut self.samplers_vs[slot]
             } else {
-                self.samplers_ps[slot] = sampler;
+                &mut self.samplers_ps[slot]
+            };
+            let changed = !Arc::ptr_eq(stage_sampler, &sampler);
+            if changed {
+                *stage_sampler = sampler;
             }
+            // If the wgpu sampler object didn't change, we don't need to rebuild the bind group.
+            affects_bind_group &= changed;
         }
 
         if affects_bind_group {
