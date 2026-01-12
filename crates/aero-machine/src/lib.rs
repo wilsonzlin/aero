@@ -39,8 +39,9 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice,
-    GsiLevelSink, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBdf, PciConfigPorts,
+    PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter,
+    PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -48,13 +49,15 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
+use aero_devices_storage::ata::AtaDrive;
+use aero_devices_storage::pci_ahci::AhciPciDevice;
 pub use aero_devices_input::Ps2MouseButton;
 use aero_gpu_vga::{PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;
-use aero_pc_platform::{PciBarMmioRouter, PciIoBarHandler, PciIoBarRouter};
+use aero_pc_platform::{PciBarMmioHandler, PciBarMmioRouter, PciIoBarHandler, PciIoBarRouter};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterrupts,
@@ -501,6 +504,34 @@ impl aero_mmu::MemoryBus for SystemMemory {
     }
 }
 
+struct AhciPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AhciPciConfigDevice {
+    fn new() -> Self {
+        let mut cfg = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
+        cfg.set_bar_definition(
+            aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+            PciBarDefinition::Mmio32 {
+                size: aero_devices_storage::pci_ahci::AHCI_ABAR_SIZE as u32,
+                prefetchable: false,
+            },
+        );
+        Self { cfg }
+    }
+}
+
+impl PciDevice for AhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 struct E1000PciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -514,28 +545,6 @@ impl E1000PciConfigDevice {
 }
 
 impl PciDevice for E1000PciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
-struct AhciPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AhciPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AhciPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
@@ -744,6 +753,50 @@ impl MmioHandler for HpetMmio {
     }
 }
 
+/// AHCI ABAR (BAR5) handler registered via the machine's [`PciBarMmioRouter`].
+///
+/// The AHCI device model gates MMIO accesses on PCI COMMAND.MEM (bit 1). `Machine` maintains a
+/// separate canonical PCI config space (`PciConfigPorts`) for guest enumeration, so we must mirror
+/// the live PCI command (and BAR base) into the AHCI model before each MMIO access.
+struct MachineAhciMmioBar {
+    pci_cfg: SharedPciConfigPorts,
+    ahci: Rc<RefCell<AhciPciDevice>>,
+    bdf: PciBdf,
+}
+
+impl MachineAhciMmioBar {
+    fn sync_pci_state(&mut self) {
+        let (command, bar5_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar5_base = cfg
+                .and_then(|cfg| cfg.bar_range(5))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar5_base)
+        };
+
+        let mut ahci = self.ahci.borrow_mut();
+        ahci.config_mut().set_command(command);
+        if bar5_base != 0 {
+            ahci.config_mut().set_bar_base(5, bar5_base);
+        }
+    }
+}
+
+impl PciBarMmioHandler for MachineAhciMmioBar {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_pci_state();
+        self.ahci.borrow_mut().mmio_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.sync_pci_state();
+        self.ahci.borrow_mut().mmio_write(offset, size, value);
+    }
+}
+
 struct E1000PciIoBar {
     dev: Rc<RefCell<E1000Device>>,
 }
@@ -834,6 +887,7 @@ pub struct Machine {
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
+    ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     bios: Bios,
     disk: VecBlockDevice,
     network_backend: Option<Box<dyn NetworkBackend>>,
@@ -914,6 +968,7 @@ impl Machine {
             hpet: None,
             e1000: None,
             vga: None,
+            ahci: None,
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
@@ -1230,6 +1285,36 @@ impl Machine {
         self.vga.clone()
     }
 
+    /// Returns the AHCI controller device model, if present.
+    pub fn ahci(&self) -> Option<Rc<RefCell<AhciPciDevice>>> {
+        self.ahci.clone()
+    }
+
+    /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
+    pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
+        let Some(ahci) = self.ahci.as_ref() else {
+            return;
+        };
+        ahci.borrow_mut().attach_drive(0, drive);
+    }
+
+    /// Attach a disk image to the canonical AHCI port 0, if the AHCI controller is enabled.
+    pub fn attach_ahci_disk_port0(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> std::io::Result<()> {
+        self.attach_ahci_drive_port0(AtaDrive::new(disk)?);
+        Ok(())
+    }
+
+    /// Detach any drive currently attached to the canonical AHCI port 0.
+    pub fn detach_ahci_drive_port0(&mut self) {
+        let Some(ahci) = self.ahci.as_ref() else {
+            return;
+        };
+        ahci.borrow_mut().detach_drive(0);
+    }
+
     /// Advance deterministic machine/platform time and poll any timer devices.
     ///
     /// This is used by [`Machine::run_slice`] to keep PIT/RTC/HPET/LAPIC timers progressing
@@ -1371,6 +1456,41 @@ impl Machine {
 
             // Redundantly gate on the canonical PCI command register as well (defensive).
             if (command & (1 << 10)) != 0 {
+                level = false;
+            }
+
+            let mut pci_intx = pci_intx.borrow_mut();
+            let mut interrupts = interrupts.borrow_mut();
+            pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+        }
+
+        // ICH9 AHCI legacy INTx (level-triggered).
+        if let Some(ahci) = &self.ahci {
+            let bdf: PciBdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+            let pin = PciInterruptPin::IntA;
+
+            let command = self
+                .pci_cfg
+                .as_ref()
+                .and_then(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg.bus_mut().device_config(bdf).map(|cfg| cfg.command())
+                })
+                .unwrap_or(0);
+
+            // Keep device-side gating consistent (INTx disable bit) when the same AHCI model is
+            // used standalone.
+            {
+                let mut ahci = ahci.borrow_mut();
+                ahci.config_mut().set_command(command);
+            }
+
+            let mut level = ahci.borrow().intx_level();
+
+            // Respect PCI command register Interrupt Disable bit (bit 10) from the canonical PCI
+            // config space.
+            let intx_disabled = (command & (1 << 10)) != 0;
+            if intx_disabled {
                 level = false;
             }
 
@@ -1772,12 +1892,24 @@ impl Machine {
                 }
             };
 
-            if self.cfg.enable_ahci {
+            let ahci = if self.cfg.enable_ahci {
                 pci_cfg.borrow_mut().bus_mut().add_device(
                     aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
                     Box::new(AhciPciConfigDevice::new()),
                 );
-            }
+
+                match &self.ahci {
+                    Some(ahci) => {
+                        // Reset in-place while keeping the `Rc` identity stable for any persistent
+                        // MMIO mappings.
+                        *ahci.borrow_mut() = AhciPciDevice::new(1);
+                        Some(ahci.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(AhciPciDevice::new(1)))),
+                }
+            } else {
+                None
+            };
 
             // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
             // multi-function bit set so OSes enumerate the IDE function at 00:01.1 reliably.
@@ -1791,6 +1923,7 @@ impl Machine {
                     Box::new(IdePciConfigDevice::new()),
                 );
             }
+
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -1862,6 +1995,19 @@ impl Machine {
                 || {
                     let mut router =
                         PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
+                    if let Some(ahci) = ahci.clone() {
+                        let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+                        // ICH9 AHCI uses BAR5 (ABAR).
+                        router.register_handler(
+                            bdf,
+                            5,
+                            MachineAhciMmioBar {
+                                pci_cfg: pci_cfg.clone(),
+                                ahci,
+                                bdf,
+                            },
+                        );
+                    }
                     if let Some(e1000) = e1000.clone() {
                         router.register_shared_handler(
                             aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
@@ -1905,6 +2051,7 @@ impl Machine {
             self.acpi_pm = Some(acpi_pm);
             self.hpet = Some(hpet);
             self.e1000 = e1000;
+            self.ahci = ahci;
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
@@ -1919,6 +2066,7 @@ impl Machine {
             self.hpet = None;
             self.e1000 = None;
             self.vga = None;
+            self.ahci = None;
         }
         if self.cfg.enable_serial {
             let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
@@ -2040,6 +2188,41 @@ impl Machine {
         }
     }
 
+    /// Process AHCI (DMA progress) once.
+    ///
+    /// This is safe to call even when AHCI is disabled; it will no-op.
+    pub fn process_ahci(&mut self) {
+        let Some(ahci) = self.ahci.as_ref() else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+        let command = self
+            .pci_cfg
+            .as_ref()
+            .and_then(|pci_cfg| {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg.bus_mut().device_config(bdf).map(|cfg| cfg.command())
+            })
+            .unwrap_or(0);
+
+        // Keep the device's internal view of the PCI command register in sync so it can apply Bus
+        // Master and INTx disable gating when used standalone.
+        {
+            let mut ahci = ahci.borrow_mut();
+            ahci.config_mut().set_command(command);
+        }
+
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+        if !bus_master_enabled {
+            return;
+        }
+
+        let mut ahci = ahci.borrow_mut();
+        ahci.process(&mut self.mem);
+    }
+
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
         let mut executed = 0u64;
@@ -2056,6 +2239,7 @@ impl Machine {
             self.cpu.state.a20_enabled = self.chipset.a20().enabled();
 
             self.poll_network();
+            self.process_ahci();
 
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one
             // pending external interrupt vector into the CPU core.
@@ -2100,12 +2284,20 @@ impl Machine {
                     // same `run_slice` call. This avoids acknowledging interrupts at the end of a
                     // slice boundary (e.g. after an `STI` interrupt shadow expires) when the CPU
                     // will not execute another instruction until the host calls `run_slice` again.
+                    //
+                    // Process AHCI once more here so guests that issue an AHCI command and then
+                    // execute `HLT` can still make DMA progress and be woken by INTx within the
+                    // same `run_slice` call.
+                    self.process_ahci();
+                    self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
 
                     // When halted, advance platform time so timer interrupts can wake the CPU.
                     self.idle_tick_platform_1ms();
+                    self.process_ahci();
+                    self.sync_pci_intx_sources_to_interrupts();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;
                     }
