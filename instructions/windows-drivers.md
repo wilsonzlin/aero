@@ -100,11 +100,20 @@ Local equivalents for fast iteration (Linux/macOS host):
 python3 scripts/ci/check-windows7-virtio-contract-consistency.py
 python3 scripts/ci/check-windows-virtio-contract.py --check
 
+# Additional Win7 driver guardrails (fast, no VM required)
+python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
+python3 scripts/ci/check-win7-virtqueue-split-headers.py
+python3 scripts/ci/check-virtqueue-split-driver-builds.py
+python3 scripts/ci/check-win7-virtio-header-collisions.py
+
 # Device contract schema/invariants (same check as windows-device-contract.yml)
 cargo run -p device-contract-validator --locked
 
 # Rust virtio protocol unit tests (same as virtio-protocol.yml)
 cargo test --locked --manifest-path drivers/protocol/virtio/Cargo.toml
+
+# Host-harness Python unit tests (wav verification + QEMU arg quoting)
+python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
 
 # Host-side C unit tests for virtio helpers and virtio-snd protocol engines
 cmake -S . -B build-virtio-host-tests -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
@@ -138,12 +147,13 @@ Legend:
 | ID | Status | Task | Where | Tests / docs to start with |
 |----|--------|------|-------|----------------------------|
 | VIO-010 | Partial | virtio-input (KMDF HID minidriver; contract-v1 IDs + report descriptor synthesis) | `drivers/windows7/virtio-input/` | README: [`drivers/windows7/virtio-input/README.md`](../drivers/windows7/virtio-input/README.md); guest coverage: [`drivers/windows7/tests/guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md) |
-| VIO-011 | Partial | virtio-blk (StorPort miniport; contract-v1 IDs; boot-start capable) | `drivers/windows7/virtio-blk/` | README: [`drivers/windows7/virtio-blk/README.md`](../drivers/windows7/virtio-blk/README.md); guest coverage: [`drivers/windows7/tests/guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md) |
-| VIO-012 | Partial | virtio-net (NDIS 6.20 miniport; contract-v1 IDs) | `drivers/windows7/virtio-net/` | README: [`drivers/windows7/virtio-net/README.md`](../drivers/windows7/virtio-net/README.md); guest coverage: [`drivers/windows7/tests/guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md) |
-| VIO-016 | Partial | **virtio-snd** (PortCls/WaveRT audio driver; modern-only + optional transitional variant) | `drivers/windows7/virtio-snd/` | README: [`drivers/windows7/virtio-snd/README.md`](../drivers/windows7/virtio-snd/README.md); design notes: [`drivers/windows7/virtio-snd/docs/design.md`](../drivers/windows7/virtio-snd/docs/design.md) |
+| VIO-011 | Implemented | virtio-blk (StorPort miniport; contract-v1 IDs; boot-start capable; minimal feature set) | `drivers/windows7/virtio-blk/` | README: [`drivers/windows7/virtio-blk/README.md`](../drivers/windows7/virtio-blk/README.md); guest coverage: [`drivers/windows7/tests/guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md) |
+| VIO-012 | Implemented | virtio-net (NDIS 6.20 miniport; contract-v1 IDs; minimal feature set) | `drivers/windows7/virtio-net/` | README: [`drivers/windows7/virtio-net/README.md`](../drivers/windows7/virtio-net/README.md); guest coverage: [`drivers/windows7/tests/guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md) |
+| VIO-016 | Implemented | **virtio-snd** (PortCls/WaveRT audio driver; contract v1 + optional transitional/QEMU package) | `drivers/windows7/virtio-snd/` | README: [`drivers/windows7/virtio-snd/README.md`](../drivers/windows7/virtio-snd/README.md); design notes: [`drivers/windows7/virtio-snd/docs/design.md`](../drivers/windows7/virtio-snd/docs/design.md) |
 | VIO-017 | Implemented | virtio-snd host unit tests (control/tx/rx engines; SG/virtqueue behavior) | `drivers/windows7/virtio-snd/tests/host/` | Host test README: [`.../tests/host/README.md`](../drivers/windows7/virtio-snd/tests/host/README.md); CI: [`drivers-win7.yml`](../.github/workflows/drivers-win7.yml) |
 | VIO-018 | Implemented | Win7 guest selftest coverage for virtio-snd **playback + capture + duplex** markers | `drivers/windows7/tests/guest-selftest/` | Guest tool docs: [`guest-selftest/README.md`](../drivers/windows7/tests/guest-selftest/README.md); CI build: [`win7-virtio-selftest.yml`](../.github/workflows/win7-virtio-selftest.yml); harness: [`win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml) (self-hosted) |
 | VIO-019 | Implemented | Host harness: QEMU runner that parses guest selftest markers + optional wav non-silence verification | `drivers/windows7/tests/host-harness/` | Harness README: [`host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md); unit tests: `drivers/windows7/tests/host-harness/tests/` |
+| VIO-020 | Remaining | Feature expansion for virtio devices (non-contract, optional): MSI/MSI-X, virtio-net offloads/TSO, virtio-snd eventq + format negotiation, virtio-input full HID feature coverage | N/A | Start from device-specific READMEs + the contract v1 doc: [`docs/windows7-virtio-driver-contract.md`](../docs/windows7-virtio-driver-contract.md) |
 
 ### Guest Tools Tasks
 
@@ -222,6 +232,15 @@ Legend:
 See [`docs/16-windows7-driver-build-and-signing.md`](../docs/16-windows7-driver-build-and-signing.md) for toolchain setup.
 
 ```powershell
+# Recommended (CI-like; builds + stages drivers under out/)
+pwsh ci/install-wdk.ps1
+pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu windows7/virtio-blk windows7/virtio-net windows7/virtio-input windows7/virtio-snd
+
+# Optional: generate catalogs + test-sign + bundle artifacts (Guest Tools ISO/zip, etc.)
+pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
+pwsh ci/package-drivers.ps1
+
 # On Windows with WDK installed:
 cd drivers\aerogpu
 msbuild aerogpu.sln /p:Configuration=Release /p:Platform=x64
