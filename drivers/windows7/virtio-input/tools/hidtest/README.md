@@ -82,10 +82,22 @@ Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
 hidtest.exe --led 0x07
 ```
 
+Write keyboard LEDs using `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`):
+
+```bat
+hidtest.exe --led-hidd 0x07
+```
+
 Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crashing the guest):
 
 ```bat
 hidtest.exe --keyboard --ioctl-bad-write-report
+```
+
+Negative test (invalid `HidD_SetOutputReport` buffer pointer; should fail cleanly without crashing the guest):
+
+```bat
+hidtest.exe --keyboard --hidd-bad-set-output-report
 ```
 
 Cycle LEDs (guaranteed visible changes):
