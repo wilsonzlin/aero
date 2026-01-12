@@ -213,6 +213,24 @@ pub mod tier1 {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ShiftOp {
+        Shl,
+        Shr,
+        Sar,
+    }
+
+    impl fmt::Display for ShiftOp {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let s = match self {
+                ShiftOp::Shl => "shl",
+                ShiftOp::Shr => "shr",
+                ShiftOp::Sar => "sar",
+            };
+            f.write_str(s)
+        }
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum InstKind {
         Mov {
@@ -229,6 +247,12 @@ pub mod tier1 {
             op: AluOp,
             dst: Operand,
             src: Operand,
+            width: Width,
+        },
+        Shift {
+            op: ShiftOp,
+            dst: Operand,
+            count: u8,
             width: Width,
         },
         Cmp {
@@ -818,6 +842,50 @@ pub mod tier1 {
                             message: "unsupported 0x81/0x83 group",
                         })
                     }
+                }
+            }
+            0xd1 => {
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                let group = modrm.reg & 0x7;
+                let op = match group {
+                    4 => ShiftOp::Shl,
+                    5 => ShiftOp::Shr,
+                    7 => ShiftOp::Sar,
+                    _ => {
+                        return Err(DecodeError {
+                            message: "unsupported 0xD1 group",
+                        })
+                    }
+                };
+                InstKind::Shift {
+                    op,
+                    dst,
+                    count: 1,
+                    width,
+                }
+            }
+            0xc1 => {
+                let (dst, modrm) =
+                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, width)?;
+                let group = modrm.reg & 0x7;
+                let op = match group {
+                    4 => ShiftOp::Shl,
+                    5 => ShiftOp::Shr,
+                    7 => ShiftOp::Sar,
+                    _ => {
+                        return Err(DecodeError {
+                            message: "unsupported 0xC1 group",
+                        })
+                    }
+                };
+                let imm8 = read_u8(bytes, offset)?;
+                offset += 1;
+                InstKind::Shift {
+                    op,
+                    dst,
+                    count: imm8,
+                    width,
                 }
             }
             0xff => {

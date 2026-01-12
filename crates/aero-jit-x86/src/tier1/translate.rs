@@ -1,7 +1,7 @@
 use super::block::{BasicBlock, BlockEndKind};
 use super::ir::{BinOp, GuestReg, IrBlock, IrBuilder, IrTerminator, ValueId};
 use aero_types::{FlagSet, Gpr, Width};
-use aero_x86::tier1::{Address, AluOp, DecodedInst, InstKind, Operand, Reg};
+use aero_x86::tier1::{Address, AluOp, DecodedInst, InstKind, Operand, Reg, ShiftOp};
 
 fn gpr_reg(reg: Reg) -> GuestReg {
     GuestReg::Gpr {
@@ -102,6 +102,14 @@ fn to_binop(op: AluOp) -> BinOp {
     }
 }
 
+fn to_shift_binop(op: ShiftOp) -> BinOp {
+    match op {
+        ShiftOp::Shl => BinOp::Shl,
+        ShiftOp::Shr => BinOp::Shr,
+        ShiftOp::Sar => BinOp::Sar,
+    }
+}
+
 #[must_use]
 pub fn translate_block(block: &BasicBlock) -> IrBlock {
     let mut b = IrBuilder::new(block.entry_rip);
@@ -145,6 +153,18 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
                 let lhs = emit_read_operand(&mut b, inst, dst, *width);
                 let rhs = emit_read_operand(&mut b, inst, src, *width);
                 let res = b.binop(to_binop(*op), *width, lhs, rhs, FlagSet::ALU);
+                emit_write_operand(&mut b, inst, dst, *width, res);
+            }
+            InstKind::Shift {
+                op,
+                dst,
+                count,
+                width,
+            } => {
+                let lhs = emit_read_operand(&mut b, inst, dst, *width);
+                // Tier1 IR requires LHS/RHS have the same width.
+                let rhs = b.const_int(*width, *count as u64);
+                let res = b.binop(to_shift_binop(*op), *width, lhs, rhs, FlagSet::EMPTY);
                 emit_write_operand(&mut b, inst, dst, *width, res);
             }
             InstKind::Cmp { lhs, rhs, width } => {

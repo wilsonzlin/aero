@@ -6,7 +6,7 @@ use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::{discover_block, translate_block, BlockLimits, Tier1Bus};
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
-use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
+use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand, ShiftOp};
 use tier1_common::{
     read_flag, read_gpr, read_gpr_part, write_cpu_to_wasm_bytes, write_flag, write_gpr,
     write_gpr_part, CpuSnapshot, SimpleBus,
@@ -203,6 +203,28 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                     }
                 };
                 write_flagset(cpu, FlagSet::ALU, flags);
+                write_op(inst, cpu, bus, dst, *width, res);
+                cpu.rip = next;
+            }
+            InstKind::Shift {
+                op,
+                dst,
+                count,
+                width,
+            } => {
+                let l = read_op(inst, cpu, bus, dst, *width);
+                // The Tier-1 IR interpreter currently masks shift amounts by `(bits - 1)`.
+                let shift_mask = width.bits() - 1;
+                let amt = (*count as u32) & shift_mask;
+                let res = match op {
+                    ShiftOp::Shl => width.truncate(l << amt),
+                    ShiftOp::Shr => width.truncate(l >> amt),
+                    ShiftOp::Sar => {
+                        let signed = width.sign_extend(l) as i64;
+                        width.truncate((signed >> amt) as u64)
+                    }
+                };
+                // Flags are intentionally left unchanged: Tier-1 translation uses `FlagSet::EMPTY`.
                 write_op(inst, cpu, bus, dst, *width, res);
                 cpu.rip = next;
             }
@@ -474,6 +496,53 @@ block 0x4000:
   v5 = const.i64 0x10
   v6 = add.i64 v4, v5
   write.rax v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
+
+#[test]
+fn group2_shr_shl_imm1_and_imm8() {
+    // mov rbx, 0x10000
+    // shr rbx, 13   (C1 /5 ib)
+    // shl rbx, 1    (D1 /4)
+    // ret
+    let code = [
+        0x48, 0xbb, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rbx, 0x10000
+        0x48, 0xc1, 0xeb, 0x0d, // shr rbx, 13
+        0x48, 0xd1, 0xe3, // shl rbx, 1
+        0xc3, // ret
+    ];
+
+    let entry = 0x6000u64;
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x9000, Width::W64, 0x7000);
+
+    let expected = "\
+block 0x6000:
+  v0 = const.i64 0x10000
+  write.rbx v0
+  v1 = read.rbx
+  v2 = const.i64 0xd
+  v3 = shr.i64 v1, v2
+  write.rbx v3
+  v4 = read.rbx
+  v5 = const.i64 0x1
+  v6 = shl.i64 v4, v5
+  write.rbx v6
   v7 = read.rsp
   v8 = load.i64 [v7]
   v9 = const.i64 0x8
