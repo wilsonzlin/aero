@@ -148,6 +148,13 @@ While the guest is producing sound, capture the host-side metrics:
 - **Overruns** remain `0` (or do not increase).
 - (Optional but useful) **readFrameIndex** and **writeFrameIndex** advance over time.
 
+Suggested pass criteria (rule-of-thumb):
+
+- Let playback run for ~10 seconds.
+- `overrunCount` should stay at `0`.
+- `underrunCount` should be `0`, or at least stop increasing after startup.
+  - If you see a small non-zero value at startup, treat up to **128 underrun frames** (one render quantum) as “tolerable” but still worth tracking.
+
 Where to look:
 
 - If the web UI has an audio status box/HUD, record the values shown:
@@ -235,6 +242,11 @@ Collect:
   - Browser audio output not started (`AudioContext` is `suspended` / autoplay blocked)
   - Output ring underrunning (producer not keeping up)
   - Guest DMA progress stuck (stream not actually running)
+- **No playback devices appear in `Control Panel → Sound`**
+  - Driver enumeration may be incomplete, or Windows Audio services may be stopped
+  - Check `services.msc`:
+    - `Windows Audio`
+    - `Windows Audio Endpoint Builder`
 - **Clicks/stutter**
   - Frequent underruns (buffer too small or CPU stalls)
 - **Overruns increasing**
