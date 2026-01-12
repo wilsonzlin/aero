@@ -1580,6 +1580,9 @@ const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalys
         case AerogpuCmdOpcode.SetRenderTargets:
         case AerogpuCmdOpcode.Present:
         case AerogpuCmdOpcode.PresentEx:
+        case AerogpuCmdOpcode.ExportSharedSurface:
+        case AerogpuCmdOpcode.ImportSharedSurface:
+        case AerogpuCmdOpcode.ReleaseSharedSurface:
         case AerogpuCmdOpcode.Flush:
           break;
         default:
