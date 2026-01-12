@@ -136,6 +136,8 @@ fn snapshot_roundtrip_preserves_key_state() {
     // Mutate PCI config.
     dev.pci_write_u32(0x10, 0xFEBF_0000);
     dev.pci_write_u32(0x14, 0xC000);
+    // Real PCI devices gate all DMA behind the Bus Master Enable bit.
+    dev.pci_config_write(0x04, 2, 0x4);
 
     // Configure TX ring.
     let tx_ring = 0x1000u64;

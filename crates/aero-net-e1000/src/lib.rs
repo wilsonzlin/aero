@@ -1623,6 +1623,11 @@ impl MmioHandler for E1000Device {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "io-snapshot")]
+    use aero_io_snapshot::io::state::codec::Encoder;
+    #[cfg(feature = "io-snapshot")]
+    use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
+
     struct TestMem {
         mem: Vec<u8>,
     }
@@ -2335,5 +2340,88 @@ mod tests {
         assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt.as_slice()));
         let updated = TxDesc::from_bytes(read_desc::<{ TxDesc::LEN }>(&mut mem, 0x1000));
         assert_ne!(updated.status & TXD_STAT_DD, 0);
+    }
+
+    #[cfg(feature = "io-snapshot")]
+    #[test]
+    fn snapshot_roundtrip_is_lossless() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Touch some state (including collections) so the snapshot isn't trivial.
+        dev.pci_write_u32(0x10, 0xffff_ffff);
+        dev.pci_write_u32(0x14, 0xffff_ffff);
+        dev.mmio_write_u32(REG_IMS, ICR_RXT0 | ICR_TXDW);
+        dev.mmio_write_u32(0x9000, 0xDEAD_BEEF);
+        dev.mmio_write_u32(0x9004, 0xC0FF_EE00);
+
+        dev.eeprom[10] = 0x1234;
+        dev.phy[1] = 0x5678;
+
+        dev.tx_partial = vec![0x33; 128];
+        dev.tx_ctx = TxOffloadContext {
+            ipcss: 14,
+            ipcso: 24,
+            ipcse: 33,
+            tucss: 34,
+            tucso: 50,
+            tucse: 100,
+            mss: 1460,
+            hdr_len: 54,
+        };
+        dev.tx_state = Some(TxPacketState::Advanced { cmd: 0xaa, popts: 0xbb });
+
+        dev.enqueue_rx_frame(vec![0x11; MIN_L2_FRAME_LEN]);
+        dev.tx_out.push_back(vec![0x22; MIN_L2_FRAME_LEN]);
+
+        let bytes = dev.save_state();
+
+        let mut restored = E1000Device::new([0, 0, 0, 0, 0, 0]);
+        restored.load_state(&bytes).unwrap();
+
+        assert_eq!(bytes, restored.save_state());
+    }
+
+    #[cfg(feature = "io-snapshot")]
+    #[test]
+    fn snapshot_encoding_is_deterministic_for_other_regs_hashmap() {
+        let mut a = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let mut b = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Same keys/values but inserted in different order.
+        a.mmio_write_u32(0x9000, 1);
+        a.mmio_write_u32(0x9004, 2);
+        a.mmio_write_u32(0x9008, 3);
+
+        b.mmio_write_u32(0x9008, 3);
+        b.mmio_write_u32(0x9004, 2);
+        b.mmio_write_u32(0x9000, 1);
+
+        assert_eq!(a.save_state(), b.save_state());
+    }
+
+    #[cfg(feature = "io-snapshot")]
+    #[test]
+    fn snapshot_load_rejects_oversized_other_regs_and_truncated_tlv() {
+        // Oversized other_regs count.
+        let oversized = Encoder::new().u32(u32::MAX).finish();
+        let mut w = SnapshotWriter::new(
+            <E1000Device as IoSnapshot>::DEVICE_ID,
+            <E1000Device as IoSnapshot>::DEVICE_VERSION,
+        );
+        w.field_bytes(90, oversized); // TAG_OTHER_REGS
+        let bytes = w.finish();
+
+        let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let err = dev.load_state(&bytes).unwrap_err();
+        assert_eq!(
+            err,
+            SnapshotError::InvalidFieldEncoding("e1000 other_regs count")
+        );
+
+        // Malformed/truncated TLV should produce a decode error (not panic).
+        let mut good = dev.save_state();
+        good.pop();
+        let err = dev.load_state(&good).unwrap_err();
+        assert_eq!(err, SnapshotError::UnexpectedEof);
     }
 }

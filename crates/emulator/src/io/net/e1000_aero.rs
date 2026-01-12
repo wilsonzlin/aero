@@ -65,12 +65,10 @@ impl MmioDevice for E1000PciDevice {
         self.nic.mmio_read(offset, size)
     }
 
-    fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
-        // `MmioDevice` provides guest RAM access, but the device's register interface must be
-        // usable behind `memory::MmioHandler`-based buses that do not. Perform a register-only
-        // write here and explicitly poll to keep the old "writes kick DMA soon" behavior.
+    fn mmio_write(&mut self, _mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        // The E1000 device model splits register side effects from DMA. MMIO writes only update
+        // internal register state; descriptor/buffer DMA happens when the emulator calls `poll`.
         self.nic.mmio_write(offset, size, value);
-        self.poll(mem);
     }
 }
 
