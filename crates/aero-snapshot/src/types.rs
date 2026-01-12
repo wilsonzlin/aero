@@ -18,12 +18,15 @@ fn decode_string_u32_bounded<R: Read>(
     if len > max_len {
         return Err(SnapshotError::Corrupt(too_long_error));
     }
-    let mut bytes = Vec::with_capacity(len as usize);
-    let mut limited = r.take(len as u64);
-    limited.read_to_end(&mut bytes)?;
-    if limited.limit() != 0 {
-        return Err(SnapshotError::Corrupt(truncated_error));
-    }
+
+    let bytes = match r.read_exact_vec(len as usize) {
+        Ok(v) => v,
+        Err(SnapshotError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            return Err(SnapshotError::Corrupt(truncated_error));
+        }
+        Err(e) => return Err(e),
+    };
+
     String::from_utf8(bytes).map_err(|_| SnapshotError::Corrupt(invalid_utf8_error))
 }
 
