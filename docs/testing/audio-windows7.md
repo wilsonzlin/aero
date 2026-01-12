@@ -50,18 +50,24 @@ Open the printed local URL (usually `http://127.0.0.1:5173/`).
 
 Most browsers require a **user gesture** to start audio output. Before expecting guest audio:
 
-- In the UI, click the **Audio “Init/Enable audio output”** button (whatever it is called in the current build).
+- In the UI, click the **Audio** panel’s **“Init audio output …”** button (exact label may vary by build).
 - Confirm the host-side audio status shows:
   - `AudioContext: running` (not `suspended`)
   - Ring buffer counters are visible (see §3.2).
 
 ### 1.3 Boot Windows 7
 
-Use the UI’s disk management / mount controls to boot Windows:
+Use the UI’s **Disks** panel + **Workers** panel to boot Windows:
 
-- Mount a **Windows 7 system disk** as HDD, *or* create a blank HDD and mount the Win7 ISO as CD to install once.
-  - The disk UI typically infers `*.iso` as a CD image.
-- Start the VM/workers (UI button often labeled “Start workers” / “Start VM”).
+- In **Disks**:
+  - Click **Import file…** and select the ISO:
+    - Agent path: `/state/win7.iso` (see §Prerequisites)
+  - Create/import a **Windows 7 system disk** as an HDD (`*.img`), *or* create a blank HDD and mount the ISO as a CD to install once.
+  - Mount:
+    - Use **Mount HDD** for the system disk
+    - Use **Mount CD** for the Win7 ISO (the UI infers `*.iso` as `kind=cd`)
+- In **Workers**:
+  - Click **Start workers** (or **Start VM**).
 - Wait for Windows to reach the desktop.
 
 **If you are installing from ISO:** once Windows is installed and boots successfully from the HDD, **unmount the ISO/CD** for subsequent boots so the test is faster and more deterministic.
@@ -99,6 +105,14 @@ In Windows 7:
 Alternative (also deterministic):
 
 - `Control Panel → Sound → Sounds tab` → select any “Program Events” sound → click **Test**.
+
+Alternative (deterministic WAV file path present on all Win7 installs):
+
+- Run this in the guest (PowerShell):
+
+```powershell
+(New-Object Media.SoundPlayer "C:\\Windows\\Media\\tada.wav").PlaySync()
+```
 
 Expected outcome:
 
@@ -211,6 +225,7 @@ Collect:
 - Audio ring metrics: buffer level + underrun/overrun counters + `AudioContext.state` + `sampleRate`.
 - If available: guest HDA stream debug (`LPIB`, `CBL`, position buffer).
 - Browser console logs (preserve timestamps; include `[cpu]`/`[io]` worker logs if present).
+- If Perf tracing is enabled in the build, export a trace (it should include `audio.*` counters when the host is sampling audio metrics).
 
 ### C) Microphone failures
 
@@ -242,4 +257,3 @@ a.href = url;
 a.download = "worker-vm-autosave.snap";
 a.click();
 ```
-
