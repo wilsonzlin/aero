@@ -790,6 +790,14 @@ export interface WasmApi {
         new (ramSizeBytes: number): {
         reset(): void;
         set_disk_image(bytes: Uint8Array): void;
+        /**
+         * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
+         *
+         * This enables large disk images without loading the entire contents into RAM.
+         *
+         * Optional for older WASM builds.
+         */
+        set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         serial_output(): Uint8Array;
         /**
