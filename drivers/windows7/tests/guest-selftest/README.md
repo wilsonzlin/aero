@@ -87,6 +87,18 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
       - The duplex test records whether any non-silence was observed for diagnostics, but does **not** require non-silence.
   - Use `--disable-snd` to force **SKIP** for both playback and capture.
   - Use `--disable-snd-capture` to force **SKIP** for capture only (while still exercising playback).
+  - Optional buffer sizing stress test:
+    - Use `--test-snd-buffer-limits` to run a WASAPI stress check that attempts to initialize a render stream with an
+      intentionally large buffer duration/period, to exercise virtio-snd buffer sizing limits (for example large cyclic
+      buffers / payload caps).
+    - Emits a separate `virtio-snd-buffer-limits` marker.
+    - PASS criteria:
+      - `IAudioClient::Initialize` either succeeds, or fails with a handled/expected HRESULT (commonly `AUDCLNT_E_*` /
+        `E_INVALIDARG`), and the selftest remains responsive.
+    - FAIL criteria:
+      - the Initialize attempt hangs (the selftest times it out), or
+      - Initialize succeeds but returns an obviously inconsistent buffer size (for example `GetBufferSize` fails or
+        reports 0 frames).
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -110,12 +122,13 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 
-# Example: virtio-snd present => playback + capture markers:
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=wasapi|frames=...|non_silence=...|silence_only=...
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=...|non_silence=...
- AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
- AERO_VIRTIO_SELFTEST|RESULT|PASS
+ # Example: virtio-snd present => playback + capture markers:
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|mode=...|init_hr=0x...|expected_failure=...|buffer_bytes=...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=wasapi|frames=...|non_silence=...|silence_only=...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=...|non_silence=...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+  AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 # Example: virtio-snd failure => overall FAIL:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|...
@@ -148,6 +161,9 @@ Notes:
   - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.
   - `FAIL|reason=...|hr=...` if any WASAPI call fails or capture returns no frames.
   - `SKIP|endpoint_missing` when the duplex test is enabled but a matching endpoint cannot be found.
+- The buffer sizing stress marker (`virtio-snd-buffer-limits`) is emitted when `--test-snd-buffer-limits` is set:
+  - `PASS|...` when the large-buffer Initialize attempt completes without hanging (success or expected failure).
+  - `FAIL|reason=...|hr=...` when the attempt times out or returns inconsistent results.
 
 ## Building
 

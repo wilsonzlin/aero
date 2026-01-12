@@ -67,6 +67,9 @@ struct Options {
   bool allow_virtio_snd_transitional = false;
   // When running a capture smoke test, require at least one non-silent capture buffer.
   bool require_non_silence = false;
+  // If set, run a WASAPI stress test that attempts to initialize a render stream with an intentionally large
+  // buffer duration/period. This is used to exercise virtio-snd buffer sizing limits.
+  bool test_snd_buffer_limits = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -2935,37 +2938,24 @@ static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fm
   return true;
 }
 
-static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& match_names, bool allow_transitional) {
-  TestResult out;
+struct SelectedVirtioSndEndpoint {
+  ComPtr<IMMDevice> device;
+  std::wstring friendly;
+  std::wstring id;
+  std::wstring instance_id;
+  std::wstring pci_hwid;
+  int score = -1;
+};
 
-  ScopedCoInitialize com(COINIT_MULTITHREADED);
-  if (FAILED(com.hr())) {
-    out.fail_reason = "com_init_failed";
-    out.hr = com.hr();
-    log.Logf("virtio-snd: CoInitializeEx failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
-    return out;
-  }
+static std::optional<SelectedVirtioSndEndpoint> FindVirtioSndRenderEndpoint(
+    Logger& log, IMMDeviceEnumerator* enumerator, const std::vector<std::wstring>& match_names,
+    bool allow_transitional, DWORD wait_ms = 20000) {
+  if (!enumerator) return std::nullopt;
 
-  ComPtr<IMMDeviceEnumerator> enumerator;
-  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
-                                __uuidof(IMMDeviceEnumerator),
-                                reinterpret_cast<void**>(enumerator.Put()));
-  if (FAILED(hr)) {
-    out.fail_reason = "create_device_enumerator_failed";
-    out.hr = hr;
-    log.Logf("virtio-snd: CoCreateInstance(MMDeviceEnumerator) failed hr=0x%08lx",
-             static_cast<unsigned long>(hr));
-    return out;
-  }
-
-  ComPtr<IMMDevice> chosen;
-  std::wstring chosen_friendly;
-  std::wstring chosen_id;
-  std::wstring chosen_instance_id;
-  std::wstring chosen_pci_hwid;
+  SelectedVirtioSndEndpoint best;
   int best_score = -1;
 
-  const DWORD deadline_ms = GetTickCount() + 20000;
+  const DWORD deadline_ms = GetTickCount() + wait_ms;
   int attempt = 0;
 
   while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
@@ -2974,8 +2964,8 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
     ComPtr<IMMDeviceCollection> collection;
     const DWORD state_mask =
         DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_NOTPRESENT | DEVICE_STATE_UNPLUGGED;
-    hr = enumerator->EnumAudioEndpoints(eRender, state_mask, collection.Put());
-    if (FAILED(hr)) {
+    HRESULT hr = enumerator->EnumAudioEndpoints(eRender, state_mask, collection.Put());
+    if (FAILED(hr) || !collection) {
       log.Logf("virtio-snd: EnumAudioEndpoints(eRender) failed hr=0x%08lx attempt=%d",
                static_cast<unsigned long>(hr), attempt);
       Sleep(1000);
@@ -2993,12 +2983,12 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
     log.Logf("virtio-snd: render endpoints count=%u attempt=%d", count, attempt);
 
     best_score = -1;
-    chosen.Reset();
+    best.device.Reset();
 
     for (UINT i = 0; i < count; i++) {
       ComPtr<IMMDevice> dev;
       hr = collection->Item(i, dev.Put());
-      if (FAILED(hr)) continue;
+      if (FAILED(hr) || !dev) continue;
 
       DWORD state = 0;
       hr = dev->GetState(&state);
@@ -3017,7 +3007,7 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
 
       std::wstring friendly;
       std::wstring instance_id;
-      if (SUCCEEDED(hr)) {
+      if (SUCCEEDED(hr) && props) {
         friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
         if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
         instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
@@ -3072,19 +3062,48 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
 
       if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names, allow_transitional)) {
         best_score = score;
-        chosen = std::move(dev);
-        chosen_friendly = friendly;
-        chosen_id = dev_id;
-        chosen_instance_id = instance_id;
-        chosen_pci_hwid = pci_hwid;
+        best.device = std::move(dev);
+        best.friendly = friendly;
+        best.id = dev_id;
+        best.instance_id = instance_id;
+        best.pci_hwid = pci_hwid;
+        best.score = score;
       }
     }
 
-    if (chosen) break;
+    if (best.device) return best;
     Sleep(1000);
   }
 
-  if (!chosen) {
+  return std::nullopt;
+}
+
+static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& match_names, bool allow_transitional) {
+  TestResult out;
+
+  ScopedCoInitialize com(COINIT_MULTITHREADED);
+  if (FAILED(com.hr())) {
+    out.fail_reason = "com_init_failed";
+    out.hr = com.hr();
+    log.Logf("virtio-snd: CoInitializeEx failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+    return out;
+  }
+
+  ComPtr<IMMDeviceEnumerator> enumerator;
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(enumerator.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "create_device_enumerator_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: CoCreateInstance(MMDeviceEnumerator) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  const auto chosen_opt =
+      FindVirtioSndRenderEndpoint(log, enumerator.Get(), match_names, allow_transitional, 20000);
+  if (!chosen_opt.has_value()) {
     log.LogLine("virtio-snd: no matching ACTIVE render endpoint found");
 
     // Log the default endpoint (if any) for debugging.
@@ -3107,16 +3126,17 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
     return out;
   }
 
+  const auto& chosen = *chosen_opt;
   out.endpoint_found = true;
   log.Logf("virtio-snd: selected endpoint name=%s id=%s instance_id=%s pci_hwid=%s score=%d",
-           WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen_id).c_str(),
-           WideToUtf8(chosen_instance_id).c_str(), WideToUtf8(chosen_pci_hwid).c_str(), best_score);
-  TryEnsureEndpointVolumeAudible(log, chosen.Get(), "render");
-  TryEnsureEndpointSessionAudible(log, chosen.Get(), "render");
+           WideToUtf8(chosen.friendly).c_str(), WideToUtf8(chosen.id).c_str(),
+           WideToUtf8(chosen.instance_id).c_str(), WideToUtf8(chosen.pci_hwid).c_str(), chosen.score);
+  TryEnsureEndpointVolumeAudible(log, chosen.device.Get(), "render");
+  TryEnsureEndpointSessionAudible(log, chosen.device.Get(), "render");
 
   ComPtr<IAudioClient> client;
-  hr = chosen->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
-                        reinterpret_cast<void**>(client.Put()));
+  hr = chosen.device->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                               reinterpret_cast<void**>(client.Put()));
   if (FAILED(hr)) {
     out.fail_reason = "activate_audio_client_failed";
     out.hr = hr;
@@ -3385,6 +3405,390 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   log.Logf("virtio-snd: render smoke ok (format=%s, used_desired=%d)", WaveFormatToString(fmt).c_str(),
            used_desired_format ? 1 : 0);
   return out;
+}
+
+static size_t WaveFormatTotalSizeBytes(const WAVEFORMATEX* fmt) {
+  if (!fmt) return 0;
+  // WAVEFORMATEX::cbSize is the number of bytes after the base WAVEFORMATEX struct.
+  const size_t extra = fmt->cbSize;
+  // Guard against corrupted headers (e.g. uninitialized pointers) producing unreasonable sizes.
+  if (extra > 4096) return 0;
+  return sizeof(WAVEFORMATEX) + extra;
+}
+
+static std::vector<BYTE> CopyWaveFormatBytes(const WAVEFORMATEX* fmt) {
+  std::vector<BYTE> out;
+  const size_t size = WaveFormatTotalSizeBytes(fmt);
+  if (size == 0) return out;
+  out.resize(size);
+  memcpy(out.data(), fmt, size);
+  return out;
+}
+
+static bool HrLooksLikeAudclntError(HRESULT hr) {
+  // AUDCLNT_E_* codes typically sit in the 0x88890000 range.
+  const uint32_t u = static_cast<uint32_t>(hr);
+  return (u & 0xFFFF0000u) == 0x88890000u;
+}
+
+static bool HrIsExpectedSndBufferLimitsFailure(HRESULT hr) {
+  if (hr == E_INVALIDARG) return true;
+  if (hr == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED)) return true;
+  if (hr == HRESULT_FROM_WIN32(ERROR_BAD_FORMAT)) return true;
+  if (HrLooksLikeAudclntError(hr)) return true;
+  return false;
+}
+
+struct VirtioSndBufferLimitsTestResult {
+  bool ok = false;
+  bool endpoint_found = false;
+  bool timed_out = false;
+
+  // Initialize outcome.
+  bool init_succeeded = false;
+  bool expected_failure = false;
+  HRESULT init_hr = E_FAIL;
+  HRESULT hr = E_FAIL;
+  std::string fail_reason;
+
+  // Diagnostics.
+  std::string mode; // "exclusive" or "shared"
+  std::string format;
+  REFERENCE_TIME requested_buffer_hns = 0;
+  REFERENCE_TIME requested_period_hns = 0;
+  UINT32 buffer_frames = 0;
+  UINT64 buffer_bytes = 0;
+};
+
+static bool BufferFramesToBytes(const WAVEFORMATEX* fmt, UINT32 frames, UINT64* out_bytes) {
+  if (!out_bytes) return false;
+  *out_bytes = 0;
+  if (!fmt) return false;
+  if (frames == 0) return false;
+  if (fmt->nBlockAlign == 0) return false;
+  *out_bytes = static_cast<UINT64>(frames) * static_cast<UINT64>(fmt->nBlockAlign);
+  return true;
+}
+
+static VirtioSndBufferLimitsTestResult VirtioSndBufferLimitsAttempt(Logger& log, IMMDevice* endpoint,
+                                                                    const char* mode_name,
+                                                                    AUDCLNT_SHAREMODE sharemode,
+                                                                    REFERENCE_TIME buffer_hns,
+                                                                    REFERENCE_TIME period_hns,
+                                                                    const std::vector<BYTE>& fmt_bytes) {
+  VirtioSndBufferLimitsTestResult out{};
+  out.mode = mode_name ? mode_name : "";
+  out.requested_buffer_hns = buffer_hns;
+  out.requested_period_hns = period_hns;
+
+  if (!endpoint) {
+    out.fail_reason = "endpoint_null";
+    out.hr = E_POINTER;
+    out.init_hr = out.hr;
+    return out;
+  }
+  if (fmt_bytes.empty()) {
+    out.fail_reason = "format_empty";
+    out.hr = E_INVALIDARG;
+    out.init_hr = out.hr;
+    return out;
+  }
+
+  const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
+  out.format = WaveFormatToString(fmt);
+
+  ComPtr<IAudioClient> client;
+  HRESULT hr = endpoint->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                                  reinterpret_cast<void**>(client.Put()));
+  if (FAILED(hr) || !client) {
+    out.fail_reason = "activate_audio_client_failed";
+    out.hr = hr;
+    out.init_hr = hr;
+    return out;
+  }
+
+  hr = client->Initialize(sharemode, 0, buffer_hns, period_hns, fmt, nullptr);
+  out.init_hr = hr;
+  out.hr = hr;
+
+  if (FAILED(hr)) {
+    // The key property of this stress test is that Initialize returns (no hang/crash). A failure
+    // HRESULT is acceptable as long as it is handled. Record whether it looks like an "expected"
+    // WASAPI buffer/period/format failure for diagnostics.
+    out.expected_failure = HrIsExpectedSndBufferLimitsFailure(hr);
+    out.ok = true;
+    return out;
+  }
+
+  out.init_succeeded = true;
+
+  UINT32 frames = 0;
+  const HRESULT size_hr = client->GetBufferSize(&frames);
+  if (FAILED(size_hr) || frames == 0) {
+    out.ok = false;
+    out.fail_reason = "get_buffer_size_failed";
+    out.hr = FAILED(size_hr) ? size_hr : E_FAIL;
+    return out;
+  }
+  out.buffer_frames = frames;
+
+  UINT64 bytes = 0;
+  if (!BufferFramesToBytes(fmt, frames, &bytes)) {
+    out.ok = false;
+    out.fail_reason = "invalid_buffer_size";
+    out.hr = E_FAIL;
+    return out;
+  }
+  out.buffer_bytes = bytes;
+
+  // If Initialize succeeded but returned a truly enormous buffer size, treat it as inconsistent.
+  // (The stress test requests ~8MiB; anything wildly larger suggests an overflow or misreport.)
+  constexpr UINT64 kMaxPlausibleBufferBytes = 256ull * 1024ull * 1024ull;
+  if (bytes > kMaxPlausibleBufferBytes) {
+    out.ok = false;
+    out.fail_reason = "buffer_size_insane";
+    out.hr = E_FAIL;
+    return out;
+  }
+
+  out.ok = true;
+  return out;
+}
+
+static VirtioSndBufferLimitsTestResult VirtioSndBufferLimitsTestInternal(Logger& log,
+                                                                         const std::vector<std::wstring>& match_names,
+                                                                         bool allow_transitional) {
+  VirtioSndBufferLimitsTestResult out{};
+
+  ScopedCoInitialize com(COINIT_MULTITHREADED);
+  if (FAILED(com.hr())) {
+    out.fail_reason = "com_init_failed";
+    out.hr = com.hr();
+    out.init_hr = out.hr;
+    log.Logf("virtio-snd: buffer-limits CoInitializeEx failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+    return out;
+  }
+
+  ComPtr<IMMDeviceEnumerator> enumerator;
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(enumerator.Put()));
+  if (FAILED(hr) || !enumerator) {
+    out.fail_reason = "create_device_enumerator_failed";
+    out.hr = hr;
+    out.init_hr = hr;
+    log.Logf("virtio-snd: buffer-limits CoCreateInstance(MMDeviceEnumerator) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  const auto chosen_opt = FindVirtioSndRenderEndpoint(log, enumerator.Get(), match_names, allow_transitional, 20000);
+  if (!chosen_opt.has_value()) {
+    out.fail_reason = "no_matching_endpoint";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    out.init_hr = out.hr;
+    log.LogLine("virtio-snd: buffer-limits no matching ACTIVE render endpoint found");
+    return out;
+  }
+  const auto& chosen = *chosen_opt;
+  out.endpoint_found = true;
+
+  log.Logf("virtio-snd: buffer-limits selected endpoint name=%s id=%s instance_id=%s pci_hwid=%s score=%d",
+           WideToUtf8(chosen.friendly).c_str(), WideToUtf8(chosen.id).c_str(),
+           WideToUtf8(chosen.instance_id).c_str(), WideToUtf8(chosen.pci_hwid).c_str(), chosen.score);
+
+  // Probe the endpoint for a stable mix format. Using the mix format ensures the Initialize call
+  // exercises buffer sizing (not format negotiation).
+  ComPtr<IAudioClient> probe;
+  hr = chosen.device->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                               reinterpret_cast<void**>(probe.Put()));
+  if (FAILED(hr) || !probe) {
+    out.fail_reason = "activate_audio_client_failed";
+    out.hr = hr;
+    out.init_hr = hr;
+    log.Logf("virtio-snd: buffer-limits Activate(IAudioClient) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  WAVEFORMATEX* mix_raw = nullptr;
+  hr = probe->GetMixFormat(&mix_raw);
+  if (FAILED(hr) || !mix_raw) {
+    out.fail_reason = "get_mix_format_failed";
+    out.hr = FAILED(hr) ? hr : E_FAIL;
+    out.init_hr = out.hr;
+    log.Logf("virtio-snd: buffer-limits GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+    return out;
+  }
+
+  std::vector<BYTE> mix_bytes = CopyWaveFormatBytes(mix_raw);
+  const std::string mix_str = WaveFormatToString(mix_raw);
+
+  const uint32_t sample_rate = mix_raw->nSamplesPerSec;
+  const uint32_t block_align = mix_raw->nBlockAlign;
+  uint64_t bytes_per_sec = mix_raw->nAvgBytesPerSec;
+  if (bytes_per_sec == 0 && sample_rate != 0 && block_align != 0) {
+    bytes_per_sec = static_cast<uint64_t>(sample_rate) * static_cast<uint64_t>(block_align);
+  }
+
+  CoTaskMemFree(mix_raw);
+  mix_raw = nullptr;
+
+  if (mix_bytes.empty()) {
+    out.fail_reason = "copy_mix_format_failed";
+    out.hr = E_FAIL;
+    out.init_hr = out.hr;
+    log.LogLine("virtio-snd: buffer-limits unable to copy mix format");
+    return out;
+  }
+  if (sample_rate == 0 || block_align == 0 || bytes_per_sec == 0) {
+    out.fail_reason = "invalid_mix_format";
+    out.hr = E_FAIL;
+    out.init_hr = out.hr;
+    log.Logf("virtio-snd: buffer-limits invalid mix format=%s", mix_str.c_str());
+    return out;
+  }
+
+  // Target an ~8MiB audio buffer to stress virtio-snd buffer sizing constraints without allocating
+  // excessive guest memory.
+  constexpr uint64_t kTargetBytes = 8ull * 1024ull * 1024ull;
+  const uint64_t duration_sec = std::max<uint64_t>(1, (kTargetBytes + bytes_per_sec - 1) / bytes_per_sec);
+  const REFERENCE_TIME requested_buffer_hns =
+      static_cast<REFERENCE_TIME>(duration_sec * 10000000ull); // seconds -> 100ns units
+
+  log.Logf("virtio-snd: buffer-limits mix_format=%s bytes_per_sec=%llu target_bytes=%llu duration_sec=%llu",
+           mix_str.c_str(), static_cast<unsigned long long>(bytes_per_sec),
+           static_cast<unsigned long long>(kTargetBytes), static_cast<unsigned long long>(duration_sec));
+
+  REFERENCE_TIME default_period = 0;
+  REFERENCE_TIME min_period = 0;
+  if (FAILED(probe->GetDevicePeriod(&default_period, &min_period))) {
+    default_period = 0;
+    min_period = 0;
+  }
+
+  // Attempt exclusive first (lets us specify both buffer duration + periodicity). If exclusive isn't
+  // possible, fall back to shared.
+  std::vector<BYTE> excl_bytes;
+  REFERENCE_TIME excl_period = 0;
+  if (min_period > 0) {
+    excl_period = min_period;
+  } else if (default_period > 0) {
+    excl_period = default_period;
+  }
+
+  if (excl_period > 0) {
+    WAVEFORMATEX* closest = nullptr;
+    const auto* mix_fmt = reinterpret_cast<const WAVEFORMATEX*>(mix_bytes.data());
+    const HRESULT fmt_hr = probe->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, mix_fmt, &closest);
+    if (fmt_hr == S_OK) {
+      excl_bytes = mix_bytes;
+    } else if (fmt_hr == S_FALSE && closest) {
+      excl_bytes = CopyWaveFormatBytes(closest);
+    }
+    if (closest) CoTaskMemFree(closest);
+  }
+
+  if (!excl_bytes.empty() && excl_period > 0) {
+    // Ensure the exclusive buffer duration is a multiple of periodicity.
+    const REFERENCE_TIME aligned_buffer_hns =
+        ((requested_buffer_hns + excl_period - 1) / excl_period) * excl_period;
+    auto excl = VirtioSndBufferLimitsAttempt(log, chosen.device.Get(), "exclusive", AUDCLNT_SHAREMODE_EXCLUSIVE,
+                                             aligned_buffer_hns, excl_period, excl_bytes);
+    excl.endpoint_found = true;
+    if (excl.ok && excl.init_succeeded) {
+      return excl;
+    }
+    // If exclusive doesn't succeed, attempt shared mode as well (to avoid reporting an exclusive-only
+    // configuration issue as a buffer sizing regression).
+    auto shared = VirtioSndBufferLimitsAttempt(log, chosen.device.Get(), "shared", AUDCLNT_SHAREMODE_SHARED,
+                                               requested_buffer_hns, 0, mix_bytes);
+    shared.endpoint_found = true;
+    if (shared.ok) return shared;
+    return excl;
+  }
+
+  auto shared = VirtioSndBufferLimitsAttempt(log, chosen.device.Get(), "shared", AUDCLNT_SHAREMODE_SHARED,
+                                             requested_buffer_hns, 0, mix_bytes);
+  shared.endpoint_found = true;
+  return shared;
+}
+
+struct VirtioSndBufferLimitsThreadContext {
+  Logger* log = nullptr;
+  std::vector<std::wstring> match_names;
+  bool allow_transitional = false;
+  HANDLE done_event = nullptr;
+  VirtioSndBufferLimitsTestResult result{};
+};
+
+static DWORD WINAPI VirtioSndBufferLimitsThreadProc(void* param) {
+  auto* ctx = reinterpret_cast<VirtioSndBufferLimitsThreadContext*>(param);
+  if (!ctx) return 0;
+  if (ctx->log) {
+    ctx->result = VirtioSndBufferLimitsTestInternal(*ctx->log, ctx->match_names, ctx->allow_transitional);
+  } else {
+    ctx->result.ok = false;
+    ctx->result.fail_reason = "logger_null";
+    ctx->result.hr = E_POINTER;
+    ctx->result.init_hr = ctx->result.hr;
+  }
+  if (ctx->done_event) SetEvent(ctx->done_event);
+  return 0;
+}
+
+static VirtioSndBufferLimitsTestResult VirtioSndBufferLimitsTest(Logger& log,
+                                                                 const std::vector<std::wstring>& match_names,
+                                                                 bool allow_transitional) {
+  VirtioSndBufferLimitsThreadContext ctx{};
+  ctx.log = &log;
+  ctx.match_names = match_names;
+  ctx.allow_transitional = allow_transitional;
+
+  ctx.done_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!ctx.done_event) {
+    VirtioSndBufferLimitsTestResult out{};
+    out.ok = false;
+    out.fail_reason = "create_event_failed";
+    out.hr = HRESULT_FROM_WIN32(GetLastError());
+    out.init_hr = out.hr;
+    return out;
+  }
+
+  DWORD thread_id = 0;
+  HANDLE thread = CreateThread(nullptr, 0, VirtioSndBufferLimitsThreadProc, &ctx, 0, &thread_id);
+  if (!thread) {
+    CloseHandle(ctx.done_event);
+    VirtioSndBufferLimitsTestResult out{};
+    out.ok = false;
+    out.fail_reason = "create_thread_failed";
+    out.hr = HRESULT_FROM_WIN32(GetLastError());
+    out.init_hr = out.hr;
+    return out;
+  }
+
+  // Bound runtime so a buggy driver can't hang the entire selftest when asked for extreme buffer sizes.
+  constexpr DWORD kTimeoutMs = 30000;
+  const DWORD wait_rc = WaitForSingleObject(ctx.done_event, kTimeoutMs);
+  if (wait_rc != WAIT_OBJECT_0) {
+    log.Logf("virtio-snd: buffer-limits timed out wait_rc=%lu", static_cast<unsigned long>(wait_rc));
+    TerminateThread(thread, 1);
+    WaitForSingleObject(thread, 5000);
+    CloseHandle(thread);
+    CloseHandle(ctx.done_event);
+
+    VirtioSndBufferLimitsTestResult out{};
+    out.ok = false;
+    out.timed_out = true;
+    out.fail_reason = "timeout";
+    out.hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    out.init_hr = out.hr;
+    return out;
+  }
+
+  WaitForSingleObject(thread, 5000);
+  CloseHandle(thread);
+  CloseHandle(ctx.done_event);
+  return ctx.result;
 }
 
 static std::wstring WinmmErrorToWide(MMRESULT rc) {
@@ -4741,6 +5145,7 @@ static void PrintUsage() {
       "  --test-snd                Alias for --require-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
+      "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
       "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
       "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
@@ -4823,6 +5228,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {
       opt.test_snd_capture = true;
+    } else if (arg == L"--test-snd-buffer-limits") {
+      opt.test_snd_buffer_limits = true;
     } else if (arg == L"--require-non-silence") {
       opt.require_non_silence = true;
     } else if (arg == L"--allow-virtio-snd-transitional") {
@@ -4864,10 +5271,11 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (opt.disable_snd &&
-      (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence)) {
+      (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.test_snd_buffer_limits ||
+       opt.require_non_silence)) {
     fprintf(stderr,
             "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-capture, "
-            "--test-snd-capture, or --require-non-silence\n");
+            "--test-snd-capture, --test-snd-buffer-limits, or --require-non-silence\n");
     PrintUsage();
     return 2;
   }
@@ -5104,6 +5512,23 @@ int wmain(int argc, wchar_t** argv) {
           // doesn't fail spuriously (which would make host-side virtio-snd wav verification flaky).
           if (want_snd_playback || want_snd_capture) {
             WaitForWindowsAudioServices(log, 30000);
+          }
+
+          if (opt.test_snd_buffer_limits && want_snd_playback) {
+            const auto stress =
+                VirtioSndBufferLimitsTest(log, match_names, opt.allow_virtio_snd_transitional);
+            if (stress.ok) {
+              log.Logf(
+                  "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|mode=%s|init_hr=0x%08lx|expected_failure=%d|buffer_bytes=%llu",
+                  stress.mode.empty() ? "-" : stress.mode.c_str(),
+                  static_cast<unsigned long>(stress.init_hr), stress.expected_failure ? 1 : 0,
+                  static_cast<unsigned long long>(stress.buffer_bytes));
+            } else {
+              log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL|reason=%s|hr=0x%08lx",
+                       stress.fail_reason.empty() ? "unknown" : stress.fail_reason.c_str(),
+                       static_cast<unsigned long>(stress.hr));
+              all_ok = false;
+            }
           }
 
           if (want_snd_playback) {
