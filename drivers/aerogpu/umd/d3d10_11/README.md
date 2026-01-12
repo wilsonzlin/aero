@@ -134,7 +134,8 @@ See also: `docs/graphics/win7-shared-surfaces-share-token.md`.
 
 Win7 validation:
 
-- `drivers/aerogpu/tests/win7/d3d11_shared_texture_ipc/`
+- `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/`
+- `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/`
 
 ## Build
 
