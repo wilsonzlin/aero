@@ -2,9 +2,12 @@
 
 This repository includes a minimal **virtio-snd** device model (`crates/aero-virtio`, `aero_virtio::devices::snd`) intended to be used as a high-performance alternative to full Intel HDA emulation once guest drivers exist.
 
-Note: the **browser worker runtime** currently wires up **HDA** as the default guest audio device. The virtio-snd device model
-exists (and the Windows 7 driver contract + Guest Tools packaging flow exist), but a corresponding IO-worker `PciDevice` wrapper
-is not yet registered in `web/src/io/devices/*`, so virtio-snd may not be available in all runtimes/configurations.
+Note: the **browser worker runtime** (IO worker) wires up **HDA** as the default *active* guest audio device, but **virtio-snd is
+also wired into the IO-worker PCI stack**:
+
+- WASM bridge export: `crates/aero-wasm/src/virtio_snd_pci_bridge.rs` (`VirtioSndPciBridge`)
+- TS PCI device wrapper: `web/src/io/devices/virtio_snd.ts` (`VirtioSndPciDevice`)
+- IO worker init/wiring: `web/src/workers/io_virtio_snd_init.ts` + `web/src/workers/io.worker.ts`
 
 The legacy virtio-snd implementation under `crates/emulator/src/io/virtio/devices/snd.rs` is retained behind the `emulator/legacy-audio` feature for reference.
 
@@ -14,6 +17,28 @@ See also:
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
 - [`windows-device-contract.md`](./windows-device-contract.md) — PCI ID + driver service naming contract (Aero).
 - [`drivers/protocol/virtio/`](../drivers/protocol/virtio/) — canonical `#[repr(C)]` message layouts (with Rust unit tests) shared between the guest driver and device model.
+
+## Browser runtime status
+
+Virtio-snd is instantiated in the browser by the **IO worker**:
+
+1. `web/src/workers/io.worker.ts` calls `tryInitVirtioSndDevice` (`web/src/workers/io_virtio_snd_init.ts`) when the WASM export
+   `VirtioSndPciBridge` is available.
+2. `tryInitVirtioSndDevice` registers `VirtioSndPciDevice` (`web/src/io/devices/virtio_snd.ts`) on the IO worker PCI bus.
+
+### Making virtio-snd the active (ring-attached) audio device
+
+The host AudioWorklet rings are **SPSC**, so the IO worker attaches them to only one guest audio device at a time:
+
+- Prefer **HDA** when `HdaControllerBridge` is available.
+- Fall back to **virtio-snd** only when HDA is unavailable (e.g. a WASM build that omits HDA exports).
+
+If both devices are registered, virtio-snd may still enumerate to the guest, but it will not produce/consume host audio unless an
+explicit device-selection mechanism is added (detach HDA rings and attach virtio-snd rings).
+
+Limitations (current):
+
+- VM snapshot/restore does not yet capture virtio-snd internal device state in the browser runtime.
 
 Scope:
 

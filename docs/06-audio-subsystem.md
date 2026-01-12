@@ -20,6 +20,8 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `crates/aero-wasm/src/hda_controller_bridge.rs` — WASM-side bridge exported as `HdaControllerBridge` and used by the browser IO
   worker to expose HDA as a PCI/MMIO device (MMIO read/write, `process(frames)`, ring attachment).
 - `crates/aero-virtio/src/devices/snd.rs` — canonical virtio-snd device model.
+- `crates/aero-wasm/src/virtio_snd_pci_bridge.rs` — WASM-side bridge exported as `VirtioSndPciBridge` and used by the browser IO
+  worker to expose virtio-snd as a virtio-pci device (BAR0 MMIO + `poll()`, ring attachment).
 - `docs/windows7-virtio-driver-contract.md` — definitive Windows 7 virtio device/transport contract (`AERO-W7-VIRTIO`, includes virtio-snd).
 - `crates/platform/src/audio/worklet_bridge.rs` — playback `SharedArrayBuffer` ring layout + producer-side helper (`WorkletBridge`).
 - `web/src/platform/audio.ts` — Web Audio output setup + JS ring producer helpers.
@@ -32,6 +34,8 @@ Canonical implementation pointers (to avoid duplicated stacks):
 - `web/src/runtime/protocol.ts` + `web/src/runtime/coordinator.ts` — ring buffer attachment messages (`SetAudioRingBufferMessage`, `SetMicrophoneRingBufferMessage`).
 - `web/src/workers/io.worker.ts` + `web/src/io/*` — worker runtime PCI/MMIO device registration (IO worker owns the guest device model layer).
   - `web/src/io/devices/hda.ts` — `HdaPciDevice` wrapper over `HdaControllerBridge` (MMIO + tick scheduling + ring attachment plumbing).
+  - `web/src/io/devices/virtio_snd.ts` — `VirtioSndPciDevice` wrapper over `VirtioSndPciBridge` (virtio-pci BAR0 MMIO + ring attachment plumbing).
+  - `web/src/workers/io_virtio_snd_init.ts` — IO worker virtio-snd init/registration helper.
 
 The older `crates/emulator` audio stack is retained behind the `emulator/legacy-audio` feature for reference and targeted tests.
 
@@ -53,9 +57,12 @@ This section describes the *canonical* browser runtime integration.
 ### Ownership model
 
 - The **IO worker** owns the guest-visible device layer (PCI/MMIO/virtio) and is the intended home for guest audio devices (**HDA** and **virtio-snd**).
-  - Note: in the current browser runtime, **HDA is wired and registered** (`web/src/io/devices/hda.ts`). The Rust virtio-snd
-    model exists (`crates/aero-virtio/src/devices/snd.rs`), but a corresponding IO-worker `PciDevice` wrapper is not yet wired
-    into `web/src/io/devices/*`.
+  - Both devices can be registered in IO-worker browser builds (depending on which WASM exports are available):
+    - HDA: `HdaControllerBridge` (`crates/aero-wasm/src/hda_controller_bridge.rs`) + `HdaPciDevice` (`web/src/io/devices/hda.ts`)
+    - virtio-snd: `VirtioSndPciBridge` (`crates/aero-wasm/src/virtio_snd_pci_bridge.rs`) + `VirtioSndPciDevice` (`web/src/io/devices/virtio_snd.ts`)
+  - **Ring attachment policy** (SPSC rings): the IO worker attaches the host audio rings to **HDA when present**, and falls back to
+    attaching them to **virtio-snd** only when HDA is unavailable (see `attachAudioRingBuffer` / `attachMicRingBuffer` in
+    `web/src/workers/io.worker.ts`).
 - The **AudioWorkletProcessor** runs on the browser’s audio rendering thread.
 - The **main thread** owns the browser audio graph (`AudioContext` + `AudioWorkletNode`), typically gated by user gesture.
 - The **coordinator** forwards `SharedArrayBuffer` attachments to workers via `postMessage`.
@@ -110,6 +117,8 @@ Guest-visible devices are registered on the IO worker PCI bus:
 - Worker wiring: `web/src/workers/io.worker.ts` (calls `DeviceManager.registerPciDevice(...)`)
   - HDA PCI function wrapper: `web/src/io/devices/hda.ts` (`HdaPciDevice`, backed by `HdaControllerBridge`).
     - Registration entrypoint: `maybeInitHdaDevice()` in `web/src/workers/io.worker.ts`.
+  - virtio-snd PCI function wrapper: `web/src/io/devices/virtio_snd.ts` (`VirtioSndPciDevice`, backed by `VirtioSndPciBridge`).
+    - Registration entrypoint: `tryInitVirtioSndDevice()` in `web/src/workers/io_virtio_snd_init.ts` (invoked by `maybeInitVirtioSndDevice()` in `web/src/workers/io.worker.ts`).
   - See `web/src/io/devices/uhci.ts` for a concrete example of a WASM-backed PCI device wrapper (PIO + IRQ + tick scheduling).
 
 ### Ring producer/consumer constraints (SPSC)
@@ -322,7 +331,10 @@ Implementation references:
 - Ring buffer **contents** are not restored. Producers clear the ring to silence on restore to avoid replaying stale samples.
 - Any host-time-derived audio clocks (e.g. `AudioFrameClock`-driven schedulers) must be reset on snapshot resume so devices do not
   "fast-forward" by wall-clock time spent paused during save/restore.
-- The goal is *guest-visible determinism*: after restore, Windows should see consistent HDA/virtio-snd state and DMA position evolution.
+- virtio-snd snapshot/restore is not yet plumbed in the browser runtime (only PCI config/bus state is snapshotted), so the
+  virtio-snd device model will reset on restore.
+- The goal is *guest-visible determinism*: after restore, Windows should see consistent HDA state (and, once implemented, virtio-snd
+  state) and DMA position evolution.
 
 ---
 

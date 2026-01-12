@@ -73,8 +73,13 @@ Audio is important for user experience but not on the critical boot path.
     - `HdaControllerBridge` (`crates/aero-wasm/src/hda_controller_bridge.rs`)
     - `HdaPciDevice` (`web/src/io/devices/hda.ts`)
   - Ring buffers are forwarded by the coordinator (`SetAudioRingBufferMessage` / `SetMicrophoneRingBufferMessage`).
-  - virtio-snd exists as a Rust device model (`crates/aero-virtio/src/devices/snd.rs`) + Win7 driver contract, but is not yet
-    registered as a device in the browser IO-worker PCI stack.
+  - virtio-snd exists as a Rust device model (`crates/aero-virtio/src/devices/snd.rs`) + Win7 driver contract, and **is wired into
+    the browser IO worker** as a virtio-pci device:
+    - WASM bridge export: `crates/aero-wasm/src/virtio_snd_pci_bridge.rs` (`VirtioSndPciBridge`)
+    - TS PCI device wrapper: `web/src/io/devices/virtio_snd.ts` (`VirtioSndPciDevice`)
+    - IO worker init/wiring: `web/src/workers/io_virtio_snd_init.ts` + `web/src/workers/io.worker.ts`
+  - **Ring attachment policy** (SPSC rings): the IO worker attaches the playback/mic rings to **HDA when present**, and falls back
+    to attaching them to **virtio-snd** in WASM builds/configurations that omit HDA.
 - **AU-008 (Audio test suite)**: E2E coverage exists for the AudioWorklet + HDA demo (`tests/e2e/audio-worklet-hda-demo.spec.ts`), plus unit coverage for IO-worker HDA tick scheduling (`web/src/io/devices/hda.test.ts`). Remaining work is full-VM guest-driver coverage (Windows playback/capture) once the end-to-end integration is exercised regularly.
 
 ---
