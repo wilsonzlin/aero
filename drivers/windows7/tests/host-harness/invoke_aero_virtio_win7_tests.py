@@ -818,7 +818,8 @@ def main() -> int:
         help=(
             "Inject deterministic keyboard/mouse events via QMP (input-send-event) and require the guest "
             "virtio-input-events selftest marker to PASS. Also emits a host marker: "
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|... "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast "
+            "(may appear multiple times due to retries). "
             "This requires a guest image provisioned with --test-input-events (or env var)."
         ),
     )
