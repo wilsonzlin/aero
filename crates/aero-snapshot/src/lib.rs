@@ -36,6 +36,7 @@ use crate::io::{ReadLeExt, WriteLeExt};
 
 const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags must be unique)";
 const DUPLICATE_DISK_ENTRY: &str = "duplicate disk entry (disk_id must be unique)";
+const DUPLICATE_APIC_ID: &str = "duplicate APIC ID in CPU list (apic_id must be unique)";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -138,7 +139,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     let mut cpus = source.cpu_states();
     cpus.sort_by_key(|cpu| cpu.apic_id);
     if cpus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
-        return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
     }
     if cpus.len() == 1 && cpus[0].apic_id == 0 && cpus[0].internal_state.is_empty() {
         write_section(w, SectionId::CPU, 2, 0, |w| cpus[0].cpu.encode_v2(w))?;
@@ -416,7 +417,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v1(&mut entry_reader, 64 * 1024 * 1024)?;
                         if !seen.insert(cpu.apic_id) {
-                            return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+                            return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
                         }
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
@@ -439,7 +440,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         let mut entry_reader = (&mut section_reader).take(entry_len);
                         let cpu = VcpuSnapshot::decode_v2(&mut entry_reader, 64 * 1024 * 1024)?;
                         if !seen.insert(cpu.apic_id) {
-                            return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+                            return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID));
                         }
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;

@@ -246,7 +246,9 @@ impl SnapshotTarget for Machine {
                 .try_into()
                 .map_err(|_| SnapshotError::Corrupt("APIC ID out of range"))?;
             if !seen.insert(apic_id) {
-                return Err(SnapshotError::Corrupt("duplicate APIC ID in CPU list"));
+                return Err(SnapshotError::Corrupt(
+                    "duplicate APIC ID in CPU list (apic_id must be unique)",
+                ));
             }
 
             let idx = self

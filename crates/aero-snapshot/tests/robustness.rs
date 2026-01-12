@@ -431,7 +431,7 @@ fn save_snapshot_rejects_duplicate_apic_ids_in_cpu_list() {
     let err = save_snapshot(&mut cursor, &mut source, options).unwrap_err();
     assert!(matches!(
         err,
-        SnapshotError::Corrupt("duplicate APIC ID in CPU list")
+        SnapshotError::Corrupt("duplicate APIC ID in CPU list (apic_id must be unique)")
     ));
 }
 
@@ -472,7 +472,7 @@ fn restore_snapshot_rejects_duplicate_apic_ids_in_cpus_section() {
     let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
     assert!(matches!(
         err,
-        SnapshotError::Corrupt("duplicate APIC ID in CPU list")
+        SnapshotError::Corrupt("duplicate APIC ID in CPU list (apic_id must be unique)")
     ));
 }
 

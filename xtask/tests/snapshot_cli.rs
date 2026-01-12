@@ -851,7 +851,9 @@ fn snapshot_validate_rejects_duplicate_apic_ids_in_cpus_section() {
         .args(["snapshot", "validate", snap.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("duplicate APIC ID in CPU list"));
+        .stderr(predicate::str::contains(
+            "duplicate APIC ID in CPU list (apic_id must be unique)",
+        ));
 }
 
 #[test]

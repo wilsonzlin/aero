@@ -591,7 +591,7 @@ fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> 
         let apic_id = validate_vcpu_entry(&mut entry_reader, section.version)?;
         if !seen_apic_ids.insert(apic_id) {
             return Err(XtaskError::Message(
-                "duplicate APIC ID in CPU list".to_string(),
+                "duplicate APIC ID in CPU list (apic_id must be unique)".to_string(),
             ));
         }
         // Skip any forward-compatible additions.
