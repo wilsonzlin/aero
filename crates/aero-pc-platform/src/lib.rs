@@ -989,7 +989,14 @@ impl PcPlatform {
     ) -> Self {
         config.enable_nvme = true;
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
-        Self::new_with_config_and_ram_inner(Box::new(ram), config, None, Some(disk), None)
+        Self::new_with_config_and_ram_inner(
+            ram_size as u64,
+            Box::new(ram),
+            config,
+            None,
+            Some(disk),
+            None,
+        )
     }
 
     pub fn new_with_ahci(ram_size: usize) -> Self {
@@ -1128,7 +1135,14 @@ impl PcPlatform {
     ) -> Self {
         config.enable_virtio_blk = true;
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
-        Self::new_with_config_and_ram_inner(Box::new(ram), config, None, None, Some(disk))
+        Self::new_with_config_and_ram_inner(
+            ram_size as u64,
+            Box::new(ram),
+            config,
+            None,
+            None,
+            Some(disk),
+        )
     }
 
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
@@ -1146,7 +1160,8 @@ impl PcPlatform {
     }
 
     pub fn new_with_config_and_ram(ram: Box<dyn GuestMemory>, config: PcPlatformConfig) -> Self {
-        Self::new_with_config_and_ram_inner(ram, config, None, None, None)
+        let ram_size_bytes = ram.size();
+        Self::new_with_config_and_ram_inner(ram_size_bytes, ram, config, None, None, None)
     }
 
     pub fn new_with_config_and_ram_dirty_tracking(
@@ -1154,10 +1169,12 @@ impl PcPlatform {
         config: PcPlatformConfig,
         page_size: u32,
     ) -> Self {
-        Self::new_with_config_and_ram_inner(ram, config, Some(page_size), None, None)
+        let ram_size_bytes = ram.size();
+        Self::new_with_config_and_ram_inner(ram_size_bytes, ram, config, Some(page_size), None, None)
     }
 
     fn new_with_config_and_ram_inner(
+        ram_size_bytes: u64,
         ram: Box<dyn GuestMemory>,
         config: PcPlatformConfig,
         dirty_page_size: Option<u32>,
@@ -1168,7 +1185,6 @@ impl PcPlatform {
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
-        let total_ram_size = ram.size();
         let mut memory = match dirty_page_size {
             Some(page_size) => MemoryBus::with_ram_dirty_tracking(filter, ram, page_size),
             None => MemoryBus::with_ram(filter, ram),
@@ -1192,7 +1208,7 @@ impl PcPlatform {
         let rtc = Rc::new(RefCell::new(RtcCmos::new(clock.clone(), rtc_irq8)));
         // Program CMOS with the *actual* guest RAM size (not including the below-4GiB PCI MMIO
         // hole when RAM is remapped above 4GiB).
-        rtc.borrow_mut().set_memory_size_bytes(total_ram_size);
+        rtc.borrow_mut().set_memory_size_bytes(ram_size_bytes);
         register_rtc_cmos(&mut io, rtc.clone());
 
         let i8042_ports = I8042Ports::new();
@@ -1777,7 +1793,7 @@ impl PcPlatform {
             chipset,
             io,
             memory,
-            ram_size_bytes: total_ram_size,
+            ram_size_bytes,
             interrupts,
             pci_cfg,
             pci_intx,
@@ -2435,5 +2451,200 @@ impl PcPlatform {
 
     pub fn take_reset_events(&mut self) -> Vec<ResetEvent> {
         std::mem::take(&mut *self.reset_events.borrow_mut())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory};
+
+    const FOUR_GIB: u64 = 1u64 << 32;
+
+    /// GuestMemory wrapper that simulates the PC "PCI hole" + high-RAM remap layout used by Q35.
+    ///
+    /// - Low RAM: `0x0..PCIE_ECAM_BASE` maps to backing RAM `0..PCIE_ECAM_BASE`.
+    /// - PCI hole: `PCIE_ECAM_BASE..0x1_0000_0000` is unmapped (read/write return OutOfRange).
+    /// - High RAM: `0x1_0000_0000..(0x1_0000_0000 + (ram_size_bytes - PCIE_ECAM_BASE))` maps to the
+    ///   remainder of the backing RAM.
+    ///
+    /// `size()` returns the *guest-physical addressable* size including the hole.
+    struct PciHoleRemappedGuestMemory {
+        backing: Box<dyn GuestMemory>,
+        ram_size_bytes: u64,
+        phys_size: u64,
+    }
+
+    impl PciHoleRemappedGuestMemory {
+        fn new(backing: Box<dyn GuestMemory>, ram_size_bytes: u64) -> Self {
+            let high_bytes = ram_size_bytes.saturating_sub(PCIE_ECAM_BASE);
+            let phys_size = if ram_size_bytes > PCIE_ECAM_BASE {
+                FOUR_GIB + high_bytes
+            } else {
+                ram_size_bytes
+            };
+            Self {
+                backing,
+                ram_size_bytes,
+                phys_size,
+            }
+        }
+
+        #[inline]
+        fn check_range(&self, paddr: u64, len: usize) -> GuestMemoryResult<u64> {
+            let size = self.size();
+            let end = paddr
+                .checked_add(len as u64)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+            if end > size {
+                return Err(GuestMemoryError::OutOfRange { paddr, len, size });
+            }
+            Ok(end)
+        }
+    }
+
+    impl GuestMemory for PciHoleRemappedGuestMemory {
+        fn size(&self) -> u64 {
+            self.phys_size
+        }
+
+        fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+            if dst.is_empty() {
+                return Ok(());
+            }
+
+            let end = self.check_range(paddr, dst.len())?;
+            let high_phys_end = FOUR_GIB + self.ram_size_bytes.saturating_sub(PCIE_ECAM_BASE);
+
+            let mut cur = paddr;
+            let mut pos = 0usize;
+            while pos < dst.len() {
+                if cur < PCIE_ECAM_BASE {
+                    let seg_end = end.min(PCIE_ECAM_BASE);
+                    let seg_len = (seg_end - cur) as usize;
+                    self.backing
+                        .read_into(cur, &mut dst[pos..pos + seg_len])?;
+                    cur += seg_len as u64;
+                    pos += seg_len;
+                    continue;
+                }
+
+                if cur >= FOUR_GIB {
+                    let seg_end = end.min(high_phys_end);
+                    let seg_len = (seg_end - cur) as usize;
+                    let backing_addr = PCIE_ECAM_BASE + (cur - FOUR_GIB);
+                    self.backing
+                        .read_into(backing_addr, &mut dst[pos..pos + seg_len])?;
+                    cur += seg_len as u64;
+                    pos += seg_len;
+                    continue;
+                }
+
+                return Err(GuestMemoryError::OutOfRange {
+                    paddr: cur,
+                    len: dst.len() - pos,
+                    size: self.size(),
+                });
+            }
+
+            Ok(())
+        }
+
+        fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+            if src.is_empty() {
+                return Ok(());
+            }
+
+            let end = self.check_range(paddr, src.len())?;
+            let high_phys_end = FOUR_GIB + self.ram_size_bytes.saturating_sub(PCIE_ECAM_BASE);
+
+            let mut cur = paddr;
+            let mut pos = 0usize;
+            while pos < src.len() {
+                if cur < PCIE_ECAM_BASE {
+                    let seg_end = end.min(PCIE_ECAM_BASE);
+                    let seg_len = (seg_end - cur) as usize;
+                    self.backing
+                        .write_from(cur, &src[pos..pos + seg_len])?;
+                    cur += seg_len as u64;
+                    pos += seg_len;
+                    continue;
+                }
+
+                if cur >= FOUR_GIB {
+                    let seg_end = end.min(high_phys_end);
+                    let seg_len = (seg_end - cur) as usize;
+                    let backing_addr = PCIE_ECAM_BASE + (cur - FOUR_GIB);
+                    self.backing
+                        .write_from(backing_addr, &src[pos..pos + seg_len])?;
+                    cur += seg_len as u64;
+                    pos += seg_len;
+                    continue;
+                }
+
+                return Err(GuestMemoryError::OutOfRange {
+                    paddr: cur,
+                    len: src.len() - pos,
+                    size: self.size(),
+                });
+            }
+
+            Ok(())
+        }
+    }
+
+    fn cmos_read_u8(pc: &mut PcPlatform, index: u8) -> u8 {
+        pc.io.write(0x70, 1, u32::from(index));
+        pc.io.read(0x71, 1) as u8
+    }
+
+    fn cmos_read_u16(pc: &mut PcPlatform, index_lo: u8, index_hi: u8) -> u16 {
+        let lo = cmos_read_u8(pc, index_lo);
+        let hi = cmos_read_u8(pc, index_hi);
+        u16::from(lo) | (u16::from(hi) << 8)
+    }
+
+    #[test]
+    fn pc_platform_reset_cmos_reports_configured_ram_size_not_physical_address_space() {
+        // Force the Q35-style high-RAM remap by configuring RAM to extend past the ECAM base.
+        let ram_size_bytes = PCIE_ECAM_BASE + 8 * 1024 * 1024;
+
+        // Don't allocate multi-GB dense RAM; use a sparse backing.
+        let backing = SparseMemory::new(ram_size_bytes).expect("failed to allocate sparse RAM");
+        let ram = PciHoleRemappedGuestMemory::new(Box::new(backing), ram_size_bytes);
+
+        let mut pc = PcPlatform::new_with_config_and_ram_inner(
+            ram_size_bytes,
+            Box::new(ram),
+            PcPlatformConfig::default(),
+            None,
+            None,
+            None,
+        );
+
+        // Ensure the guest-physical address space is larger than the configured contiguous RAM.
+        assert!(
+            pc.memory.ram().size() > ram_size_bytes,
+            "test requires PCI hole remap (phys_size > ram_size_bytes)"
+        );
+
+        // The bug being exercised is in `PcPlatform::reset` (it re-creates the RTC/CMOS).
+        pc.reset();
+
+        // Expected values, matching `RtcCmos::set_memory_size_bytes`.
+        const ONE_MIB: u64 = 1024 * 1024;
+        const SIXTEEN_MIB: u64 = 16 * 1024 * 1024;
+        const SIXTY_FOUR_KIB: u64 = 64 * 1024;
+
+        let base_kb: u16 = 640;
+        let ext_kb = (ram_size_bytes.saturating_sub(ONE_MIB) / 1024)
+            .min(u64::from(u16::MAX)) as u16;
+        let high_blocks = (ram_size_bytes.saturating_sub(SIXTEEN_MIB) / SIXTY_FOUR_KIB)
+            .min(u64::from(u16::MAX)) as u16;
+
+        assert_eq!(cmos_read_u16(&mut pc, 0x15, 0x16), base_kb);
+        assert_eq!(cmos_read_u16(&mut pc, 0x17, 0x18), ext_kb);
+        assert_eq!(cmos_read_u16(&mut pc, 0x30, 0x31), ext_kb);
+        assert_eq!(cmos_read_u16(&mut pc, 0x34, 0x35), high_blocks);
     }
 }
