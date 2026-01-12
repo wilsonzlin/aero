@@ -438,6 +438,7 @@ impl IsoBackend for MemIso {
 fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_reattach() {
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
     const AHCI_VECTOR: u8 = 0x70;
+    const IDE_PRIMARY_VECTOR: u8 = 0x60;
 
     let mut cfg = MachineConfig::win7_storage_defaults(RAM_SIZE);
     // Keep the machine minimal and deterministic for snapshot tests.
@@ -497,6 +498,10 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
         ints.set_mode(PlatformInterruptMode::Apic);
         let low = u32::from(AHCI_VECTOR) | (1 << 13) | (1 << 15);
         program_ioapic_entry(&mut ints, ahci_gsi, low, 0);
+
+        // Also route ISA IRQ14 (IDE primary) to a known vector so we can observe pending IDE IRQ
+        // state after snapshot restore without relying on a guest OS configuration.
+        program_ioapic_entry(&mut ints, 14, u32::from(IDE_PRIMARY_VECTOR), 0);
     }
 
     let ahci_abar = {
@@ -529,12 +534,15 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     src.write_physical_u32(ahci_abar + PORT_BASE + PORT_REG_CI, 1);
 
     src.process_ahci();
-    src.poll_pci_intx_lines();
 
     assert!(src.ahci().unwrap().borrow().intx_level());
     {
         let interrupts = src.platform_interrupts().expect("pc platform enabled");
-        assert_eq!(interrupts.borrow().get_pending(), Some(AHCI_VECTOR));
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            None,
+            "AHCI INTx should not be visible in PlatformInterrupts until polled"
+        );
     }
 
     let mut out = [0u8; 4];
@@ -556,6 +564,14 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     first4[0..2].copy_from_slice(&w0.to_le_bytes());
     first4[2..4].copy_from_slice(&w1.to_le_bytes());
     assert_eq!(&first4, b"BOOT");
+    assert!(
+        src.ide()
+            .unwrap()
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "IDE primary IRQ should be pending mid-transfer before snapshot"
+    );
 
     // Trigger ATAPI UNIT ATTENTION and leave sense state pending.
     src.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
@@ -655,6 +671,15 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
         let interrupts = restored.platform_interrupts().expect("pc platform enabled");
         assert_eq!(interrupts.borrow().get_pending(), Some(AHCI_VECTOR));
     }
+    assert!(
+        restored
+            .ide()
+            .unwrap()
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "IDE primary IRQ should remain pending after restore"
+    );
 
     // Reattach storage backends (controller load_state intentionally drops them).
     restored.attach_ahci_drive_port0(AtaDrive::new(Box::new(ahci_disk.clone())).unwrap());
@@ -673,6 +698,13 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     {
         let interrupts = restored.platform_interrupts().expect("pc platform enabled");
         interrupts.borrow_mut().eoi(AHCI_VECTOR);
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(IDE_PRIMARY_VECTOR),
+            "IDE IRQ14 should be re-driven and deliverable after clearing AHCI INTx"
+        );
+        interrupts.borrow_mut().acknowledge(IDE_PRIMARY_VECTOR);
+        interrupts.borrow_mut().eoi(IDE_PRIMARY_VECTOR);
         assert_eq!(interrupts.borrow().get_pending(), None);
     }
 
