@@ -102,6 +102,53 @@ fn build_int10_teletype_boot_sector(ch: u8, attr: u8) -> [u8; 512] {
     sector
 }
 
+fn build_int10_write_string_boot_sector() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // Place the string near the end of the boot sector so it's well away from the code stream.
+    // The BIOS loads the boot sector to physical 0x7C00 and starts executing at 0000:7C00, so
+    // ES:BP can use an absolute offset into 0x0000 segment space.
+    let text = b"ABC";
+    let text_offset = 0x01E0usize;
+    let text_addr = 0x7C00u16 + text_offset as u16;
+
+    sector[text_offset..text_offset + text.len()].copy_from_slice(text);
+
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+    // mov bp, text_addr
+    sector[i..i + 3].copy_from_slice(&[0xBD, (text_addr & 0x00FF) as u8, (text_addr >> 8) as u8]);
+    i += 3;
+
+    // mov ax, 0x1301 ; INT 10h AH=13h Write String, AL=01h (update cursor, no inline attrs)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x01, 0x13]);
+    i += 3;
+    // mov bx, 0x001F ; BH=0 page, BL=0x1F attribute (white on blue)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x1F, 0x00]);
+    i += 3;
+    // mov cx, 3 ; string length
+    sector[i..i + 3].copy_from_slice(&[0xB9, 0x03, 0x00]);
+    i += 3;
+    // xor dx, dx ; DH=row0, DL=col0
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xD2]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn build_set_start_address_and_set_cursor_pos_boot_sector(
     start_addr: u16,
     row: u8,
@@ -435,4 +482,29 @@ fn int10_set_active_page_updates_crtc_start_address() {
     assert_eq!(start, 0x06);
     assert_eq!(end, 0x07);
     assert_eq!(pos, expected_start);
+}
+
+#[test]
+fn int10_write_string_updates_cursor_and_syncs_to_vga_crtc() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let boot = build_int10_write_string_boot_sector();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // The BIOS should have advanced the cursor by 3 cells (after writing "ABC").
+    let start_addr = read_crtc_start_addr(&mut m) & 0x3FFF;
+    let expected_pos = start_addr.wrapping_add(3) & 0x3FFF;
+
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos & 0x3FFF, expected_pos);
 }
