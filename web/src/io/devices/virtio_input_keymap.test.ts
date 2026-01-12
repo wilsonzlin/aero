@@ -4,6 +4,23 @@ import { keyboardCodeToHidUsage } from "../../input/hid_usage";
 import { hidUsageToLinuxKeyCode } from "./virtio_input";
 
 describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
+  it("maps contract-required alphanumerics, basic keys, and function keys", () => {
+    // Letters.
+    expect(hidUsageToLinuxKeyCode(0x04)).toBe(30); // KEY_A
+    expect(hidUsageToLinuxKeyCode(0x1d)).toBe(44); // KEY_Z
+
+    // Digits.
+    expect(hidUsageToLinuxKeyCode(0x27)).toBe(11); // KEY_0
+
+    // Basic.
+    expect(hidUsageToLinuxKeyCode(0x28)).toBe(28); // KEY_ENTER
+    expect(hidUsageToLinuxKeyCode(0x29)).toBe(1); // KEY_ESC
+
+    // Function keys.
+    expect(hidUsageToLinuxKeyCode(0x3a)).toBe(59); // KEY_F1
+    expect(hidUsageToLinuxKeyCode(0x45)).toBe(88); // KEY_F12
+  });
+
   it("maps punctuation + locks + meta HID usages to Linux KEY_* codes", () => {
     const cases: Array<{ usage: number; linuxKey: number }> = [
       // Punctuation.

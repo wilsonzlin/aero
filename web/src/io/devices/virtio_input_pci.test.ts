@@ -87,9 +87,18 @@ describe("io/devices/virtio_input PCI config", () => {
     expect(cfg.readU8(10, 0, 0x08)).toBe(0x01);
     expect(cfg.readU8(10, 1, 0x08)).toBe(0x01);
 
+    // Class code: 0x09_80_00 (Input device, Other).
+    expect(cfg.readU8(10, 0, 0x09)).toBe(0x00); // prog-if
+    expect(cfg.readU8(10, 0, 0x0a)).toBe(0x80); // subclass
+    expect(cfg.readU8(10, 0, 0x0b)).toBe(0x09); // base class
+
     // Header type: fn0 advertises multifunction.
     expect(cfg.readU8(10, 0, 0x0e)).toBe(0x80);
     expect(cfg.readU8(10, 1, 0x0e)).toBe(0x00);
+
+    // Interrupt line/pin: IRQ 5, INTA#.
+    expect(cfg.readU8(10, 0, 0x3c)).toBe(0x05);
+    expect(cfg.readU8(10, 0, 0x3d)).toBe(0x01);
 
     // BAR0: 64-bit MMIO with size 0x4000.
     for (const fn of [0, 1]) {
