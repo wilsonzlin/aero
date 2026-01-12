@@ -388,7 +388,11 @@ impl<C: Clock> AcpiPmIo<C> {
     fn reset_state(&mut self) {
         self.pm1_sts = 0;
         self.pm1_en = 0;
-        self.pm1_cnt = 0;
+        self.pm1_cnt = if self.cfg.start_enabled {
+            PM1_CNT_SCI_EN
+        } else {
+            0
+        };
         if self.cfg.start_enabled {
             self.pm1_cnt |= PM1_CNT_SCI_EN;
         }

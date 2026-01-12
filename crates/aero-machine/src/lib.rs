@@ -26,11 +26,25 @@ use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
 use aero_devices::a20_gate::A20Gate as A20GateDevice;
+use aero_devices::acpi_pm::{
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
+};
+use aero_devices::clock::ManualClock;
+use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
+use aero_devices::irq::PlatformIrqLine;
+use aero_devices::pci::{
+    register_pci_config_ports, PciConfigPorts, PciIntxRouter, PciIntxRouterConfig,
+    SharedPciConfigPorts,
+};
+use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
+use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
+use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
+use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_net_backend::NetworkBackend;
@@ -56,6 +70,10 @@ pub struct MachineConfig {
     pub ram_size_bytes: u64,
     /// Number of vCPUs (currently must be 1).
     pub cpu_count: u8,
+    /// Whether to attach canonical PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET).
+    ///
+    /// This is currently opt-in to keep the default machine minimal and deterministic.
+    pub enable_pc_platform: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
     /// Whether to attach a legacy i8042 controller at ports `0x60/0x64`.
@@ -71,6 +89,7 @@ impl Default for MachineConfig {
         Self {
             ram_size_bytes: 64 * 1024 * 1024,
             cpu_count: 1,
+            enable_pc_platform: false,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,
@@ -444,6 +463,19 @@ pub struct Machine {
     assist: AssistContext,
     mem: SystemMemory,
     io: IoPortBus,
+
+    // Optional PC platform devices. These are behind `Rc<RefCell<_>>` so their host wiring
+    // survives snapshot restore (devices reset their internal state but preserve callbacks/irq
+    // lines).
+    platform_clock: Option<ManualClock>,
+    interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
+    pit: Option<SharedPit8254>,
+    rtc: Option<SharedRtcCmos<ManualClock, PlatformIrqLine>>,
+    pci_cfg: Option<SharedPciConfigPorts>,
+    pci_intx: Option<Rc<RefCell<PciIntxRouter>>>,
+    acpi_pm: Option<SharedAcpiPmIo>,
+    hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
+
     bios: Bios,
     disk: VecBlockDevice,
     network_backend: Option<Box<dyn NetworkBackend>>,
@@ -478,6 +510,14 @@ impl Machine {
             assist: AssistContext::default(),
             mem,
             io: IoPortBus::new(),
+            platform_clock: None,
+            interrupts: None,
+            pit: None,
+            rtc: None,
+            pci_cfg: None,
+            pci_intx: None,
+            acpi_pm: None,
+            hpet: None,
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
             network_backend: None,
@@ -539,6 +579,85 @@ impl Machine {
         let mut out = vec![0u8; len];
         self.mem.read_physical(paddr, &mut out);
         out
+    }
+
+    /// Debug/testing helper: read from an I/O port.
+    pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
+        self.io.read(port, size)
+    }
+
+    /// Debug/testing helper: write to an I/O port.
+    pub fn io_write(&mut self, port: u16, size: u8, value: u32) {
+        self.io.write(port, size, value);
+    }
+
+    /// Returns the shared manual clock backing platform timer devices, if the PC platform is
+    /// enabled.
+    pub fn platform_clock(&self) -> Option<ManualClock> {
+        self.platform_clock.clone()
+    }
+
+    /// Returns the platform interrupt controller complex (PIC + IOAPIC + LAPIC), if present.
+    pub fn platform_interrupts(&self) -> Option<Rc<RefCell<PlatformInterrupts>>> {
+        self.interrupts.clone()
+    }
+
+    /// Returns the PCI config mechanism #1 ports device, if present.
+    pub fn pci_config_ports(&self) -> Option<SharedPciConfigPorts> {
+        self.pci_cfg.clone()
+    }
+
+    /// Returns the PCI INTx router, if present.
+    pub fn pci_intx_router(&self) -> Option<Rc<RefCell<PciIntxRouter>>> {
+        self.pci_intx.clone()
+    }
+
+    /// Returns the PIT 8254 device, if present.
+    pub fn pit(&self) -> Option<SharedPit8254> {
+        self.pit.clone()
+    }
+
+    /// Returns the RTC CMOS device, if present.
+    pub fn rtc(&self) -> Option<SharedRtcCmos<ManualClock, PlatformIrqLine>> {
+        self.rtc.clone()
+    }
+
+    /// Returns the ACPI PM I/O device, if present.
+    pub fn acpi_pm(&self) -> Option<SharedAcpiPmIo> {
+        self.acpi_pm.clone()
+    }
+
+    /// Returns the HPET device, if present.
+    pub fn hpet(&self) -> Option<Rc<RefCell<hpet::Hpet<ManualClock>>>> {
+        self.hpet.clone()
+    }
+
+    /// Advance deterministic platform time and poll any timer devices.
+    ///
+    /// This is a testing/debugging helper; the canonical CPU stepping loop does not currently
+    /// advance platform time automatically.
+    pub fn tick_platform(&mut self, delta_ns: u64) {
+        if let Some(clock) = &self.platform_clock {
+            clock.advance_ns(delta_ns);
+        }
+
+        if let Some(pit) = &self.pit {
+            pit.borrow_mut().advance_ns(delta_ns);
+        }
+
+        if let Some(rtc) = &self.rtc {
+            rtc.borrow_mut().tick();
+        }
+
+        if let Some(interrupts) = &self.interrupts {
+            interrupts.borrow().tick(delta_ns);
+        }
+
+        if let (Some(hpet), Some(interrupts)) = (&self.hpet, &self.interrupts) {
+            let mut hpet = hpet.borrow_mut();
+            let mut interrupts = interrupts.borrow_mut();
+            hpet.poll(&mut *interrupts);
+        }
     }
 
     /// Take (drain) all serial output accumulated so far.
@@ -681,6 +800,63 @@ impl Machine {
 
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
+
+        if self.cfg.enable_pc_platform {
+            let clock = ManualClock::new();
+            let interrupts: Rc<RefCell<PlatformInterrupts>> =
+                Rc::new(RefCell::new(PlatformInterrupts::new()));
+
+            PlatformInterrupts::register_imcr_ports(&mut self.io, interrupts.clone());
+            register_pic8259_on_platform_interrupts(&mut self.io, interrupts.clone());
+
+            let pit: SharedPit8254 = Rc::new(RefCell::new(Pit8254::new()));
+            pit.borrow_mut()
+                .connect_irq0_to_platform_interrupts(interrupts.clone());
+            register_pit8254(&mut self.io, pit.clone());
+
+            let rtc_irq8 = PlatformIrqLine::isa(interrupts.clone(), 8);
+            let rtc: SharedRtcCmos<ManualClock, PlatformIrqLine> =
+                Rc::new(RefCell::new(RtcCmos::new(clock.clone(), rtc_irq8)));
+            rtc.borrow_mut()
+                .set_memory_size_bytes(self.cfg.ram_size_bytes);
+            register_rtc_cmos(&mut self.io, rtc.clone());
+
+            let acpi_pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(
+                AcpiPmConfig::default(),
+                AcpiPmCallbacks {
+                    sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), 9)),
+                    request_power_off: None,
+                },
+            )));
+            register_acpi_pm(&mut self.io, acpi_pm.clone());
+
+            let pci_cfg: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::new()));
+            register_pci_config_ports(&mut self.io, pci_cfg.clone());
+
+            let pci_intx = Rc::new(RefCell::new(PciIntxRouter::new(
+                PciIntxRouterConfig::default(),
+            )));
+
+            let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock.clone())));
+
+            self.platform_clock = Some(clock);
+            self.interrupts = Some(interrupts);
+            self.pit = Some(pit);
+            self.rtc = Some(rtc);
+            self.pci_cfg = Some(pci_cfg);
+            self.pci_intx = Some(pci_intx);
+            self.acpi_pm = Some(acpi_pm);
+            self.hpet = Some(hpet);
+        } else {
+            self.platform_clock = None;
+            self.interrupts = None;
+            self.pit = None;
+            self.rtc = None;
+            self.pci_cfg = None;
+            self.pci_intx = None;
+            self.acpi_pm = None;
+            self.hpet = None;
+        }
 
         if self.cfg.enable_serial {
             let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
@@ -884,6 +1060,50 @@ impl snapshot::SnapshotSource for Machine {
             data: self.serial_log.clone(),
         });
 
+        // Optional PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI/HPET).
+        if let Some(interrupts) = &self.interrupts {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::APIC,
+                &*interrupts.borrow(),
+            ));
+        }
+        if let Some(pit) = &self.pit {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::PIT,
+                &*pit.borrow(),
+            ));
+        }
+        if let Some(rtc) = &self.rtc {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::RTC,
+                &*rtc.borrow(),
+            ));
+        }
+        if let Some(pci_cfg) = &self.pci_cfg {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::PCI_CFG,
+                &*pci_cfg.borrow(),
+            ));
+        }
+        if let Some(pci_intx) = &self.pci_intx {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::PCI_INTX,
+                &*pci_intx.borrow(),
+            ));
+        }
+        if let Some(acpi_pm) = &self.acpi_pm {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::ACPI_PM,
+                &*acpi_pm.borrow(),
+            ));
+        }
+        if let Some(hpet) = &self.hpet {
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::HPET,
+                &*hpet.borrow(),
+            ));
+        }
+
         if let Some(ctrl) = &self.i8042 {
             let ctrl = ctrl.borrow();
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -908,7 +1128,6 @@ impl snapshot::SnapshotSource for Machine {
                 .to_device_state()
                 .expect("CpuInternalState encode cannot fail"),
         );
-
         devices
     }
 
@@ -960,51 +1179,138 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn restore_device_states(&mut self, states: Vec<snapshot::DeviceState>) {
+        use std::collections::HashMap;
+
+        // Restore ordering must be explicit and independent of snapshot file ordering so device
+        // state is deterministic (especially for interrupt lines and PCI INTx routing).
+        let mut by_id: HashMap<snapshot::DeviceId, snapshot::DeviceState> =
+            HashMap::with_capacity(states.len());
         for state in states {
-            match state.id {
-                snapshot::DeviceId::BIOS => {
-                    if state.version != 1 {
-                        continue;
-                    }
-                    let snapshot =
-                        match firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data)) {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
+            // Snapshot format already rejects duplicate (id, version, flags) tuples; for multiple
+            // entries with the same outer ID (forward-compatible versions), prefer the first one.
+            by_id.entry(state.id).or_insert(state);
+        }
+
+        // Firmware snapshot: required for deterministic BIOS interrupt behaviour.
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::BIOS) {
+            if state.version == 1 {
+                if let Ok(snapshot) =
+                    firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data))
+                {
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
-                snapshot::DeviceId::MEMORY => {
-                    if state.version != 1 {
-                        continue;
-                    }
-                    let enabled = state.data.first().copied().unwrap_or(0) != 0;
-                    self.chipset.a20().set_enabled(enabled);
-                    self.cpu.state.a20_enabled = enabled;
+            }
+        }
+
+        // Memory/chipset glue.
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::MEMORY) {
+            if state.version == 1 {
+                let enabled = state.data.first().copied().unwrap_or(0) != 0;
+                self.chipset.a20().set_enabled(enabled);
+                self.cpu.state.a20_enabled = enabled;
+            }
+        }
+
+        // Accumulated serial output.
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::SERIAL) {
+            if state.version == 1 {
+                if let Some(uart) = &self.serial {
+                    let _ = uart.borrow_mut().take_tx();
                 }
-                snapshot::DeviceId::SERIAL => {
-                    if state.version != 1 {
-                        continue;
-                    }
-                    if let Some(uart) = &self.serial {
-                        let _ = uart.borrow_mut().take_tx();
-                    }
-                    self.serial_log = state.data;
-                }
-                snapshot::DeviceId::I8042 => {
-                    let Some(ctrl) = &self.i8042 else {
-                        continue;
-                    };
-                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                        &state,
-                        &mut *ctrl.borrow_mut(),
-                    );
-                }
-                snapshot::DeviceId::CPU_INTERNAL => {
-                    if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
-                        self.restored_cpu_internal = Some(decoded);
-                    }
-                }
-                _ => {}
+                self.serial_log = state.data;
+            }
+        }
+
+        // Optional PC platform devices.
+
+        // 1) Restore interrupt controller complex first.
+        let mut restored_interrupts = false;
+        if let (Some(interrupts), Some(state)) =
+            (&self.interrupts, by_id.remove(&snapshot::DeviceId::APIC))
+        {
+            let mut interrupts = interrupts.borrow_mut();
+            let _ =
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *interrupts);
+            restored_interrupts = true;
+        }
+
+        // 2) Restore PCI devices (config ports + INTx router).
+        if let (Some(pci_cfg), Some(state)) =
+            (&self.pci_cfg, by_id.remove(&snapshot::DeviceId::PCI_CFG))
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let _ =
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);
+        }
+
+        let mut restored_pci_intx = false;
+        if let (Some(pci_intx), Some(state)) =
+            (&self.pci_intx, by_id.remove(&snapshot::DeviceId::PCI_INTX))
+        {
+            let mut pci_intx = pci_intx.borrow_mut();
+            let _ =
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_intx);
+            restored_pci_intx = true;
+        }
+
+        // 3) After restoring both the interrupt controller and the PCI INTx router, re-drive any
+        // asserted level-triggered GSIs into the interrupt sink.
+        if restored_interrupts && restored_pci_intx {
+            if let (Some(pci_intx), Some(interrupts)) = (&self.pci_intx, &self.interrupts) {
+                let pci_intx = pci_intx.borrow();
+                let mut interrupts = interrupts.borrow_mut();
+                pci_intx.sync_levels_to_sink(&mut *interrupts);
+            }
+        }
+
+        // 4) Restore PIT + RTC + ACPI PM (these can drive IRQ lines during load_state()).
+        if let (Some(pit), Some(state)) = (&self.pit, by_id.remove(&snapshot::DeviceId::PIT)) {
+            let mut pit = pit.borrow_mut();
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pit);
+        }
+        if let (Some(rtc), Some(state)) = (&self.rtc, by_id.remove(&snapshot::DeviceId::RTC)) {
+            let mut rtc = rtc.borrow_mut();
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *rtc);
+        }
+        if let (Some(acpi_pm), Some(state)) =
+            (&self.acpi_pm, by_id.remove(&snapshot::DeviceId::ACPI_PM))
+        {
+            let mut acpi_pm = acpi_pm.borrow_mut();
+            let _ =
+                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *acpi_pm);
+        }
+
+        // 5) Restore HPET.
+        let mut restored_hpet = false;
+        if let (Some(hpet), Some(state)) = (&self.hpet, by_id.remove(&snapshot::DeviceId::HPET)) {
+            let mut hpet = hpet.borrow_mut();
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *hpet);
+            restored_hpet = true;
+        }
+
+        // 6) After HPET restore, poll once so any level-triggered lines implied by restored
+        // interrupt status are asserted immediately.
+        if restored_hpet {
+            if let (Some(hpet), Some(interrupts)) = (&self.hpet, &self.interrupts) {
+                let mut hpet = hpet.borrow_mut();
+                let mut interrupts = interrupts.borrow_mut();
+                hpet.poll(&mut *interrupts);
+            }
+        }
+
+        // Restore i8042 after the interrupt controller complex so any restored IRQ pulses are
+        // delivered into the correct sink state.
+        if let (Some(ctrl), Some(state)) = (&self.i8042, by_id.remove(&snapshot::DeviceId::I8042)) {
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *ctrl.borrow_mut(),
+            );
+        }
+
+        // CPU_INTERNAL: machine-defined CPU bookkeeping (applied in `post_restore`).
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::CPU_INTERNAL) {
+            if let Ok(decoded) = snapshot::CpuInternalState::from_device_state(&state) {
+                self.restored_cpu_internal = Some(decoded);
             }
         }
     }
