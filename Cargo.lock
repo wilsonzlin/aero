@@ -1642,6 +1642,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "devices"
+version = "0.1.0"
+dependencies = [
+ "aero-acpi",
+ "aero-cpu-core",
+ "aero-devices",
+ "aero-io-snapshot",
+ "aero-platform",
+ "aero-snapshot",
+ "serde_json",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,19 @@
+[package]
+name = "devices"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "devices"
+
+[dependencies]
+aero-devices = { path = "../devices" }
+
+[dev-dependencies]
+aero-acpi = { path = "../aero-acpi" }
+aero-cpu-core = { path = "../aero-cpu-core" }
+aero-io-snapshot = { path = "../aero-io-snapshot" }
+aero-platform = { path = "../platform" }
+aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
+serde_json = "1"

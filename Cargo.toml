@@ -57,6 +57,8 @@ members = [
     "crates/aero-d3d11",
     "crates/aero-machine",
     "crates/devices",
+    # Compatibility shim so `cargo test -p devices` continues to work.
+    "crates/devices-compat",
     "crates/emulator",
     "crates/firmware",
     "crates/memory",
