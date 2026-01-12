@@ -142,6 +142,15 @@ function isTier1CompileError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return message.trimStart().startsWith('compile_tier1_block:');
 }
+
+function isTier1AbiMismatchError(err: unknown): boolean {
+  // wasm-bindgen argument mismatches typically show up as TypeErrors (wrong BigInt/number types,
+  // wrong arg count, etc). Use a best-effort heuristic so we don't accidentally swallow real
+  // compiler/runtime errors by retrying with legacy call signatures.
+  if (err instanceof TypeError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /bigint|cannot convert|argument|parameter|is not a function/i.test(message);
+}
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {
     postMessageToCpu({
@@ -221,6 +230,10 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
       ) as unknown;
     } catch (err) {
       if (isTier1CompileError(err)) {
+        throw err;
+      }
+      if (!isTier1AbiMismatchError(err)) {
+        // Preserve the original error message instead of masking it with a fallback-call failure.
         throw err;
       }
       // Backwards-compat: older JIT wasm builds used simpler argument lists.
