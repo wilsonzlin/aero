@@ -39,7 +39,12 @@ pub struct EgressPolicy {
     allow_private_ips: bool,
     allowed_tcp_ports: Option<HashSet<u16>>,
     allowed_udp_ports: Option<HashSet<u16>>,
+    /// If non-empty, outbound DNS/TCP destinations must match at least one of these suffixes.
+    ///
+    /// Matching is ASCII case-insensitive and boundary-aware:
+    /// `name == suffix || name.ends_with("." + suffix)`.
     allowed_domains: Vec<String>,
+    /// DNS name suffix denylist. See `allowed_domains` for matching semantics.
     blocked_domains: Vec<String>,
 }
 

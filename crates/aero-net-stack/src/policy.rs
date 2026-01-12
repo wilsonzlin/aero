@@ -47,8 +47,10 @@ pub struct HostPolicy {
 
     /// If non-empty, only DNS names matching one of these suffixes are allowed.
     ///
-    /// Entries should be in lower-case without a trailing dot (e.g. `"example.com"`). Matching is
-    /// done on `name == suffix || name.ends_with("." + suffix)`.
+    /// Matching is ASCII case-insensitive and suffix/boundary-aware:
+    /// `name == suffix || name.ends_with("." + suffix)`.
+    ///
+    /// Trailing dots in either the input name or suffix entries are ignored.
     pub allow_domains: Vec<String>,
     /// DNS name suffix denylist. See `allow_domains` for format and matching semantics.
     pub deny_domains: Vec<String>,
