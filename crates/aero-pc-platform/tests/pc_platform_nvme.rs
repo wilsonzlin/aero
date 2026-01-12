@@ -179,6 +179,99 @@ fn pc_platform_nvme_admin_identify_produces_completion_and_intx() {
 }
 
 #[test]
+fn pc_platform_respects_pci_interrupt_disable_bit_for_nvme_intx() {
+    let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Unmask IRQ2 (cascade) and the routed NVMe INTx IRQ (device 3 INTA# -> PIRQD -> GSI/IRQ13).
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(13, false);
+    }
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+
+    pc.process_nvme();
+
+    // Route INTx into the platform interrupt controller.
+    pc.poll_pci_intx_lines();
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("NVMe INTx should be pending via IRQ13");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 13);
+
+    // Consume and EOI the interrupt so subsequent assertions about pending vectors are not
+    // affected by the edge-triggered PIC latching semantics.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(pending);
+        interrupts.pic_mut().eoi(pending);
+    }
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Disable INTx via PCI command bit 10 while the device still has a completion pending.
+    // The PIC should not observe an interrupt until it is re-enabled.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0006 | (1 << 10),
+    );
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Re-enable INTx and ensure the asserted line is delivered.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts
+            .borrow()
+            .pic()
+            .get_pending_vector()
+            .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
+        Some(13)
+    );
+}
+
+#[test]
 fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
     let bdf = NVME_CONTROLLER.bdf;
