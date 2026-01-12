@@ -3,6 +3,7 @@ use std::io::Cursor;
 use aero_devices::pci::profile;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_pc_platform::PcPlatform;
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 use aero_snapshot::{
@@ -57,13 +58,21 @@ impl SnapshotSource for PcPlatformStorageSnapshotHarness {
             &*self.platform.pci_cfg.borrow(),
         ));
 
-        // Storage controller(s). For this harness we only snapshot the AHCI controller.
+        // Storage controller(s).
+        //
+        // Canonical encoding for the outer `DeviceId::DISK_CONTROLLER` entry is the `DSKC` wrapper
+        // (`DiskControllersSnapshot`). This allows a single device entry to carry multiple
+        // different controller snapshots (AHCI + IDE + NVMe + virtio-blk) keyed by PCI BDF.
+        let mut disk_controllers = DiskControllersSnapshot::new();
+
+        // For this harness we only snapshot the ICH9 AHCI controller at its canonical BDF.
         if let Some(ahci) = &self.platform.ahci {
-            devices.push(device_state_from_io_snapshot(
-                DeviceId::DISK_CONTROLLER,
-                &*ahci.borrow(),
-            ));
+            disk_controllers.insert(profile::SATA_AHCI_ICH9.bdf.pack_u16(), ahci.borrow().save_state());
         }
+        devices.push(device_state_from_io_snapshot(
+            DeviceId::DISK_CONTROLLER,
+            &disk_controllers,
+        ));
 
         devices
     }
@@ -99,12 +108,12 @@ impl SnapshotTarget for PcPlatformStorageSnapshotHarness {
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
         // Restore ordering is explicit so controller restore sees the correct PCI bus state.
         let mut pci_cfg = None;
-        let mut disk_controllers = Vec::new();
+        let mut disk_controllers = None;
 
         for state in states {
             match state.id {
                 DeviceId::PCI_CFG => pci_cfg = Some(state),
-                DeviceId::DISK_CONTROLLER => disk_controllers.push(state),
+                DeviceId::DISK_CONTROLLER => disk_controllers = Some(state),
                 _ => {}
             }
         }
@@ -113,21 +122,17 @@ impl SnapshotTarget for PcPlatformStorageSnapshotHarness {
             apply_io_snapshot_to_device(&state, &mut *self.platform.pci_cfg.borrow_mut()).unwrap();
         }
 
-        for state in disk_controllers {
-            // `DeviceId::DISK_CONTROLLER` may contain multiple controller types/versions.
-            // Route based on the inner `aero-io-snapshot` device id.
-            let id = state
-                .data
-                .get(8..12)
-                .unwrap_or(&[])
-                .try_into()
-                .unwrap_or([0u8; 4]);
-            match id {
-                [b'A', b'H', b'C', b'P'] => {
-                    let ahci = self.platform.ahci.as_ref().expect("AHCI enabled");
-                    apply_io_snapshot_to_device(&state, &mut *ahci.borrow_mut()).unwrap();
+        if let Some(state) = disk_controllers {
+            let mut wrapper = DiskControllersSnapshot::default();
+            apply_io_snapshot_to_device(&state, &mut wrapper).unwrap();
+
+            // Apply only controller entries that exist in the target machine.
+            for (bdf, nested) in wrapper.controllers() {
+                if *bdf == profile::SATA_AHCI_ICH9.bdf.pack_u16() {
+                    if let Some(ahci) = &self.platform.ahci {
+                        ahci.borrow_mut().load_state(nested).unwrap();
+                    }
                 }
-                _ => panic!("unexpected DISK_CONTROLLER payload device id: {id:?}"),
             }
         }
     }
