@@ -3369,6 +3369,7 @@ impl Machine {
                 match &self.virtio_blk {
                     Some(dev) => {
                         // Reset in-place while keeping `Rc` identity stable for persistent MMIO
+                        // mappings. This preserves any host-provided disk backend.
                         // mappings. This intentionally preserves any host-attached disk backend
                         // owned by the inner virtio-blk device.
                         dev.borrow_mut().reset();
