@@ -58,6 +58,25 @@ fn tier2_masks_shift_count_for_8bit_operands_like_x86() {
 }
 
 #[test]
+fn tier2_masks_8bit_shift_counts_to_5_bits_not_3_bits() {
+    // mov al, 1
+    // shl al, 9
+    // int3
+    //
+    // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
+    // If we (incorrectly) masked by (width.bits()-1)==7, this would behave like shl al, 1.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x09, // shl al, 9
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
+}
+
+#[test]
 fn tier2_masks_shift_count_for_high8_operands_like_x86() {
     // mov ah, 1
     // shl ah, 33
@@ -71,6 +90,24 @@ fn tier2_masks_shift_count_for_high8_operands_like_x86() {
     let (exit, state) = run_x86(CODE);
     assert_side_exit_at_int3(exit, CODE);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x200);
+}
+
+#[test]
+fn tier2_masks_high8_shift_counts_to_5_bits_not_3_bits() {
+    // mov ah, 1
+    // shl ah, 9
+    // int3
+    //
+    // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
+    const CODE: &[u8] = &[
+        0xB4, 0x01, // mov ah, 1
+        0xC0, 0xE4, 0x09, // shl ah, 9
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
 #[test]
@@ -119,6 +156,24 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
     let (exit, state) = run_x86(CODE);
     assert_side_exit_at_int3(exit, CODE);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
+}
+
+#[test]
+fn tier2_masks_16bit_shift_counts_to_5_bits_not_4_bits() {
+    // 66 mov ax, 1
+    // 66 shl ax, 17
+    // int3
+    //
+    // x86 masks 16-bit shift counts to 5 bits, so 17 is *not* reduced to 1.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
+        0x66, 0xC1, 0xE0, 0x11, // shl ax, 17
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
 #[test]
