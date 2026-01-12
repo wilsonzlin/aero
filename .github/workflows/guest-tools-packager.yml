@@ -129,6 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/guest-tools-packager
+          python tools/guest-tools/lint_guest_tools_scripts.py 2>&1 | tee out/guest-tools-packager/lint-guest-tools-scripts.log
           python -m unittest discover -s tools/guest-tools/tests -p 'test_*.py' 2>&1 | tee out/guest-tools-packager/python-unittest-guest-tools.log
 
       - name: Validate make-guest-tools-from-ci.ps1 signing-policy surface
