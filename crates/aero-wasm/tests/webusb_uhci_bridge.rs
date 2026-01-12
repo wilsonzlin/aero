@@ -140,6 +140,93 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
 }
 
 #[wasm_bindgen_test]
+fn bridge_blocks_guest_schedule_dma_until_pci_bus_master_enable() {
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x8000);
+
+    // Layout (all 16-byte aligned).
+    let fl_base = 0x1000u32;
+    let qh_addr = fl_base + 0x1000;
+    let setup_td = qh_addr + 0x20;
+    let data_td = setup_td + 0x20;
+    let status_td = data_td + 0x20;
+    let setup_buf = status_td + 0x20;
+    let data_buf = setup_buf + 0x10;
+
+    // Install frame list pointing at our single QH.
+    unsafe {
+        for i in 0..1024u32 {
+            common::write_u32(guest_base + fl_base + i * 4, qh_addr | LINK_PTR_Q);
+        }
+
+        // QH: head=terminate, element=SETUP TD.
+        common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + qh_addr + 0x04, setup_td);
+
+        // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
+        let setup_packet = [
+            0x80, // bmRequestType: device-to-host | standard | device
+            0x06, // bRequest: GET_DESCRIPTOR
+            0x00, 0x01, // wValue: (DEVICE=1)<<8 | index 0
+            0x00, 0x00, // wIndex
+            0x08, 0x00, // wLength: 8
+        ];
+        common::write_bytes(guest_base + setup_buf, &setup_packet);
+
+        // SETUP TD.
+        common::write_u32(guest_base + setup_td + 0x00, data_td);
+        common::write_u32(guest_base + setup_td + 0x04, td_ctrl(true, false));
+        common::write_u32(guest_base + setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
+        common::write_u32(guest_base + setup_td + 0x0C, setup_buf);
+
+        // DATA IN TD (will NAK until host completion is pushed).
+        common::write_u32(guest_base + data_td + 0x00, status_td);
+        common::write_u32(guest_base + data_td + 0x04, td_ctrl(true, false));
+        common::write_u32(guest_base + data_td + 0x08, td_token(0x69, 0, 0, true, 8));
+        common::write_u32(guest_base + data_td + 0x0C, data_buf);
+
+        // STATUS OUT TD (0-length, IOC).
+        common::write_u32(guest_base + status_td + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + status_td + 0x04, td_ctrl(true, true));
+        common::write_u32(guest_base + status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
+        common::write_u32(guest_base + status_td + 0x0C, 0);
+    }
+
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
+    bridge.set_connected(true);
+
+    bridge.io_write(REG_FRBASEADD, 4, fl_base);
+    bridge.io_write(REG_USBINTR, 4, USBINTR_IOC);
+
+    // Reset + enable port 2 (root port 1).
+    bridge.io_write(REG_PORTSC1, 4, PORTSC_PR << 16);
+    bridge.step_frames(50);
+
+    bridge.io_write(REG_USBCMD, 4, USBCMD_RUN);
+    bridge.step_frames(1);
+
+    // With PCI bus mastering disabled, the UHCI controller must not DMA its schedule, so it should
+    // not reach the WebUSB passthrough device and therefore must not emit host actions.
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    assert!(
+        drained.is_null(),
+        "expected no queued UsbHostAction when PCI BME is clear"
+    );
+
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
+    bridge.set_pci_command(PCI_COMMAND_BME);
+    bridge.step_frames(1);
+
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    assert!(
+        !actions.is_empty(),
+        "expected host actions once PCI BME is enabled"
+    );
+    assert!(matches!(actions[0], UsbHostAction::ControlIn { .. }));
+}
+
+#[wasm_bindgen_test]
 fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
     let fl_guest = 0x1000u32;

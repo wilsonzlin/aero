@@ -14,6 +14,7 @@ mod common;
 const REG_USBCMD: u16 = 0x00;
 const REG_USBSTS: u16 = 0x02;
 const REG_USBINTR: u16 = 0x04;
+const REG_FRNUM: u16 = 0x06;
 const REG_FRBASEADD: u16 = 0x08;
 const REG_PORTSC1: u16 = 0x10;
 
@@ -192,6 +193,83 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
         !ctrl.irq_asserted(),
         "irq should deassert after clearing USBSTS.USBINT"
     );
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
+    // Synthetic guest memory region: allocate outside the wasm heap to keep wasm-pack tests from
+    // exhausting the bounded `runtime_alloc` heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x9000);
+    // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting at
+    // `guest_base` and the region is private to this test.
+    let guest =
+        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+
+    let mut ctrl =
+        UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
+
+    // Attach a trivial device at root port 0 so we can complete a single IN TD once DMA is enabled.
+    ctrl.connect_device_for_test(0, Box::new(SimpleInDevice::new(b"ABCD")));
+
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PED as u32);
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+    ctrl.io_write(REG_FRBASEADD, 4, 0x1000);
+    ctrl.io_write(REG_FRNUM, 2, 0);
+
+    // Frame list: point every entry at our QH so the test is independent of the current FRNUM.
+    for i in 0..1024u32 {
+        write_u32(guest, 0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
+    }
+
+    // Queue head -> TD.
+    write_u32(guest, 0x2000, LINK_PTR_T);
+    write_u32(guest, 0x2004, 0x3000);
+
+    // TD: IN to addr0/ep1, 4 bytes.
+    let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
+    let token = 0x69u32 | maxlen_field | (1 << TD_TOKEN_ENDPT_SHIFT); // IN, addr0/ep1
+    write_u32(guest, 0x3000, LINK_PTR_T);
+    write_u32(guest, 0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
+    write_u32(guest, 0x3008, token);
+    write_u32(guest, 0x300C, 0x4000);
+
+    guest[0x4000..0x4004].fill(0xEE);
+
+    ctrl.io_write(REG_USBCMD, 2, USBCMD_RUN as u32);
+
+    // With PCI bus mastering disabled, UHCI should still tick (FRNUM advances) but must not DMA
+    // the schedule or mutate guest memory.
+    ctrl.step_frames(1);
+
+    assert_eq!(
+        ctrl.io_read(REG_FRNUM, 2) & 0x7ff,
+        1,
+        "expected FRNUM to advance even when PCI BME is clear"
+    );
+    assert_eq!(
+        &guest[0x4000..0x4004],
+        &[0xEE, 0xEE, 0xEE, 0xEE],
+        "expected schedule DMA to be blocked without PCI BME"
+    );
+    assert_eq!(
+        read_u32(guest, 0x2004),
+        0x3000,
+        "QH element pointer must not advance without DMA"
+    );
+    assert_ne!(
+        read_u32(guest, 0x3004) & TD_CTRL_ACTIVE,
+        0,
+        "TD must remain active without DMA"
+    );
+    assert!(
+        !ctrl.irq_asserted(),
+        "expected no IOC IRQ without schedule DMA"
+    );
+
+    // Once bus mastering is enabled, the schedule should execute and populate the buffer.
+    ctrl.set_pci_command(PCI_COMMAND_BME);
+    ctrl.step_frames(1);
+    assert_eq!(&guest[0x4000..0x4004], b"ABCD");
 }
 
 #[wasm_bindgen_test]
