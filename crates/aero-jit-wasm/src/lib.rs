@@ -92,6 +92,34 @@ impl<'a> Tier1Bus for Tier1SliceBus<'a> {
     }
 
     #[inline]
+    fn fetch(&self, addr: u64, len: usize) -> Vec<u8> {
+        // Tier-1 decoding uses a fixed 15-byte fetch window per instruction. Override the default
+        // `Tier1Bus::fetch` implementation to avoid calling `read_u8` in a tight loop.
+        let Some(off) = addr.checked_sub(self.entry_rip) else {
+            self.record_oob(addr);
+            return vec![0u8; len];
+        };
+        let Ok(off) = usize::try_from(off) else {
+            self.record_oob(addr);
+            return vec![0u8; len];
+        };
+        if off >= self.code.len() {
+            self.record_oob(addr);
+            return vec![0u8; len];
+        }
+
+        let available = self.code.len() - off;
+        let copy_len = available.min(len);
+        let mut out = vec![0u8; len];
+        out[..copy_len].copy_from_slice(&self.code[off..off + copy_len]);
+        if copy_len < len {
+            // Record the first address beyond the provided slice.
+            self.record_oob(self.entry_rip + self.code.len() as u64);
+        }
+        out
+    }
+
+    #[inline]
     fn write_u8(&mut self, addr: u64, _value: u8) {
         // Tier-1 compilation should not write via the bus. If it does, treat it as out-of-bounds
         // (deterministic error) since we only have an immutable code slice.
