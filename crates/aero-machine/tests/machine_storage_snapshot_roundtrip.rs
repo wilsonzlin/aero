@@ -358,7 +358,7 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
     const AHCI_VECTOR: u8 = 0x70;
 
-    let mut cfg = MachineConfig::win7_storage(RAM_SIZE);
+    let mut cfg = MachineConfig::win7_storage_defaults(RAM_SIZE);
     // Keep the machine minimal and deterministic for snapshot tests.
     cfg.enable_vga = false;
     cfg.enable_serial = false;

@@ -11,7 +11,7 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn machine_win7_storage_topology_has_stable_bdfs_and_interrupt_lines() {
-    let mut cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    let mut cfg = MachineConfig::win7_storage_defaults(2 * 1024 * 1024);
     // Keep this test focused on PCI topology and avoid unrelated devices.
     cfg.enable_vga = false;
     cfg.enable_serial = false;
