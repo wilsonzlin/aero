@@ -130,16 +130,12 @@ fn write_adv_data_desc(dma: &mut TestDma, addr: u64, buf_addr: u64, len: u16, cm
 fn snapshot_roundtrip_preserves_key_state() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);
-    // DMA is gated on PCI Bus Master Enable.
-    dev.pci_config_write(0x04, 2, 0x4);
     let mut dma = TestDma::new(0x10000);
     dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
     // Mutate PCI config.
     dev.pci_write_u32(0x10, 0xFEBF_0000);
     dev.pci_write_u32(0x14, 0xC000);
-    // Real PCI devices gate all DMA behind the Bus Master Enable bit.
-    dev.pci_config_write(0x04, 2, 0x4);
 
     // Configure TX ring.
     let tx_ring = 0x1000u64;
@@ -559,4 +555,61 @@ fn snapshot_reader_rejects_duplicate_tlv_tags() {
     let mut dev = E1000Device::new([0; 6]);
     let err = dev.load_state(&bytes).unwrap_err();
     assert_eq!(err, SnapshotError::DuplicateFieldTag(10));
+}
+
+#[test]
+fn snapshot_rejects_wrong_device_id() {
+    let wrong_id: [u8; 4] = *b"NOPE";
+    let w = SnapshotWriter::new(wrong_id, <E1000Device as IoSnapshot>::DEVICE_VERSION);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::DeviceIdMismatch {
+            expected: <E1000Device as IoSnapshot>::DEVICE_ID,
+            found: wrong_id,
+        }
+    );
+}
+
+#[test]
+fn snapshot_rejects_unsupported_format_version() {
+    // Snapshot header format:
+    // magic (4) + fmt major (2) + fmt minor (2) + device id (4) + dev major (2) + dev minor (2).
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO");
+    bytes.extend_from_slice(&2u16.to_le_bytes()); // unsupported format major
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&<E1000Device as IoSnapshot>::DEVICE_ID);
+    bytes.extend_from_slice(&<E1000Device as IoSnapshot>::DEVICE_VERSION.major.to_le_bytes());
+    bytes.extend_from_slice(&<E1000Device as IoSnapshot>::DEVICE_VERSION.minor.to_le_bytes());
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::UnsupportedFormatVersion {
+            found: SnapshotVersion::new(2, 0),
+            supported: SnapshotVersion::new(1, 0),
+        }
+    );
+}
+
+#[test]
+fn snapshot_reader_rejects_too_many_fields() {
+    // SnapshotReader caps the number of TLV fields to keep parsing bounded.
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    for tag in 1..=4097u16 {
+        w.field_bytes(tag, Vec::new());
+    }
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many fields"));
 }
