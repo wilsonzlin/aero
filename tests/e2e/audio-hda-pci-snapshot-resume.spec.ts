@@ -127,8 +127,9 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     throw new Error(`snapshot save failed: ${String(saveResult.error)}`);
   }
 
-  // Simulate time passing between save and restore.
-  await page.waitForTimeout(1500);
+  // Simulate time passing between save and restore (user delay, slow restore, etc.).
+  // Keep this > the IO-worker HDA max-delta clamp (100ms) so a regression will still manifest.
+  await page.waitForTimeout(500);
 
   // Restore snapshot via coordinator (pause → restore → resume), while measuring the immediate
   // post-resume write delta to catch any producer burst/catch-up.
