@@ -271,6 +271,29 @@ fn detect_qcow2_and_vhd() {
 }
 
 #[test]
+fn detect_qcow2_bad_version_falls_back_to_raw() {
+    let mut storage = MemStorage::with_len(8);
+    let mut header = [0u8; 8];
+    header[..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 1);
+    storage.write_at(0, &header).unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
+fn detect_vhd_cookie_without_plausible_footer_is_raw() {
+    let mut storage = MemStorage::with_len(512);
+    let mut footer = [0u8; 512];
+    footer[..8].copy_from_slice(b"conectix");
+    write_be_u32(&mut footer, 12, 0x0001_0000);
+    write_be_u64(&mut footer, 16, u64::MAX);
+    write_be_u64(&mut footer, 48, 512);
+    write_be_u32(&mut footer, 60, 2);
+    storage.write_at(0, &footer).unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
 fn raw_disk_create_and_rw_roundtrip() {
     let storage = MemStorage::default();
     let mut disk = emulator::io::storage::formats::RawDisk::create(storage, 512, 8).unwrap();
