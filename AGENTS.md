@@ -6,16 +6,79 @@
 
 ---
 
+## 🛡️ Defensive Mindset (Read This First)
+
+**Assume all code and processes can misbehave.** Every subprocess you spawn might:
+
+- Hang forever
+- Consume infinite memory
+- Spin the CPU endlessly
+- Leave zombie children
+- Ignore SIGTERM
+- Corrupt shared state
+
+**You are not debugging your code. You are operating in a hostile environment where your own code, dependencies, and the system itself may fail in arbitrary ways.**
+
+This mindset applies to:
+
+- Cargo/rustc (can OOM, hang on codegen, deadlock on locks)
+- npm/node (can leak memory, hang on network, spawn zombie processes)
+- Playwright/Chrome (can hang, crash, leak GPU memory)
+- Any I/O operation (can block indefinitely, return garbage, timeout inconsistently)
+
+**Default behaviors:**
+
+1. **Always use timeouts** — no command runs without a deadline
+2. **Always use `-k` with timeout** — SIGKILL after grace period (misbehaving code ignores SIGTERM)
+3. **Always use memory limits** — no build runs without a ceiling
+4. **Always check exit codes** — success is never assumed
+5. **Always capture stderr** — silent failures are unacceptable
+6. **Kill aggressively** — SIGTERM, wait briefly, SIGKILL
+
+---
+
+## 📀 Windows 7 Test ISO
+
+A Windows 7 Professional x64 ISO is available for integration testing:
+
+```
+/state/win7.iso
+```
+
+Use this for:
+
+- Boot testing once the emulator reaches that stage
+- Driver installation testing
+- Integration test fixtures
+
+**Do not redistribute or commit this file.** See `[LEGAL.md](./LEGAL.md)` for licensing.
+
+---
+
 ## ⚠️ Memory Limits for Concurrent Execution
 
 **If running many agents concurrently**, enforce **memory limits**. CPU and disk I/O contention are handled fine by the Linux scheduler, but memory exhaustion will OOM-kill the host.
 
-**The one rule:** Use `./scripts/mem-limit.sh 12G <command>` for memory-hungry operations (mainly `cargo build --release --locked`).
+**The one rule:** Use `./scripts/safe-run.sh <command>` for all non-trivial operations. It enforces both timeout (10 min default) and memory limit (12G default).
 
 ```bash
-./scripts/agent-env-setup.sh                            # One-time sanity checks (safe to re-run)
-source ./scripts/agent-env.sh                           # Set recommended env vars
-./scripts/mem-limit.sh 12G cargo build --release --locked # Memory-limited build
+./scripts/agent-env-setup.sh                    # One-time: validate environment
+source ./scripts/agent-env.sh                   # Activate recommended env vars
+./scripts/safe-run.sh cargo build --locked      # Build with timeout + memory limit
+./scripts/safe-run.sh cargo test --locked       # Test with timeout + memory limit
+
+# Override defaults if needed:
+AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
+```
+
+Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
+
+```bash
+# CORRECT — -k 10 sends SIGKILL 10s after SIGTERM if process ignores SIGTERM
+timeout -k 10 600 cargo build --release --locked
+
+# WRONG — process can ignore SIGTERM forever:
+timeout 600 cargo build --release --locked
 ```
 
 See [Agent Resource Limits Guide](./docs/agent-resource-limits.md) for details.
@@ -107,7 +170,7 @@ This is not a "proof of concept" document—it is a comprehensive engineering bl
 3. **Modern storage APIs**: OPFS (Origin Private File System) enables fast, large file access
 4. **Improved JIT**: Browser engines have mature JIT compilers we can leverage
 5. **Memory**: Modern browsers can allocate multi-GB WASM memories
-   - Practically constrained by wasm32 (≤4GiB addressable) and browser/OS allocation caps (often lower).
+  - Practically constrained by wasm32 (≤4GiB addressable) and browser/OS allocation caps (often lower).
 
 ---
 
@@ -352,7 +415,7 @@ pub trait DisplayAdapter {
 
 ## Getting Started
 
-1. Read [`LEGAL.md`](./LEGAL.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md) (clean-room rules, licensing, and distribution constraints)
+1. Read `[LEGAL.md](./LEGAL.md)` and `[CONTRIBUTING.md](./CONTRIBUTING.md)` (clean-room rules, licensing, and distribution constraints)
 2. **If running concurrently with other agents:** Read [Agent Resource Limits](./docs/agent-resource-limits.md) and ensure limits are enforced
 3. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
 4. Review the documentation for your area of focus
@@ -365,61 +428,61 @@ pub trait DisplayAdapter {
 ## Document Index
 
 
-| Document                                                                | Description                            | Primary Relevance |
-| ----------------------------------------------------------------------- | -------------------------------------- | ----------------- |
-| [01-architecture-overview.md](./docs/01-architecture-overview.md)       | System architecture, component diagram | All               |
-| [02-cpu-emulation.md](./docs/02-cpu-emulation.md)                       | x86-64 CPU emulation design            | Core              |
-| [03-memory-management.md](./docs/03-memory-management.md)               | Virtual memory, paging, TLB            | Core              |
-| [04-graphics-subsystem.md](./docs/04-graphics-subsystem.md)             | DirectX → WebGPU translation           | Graphics          |
-| [05-storage-subsystem.md](./docs/05-storage-subsystem.md)               | Disk emulation, AHCI, virtio           | I/O               |
-| [06-audio-subsystem.md](./docs/06-audio-subsystem.md)                   | HD Audio, Web Audio API                | I/O               |
-| [07-networking.md](./docs/07-networking.md)                             | Network stack emulation                | I/O               |
-| [08-input-devices.md](./docs/08-input-devices.md)                       | Keyboard, mouse, USB HID               | I/O               |
-| [usb-hid.md](./docs/usb-hid.md)                                         | USB HID usages and report formats      | I/O               |
-| [webhid-webusb-passthrough.md](./docs/webhid-webusb-passthrough.md)     | WebHID/WebUSB physical device passthrough architecture + security model (aero-usb/aero-wasm bridges + TS broker wiring) | I/O / Infra |
-| [webhid-hid-report-descriptor-synthesis.md](./docs/webhid-hid-report-descriptor-synthesis.md) | WebHID → HID report descriptor synthesis (Windows 7 contract) | I/O |
-| [webusb.md](./docs/webusb.md)                                           | WebUSB constraints and troubleshooting | I/O / Infra       |
-| [webusb-passthrough.md](./docs/webusb-passthrough.md)                   | WebUSB passthrough architecture (UHCI ↔ host actions/completions) | I/O / Infra |
-| [09-bios-firmware.md](./docs/09-bios-firmware.md)                       | BIOS, ACPI, device models              | Firmware          |
-| [10-performance-optimization.md](./docs/10-performance-optimization.md) | JIT, caching, profiling                | Performance       |
-| [11-browser-apis.md](./docs/11-browser-apis.md)                         | Web platform integration               | Infrastructure    |
-| [12-testing-strategy.md](./docs/12-testing-strategy.md)                 | Testing methodology                    | All               |
-| [13-legal-considerations.md](./docs/13-legal-considerations.md)         | Licensing, IP concerns                 | All               |
-| [14-project-milestones.md](./docs/14-project-milestones.md)             | Timeline, deliverables                 | All               |
-| [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)         | Parallelizable work items              | All               |
-| [adr/README.md](./docs/adr/README.md)                                   | Architecture Decision Records (ADRs)   | Infrastructure    |
-| [16-debugging-and-introspection.md](./docs/16-debugging-and-introspection.md) | Developer debugging surfaces (serial, state, trace) | All |
-| [16-snapshots.md](./docs/16-snapshots.md)                               | VM snapshot format + restore flow      | All               |
-| [16-performance-tooling.md](./docs/16-performance-tooling.md)           | Profiling HUD, traces, benchmarks      | Performance       |
-| [16-windows7-driver-build-and-signing.md](./docs/16-windows7-driver-build-and-signing.md) | Driver build & signing toolchain notes | Infrastructure    |
-| [16-driver-packaging-and-signing.md](./docs/16-driver-packaging-and-signing.md) | Driver packaging, catalogs, WDK redist | Infrastructure    |
-| [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md) | D3D9Ex surface + DWM requirements      | Graphics          |
-| [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)          | Direct3D 10/11 translation details     | Graphics          |
-| [16-perf-tracing.md](./docs/16-perf-tracing.md)                         | Chrome Trace/Perfetto export           | Performance       |
-| [16-remote-disk-image-delivery.md](./docs/16-remote-disk-image-delivery.md) | Production delivery of disk bytes via object store + CDN + HTTP Range | I/O / Infra       |
-| [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)             | HTTP Range + CDN caching/limits        | Infrastructure    |
-| [deployment/cloudfront-disk-streaming.md](./docs/deployment/cloudfront-disk-streaming.md) | Concrete CloudFront/S3 setup for authenticated disk Range streaming | I/O / Infra       |
-| [17-disk-image-lifecycle-and-access-control.md](./docs/17-disk-image-lifecycle-and-access-control.md) | Hosted disk image uploads, ownership/sharing, leases, and writeback strategies | I/O / Infra       |
-| [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md) | Chunked disk image delivery (no HTTP Range) | I/O               |
-| [windows7-guest-tools.md](./docs/windows7-guest-tools.md)               | End-user guide: install Guest Tools and switch to virtio + Aero GPU | All |
-| [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md) | End-user guide: Windows 7 driver/signing troubleshooting | All |
-| [16-driver-install-media.md](./docs/16-driver-install-media.md)         | Driver install media artifacts         | Infrastructure    |
-| [16-win7-image-servicing.md](./docs/16-win7-image-servicing.md)         | Win7 install media servicing for test-signed drivers | I/O               |
-| [win7-bcd-offline-patching.md](./docs/win7-bcd-offline-patching.md)     | Win7 offline patching of BCD stores for testsigning/nointegritychecks (element IDs + object selection) | I/O |
-| [windows/README.md](./docs/windows/README.md)                           | Windows driver development notes       | I/O               |
-| [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md) | Virtio contract: Win7 drivers ↔ emulator | I/O               |
-| [virtio-windows-drivers.md](./docs/virtio-windows-drivers.md)           | Windows 7 virtio driver packaging      | I/O               |
-| [virtqueue-split-ring-win7.md](./docs/virtio/virtqueue-split-ring-win7.md) | Virtio 1.0 split virtqueue implementation guide (Win7 KMDF) | I/O (virtio drivers) |
-| [windows/virtio-pci-modern-interrupts.md](./docs/windows/virtio-pci-modern-interrupts.md) | Windows 7 KMDF guide for virtio-pci modern MSI-X/INTx interrupts | I/O (virtio drivers) |
-| [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md) | Disk image streaming (Range/CORS/COEP) | I/O / Infra       |
-| [security-headers.md](./docs/security-headers.md)                       | COOP/COEP, CSP, security headers       | Infrastructure    |
-| [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md) | Disk byte streaming, auth, CORS/COEP   | I/O / Infra       |
-| [16-win7-unattended-install.md](./docs/16-win7-unattended-install.md)   | Unattended Win7 install (drivers/hooks) | All               |
-| [17-win7-unattend-validation.md](./docs/17-win7-unattend-validation.md) | Validate/debug Win7 unattended installs (logs, config-set, SetupComplete) | All |
-| [16-windows7-install-media-prep.md](./docs/16-windows7-install-media-prep.md) | Preparing a Win7 SP1 ISO with Aero drivers/certs | All |
-| [16-guest-tools-packaging.md](./docs/16-guest-tools-packaging.md)       | Guest Tools ISO/zip packaging          | Infrastructure    |
-| [16-guest-cpu-benchmark-suite.md](./docs/16-guest-cpu-benchmark-suite.md) | Guest CPU throughput benchmarks (PF-008) | Performance       |
-| [agent-resource-limits.md](./docs/agent-resource-limits.md)             | Resource limits for concurrent agent execution | Infrastructure    |
+| Document                                                                                              | Description                                                                                                             | Primary Relevance    |
+| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| [01-architecture-overview.md](./docs/01-architecture-overview.md)                                     | System architecture, component diagram                                                                                  | All                  |
+| [02-cpu-emulation.md](./docs/02-cpu-emulation.md)                                                     | x86-64 CPU emulation design                                                                                             | Core                 |
+| [03-memory-management.md](./docs/03-memory-management.md)                                             | Virtual memory, paging, TLB                                                                                             | Core                 |
+| [04-graphics-subsystem.md](./docs/04-graphics-subsystem.md)                                           | DirectX → WebGPU translation                                                                                            | Graphics             |
+| [05-storage-subsystem.md](./docs/05-storage-subsystem.md)                                             | Disk emulation, AHCI, virtio                                                                                            | I/O                  |
+| [06-audio-subsystem.md](./docs/06-audio-subsystem.md)                                                 | HD Audio, Web Audio API                                                                                                 | I/O                  |
+| [07-networking.md](./docs/07-networking.md)                                                           | Network stack emulation                                                                                                 | I/O                  |
+| [08-input-devices.md](./docs/08-input-devices.md)                                                     | Keyboard, mouse, USB HID                                                                                                | I/O                  |
+| [usb-hid.md](./docs/usb-hid.md)                                                                       | USB HID usages and report formats                                                                                       | I/O                  |
+| [webhid-webusb-passthrough.md](./docs/webhid-webusb-passthrough.md)                                   | WebHID/WebUSB physical device passthrough architecture + security model (aero-usb/aero-wasm bridges + TS broker wiring) | I/O / Infra          |
+| [webhid-hid-report-descriptor-synthesis.md](./docs/webhid-hid-report-descriptor-synthesis.md)         | WebHID → HID report descriptor synthesis (Windows 7 contract)                                                           | I/O                  |
+| [webusb.md](./docs/webusb.md)                                                                         | WebUSB constraints and troubleshooting                                                                                  | I/O / Infra          |
+| [webusb-passthrough.md](./docs/webusb-passthrough.md)                                                 | WebUSB passthrough architecture (UHCI ↔ host actions/completions)                                                       | I/O / Infra          |
+| [09-bios-firmware.md](./docs/09-bios-firmware.md)                                                     | BIOS, ACPI, device models                                                                                               | Firmware             |
+| [10-performance-optimization.md](./docs/10-performance-optimization.md)                               | JIT, caching, profiling                                                                                                 | Performance          |
+| [11-browser-apis.md](./docs/11-browser-apis.md)                                                       | Web platform integration                                                                                                | Infrastructure       |
+| [12-testing-strategy.md](./docs/12-testing-strategy.md)                                               | Testing methodology                                                                                                     | All                  |
+| [13-legal-considerations.md](./docs/13-legal-considerations.md)                                       | Licensing, IP concerns                                                                                                  | All                  |
+| [14-project-milestones.md](./docs/14-project-milestones.md)                                           | Timeline, deliverables                                                                                                  | All                  |
+| [15-agent-task-breakdown.md](./docs/15-agent-task-breakdown.md)                                       | Parallelizable work items                                                                                               | All                  |
+| [adr/README.md](./docs/adr/README.md)                                                                 | Architecture Decision Records (ADRs)                                                                                    | Infrastructure       |
+| [16-debugging-and-introspection.md](./docs/16-debugging-and-introspection.md)                         | Developer debugging surfaces (serial, state, trace)                                                                     | All                  |
+| [16-snapshots.md](./docs/16-snapshots.md)                                                             | VM snapshot format + restore flow                                                                                       | All                  |
+| [16-performance-tooling.md](./docs/16-performance-tooling.md)                                         | Profiling HUD, traces, benchmarks                                                                                       | Performance          |
+| [16-windows7-driver-build-and-signing.md](./docs/16-windows7-driver-build-and-signing.md)             | Driver build & signing toolchain notes                                                                                  | Infrastructure       |
+| [16-driver-packaging-and-signing.md](./docs/16-driver-packaging-and-signing.md)                       | Driver packaging, catalogs, WDK redist                                                                                  | Infrastructure       |
+| [16-d3d9ex-dwm-compatibility.md](./docs/16-d3d9ex-dwm-compatibility.md)                               | D3D9Ex surface + DWM requirements                                                                                       | Graphics             |
+| [16-d3d10-11-translation.md](./docs/16-d3d10-11-translation.md)                                       | Direct3D 10/11 translation details                                                                                      | Graphics             |
+| [16-perf-tracing.md](./docs/16-perf-tracing.md)                                                       | Chrome Trace/Perfetto export                                                                                            | Performance          |
+| [16-remote-disk-image-delivery.md](./docs/16-remote-disk-image-delivery.md)                           | Production delivery of disk bytes via object store + CDN + HTTP Range                                                   | I/O / Infra          |
+| [17-range-cdn-behavior.md](./docs/17-range-cdn-behavior.md)                                           | HTTP Range + CDN caching/limits                                                                                         | Infrastructure       |
+| [deployment/cloudfront-disk-streaming.md](./docs/deployment/cloudfront-disk-streaming.md)             | Concrete CloudFront/S3 setup for authenticated disk Range streaming                                                     | I/O / Infra          |
+| [17-disk-image-lifecycle-and-access-control.md](./docs/17-disk-image-lifecycle-and-access-control.md) | Hosted disk image uploads, ownership/sharing, leases, and writeback strategies                                          | I/O / Infra          |
+| [18-chunked-disk-image-format.md](./docs/18-chunked-disk-image-format.md)                             | Chunked disk image delivery (no HTTP Range)                                                                             | I/O                  |
+| [windows7-guest-tools.md](./docs/windows7-guest-tools.md)                                             | End-user guide: install Guest Tools and switch to virtio + Aero GPU                                                     | All                  |
+| [windows7-driver-troubleshooting.md](./docs/windows7-driver-troubleshooting.md)                       | End-user guide: Windows 7 driver/signing troubleshooting                                                                | All                  |
+| [16-driver-install-media.md](./docs/16-driver-install-media.md)                                       | Driver install media artifacts                                                                                          | Infrastructure       |
+| [16-win7-image-servicing.md](./docs/16-win7-image-servicing.md)                                       | Win7 install media servicing for test-signed drivers                                                                    | I/O                  |
+| [win7-bcd-offline-patching.md](./docs/win7-bcd-offline-patching.md)                                   | Win7 offline patching of BCD stores for testsigning/nointegritychecks (element IDs + object selection)                  | I/O                  |
+| [windows/README.md](./docs/windows/README.md)                                                         | Windows driver development notes                                                                                        | I/O                  |
+| [windows7-virtio-driver-contract.md](./docs/windows7-virtio-driver-contract.md)                       | Virtio contract: Win7 drivers ↔ emulator                                                                                | I/O                  |
+| [virtio-windows-drivers.md](./docs/virtio-windows-drivers.md)                                         | Windows 7 virtio driver packaging                                                                                       | I/O                  |
+| [virtqueue-split-ring-win7.md](./docs/virtio/virtqueue-split-ring-win7.md)                            | Virtio 1.0 split virtqueue implementation guide (Win7 KMDF)                                                             | I/O (virtio drivers) |
+| [windows/virtio-pci-modern-interrupts.md](./docs/windows/virtio-pci-modern-interrupts.md)             | Windows 7 KMDF guide for virtio-pci modern MSI-X/INTx interrupts                                                        | I/O (virtio drivers) |
+| [backend/disk-image-streaming-service.md](./docs/backend/disk-image-streaming-service.md)             | Disk image streaming (Range/CORS/COEP)                                                                                  | I/O / Infra          |
+| [security-headers.md](./docs/security-headers.md)                                                     | COOP/COEP, CSP, security headers                                                                                        | Infrastructure       |
+| [16-disk-image-streaming-auth.md](./docs/16-disk-image-streaming-auth.md)                             | Disk byte streaming, auth, CORS/COEP                                                                                    | I/O / Infra          |
+| [16-win7-unattended-install.md](./docs/16-win7-unattended-install.md)                                 | Unattended Win7 install (drivers/hooks)                                                                                 | All                  |
+| [17-win7-unattend-validation.md](./docs/17-win7-unattend-validation.md)                               | Validate/debug Win7 unattended installs (logs, config-set, SetupComplete)                                               | All                  |
+| [16-windows7-install-media-prep.md](./docs/16-windows7-install-media-prep.md)                         | Preparing a Win7 SP1 ISO with Aero drivers/certs                                                                        | All                  |
+| [16-guest-tools-packaging.md](./docs/16-guest-tools-packaging.md)                                     | Guest Tools ISO/zip packaging                                                                                           | Infrastructure       |
+| [16-guest-cpu-benchmark-suite.md](./docs/16-guest-cpu-benchmark-suite.md)                             | Guest CPU throughput benchmarks (PF-008)                                                                                | Performance          |
+| [agent-resource-limits.md](./docs/agent-resource-limits.md)                                           | Resource limits for concurrent agent execution                                                                          | Infrastructure       |
 
 
 ---
@@ -427,17 +490,17 @@ pub trait DisplayAdapter {
 ## Quick Reference: Key Technical Decisions
 
 
-| Decision                | Choice                                       | Rationale                               |
-| ----------------------- | -------------------------------------------- | --------------------------------------- |
-| Implementation Language | Rust                                         | Memory safety, WASM target, performance |
-| JIT Strategy            | Tiered (interpreter → baseline → optimizing) | Balance startup time vs peak perf       |
-| WASM Threading          | SharedArrayBuffer + Atomics                  | True parallelism required               |
-| Graphics API            | WebGPU (fallback: WebGL2)                    | Hardware acceleration essential         |
-| Storage Backend         | OPFS primary, IndexedDB fallback             | Large file support                      |
+| Decision                | Choice                                                          | Rationale                                                                         |
+| ----------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Implementation Language | Rust                                                            | Memory safety, WASM target, performance                                           |
+| JIT Strategy            | Tiered (interpreter → baseline → optimizing)                    | Balance startup time vs peak perf                                                 |
+| WASM Threading          | SharedArrayBuffer + Atomics                                     | True parallelism required                                                         |
+| Graphics API            | WebGPU (fallback: WebGL2)                                       | Hardware acceleration essential                                                   |
+| Storage Backend         | OPFS primary, IndexedDB fallback                                | Large file support                                                                |
 | Network Transport       | L2 tunnel over WebSocket (default), optional WebRTC DataChannel | Keep the browser as a frame forwarder; proxy runs the user-space stack (ADR 0013) |
-| Audio Processing        | AudioWorklet                                 | Low latency audio                       |
-| USB passthrough stack   | `crates/aero-usb` + `web/src/usb/*` (ADR 0015) | Single canonical browser USB/UHCI stack; deterministic device models in Rust |
-| Browser memory model    | Split buffers (shared `WebAssembly.Memory` + small SABs) | Avoid >4GiB offsets and single huge SAB allocations |
+| Audio Processing        | AudioWorklet                                                    | Low latency audio                                                                 |
+| USB passthrough stack   | `crates/aero-usb` + `web/src/usb/*` (ADR 0015)                  | Single canonical browser USB/UHCI stack; deterministic device models in Rust      |
+| Browser memory model    | Split buffers (shared `WebAssembly.Memory` + small SABs)        | Avoid >4GiB offsets and single huge SAB allocations                               |
 
 
 ---

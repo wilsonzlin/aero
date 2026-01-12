@@ -6,6 +6,26 @@
 
 ---
 
+## 🛡️ Core Principle: Assume Hostile Processes
+
+**Every process you spawn is potentially hostile, pathological, or malfunctioning.**
+
+This isn't paranoia—it's operational reality. `cargo`, `rustc`, `node`, `npm`, `chromium`, and even simple shell commands can:
+
+| Failure Mode | Example | Your Defense |
+|--------------|---------|--------------|
+| **Hang forever** | rustc stuck on codegen, npm waiting for network | Always use timeouts |
+| **Consume infinite memory** | LTO linking, webpack bundling | Always use memory limits |
+| **Spin CPU forever** | Infinite loop in proc macro, bad regex | Timeouts + kill |
+| **Ignore SIGTERM** | Misbehaving Chrome process | SIGTERM → wait → SIGKILL |
+| **Leave zombies** | Crashed parent, orphaned children | Kill process groups, not just PIDs |
+| **Corrupt state** | Partial writes, lock files | Validate outputs, clean state |
+| **Lie about success** | Exit 0 but wrong output | Check outputs, not just exit codes |
+
+**Your code is not special.** It will also misbehave. Defend against yourself.
+
+---
+
 ## The One Rule That Matters
 
 **Memory is the constraint.** CPU and disk I/O are handled gracefully by the Linux scheduler under contention. But if 200 agents each try to use 16 GB during a Rust build, the machine will OOM and become unresponsive.
@@ -35,33 +55,32 @@ source ./scripts/agent-env.sh
 
 ## Memory Limit Enforcement
 
-### Option 1: systemd-run (Recommended)
+We use RLIMIT_AS (virtual address space limit) via `prlimit` or `ulimit`. This is simpler and more portable than cgroups/systemd-run.
 
-Wrap long-running or memory-intensive commands:
-
-```bash
-# For cargo build (can spike to 16GB without limits)
-systemd-run --user --scope -p MemoryMax=12G cargo build --release --locked
-
-# Or use the helper script
-./scripts/mem-limit.sh 12G cargo build --release --locked
-```
-
-`mem-limit.sh` prefers `systemd-run` when available, and falls back to
-`prlimit`/`ulimit` on systems without a working systemd user session (common in
-containers).
-
-### Option 2: Cgroup (if you have root/sudo)
+### Using `run_limited.sh` (Recommended)
 
 ```bash
-# Create a memory-limited slice for this shell and all children
-sudo systemd-run --scope -p MemoryMax=12G --uid=$(id -u) bash
-# Now all commands in this shell respect the 12G limit
+# Limit to 12GB virtual address space
+./scripts/run_limited.sh --as 12G -- cargo build --release --locked
+
+# Or use safe-run.sh which combines timeout + memory limit
+./scripts/safe-run.sh cargo build --release --locked
 ```
 
-### Option 3: Environment Variable (Softer)
+### How it works
 
-This doesn't enforce a hard limit but reduces peak usage:
+1. **`prlimit`** (preferred): Sets RLIMIT_AS on the current process, inherited by children
+2. **`ulimit -v`** (fallback): Same effect via shell builtin
+
+This approach:
+- Works in containers (no cgroups/systemd needed)
+- Works on most Linux systems without root
+- Works on macOS (via ulimit)
+- Handles Rustup shims correctly (resolves to real cargo binary first)
+
+### Soft limits (reduce peak usage)
+
+These don't enforce hard limits but reduce memory spikes:
 
 ```bash
 export CARGO_BUILD_JOBS=4       # Limit parallel rustc (default: num_cpus)
@@ -101,20 +120,129 @@ export PW_TEST_WORKERS=1
 
 ---
 
-## Timeouts
+## Timeouts (Non-Negotiable)
 
-Long-running commands should have timeouts to catch infinite loops or stuck processes:
+**Every command gets a timeout. No exceptions.**
+
+Processes hang. Network calls block. Locks deadlock. Without timeouts, a single stuck process can block your entire session indefinitely.
 
 ```bash
-# 10 minute timeout for builds
-timeout 600 cargo build --locked
+# NEVER do this:
+cargo build --locked  # Can hang forever
 
-# 5 minute timeout for tests  
-timeout 300 cargo test --locked
+# ALWAYS do this (use safe-run.sh for both timeout + memory limit):
+./scripts/safe-run.sh cargo build --locked
 
-# Helper script with graceful shutdown
-./scripts/with-timeout.sh 600 cargo build --release --locked
+# Or just timeout:
+timeout -k 10 600 cargo build --locked
+./scripts/with-timeout.sh 600 cargo build --locked
 ```
+
+### The `-k` flag is critical
+
+**Always use `timeout -k <grace>` — never bare `timeout`.**
+
+Misbehaving code can ignore SIGTERM indefinitely. The `-k 10` sends SIGKILL 10 seconds after SIGTERM if the process is still running.
+
+```bash
+# CORRECT — SIGKILL after 10s grace period:
+timeout -k 10 600 cargo build --locked
+
+# WRONG — process can ignore SIGTERM forever:
+timeout 600 cargo build --locked
+```
+
+### Recommended Timeouts
+
+| Operation | Timeout | Rationale |
+|-----------|---------|-----------|
+| `cargo build` (debug) | 10 min | Should complete in 2-5 min normally |
+| `cargo build --release` | 20 min | LTO/optimization takes longer |
+| `cargo test` | 10 min | Tests shouldn't take forever |
+| `npm install` | 5 min | Network can be slow, but not infinite |
+| `npm run build` | 10 min | Bundling is finite |
+| Playwright tests | 5 min per test | Browser can hang |
+| Any network request | 30 sec | DNS/connect/read timeouts |
+
+### What Happens on Timeout
+
+1. SIGTERM sent to the process
+2. 10 second grace period for cleanup
+3. SIGKILL if still running (non-negotiable)
+
+**If something times out, it's a bug or a hang.** Investigate—don't just increase the timeout.
+
+---
+
+## Killing Processes: Do It Right
+
+When something goes wrong, kill it properly. Half-killed processes are worse than running processes.
+
+### Kill a Process Group (Preferred)
+
+```bash
+# Kill the entire process tree, not just the parent
+kill -TERM -$PGID    # SIGTERM to process group
+sleep 2
+kill -KILL -$PGID    # SIGKILL if still alive
+```
+
+### Find and Kill Orphans
+
+```bash
+# Find processes using excessive memory
+ps aux --sort=-%mem | head -20
+
+# Find your orphaned cargo/rustc processes
+pgrep -u $(whoami) -f 'cargo|rustc|node|chrome' | xargs -r ps -p
+
+# Kill them
+pkill -u $(whoami) -f 'cargo build'
+```
+
+### Clean Up Lock Files
+
+Crashed processes leave locks. Remove them:
+
+```bash
+# Cargo build directory lock
+rm -f target/.cargo-lock
+
+# npm lock
+rm -f package-lock.json.lock node_modules/.package-lock.json
+
+# OPFS/IndexedDB (browser storage) - clear via browser devtools or fresh profile
+```
+
+---
+
+## Validating Outputs (Trust Nothing)
+
+**Exit code 0 does not mean success.** Verify:
+
+```bash
+# BAD: Assumes success
+cargo build --locked
+./target/debug/mybin
+
+# GOOD: Verify the artifact exists and is valid
+cargo build --locked
+if [[ ! -x ./target/debug/mybin ]]; then
+    echo "ERROR: Build claimed success but binary missing" >&2
+    exit 1
+fi
+./target/debug/mybin --version || { echo "Binary crashes on --version" >&2; exit 1; }
+```
+
+### Common "Successful Failures"
+
+| Tool | Silent Failure Mode | How to Detect |
+|------|---------------------|---------------|
+| `cargo build` | Partial build, missing artifact | Check file exists + is executable |
+| `wasm-pack` | Missing `.wasm` file | Check `pkg/*.wasm` exists |
+| `npm run build` | Empty dist folder | Check `dist/` is non-empty |
+| `cargo test` | Some tests skipped silently | Parse test output for skip count |
+| `playwright test` | Flaky pass after retries | Check retry count in output |
 
 ---
 
@@ -289,10 +417,35 @@ The `scripts/` directory contains:
 
 | Script               | Purpose                                           |
 | -------------------- | ------------------------------------------------- |
+| `safe-run.sh`        | **Recommended**: Run with both timeout + memory limit |
+| `run_limited.sh`     | Run a command with RLIMIT_AS memory limit         |
+| `with-timeout.sh`    | Run a command with a timeout (uses `-k` for SIGKILL) |
 | `agent-env.sh`       | Source this to set recommended env vars           |
-| `agent-env-setup.sh` | One-time sanity checks (does not overwrite repo Cargo config) |
-| `mem-limit.sh`       | Run a command with a memory limit                 |
-| `with-timeout.sh`    | Run a command with a timeout                      |
+| `agent-env-setup.sh` | One-time sanity checks + environment validation   |
+
+
+### Quick Reference
+
+```bash
+# One-time setup (validates environment, shows warnings)
+./scripts/agent-env-setup.sh
+
+# Activate environment in current shell
+source ./scripts/agent-env.sh
+
+# Run a build with full protection (RECOMMENDED)
+./scripts/safe-run.sh cargo build --release --locked
+
+# Override defaults
+AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
+
+# Just timeout (always use -k for SIGKILL fallback!)
+timeout -k 10 600 cargo test --locked
+./scripts/with-timeout.sh 600 cargo test --locked
+
+# Just memory limit (RLIMIT_AS)
+./scripts/run_limited.sh --as 12G -- cargo build --release --locked
+```
 
 
 ---
@@ -362,10 +515,99 @@ Functional tests pass; performance is not representative.
 
 ---
 
+## Safe Command Execution Patterns
+
+### The Fully Defensive Pattern
+
+For any non-trivial command:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+TIMEOUT=600
+MEM_LIMIT=12G
+CMD="cargo build --release --locked"
+
+echo "[run] Starting: $CMD"
+echo "[run] Timeout: ${TIMEOUT}s, Memory limit: $MEM_LIMIT"
+
+# Capture both stdout and stderr, with timeout and memory limit
+if ! ./scripts/with-timeout.sh "$TIMEOUT" ./scripts/mem-limit.sh "$MEM_LIMIT" $CMD 2>&1 | tee build.log; then
+    echo "[run] FAILED: $CMD" >&2
+    echo "[run] Last 50 lines of output:" >&2
+    tail -50 build.log >&2
+    exit 1
+fi
+
+# Verify output exists
+if [[ ! -f target/release/aero ]]; then
+    echo "[run] ERROR: Command succeeded but expected output missing" >&2
+    exit 1
+fi
+
+echo "[run] SUCCESS: $CMD"
+```
+
+### Quick Defensive One-Liners
+
+```bash
+# Build with all protections
+./scripts/with-timeout.sh 600 ./scripts/mem-limit.sh 12G cargo build --locked 2>&1 | tee build.log
+
+# Test with timeout (tests should be fast)
+./scripts/with-timeout.sh 300 cargo test --locked 2>&1 | tee test.log
+
+# npm with timeout (network can hang)
+./scripts/with-timeout.sh 300 npm ci 2>&1 | tee npm.log
+```
+
+### Recovering from Failures
+
+When something fails:
+
+1. **Check what's still running:**
+   ```bash
+   pgrep -u $(whoami) -af 'cargo|rustc|node|npm|chrome'
+   ```
+
+2. **Kill orphans:**
+   ```bash
+   pkill -u $(whoami) -f 'rustc'
+   pkill -u $(whoami) -f 'chrome'
+   ```
+
+3. **Clean corrupted state:**
+   ```bash
+   rm -rf target/.cargo-lock
+   cargo clean -p <crate-that-failed>
+   ```
+
+4. **Retry with more visibility:**
+   ```bash
+   RUST_BACKTRACE=1 cargo build --locked -vv 2>&1 | tee verbose-build.log
+   ```
+
+---
+
+## Windows 7 Test ISO
+
+A Windows 7 Professional x64 ISO is available at:
+
+```
+/state/win7.iso
+```
+
+Use this for integration testing once the emulator can boot. Do not redistribute.
+
+---
+
 ## Summary
 
-1. **Memory is the only hard constraint** — use `mem-limit.sh` or `systemd-run` for heavy builds
-2. **Don't over-constrain** — `-j4` is fine, `-j1` is too conservative
-3. **Timeouts for long commands** — catch runaway processes
-4. **Everything else is fine** — let the scheduler do its job
-5. **GPU-less is fine** — WebGPU tests skip gracefully, WebGL2 works via software
+1. **Assume hostility** — every process can hang, OOM, or misbehave
+2. **Memory is the hard constraint** — use `mem-limit.sh` or `systemd-run` for heavy builds
+3. **Timeouts are mandatory** — no command runs without a deadline
+4. **Verify outputs** — exit code 0 doesn't mean success
+5. **Kill aggressively** — SIGTERM, wait, SIGKILL; clean up orphans
+6. **Don't over-constrain** — `-j4` is fine, `-j1` is too conservative
+7. **GPU-less is fine** — WebGPU tests skip gracefully, WebGL2 works via software

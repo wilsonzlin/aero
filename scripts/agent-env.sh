@@ -1,6 +1,15 @@
 #!/bin/bash
 # Source this file to set recommended environment variables for Aero development.
 # Usage: source scripts/agent-env.sh
+#
+# DEFENSIVE DEFAULTS:
+# - Memory-limited build parallelism
+# - Timeouts are NOT set here (use with-timeout.sh or safe-run.sh explicitly)
+# - File descriptor limits raised
+# - Rustc wrapper issues handled
+#
+# These settings assume processes may misbehave. They prioritize reliability
+# over maximum speed.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -55,12 +64,16 @@ esac
 # override Cargo config and disable wrappers entirely.
 case "${AERO_DISABLE_RUSTC_WRAPPER:-}" in
   "" | 0 | false | FALSE | no | NO | off | OFF)
-    for var in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
-      val="${!var:-}"
-      if [[ "$val" == "sccache" || "$val" == */sccache || "$val" == "sccache.exe" || "$val" == */sccache.exe ]]; then
-        export "${var}="
-      fi
-    done
+    # Check each wrapper variable for sccache (compatible with bash and zsh)
+    _aero_check_sccache() {
+      local val="$1"
+      [[ "$val" == "sccache" || "$val" == */sccache || "$val" == "sccache.exe" || "$val" == */sccache.exe ]]
+    }
+    if _aero_check_sccache "${RUSTC_WRAPPER:-}"; then export RUSTC_WRAPPER=; fi
+    if _aero_check_sccache "${RUSTC_WORKSPACE_WRAPPER:-}"; then export RUSTC_WORKSPACE_WRAPPER=; fi
+    if _aero_check_sccache "${CARGO_BUILD_RUSTC_WRAPPER:-}"; then export CARGO_BUILD_RUSTC_WRAPPER=; fi
+    if _aero_check_sccache "${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-}"; then export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=; fi
+    unset -f _aero_check_sccache 2>/dev/null || true
     ;;
   1 | true | TRUE | yes | YES | on | ON)
     export RUSTC_WRAPPER=
@@ -133,3 +146,11 @@ if [[ -n "${AERO_ALLOW_UNSUPPORTED_NODE:-}" ]]; then
   echo "  AERO_ALLOW_UNSUPPORTED_NODE=$AERO_ALLOW_UNSUPPORTED_NODE"
 fi
 echo "  PW_TEST_WORKERS=$PW_TEST_WORKERS"
+echo ""
+echo "⚠️  DEFENSIVE REMINDERS:"
+echo "  • Always use timeouts:  ./scripts/with-timeout.sh 600 <command>"
+echo "  • Always limit memory:  ./scripts/mem-limit.sh 12G <command>"
+echo "  • Or use both:          ./scripts/safe-run.sh <command>"
+echo "  • Verify outputs exist after builds (exit 0 ≠ success)"
+echo ""
+echo "📀 Windows 7 test ISO: /state/win7.iso"
