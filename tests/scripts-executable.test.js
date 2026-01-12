@@ -78,3 +78,9 @@ test("scripts referenced as ./scripts/*.sh are executable", { skip: process.plat
   }
 });
 
+test("safe-run.sh can execute a trivial command (Linux)", { skip: process.platform !== "linux" }, () => {
+  execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["true"], {
+    cwd: repoRoot,
+    stdio: "ignore",
+  });
+});
