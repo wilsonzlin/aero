@@ -27,6 +27,8 @@ export type RemoteRangeDiskTelemetry = {
 
 type RemoteRangeDiskCacheMeta = RemoteCacheMetaV1;
 
+const META_PERSIST_DEBOUNCE_MS = 50;
+
 export interface RemoteRangeDiskSparseCache extends AsyncSectorDisk {
   readonly blockSizeBytes: number;
   isBlockAllocated(blockIndex: number): boolean;
@@ -450,6 +452,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private meta: RemoteRangeDiskCacheMeta | null = null;
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
+  private metaDirty = false;
+  private metaPersistTimer: ReturnType<typeof setTimeout> | null = null;
   private cacheGeneration = 0;
 
   private readonly inflightChunks = new Map<number, { generation: number; promise: Promise<void> }>();
@@ -758,6 +762,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    await this.flushPendingMetaPersist(this.cacheGeneration).catch(() => {
+      // best-effort metadata persistence
+    });
     await this.metaWriteChain.catch(() => {
       // best-effort metadata persistence
     });
@@ -778,6 +785,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.flushTimer = null;
     }
     this.flushPending = false;
+
+    this.cancelPendingMetaPersist();
 
     const oldCache = this.cache;
     await oldCache?.close?.();
@@ -815,6 +824,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       cachedRanges: [],
     };
     this.meta = metaToPersist;
+    this.metaDirty = false;
     await this.metadataStore.write(this.cacheId, metaToPersist);
   }
 
@@ -829,6 +839,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.flushTimer = null;
     }
     this.flushPending = false;
+    if (this.invalidationPromise) {
+      await this.invalidationPromise;
+    }
+    await this.flushPendingMetaPersist(this.cacheGeneration).catch(() => {
+      // best-effort metadata persistence
+    });
     await this.metaWriteChain.catch(() => {
       // best-effort metadata persistence
     });
@@ -932,7 +948,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           this.lastFetchMs = performance.now() - start;
           this.lastFetchAtMs = Date.now();
         }
-        await this.recordCachedChunk(chunkIndex, generation);
+        this.recordCachedChunk(chunkIndex, generation);
         this.scheduleBackgroundFlush();
         return;
       } catch (err) {
@@ -1154,7 +1170,41 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     (this.flushTimer as unknown as { unref?: () => void }).unref?.();
   }
 
-  private async recordCachedChunk(chunkIndex: number, generation: number): Promise<void> {
+  private scheduleMetaPersist(generation: number): void {
+    if (!this.metaDirty) return;
+    if (this.metaPersistTimer !== null) return;
+
+    this.metaPersistTimer = setTimeout(() => {
+      this.metaPersistTimer = null;
+      if (!this.metaDirty) return;
+      if (generation !== this.cacheGeneration) return;
+      this.metaDirty = false;
+      void this.persistMeta(generation).catch(() => {
+        // best-effort metadata persistence
+      });
+    }, META_PERSIST_DEBOUNCE_MS);
+    (this.metaPersistTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private cancelPendingMetaPersist(): void {
+    if (this.metaPersistTimer !== null) {
+      clearTimeout(this.metaPersistTimer);
+      this.metaPersistTimer = null;
+    }
+    this.metaDirty = false;
+  }
+
+  private async flushPendingMetaPersist(generation: number): Promise<void> {
+    if (this.metaPersistTimer !== null) {
+      clearTimeout(this.metaPersistTimer);
+      this.metaPersistTimer = null;
+    }
+    if (!this.metaDirty) return;
+    this.metaDirty = false;
+    await this.persistMeta(generation);
+  }
+
+  private recordCachedChunk(chunkIndex: number, generation: number): void {
     const meta = this.meta;
     if (!meta) return;
     if (generation !== this.cacheGeneration) return;
@@ -1166,7 +1216,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.rangeSet.insert(start, end);
     meta.cachedRanges = this.rangeSet.getRanges();
     meta.lastAccessedAtMs = Date.now();
-    await this.persistMeta(generation);
+    this.metaDirty = true;
+    this.scheduleMetaPersist(generation);
   }
 
   private async persistMeta(generation: number): Promise<void> {
@@ -1198,6 +1249,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         this.flushTimer = null;
       }
       this.flushPending = false;
+
+      this.cancelPendingMetaPersist();
 
       const oldCache = this.cache;
       await oldCache?.close?.();
@@ -1241,6 +1294,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         cachedRanges: [],
       };
       this.meta = metaToPersist;
+      this.metaDirty = false;
       await this.metadataStore.write(this.cacheId, metaToPersist);
     })();
 

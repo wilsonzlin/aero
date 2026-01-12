@@ -417,6 +417,55 @@ describe("RemoteRangeDisk", () => {
     expect(server.stats.rangeGets).toBe(1);
   });
 
+  it("debounces metadata writes when caching many chunks", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(4 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    class CountingMetadataStore implements RemoteRangeDiskMetadataStore {
+      writes = 0;
+      private readonly map = new Map<string, any>();
+
+      async read(cacheId: string): Promise<any | null> {
+        return this.map.get(cacheId) ?? null;
+      }
+
+      async write(cacheId: string, meta: any): Promise<void> {
+        this.writes += 1;
+        this.map.set(cacheId, meta);
+      }
+
+      async delete(cacheId: string): Promise<void> {
+        this.map.delete(cacheId);
+      }
+    }
+
+    const metadataStore = new CountingMetadataStore();
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: { imageId: "debounced-meta", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore,
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const buf = new Uint8Array(4 * chunkSize);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data);
+
+    // Ensure any pending debounced meta write has completed.
+    await disk.flush();
+
+    // Init + 1 debounced update (not per chunk).
+    expect(metadataStore.writes).toBeLessThanOrEqual(2);
+  });
+
   it("exposes a telemetry snapshot compatible with the runtime disk worker", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);
