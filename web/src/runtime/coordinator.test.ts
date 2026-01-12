@@ -111,7 +111,8 @@ describe("runtime/coordinator", () => {
   it("rejects VM start when activeDiskImage is set but OPFS SyncAccessHandle is unavailable", () => {
     const coordinator = new WorkerCoordinator();
 
-    expect(() =>
+    let err: unknown;
+    try {
       coordinator.start(
         {
           guestMemoryMiB: 1,
@@ -138,8 +139,14 @@ describe("runtime/coordinator", () => {
             jit_dynamic_wasm: true,
           },
         },
-      ),
-    ).toThrow(/SyncAccessHandle/i);
+      );
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/SyncAccessHandle/i);
+    expect((err as Error).message).toMatch(/IndexedDB/i);
   });
 
   it("stops and emits a fatal event when switching into VM mode via updateConfig without OPFS SyncAccessHandle", () => {
@@ -184,6 +191,7 @@ describe("runtime/coordinator", () => {
 
     expect(coordinator.getVmState()).toBe("failed");
     expect(coordinator.getLastFatalEvent()?.message).toMatch(/SyncAccessHandle/i);
+    expect(coordinator.getLastFatalEvent()?.message).toMatch(/IndexedDB/i);
 
     const statuses = coordinator.getWorkerStatuses();
     expect(statuses.cpu.state).toBe("stopped");
