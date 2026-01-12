@@ -1646,6 +1646,12 @@ async function runLoopInner(): Promise<void> {
             const id = readDword(0x00);
             const vendorId = id & 0xffff;
             const deviceId = (id >>> 16) & 0xffff;
+            const subsys = readDword(0x2c);
+            const subsystemVendorId = subsys & 0xffff;
+            const subsystemId = (subsys >>> 16) & 0xffff;
+            const intx = readDword(0x3c);
+            const irqLine = intx & 0xff;
+            const irqPin = (intx >>> 8) & 0xff;
             const bar0 = readDword(0x10);
 
             // Enable memory-space decoding.
@@ -1655,10 +1661,14 @@ async function runLoopInner(): Promise<void> {
             io!.mmioWrite(bar0Base, 4, 0xcafe_babe);
             const mmio0 = io!.mmioRead(bar0Base, 4) >>> 0;
 
-            return { vendorId, deviceId, bar0, mmio0 };
+            return { vendorId, deviceId, subsystemVendorId, subsystemId, irqLine, irqPin, bar0, mmio0 };
           });
           perf.counter("cpu:io:pci:vendorId", pci.vendorId);
           perf.counter("cpu:io:pci:deviceId", pci.deviceId);
+          perf.counter("cpu:io:pci:ssVendorId", pci.subsystemVendorId);
+          perf.counter("cpu:io:pci:ssId", pci.subsystemId);
+          perf.counter("cpu:io:pci:irqLine", pci.irqLine);
+          perf.counter("cpu:io:pci:irqPin", pci.irqPin);
           perf.counter("cpu:io:pci:mmio0", pci.mmio0);
 
           // Emit a couple bytes on COM1; the I/O worker should mirror them back
@@ -1674,7 +1684,9 @@ async function runLoopInner(): Promise<void> {
           console.log(
             `[cpu] io demo: i8042 status=0x${status64.toString(16)} cmdByte=0x${cmdByte.toString(
               16,
-            )} pci=${pci.vendorId.toString(16)}:${pci.deviceId.toString(16)} bar0=0x${pci.bar0.toString(16)} mmio0=0x${pci.mmio0.toString(16)}`,
+            )} pci=${pci.vendorId.toString(16)}:${pci.deviceId.toString(16)} ss=${pci.subsystemVendorId.toString(
+              16,
+            )}:${pci.subsystemId.toString(16)} intx=${pci.irqLine}/${pci.irqPin} bar0=0x${pci.bar0.toString(16)} mmio0=0x${pci.mmio0.toString(16)}`,
           );
         } catch (err) {
           // eslint-disable-next-line no-console
