@@ -27,6 +27,7 @@ export class KeyboardCapture {
       return;
     }
     e.preventDefault();
+    e.stopPropagation();
 
     // Browser auto-repeat matches the keyboard's typematic behaviour: repeated
     // make codes while the key stays pressed.
@@ -42,6 +43,7 @@ export class KeyboardCapture {
       return;
     }
     e.preventDefault();
+    e.stopPropagation();
     this.pressed.delete(e.code);
     if (bytes.length > 0) {
       this.sink(bytes);

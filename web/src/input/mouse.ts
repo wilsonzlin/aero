@@ -24,6 +24,8 @@ export class MouseCapture {
       if (!this.pointerLocked) {
         return;
       }
+      e.preventDefault();
+      e.stopPropagation();
       this.onMove(e.movementX, e.movementY, 0);
     });
 
@@ -32,6 +34,7 @@ export class MouseCapture {
         return;
       }
       e.preventDefault();
+      e.stopPropagation();
       this.onButton(e.button, true);
     });
 
@@ -40,6 +43,7 @@ export class MouseCapture {
         return;
       }
       e.preventDefault();
+      e.stopPropagation();
       this.onButton(e.button, false);
     });
 
@@ -50,6 +54,7 @@ export class MouseCapture {
           return;
         }
         e.preventDefault();
+        e.stopPropagation();
         // Wheel deltas are browser-defined; the host glue should convert this to
         // the guest's expected units.
         this.onMove(0, 0, e.deltaY);
@@ -58,4 +63,3 @@ export class MouseCapture {
     );
   }
 }
-
