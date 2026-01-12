@@ -496,25 +496,18 @@ def _test_options_preflight(
     authorization: str | None,
     timeout_s: float,
     etag: str | None,
-    last_modified: str | None,
 ) -> TestResult:
     required_headers = {"range", "if-range"}
-    optional_headers: set[str] = set()
     req_headers: list[str] = ["range", "if-range"]
     if etag is not None:
         required_headers.add("if-none-match")
         req_headers.append("if-none-match")
-    if last_modified is not None:
-        optional_headers.add("if-modified-since")
-        req_headers.append("if-modified-since")
 
     req_header_value = ",".join(req_headers)
 
     name = "OPTIONS: CORS preflight allows Range + If-Range headers"
     if etag is not None:
         name += " + If-None-Match"
-    if last_modified is not None:
-        name += " + If-Modified-Since"
     if authorization is not None:
         required_headers.add("authorization")
         req_header_value += ",authorization"
@@ -565,17 +558,87 @@ def _test_options_preflight(
             f"expected Allow-Headers to include {sorted(required_headers)} (or '*'); missing {sorted(missing_required)}; got {allow_headers!r}",
         )
 
-        missing_optional = set()
-        if "*" not in allowed:
-            missing_optional = optional_headers.difference(allowed)
-        if missing_optional:
-            message = f"missing optional Allow-Headers {sorted(missing_optional)}; got {allow_headers!r}"
-            return TestResult(name=name, status="WARN", details=message)
-
         return TestResult(name=name, status="PASS", details=f"status={resp.status}")
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e))
 
+
+def _test_options_preflight_if_modified_since(
+    *,
+    base_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    last_modified: str | None,
+) -> TestResult:
+    name = "OPTIONS: CORS preflight allows If-Modified-Since header"
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if last_modified is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no Last-Modified from HEAD)")
+
+    try:
+        req_header_value = "if-modified-since"
+        required_headers = {"if-modified-since"}
+        if authorization is not None:
+            req_header_value += ",authorization"
+            required_headers.add("authorization")
+
+        resp = _request(
+            url=base_url,
+            method="OPTIONS",
+            headers={
+                "Accept-Encoding": "identity",
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": req_header_value,
+            },
+            timeout_s=timeout_s,
+            follow_redirects=False,
+            max_body_bytes=1024,
+        )
+        if not (200 <= resp.status < 300):
+            return TestResult(name=name, status="WARN", details=f"expected 2xx, got {resp.status}")
+
+        allow_origin = _header(resp, "Access-Control-Allow-Origin")
+        if allow_origin is None:
+            return TestResult(name=name, status="WARN", details="missing Access-Control-Allow-Origin")
+        allow_origin = allow_origin.strip()
+        if not (allow_origin == "*" or allow_origin == origin):
+            return TestResult(
+                name=name,
+                status="WARN",
+                details=f"expected Allow-Origin '*' or {origin!r}, got {allow_origin!r}",
+            )
+
+        allow_methods = _header(resp, "Access-Control-Allow-Methods")
+        if allow_methods is None:
+            return TestResult(name=name, status="WARN", details="missing Access-Control-Allow-Methods")
+        allow_method_tokens = _csv_tokens(allow_methods)
+        required_methods = {"get", "head"}
+        if not ("*" in allow_method_tokens or required_methods.issubset(allow_method_tokens)):
+            return TestResult(
+                name=name,
+                status="WARN",
+                details=f"expected Allow-Methods to include {sorted(required_methods)} (or '*'); got {allow_methods!r}",
+            )
+
+        allow_headers = _header(resp, "Access-Control-Allow-Headers")
+        if allow_headers is None:
+            return TestResult(name=name, status="WARN", details="missing Access-Control-Allow-Headers")
+        allowed = _csv_tokens(allow_headers)
+        if "*" not in allowed:
+            missing = required_headers.difference(allowed)
+            if missing:
+                return TestResult(
+                    name=name,
+                    status="WARN",
+                    details=f"missing Allow-Headers {sorted(missing)}; got {allow_headers!r}",
+                )
+
+        return TestResult(name=name, status="PASS", details=f"status={resp.status}")
+    except TestFailure as e:
+        return TestResult(name=name, status="WARN", details=str(e))
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     env_base_url = os.environ.get("BASE_URL")
@@ -1187,6 +1250,14 @@ def main(argv: Sequence[str]) -> int:
             authorization=authorization,
             timeout_s=timeout_s,
             etag=etag,
+        )
+    )
+    results.append(
+        _test_options_preflight_if_modified_since(
+            base_url=base_url,
+            origin=origin,
+            authorization=authorization,
+            timeout_s=timeout_s,
             last_modified=last_modified,
         )
     )

@@ -16,7 +16,10 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
   - (Optional) `GET` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
 - (Optional) `HEAD` with `If-Modified-Since: <last-modified>` returns `304` (WARN if not)
 - Unsatisfiable ranges fail correctly (`416` + `Content-Range: bytes */<size>`)
-- CORS preflight (`OPTIONS`) allows `Range`, `If-Range`, and conditional headers (`If-None-Match`, `If-Modified-Since`) (and `Authorization` when testing private images)
+- CORS preflight (`OPTIONS`) allows required request headers:
+  - `Range`, `If-Range` (and `Authorization` when testing private images)
+  - `If-None-Match` when an `ETag` is advertised (so conditional revalidation is usable from browsers)
+  - (Optional) `If-Modified-Since` when `Last-Modified` is advertised (WARN if not)
 - CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
 - COEP/CORP defence-in-depth: `Cross-Origin-Resource-Policy` is present on `GET`/`HEAD` (WARN-only by default; see `--strict` / `--expect-corp`)
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
@@ -86,9 +89,10 @@ PASS GET: Range + If-Range (matching ETag) returns 206 - Content-Range='bytes 0-
 PASS GET: Range + If-Range ("mismatch") does not return mixed-version 206 - status=200 (Range ignored)
 PASS GET: If-None-Match returns 304 Not Modified - status=304
 PASS GET: If-Modified-Since returns 304 Not Modified - status=304
-PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match + If-Modified-Since - status=204
+PASS OPTIONS: CORS preflight allows Range + If-Range headers + If-None-Match - status=204
+PASS OPTIONS: CORS preflight allows If-Modified-Since header - status=204
 
-Summary: 13 passed, 0 failed, 0 warned, 1 skipped
+Summary: 14 passed, 0 failed, 0 warned, 1 skipped
 ```
 
 ## Strict mode
