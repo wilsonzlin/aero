@@ -284,12 +284,14 @@ The PCI core in `crates/aero-devices` snapshots only **guest-visible PCI-layer s
 (`INTX`) cannot both be stored as separate `(DeviceId::PCI, 1, 0)` entries.
 
 When storing these `aero-io-snapshot` blobs as **separate** `DEVICES` entries (rather than wrapping them in `PciCoreSnapshot`), they must
-use distinct outer `DeviceId`s to avoid collisions:
+use **distinct outer** `DeviceId`s to avoid collisions:
 
-- `PciConfigPorts` (`PCPT`): store as outer `DeviceId::PCI` with `(version, flags)` mirroring the inner `SnapshotVersion (major, minor)`.
-- `PciIntxRouter` (`INTX`): store as outer `DeviceId::PCI_INTX_ROUTER` with `(version, flags)` mirroring the inner `SnapshotVersion`.
-
-Canonical full-machine snapshots use the more explicit split-out IDs `DeviceId::PCI_CFG` (`14`) and `DeviceId::PCI_INTX_ROUTER` (`15`).
+- Preferred split layout:
+  - `PciConfigPorts` (`PCPT`): store as outer `DeviceId::PCI_CFG` (`14`)
+  - `PciIntxRouter` (`INTX`): store as outer `DeviceId::PCI_INTX_ROUTER` (`15`)
+- Legacy/compat layouts (restore should accept):
+  - `PciConfigPorts` (`PCPT`) stored under the historical outer `DeviceId::PCI` (`5`)
+  - `PciIntxRouter` (`INTX`) stored under the historical outer `DeviceId::PCI` (`5`)
 
 This split avoids `DEVICES` duplicate key collisions, since the section rejects duplicate `(device_id, version, flags)` tuples and both PCI
 TLVs commonly share the same inner snapshot `(major, minor)` (e.g. v1.0). It also reflects different restore orchestration:
