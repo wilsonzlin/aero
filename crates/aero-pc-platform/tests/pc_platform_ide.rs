@@ -111,6 +111,12 @@ fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
     let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
     assert_ne!(bm_base, 0);
 
+    // The IDE model floats the legacy taskfile/status registers high (0xFF) when no drive is
+    // present. Attach a tiny in-memory disk so the test can distinguish "I/O decoding disabled"
+    // from "no device responded".
+    let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
     // With PCI I/O decoding enabled, legacy ports should respond and BAR4 should decode.
     let status = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
     assert_ne!(status, 0xFF, "expected IDE status to decode while IO is enabled");
