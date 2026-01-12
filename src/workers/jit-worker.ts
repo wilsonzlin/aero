@@ -16,9 +16,16 @@ function postMessageToCpu(msg: JitToCpuMessage, transfer?: Transferable[]) {
 }
 
 async function loadJitWasmApi(): Promise<JitWasmApi> {
-  if (jitWasmApiPromise) return await jitWasmApiPromise;
-  jitWasmApiPromise = initJitWasm().then(({ api }) => api);
-  return await jitWasmApiPromise;
+  if (!jitWasmApiPromise) {
+    jitWasmApiPromise = initJitWasm().then(({ api }) => api);
+  }
+  try {
+    return await jitWasmApiPromise;
+  } catch (err) {
+    // Allow retries if initialization fails (e.g. missing assets during dev or CSP restrictions).
+    jitWasmApiPromise = null;
+    throw err;
+  }
 }
 
 function clampU32(n: number): number {
