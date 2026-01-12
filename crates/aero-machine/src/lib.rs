@@ -3059,6 +3059,30 @@ mod tests {
     }
 
     #[test]
+    fn inject_ps2_mouse_motion_inverts_dy() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Enable mouse reporting so injected motion generates stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        // `inject_ps2_mouse_motion` expects dy>0 as "up". The underlying PS/2 mouse model expects
+        // browser-style dy>0 as "down", so Machine must invert it.
+        m.inject_ps2_mouse_motion(0, 5, 0);
+        let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(packet, vec![0x08, 0x00, 0x05]);
+    }
+
+    #[test]
     fn snapshot_restore_preserves_i8042_pending_output_bytes() {
         let cfg = MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
