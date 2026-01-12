@@ -5,6 +5,11 @@ use crate::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+// Snapshots may be loaded from untrusted sources (e.g. downloaded files). Keep decoding bounded so
+// corrupted snapshots cannot force pathological allocations.
+const MAX_NAT_ENTRIES: usize = 65_536;
+const MAX_TCP_PROXY_CONNS: usize = 65_536;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ipv4Addr(pub [u8; 4]);
 
@@ -148,7 +153,7 @@ impl IoSnapshot for LegacyNetworkStackState {
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_bytes(TAG_MAC, self.mac_addr.to_vec());
-        w.field_u32(TAG_NEXT_CONN_ID, self.next_conn_id);
+        w.field_u32(TAG_NEXT_CONN_ID, self.next_conn_id.max(1));
 
         if let Some(lease) = &self.dhcp_lease {
             let bytes = Encoder::new()
@@ -161,8 +166,9 @@ impl IoSnapshot for LegacyNetworkStackState {
             w.field_bytes(TAG_DHCP, bytes);
         }
 
-        let mut nat = Encoder::new().u32(self.nat.len() as u32);
-        for (k, v) in &self.nat {
+        let nat_len = self.nat.len().min(MAX_NAT_ENTRIES);
+        let mut nat = Encoder::new().u32(nat_len as u32);
+        for (k, v) in self.nat.iter().take(nat_len) {
             nat = nat
                 .u8(k.proto as u8)
                 .bytes(&k.inside_ip.0)
@@ -174,8 +180,9 @@ impl IoSnapshot for LegacyNetworkStackState {
         }
         w.field_bytes(TAG_NAT, nat.finish());
 
-        let mut conns = Encoder::new().u32(self.tcp_proxy_conns.len() as u32);
-        for (id, conn) in &self.tcp_proxy_conns {
+        let conns_len = self.tcp_proxy_conns.len().min(MAX_TCP_PROXY_CONNS);
+        let mut conns = Encoder::new().u32(conns_len as u32);
+        for (id, conn) in self.tcp_proxy_conns.iter().take(conns_len) {
             conns = conns
                 .u32(*id)
                 .bytes(&conn.remote_ip.0)
@@ -193,9 +200,6 @@ impl IoSnapshot for LegacyNetworkStackState {
         const TAG_NAT: u16 = 3;
         const TAG_NEXT_CONN_ID: u16 = 4;
         const TAG_TCP_CONNS: u16 = 5;
-
-        const MAX_NAT_ENTRIES: usize = 65_536;
-        const MAX_TCP_PROXY_CONNS: usize = 65_536;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
