@@ -679,6 +679,11 @@ When `navigator.gpu` is unavailable, Aero can fall back to WebGL2 for framebuffe
 
 ## Origin Private File System (OPFS)
 
+Note: In Aero, the boot-critical synchronous OPFS backend used by the Rust disk/controller stack is
+implemented in Rust/wasm32 in `crates/aero-opfs` (e.g. `aero_opfs::OpfsByteStorage`). The snippets
+below show the underlying browser APIs for reference and are not necessarily the exact
+implementation used in this repo.
+
 ### File Access
 
 ```javascript
@@ -755,6 +760,10 @@ async function importDiskImage(file, progressCallback) {
 ---
 
 ## IndexedDB (Small Persistent Caches)
+
+Note: IndexedDB is async. The Rust/wasm32 async IndexedDB block store lives in `crates/st-idb`,
+and it is not currently exposed as a synchronous `aero_storage::StorageBackend` /
+`aero_storage::VirtualDisk` (see `docs/19-indexeddb-storage-story.md`).
 
 IndexedDB is used for **small key/value** data that benefits from persistence across sessions but does not require OPFS throughput:
 

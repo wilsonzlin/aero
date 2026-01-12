@@ -11,6 +11,11 @@ This repository now includes a minimal, browser-side **disk image manager** inte
 - Persist metadata (JSON) per backend: name, kind (HDD/CD), size, last used, and a streaming CRC32 checksum.
 - Maintain a mount selection: **one HDD (rw)** + **one CD (ro)** at minimum.
 
+Note: IndexedDB storage is async and is used here as a host-side fallback for disk management and
+import/export flows. It is not currently exposed as a synchronous `aero_storage::StorageBackend` /
+`aero_storage::VirtualDisk` for the boot-critical Rust controller path (see
+[`docs/19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md)).
+
 Implementation lives in:
 
 - `web/src/storage/disk_manager.ts` (main-thread API, worker client)
