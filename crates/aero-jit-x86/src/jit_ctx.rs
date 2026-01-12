@@ -85,6 +85,30 @@ mod tests {
             JitContext::BYTE_SIZE + JitContext::TLB_BYTES
         );
     }
+
+    #[test]
+    fn jit_context_write_header_writes_little_endian_fields() {
+        let ctx = JitContext {
+            ram_base: 0x1122_3344_5566_7788,
+            tlb_salt: 0x99aa_bbcc_ddee_ff00,
+        };
+
+        let mut mem = [0u8; 64];
+        let base = 7usize;
+        ctx.write_header_to_mem(&mut mem, base);
+
+        let ram_base_off = base + (JitContext::RAM_BASE_OFFSET as usize);
+        assert_eq!(
+            &mem[ram_base_off..ram_base_off + 8],
+            &ctx.ram_base.to_le_bytes()
+        );
+
+        let salt_off = base + (JitContext::TLB_SALT_OFFSET as usize);
+        assert_eq!(
+            &mem[salt_off..salt_off + 8],
+            &ctx.tlb_salt.to_le_bytes()
+        );
+    }
 }
 
 /// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
