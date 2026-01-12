@@ -54,6 +54,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
+use aero_devices::usb::uhci::UhciPciDevice;
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
@@ -127,6 +128,15 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ide: bool,
+    /// Whether to attach an Intel PIIX3 UHCI (USB 1.1) controller at the canonical BDF
+    /// (`aero_devices::pci::profile::USB_UHCI_PIIX3.bdf`, `00:01.2`).
+    ///
+    /// Note: Like IDE, UHCI is function 2 of the multi-function PIIX3 device, so enabling this
+    /// will also expose the PIIX3 ISA bridge function (`aero_devices::pci::profile::ISA_PIIX3` at
+    /// `00:01.0`) with the multi-function bit set so OSes enumerate function 2 reliably.
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_uhci: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
     /// When enabled, guest physical accesses to the legacy VGA window (`0xA0000..0xC0000`), the
@@ -168,6 +178,7 @@ impl Default for MachineConfig {
             enable_pc_platform: false,
             enable_ahci: false,
             enable_ide: false,
+            enable_uhci: false,
             enable_vga: true,
             enable_serial: true,
             enable_i8042: true,
@@ -206,6 +217,7 @@ impl MachineConfig {
             enable_pc_platform: true,
             enable_ahci: true,
             enable_ide: true,
+            enable_uhci: false,
             enable_vga: true,
             enable_serial: true,
             enable_i8042: true,
@@ -269,6 +281,7 @@ pub enum MachineError {
     GuestMemoryTooLarge(u64),
     AhciRequiresPcPlatform,
     IdeRequiresPcPlatform,
+    UhciRequiresPcPlatform,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
     MultipleNicsEnabled,
@@ -297,6 +310,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::IdeRequiresPcPlatform => {
                 write!(f, "enable_ide requires enable_pc_platform=true")
+            }
+            MachineError::UhciRequiresPcPlatform => {
+                write!(f, "enable_uhci requires enable_pc_platform=true")
             }
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
@@ -957,6 +973,28 @@ impl PciDevice for IdePciConfigDevice {
     }
 }
 
+struct UhciPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl UhciPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::USB_UHCI_PIIX3.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for UhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 // -----------------------------------------------------------------------------
 // VGA port/MMIO adapters
 // -----------------------------------------------------------------------------
@@ -1303,6 +1341,52 @@ impl PciIoBarHandler for IdeBusMasterBar {
     }
 }
 
+struct UhciIoBar {
+    pci_cfg: SharedPciConfigPorts,
+    uhci: Rc<RefCell<UhciPciDevice>>,
+    bdf: PciBdf,
+}
+
+impl UhciIoBar {
+    fn sync_config(&self) {
+        let (command, bar4_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let cfg = bus.device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar4_base = cfg
+                .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar4_base)
+        };
+
+        let mut uhci = self.uhci.borrow_mut();
+        uhci.config_mut().set_command(command);
+        if bar4_base != 0 {
+            uhci.config_mut()
+                .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
+        }
+    }
+}
+
+impl PciIoBarHandler for UhciIoBar {
+    fn io_read(&mut self, offset: u64, size: usize) -> u32 {
+        self.sync_config();
+        let offset = u16::try_from(offset).unwrap_or(0);
+        self.uhci.borrow_mut().controller_mut().io_read(offset, size)
+    }
+
+    fn io_write(&mut self, offset: u64, size: usize, value: u32) {
+        self.sync_config();
+        let offset = u16::try_from(offset).unwrap_or(0);
+        self.uhci
+            .borrow_mut()
+            .controller_mut()
+            .io_write(offset, size, value);
+    }
+}
+
 struct E1000PciIoBar {
     dev: Rc<RefCell<E1000Device>>,
 }
@@ -1466,6 +1550,8 @@ pub struct Machine {
     vga: Option<Rc<RefCell<VgaDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
+    uhci: Option<Rc<RefCell<UhciPciDevice>>>,
+    uhci_ns_remainder: u64,
     bios: Bios,
     disk: SharedDisk,
     /// Whether the machine should automatically keep its canonical [`SharedDisk`] attached to the
@@ -1529,6 +1615,9 @@ impl Machine {
             }
             return Err(MachineError::IdeRequiresPcPlatform);
         }
+        if cfg.enable_uhci && !cfg.enable_pc_platform {
+            return Err(MachineError::UhciRequiresPcPlatform);
+        }
         if cfg.enable_e1000 && !cfg.enable_pc_platform {
             return Err(MachineError::E1000RequiresPcPlatform);
         }
@@ -1568,6 +1657,8 @@ impl Machine {
             vga: None,
             ahci: None,
             ide: None,
+            uhci: None,
+            uhci_ns_remainder: 0,
             bios: Bios::new(BiosConfig::default()),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
             ahci_port0_auto_attach_shared_disk: true,
@@ -2160,6 +2251,44 @@ impl Machine {
             let mut interrupts = interrupts.borrow_mut();
             hpet.poll(&mut *interrupts);
         }
+
+        if let Some(uhci) = self.uhci.as_ref() {
+            const NS_PER_MS: u64 = 1_000_000;
+
+            let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+            let (command, bar4_base) = self
+                .pci_cfg
+                .as_ref()
+                .map(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar4_base = cfg
+                        .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar4_base)
+                })
+                .unwrap_or((0, 0));
+
+            // Keep the UHCI model's view of PCI config state in sync so it can apply bus mastering
+            // gating when used via `tick_1ms`.
+            let mut uhci = uhci.borrow_mut();
+            uhci.config_mut().set_command(command);
+            if bar4_base != 0 {
+                uhci.config_mut()
+                    .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
+            }
+
+            self.uhci_ns_remainder = self.uhci_ns_remainder.saturating_add(delta_ns);
+            let mut ticks = self.uhci_ns_remainder / NS_PER_MS;
+            self.uhci_ns_remainder %= NS_PER_MS;
+
+            while ticks != 0 {
+                uhci.tick_1ms(&mut self.mem.bus);
+                ticks -= 1;
+            }
+        }
     }
 
     /// Backward-compatible alias for [`Machine::tick_platform`].
@@ -2329,6 +2458,47 @@ impl Machine {
                     .unwrap_or(0);
 
                 let mut level = virtio.borrow().irq_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // PIIX3 UHCI legacy INTx (level-triggered).
+            if let Some(uhci) = &self.uhci {
+                let bdf: PciBdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                // Keep the device model's internal PCI command state coherent so
+                // `UhciPciDevice::irq_level()` and `UhciPciDevice::tick_1ms` can apply
+                // COMMAND.INTX_DISABLE and COMMAND.BME gating.
+                let (command, bar4_base) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar4_base = cfg
+                            .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        (command, bar4_base)
+                    })
+                    .unwrap_or((0, 0));
+
+                let mut uhci_dev = uhci.borrow_mut();
+                uhci_dev.config_mut().set_command(command);
+                if bar4_base != 0 {
+                    uhci_dev
+                        .config_mut()
+                        .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
+                }
+
+                let mut level = uhci_dev.irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -2582,6 +2752,7 @@ impl Machine {
         self.serial_log.clear();
         self.ps2_mouse_buttons = 0;
         self.guest_time.reset();
+        self.uhci_ns_remainder = 0;
         self.restored_disk_overlays = None;
         self.display_fb.clear();
         self.display_width = 0;
@@ -2863,14 +3034,31 @@ impl Machine {
             };
 
             // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
-            // multi-function bit set so OSes enumerate the IDE function at 00:01.1 reliably.
-            if self.cfg.enable_ide {
+            // multi-function bit set so OSes enumerate the IDE/UHCI functions at 00:01.1/00:01.2
+            // reliably.
+            if self.cfg.enable_ide || self.cfg.enable_uhci {
                 let bdf = aero_devices::pci::profile::ISA_PIIX3.bdf;
                 pci_cfg
                     .borrow_mut()
                     .bus_mut()
                     .add_device(bdf, Box::new(Piix3IsaPciConfigDevice::new()));
             }
+
+            let uhci = if self.cfg.enable_uhci {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::USB_UHCI_PIIX3.bdf,
+                    Box::new(UhciPciConfigDevice::new()),
+                );
+                match &self.uhci {
+                    Some(uhci) => {
+                        uhci.borrow_mut().reset();
+                        Some(uhci.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(UhciPciDevice::default()))),
+                }
+            } else {
+                None
+            };
 
             let ide = if self.cfg.enable_ide {
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -3049,6 +3237,18 @@ impl Machine {
                     },
                 );
             }
+            if let Some(uhci) = uhci.clone() {
+                let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+                io_router.register_handler(
+                    bdf,
+                    UhciPciDevice::IO_BAR_INDEX,
+                    UhciIoBar {
+                        pci_cfg: pci_cfg.clone(),
+                        uhci,
+                        bdf,
+                    },
+                );
+            }
             if let Some(e1000) = e1000.clone() {
                 io_router.register_handler(
                     aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
@@ -3132,6 +3332,7 @@ impl Machine {
             self.virtio_net = virtio_net;
             self.ahci = ahci;
             self.ide = ide;
+            self.uhci = uhci;
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
@@ -3151,6 +3352,7 @@ impl Machine {
             self.ahci = None;
             self.virtio_net = None;
             self.ide = None;
+            self.uhci = None;
         }
         if self.cfg.enable_serial {
             let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
@@ -3819,6 +4021,33 @@ impl snapshot::SnapshotSource for Machine {
                 &*e1000.borrow(),
             ));
         }
+        if let Some(uhci) = &self.uhci {
+            let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let (command, bar4_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar4_base = cfg
+                        .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar4_base)
+                };
+
+                let mut uhci = uhci.borrow_mut();
+                uhci.config_mut().set_command(command);
+                if bar4_base != 0 {
+                    uhci.config_mut()
+                        .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
+                }
+            }
+
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::USB,
+                &*uhci.borrow(),
+            ));
+        }
         // Storage controller(s).
         //
         // Canonical encoding for the outer `DeviceId::DISK_CONTROLLER` entry is the `DSKC` wrapper
@@ -4472,6 +4701,15 @@ impl snapshot::SnapshotTarget for Machine {
             );
         }
 
+        // Restore USB controller state after the interrupt controller + PCI core so its IRQ level
+        // can be re-driven deterministically.
+        if let (Some(uhci), Some(state)) = (&self.uhci, by_id.remove(&snapshot::DeviceId::USB)) {
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                &state,
+                &mut *uhci.borrow_mut(),
+            );
+        }
+
         // Restore i8042 after the interrupt controller complex so any restored IRQ pulses are
         // delivered into the correct sink state.
         if let (Some(ctrl), Some(state)) = (&self.i8042, by_id.remove(&snapshot::DeviceId::I8042)) {
@@ -4615,6 +4853,7 @@ impl snapshot::SnapshotTarget for Machine {
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.resync_guest_time_from_tsc();
+        self.uhci_ns_remainder = 0;
 
         // Snapshot restore applies `DEVICES` before `RAM`, so any cursor sync that reads from the
         // BIOS Data Area must happen *after* RAM is restored (here in `post_restore`).

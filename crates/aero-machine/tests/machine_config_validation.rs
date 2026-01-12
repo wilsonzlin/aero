@@ -43,6 +43,20 @@ fn enable_ide_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_uhci_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_uhci: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::UhciRequiresPcPlatform)
+    ));
+}
+
+#[test]
 fn enable_virtio_net_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
