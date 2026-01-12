@@ -1662,12 +1662,11 @@ impl PcPlatform {
             .and_then(|e1000| e1000.borrow_mut().pop_tx_frame())
     }
 
-    pub fn e1000_enqueue_rx_frame(&mut self, frame: Vec<u8>) -> bool {
+    pub fn e1000_enqueue_rx_frame(&mut self, frame: Vec<u8>) {
         let Some(e1000) = self.e1000.as_ref() else {
-            return false;
+            return;
         };
         e1000.borrow_mut().enqueue_rx_frame(frame);
-        true
     }
 
     pub fn reset_pci(&mut self) {

@@ -104,7 +104,7 @@ fn pc_platform_gates_e1000_dma_on_pci_bus_master_enable() {
     pc.memory.write_u32(bar0_base + 0x00D0, ICR_RXT0); // IMS
 
     let frame = build_test_frame(b"hi");
-    assert!(pc.e1000_enqueue_rx_frame(frame.clone()));
+    pc.e1000_enqueue_rx_frame(frame.clone());
 
     // With COMMAND.BME=0, the poll method should be a no-op for DMA: no writes to guest buffers and
     // no interrupt should be asserted.

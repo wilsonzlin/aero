@@ -566,5 +566,7 @@ fn pc_platform_e1000_helpers_are_noops_when_disabled() {
     assert!(!pc.has_e1000());
     assert_eq!(pc.e1000_mac_addr(), None);
     assert_eq!(pc.e1000_pop_tx_frame(), None);
-    assert!(!pc.e1000_enqueue_rx_frame(vec![0u8; MIN_L2_FRAME_LEN]));
+
+    // Should be a no-op (and should not panic) when E1000 is disabled.
+    pc.e1000_enqueue_rx_frame(vec![0u8; MIN_L2_FRAME_LEN]);
 }
