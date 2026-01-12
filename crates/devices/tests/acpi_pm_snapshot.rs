@@ -420,6 +420,43 @@ fn snapshot_restore_from_ticks_and_remainder_with_wrap_preserves_tick_boundary()
 }
 
 #[test]
+fn snapshot_restore_with_inconsistent_remainder_falls_back_to_ticks_only() {
+    // If `(pm_timer_ticks, pm_timer_remainder)` are inconsistent (no solution for the wrap count),
+    // load_state should fall back to restoring the guest-visible tick counter only rather than
+    // failing the entire restore.
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const TAG_PM_TIMER_REMAINDER: u16 = 9;
+
+    let cfg = AcpiPmConfig::default();
+    let mut pm = AcpiPmIo::new(cfg);
+
+    // Choose a remainder that is *not* divisible by 5. Since the PM timer frequency is divisible
+    // by 5, valid snapshots always have `remainder % 5 == 0` (see the restore math in
+    // `acpi_pm.rs`). This forces the solver to take the "no solution" fallback path.
+    let ticks = 0x00AB_CDEFu32;
+    let remainder = 1u32;
+
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, ticks);
+    w.field_u32(TAG_PM_TIMER_REMAINDER, remainder);
+    pm.load_state(&w.finish()).unwrap();
+
+    assert_eq!(
+        pm.read(cfg.pm_tmr_blk, 4) & 0x00FF_FFFF,
+        ticks & 0x00FF_FFFF,
+        "fallback restore should preserve the visible 24-bit PM_TMR tick counter"
+    );
+
+    // Re-saving should produce a *valid* remainder (divisible by 5) rather than preserving the
+    // corrupted remainder value from the snapshot.
+    let snap2 = pm.save_state();
+    let r = SnapshotReader::parse(&snap2, *b"ACPM").unwrap();
+    let remainder2 = r.u32(TAG_PM_TIMER_REMAINDER).unwrap().unwrap();
+    assert_ne!(remainder2, remainder);
+    assert_eq!(remainder2 % 5, 0);
+}
+
+#[test]
 fn snapshot_save_samples_clock_once_for_timer_encoding() {
     // Snapshot save should sample the clock once for deterministic PM timer encoding. This guards
     // against regressions where `save_state()` would call `Clock::now_ns()` multiple times and
