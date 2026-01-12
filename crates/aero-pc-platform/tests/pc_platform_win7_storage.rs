@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::{IDE_PIIX3, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9};
 use aero_pc_platform::PcPlatform;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -34,5 +34,11 @@ fn pc_platform_win7_storage_has_ahci_and_ide_on_canonical_bdfs() {
         assert_eq!(id & 0xffff, u32::from(IDE_PIIX3.vendor_id));
         assert_eq!((id >> 16) & 0xffff, u32::from(IDE_PIIX3.device_id));
     }
-}
 
+    // NVMe at 00:03.0 is optional and is off by default for Win7 (no inbox NVMe driver).
+    {
+        let bdf = NVME_CONTROLLER.bdf;
+        let id = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x00);
+        assert_eq!(id, 0xffff_ffff);
+    }
+}
