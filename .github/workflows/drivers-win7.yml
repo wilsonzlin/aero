@@ -9,6 +9,7 @@ on:
       - "ci/**"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
+      - "scripts/ci/check-win7-virtio-snd-contiguous-free.py"
       - "scripts/ci/check-win7-virtqueue-split-headers.py"
       - "scripts/ci/check-virtqueue-split-driver-builds.py"
       - "scripts/ci/check-win7-virtio-header-collisions.py"
@@ -37,6 +38,7 @@ on:
       - "ci/**"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
+      - "scripts/ci/check-win7-virtio-snd-contiguous-free.py"
       - "scripts/ci/check-win7-virtqueue-split-headers.py"
       - "scripts/ci/check-virtqueue-split-driver-builds.py"
       - "scripts/ci/check-win7-virtio-header-collisions.py"
@@ -76,6 +78,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
+
+      - name: Check Win7 virtio-snd contiguous alloc/free pairing
+        run: python3 scripts/ci/check-win7-virtio-snd-contiguous-free.py
 
       - name: Check Win7 virtqueue_split header ambiguity
         shell: bash
