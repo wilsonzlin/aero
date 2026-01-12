@@ -533,12 +533,17 @@ struct DepthStencilState {
     depth_write_enable: bool,
     depth_func: u32,
     stencil_enable: bool,
+    two_sided_stencil_enable: bool,
     stencil_read_mask: u8,
     stencil_write_mask: u8,
     stencil_func: u32,
     stencil_fail_op: u32,
     stencil_depth_fail_op: u32,
     stencil_pass_op: u32,
+    ccw_stencil_func: u32,
+    ccw_stencil_fail_op: u32,
+    ccw_stencil_depth_fail_op: u32,
+    ccw_stencil_pass_op: u32,
 }
 
 impl Default for DepthStencilState {
@@ -549,12 +554,19 @@ impl Default for DepthStencilState {
             depth_write_enable: true,
             depth_func: 3, // LESS_EQUAL
             stencil_enable: false,
+            two_sided_stencil_enable: false,
             stencil_read_mask: 0xFF,
             stencil_write_mask: 0xFF,
             stencil_func: 7,          // ALWAYS
             stencil_fail_op: 0,       // KEEP
             stencil_depth_fail_op: 0, // KEEP
             stencil_pass_op: 0,       // KEEP
+            // Match D3D9's defaults for CCW stencil state. When two-sided stencil mode is
+            // disabled, these are ignored and the regular stencil state applies to both sides.
+            ccw_stencil_func: 7,          // ALWAYS
+            ccw_stencil_fail_op: 0,       // KEEP
+            ccw_stencil_depth_fail_op: 0, // KEEP
+            ccw_stencil_pass_op: 0,       // KEEP
         }
     }
 }
@@ -677,6 +689,12 @@ fn create_default_render_states() -> Vec<u32> {
     states[d3d9::D3DRS_STENCILPASS as usize] = 1; // D3DSTENCILOP_KEEP
     states[d3d9::D3DRS_STENCILMASK as usize] = 0xFFFF_FFFF;
     states[d3d9::D3DRS_STENCILWRITEMASK as usize] = 0xFFFF_FFFF;
+
+    states[d3d9::D3DRS_TWOSIDEDSTENCILMODE as usize] = 0;
+    states[d3d9::D3DRS_CCW_STENCILFUNC as usize] = 8; // D3DCMP_ALWAYS
+    states[d3d9::D3DRS_CCW_STENCILFAIL as usize] = 1; // D3DSTENCILOP_KEEP
+    states[d3d9::D3DRS_CCW_STENCILZFAIL as usize] = 1; // D3DSTENCILOP_KEEP
+    states[d3d9::D3DRS_CCW_STENCILPASS as usize] = 1; // D3DSTENCILOP_KEEP
 
     states
 }
@@ -5380,23 +5398,45 @@ impl AerogpuD3d9Executor {
                         stencil: if depth_has_stencil
                             && self.state.depth_stencil_state.stencil_enable
                         {
-                            let face = wgpu::StencilFaceState {
-                                compare: map_compare_func(
-                                    self.state.depth_stencil_state.stencil_func,
-                                ),
-                                fail_op: map_stencil_op(
-                                    self.state.depth_stencil_state.stencil_fail_op,
-                                ),
+                            let cw_face = wgpu::StencilFaceState {
+                                compare: map_compare_func(self.state.depth_stencil_state.stencil_func),
+                                fail_op: map_stencil_op(self.state.depth_stencil_state.stencil_fail_op),
                                 depth_fail_op: map_stencil_op(
                                     self.state.depth_stencil_state.stencil_depth_fail_op,
                                 ),
+                                pass_op: map_stencil_op(self.state.depth_stencil_state.stencil_pass_op),
+                            };
+                            let ccw_face = wgpu::StencilFaceState {
+                                compare: map_compare_func(
+                                    self.state.depth_stencil_state.ccw_stencil_func,
+                                ),
+                                fail_op: map_stencil_op(
+                                    self.state.depth_stencil_state.ccw_stencil_fail_op,
+                                ),
+                                depth_fail_op: map_stencil_op(
+                                    self.state.depth_stencil_state.ccw_stencil_depth_fail_op,
+                                ),
                                 pass_op: map_stencil_op(
-                                    self.state.depth_stencil_state.stencil_pass_op,
+                                    self.state.depth_stencil_state.ccw_stencil_pass_op,
                                 ),
                             };
+
+                            // D3D9's CCW stencil state is keyed to winding order, not "back face".
+                            // We configure `primitive.front_face` from `FRONTCOUNTERCLOCKWISE`;
+                            // map the CCW winding state onto the corresponding wgpu face.
+                            let (front, back) =
+                                if self.state.depth_stencil_state.two_sided_stencil_enable {
+                                    if self.state.rasterizer_state.front_ccw {
+                                        (ccw_face, cw_face)
+                                    } else {
+                                        (cw_face, ccw_face)
+                                    }
+                                } else {
+                                    (cw_face, cw_face)
+                                };
                             wgpu::StencilState {
-                                front: face,
-                                back: face,
+                                front,
+                                back,
                                 read_mask: self.state.depth_stencil_state.stencil_read_mask as u32,
                                 write_mask: self.state.depth_stencil_state.stencil_write_mask
                                     as u32,
@@ -6022,6 +6062,37 @@ impl AerogpuD3d9Executor {
                 let raw = if value == 0 { 8 } else { value };
                 match d3d9_compare_to_aerogpu(raw) {
                     Some(func) => self.state.depth_stencil_state.stencil_func = func,
+                    None => debug!(state_id, value, "unknown D3D9 compare func"),
+                }
+            }
+            d3d9::D3DRS_TWOSIDEDSTENCILMODE => {
+                self.state.depth_stencil_state.two_sided_stencil_enable = value != 0
+            }
+            d3d9::D3DRS_CCW_STENCILFAIL => {
+                let raw = if value == 0 { 1 } else { value };
+                match d3d9_stencil_op_to_aerogpu(raw) {
+                    Some(op) => self.state.depth_stencil_state.ccw_stencil_fail_op = op,
+                    None => debug!(state_id, value, "unknown D3D9 stencil op"),
+                }
+            }
+            d3d9::D3DRS_CCW_STENCILZFAIL => {
+                let raw = if value == 0 { 1 } else { value };
+                match d3d9_stencil_op_to_aerogpu(raw) {
+                    Some(op) => self.state.depth_stencil_state.ccw_stencil_depth_fail_op = op,
+                    None => debug!(state_id, value, "unknown D3D9 stencil op"),
+                }
+            }
+            d3d9::D3DRS_CCW_STENCILPASS => {
+                let raw = if value == 0 { 1 } else { value };
+                match d3d9_stencil_op_to_aerogpu(raw) {
+                    Some(op) => self.state.depth_stencil_state.ccw_stencil_pass_op = op,
+                    None => debug!(state_id, value, "unknown D3D9 stencil op"),
+                }
+            }
+            d3d9::D3DRS_CCW_STENCILFUNC => {
+                let raw = if value == 0 { 8 } else { value };
+                match d3d9_compare_to_aerogpu(raw) {
+                    Some(func) => self.state.depth_stencil_state.ccw_stencil_func = func,
                     None => debug!(state_id, value, "unknown D3D9 compare func"),
                 }
             }
@@ -7194,6 +7265,12 @@ mod d3d9 {
     pub const D3DRS_STENCILREF: u32 = 57;
     pub const D3DRS_STENCILMASK: u32 = 58;
     pub const D3DRS_STENCILWRITEMASK: u32 = 59;
+
+    pub const D3DRS_TWOSIDEDSTENCILMODE: u32 = 185;
+    pub const D3DRS_CCW_STENCILFAIL: u32 = 186;
+    pub const D3DRS_CCW_STENCILZFAIL: u32 = 187;
+    pub const D3DRS_CCW_STENCILPASS: u32 = 188;
+    pub const D3DRS_CCW_STENCILFUNC: u32 = 189;
 
     // D3DSAMPLERSTATETYPE (subset).
     pub const D3DSAMP_ADDRESSU: u32 = 1;
