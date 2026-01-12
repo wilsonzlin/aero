@@ -64,6 +64,7 @@
   // Opcodes.
   let AEROGPU_CMD_CREATE_BUFFER = 0x0100;
   let AEROGPU_CMD_CREATE_TEXTURE2D = 0x0101;
+  let AEROGPU_CMD_DESTROY_RESOURCE = 0x0102;
   let AEROGPU_CMD_SET_RENDER_TARGETS = 0x0400;
   let AEROGPU_CMD_SET_VIEWPORT = 0x0401;
   let AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x0500;
@@ -76,10 +77,14 @@
   let AEROGPU_CMD_DRAW = 0x0601;
   let AEROGPU_CMD_PRESENT = 0x0700;
   let AEROGPU_CMD_PRESENT_EX = 0x0701;
+  let AEROGPU_CMD_EXPORT_SHARED_SURFACE = 0x0710;
+  let AEROGPU_CMD_IMPORT_SHARED_SURFACE = 0x0711;
+  let AEROGPU_CMD_RELEASE_SHARED_SURFACE = 0x0712;
 
   // Packet sizes (minimum size_bytes).
   let AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES = 40;
   let AEROGPU_CMD_CREATE_TEXTURE2D_SIZE_BYTES = 56;
+  let AEROGPU_CMD_DESTROY_RESOURCE_SIZE_BYTES = 16;
   let AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES = 48;
   let AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = 32;
   let AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = 16;
@@ -93,6 +98,9 @@
   let AEROGPU_CMD_DRAW_SIZE_BYTES = 24;
   let AEROGPU_CMD_PRESENT_SIZE_BYTES = 16;
   let AEROGPU_CMD_PRESENT_EX_SIZE_BYTES = 24;
+  let AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE_BYTES = 24;
+  let AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE_BYTES = 24;
+  let AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE_BYTES = 24;
 
   let AEROGPU_CLEAR_COLOR = 1 << 0;
   let AEROGPU_CLEAR_DEPTH = 1 << 1;
@@ -135,6 +143,7 @@
         if (cmd.AerogpuCmdOpcode) {
           if (typeof cmd.AerogpuCmdOpcode.CreateBuffer === "number") AEROGPU_CMD_CREATE_BUFFER = cmd.AerogpuCmdOpcode.CreateBuffer >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.CreateTexture2d === "number") AEROGPU_CMD_CREATE_TEXTURE2D = cmd.AerogpuCmdOpcode.CreateTexture2d >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.DestroyResource === "number") AEROGPU_CMD_DESTROY_RESOURCE = cmd.AerogpuCmdOpcode.DestroyResource >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetRenderTargets === "number") AEROGPU_CMD_SET_RENDER_TARGETS = cmd.AerogpuCmdOpcode.SetRenderTargets >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetViewport === "number") AEROGPU_CMD_SET_VIEWPORT = cmd.AerogpuCmdOpcode.SetViewport >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetVertexBuffers === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS = cmd.AerogpuCmdOpcode.SetVertexBuffers >>> 0;
@@ -147,10 +156,22 @@
           if (typeof cmd.AerogpuCmdOpcode.Draw === "number") AEROGPU_CMD_DRAW = cmd.AerogpuCmdOpcode.Draw >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.Present === "number") AEROGPU_CMD_PRESENT = cmd.AerogpuCmdOpcode.Present >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.PresentEx === "number") AEROGPU_CMD_PRESENT_EX = cmd.AerogpuCmdOpcode.PresentEx >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.ExportSharedSurface === "number") {
+            AEROGPU_CMD_EXPORT_SHARED_SURFACE = cmd.AerogpuCmdOpcode.ExportSharedSurface >>> 0;
+          }
+          if (typeof cmd.AerogpuCmdOpcode.ImportSharedSurface === "number") {
+            AEROGPU_CMD_IMPORT_SHARED_SURFACE = cmd.AerogpuCmdOpcode.ImportSharedSurface >>> 0;
+          }
+          if (typeof cmd.AerogpuCmdOpcode.ReleaseSharedSurface === "number") {
+            AEROGPU_CMD_RELEASE_SHARED_SURFACE = cmd.AerogpuCmdOpcode.ReleaseSharedSurface >>> 0;
+          }
         }
 
         if (typeof cmd.AEROGPU_CMD_CREATE_BUFFER_SIZE === "number") AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES = cmd.AEROGPU_CMD_CREATE_BUFFER_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_CREATE_TEXTURE2D_SIZE === "number") AEROGPU_CMD_CREATE_TEXTURE2D_SIZE_BYTES = cmd.AEROGPU_CMD_CREATE_TEXTURE2D_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_DESTROY_RESOURCE_SIZE === "number") {
+          AEROGPU_CMD_DESTROY_RESOURCE_SIZE_BYTES = cmd.AEROGPU_CMD_DESTROY_RESOURCE_SIZE >>> 0;
+        }
         if (typeof cmd.AEROGPU_CMD_SET_RENDER_TARGETS_SIZE === "number") AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_RENDER_TARGETS_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE === "number") AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE >>> 0;
@@ -164,6 +185,15 @@
         if (typeof cmd.AEROGPU_CMD_DRAW_SIZE === "number") AEROGPU_CMD_DRAW_SIZE_BYTES = cmd.AEROGPU_CMD_DRAW_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_PRESENT_SIZE === "number") AEROGPU_CMD_PRESENT_SIZE_BYTES = cmd.AEROGPU_CMD_PRESENT_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_PRESENT_EX_SIZE === "number") AEROGPU_CMD_PRESENT_EX_SIZE_BYTES = cmd.AEROGPU_CMD_PRESENT_EX_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE === "number") {
+          AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE_BYTES = cmd.AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE >>> 0;
+        }
+        if (typeof cmd.AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE === "number") {
+          AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE_BYTES = cmd.AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE >>> 0;
+        }
+        if (typeof cmd.AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE === "number") {
+          AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE_BYTES = cmd.AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE >>> 0;
+        }
 
         if (typeof cmd.AEROGPU_CLEAR_COLOR === "number") AEROGPU_CLEAR_COLOR = cmd.AEROGPU_CLEAR_COLOR >>> 0;
         if (typeof cmd.AEROGPU_CLEAR_DEPTH === "number") AEROGPU_CLEAR_DEPTH = cmd.AEROGPU_CLEAR_DEPTH >>> 0;
@@ -910,6 +940,142 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     // A3A0 (AeroGPU command stream) replay state.
     const acmdBuffers = new Map(); // u32 handle -> WebGLBuffer
     const acmdTextures = new Map(); // u32 handle -> { texture, framebuffer, width, height, format }
+    // Shared surface bookkeeping (EXPORT/IMPORT_SHARED_SURFACE).
+    // Mirrors the host-side shared-surface protocol:
+    // - EXPORT: share_token -> underlying handle
+    // - IMPORT: alias_handle -> underlying handle
+    // - DESTROY_RESOURCE refcounts alias/original handles and destroys the underlying resource on the final ref.
+    const acmdSharedSurfaces = new Map(); // u64 share_token (BigInt) -> underlying handle (u32)
+    const acmdRetiredSharedSurfaceTokens = new Set(); // BigInt share_token values that were released/retired
+    const acmdSharedHandles = new Map(); // u32 handle -> underlying handle (u32)
+    const acmdSharedRefcounts = new Map(); // u32 underlying handle -> refcount (number)
+
+    function resolveSharedHandle(handle) {
+      return acmdSharedHandles.get(handle) ?? handle;
+    }
+
+    function registerSharedHandle(handle) {
+      if (handle === 0) return;
+      const existing = acmdSharedHandles.get(handle);
+      if (existing !== undefined) {
+        if (existing !== handle) fail("ACMD shared surface handle " + handle + " is already an alias (underlying=" + existing + ")");
+        return;
+      }
+      acmdSharedHandles.set(handle, handle);
+      acmdSharedRefcounts.set(handle, (acmdSharedRefcounts.get(handle) || 0) + 1);
+    }
+
+    function retireTokensForUnderlying(underlying) {
+      const toRetire = [];
+      for (const [token, h] of acmdSharedSurfaces) {
+        if (h === underlying) toRetire.push(token);
+      }
+      for (const token of toRetire) {
+        acmdSharedSurfaces.delete(token);
+        acmdRetiredSharedSurfaceTokens.add(token);
+      }
+    }
+
+    function exportSharedSurface(resourceHandle, shareToken) {
+      if (resourceHandle === 0) fail("ACMD EXPORT_SHARED_SURFACE invalid resource_handle 0");
+      if (shareToken === 0n) fail("ACMD EXPORT_SHARED_SURFACE invalid share_token 0");
+      if (acmdRetiredSharedSurfaceTokens.has(shareToken)) {
+        fail("ACMD EXPORT_SHARED_SURFACE share_token 0x" + shareToken.toString(16) + " was previously released");
+      }
+
+      const underlying = acmdSharedHandles.get(resourceHandle);
+      if (underlying === undefined) fail("ACMD EXPORT_SHARED_SURFACE unknown resource handle " + resourceHandle);
+
+      const existing = acmdSharedSurfaces.get(shareToken);
+      if (existing !== undefined) {
+        if (existing !== underlying) {
+          fail(
+            "ACMD EXPORT_SHARED_SURFACE share_token 0x" +
+              shareToken.toString(16) +
+              " already exported (existing=" +
+              existing +
+              " new=" +
+              underlying +
+              ")",
+          );
+        }
+        return;
+      }
+
+      acmdSharedSurfaces.set(shareToken, underlying);
+    }
+
+    function importSharedSurface(outHandle, shareToken) {
+      if (outHandle === 0) fail("ACMD IMPORT_SHARED_SURFACE invalid out_resource_handle 0");
+      if (shareToken === 0n) fail("ACMD IMPORT_SHARED_SURFACE invalid share_token 0");
+
+      const underlying = acmdSharedSurfaces.get(shareToken);
+      if (underlying === undefined) {
+        fail("ACMD IMPORT_SHARED_SURFACE unknown share_token 0x" + shareToken.toString(16) + " (not exported)");
+      }
+      if (!acmdSharedRefcounts.has(underlying)) {
+        fail(
+          "ACMD IMPORT_SHARED_SURFACE share_token 0x" +
+            shareToken.toString(16) +
+            " refers to destroyed handle " +
+            underlying,
+        );
+      }
+
+      const existing = acmdSharedHandles.get(outHandle);
+      if (existing !== undefined) {
+        if (existing !== underlying) {
+          fail(
+            "ACMD IMPORT_SHARED_SURFACE out_resource_handle " +
+              outHandle +
+              " already bound (existing=" +
+              existing +
+              " new=" +
+              underlying +
+              ")",
+          );
+        }
+        return;
+      }
+
+      // Do not allow aliasing a handle that is already bound to a real resource.
+      if (acmdTextures.has(outHandle) || acmdBuffers.has(outHandle)) {
+        fail("ACMD IMPORT_SHARED_SURFACE out_resource_handle " + outHandle + " collides with an existing resource");
+      }
+
+      acmdSharedHandles.set(outHandle, underlying);
+      acmdSharedRefcounts.set(underlying, (acmdSharedRefcounts.get(underlying) || 0) + 1);
+    }
+
+    function releaseSharedSurface(shareToken) {
+      if (shareToken === 0n) return;
+      acmdSharedSurfaces.delete(shareToken);
+      acmdRetiredSharedSurfaceTokens.add(shareToken);
+    }
+
+    function destroySharedHandle(handle) {
+      if (handle === 0) return null;
+      const underlying = acmdSharedHandles.get(handle);
+      if (underlying === undefined) return null;
+      acmdSharedHandles.delete(handle);
+
+      const count = acmdSharedRefcounts.get(underlying);
+      if (count === undefined) {
+        retireTokensForUnderlying(underlying);
+        return { underlying, lastRef: true };
+      }
+
+      const next = Math.max(0, count - 1);
+      if (next !== 0) {
+        acmdSharedRefcounts.set(underlying, next);
+        return { underlying, lastRef: false };
+      }
+
+      acmdSharedRefcounts.delete(underlying);
+      retireTokensForUnderlying(underlying);
+      return { underlying, lastRef: true };
+    }
+
     let acmdFramebuffer = null; // currently bound draw framebuffer (WebGLFramebuffer | null)
     let acmdColor0 = null; // { framebuffer, width, height } | null
     let acmdPrimitiveMode = gl.TRIANGLES;
@@ -1036,6 +1202,12 @@ void main() {
             const backingAllocId = readU32(pv, off + 24);
             const backingOffsetBytes = readU32(pv, off + 28);
 
+            if (bufferHandle === 0) fail("ACMD CREATE_BUFFER invalid handle 0");
+            const shared = acmdSharedHandles.get(bufferHandle);
+            if (shared !== undefined && shared !== bufferHandle) {
+              fail("ACMD CREATE_BUFFER handle " + bufferHandle + " is already an alias (underlying=" + shared + ")");
+            }
+
             const glBuf = gl.createBuffer();
             if (!glBuf) fail("gl.createBuffer failed");
             acmdBuffers.set(bufferHandle, glBuf);
@@ -1053,6 +1225,7 @@ void main() {
               const size = u64BigToSafeNumber(sizeBytes, "ACMD CREATE_BUFFER size_bytes");
               gl.bufferData(gl.ARRAY_BUFFER, size, gl.STATIC_DRAW);
             }
+            registerSharedHandle(bufferHandle);
             break;
           }
           case AEROGPU_CMD_CREATE_TEXTURE2D: {
@@ -1067,6 +1240,12 @@ void main() {
             const rowPitchBytes = readU32(pv, off + 36);
             const backingAllocId = readU32(pv, off + 40);
             const backingOffsetBytes = readU32(pv, off + 44);
+
+            if (textureHandle === 0) fail("ACMD CREATE_TEXTURE2D invalid handle 0");
+            const shared = acmdSharedHandles.get(textureHandle);
+            if (shared !== undefined && shared !== textureHandle) {
+              fail("ACMD CREATE_TEXTURE2D handle " + textureHandle + " is already an alias (underlying=" + shared + ")");
+            }
 
             if (mipLevels !== 1) fail("ACMD CREATE_TEXTURE2D mip_levels not supported: " + mipLevels);
             if (arrayLayers !== 1) fail("ACMD CREATE_TEXTURE2D array_layers not supported: " + arrayLayers);
@@ -1129,6 +1308,35 @@ void main() {
             gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb);
 
             acmdTextures.set(textureHandle, { texture: tex, framebuffer: fb, width, height, format });
+            registerSharedHandle(textureHandle);
+            break;
+          }
+          case AEROGPU_CMD_DESTROY_RESOURCE: {
+            // struct aerogpu_cmd_destroy_resource (16 bytes)
+            if (cmdSize < AEROGPU_CMD_DESTROY_RESOURCE_SIZE_BYTES) fail("ACMD DESTROY_RESOURCE size_bytes too small: " + cmdSize);
+            const handle = readU32(pv, off + 8);
+
+            const shared = destroySharedHandle(handle);
+            const underlying = shared ? shared.underlying : handle;
+            const lastRef = shared ? shared.lastRef : true;
+            if (!lastRef) break;
+
+            const texObj = acmdTextures.get(underlying);
+            if (texObj) {
+              if (acmdFramebuffer === texObj.framebuffer) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                acmdFramebuffer = null;
+              }
+              if (acmdColor0 && acmdColor0.framebuffer === texObj.framebuffer) acmdColor0 = null;
+              gl.deleteFramebuffer(texObj.framebuffer);
+              gl.deleteTexture(texObj.texture);
+              acmdTextures.delete(underlying);
+            }
+            const bufObj = acmdBuffers.get(underlying);
+            if (bufObj) {
+              gl.deleteBuffer(bufObj);
+              acmdBuffers.delete(underlying);
+            }
             break;
           }
           case AEROGPU_CMD_SET_RENDER_TARGETS: {
@@ -1136,13 +1344,14 @@ void main() {
             if (cmdSize < 48) fail("ACMD SET_RENDER_TARGETS size_bytes too small: " + cmdSize);
             const colorCount = readU32(pv, off + 8);
             if (colorCount > 8) fail("ACMD SET_RENDER_TARGETS color_count out of bounds: " + colorCount);
-            const color0 = colorCount > 0 ? readU32(pv, off + 16) : 0;
+            const color0Raw = colorCount > 0 ? readU32(pv, off + 16) : 0;
+            const color0 = color0Raw !== 0 ? resolveSharedHandle(color0Raw) : 0;
 
             let fb = null;
             acmdColor0 = null;
             if (color0 !== 0) {
               const texObj = acmdTextures.get(color0);
-              if (!texObj) fail("ACMD SET_RENDER_TARGETS unknown texture_handle=" + color0);
+              if (!texObj) fail("ACMD SET_RENDER_TARGETS unknown texture_handle=" + color0Raw + " (resolved=" + color0 + ")");
               fb = texObj.framebuffer;
               acmdColor0 = { framebuffer: texObj.framebuffer, width: texObj.width, height: texObj.height };
             }
@@ -1187,8 +1396,9 @@ void main() {
 
               if (slot === 0) {
                 if (strideBytes < 24) fail("ACMD vertex stride too small: " + strideBytes);
-                const glBuf = acmdBuffers.get(bufferHandle);
-                if (!glBuf) fail("ACMD unknown buffer_handle=" + bufferHandle);
+                const resolvedBufferHandle = resolveSharedHandle(bufferHandle);
+                const glBuf = acmdBuffers.get(resolvedBufferHandle);
+                if (!glBuf) fail("ACMD unknown buffer_handle=" + bufferHandle + " (resolved=" + resolvedBufferHandle + ")");
                 gl.bindVertexArray(acmdVao);
                 gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
                 // Vertex format for the triangle fixture:
@@ -1331,6 +1541,29 @@ void main() {
               gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, acmdFramebuffer);
             }
             gl.finish();
+            break;
+          }
+          case AEROGPU_CMD_EXPORT_SHARED_SURFACE: {
+            // struct aerogpu_cmd_export_shared_surface (24 bytes)
+            if (cmdSize < AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE_BYTES) fail("ACMD EXPORT_SHARED_SURFACE size_bytes too small: " + cmdSize);
+            const resourceHandle = readU32(pv, off + 8);
+            const shareToken = readU64Big(pv, off + 16);
+            exportSharedSurface(resourceHandle, shareToken);
+            break;
+          }
+          case AEROGPU_CMD_IMPORT_SHARED_SURFACE: {
+            // struct aerogpu_cmd_import_shared_surface (24 bytes)
+            if (cmdSize < AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE_BYTES) fail("ACMD IMPORT_SHARED_SURFACE size_bytes too small: " + cmdSize);
+            const outHandle = readU32(pv, off + 8);
+            const shareToken = readU64Big(pv, off + 16);
+            importSharedSurface(outHandle, shareToken);
+            break;
+          }
+          case AEROGPU_CMD_RELEASE_SHARED_SURFACE: {
+            // struct aerogpu_cmd_release_shared_surface (24 bytes)
+            if (cmdSize < AEROGPU_CMD_RELEASE_SHARED_SURFACE_SIZE_BYTES) fail("ACMD RELEASE_SHARED_SURFACE size_bytes too small: " + cmdSize);
+            const shareToken = readU64Big(pv, off + 8);
+            releaseSharedSurface(shareToken);
             break;
           }
           default:
