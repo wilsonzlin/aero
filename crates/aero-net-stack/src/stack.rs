@@ -1921,10 +1921,17 @@ impl NetworkStack {
             return;
         }
 
-        let is_new = !self.dns_cache.contains_key(&name);
-        self.dns_cache.insert(name.clone(), entry);
-        if is_new {
-            self.dns_cache_fifo.push_back(name);
+        match self.dns_cache.entry(name) {
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                slot.insert(entry);
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                // The FIFO stores its own copies of keys so we can preserve insertion order even if
+                // the map is mutated/rehashes.
+                let fifo_key = slot.key().clone();
+                slot.insert(entry);
+                self.dns_cache_fifo.push_back(fifo_key);
+            }
         }
 
         while self.dns_cache.len() > max {
