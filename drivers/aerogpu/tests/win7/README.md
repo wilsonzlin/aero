@@ -95,6 +95,7 @@ drivers/aerogpu/tests/win7/
   d3d10_shared_surface_ipc/
   d3d10_1_triangle/
   d3d10_1_map_do_not_wait/
+  d3d10_1_shared_surface_ipc/
   d3d10_caps_smoke/
   d3d11_triangle/
   d3d11_map_do_not_wait/

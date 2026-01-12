@@ -79,6 +79,7 @@ Use one of the cross-process shared-surface IPC tests:
 - `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc/main.cpp`
 - `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/main.cpp`
 - `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/main.cpp`
+- `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc/main.cpp`
 
 It should:
 

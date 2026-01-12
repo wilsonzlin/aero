@@ -136,6 +136,7 @@ Win7 validation:
 
 - `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/`
 - `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/`
+- `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc/`
 
 ## Build
 
