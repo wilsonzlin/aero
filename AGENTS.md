@@ -68,7 +68,9 @@ bash ./scripts/safe-run.sh cargo build --locked  # Build with timeout + memory l
 bash ./scripts/safe-run.sh cargo test --locked   # Test with timeout + memory limit
 
 # Override defaults if needed:
-AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
+#   - AERO_TIMEOUT / AERO_MEM_LIMIT apply to safe-run's timeout + RLIMIT_AS wrapper.
+#   - AERO_CARGO_BUILD_JOBS controls Cargo parallelism (defaults to -j1 for reliability in constrained sandboxes).
+AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G AERO_CARGO_BUILD_JOBS=2 bash ./scripts/safe-run.sh cargo build --release --locked
 ```
 
 Troubleshooting (some agent environments lose executable bits and/or tracked fixtures):
