@@ -103,6 +103,16 @@ fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
     bus.write_u16(BDA_BASE + TAIL_OFF, tail);
 }
 
+#[cfg(test)]
+fn keyboard_bda_head(bus: &mut dyn BiosBus) -> u16 {
+    bus.read_u16(BDA_BASE + 0x1A)
+}
+
+#[cfg(test)]
+fn keyboard_bda_tail(bus: &mut dyn BiosBus) -> u16 {
+    bus.read_u16(BDA_BASE + 0x1C)
+}
+
 fn handle_int11(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     // Get equipment list.
     //
@@ -2046,8 +2056,8 @@ mod tests {
 
         sync_keyboard_bda(&bios, &mut mem);
 
-        assert_eq!(mem.read_u16(BDA_BASE + 0x1A), 0x001E);
-        assert_eq!(mem.read_u16(BDA_BASE + 0x1C), 0x0022);
+        assert_eq!(keyboard_bda_head(&mut mem), 0x001E);
+        assert_eq!(keyboard_bda_tail(&mut mem), 0x0022);
         assert_eq!(mem.read_u16(BDA_BASE + 0x001E), 0x1234);
         assert_eq!(mem.read_u16(BDA_BASE + 0x0020), 0x5678);
     }
@@ -2138,8 +2148,11 @@ mod tests {
     fn int16_extended_read_and_check_use_keyboard_queue() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
         let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
 
         bios.push_key(0x1234);
+        sync_keyboard_bda(&bios, &mut mem);
 
         // AH=11h (check for extended keystroke) should not dequeue.
         cpu.gpr[gpr::RAX] = 0x1100;
@@ -2147,6 +2160,10 @@ mod tests {
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.rflags & FLAG_ZF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
+        // BDA should still show one key pending.
+        sync_keyboard_bda(&bios, &mut mem);
+        assert_eq!(keyboard_bda_head(&mut mem), 0x001E);
+        assert_eq!(keyboard_bda_tail(&mut mem), 0x0020);
 
         // AH=01h should still see the same key (queue not drained).
         cpu.gpr[gpr::RAX] = 0x0100;
@@ -2159,6 +2176,9 @@ mod tests {
         handle_int16(&mut bios, &mut cpu);
         assert_eq!(cpu.rflags & FLAG_ZF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
+        sync_keyboard_bda(&bios, &mut mem);
+        assert_eq!(keyboard_bda_head(&mut mem), 0x001E);
+        assert_eq!(keyboard_bda_tail(&mut mem), 0x001E);
 
         // Now the queue should be empty.
         cpu.gpr[gpr::RAX] = 0x1100;
