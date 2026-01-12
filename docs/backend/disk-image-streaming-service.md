@@ -67,6 +67,11 @@ These endpoints are recommended for operability. Exact paths may vary, but the s
 | `/v1/images` | GET | List available disk images (JSON) | Includes size/etag/last_modified; response uses `Cache-Control: no-cache`. |
 | `/v1/images/{image_id}/meta` | GET | Fetch metadata for one image (JSON) | Same fields as the list response. |
 
+Implementation note:
+
+- Treat `image_id` as an opaque identifier and keep it **bounded** for operability and DoS safety
+  (the reference `aero-storage-server` implementation enforces **`[A-Za-z0-9._-]{1,128}`**).
+
 Metadata response fields:
 
 - `id`, `name`, `description` (optional)
@@ -97,6 +102,8 @@ The service should be configurable enough to support multiple storage backends a
 - **Image identification**
   - Map a stable `image_id` (e.g. `win7-sp1-x64`) to an underlying object key/path.
   - Avoid exposing raw filesystem paths to callers (see security guidance).
+  - Keep `image_id` values bounded and restricted to safe characters to avoid
+    path traversal and to prevent log/metrics amplification attacks.
 - **CORS**
   - Allowlist of app origins allowed to fetch images (or `*` only for non-credentialed public images).
   - Whether to include `Access-Control-Allow-Credentials`.
