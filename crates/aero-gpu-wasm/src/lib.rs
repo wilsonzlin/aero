@@ -433,10 +433,6 @@ mod wasm {
     impl GuestMemory for JsGuestMemory {
         fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
             let len = dst.len();
-            if len == 0 {
-                return Ok(());
-            }
-
             // `gpa` is a guest physical address. The backing `Uint8Array` is a flat RAM byte store
             // of length `guest_size`; translate through the PC/Q35 hole/high-RAM remap layout.
             let ram_bytes = self.view.length() as u64;
@@ -456,10 +452,6 @@ mod wasm {
 
         fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
             let len = src.len();
-            if len == 0 {
-                return Ok(());
-            }
-
             let ram_bytes = self.view.length() as u64;
             let len_u64 = u64::try_from(len).map_err(|_| GuestMemoryError { gpa, len })?;
             let ram_offset =
