@@ -493,3 +493,58 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
             .map_err(|e| emulator_disk_error_to_aero_storage(e, None, None, None))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aero_storage_disk_error_to_emulator_maps_browser_variants() {
+        assert_eq!(
+            aero_storage_disk_error_to_emulator(aero_storage::DiskError::NotSupported(
+                "opfs missing".into()
+            )),
+            DiskError::NotSupported("opfs missing".into())
+        );
+        assert_eq!(
+            aero_storage_disk_error_to_emulator(aero_storage::DiskError::QuotaExceeded),
+            DiskError::QuotaExceeded
+        );
+        assert_eq!(
+            aero_storage_disk_error_to_emulator(aero_storage::DiskError::InUse),
+            DiskError::InUse
+        );
+        assert_eq!(
+            aero_storage_disk_error_to_emulator(aero_storage::DiskError::InvalidState(
+                "closed".into()
+            )),
+            DiskError::InvalidState("closed".into())
+        );
+        assert_eq!(
+            aero_storage_disk_error_to_emulator(aero_storage::DiskError::BackendUnavailable),
+            DiskError::BackendUnavailable
+        );
+        assert_eq!(
+            aero_storage_disk_error_to_emulator(aero_storage::DiskError::Io("boom".into())),
+            DiskError::Io("boom".into())
+        );
+    }
+
+    #[test]
+    fn emulator_to_aero_storage_to_emulator_roundtrip_preserves_browser_variants() {
+        let cases = [
+            DiskError::NotSupported("opfs missing".into()),
+            DiskError::QuotaExceeded,
+            DiskError::InUse,
+            DiskError::InvalidState("closed".into()),
+            DiskError::BackendUnavailable,
+            DiskError::Io("boom".into()),
+        ];
+
+        for case in cases {
+            let storage = emulator_disk_error_to_aero_storage(case.clone(), None, None, None);
+            let back = aero_storage_disk_error_to_emulator(storage);
+            assert_eq!(back, case);
+        }
+    }
+}
