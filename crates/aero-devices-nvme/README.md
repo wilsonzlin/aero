@@ -21,6 +21,11 @@ The controller is intentionally implemented against two small traits:
 - `DiskBackend` (block storage backend)
 - `memory::MemoryBus` (guest physical memory DMA access)
 
+Note: the repo-wide canonical synchronous disk trait is `aero_storage::VirtualDisk`; `DiskBackend`
+is an internal integration trait for the NVMe model. See:
+
+- [`docs/20-storage-trait-consolidation.md`](../../docs/20-storage-trait-consolidation.md)
+
 ## Using `aero-storage` disks as the backend
 
 Many Aero disk image formats are implemented in the [`aero-storage`](../aero-storage/) crate
