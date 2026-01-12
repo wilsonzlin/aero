@@ -1017,6 +1017,15 @@ def _test_corp_header(
             ),
         )
 
+    actual = corp.strip().lower()
+    allowed = {"same-origin", "same-site", "cross-origin"}
+    if actual not in allowed:
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=f"unexpected Cross-Origin-Resource-Policy value {corp!r} (expected one of {sorted(allowed)})",
+        )
+
     return TestResult(name=name, status="PASS", details=f"value={corp!r}")
 
 

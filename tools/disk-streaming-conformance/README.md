@@ -23,6 +23,7 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
   - (Optional) `If-Modified-Since` when `Last-Modified` is advertised (WARN if not)
 - CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
 - COEP/CORP defence-in-depth: `Cross-Origin-Resource-Policy` is present on `GET`/`HEAD` (WARN-only by default; see `--strict` / `--expect-corp`)
+  - Warns if the value is not one of `same-origin`, `same-site`, `cross-origin`
 - (Private images) unauthenticated requests are denied, authenticated requests succeed
 - (Private images) `206` responses are not publicly cacheable (`Cache-Control: no-store` recommended; WARN-only by default)
 
