@@ -245,6 +245,7 @@ const SYNTHETIC_USB_HID_KEYBOARD_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, U
 const SYNTHETIC_USB_HID_MOUSE_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT];
 const SYNTHETIC_USB_HID_GAMEPAD_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT];
 const MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH = 64;
+const MAX_SYNTHETIC_USB_HID_OUTPUT_REPORTS_PER_TICK = 64;
 
 let snapshotPaused = false;
 let snapshotOpInFlight = false;
@@ -2783,6 +2784,7 @@ function startIoIpcServer(): void {
         }
       }
       mgr.tick(nowMs);
+      drainSyntheticUsbHidOutputReports();
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();
@@ -3008,55 +3010,90 @@ function drainSyntheticUsbHidReports(): void {
   const mouse = syntheticUsbMouse;
   const gamepad = syntheticUsbGamepad;
 
-  if (keyboard) {
-    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
-      let report: Uint8Array | null = null;
-      try {
-        report = source.drain_next_keyboard_report();
-      } catch {
-        break;
-      }
-      if (!(report instanceof Uint8Array)) break;
-      try {
-        keyboard.push_input_report(0, report);
-      } catch {
-        // ignore
-      }
+  const keyboardConfigured = safeSyntheticUsbHidConfigured(keyboard);
+  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+    let report: Uint8Array | null = null;
+    try {
+      report = source.drain_next_keyboard_report();
+    } catch {
+      break;
+    }
+    if (!(report instanceof Uint8Array)) break;
+    if (!keyboardConfigured || !keyboard) continue;
+    try {
+      keyboard.push_input_report(0, report);
+    } catch {
+      // ignore
     }
   }
 
-  if (mouse) {
-    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
-      let report: Uint8Array | null = null;
-      try {
-        report = source.drain_next_mouse_report();
-      } catch {
-        break;
-      }
-      if (!(report instanceof Uint8Array)) break;
-      try {
-        mouse.push_input_report(0, report);
-      } catch {
-        // ignore
-      }
+  const mouseConfigured = safeSyntheticUsbHidConfigured(mouse);
+  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+    let report: Uint8Array | null = null;
+    try {
+      report = source.drain_next_mouse_report();
+    } catch {
+      break;
+    }
+    if (!(report instanceof Uint8Array)) break;
+    if (!mouseConfigured || !mouse) continue;
+    try {
+      mouse.push_input_report(0, report);
+    } catch {
+      // ignore
     }
   }
 
-  if (gamepad) {
-    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
-      let report: Uint8Array | null = null;
-      try {
-        report = source.drain_next_gamepad_report();
-      } catch {
-        break;
-      }
-      if (!(report instanceof Uint8Array)) break;
-      try {
-        gamepad.push_input_report(0, report);
-      } catch {
-        // ignore
-      }
+  const gamepadConfigured = safeSyntheticUsbHidConfigured(gamepad);
+  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+    let report: Uint8Array | null = null;
+    try {
+      report = source.drain_next_gamepad_report();
+    } catch {
+      break;
     }
+    if (!(report instanceof Uint8Array)) break;
+    if (!gamepadConfigured || !gamepad) continue;
+    try {
+      gamepad.push_input_report(0, report);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function drainSyntheticUsbHidOutputReports(): void {
+  // Lazy-init so older WASM builds (or unit tests) can run without the UHCI/hid-passthrough exports.
+  maybeInitSyntheticUsbHidDevices();
+
+  const keyboard = syntheticUsbKeyboard;
+  const mouse = syntheticUsbMouse;
+  const gamepad = syntheticUsbGamepad;
+
+  if (keyboard) drainSyntheticUsbHidOutputReportsForDevice(keyboard);
+  if (mouse) drainSyntheticUsbHidOutputReportsForDevice(mouse);
+  if (gamepad) drainSyntheticUsbHidOutputReportsForDevice(gamepad);
+}
+
+function drainSyntheticUsbHidOutputReportsForDevice(dev: UsbHidPassthroughBridge): void {
+  if (!safeSyntheticUsbHidConfigured(dev)) return;
+  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_OUTPUT_REPORTS_PER_TICK; i += 1) {
+    let report: unknown;
+    try {
+      report = dev.drain_next_output_report();
+    } catch {
+      break;
+    }
+    if (report == null) break;
+  }
+}
+
+function safeSyntheticUsbHidConfigured(dev: UsbHidPassthroughBridge | null): boolean {
+  if (!dev) return false;
+  try {
+    return dev.configured();
+  } catch {
+    return false;
   }
 }
 
