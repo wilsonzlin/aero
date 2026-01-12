@@ -317,9 +317,12 @@ Device snapshot IDs and the stable `kind` strings used by the web runtime are li
 
 #### E1000 NIC (`net.e1000`)
 
-- **Restored:** guest-visible device state (registers, ring base addresses, head/tail indices, interrupt mask/cause, MAC, etc.).
-- **Not bit-restorable:** host-facing in-flight frame queues (anything buffered between the device model and the host network) are **best-effort and may be dropped**.
-  - Expect occasional packet loss immediately after restore; higher layers (TCP, application retries) must cope.
+- **Restored:** guest-visible NIC device model state (registers, ring base addresses, head/tail indices,
+  interrupt mask/cause, MAC/EEPROM/PHY state, and the device model’s own pending RX/TX frame queues).
+- **Not bit-restorable:** host-side network backends/transports and their buffers (e.g. live tunnel connections,
+  shared `NET_TX`/`NET_RX` rings) are external state and are not part of VM snapshots.
+  - Expect occasional packet loss immediately after restore if frames were in flight in host-side queues.
+    Higher layers (TCP, application retries) must cope.
 
 #### Net stack (`net.stack`, Phase 0 / fallback)
 
