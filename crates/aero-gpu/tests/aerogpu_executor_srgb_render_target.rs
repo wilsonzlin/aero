@@ -588,6 +588,176 @@ fn executor_samples_bgra_srgb_texture_and_decodes_texels() {
 }
 
 #[test]
+fn executor_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x1000);
+
+        // Full-screen triangle (pos: vec2<f32>).
+        let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        let mut vb_bytes = Vec::new();
+        for v in verts {
+            vb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        // Sampled texel (linear): output white, alpha=0. X8 render targets should keep alpha=255.
+        let texel = [255u8, 255u8, 255u8, 0u8];
+
+        let cases = [
+            ("rgba_x8_srgb_rt", AerogpuFormat::R8G8B8X8UnormSrgb),
+            ("bgra_x8_srgb_rt", AerogpuFormat::B8G8R8X8UnormSrgb),
+        ];
+
+        for (idx, (label, rt_format)) in cases.into_iter().enumerate() {
+            let base = (idx as u32) * 10;
+            let vb_handle = base + 1;
+            let tex_handle = base + 2;
+            let rt_handle = base + 3;
+
+            let stream = build_stream(|out| {
+                // CREATE_BUFFER vertex buffer.
+                emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                    push_u32(out, vb_handle);
+                    push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+                    push_u64(out, vb_bytes.len() as u64);
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                // CREATE_TEXTURE2D sampled texture (unorm).
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, tex_handle);
+                    push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                    push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+                    push_u32(out, 1); // width
+                    push_u32(out, 1); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 0); // row_pitch_bytes
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+                emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                    push_u32(out, tex_handle);
+                    push_u32(out, 0);
+                    push_u64(out, 0);
+                    push_u64(out, texel.len() as u64);
+                    out.extend_from_slice(&texel);
+                });
+
+                // CREATE_TEXTURE2D X8 sRGB render target.
+                emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                    push_u32(out, rt_handle);
+                    push_u32(out, AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+                    push_u32(out, rt_format as u32);
+                    push_u32(out, 1); // width
+                    push_u32(out, 1); // height
+                    push_u32(out, 1); // mip_levels
+                    push_u32(out, 1); // array_layers
+                    push_u32(out, 0); // row_pitch_bytes
+                    push_u32(out, 0); // backing_alloc_id
+                    push_u32(out, 0); // backing_offset_bytes
+                    push_u64(out, 0); // reserved0
+                });
+
+                // SET_RENDER_TARGETS: color0 = rt_handle.
+                emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                    push_u32(out, 1); // color_count
+                    push_u32(out, 0); // depth_stencil
+                    push_u32(out, rt_handle); // colors[0]
+                    for _ in 1..8 {
+                        push_u32(out, 0);
+                    }
+                });
+
+                // CLEAR to black with alpha=0; X8 targets should still store alpha=255.
+                emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                    push_u32(out, AEROGPU_CLEAR_COLOR);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 0.0);
+                    push_f32_bits(out, 1.0); // depth (unused)
+                    push_u32(out, 0); // stencil
+                });
+
+                // SET_TEXTURE (ps slot 0) = tex_handle.
+                emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
+                    push_u32(out, AerogpuShaderStage::Pixel as u32);
+                    push_u32(out, 0); // slot
+                    push_u32(out, tex_handle);
+                    push_u32(out, 0); // reserved0
+                });
+
+                // UPLOAD_RESOURCE vertex buffer bytes.
+                emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                    push_u32(out, vb_handle);
+                    push_u32(out, 0); // reserved0
+                    push_u64(out, 0); // offset_bytes
+                    push_u64(out, vb_bytes.len() as u64); // size_bytes
+                    out.extend_from_slice(&vb_bytes);
+                });
+
+                // SET_VERTEX_BUFFERS: slot 0 = vb_handle.
+                emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+                    push_u32(out, 0); // start_slot
+                    push_u32(out, 1); // buffer_count
+                    push_u32(out, vb_handle);
+                    push_u32(out, 8); // stride_bytes
+                    push_u32(out, 0); // offset_bytes
+                    push_u32(out, 0); // reserved0
+                });
+
+                // DRAW: full-screen triangle.
+                emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+                    push_u32(out, 3); // vertex_count
+                    push_u32(out, 1); // instance_count
+                    push_u32(out, 0); // first_vertex
+                    push_u32(out, 0); // first_instance
+                });
+            });
+
+            let report = exec.process_cmd_stream(&stream, &mut guest, None);
+            assert!(report.is_ok(), "executor reported errors ({label}): {report:?}");
+
+            let rt = exec.texture(rt_handle).expect("render target texture");
+            let rgba = readback_rgba8(
+                exec.device(),
+                exec.queue(),
+                rt,
+                TextureRegion {
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                },
+            )
+            .await;
+
+            let px = &rgba[0..4];
+            assert!(
+                px[0] >= 254 && px[1] >= 254 && px[2] >= 254,
+                "{label}: expected draw to write white into RGB channels, got {px:?}"
+            );
+            assert_eq!(px[3], 255, "{label}: X8 render target alpha must remain opaque");
+        }
+    });
+}
+
+#[test]
 fn executor_upload_x8_srgb_forces_opaque_alpha() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {

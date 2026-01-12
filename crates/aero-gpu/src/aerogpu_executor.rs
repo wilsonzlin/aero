@@ -735,7 +735,7 @@ pub struct AeroGpuExecutor {
 
     state: ExecutorState,
 
-    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    pipelines: HashMap<(wgpu::TextureFormat, bool), wgpu::RenderPipeline>,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 }
@@ -852,34 +852,41 @@ fn fs_main() -> @location(0) vec4<f32> {
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         ] {
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("aerogpu.executor.pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: "vs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &vertex_buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: "fs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
-            pipelines.insert(fmt, pipeline);
+            for (is_x8, write_mask) in [
+                (false, wgpu::ColorWrites::ALL),
+                // X8 render targets treat alpha as always opaque. Avoid writing alpha so a clear
+                // that forces alpha=1.0 stays intact across draws.
+                (true, wgpu::ColorWrites::ALL & !wgpu::ColorWrites::ALPHA),
+            ] {
+                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aerogpu.executor.pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: "vs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &vertex_buffers,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: "fs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
+                pipelines.insert((fmt, is_x8), pipeline);
+            }
         }
 
         Ok(Self {
@@ -3241,7 +3248,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         let tex = self.textures.get(&color0).ok_or_else(|| {
             ExecutorError::Validation(format!("SET_RENDER_TARGETS unknown texture {color0}"))
         })?;
-        if !self.pipelines.contains_key(&tex.format) {
+        let is_x8 = is_x8_format(tex.format_raw);
+        if !self.pipelines.contains_key(&(tex.format, is_x8)) {
             return Err(ExecutorError::Validation(format!(
                 "render target format {:?} not supported by executor",
                 tex.format
@@ -3398,7 +3406,10 @@ fn fs_main() -> @location(0) vec4<f32> {
         let r = f32::from_bits(color_rgba_f32[0]);
         let g = f32::from_bits(color_rgba_f32[1]);
         let b = f32::from_bits(color_rgba_f32[2]);
-        let a = f32::from_bits(color_rgba_f32[3]);
+        let mut a = f32::from_bits(color_rgba_f32[3]);
+        if is_x8_format(rt_tex.format_raw) {
+            a = 1.0;
+        }
 
         let mut encoder = self
             .device
@@ -3510,7 +3521,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                 timestamp_writes: None,
             });
 
-            let pipeline = self.pipelines.get(&rt_tex.format).ok_or_else(|| {
+            let rt_is_x8 = is_x8_format(rt_tex.format_raw);
+            let pipeline = self
+                .pipelines
+                .get(&(rt_tex.format, rt_is_x8))
+                .ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "no pipeline configured for render target format {:?}",
                     rt_tex.format
@@ -3631,7 +3646,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                 timestamp_writes: None,
             });
 
-            let pipeline = self.pipelines.get(&rt_tex.format).ok_or_else(|| {
+            let rt_is_x8 = is_x8_format(rt_tex.format_raw);
+            let pipeline = self
+                .pipelines
+                .get(&(rt_tex.format, rt_is_x8))
+                .ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "no pipeline configured for render target format {:?}",
                     rt_tex.format
