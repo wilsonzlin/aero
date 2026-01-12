@@ -583,7 +583,9 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage): Prom
   writeDword(bus, device, fn, 0x04, (cmdStatus & 0xffff_0000) | newCommand);
 
   const bar0 = readDword(bus, device, fn, 0x10) >>> 0;
-  const bar0Base = BigInt(bar0 & 0xffff_fff0);
+  // Avoid JS bitwise ops here: BAR bases commonly live above 2^31 (e.g. 0xE000_0000),
+  // and `bar0 & 0xffff_fff0` would sign-extend to a negative number before converting to BigInt.
+  const bar0Base = BigInt(bar0) & 0xffff_fff0n;
   if (bar0Base === 0n) {
     throw new Error("HDA BAR0 is zero after enabling MEM decoding.");
   }

@@ -242,7 +242,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect(bar0LowInitial & 0x0f).toBe(0x04);
       expect(bar0HighInitial).toBe(0);
       expect(bar0LowInitial & 0x6).toBe(0x4);
-      const oldBar0Base = (BigInt(bar0HighInitial) << 32n) | BigInt(bar0LowInitial & 0xffff_fff0);
+      const oldBar0Base = (BigInt(bar0HighInitial) << 32n) | (BigInt(bar0LowInitial) & 0xffff_fff0n);
 
       // Read full PCI config space (for capability parsing).
       const cfg = new Uint8Array(256);
@@ -312,7 +312,8 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // Compute mapped MMIO base.
       const bar0LowBeforeRemap = cfgReadU32(pciAddr, 0x10);
       const bar0HighBeforeRemap = cfgReadU32(pciAddr, 0x14);
-      const bar0BaseBeforeRemap = (BigInt(bar0HighBeforeRemap) << 32n) | BigInt(bar0LowBeforeRemap & 0xffff_fff0);
+      const bar0BaseBeforeRemap =
+        (BigInt(bar0HighBeforeRemap) << 32n) | (BigInt(bar0LowBeforeRemap) & 0xffff_fff0n);
       expect(bar0BaseBeforeRemap).toBe(oldBar0Base);
 
       const commonBaseBeforeRemap = bar0BaseBeforeRemap + BigInt(caps.commonOff!);
@@ -328,7 +329,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
 
       const bar0Low = cfgReadU32(pciAddr, 0x10);
       const bar0High = cfgReadU32(pciAddr, 0x14);
-      const bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
+      const bar0Base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
       expect(bar0Base).toBe(newBarBase);
 
       const commonBase = bar0Base + BigInt(caps.commonOff!);

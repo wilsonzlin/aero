@@ -41,7 +41,9 @@ function probeMmio64BarSize(cfg: ReturnType<typeof makeCfgIo>, dev: number, fn: 
   cfg.writeU32(dev, fn, barOff + 4, 0xffff_ffff);
   const maskLow = cfg.readU32(dev, fn, barOff) >>> 0;
   const maskHigh = cfg.readU32(dev, fn, barOff + 4) >>> 0;
-  const mask = (BigInt(maskHigh) << 32n) | BigInt(maskLow & 0xffff_fff0);
+  // Avoid JS bitwise ops on the low dword: values like 0xffff_c000 exceed 2^31 and would
+  // sign-extend if we did `maskLow & 0xffff_fff0` before converting to BigInt.
+  const mask = (BigInt(maskHigh) << 32n) | (BigInt(maskLow) & 0xffff_fff0n);
   return (~mask + 1n) & 0xffff_ffff_ffff_ffffn;
 }
 

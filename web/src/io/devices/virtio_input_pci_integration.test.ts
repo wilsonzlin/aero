@@ -139,7 +139,7 @@ describe("io/devices/virtio-input (pci bridge integration)", () => {
 
       const bar0Low = cfgReadU32(pciAddr, 0x10);
       const bar0High = cfgReadU32(pciAddr, 0x14);
-      const bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
+      const bar0Base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
       expect(bar0Base).toBe(newBarBase);
 
       // Contract v1 fixed BAR0 layout.
@@ -372,7 +372,7 @@ describe("io/devices/virtio-input (pci bridge integration)", () => {
 
       const bar0Low = cfgReadU32(pciAddr, 0x10);
       const bar0High = cfgReadU32(pciAddr, 0x14);
-      const bar0Base = (BigInt(bar0High) << 32n) | BigInt(bar0Low & 0xffff_fff0);
+      const bar0Base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
       expect(bar0Base).toBe(newBarBase);
 
       // Contract v1 fixed BAR0 layout.
