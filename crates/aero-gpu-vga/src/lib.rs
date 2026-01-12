@@ -209,7 +209,11 @@ impl VgaDevice {
     pub fn set_text_mode_80x25(&mut self) {
         // Attribute mode control: bit0=0 => text.
         self.attribute[0x10] = 1 << 2; // line graphics enable
-                                       // Identity palette mapping for indices 0..15.
+        // Enable all 4 color planes by default; otherwise color indices would be masked to 0.
+        self.attribute[0x12] = 0x0F; // color plane enable
+        // Default color select: choose palette page 0.
+        self.attribute[0x14] = 0x00; // color select
+        // Identity palette mapping for indices 0..15.
         for i in 0..16 {
             self.attribute[i] = i as u8;
         }
@@ -240,6 +244,8 @@ impl VgaDevice {
     pub fn set_mode_13h(&mut self) {
         // Attribute mode control: graphics enable.
         self.attribute[0x10] = 0x01;
+        self.attribute[0x12] = 0x0F; // color plane enable (not used by mode 13h path, but matches VGA defaults)
+        self.attribute[0x14] = 0x00; // color select
         // Identity palette mapping for indices 0..15; in 256-color mode the mapping is bypassed.
         for i in 0..16 {
             self.attribute[i] = i as u8;
@@ -720,9 +726,34 @@ impl VgaDevice {
     }
 
     fn attribute_palette_lookup(&self, color: u8) -> u8 {
-        // Attribute palette registers are 6-bit and feed into the DAC.
-        let idx = (color & 0x0F) as usize;
-        self.attribute[idx] & 0x3F
+        // Attribute Controller indices.
+        const MODE_CONTROL: usize = 0x10;
+        const COLOR_PLANE_ENABLE: usize = 0x12;
+        const COLOR_SELECT: usize = 0x14;
+
+        // Mirror the VGA Attribute Controller palette mapping logic:
+        // - Color Plane Enable masks the 4-bit color index.
+        // - Palette registers provide a 6-bit "PEL" (0..=63).
+        // - When the Mode Control P54S bit is set, palette bits 5-4 are sourced from
+        //   Color Select bits 3-2 instead of the palette register.
+        // - The top 2 bits of the DAC index (7-6) come from Color Select bits 1-0.
+        let mode_control = self.attribute[MODE_CONTROL];
+        let color_plane_enable = self.attribute[COLOR_PLANE_ENABLE] & 0x0F;
+        let color_select = self.attribute[COLOR_SELECT];
+
+        let masked = (color & 0x0F) & color_plane_enable;
+
+        // Palette entry is 6-bit (0..=63).
+        let mut pel = self.attribute[masked as usize] & 0x3F;
+
+        // VGA "Palette bits 5-4 select" (P54S): when set, bits 5-4 of the palette entry come from
+        // Color Select bits 3-2 instead of the palette register.
+        if (mode_control & 0x80) != 0 {
+            pel = (pel & 0x0F) | ((color_select & 0x0C) << 2);
+        }
+
+        // Bits 7-6 of the final DAC index come from Color Select bits 1-0.
+        ((color_select & 0x03) << 6) | pel
     }
 
     fn render_mode_13h(&mut self) {
@@ -1341,6 +1372,52 @@ mod tests {
         dev.port_write(0x3C0, 1, 0x11);
         assert_eq!(dev.attribute_index, 0x11);
         assert!(dev.attribute_flip_flop_data);
+    }
+
+    #[test]
+    fn attribute_palette_color_plane_enable_masks_index() {
+        let mut dev = VgaDevice::new();
+
+        // Make the mapping deterministic for the test.
+        dev.attribute[0x10] = 0x00; // mode control: P54S=0
+        dev.attribute[0x14] = 0x00; // color select: high bits=0
+
+        dev.attribute[0] = 0x05;
+        dev.attribute[1] = 0x06;
+        dev.attribute[2] = 0x07;
+
+        // Disable plane 0 (mask bit0), so index 1 maps to 0, and index 3 maps to 2.
+        dev.attribute[0x12] = 0x0E;
+
+        assert_eq!(dev.attribute_palette_lookup(1), 0x05);
+        assert_eq!(dev.attribute_palette_lookup(3), 0x07);
+    }
+
+    #[test]
+    fn attribute_palette_color_select_sets_high_bits() {
+        let mut dev = VgaDevice::new();
+
+        dev.attribute[0x10] = 0x00; // mode control: P54S=0
+        dev.attribute[0x12] = 0x0F; // color plane enable
+        dev.attribute[0x14] = 0x02; // color select bits 1-0 = 2 => DAC bits 7-6 = 0b10
+
+        dev.attribute[0x0F] = 0x3F; // PEL = 0b00_111111
+
+        assert_eq!(dev.attribute_palette_lookup(0x0F), 0xBF);
+    }
+
+    #[test]
+    fn attribute_palette_mode_control_p54s_overrides_palette_bits() {
+        let mut dev = VgaDevice::new();
+
+        dev.attribute[0x10] = 0x80; // mode control: P54S=1
+        dev.attribute[0x12] = 0x0F; // color plane enable
+        dev.attribute[0x14] = 0x0D; // bits 3-2=0b11 => PEL bits 5-4=0b11, bits 1-0=0b01 => DAC bits 7-6=0b01
+
+        dev.attribute[0x03] = 0x0A; // PEL low bits = 0xA, high bits overridden by color_select
+
+        // Expect: DAC bits 7-6 = 0b01 => 0x40; PEL bits 5-4 = 0b11 => 0x30; PEL bits 3-0 = 0xA
+        assert_eq!(dev.attribute_palette_lookup(0x03), 0x7A);
     }
 
     #[test]
