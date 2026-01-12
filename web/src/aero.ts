@@ -11,8 +11,13 @@ async function runMicrobenchSuiteGlobal(opts?: unknown): Promise<unknown> {
 }
 
 export function installAeroGlobals(): void {
-  window.aero = window.aero ?? {};
-  const aero = window.aero as NonNullable<Window["aero"]>;
+  // Be defensive: other tooling might set `window.aero` to a non-object value.
+  // Align with `web/src/api/status.ts` / net-trace backend installers.
+  const win = window as unknown as { aero?: unknown };
+  if (!win.aero || typeof win.aero !== "object") {
+    win.aero = {};
+  }
+  const aero = win.aero as NonNullable<Window["aero"]>;
   aero.bench = { ...(aero.bench ?? {}), runMicrobenchSuite: runMicrobenchSuiteGlobal };
 
   if (aero.perf) {

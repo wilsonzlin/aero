@@ -24,7 +24,13 @@ type AeroGlobal = NonNullable<Window["aero"]> & {
  * Safe to call multiple times.
  */
 export function installAeroGlobal(): void {
-  const aero = ((window as Window).aero ??= {}) as AeroGlobal;
+  // Be defensive: other tooling might set `window.aero` to a non-object value.
+  // Align with `web/src/api/status.ts` / net-trace backend installers.
+  const win = window as unknown as { aero?: unknown };
+  if (!win.aero || typeof win.aero !== "object") {
+    win.aero = {};
+  }
+  const aero = win.aero as AeroGlobal;
   aero.bench ??= {};
 
   aero.bench.runWebGpuBench = async (opts?: WebGpuBenchOptions): Promise<WebGpuBenchResult> => {

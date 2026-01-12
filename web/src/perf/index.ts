@@ -23,7 +23,13 @@ const isPerfApi = (value: unknown): value is PerfApi => {
 };
 
 export const installPerfHud = (options: InstallPerfHudOptions = {}) => {
-  const aero = (window.aero ??= {});
+  // Be defensive: other tooling might set `window.aero` to a non-object value.
+  // Align with `web/src/api/status.ts` / net-trace backend installers.
+  const win = window as unknown as { aero?: unknown };
+  if (!win.aero || typeof win.aero !== "object") {
+    win.aero = {};
+  }
+  const aero = win.aero as NonNullable<Window["aero"]>;
 
   if (!isPerfApi(aero.perf)) {
     if (typeof SharedArrayBuffer === "undefined") {

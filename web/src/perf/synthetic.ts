@@ -14,7 +14,13 @@ export async function runSyntheticInputLatencyTest(
 ): Promise<{ perf: PerfApi; export: unknown }> {
   if (typeof window === 'undefined') throw new Error('Synthetic test requires a browser window context.');
 
-  const aero = (window.aero ??= {});
+  // Be defensive: other tooling might set `window.aero` to a non-object value.
+  // Align with `web/src/api/status.ts` / net-trace backend installers.
+  const win = window as unknown as { aero?: unknown };
+  if (!win.aero || typeof win.aero !== 'object') {
+    win.aero = {};
+  }
+  const aero = win.aero as NonNullable<Window['aero']>;
   const perf: PerfApi =
     aero.perf && typeof aero.perf === 'object' && 'getHudSnapshot' in aero.perf ? (aero.perf as PerfApi) : installFallbackPerf();
   aero.perf = perf;
