@@ -342,8 +342,31 @@ pub fn bytes_to_js_value(bytes: &[u8]) -> JsValue {
 }
 
 pub fn js_value_to_bytes(val: &JsValue) -> Result<Vec<u8>> {
-    let arr = js_sys::Uint8Array::new(val);
-    let mut out = vec![0u8; arr.length() as usize];
+    // Defensive bounds: if the IndexedDB entry is corrupt (or attacker-controlled), avoid
+    // allocating an absurd amount of memory when decoding a stored `Uint8Array`.
+    //
+    // `st-idb` stores fixed-size 1MiB blocks today, so anything above a few MiB is certainly
+    // invalid. Keep this conservative to harden against OOM.
+    const MAX_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
+
+    // Be strict about accepted JS value types to avoid `Uint8Array::new(val)` implicitly
+    // allocating when `val` is not already binary data (e.g. a number length).
+    let arr = if let Some(arr) = val.dyn_ref::<js_sys::Uint8Array>() {
+        arr.clone()
+    } else if val.is_instance_of::<js_sys::ArrayBuffer>() {
+        js_sys::Uint8Array::new(val)
+    } else {
+        return Err(StorageError::Corrupt(
+            "expected Uint8Array for stored block",
+        ));
+    };
+
+    let len = arr.length();
+    if len > MAX_BYTES {
+        return Err(StorageError::Corrupt("stored block exceeds max size"));
+    }
+
+    let mut out = vec![0u8; len as usize];
     arr.copy_to(&mut out);
     Ok(out)
 }
