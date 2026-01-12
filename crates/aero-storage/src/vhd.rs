@@ -570,7 +570,10 @@ impl<B: StorageBackend> VhdDisk<B> {
 
     fn is_sector_allocated(&mut self, lba: u64) -> Result<bool> {
         let (sectors_per_block, bitmap_size) = self.dyn_params()?;
-        let block_index = (lba / sectors_per_block) as usize;
+        let block_index_u64 = lba / sectors_per_block;
+        let block_index: usize = block_index_u64
+            .try_into()
+            .map_err(|_| DiskError::CorruptImage("vhd block index out of range"))?;
         let sector_in_block = lba % sectors_per_block;
         if block_index >= self.bat.len() {
             return Err(DiskError::CorruptImage("vhd block index out of range"));
@@ -590,7 +593,10 @@ impl<B: StorageBackend> VhdDisk<B> {
     fn read_sector_dyn(&mut self, lba: u64, out: &mut [u8; SECTOR_SIZE]) -> Result<()> {
         let (sectors_per_block, bitmap_size) = self.dyn_params()?;
 
-        let block_index = (lba / sectors_per_block) as usize;
+        let block_index_u64 = lba / sectors_per_block;
+        let block_index: usize = block_index_u64
+            .try_into()
+            .map_err(|_| DiskError::CorruptImage("vhd block index out of range"))?;
         let sector_in_block = lba % sectors_per_block;
 
         if block_index >= self.bat.len() {
@@ -636,7 +642,10 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
         let (sectors_per_block, bitmap_size) = self.dyn_params()?;
 
-        let block_index = (lba / sectors_per_block) as usize;
+        let block_index_u64 = lba / sectors_per_block;
+        let block_index: usize = block_index_u64
+            .try_into()
+            .map_err(|_| DiskError::CorruptImage("vhd block index out of range"))?;
         let sector_in_block = lba % sectors_per_block;
         if block_index >= self.bat.len() {
             return Err(DiskError::CorruptImage("vhd block index out of range"));
@@ -842,7 +851,10 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
                 .checked_add(pos as u64)
                 .ok_or(DiskError::OffsetOverflow)?;
 
-            let block_index = (abs / block_size) as usize;
+            let block_index_u64 = abs / block_size;
+            let block_index: usize = block_index_u64
+                .try_into()
+                .map_err(|_| DiskError::CorruptImage("vhd block index out of range"))?;
             let within_block = abs % block_size;
             let remaining_in_block = block_size - within_block;
             let chunk_len = remaining_in_block.min((buf.len() - pos) as u64) as usize;
@@ -901,10 +913,10 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
                     .checked_add(run_len_u64)
                     .ok_or(DiskError::OffsetOverflow)?;
                 pos += run_len;
-                remaining -= run_len;
+                remaining = remaining
+                    .checked_sub(run_len)
+                    .ok_or(DiskError::OffsetOverflow)?;
             }
-
-            debug_assert_eq!(remaining, 0);
         }
 
         Ok(())
@@ -994,7 +1006,8 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
     const CHUNK: usize = 64 * 1024;
     let buf = [0u8; CHUNK];
     while len > 0 {
-        let to_write = (len as usize).min(CHUNK);
+        // Convert to usize *after* clamping so we never truncate `len` on 32-bit builds.
+        let to_write = len.min(CHUNK as u64) as usize;
         backend.write_at(offset, &buf[..to_write])?;
         offset = offset
             .checked_add(to_write as u64)

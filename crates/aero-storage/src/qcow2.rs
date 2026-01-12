@@ -1099,7 +1099,8 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
     const CHUNK: usize = 64 * 1024;
     let buf = [0u8; CHUNK];
     while len > 0 {
-        let to_write = (len as usize).min(CHUNK);
+        // Convert to usize *after* clamping so we never truncate `len` on 32-bit builds.
+        let to_write = len.min(CHUNK as u64) as usize;
         backend.write_at(offset, &buf[..to_write])?;
         offset = offset
             .checked_add(to_write as u64)
