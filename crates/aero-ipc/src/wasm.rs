@@ -333,12 +333,12 @@ pub fn open_ring_by_kind(
                 "queue descriptor {i} reserved field must be 0"
             )));
         }
-        if offset_bytes % (RECORD_ALIGN as u32) != 0 {
+        if !offset_bytes.is_multiple_of(RECORD_ALIGN as u32) {
             return Err(JsValue::from_str(&format!(
                 "queue[{i}].offsetBytes must be aligned to {RECORD_ALIGN} bytes (got {offset_bytes})"
             )));
         }
-        if capacity_bytes % (RECORD_ALIGN as u32) != 0 {
+        if !capacity_bytes.is_multiple_of(RECORD_ALIGN as u32) {
             return Err(JsValue::from_str(&format!(
                 "queue[{i}].capacityBytes must be aligned to {RECORD_ALIGN} bytes (got {capacity_bytes})"
             )));
