@@ -175,7 +175,7 @@ impl MachineConfig {
     /// - i8042 enabled (keyboard/mouse)
     /// - fast A20 gate enabled (port `0x92`)
     /// - reset control enabled (port `0xCF9`)
-    /// - VGA disabled
+    /// - VGA enabled
     /// - E1000 disabled
     #[must_use]
     pub fn win7_storage(ram_size_bytes: u64) -> Self {
@@ -185,7 +185,7 @@ impl MachineConfig {
             enable_pc_platform: true,
             enable_ahci: true,
             enable_ide: true,
-            enable_vga: false,
+            enable_vga: true,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,

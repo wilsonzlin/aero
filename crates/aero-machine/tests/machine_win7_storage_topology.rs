@@ -34,6 +34,7 @@ fn machine_win7_storage_has_ahci_and_ide_on_canonical_bdfs() {
     cfg.enable_i8042 = false;
     cfg.enable_a20_gate = false;
     cfg.enable_reset_ctrl = false;
+    cfg.enable_vga = false;
 
     let mut m = Machine::new(cfg).unwrap();
 

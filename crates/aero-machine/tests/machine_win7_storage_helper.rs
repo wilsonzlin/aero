@@ -27,7 +27,7 @@ fn machine_helper_enables_canonical_win7_storage_topology_pci_functions() {
     assert!(cfg.enable_i8042);
     assert!(cfg.enable_a20_gate);
     assert!(cfg.enable_reset_ctrl);
-    assert!(!cfg.enable_vga);
+    assert!(cfg.enable_vga);
     assert!(!cfg.enable_e1000);
     assert_eq!(cfg.e1000_mac_addr, None);
 

@@ -56,6 +56,7 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
     cfg.enable_i8042 = false;
     cfg.enable_a20_gate = false;
     cfg.enable_reset_ctrl = false;
+    cfg.enable_vga = false;
 
     let mut src = Machine::new(cfg.clone()).unwrap();
 
