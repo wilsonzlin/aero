@@ -46,6 +46,37 @@ describe("io/devices/hda tick scheduling", () => {
     expect(nowNs).toBe(1_000_000_000n * 600n);
     expect(totalFrames).toBe(48_000 * 600);
   });
+
+  it("drops excess host time beyond the max delta budget (does not catch up)", () => {
+    const irq: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: () => 0,
+      mmio_write: () => {},
+      step_frames: vi.fn(),
+      irq_level: () => false,
+      set_mic_ring_buffer: () => {},
+      set_capture_sample_rate_hz: () => {},
+      free: () => {},
+    };
+
+    const dev = new HdaPciDevice({ bridge, irqSink: irq });
+    dev.onPciCommandWrite?.(1 << 2);
+
+    // First tick initializes the clock.
+    dev.tick(0);
+
+    // Simulate a long stall (e.g. tab backgrounded). The device should advance by the
+    // clamp budget (~100ms), then discard the remainder so it doesn't "catch up" later.
+    dev.tick(500);
+    // Next tick should only process the new delta (100ms), not the dropped 400ms.
+    dev.tick(600);
+
+    // Default output sample rate is 48kHz; max delta clamp is 100ms => 4800 frames.
+    expect(bridge.step_frames).toHaveBeenCalledTimes(2);
+    expect(bridge.step_frames).toHaveBeenNthCalledWith(1, 4_800);
+    expect(bridge.step_frames).toHaveBeenNthCalledWith(2, 4_800);
+  });
 });
 
 describe("io/devices/HdaPciDevice", () => {
