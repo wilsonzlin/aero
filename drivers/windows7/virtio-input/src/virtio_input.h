@@ -174,12 +174,12 @@ __forceinline NTSTATUS VioInputReadRequestInputUlong(_In_ WDFREQUEST Request, _O
             return status;
         }
 
-        *ValueOut = *systemPtr;
+        *ValueOut = *(UNALIGNED ULONG *)systemPtr;
         VioInputMdlFree(&mdl);
         return STATUS_SUCCESS;
     }
 
-    *ValueOut = *userPtr;
+    *ValueOut = *(UNALIGNED ULONG *)userPtr;
     return STATUS_SUCCESS;
 }
 
