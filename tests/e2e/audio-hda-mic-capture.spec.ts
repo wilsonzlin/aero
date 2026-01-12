@@ -95,14 +95,14 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     return Boolean(coord?.getWorkerWasmStatus?.("io"));
   });
 
-  const pcm = await page.evaluate(async () => {
+  const first = await page.evaluate(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
     const io = coord.getIoWorker?.();
     if (!io) throw new Error("Missing IO worker");
 
     const requestId = 1;
-    return await new Promise<ArrayBuffer>((resolve, reject) => {
+    return await new Promise<{ pcm: ArrayBuffer; lpibBefore: number; lpibAfter: number }>((resolve, reject) => {
       const timeoutMs = 10_000;
       const timer = setTimeout(() => {
         io.removeEventListener("message", onMessage as any);
@@ -117,7 +117,11 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
         clearTimeout(timer);
         io.removeEventListener("message", onMessage as any);
         if (msg.ok) {
-          resolve(msg.pcm as ArrayBuffer);
+          resolve({
+            pcm: msg.pcm as ArrayBuffer,
+            lpibBefore: (msg.lpibBefore ?? 0) >>> 0,
+            lpibAfter: (msg.lpibAfter ?? 0) >>> 0,
+          });
         } else {
           reject(new Error(typeof msg.error === "string" ? msg.error : "HDA mic capture test failed"));
         }
@@ -128,14 +132,16 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     });
   });
 
-  const bytes = new Uint8Array(pcm);
+  expect(first.lpibAfter).not.toBe(first.lpibBefore);
+
+  const bytes = new Uint8Array(first.pcm);
   let nonZero = 0;
   for (const b of bytes) if (b !== 0) nonZero += 1;
 
   expect(nonZero).toBeGreaterThan(0);
 
   // Decode as signed 16-bit PCM (the harness programs 16-bit mono).
-  const view = new DataView(pcm);
+  const view = new DataView(first.pcm);
   let posSamples = 0;
   let negSamples = 0;
   for (let off = 0; off + 1 < view.byteLength; off += 2) {
@@ -162,4 +168,79 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX },
   );
   expect(micAfter?.read ?? 0).toBeGreaterThan(0);
+
+  // Empty the mic ring (no available samples) and ensure capture still completes and produces silence.
+  const micBeforeSilence = micAfter;
+  await page.evaluate(
+    ({ MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sab = (globalThis as any).__aeroTestMicRingSab as SharedArrayBuffer | undefined;
+      if (!sab) return;
+      const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+      const read = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+      Atomics.store(header, MIC_WRITE_POS_INDEX, read);
+    },
+    { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX },
+  );
+
+  const silence = await page.evaluate(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const coord = (globalThis as any).__aeroWorkerCoordinator as any;
+    const io = coord.getIoWorker?.();
+    if (!io) throw new Error("Missing IO worker");
+
+    const requestId = 2;
+    return await new Promise<{ pcm: ArrayBuffer; lpibBefore: number; lpibAfter: number }>((resolve, reject) => {
+      const timeoutMs = 10_000;
+      const timer = setTimeout(() => {
+        io.removeEventListener("message", onMessage as any);
+        reject(new Error(`Timed out waiting for hda.micCaptureTest.result (${timeoutMs}ms)`));
+      }, timeoutMs);
+
+      const onMessage = (ev: MessageEvent<any>) => {
+        const msg = ev.data;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type !== "hda.micCaptureTest.result") return;
+        if (msg.requestId !== requestId) return;
+        clearTimeout(timer);
+        io.removeEventListener("message", onMessage as any);
+        if (msg.ok) {
+          resolve({
+            pcm: msg.pcm as ArrayBuffer,
+            lpibBefore: (msg.lpibBefore ?? 0) >>> 0,
+            lpibAfter: (msg.lpibAfter ?? 0) >>> 0,
+          });
+        } else {
+          reject(new Error(typeof msg.error === "string" ? msg.error : "HDA mic capture test failed"));
+        }
+      };
+
+      io.addEventListener("message", onMessage as any);
+      io.postMessage({ type: "hda.micCaptureTest", requestId });
+    });
+  });
+
+  expect(silence.lpibAfter).not.toBe(silence.lpibBefore);
+  const silenceBytes = new Uint8Array(silence.pcm);
+  let silenceNonZero = 0;
+  for (const b of silenceBytes) if (b !== 0) silenceNonZero += 1;
+  expect(silenceNonZero).toBe(0);
+
+  const micAfterSilence = await page.evaluate(
+    ({ MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sab = (globalThis as any).__aeroTestMicRingSab as SharedArrayBuffer | undefined;
+      if (!sab) return null;
+      const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+      return {
+        read: Atomics.load(header, MIC_READ_POS_INDEX) >>> 0,
+        write: Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0,
+        dropped: Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0,
+      };
+    },
+    { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX },
+  );
+  expect(micAfterSilence).toBeTruthy();
+  // No samples available -> consumer should not advance.
+  expect(micAfterSilence?.read).toBe(micBeforeSilence?.read);
 });

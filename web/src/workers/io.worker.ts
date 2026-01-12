@@ -2293,17 +2293,23 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
 }
 
 type HdaMicCaptureTestResultMessage =
-  | { type: "hda.micCaptureTest.result"; requestId: number; ok: true; pcm: ArrayBuffer }
+  | { type: "hda.micCaptureTest.result"; requestId: number; ok: true; pcm: ArrayBuffer; lpibBefore: number; lpibAfter: number }
   | { type: "hda.micCaptureTest.result"; requestId: number; ok: false; error: string };
 
 function runHdaMicCaptureTest(requestId: number): void {
   maybeInitHdaDevice();
 
   const bridge = hdaControllerBridge as unknown as {
+    mmio_read?: unknown;
     mmio_write?: unknown;
     step_frames?: unknown;
   } | null;
-  if (!bridge || typeof bridge.mmio_write !== "function" || typeof bridge.step_frames !== "function") {
+  if (
+    !bridge ||
+    typeof bridge.mmio_read !== "function" ||
+    typeof bridge.mmio_write !== "function" ||
+    typeof bridge.step_frames !== "function"
+  ) {
     ctx.postMessage({
       type: "hda.micCaptureTest.result",
       requestId,
@@ -2373,6 +2379,7 @@ function runHdaMicCaptureTest(requestId: number): void {
     writeU32(corbBase + 4, cmd(0, 4, setFmt));
 
     const mmioWrite = bridge.mmio_write as (offset: number, size: number, value: number) => void;
+    const mmioRead = bridge.mmio_read as (offset: number, size: number) => number;
     const stepFrames = bridge.step_frames as (frames: number) => void;
 
     // Bring controller out of reset and configure CORB/RIRB.
@@ -2408,14 +2415,25 @@ function runHdaMicCaptureTest(requestId: number): void {
     mmioWrite(sd1Base + 0x12, 2, fmtRaw); // FMT
     mmioWrite(sd1Base + 0x00, 4, ctl); // CTL
 
+    const lpibBefore = mmioRead(sd1Base + 0x04, 4) >>> 0;
+
     // Advance the device and allow the capture DMA to run.
     stepFrames(1024);
+
+    const lpibAfter = mmioRead(sd1Base + 0x04, 4) >>> 0;
 
     const pcm = new Uint8Array(pcmBytes);
     pcm.set(guestU8.subarray(pcmBase, pcmBase + pcmBytes));
 
     ctx.postMessage(
-      { type: "hda.micCaptureTest.result", requestId, ok: true, pcm: pcm.buffer } satisfies HdaMicCaptureTestResultMessage,
+      {
+        type: "hda.micCaptureTest.result",
+        requestId,
+        ok: true,
+        pcm: pcm.buffer,
+        lpibBefore,
+        lpibAfter,
+      } satisfies HdaMicCaptureTestResultMessage,
       [pcm.buffer],
     );
   } catch (err) {
