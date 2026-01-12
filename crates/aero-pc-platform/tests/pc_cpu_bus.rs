@@ -4,6 +4,7 @@ use aero_cpu_core::interrupts::{CpuCore, CpuExit};
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, CR0_PE, CR0_PG, CR4_PAE, EFER_LME};
 use aero_cpu_core::Exception;
+use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_pc_platform::{PcCpuBus, PcPlatform};
 use aero_platform::interrupts::InterruptInput;
 
@@ -186,15 +187,15 @@ fn cpu_core_bus_routes_i8042_output_port_to_toggle_a20() {
         0xB0, 0x22, // mov al,0x22
         0xA2, 0x10, 0x00, // mov [0x10],al
         0xB0, 0xD1, // mov al,0xD1
-        0xE6, 0x64, // out 0x64,al
+        0xE6, I8042_STATUS_PORT as u8, // out 0x64,al
         0xB0, 0x03, // mov al,0x03
-        0xE6, 0x60, // out 0x60,al
+        0xE6, I8042_DATA_PORT as u8, // out 0x60,al
         0xB0, 0x33, // mov al,0x33
         0xA2, 0x10, 0x00, // mov [0x10],al
         0xB0, 0xD1, // mov al,0xD1
-        0xE6, 0x64, // out 0x64,al
+        0xE6, I8042_STATUS_PORT as u8, // out 0x64,al
         0xB0, 0x01, // mov al,0x01
-        0xE6, 0x60, // out 0x60,al
+        0xE6, I8042_DATA_PORT as u8, // out 0x60,al
         0xB0, 0x44, // mov al,0x44
         0xA2, 0x10, 0x00, // mov [0x10],al
         0xF4, // hlt
