@@ -128,6 +128,11 @@ import {
   type AudioWorkletRingBufferViews,
 } from "../audio/audio_worklet_ring";
 import {
+  CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  HEADER_BYTES as MIC_HEADER_BYTES,
+  HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+} from "../audio/mic_ring.js";
+import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
   isHidAttachMessage as isHidPassthroughAttachMessage,
   isHidDetachMessage as isHidPassthroughDetachMessage,
@@ -2698,6 +2703,35 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
     } else if (!(ringBuffer instanceof Sab)) {
       console.warn("[io.worker] setMicrophoneRingBuffer expects a SharedArrayBuffer or null; dropping attachment.");
       ringBuffer = null;
+    } else {
+      // Best-effort validate ring buffer layout so we don't propagate obviously invalid SABs into
+      // the device model (which would otherwise throw during WASM `MicBridge` construction).
+      try {
+        const byteLen = ringBuffer.byteLength;
+        if (byteLen < MIC_HEADER_BYTES) {
+          throw new Error(`mic ring buffer too small (${byteLen} bytes)`);
+        }
+
+        const payloadBytes = byteLen - MIC_HEADER_BYTES;
+        if (payloadBytes <= 0 || payloadBytes % Float32Array.BYTES_PER_ELEMENT !== 0) {
+          throw new Error("mic ring buffer payload is not 4-byte aligned");
+        }
+
+        const payloadSamples = payloadBytes / Float32Array.BYTES_PER_ELEMENT;
+        const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
+        const capFromHeader = Atomics.load(header, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
+        const capacitySamples = capFromHeader !== 0 ? capFromHeader : payloadSamples;
+        if (capFromHeader !== 0 && capFromHeader !== payloadSamples) {
+          throw new Error("mic ring buffer capacity does not match SharedArrayBuffer size");
+        }
+        const MAX_CAPACITY_SAMPLES = 1_048_576; // keep in sync with mic_ring.js + Rust MicBridge cap
+        if (!Number.isFinite(capacitySamples) || capacitySamples <= 0 || capacitySamples > MAX_CAPACITY_SAMPLES) {
+          throw new Error(`mic ring buffer capacity out of range: ${capacitySamples}`);
+        }
+      } catch (err) {
+        console.warn("[io.worker] mic ring buffer validation failed; dropping attachment:", err);
+        ringBuffer = null;
+      }
     }
   }
 
