@@ -26,13 +26,13 @@ Binaries are staged under:
 - `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
 - `out/artifacts/` (ZIP/ISO bundles)
 
-CI artifacts stage `aerogpu_dx11.inf` (**DX11-capable**) by default.
-The D3D9-only variant (`aerogpu.inf`) is not staged unless you customize `drivers/aerogpu/ci-package.json`.
+CI-produced packages (`out/packages/aerogpu/<arch>/`) stage the following by default:
 
-Legacy binding INFs are shipped under `legacy/` for emulator builds that intentionally expose the deprecated legacy device model:
+- `aerogpu_dx11.inf` at the **package root** (canonical HWID; DX11-capable)
+- `legacy/aerogpu.inf` under `legacy/` (legacy HWID; D3D9-only)
 
-- `legacy/aerogpu.inf` (D3D9-only; shipped by default)
-- `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; exists in-tree but is not shipped in CI packages by default)
+The D3D9-only canonical variant (`aerogpu.inf`) is not staged unless you customize `drivers/aerogpu/ci-package.json`.
+The legacy DX11-capable INF (`legacy/aerogpu_dx11.inf`) exists in-tree (see `drivers/aerogpu/legacy/`) but is also not shipped in CI packages by default.
 
 The canonical DX11-capable variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs). It is staged in CI by default;
 see `drivers/aerogpu/packaging/win7/README.md` for install notes.
