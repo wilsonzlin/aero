@@ -29,7 +29,6 @@ const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 struct WasmGuestMemory {
     guest_base: u32,
     guest_size: u64,
-    mem_bytes: u64,
 }
 
 impl WasmGuestMemory {
@@ -42,47 +41,116 @@ impl WasmGuestMemory {
         Self {
             guest_base,
             guest_size,
-            mem_bytes,
         }
     }
 
-    fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
-        let end = paddr.checked_add(len as u64)?;
+    #[inline]
+    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
+        let end = ram_offset.checked_add(len as u64)?;
         if end > self.guest_size {
             return None;
         }
-        let mapped = (self.guest_base as u64).checked_add(end)?;
-        if mapped > self.mem_bytes {
-            return None;
-        }
-        let base = (self.guest_base as u64).checked_add(paddr)?;
-        u32::try_from(base).ok()
+        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
+        u32::try_from(linear).ok().map(|v| v as *const u8)
+    }
+
+    #[inline]
+    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
+        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
     }
 }
 
 impl MemoryBus for WasmGuestMemory {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        let Some(start) = self.translate(paddr, buf.len()) else {
-            buf.fill(0);
+        if buf.is_empty() {
             return;
         };
 
-        // SAFETY: Bounds checked against the current linear memory size and `buf` is a valid slice.
-        unsafe {
-            let src = core::slice::from_raw_parts(start as *const u8, buf.len());
-            buf.copy_from_slice(src);
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
+
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk =
+                crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, cur_paddr, remaining);
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
+                        buf[off..].fill(0);
+                        return;
+                    };
+
+                    // SAFETY: `translate_guest_paddr_chunk` + `linear_ptr` validate the range.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    buf[off..off + len].fill(0xFF);
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    buf[off..off + len].fill(0);
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => {
+                    buf[off..].fill(0);
+                    return;
+                }
+            };
         }
     }
 
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        let Some(start) = self.translate(paddr, buf.len()) else {
+        if buf.is_empty() {
             return;
-        };
+        }
 
-        // SAFETY: Bounds checked against the current linear memory size and `buf` is a valid slice.
-        unsafe {
-            let dst = core::slice::from_raw_parts_mut(start as *mut u8, buf.len());
-            dst.copy_from_slice(buf);
+        let mut cur_paddr = paddr;
+        let mut off = 0usize;
+
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk =
+                crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, cur_paddr, remaining);
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
+                        return;
+                    };
+                    // SAFETY: `translate_guest_paddr_chunk` + `linear_ptr_mut` validate the range.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    // Open bus: writes are ignored.
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    // Preserve existing semantics: ignore out-of-range writes.
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => return,
+            };
         }
     }
 }

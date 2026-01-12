@@ -19,6 +19,7 @@ aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-machine = { path = "../aero-machine" }
 aero-net-backend = { path = "../aero-net-backend" }
+aero-pc-constants = { path = "../aero-pc-constants" }
 aero-usb = { path = "../aero-usb" }
 aero-virtio = { path = "../aero-virtio" }
 aero-shared = { path = "../aero-shared", optional = true }

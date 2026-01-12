@@ -690,6 +690,7 @@ dependencies = [
  "aero-net-backend",
  "aero-net-e1000",
  "aero-opfs",
+ "aero-pc-constants",
  "aero-platform",
  "aero-shared",
  "aero-snapshot",

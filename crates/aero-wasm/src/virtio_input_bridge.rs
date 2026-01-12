@@ -209,33 +209,47 @@ impl VirtioInputPciDeviceCore {
 // WASM export
 // -------------------------------------------------------------------------------------------------
 
-#[cfg(target_arch = "wasm32")]
-mod wasm {
-    use super::*;
+#[cfg(any(target_arch = "wasm32", test))]
+mod wasm_guest_memory {
     use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError};
-    use wasm_bindgen::prelude::*;
 
-    fn js_error(message: impl core::fmt::Display) -> JsValue {
-        js_sys::Error::new(&message.to_string()).into()
+    use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
+
+    // Cap open-bus slices so a malicious guest cannot force unbounded allocations.
+    const OPEN_BUS_SLICE_MAX: usize = 64 * 1024;
+    static OPEN_BUS_BYTES: [u8; OPEN_BUS_SLICE_MAX] = [0xFF; OPEN_BUS_SLICE_MAX];
+
+    pub(super) struct WasmGuestMemory {
+        /// Pointer to the start of the *mapped* RAM window.
+        ram_ptr: *mut u8,
+        /// Byte offset within the contiguous guest RAM backing store that corresponds to `ram_ptr`.
+        ram_offset_base: u64,
+        /// Length (in bytes) of the mapped RAM window.
+        ram_window_len: u64,
+        /// Total guest RAM size in bytes (contiguous backing store length).
+        ram_bytes: u64,
+        /// Scratch sink for open-bus writes (writes must not affect future reads).
+        open_bus_write: Vec<u8>,
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn wasm_memory_byte_len() -> u64 {
         let pages = core::arch::wasm32::memory_size(0) as u64;
         pages.saturating_mul(64 * 1024)
     }
 
-    #[derive(Clone, Copy)]
-    struct WasmGuestMemory {
-        guest_base: u32,
-        guest_size: u64,
+    #[cfg(target_arch = "wasm32")]
+    fn js_error(message: impl core::fmt::Display) -> wasm_bindgen::JsValue {
+        js_sys::Error::new(&message.to_string()).into()
     }
 
     impl WasmGuestMemory {
-        fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
+        #[cfg(target_arch = "wasm32")]
+        pub(super) fn new(guest_base: u32, guest_size: u32) -> Result<Self, wasm_bindgen::JsValue> {
             if guest_base == 0 {
                 return Err(js_error("guestBase must be non-zero"));
             }
- 
+
             let mem_len = wasm_memory_byte_len();
             let guest_base_u64 = u64::from(guest_base);
             // Allow `guest_base == wasm_mem_len` when `guest_size == 0` (empty guest RAM) to match
@@ -246,8 +260,7 @@ mod wasm {
                 )));
             }
 
-            // Match other WASM bridges (e.g. UHCI/E1000): treat `guest_size=0` as "use the
-            // remainder of linear memory".
+            // Treat `guest_size=0` as "use the remainder of linear memory".
             let guest_size_u64 = if guest_size == 0 {
                 mem_len - guest_base_u64
             } else {
@@ -266,30 +279,108 @@ mod wasm {
             }
 
             Ok(Self {
-                guest_base,
-                guest_size: guest_size_u64,
+                ram_ptr: guest_base as *mut u8,
+                ram_offset_base: 0,
+                ram_window_len: guest_size_u64,
+                ram_bytes: guest_size_u64,
+                open_bus_write: Vec::new(),
             })
         }
 
+        #[cfg(test)]
+        pub(super) fn new_for_test(
+            ram_bytes: u64,
+            ram_offset_base: u64,
+            backing: &mut [u8],
+        ) -> Self {
+            Self {
+                ram_ptr: backing.as_mut_ptr(),
+                ram_offset_base,
+                ram_window_len: backing.len() as u64,
+                ram_bytes,
+                open_bus_write: Vec::new(),
+            }
+        }
+
         #[inline]
-        fn linear_offset(&self, paddr: u64, len: usize) -> Result<u32, GuestMemoryError> {
-            let len_u64 = len as u64;
-            let end = paddr
-                .checked_add(len_u64)
+        fn ram_slice<'a>(
+            &'a self,
+            paddr: u64,
+            ram_offset: u64,
+            len: usize,
+        ) -> Result<&'a [u8], GuestMemoryError> {
+            let end = ram_offset
+                .checked_add(len as u64)
                 .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
-            if end > self.guest_size {
+            let window_end = self
+                .ram_offset_base
+                .checked_add(self.ram_window_len)
+                .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
+            if ram_offset < self.ram_offset_base || end > window_end {
                 return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
             }
-            let linear = u64::from(self.guest_base)
-                .checked_add(paddr)
+            let rel = ram_offset - self.ram_offset_base;
+            let rel_usize =
+                usize::try_from(rel).map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
+
+            // Safety: callers ensure `ram_offset..ram_offset+len` lies within the mapped window.
+            unsafe { Ok(core::slice::from_raw_parts(self.ram_ptr.add(rel_usize), len)) }
+        }
+
+        #[inline]
+        fn ram_slice_mut<'a>(
+            &'a mut self,
+            paddr: u64,
+            ram_offset: u64,
+            len: usize,
+        ) -> Result<&'a mut [u8], GuestMemoryError> {
+            let end = ram_offset
+                .checked_add(len as u64)
                 .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
-            u32::try_from(linear).map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })
+            let window_end = self
+                .ram_offset_base
+                .checked_add(self.ram_window_len)
+                .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
+            if ram_offset < self.ram_offset_base || end > window_end {
+                return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
+            }
+            let rel = ram_offset - self.ram_offset_base;
+            let rel_usize =
+                usize::try_from(rel).map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
+
+            // Safety: callers ensure `ram_offset..ram_offset+len` lies within the mapped window.
+            unsafe { Ok(core::slice::from_raw_parts_mut(self.ram_ptr.add(rel_usize), len)) }
+        }
+
+        #[inline]
+        fn open_bus_slice(&self, paddr: u64, len: usize) -> Result<&'static [u8], GuestMemoryError> {
+            if len > OPEN_BUS_SLICE_MAX {
+                return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
+            }
+            Ok(&OPEN_BUS_BYTES[..len])
+        }
+
+        #[inline]
+        fn open_bus_slice_mut(
+            &mut self,
+            paddr: u64,
+            len: usize,
+        ) -> Result<&mut [u8], GuestMemoryError> {
+            if len > OPEN_BUS_SLICE_MAX {
+                return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
+            }
+            if self.open_bus_write.len() < len {
+                self.open_bus_write.resize(len, 0xFF);
+            } else {
+                self.open_bus_write[..len].fill(0xFF);
+            }
+            Ok(&mut self.open_bus_write[..len])
         }
     }
 
     impl VirtioGuestMemory for WasmGuestMemory {
         fn len(&self) -> u64 {
-            self.guest_size
+            guest_ram_phys_end_exclusive(self.ram_bytes)
         }
 
         fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
@@ -304,20 +395,22 @@ mod wasm {
 
         fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
             if len == 0 {
-                if addr > self.guest_size {
+                if addr > self.len() {
                     return Err(GuestMemoryError::OutOfBounds { addr, len });
                 }
                 return Ok(&[]);
             }
-            let linear = self.linear_offset(addr, len)?;
-            // Safety: `linear_offset` bounds-checks against the configured guest region, and wasm
-            // linear memory does not relocate when it grows.
-            unsafe { Ok(core::slice::from_raw_parts(linear as *const u8, len)) }
+
+            match translate_guest_paddr_range(self.ram_bytes, addr, len) {
+                GuestRamRange::Ram { ram_offset } => self.ram_slice(addr, ram_offset, len),
+                GuestRamRange::Hole => self.open_bus_slice(addr, len),
+                GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
+            }
         }
 
         fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
             if len == 0 {
-                if addr > self.guest_size {
+                if addr > self.len() {
                     return Err(GuestMemoryError::OutOfBounds { addr, len });
                 }
                 // Safety: a zero-length slice may be created from a dangling pointer.
@@ -325,10 +418,25 @@ mod wasm {
                     core::slice::from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
                 });
             }
-            let linear = self.linear_offset(addr, len)?;
-            // Safety: `linear_offset` bounds-checks against the configured guest region.
-            unsafe { Ok(core::slice::from_raw_parts_mut(linear as *mut u8, len)) }
+
+            match translate_guest_paddr_range(self.ram_bytes, addr, len) {
+                GuestRamRange::Ram { ram_offset } => self.ram_slice_mut(addr, ram_offset, len),
+                GuestRamRange::Hole => self.open_bus_slice_mut(addr, len),
+                GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
+            }
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    use super::wasm_guest_memory::WasmGuestMemory;
+
+    fn js_error(message: impl core::fmt::Display) -> JsValue {
+        js_sys::Error::new(&message.to_string()).into()
     }
 
     /// WASM export: virtio-input device exposed as a virtio-pci BAR0 MMIO region.
@@ -442,3 +550,27 @@ mod wasm {
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm::VirtioInputPciDevice;
+
+#[cfg(test)]
+mod remap_tests {
+    use super::wasm_guest_memory::WasmGuestMemory;
+
+    use aero_virtio::memory::GuestMemory;
+
+    #[test]
+    fn virtio_wasm_guest_memory_maps_high_ram_above_4gib() {
+        // Simulate a guest with low RAM up to 0xB000_0000 and 8KiB of remapped high RAM.
+        let ram_bytes = 0xB000_0000u64 + 0x2000;
+
+        // Only allocate the high-RAM portion and map it as a window starting at ram offset
+        // 0xB000_0000. This avoids requiring a multi-GB allocation in the unit test.
+        let mut high = vec![0u8; 0x2000];
+        high[0..4].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+
+        let mem = WasmGuestMemory::new_for_test(ram_bytes, 0xB000_0000, high.as_mut_slice());
+
+        let slice = mem.get_slice(0x1_0000_0000, 4).expect("high RAM slice");
+        assert_eq!(slice, &[0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(slice.as_ptr(), high.as_ptr());
+    }
+}

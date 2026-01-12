@@ -5,6 +5,9 @@ use wasm_bindgen::prelude::*;
 
 pub mod guest_cpu_bench;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod guest_phys;
+
 // Re-export Aero IPC SharedArrayBuffer ring helpers so the generated `aero-wasm`
 // wasm-pack package exposes them to JS (both threaded + single builds).
 #[cfg(target_arch = "wasm32")]
@@ -1421,34 +1424,60 @@ struct HdaGuestMemory {
 }
 
 #[cfg(target_arch = "wasm32")]
-impl HdaGuestMemory {
-    #[inline]
-    fn translate(&self, addr: u64, len: usize) -> Option<u32> {
-        let end = addr.checked_add(len as u64)?;
-        if end > self.guest_size {
-            return None;
-        }
-        let linear = (self.guest_base as u64).checked_add(addr)?;
-        u32::try_from(linear).ok()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl MemoryAccess for HdaGuestMemory {
     fn read_physical(&self, addr: u64, buf: &mut [u8]) {
         if buf.is_empty() {
             return;
         }
 
-        let Some(linear) = self.translate(addr, buf.len()) else {
-            buf.fill(0);
-            return;
-        };
+        let mut paddr = addr;
+        let mut off = 0usize;
 
-        // Safety: `translate` validates the requested guest range and returns a wasm32-compatible
-        // linear address.
-        unsafe {
-            core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, paddr, remaining);
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(linear) = (self.guest_base as u64)
+                        .checked_add(ram_offset)
+                        .and_then(|v| u32::try_from(v).ok())
+                    else {
+                        buf[off..].fill(0);
+                        return;
+                    };
+
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
+                    // RAM size and `linear` is a wasm32-compatible linear address.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            linear as *const u8,
+                            buf[off..].as_mut_ptr(),
+                            len,
+                        );
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    buf[off..off + len].fill(0xFF);
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    buf[off..off + len].fill(0);
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            paddr = match paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => {
+                    buf[off..].fill(0);
+                    return;
+                }
+            };
         }
     }
 
@@ -1457,14 +1486,50 @@ impl MemoryAccess for HdaGuestMemory {
             return;
         }
 
-        let Some(linear) = self.translate(addr, buf.len()) else {
-            return;
-        };
+        let mut paddr = addr;
+        let mut off = 0usize;
 
-        // Safety: `translate` validates the requested guest range and returns a wasm32-compatible
-        // linear address.
-        unsafe {
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
+        while off < buf.len() {
+            let remaining = buf.len() - off;
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(self.guest_size, paddr, remaining);
+            let chunk_len = match chunk {
+                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
+                    let Some(linear) = (self.guest_base as u64)
+                        .checked_add(ram_offset)
+                        .and_then(|v| u32::try_from(v).ok())
+                    else {
+                        return;
+                    };
+
+                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
+                    // RAM size and `linear` is a wasm32-compatible linear address.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            buf[off..].as_ptr(),
+                            linear as *mut u8,
+                            len,
+                        );
+                    }
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::Hole { len } => {
+                    // Open bus: writes are ignored.
+                    len
+                }
+                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
+                    // Preserve existing semantics: ignore out-of-range writes.
+                    len
+                }
+            };
+
+            if chunk_len == 0 {
+                break;
+            }
+            off += chunk_len;
+            paddr = match paddr.checked_add(chunk_len as u64) {
+                Some(v) => v,
+                None => return,
+            };
         }
     }
 }

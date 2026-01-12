@@ -41,36 +41,57 @@ fn wasm_memory_byte_len() -> u64 {
     pages.saturating_mul(64 * 1024)
 }
 
-#[derive(Clone, Copy)]
+// Cap open-bus slices so a malicious guest cannot force unbounded allocations.
+const OPEN_BUS_SLICE_MAX: usize = 64 * 1024;
+static OPEN_BUS_BYTES: [u8; OPEN_BUS_SLICE_MAX] = [0xFF; OPEN_BUS_SLICE_MAX];
+
 struct WasmGuestMemory {
     guest_base: u32,
-    guest_size: u64,
+    ram_bytes: u64,
+    open_bus_write: Vec<u8>,
 }
 
 impl WasmGuestMemory {
     #[inline]
-    fn validate_range(&self, addr: u64, len: usize) -> Result<u32, GuestMemoryError> {
-        let end = addr
+    fn open_bus_slice(&self, addr: u64, len: usize) -> Result<&'static [u8], GuestMemoryError> {
+        if len > OPEN_BUS_SLICE_MAX {
+            return Err(GuestMemoryError::OutOfBounds { addr, len });
+        }
+        Ok(&OPEN_BUS_BYTES[..len])
+    }
+
+    #[inline]
+    fn open_bus_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
+        if len > OPEN_BUS_SLICE_MAX {
+            return Err(GuestMemoryError::OutOfBounds { addr, len });
+        }
+        if self.open_bus_write.len() < len {
+            self.open_bus_write.resize(len, 0xFF);
+        } else {
+            self.open_bus_write[..len].fill(0xFF);
+        }
+        Ok(&mut self.open_bus_write[..len])
+    }
+
+    #[inline]
+    fn linear_offset(&self, addr: u64, ram_offset: u64, len: usize) -> Result<u32, GuestMemoryError> {
+        let end = ram_offset
             .checked_add(len as u64)
             .ok_or(GuestMemoryError::OutOfBounds { addr, len })?;
-        if end > self.guest_size {
+        if end > self.ram_bytes {
             return Err(GuestMemoryError::OutOfBounds { addr, len });
         }
 
         let linear = (self.guest_base as u64)
-            .checked_add(addr)
+            .checked_add(ram_offset)
             .ok_or(GuestMemoryError::OutOfBounds { addr, len })?;
-
-        // `GuestMemory` addresses are u64; do not truncate when mapping to wasm32 pointers.
-        let linear_u32 =
-            u32::try_from(linear).map_err(|_| GuestMemoryError::OutOfBounds { addr, len })?;
-        Ok(linear_u32)
+        u32::try_from(linear).map_err(|_| GuestMemoryError::OutOfBounds { addr, len })
     }
 }
 
 impl GuestMemory for WasmGuestMemory {
     fn len(&self) -> u64 {
-        self.guest_size
+        crate::guest_phys::guest_ram_phys_end_exclusive(self.ram_bytes)
     }
 
     fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
@@ -85,22 +106,27 @@ impl GuestMemory for WasmGuestMemory {
 
     fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
         if len == 0 {
-            // Avoid edge cases where `guest_base + addr == 4GiB` (not representable as a u32
-            // pointer) even though a zero-length slice is valid.
-            if addr > self.guest_size {
+            if addr > self.len() {
                 return Err(GuestMemoryError::OutOfBounds { addr, len });
             }
             return Ok(&[]);
         }
 
-        let linear = self.validate_range(addr, len)?;
-        // Safety: `validate_range` ensures the slice is fully within the guest RAM window.
-        Ok(unsafe { core::slice::from_raw_parts(linear as *const u8, len) })
+        match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
+            crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
+                let linear = self.linear_offset(addr, ram_offset, len)?;
+                // Safety: `linear_offset` bounds-checks against the configured guest region, and wasm
+                // linear memory does not relocate when it grows.
+                Ok(unsafe { core::slice::from_raw_parts(linear as *const u8, len) })
+            }
+            crate::guest_phys::GuestRamRange::Hole => self.open_bus_slice(addr, len),
+            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
+        }
     }
 
     fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
         if len == 0 {
-            if addr > self.guest_size {
+            if addr > self.len() {
                 return Err(GuestMemoryError::OutOfBounds { addr, len });
             }
             // Safety: a 0-length slice may use a dangling pointer.
@@ -109,9 +135,15 @@ impl GuestMemory for WasmGuestMemory {
             });
         }
 
-        let linear = self.validate_range(addr, len)?;
-        // Safety: `validate_range` ensures the slice is fully within the guest RAM window.
-        Ok(unsafe { core::slice::from_raw_parts_mut(linear as *mut u8, len) })
+        match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
+            crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
+                let linear = self.linear_offset(addr, ram_offset, len)?;
+                // Safety: `linear_offset` bounds-checks against the configured guest region.
+                Ok(unsafe { core::slice::from_raw_parts_mut(linear as *mut u8, len) })
+            }
+            crate::guest_phys::GuestRamRange::Hole => self.open_bus_slice_mut(addr, len),
+            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
+        }
     }
 }
 
@@ -291,7 +323,8 @@ impl VirtioNetPciBridge {
         Ok(Self {
             mem: WasmGuestMemory {
                 guest_base,
-                guest_size: guest_size_u64,
+                ram_bytes: guest_size_u64,
+                open_bus_write: Vec::new(),
             },
             dev,
             irq_asserted: asserted,
