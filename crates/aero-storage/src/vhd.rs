@@ -104,7 +104,7 @@ pub struct VhdDisk<B> {
     footer: VhdFooter,
     dynamic: Option<VhdDynamicHeader>,
     bat: Vec<u32>,
-    bitmap_cache: LruCache<u64, Arc<[u8]>>,
+    bitmap_cache: LruCache<u64, Arc<Vec<u8>>>,
 }
 
 impl<B: StorageBackend> VhdDisk<B> {
@@ -304,18 +304,6 @@ impl<B: StorageBackend> VhdDisk<B> {
         Ok((bitmap[byte] & (1u8 << bit)) != 0)
     }
 
-    fn bitmap_set(bitmap: &mut [u8], sector_in_block: u64) -> Result<()> {
-        let byte: usize = (sector_in_block / 8)
-            .try_into()
-            .map_err(|_| DiskError::OffsetOverflow)?;
-        if byte >= bitmap.len() {
-            return Err(DiskError::CorruptImage("vhd bitmap too small"));
-        }
-        let bit = 7 - (sector_in_block % 8) as u8;
-        bitmap[byte] |= 1u8 << bit;
-        Ok(())
-    }
-
     fn sector_run_len(
         bitmap: &[u8],
         sectors_per_block: u64,
@@ -346,7 +334,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         Ok(end - within_block)
     }
 
-    fn load_bitmap(&mut self, block_start: u64, bitmap_size: u64) -> Result<Arc<[u8]>> {
+    fn load_bitmap(&mut self, block_start: u64, bitmap_size: u64) -> Result<Arc<Vec<u8>>> {
         if let Some(v) = self.bitmap_cache.get(&block_start) {
             return Ok(v.clone());
         }
@@ -355,15 +343,9 @@ impl<B: StorageBackend> VhdDisk<B> {
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         let mut bitmap = vec![0u8; bytes];
         self.backend_read_at(block_start, &mut bitmap, "vhd block bitmap truncated")?;
-        let arc: Arc<[u8]> = bitmap.into();
+        let arc = Arc::new(bitmap);
         let _ = self.bitmap_cache.push(block_start, arc.clone());
         Ok(arc)
-    }
-
-    fn store_bitmap(&mut self, block_start: u64, bitmap: Arc<[u8]>) -> Result<()> {
-        self.backend.write_at(block_start, bitmap.as_ref())?;
-        let _ = self.bitmap_cache.push(block_start, bitmap);
-        Ok(())
     }
 
     fn data_region_start(&self) -> Result<u64> {
@@ -438,7 +420,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
-        Self::bitmap_get(bitmap.as_ref(), sector_in_block)
+        Self::bitmap_get(bitmap.as_slice(), sector_in_block)
     }
 
     fn read_sector_dyn(&mut self, lba: u64, out: &mut [u8; SECTOR_SIZE]) -> Result<()> {
@@ -462,7 +444,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.validate_block_bounds(block_start, bitmap_size)?;
         let bitmap = self.load_bitmap(block_start, bitmap_size)?;
-        if !Self::bitmap_get(bitmap.as_ref(), sector_in_block)? {
+        if !Self::bitmap_get(bitmap.as_slice(), sector_in_block)? {
             out.fill(0);
             return Ok(());
         }
@@ -510,10 +492,38 @@ impl<B: StorageBackend> VhdDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend.write_at(data_offset, data)?;
 
-        let bitmap = self.load_bitmap(block_start, bitmap_size)?;
-        let mut bitmap_vec = bitmap.as_ref().to_vec();
-        Self::bitmap_set(&mut bitmap_vec, sector_in_block)?;
-        self.store_bitmap(block_start, bitmap_vec.into())?;
+        // Update the per-block bitmap.
+        //
+        // We keep the bitmap cached in memory and only write back the single modified byte.
+        let byte_index =
+            usize::try_from(sector_in_block / 8).map_err(|_| DiskError::OffsetOverflow)?;
+        let bit = 7 - (sector_in_block % 8) as u8;
+        let mask = 1u8 << bit;
+
+        // Ensure bitmap is present in the cache so we can update it without cloning.
+        let _ = self.load_bitmap(block_start, bitmap_size)?;
+
+        let (byte_offset, new_byte) = {
+            let entry = self
+                .bitmap_cache
+                .get_mut(&block_start)
+                .ok_or(DiskError::CorruptImage("vhd bitmap cache missing"))?;
+            let bitmap_vec: &mut Vec<u8> = Arc::make_mut(entry);
+            if byte_index >= bitmap_vec.len() {
+                return Err(DiskError::CorruptImage("vhd bitmap too small"));
+            }
+            let old = bitmap_vec[byte_index];
+            let new = old | mask;
+            bitmap_vec[byte_index] = new;
+            (
+                block_start
+                    .checked_add(byte_index as u64)
+                    .ok_or(DiskError::OffsetOverflow)?,
+                new,
+            )
+        };
+
+        self.backend.write_at(byte_offset, &[new_byte])?;
 
         Ok(())
     }
@@ -576,7 +586,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .try_into()
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         self.bitmap_cache
-            .push(old_footer_offset, vec![0u8; bitmap_size_usize].into());
+            .push(old_footer_offset, Arc::new(vec![0u8; bitmap_size_usize]));
 
         Ok(old_footer_offset)
     }
@@ -639,9 +649,9 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
                     return Err(DiskError::CorruptImage("vhd sector index out of range"));
                 }
 
-                let allocated = Self::bitmap_get(bitmap.as_ref(), sector_in_block)?;
+                let allocated = Self::bitmap_get(bitmap.as_slice(), sector_in_block)?;
                 let run_len_u64 = Self::sector_run_len(
-                    bitmap.as_ref(),
+                    bitmap.as_slice(),
                     sectors_per_block,
                     within,
                     remaining as u64,
