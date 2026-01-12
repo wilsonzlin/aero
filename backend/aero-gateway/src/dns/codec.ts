@@ -225,17 +225,28 @@ export function encodeDnsName(name: string): Buffer {
   const normalized = normalizeDnsName(name);
   if (normalized === "") return Buffer.from([0x00]);
   const labels = normalized.split(".").filter(Boolean);
-  const buffers: Buffer[] = [];
-  let nameBytes = 1; // terminating 0-length label
+  const labelLengths: number[] = [];
+  let totalBytes = 1; // terminating 0-length label
   for (const label of labels) {
-    const bytes = Buffer.from(label, "utf8");
-    if (bytes.length > 63) throw new Error("DNS label too long");
-    nameBytes += 1 + bytes.length;
-    if (nameBytes > 255) throw new Error("DNS name too long");
-    buffers.push(Buffer.from([bytes.length]), bytes);
+    const len = Buffer.byteLength(label, "utf8");
+    if (len > 63) throw new Error("DNS label too long");
+    totalBytes += 1 + len;
+    if (totalBytes > 255) throw new Error("DNS name too long");
+    labelLengths.push(len);
   }
-  buffers.push(Buffer.from([0x00]));
-  return Buffer.concat(buffers);
+
+  const out = Buffer.allocUnsafe(totalBytes);
+  let offset = 0;
+  for (let i = 0; i < labels.length; i += 1) {
+    const len = labelLengths[i]!;
+    out[offset] = len;
+    offset += 1;
+    const written = out.write(labels[i]!, offset, len, "utf8");
+    if (written !== len) throw new Error("DNS name encoding error");
+    offset += len;
+  }
+  out[offset] = 0x00;
+  return out;
 }
 
 export function encodeDnsQuery(options: DnsQueryEncodeOptions): Buffer {
