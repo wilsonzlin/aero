@@ -170,6 +170,7 @@ fn synthetic_guest_tx_and_rx_deferred_dma_via_poll() {
     // Real hardware requires PCI Bus Master Enable before the NIC may DMA descriptors/buffers.
     dev.pci_config_write(0x04, 2, 0x4);
     let mut dma = TestDma::new(0x40_000);
+    dev.pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
     // Enable interrupts for both RX and TX (register-only write).
     dev.mmio_write_u32(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS

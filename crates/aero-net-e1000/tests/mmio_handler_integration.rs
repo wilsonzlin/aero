@@ -82,8 +82,7 @@ fn physical_memory_bus_mmio_defers_dma_until_poll() {
 
     let mmio_base = 0x100_000u64;
     let dev = Rc::new(RefCell::new(E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56])));
-    // Real hardware gates all DMA behind the PCI Bus Master Enable bit.
-    dev.borrow_mut().pci_config_write(0x04, 2, 0x4);
+    dev.borrow_mut().pci_config_write(0x04, 2, 0x4); // Bus Master Enable
 
     bus.map_mmio(
         mmio_base,
