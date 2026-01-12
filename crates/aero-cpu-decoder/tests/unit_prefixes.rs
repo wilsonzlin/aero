@@ -44,6 +44,30 @@ fn parses_vex2_prefix() {
 }
 
 #[test]
+fn parses_evex_prefix() {
+    // 62 F1 7C 48 58 C0 => vaddps zmm0, zmm0, zmm0
+    //
+    // (The `0x62` lead byte is ambiguous with `BOUND` in non-64-bit modes, so
+    // this test also guards our EVEX-vs-BOUND disambiguation logic.)
+    let bytes = [0x62, 0xF1, 0x7C, 0x48, 0x58, 0xC0];
+    let decoded = decode_one(DecodeMode::Bits32, 0, &bytes).expect("decode");
+    assert!(decoded.prefixes.evex.is_some());
+    assert_eq!(decoded.instruction.mnemonic(), Mnemonic::Vaddps);
+}
+
+#[test]
+fn parses_xop_prefix() {
+    // 8F A9 A8 90 C0 => vprotb xmm0, xmm10, xmm0
+    //
+    // XOP shares its lead byte (`0x8F`) with the legacy `POP r/m` encoding, so
+    // this is a positive test for the POP-vs-XOP disambiguation rule.
+    let bytes = [0x8F, 0xA9, 0xA8, 0x90, 0xC0];
+    let decoded = decode_one(DecodeMode::Bits16, 0, &bytes).expect("decode");
+    assert!(decoded.prefixes.xop.is_some());
+    assert_eq!(decoded.instruction.mnemonic(), Mnemonic::Vprotb);
+}
+
+#[test]
 fn does_not_misdetect_pop_as_xop() {
     // 8F 00 => pop qword ptr [rax]
     let bytes = [0x8F, 0x00];
