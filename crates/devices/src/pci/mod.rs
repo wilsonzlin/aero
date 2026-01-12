@@ -69,18 +69,14 @@ impl PciBdf {
     /// # Panics
     ///
     /// Panics in debug builds if `device >= 32` or `function >= 8`.
-    pub fn pack_u16(self) -> u16 {
-        debug_assert!(self.device < 32, "PCI device out of range: {}", self.device);
-        debug_assert!(
-            self.function < 8,
-            "PCI function out of range: {}",
-            self.function
-        );
-        (u16::from(self.bus) << 8) | (u16::from(self.device) << 3) | u16::from(self.function)
+    pub const fn pack_u16(self) -> u16 {
+        debug_assert!(self.device < 32);
+        debug_assert!(self.function < 8);
+        ((self.bus as u16) << 8) | ((self.device as u16) << 3) | (self.function as u16)
     }
 
     /// Unpacks a `u16` produced by [`PciBdf::pack_u16`] back into a [`PciBdf`].
-    pub fn unpack_u16(v: u16) -> Self {
+    pub const fn unpack_u16(v: u16) -> Self {
         let bus = (v >> 8) as u8;
         let device = ((v >> 3) & 0x1f) as u8;
         let function = (v & 0x7) as u8;
@@ -95,6 +91,18 @@ impl PciBdf {
             device,
             function,
         }
+    }
+}
+
+impl From<PciBdf> for u16 {
+    fn from(value: PciBdf) -> Self {
+        value.pack_u16()
+    }
+}
+
+impl From<u16> for PciBdf {
+    fn from(value: u16) -> Self {
+        Self::unpack_u16(value)
     }
 }
 

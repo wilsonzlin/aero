@@ -13,6 +13,10 @@ fn pci_bdf_pack_unpack_u16_roundtrip() {
         let packed = bdf.pack_u16();
         let unpacked = PciBdf::unpack_u16(packed);
         assert_eq!(unpacked, bdf);
+
+        // Conversion impls are thin wrappers over the canonical helpers.
+        assert_eq!(u16::from(bdf), packed);
+        assert_eq!(PciBdf::from(packed), bdf);
     }
 }
 
@@ -42,4 +46,3 @@ fn pci_bdf_pack_u16_rejects_invalid_function_in_debug() {
     // Valid PCI function numbers are 0-7.
     let _ = PciBdf::new(0, 0, 8).pack_u16();
 }
-
