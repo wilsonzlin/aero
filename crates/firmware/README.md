@@ -66,5 +66,5 @@ The canonical source of truth is the `aero-acpi` Rust generator. To regenerate t
 fixture after AML changes:
 
 ```bash
-cargo run -p firmware --bin gen_dsdt
+cargo run -p firmware --bin gen_dsdt --locked
 ```
