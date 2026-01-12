@@ -78,6 +78,35 @@ error: internal compiler error: unexpected panic
 failed to spawn helper thread: WouldBlock (os error 11)
 EOF
 
+assert_retry "ctrlc-handler-eagain" <<'EOF'
+error: internal compiler error: unexpected panic
+Unable to install ctrlc handler: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+EOF
+
+assert_retry "could-not-execute-process-eagain" <<'EOF'
+error: could not compile `foo` (lib)
+
+Caused by:
+  could not execute process `rustc --crate-name foo --print=file-names` (never executed)
+
+Caused by:
+  Resource temporarily unavailable (os error 11)
+EOF
+
+assert_retry "failed-to-fork-eagain" <<'EOF'
+error: could not compile `foo` (build script)
+Caused by:
+  failed to fork: Resource temporarily unavailable (os error 11)
+EOF
+
+assert_retry "std-system-error-eagain" <<'EOF'
+std::system_error: Resource temporarily unavailable
+EOF
+
+assert_no_retry "random-eagain-no-context" <<'EOF'
+Resource temporarily unavailable
+EOF
+
 assert_retry "threadpoolbuilderror-eagain" <<'EOF'
 ThreadPoolBuildError { kind: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" } }
 EOF
