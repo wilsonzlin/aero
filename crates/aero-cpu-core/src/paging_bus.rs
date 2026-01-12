@@ -15,6 +15,18 @@ pub trait IoBus {
     fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception>;
 }
 
+impl<T: IoBus + ?Sized> IoBus for &mut T {
+    #[inline]
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        <T as IoBus>::io_read(&mut **self, port, size)
+    }
+
+    #[inline]
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        <T as IoBus>::io_write(&mut **self, port, size, val)
+    }
+}
+
 /// Default port-I/O backend that behaves like the old `PagingBus` stub I/O: all
 /// reads return `0` and all writes are ignored.
 #[derive(Clone, Copy, Default)]
