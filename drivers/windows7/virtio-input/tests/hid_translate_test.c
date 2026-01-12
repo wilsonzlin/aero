@@ -120,6 +120,8 @@ static void test_linux_keycode_abi_values(void) {
   assert(VIRTIO_INPUT_KEY_F8 == 66);
   assert(VIRTIO_INPUT_KEY_F9 == 67);
   assert(VIRTIO_INPUT_KEY_F10 == 68);
+  assert(VIRTIO_INPUT_KEY_NUMLOCK == 69);
+  assert(VIRTIO_INPUT_KEY_SCROLLLOCK == 70);
   assert(VIRTIO_INPUT_KEY_F11 == 87);
   assert(VIRTIO_INPUT_KEY_F12 == 88);
   assert(VIRTIO_INPUT_KEY_HOME == 102);
@@ -159,6 +161,7 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F10) == 0x43);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F11) == 0x44);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_F12) == 0x45);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_SCROLLLOCK) == 0x47);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_INSERT) == 0x49);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_HOME) == 0x4A);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_PAGEUP) == 0x4B);
@@ -169,6 +172,7 @@ static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_LEFT) == 0x50);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_DOWN) == 0x51);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_UP) == 0x52);
+  assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_NUMLOCK) == 0x53);
 
   /* Modifiers are handled as a bitmask, not returned as usages. */
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_LEFTCTRL) == 0);
