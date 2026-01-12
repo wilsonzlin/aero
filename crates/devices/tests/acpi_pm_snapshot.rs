@@ -649,3 +649,86 @@ fn snapshot_restore_accepts_future_minor_version() {
     pm.load_state(&w.finish()).unwrap();
     assert_eq!(pm.pm1_status(), 0xABCD);
 }
+
+#[test]
+fn snapshot_restore_rejects_duplicate_field_tags_and_is_atomic() {
+    const TAG_PM1_STS: u16 = 1;
+
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(1_000_000);
+
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
+
+    // Mutate state so we can verify `load_state()` failure is atomic.
+    pm.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    pm.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    pm.trigger_power_button();
+    pm.write(cfg.pm1a_cnt_blk, 2, 0x1235);
+    pm.advance_ns(1_000_000);
+
+    let pm1_sts_before = pm.pm1_status();
+    let pm1_en_before = pm.read(cfg.pm1a_evt_blk + 2, 2);
+    let pm1_cnt_before = pm.pm1_cnt();
+    let sci_before = pm.sci_level();
+    let tmr_before = pm.read(cfg.pm_tmr_blk, 4);
+
+    // Construct a snapshot with duplicate field tags.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u16(TAG_PM1_STS, 0x1111);
+    w.field_u16(TAG_PM1_STS, 0x2222);
+    let bytes = w.finish();
+
+    assert!(
+        matches!(
+            pm.load_state(&bytes),
+            Err(SnapshotError::DuplicateFieldTag(TAG_PM1_STS))
+        ),
+        "duplicate tags must be rejected"
+    );
+
+    // State must be unchanged.
+    assert_eq!(pm.pm1_status(), pm1_sts_before);
+    assert_eq!(pm.read(cfg.pm1a_evt_blk + 2, 2), pm1_en_before);
+    assert_eq!(pm.pm1_cnt(), pm1_cnt_before);
+    assert_eq!(pm.sci_level(), sci_before);
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4), tmr_before);
+}
+
+#[test]
+fn snapshot_restore_rejects_truncated_snapshot_and_is_atomic() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(1_000_000);
+
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
+
+    // Mutate state so we can verify `load_state()` failure is atomic.
+    pm.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    pm.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    pm.trigger_power_button();
+    pm.write(cfg.pm1a_cnt_blk, 2, 0x1235);
+    pm.advance_ns(1_000_000);
+
+    let pm1_sts_before = pm.pm1_status();
+    let pm1_en_before = pm.read(cfg.pm1a_evt_blk + 2, 2);
+    let pm1_cnt_before = pm.pm1_cnt();
+    let sci_before = pm.sci_level();
+    let tmr_before = pm.read(cfg.pm_tmr_blk, 4);
+
+    let snap = pm.save_state();
+    assert!(snap.len() > 1);
+    let truncated = &snap[..snap.len() - 1];
+
+    assert!(
+        matches!(pm.load_state(truncated), Err(SnapshotError::UnexpectedEof)),
+        "truncated snapshots must be rejected"
+    );
+
+    // State must be unchanged.
+    assert_eq!(pm.pm1_status(), pm1_sts_before);
+    assert_eq!(pm.read(cfg.pm1a_evt_blk + 2, 2), pm1_en_before);
+    assert_eq!(pm.pm1_cnt(), pm1_cnt_before);
+    assert_eq!(pm.sci_level(), sci_before);
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4), tmr_before);
+}
