@@ -41,6 +41,7 @@
     "preview:harness": "vite preview --config vite.harness.config.ts",
     "serve:coi:harness": "vite build --config vite.harness.config.ts --emptyOutDir && vite preview --config vite.harness.config.ts --host 127.0.0.1 --port 4173 --strictPort",
     "gen:scancodes": "node tools/gen_scancodes/gen_scancodes.mjs",
+    "check:scancodes": "node tools/gen_scancodes/check_generated.mjs",
     "pretypecheck": "npm run check:node",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "generate:mega-module": "node scripts/generate-mega-module.mjs",
