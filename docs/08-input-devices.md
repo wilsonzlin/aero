@@ -634,6 +634,9 @@ The repository includes a concrete browser-side input capture implementation:
   - `Meta` shortcuts are intentionally *not* prevented by default so host shortcuts can win when desired.
     - Exception: browser navigation keys like `BrowserBack`/`BrowserSearch` are always swallowed to avoid navigating away from the VM.
   - `Ctrl`-only shortcuts are also not prevented by default (copy/paste/etc.), but `Ctrl+Alt` (often reported for **AltGr** layouts) is treated as a capture combination and prevented by default so it reaches the guest reliably.
+- Input handlers that swallow events call **both** `event.preventDefault()` and `event.stopPropagation()` so that:
+  - the browser does not perform its default action (scroll, navigate, etc.), and
+  - other app-level/global listeners do not observe the event while the VM is actively capturing input.
 
 #### Worker Transport / Wire Format
 
