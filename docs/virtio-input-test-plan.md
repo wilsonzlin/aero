@@ -248,6 +248,10 @@ In Device Manager after install/reboot:
 
 (Optional but recommended) Run `hidtest.exe` as described in the QEMU README to validate raw input reports.
 
+- Tool source/build instructions: [`drivers/windows7/virtio-input/tools/hidtest/README.md`](../drivers/windows7/virtio-input/tools/hidtest/README.md)
+
+After the driver is installed and confirmed working, you can optionally disable PS/2 in QEMU (`-machine ...,i8042=off`) to ensure you are not accidentally testing the emulated PS/2 devices. Only do this once you have a known-good virtio-input driver; otherwise you may lose input in the guest.
+
 ### 3.4 Expected pass/fail signals (Windows 7)
 
 These are common “first look” signals when validating the driver end-to-end:
