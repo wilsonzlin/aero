@@ -25,6 +25,6 @@ export {
   type L2TunnelForwarderOptions,
   type L2TunnelForwarderStats,
 } from "./l2TunnelForwarder";
-export { NetTracer, type FrameDirection, type NetTraceConfig } from "./net_tracer";
+export { NetTracer, type FrameDirection, type NetTraceConfig, type ProxyDirection, type UdpProxyTransport } from "./net_tracer";
 export { LinkType, PacketDirection, PcapngWriter } from "./pcapng";
 export type { LinkType, PacketDirection } from "./pcapng";

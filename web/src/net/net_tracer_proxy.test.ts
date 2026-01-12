@@ -22,8 +22,13 @@ type ParsedEpb = {
   flags: number | null;
 };
 
-function parsePcapng(bytes: Uint8Array): { linkTypes: number[]; epbs: ParsedEpb[] } {
-  const linkTypes: number[] = [];
+type ParsedInterface = {
+  linkType: number;
+  name: string | null;
+};
+
+function parsePcapng(bytes: Uint8Array): { interfaces: ParsedInterface[]; epbs: ParsedEpb[] } {
+  const interfaces: ParsedInterface[] = [];
   const epbs: ParsedEpb[] = [];
 
   let off = 0;
@@ -41,7 +46,22 @@ function parsePcapng(bytes: Uint8Array): { linkTypes: number[]; epbs: ParsedEpb[
     if (blockType === 0x0000_0001) {
       // Interface Description Block.
       const linkType = readU16LE(bytes, bodyStart);
-      linkTypes.push(linkType);
+
+      let name: string | null = null;
+      let optOff = bodyStart + 8;
+      while (optOff + 4 <= bodyEnd) {
+        const code = readU16LE(bytes, optOff);
+        const len = readU16LE(bytes, optOff + 2);
+        optOff += 4;
+        if (code === 0) break;
+        if (code === 2) {
+          name = new TextDecoder().decode(bytes.subarray(optOff, optOff + len));
+        }
+        optOff += len;
+        optOff = (optOff + 3) & ~3;
+      }
+
+      interfaces.push({ linkType, name });
     } else if (blockType === 0x0000_0006) {
       // Enhanced Packet Block.
       const interfaceId = readU32LE(bytes, bodyStart);
@@ -73,7 +93,7 @@ function parsePcapng(bytes: Uint8Array): { linkTypes: number[]; epbs: ParsedEpb[
     off += blockLen;
   }
 
-  return { linkTypes, epbs };
+  return { interfaces, epbs };
 }
 
 function ascii(bytes: Uint8Array): string {
@@ -94,9 +114,13 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
     const parsed = parsePcapng(bytes);
 
     // Ethernet always exists; proxy pseudo-interfaces only appear when records exist.
-    expect(parsed.linkTypes).toContain(1);
-    expect(parsed.linkTypes).toContain(147);
-    expect(parsed.linkTypes).toContain(148);
+    expect(parsed.interfaces.map((i) => i.linkType)).toContain(1);
+    expect(parsed.interfaces.map((i) => i.linkType)).toContain(147);
+    expect(parsed.interfaces.map((i) => i.linkType)).toContain(148);
+
+    expect(parsed.interfaces.map((i) => i.name)).toContain("guest-eth0");
+    expect(parsed.interfaces.map((i) => i.name)).toContain("tcp-proxy");
+    expect(parsed.interfaces.map((i) => i.name)).toContain("udp-proxy");
 
     const tcpPkt = parsed.epbs.find((epb) => ascii(epb.packetData.slice(0, 4)) === "ATCP");
     expect(tcpPkt).toBeTruthy();
@@ -122,5 +146,41 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
     expect(readU16LE(audp, 12)).toBe(1234); // src port (LE)
     expect(readU16LE(audp, 14)).toBe(5678); // dst port (LE)
     expect(Array.from(audp.slice(16))).toEqual([9, 8, 7]);
+  });
+
+  it("only creates tcp-proxy interface when TCP proxy records exist", () => {
+    const tracer = new NetTracer();
+    tracer.enable();
+    tracer.recordTcpProxy("guest_to_remote", 1, Uint8Array.of(1, 2, 3), 1n);
+
+    const { interfaces } = parsePcapng(tracer.exportPcapng());
+    const linkTypes = interfaces.map((i) => i.linkType);
+    const names = interfaces.map((i) => i.name);
+
+    expect(linkTypes).toContain(1);
+    expect(linkTypes).toContain(147);
+    expect(linkTypes).not.toContain(148);
+
+    expect(names).toContain("guest-eth0");
+    expect(names).toContain("tcp-proxy");
+    expect(names).not.toContain("udp-proxy");
+  });
+
+  it("only creates udp-proxy interface when UDP proxy records exist", () => {
+    const tracer = new NetTracer();
+    tracer.enable();
+    tracer.recordUdpProxy("guest_to_remote", "proxy", [192, 0, 2, 1], 1000, 2000, Uint8Array.of(4, 5, 6), 1n);
+
+    const { interfaces } = parsePcapng(tracer.exportPcapng());
+    const linkTypes = interfaces.map((i) => i.linkType);
+    const names = interfaces.map((i) => i.name);
+
+    expect(linkTypes).toContain(1);
+    expect(linkTypes).toContain(148);
+    expect(linkTypes).not.toContain(147);
+
+    expect(names).toContain("guest-eth0");
+    expect(names).toContain("udp-proxy");
+    expect(names).not.toContain("tcp-proxy");
   });
 });
