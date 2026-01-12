@@ -224,6 +224,20 @@ const AEROGPU_FORMAT_B8G8R8X8_UNORM = AerogpuFormat.B8G8R8X8Unorm;
 const AEROGPU_FORMAT_R8G8B8A8_UNORM = AerogpuFormat.R8G8B8A8Unorm;
 const AEROGPU_FORMAT_R8G8B8X8_UNORM = AerogpuFormat.R8G8B8X8Unorm;
 
+// ABI 1.2+ may introduce additional `AerogpuFormat` enum values (sRGB + BC compressed formats).
+// Use a dynamic lookup so this executor can be imported by older tests/builds without requiring
+// those enum members to exist at compile-time.
+const getOptionalAerogpuFormat = (key: string): number => {
+  const value = (AerogpuFormat as Record<string, number>)[key];
+  return typeof value === "number" ? value : -1;
+};
+
+// sRGB variants are treated identically to UNORM by the CPU executor (no color-space conversion).
+const AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB = getOptionalAerogpuFormat("B8G8R8A8UnormSrgb");
+const AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB = getOptionalAerogpuFormat("B8G8R8X8UnormSrgb");
+const AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB = getOptionalAerogpuFormat("R8G8B8A8UnormSrgb");
+const AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB = getOptionalAerogpuFormat("R8G8B8X8UnormSrgb");
+
 const readTexelIntoRgba = (format: number, src: Uint8Array, srcOff: number, dst: Uint8Array, dstOff: number): void => {
   const c0 = src[srcOff + 0]!;
   const c1 = src[srcOff + 1]!;
@@ -231,28 +245,32 @@ const readTexelIntoRgba = (format: number, src: Uint8Array, srcOff: number, dst:
   const c3 = src[srcOff + 3]!;
 
   switch (format) {
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM: {
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB: {
       dst[dstOff + 0] = c0;
       dst[dstOff + 1] = c1;
       dst[dstOff + 2] = c2;
       dst[dstOff + 3] = c3;
       break;
     }
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM: {
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB: {
       dst[dstOff + 0] = c0;
       dst[dstOff + 1] = c1;
       dst[dstOff + 2] = c2;
       dst[dstOff + 3] = 255;
       break;
     }
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM: {
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB: {
       dst[dstOff + 0] = c2;
       dst[dstOff + 1] = c1;
       dst[dstOff + 2] = c0;
       dst[dstOff + 3] = c3;
       break;
     }
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM: {
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB: {
       dst[dstOff + 0] = c2;
       dst[dstOff + 1] = c1;
       dst[dstOff + 2] = c0;
@@ -260,7 +278,7 @@ const readTexelIntoRgba = (format: number, src: Uint8Array, srcOff: number, dst:
       break;
     }
     default:
-      throw new Error(`aerogpu: unsupported texture format ${format}`);
+      throw new Error(`aerogpu: unsupported texture format ${format} (BC formats require GPU backend)`);
   }
 };
 
@@ -271,28 +289,32 @@ const writeTexelFromRgba = (format: number, src: Uint8Array, srcOff: number, dst
   const a = src[srcOff + 3]!;
 
   switch (format) {
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM: {
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB: {
       dst[dstOff + 0] = r;
       dst[dstOff + 1] = g;
       dst[dstOff + 2] = b;
       dst[dstOff + 3] = a;
       break;
     }
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM: {
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB: {
       dst[dstOff + 0] = r;
       dst[dstOff + 1] = g;
       dst[dstOff + 2] = b;
       dst[dstOff + 3] = 255;
       break;
     }
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM: {
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB: {
       dst[dstOff + 0] = b;
       dst[dstOff + 1] = g;
       dst[dstOff + 2] = r;
       dst[dstOff + 3] = a;
       break;
     }
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM: {
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB: {
       dst[dstOff + 0] = b;
       dst[dstOff + 1] = g;
       dst[dstOff + 2] = r;
@@ -300,7 +322,7 @@ const writeTexelFromRgba = (format: number, src: Uint8Array, srcOff: number, dst
       break;
     }
     default:
-      throw new Error(`aerogpu: unsupported texture format ${format}`);
+      throw new Error(`aerogpu: unsupported texture format ${format} (BC formats require GPU backend)`);
   }
 };
 
@@ -450,11 +472,15 @@ export const executeAerogpuCmdStream = (
         }
         if (
           format !== AEROGPU_FORMAT_R8G8B8A8_UNORM &&
+          format !== AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB &&
           format !== AEROGPU_FORMAT_R8G8B8X8_UNORM &&
+          format !== AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB &&
           format !== AEROGPU_FORMAT_B8G8R8A8_UNORM &&
-          format !== AEROGPU_FORMAT_B8G8R8X8_UNORM
+          format !== AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB &&
+          format !== AEROGPU_FORMAT_B8G8R8X8_UNORM &&
+          format !== AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB
         ) {
-          throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format}`);
+          throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format} (BC formats require GPU backend)`);
         }
 
         const rowBytes = width * 4;
@@ -504,7 +530,12 @@ export const executeAerogpuCmdStream = (
           throw new Error(`aerogpu: CREATE_TEXTURE2D texture too large for JS (${byteLenBig} bytes)`);
         }
         const data = new Uint8Array(Number(byteLenBig));
-        if (format === AEROGPU_FORMAT_R8G8B8X8_UNORM || format === AEROGPU_FORMAT_B8G8R8X8_UNORM) {
+        if (
+          format === AEROGPU_FORMAT_R8G8B8X8_UNORM ||
+          format === AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB ||
+          format === AEROGPU_FORMAT_B8G8R8X8_UNORM ||
+          format === AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB
+        ) {
           for (let i = 3; i < data.length; i += 4) {
             data[i] = 255;
           }
@@ -613,7 +644,7 @@ export const executeAerogpuCmdStream = (
 
           const srcBytes = sliceGuestChecked(guest, baseGpa + start, copyLen, `texture ${handle}`);
           const dstBytes = tex.data;
-          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
             dstBytes.set(srcBytes, dst);
             continue;
           }
@@ -682,7 +713,7 @@ export const executeAerogpuCmdStream = (
             );
           }
 
-          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
             dstBytes.set(srcBytes, offsetBytes);
             break;
           }
@@ -707,7 +738,7 @@ export const executeAerogpuCmdStream = (
           const srcRowOff = row * tex.rowPitchBytes;
           const dstRowOff = row * bytesPerRow;
 
-          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
             dstBytes.set(srcBytes.subarray(srcRowOff, srcRowOff + bytesPerRow), dstRowOff);
             continue;
           }
@@ -878,7 +909,7 @@ export const executeAerogpuCmdStream = (
               `texture ${dstTexture} writeback`,
             );
 
-            if (dst.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+            if (dst.format === AEROGPU_FORMAT_R8G8B8A8_UNORM || dst.format === AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB) {
               dstRowBytes.set(tmp.subarray(tmpOff, tmpOff + rowBytes));
               continue;
             }
