@@ -203,7 +203,7 @@ impl MemoryBus for dyn memory::MemoryBus {
 
 /// Enable use of [`aero_mem::MemoryBus`] (the new shared physical address router) as the MMU
 /// page-walk backend.
-#[cfg(all(feature = "aero-mem-bus", not(feature = "memory-bus")))]
+#[cfg(feature = "aero-mem-bus")]
 impl MemoryBus for aero_mem::MemoryBus {
     #[inline]
     fn read_u8(&mut self, paddr: u64) -> u8 {
