@@ -264,8 +264,12 @@ describe("net/pcapng.PcapngWriter", () => {
     const w = new PcapngWriter(userAppl);
     const iface = w.addInterface(LinkType.Ethernet, ifaceName);
 
-    const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01]);
-    w.writePacket(iface, 123_456_789n, payload, PacketDirection.Inbound);
+    const payloadIn = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01]);
+    const payloadOut = new Uint8Array([0xca, 0xfe]);
+    const payloadNoDir = new Uint8Array([0x99, 0x88, 0x77]);
+    w.writePacket(iface, 123_456_789n, payloadIn, PacketDirection.Inbound);
+    w.writePacket(iface, 123_456_790n, payloadOut, PacketDirection.Outbound);
+    w.writePacket(iface, 123_456_791n, payloadNoDir);
 
     const bytes = w.intoBytes();
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -343,37 +347,63 @@ describe("net/pcapng.PcapngWriter", () => {
 
     offset += idbLen;
 
-    // --- EPB ---
-    const epbType = view.getUint32(offset, true);
-    expect(epbType).toBe(0x0000_0006);
-    const epbLen = view.getUint32(offset + 4, true);
-    expect(view.getUint32(offset + epbLen - 4, true)).toBe(epbLen);
+    const parseEpb = (off: number): { nextOff: number; payload: Uint8Array; flags: number | null } => {
+      const epbType = view.getUint32(off, true);
+      expect(epbType).toBe(0x0000_0006);
+      const epbLen = view.getUint32(off + 4, true);
+      expect(view.getUint32(off + epbLen - 4, true)).toBe(epbLen);
 
-    const capLen = view.getUint32(offset + 20, true);
-    const origLen = view.getUint32(offset + 24, true);
-    expect(capLen).toBe(payload.byteLength);
-    expect(origLen).toBe(payload.byteLength);
+      const capLen = view.getUint32(off + 20, true);
+      const origLen = view.getUint32(off + 24, true);
+      expect(origLen).toBe(capLen);
 
-    const packetDataStart = offset + 28;
-    expect(bytes.subarray(packetDataStart, packetDataStart + payload.byteLength)).toEqual(payload);
+      const packetDataStart = off + 28;
+      const packetDataEnd = packetDataStart + capLen;
+      expect(packetDataEnd).toBeLessThanOrEqual(off + epbLen - 4);
+      const payload = bytes.slice(packetDataStart, packetDataEnd);
 
-    const epbOptsStart = packetDataStart + alignUp4(payload.byteLength);
-    const epbOptsEnd = offset + epbLen - 4;
-    optOff = epbOptsStart;
-    let foundFlags = false;
-    while (optOff + 4 <= epbOptsEnd) {
-      const code = view.getUint16(optOff, true);
-      const len = view.getUint16(optOff + 2, true);
-      optOff += 4;
-      if (code === 0) break;
-      if (code === 2) {
-        expect(len).toBe(4);
-        expect(view.getUint32(optOff, true)).toBe(1); // inbound
-        foundFlags = true;
+      const epbOptsStart = packetDataStart + alignUp4(capLen);
+      const epbOptsEnd = off + epbLen - 4;
+      let optOff = epbOptsStart;
+      let flags: number | null = null;
+      while (optOff + 4 <= epbOptsEnd) {
+        const code = view.getUint16(optOff, true);
+        const len = view.getUint16(optOff + 2, true);
+        optOff += 4;
+        if (code === 0) break;
+        if (code === 2) {
+          expect(len).toBe(4);
+          flags = view.getUint32(optOff, true);
+        }
+        optOff += len;
+        optOff = alignUp4(optOff);
       }
-      optOff += len;
-      optOff = alignUp4(optOff);
+
+      return { nextOff: off + epbLen, payload, flags };
+    };
+
+    // EPB #1 (inbound).
+    {
+      const epb = parseEpb(offset);
+      expect(epb.payload).toEqual(payloadIn);
+      expect(epb.flags).toBe(1);
+      offset = epb.nextOff;
     }
-    expect(foundFlags).toBe(true);
+
+    // EPB #2 (outbound).
+    {
+      const epb = parseEpb(offset);
+      expect(epb.payload).toEqual(payloadOut);
+      expect(epb.flags).toBe(2);
+      offset = epb.nextOff;
+    }
+
+    // EPB #3 (no direction option).
+    {
+      const epb = parseEpb(offset);
+      expect(epb.payload).toEqual(payloadNoDir);
+      expect(epb.flags).toBeNull();
+      offset = epb.nextOff;
+    }
   });
 });
