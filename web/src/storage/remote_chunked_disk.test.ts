@@ -368,6 +368,75 @@ describe("RemoteChunkedDisk", () => {
     await disk2.close();
   });
 
+  it("does not persist chunks when cacheLimitBytes is 0 (cache disabled)", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunks[0]);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new TestMemoryStore();
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store,
+      cacheLimitBytes: 0,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    const buf1 = new Uint8Array(512);
+    await disk.readSectors(0, buf1);
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(store.files.size).toBe(0);
+
+    const buf2 = new Uint8Array(512);
+    await disk.readSectors(0, buf2);
+    expect(buf2).toEqual(img.slice(0, 512));
+    // Cache disabled: must re-fetch.
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    expect(store.files.size).toBe(0);
+
+    const t = disk.getTelemetrySnapshot();
+    expect(t.cachedBytes).toBe(0);
+    expect(t.cacheHits).toBe(0);
+
+    await disk.close();
+  });
+
   it("supports relative manifest URLs by resolving against global location.href", async () => {
     const chunkSize = 1024; // multiple of 512
     const totalSize = chunkSize;
