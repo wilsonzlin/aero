@@ -432,3 +432,16 @@ VOID WdkTestResetKeRemoveQueueDpcCounts(VOID);
  */
 VOID WdkTestAutoCompleteDpcInFlightAfterDelayCalls(_Inout_ volatile LONG* DpcInFlight, _In_ ULONG DelayCallCount);
 VOID WdkTestClearAutoCompleteDpcInFlight(VOID);
+
+/*
+ * Test-only hook invoked on every KeInsertQueueDpc() call.
+ *
+ * This lets tests validate ordering expectations (e.g. DpcInFlight is incremented
+ * before KeInsertQueueDpc is called).
+ */
+typedef VOID (*WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK)(_Inout_ PKDPC Dpc,
+                                                 _In_opt_ PVOID SystemArgument1,
+                                                 _In_opt_ PVOID SystemArgument2,
+                                                 _In_opt_ PVOID Context);
+VOID WdkTestSetKeInsertQueueDpcHook(_In_opt_ WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK Hook, _In_opt_ PVOID Context);
+VOID WdkTestClearKeInsertQueueDpcHook(VOID);

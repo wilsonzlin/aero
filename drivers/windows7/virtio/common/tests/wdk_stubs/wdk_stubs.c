@@ -33,6 +33,9 @@ static ULONG g_ke_remove_queue_dpc_fail_count = 0;
 static volatile LONG* g_test_auto_complete_dpc_inflight_ptr = NULL;
 static ULONG g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
 
+static WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK g_test_ke_insert_queue_dpc_hook = NULL;
+static PVOID g_test_ke_insert_queue_dpc_hook_ctx = NULL;
+
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
     g_mmio_read_handler = ReadHandler;
@@ -144,6 +147,10 @@ BOOLEAN KeInsertQueueDpc(_Inout_ PKDPC Dpc, _In_opt_ PVOID SystemArgument1, _In_
 
     g_ke_insert_queue_dpc_count++;
 
+    if (g_test_ke_insert_queue_dpc_hook != NULL) {
+        g_test_ke_insert_queue_dpc_hook(Dpc, SystemArgument1, SystemArgument2, g_test_ke_insert_queue_dpc_hook_ctx);
+    }
+
     if (Dpc->Inserted != FALSE) {
         g_ke_insert_queue_dpc_fail_count++;
         return FALSE;
@@ -206,6 +213,18 @@ VOID WdkTestClearAutoCompleteDpcInFlight(VOID)
 {
     g_test_auto_complete_dpc_inflight_ptr = NULL;
     g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
+}
+
+VOID WdkTestSetKeInsertQueueDpcHook(_In_opt_ WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK Hook, _In_opt_ PVOID Context)
+{
+    g_test_ke_insert_queue_dpc_hook = Hook;
+    g_test_ke_insert_queue_dpc_hook_ctx = Context;
+}
+
+VOID WdkTestClearKeInsertQueueDpcHook(VOID)
+{
+    g_test_ke_insert_queue_dpc_hook = NULL;
+    g_test_ke_insert_queue_dpc_hook_ctx = NULL;
 }
 
 NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Alertable, _In_opt_ PLARGE_INTEGER Interval)
