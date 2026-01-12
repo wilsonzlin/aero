@@ -414,6 +414,39 @@ static void test_dpc_queue_stub_counters(void)
     assert(WdkTestGetKeRemoveQueueDpcCount() == 1);
 }
 
+static void test_disconnect_remove_dpc_not_queued_path(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    /* Queue and run one DPC so it is not queued at disconnect time. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx.Dpc) != FALSE);
+    assert(intx.Dpc.Inserted == FALSE);
+    assert(intx.DpcInFlight == 0);
+
+    WdkTestResetKeRemoveQueueDpcCounts();
+    WdkTestResetKeDelayExecutionThreadCount();
+
+    VirtioIntxDisconnect(&intx);
+
+    /* Disconnect always tries to remove a queued KDPC; here it should fail. */
+    assert(WdkTestGetKeRemoveQueueDpcCount() == 1);
+    assert(WdkTestGetKeRemoveQueueDpcSuccessCount() == 0);
+    assert(WdkTestGetKeRemoveQueueDpcFailCount() == 1);
+
+    /* DpcInFlight was already 0, so disconnect should not have waited. */
+    assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
+}
+
 static void test_null_callbacks_safe(void)
 {
     VIRTIO_INTX intx;
@@ -867,6 +900,7 @@ int main(void)
     test_isr_defensive_null_service_context();
     test_isr_defensive_null_isr_register();
     test_dpc_queue_stub_counters();
+    test_disconnect_remove_dpc_not_queued_path();
     test_null_callbacks_safe();
     test_spurious_interrupt_does_not_affect_pending();
     test_unknown_isr_bits_no_callbacks_without_evt_dpc();
