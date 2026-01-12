@@ -115,8 +115,16 @@ export type GpuRuntimeInitOptions = {
   presenter?: PresenterInitOptions;
 
   /**
-   * Optional dynamic module URL that exports `present()` (and optionally
-   * `get_frame_timings()`).
+   * Optional dynamic module URL that exports `present()` and may optionally export
+   * telemetry helpers:
+   *
+   * - `get_frame_timings()` (optional)
+   * - `get_gpu_stats()` / `getGpuStats()` (optional): extra stats for periodic `stats`
+   *   messages. Payload may be a JSON string or an object.
+   * - `drain_gpu_events()` (optional; also accepts `drain_gpu_error_events()`,
+   *   `take_gpu_events()`, etc): error/diagnostic events forwarded as `events`
+   *   messages. Payload may be a JSON string, a single object, or an array; the
+   *   worker normalizes best-effort.
    *
    * When provided, the worker will call into this module instead of using the
    * built-in presenter backends.
