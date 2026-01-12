@@ -7,10 +7,14 @@ type ShaderCacheCounters = {
   persistentMisses: number;
 };
 
+// Debug-only: keep in sync with `crates/aero-d3d9/src/runtime/shader_cache.rs`.
+const D3D9_TRANSLATOR_CACHE_VERSION = 1;
+
 declare global {
   interface Window {
     __d3d9ShaderCacheDemo?: ShaderCacheCounters & {
       backend: string;
+      d3d9TranslatorCacheVersion: number;
       error?: string;
     };
   }
@@ -214,11 +218,16 @@ async function main(): Promise<void> {
   await gpu.submitAerogpu(cmdStream.buffer, /* fence */ 1n, undefined, /* contextId */ 0);
 
   const delta = await withTimeout(countersPromise, 10_000, "Waiting for wasm shader-cache stats");
-  window.__d3d9ShaderCacheDemo = { backend: ready.backendKind, ...delta };
+  window.__d3d9ShaderCacheDemo = {
+    backend: ready.backendKind,
+    d3d9TranslatorCacheVersion: D3D9_TRANSLATOR_CACHE_VERSION,
+    ...delta,
+  };
 
   if (status) {
     status.textContent =
       `backend=${ready.backendKind}\n` +
+      `d3d9TranslatorCacheVersion=${D3D9_TRANSLATOR_CACHE_VERSION}\n` +
       `translateCalls=${delta.translateCalls}\n` +
       `persistentHits=${delta.persistentHits}\n` +
       `persistentMisses=${delta.persistentMisses}\n`;
@@ -232,6 +241,7 @@ void main().catch((err) => {
     persistentHits: 0,
     persistentMisses: 0,
     backend: "unknown",
+    d3d9TranslatorCacheVersion: D3D9_TRANSLATOR_CACHE_VERSION,
     error: message,
   };
   const status = $("status");

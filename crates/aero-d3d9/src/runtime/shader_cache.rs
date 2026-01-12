@@ -16,14 +16,49 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+/// Version used to invalidate persisted D3D9 DXBC -> WGSL translation artifacts.
+///
+/// Bump this when the Rust translator's output *semantics* change in a way that could still
+/// compile successfully but behave differently (i.e. a correctness fix).
+///
+/// Note: This is separate from the JS-side `CACHE_SCHEMA_VERSION` because it is easy to forget
+/// to bump that global cache version when only the D3D9 translator changes.
+pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 1;
+
+fn default_d3d9_translator_cache_version() -> u32 {
+    D3D9_TRANSLATOR_CACHE_VERSION
+}
+
 /// Translation flags that affect WGSL output.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShaderTranslationFlags {
+    /// D3D9 translator version that participates in cache key derivation.
+    ///
+    /// Always set this to [`D3D9_TRANSLATOR_CACHE_VERSION`] for persistent cache keys so any
+    /// semantic translation changes safely invalidate cached WGSL.
+    #[serde(default = "default_d3d9_translator_cache_version")]
+    pub d3d9_translator_version: u32,
     pub half_pixel_center: bool,
     /// Stable hash representing relevant WebGPU capabilities/limits/features.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caps_hash: Option<String>,
+}
+
+impl ShaderTranslationFlags {
+    pub fn new(half_pixel_center: bool, caps_hash: Option<String>) -> Self {
+        Self {
+            d3d9_translator_version: D3D9_TRANSLATOR_CACHE_VERSION,
+            half_pixel_center,
+            caps_hash,
+        }
+    }
+}
+
+impl Default for ShaderTranslationFlags {
+    fn default() -> Self {
+        Self::new(false, None)
+    }
 }
 
 /// Persisted output of DXBC -> WGSL translation.
@@ -38,8 +73,8 @@ pub struct PersistedShaderArtifact {
 ///
 /// The key is derived from:
 /// - raw DXBC bytecode
-/// - translation flags (half-pixel mode, caps hash)
-/// - a version constant baked into the JS persistent cache key derivation
+/// - translation flags (half-pixel mode, caps hash, translator version)
+/// - a version constant baked into the JS persistent cache key derivation (`CACHE_SCHEMA_VERSION`)
 ///
 /// The JS side is responsible for the canonical key derivation and versioning.
 /// Rust computes the same key to look up cached artifacts without translating.
@@ -89,6 +124,7 @@ fn compute_in_memory_key(dxbc: &[u8], flags: &ShaderTranslationFlags) -> InMemor
     let mut hasher = blake3::Hasher::new();
     hasher.update(VERSION);
     hasher.update(dxbc);
+    hasher.update(&flags.d3d9_translator_version.to_le_bytes());
     hasher.update(&[flags.half_pixel_center as u8]);
     match &flags.caps_hash {
         Some(caps_hash) => {
