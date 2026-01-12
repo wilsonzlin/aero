@@ -19,6 +19,21 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 
+function Assert-Elevated {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $p = New-Object Security.Principal.WindowsPrincipal($id)
+  if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "This script must be run from an elevated PowerShell prompt (Run as Administrator)."
+  }
+}
+
+$certutil = Get-Command certutil.exe -ErrorAction SilentlyContinue
+if (-not $certutil) {
+  throw "certutil.exe not found in PATH."
+}
+
+Assert-Elevated
+
 $CertPath = (Resolve-Path -LiteralPath $CertPath).Path
 
 Write-Host "Installing test certificate:"
