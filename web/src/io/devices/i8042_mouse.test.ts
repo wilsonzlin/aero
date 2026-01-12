@@ -100,4 +100,27 @@ describe("io/devices/I8042Controller (PS/2 mouse)", () => {
     expect(i8042.portRead(0x60, 1)).toBe(0x01);
     expect(i8042.portRead(0x60, 1)).toBe(0x00);
   });
+
+  it("sets X overflow bit when remote-mode read data clamps a large delta", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const i8042 = new I8042Controller(irqSink);
+
+    // Set remote mode.
+    i8042.portWrite(0x64, 1, 0xd4);
+    i8042.portWrite(0x60, 1, 0xf0);
+    expect(i8042.portRead(0x60, 1)).toBe(0xfa); // ACK
+
+    // Inject a delta larger than what one PS/2 packet can represent.
+    i8042.injectMouseMotion(300, 0, 0);
+
+    // Read data in remote mode.
+    i8042.portWrite(0x64, 1, 0xd4);
+    i8042.portWrite(0x60, 1, 0xeb);
+    expect(i8042.portRead(0x60, 1)).toBe(0xfa); // ACK
+
+    // Packet: status (bit6 overflow), dx saturated to 255, dy 0.
+    expect(i8042.portRead(0x60, 1)).toBe(0x48);
+    expect(i8042.portRead(0x60, 1)).toBe(0xff);
+    expect(i8042.portRead(0x60, 1)).toBe(0x00);
+  });
 }); 

@@ -853,13 +853,16 @@ class Ps2Mouse {
 
   #sendMovementPacket(): void {
     // PS/2 packet uses 9-bit signed deltas with explicit sign bits.
-    const dx = Math.max(-256, Math.min(255, this.dx | 0));
-    const dy = Math.max(-256, Math.min(255, this.dy | 0));
+    const rawDx = this.dx | 0;
+    const rawDy = this.dy | 0;
+    const dx = Math.max(-256, Math.min(255, rawDx));
+    const dy = Math.max(-256, Math.min(255, rawDy));
 
     let b0 = (this.buttons & 0x07) | 0x08;
     if (dx < 0) b0 |= 0x10;
     if (dy < 0) b0 |= 0x20;
-    // Overflow bits are ignored for now.
+    if (rawDx !== dx) b0 |= 0x40;
+    if (rawDy !== dy) b0 |= 0x80;
 
     this.#queueByte(b0);
     this.#queueByte(dx & 0xff);

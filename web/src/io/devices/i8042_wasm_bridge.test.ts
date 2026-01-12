@@ -182,6 +182,24 @@ describe("io/devices/i8042 WASM bridge", () => {
     }
   });
 
+  it("sets X overflow bit when remote-mode read data clamps a large delta", async () => {
+    const bridge = await createBridge();
+    if (!bridge) return;
+    try {
+      // Enter remote mode.
+      writeToMouse(bridge, 0xf0);
+      expect(drainOutput(bridge)).toEqual([0xfa]);
+
+      bridge.inject_mouse_move(300, 0);
+
+      // Read data (remote mode).
+      writeToMouse(bridge, 0xeb);
+      expect(drainOutput(bridge)).toEqual([0xfa, 0x48, 0xff, 0x00]);
+    } finally {
+      bridge.free();
+    }
+  });
+
   it("save_state/load_state roundtrips pending output", async () => {
     const bridge1 = await createBridge();
     if (!bridge1) return;
