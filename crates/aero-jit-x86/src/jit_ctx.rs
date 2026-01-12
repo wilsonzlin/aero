@@ -37,17 +37,36 @@ impl JitContext {
     ///
     /// The TLB array is left untouched (typically zeroed on allocation).
     pub fn write_header_to_mem(&self, mem: &mut [u8], base: usize) {
+        let end = base.checked_add(Self::BYTE_SIZE).unwrap_or_else(|| {
+            panic!(
+                "JitContext write out of bounds: base={base} size={} mem_len={} (overflow)",
+                Self::BYTE_SIZE,
+                mem.len()
+            )
+        });
         assert!(
-            base + Self::BYTE_SIZE <= mem.len(),
+            end <= mem.len(),
             "JitContext write out of bounds: base={base} size={} mem_len={}",
             Self::BYTE_SIZE,
             mem.len()
         );
 
-        let ram_base_off = base + (Self::RAM_BASE_OFFSET as usize);
+        let ram_base_off = base.checked_add(Self::RAM_BASE_OFFSET as usize).unwrap_or_else(|| {
+            panic!(
+                "JitContext ram_base offset overflow: base={base} off={} mem_len={}",
+                Self::RAM_BASE_OFFSET,
+                mem.len()
+            )
+        });
         mem[ram_base_off..ram_base_off + 8].copy_from_slice(&self.ram_base.to_le_bytes());
 
-        let tlb_salt_off = base + (Self::TLB_SALT_OFFSET as usize);
+        let tlb_salt_off = base.checked_add(Self::TLB_SALT_OFFSET as usize).unwrap_or_else(|| {
+            panic!(
+                "JitContext tlb_salt offset overflow: base={base} off={} mem_len={}",
+                Self::TLB_SALT_OFFSET,
+                mem.len()
+            )
+        });
         mem[tlb_salt_off..tlb_salt_off + 8].copy_from_slice(&self.tlb_salt.to_le_bytes());
     }
 }
