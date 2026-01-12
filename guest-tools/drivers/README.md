@@ -12,5 +12,5 @@ Typical layout is one folder per device (virtio-blk/net/snd/input, Aero GPU), bu
 Driver packages should also include any INF-referenced payload files alongside the INF (at minimum `.sys` + `.cat`, and optionally coinstallers/UMDs such as `*.dll`).
 Canonical naming:
 
-- Use `aerogpu` (not `aero-gpu`) for the AeroGPU driver directory name, matching the INF (`aerogpu.inf`) and source tree (`drivers/aerogpu/`).
+- Use `aerogpu` (not `aero-gpu`) for the AeroGPU driver directory name, matching the source tree (`drivers/aerogpu/`) and INF base name (`aerogpu*.inf`, e.g. `aerogpu_dx11.inf`).
   - Legacy compatibility: the packager/CI tooling and validators accept `aero-gpu` as an alias for `aerogpu`.
