@@ -203,6 +203,8 @@ let syntheticUsbKeyboard: UsbHidPassthroughBridge | null = null;
 let syntheticUsbMouse: UsbHidPassthroughBridge | null = null;
 let syntheticUsbGamepad: UsbHidPassthroughBridge | null = null;
 let syntheticUsbHidAttached = false;
+let syntheticUsbKeyboardPendingReport: Uint8Array | null = null;
+let syntheticUsbGamepadPendingReport: Uint8Array | null = null;
 let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
@@ -2861,6 +2863,7 @@ function startIoIpcServer(): void {
         }
       }
       mgr.tick(nowMs);
+      flushSyntheticUsbHidPendingInputReports();
       drainSyntheticUsbHidOutputReports();
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
@@ -3088,6 +3091,14 @@ function drainSyntheticUsbHidReports(): void {
   const gamepad = syntheticUsbGamepad;
 
   const keyboardConfigured = safeSyntheticUsbHidConfigured(keyboard);
+  if (keyboardConfigured && keyboard && syntheticUsbKeyboardPendingReport) {
+    try {
+      keyboard.push_input_report(0, syntheticUsbKeyboardPendingReport);
+    } catch {
+      // ignore
+    }
+    syntheticUsbKeyboardPendingReport = null;
+  }
   for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
     let report: Uint8Array | null = null;
     try {
@@ -3096,11 +3107,17 @@ function drainSyntheticUsbHidReports(): void {
       break;
     }
     if (!(report instanceof Uint8Array)) break;
-    if (!keyboardConfigured || !keyboard) continue;
-    try {
-      keyboard.push_input_report(0, report);
-    } catch {
-      // ignore
+    if (keyboardConfigured && keyboard) {
+      try {
+        keyboard.push_input_report(0, report);
+      } catch {
+        // ignore
+      }
+    } else {
+      // For stateful devices like the keyboard, keep the latest report so we can send it once the
+      // guest configures the device. This avoids the "held key during enumeration" edge case
+      // where the guest never sees the pressed state.
+      syntheticUsbKeyboardPendingReport = report;
     }
   }
 
@@ -3122,6 +3139,14 @@ function drainSyntheticUsbHidReports(): void {
   }
 
   const gamepadConfigured = safeSyntheticUsbHidConfigured(gamepad);
+  if (gamepadConfigured && gamepad && syntheticUsbGamepadPendingReport) {
+    try {
+      gamepad.push_input_report(0, syntheticUsbGamepadPendingReport);
+    } catch {
+      // ignore
+    }
+    syntheticUsbGamepadPendingReport = null;
+  }
   for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
     let report: Uint8Array | null = null;
     try {
@@ -3130,12 +3155,40 @@ function drainSyntheticUsbHidReports(): void {
       break;
     }
     if (!(report instanceof Uint8Array)) break;
-    if (!gamepadConfigured || !gamepad) continue;
+    if (gamepadConfigured && gamepad) {
+      try {
+        gamepad.push_input_report(0, report);
+      } catch {
+        // ignore
+      }
+    } else {
+      syntheticUsbGamepadPendingReport = report;
+    }
+  }
+}
+
+function flushSyntheticUsbHidPendingInputReports(): void {
+  // Lazy-init so older WASM builds (or unit tests) can run without the UHCI/hid-passthrough exports.
+  maybeInitSyntheticUsbHidDevices();
+
+  const keyboard = syntheticUsbKeyboard;
+  if (keyboard && syntheticUsbKeyboardPendingReport && safeSyntheticUsbHidConfigured(keyboard)) {
     try {
-      gamepad.push_input_report(0, report);
+      keyboard.push_input_report(0, syntheticUsbKeyboardPendingReport);
     } catch {
       // ignore
     }
+    syntheticUsbKeyboardPendingReport = null;
+  }
+
+  const gamepad = syntheticUsbGamepad;
+  if (gamepad && syntheticUsbGamepadPendingReport && safeSyntheticUsbHidConfigured(gamepad)) {
+    try {
+      gamepad.push_input_report(0, syntheticUsbGamepadPendingReport);
+    } catch {
+      // ignore
+    }
+    syntheticUsbGamepadPendingReport = null;
   }
 }
 
@@ -3188,6 +3241,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   const virtioKeyboardOk = virtioKeyboard?.driverOk() ?? false;
   const virtioMouseOk = virtioMouse?.driverOk() ?? false;
 
+  // Ensure synthetic USB HID devices exist (when supported) before processing this batch so we
+  // can consistently decide whether to use the legacy PS/2 scancode injection path.
+  maybeInitSyntheticUsbHidDevices();
+
   const base = 2;
   for (let i = 0; i < count; i++) {
     const off = base + i * 4;
@@ -3202,6 +3259,8 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           if (keyCode !== null) {
             virtioKeyboard.injectKey(keyCode, pressed);
           }
+        } else {
+          usbHid?.keyboard_event(usage, pressed);
         }
         break;
       }
@@ -3243,7 +3302,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Payload: a=packed bytes LE, b=len.
         const packed = words[off + 2] >>> 0;
         const len = words[off + 3] >>> 0;
-        if (!virtioKeyboardOk && i8042) {
+        // When the synthetic USB HID devices are attached, prefer the USB keyboard path and
+        // avoid double-injecting via both PS/2 and USB (which would produce duplicated input
+        // in the guest).
+        if (!virtioKeyboardOk && i8042 && !syntheticUsbHidAttached) {
           const bytes = new Uint8Array(len);
           for (let j = 0; j < len; j++) {
             bytes[j] = (packed >>> (j * 8)) & 0xff;
@@ -3312,6 +3374,8 @@ function shutdown(): void {
       syntheticUsbGamepad?.free();
       syntheticUsbGamepad = null;
       syntheticUsbHidAttached = false;
+      syntheticUsbKeyboardPendingReport = null;
+      syntheticUsbGamepadPendingReport = null;
 
       webUsbGuestBridge = null;
 
