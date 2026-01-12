@@ -62,6 +62,8 @@ param(
 
   # If set, inject deterministic virtio-input keyboard/mouse events via QMP (`input-send-event`) and
   # require the guest selftest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
+  # The harness also prints a host marker for the injection step:
+  #   AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|...
   [Parameter(Mandatory = $false)]
   [Alias("EnableVirtioInputEvents")]
   [switch]$WithVirtioInputEvents,

@@ -723,7 +723,8 @@ def main() -> int:
         action="store_true",
         help=(
             "Inject deterministic virtio-input keyboard/mouse events via QMP (input-send-event) and require the guest "
-            "virtio-input-events selftest marker to PASS."
+            "virtio-input-events selftest marker to PASS. Also emits a host marker: "
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|..."
         ),
     )
     parser.add_argument(
