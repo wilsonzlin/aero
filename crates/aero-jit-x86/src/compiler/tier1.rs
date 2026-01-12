@@ -52,7 +52,17 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     options: Tier1WasmOptions,
 ) -> Result<Tier1Compilation, Tier1CompileError> {
     let block = discover_block_mode(bus, entry_rip, limits, bitness);
-    let byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
+    // `byte_len` tracks the byte span of *guest code bytes that are executed by the compiled
+    // block* for code version guards.
+    //
+    // If the last decoded instruction is `Invalid`, Tier-1 side-exits to the interpreter at that
+    // instruction's RIP and does not execute it, so we exclude it from the covered byte range.
+    let mut byte_len: u32 = block.insts.iter().map(|inst| inst.len as u32).sum();
+    if let Some(last) = block.insts.last() {
+        if matches!(last.kind, InstKind::Invalid) {
+            byte_len = byte_len.saturating_sub(last.len as u32);
+        }
+    }
     let instruction_count = {
         let mut count = u32::try_from(block.insts.len()).unwrap_or(u32::MAX);
         if matches!(
