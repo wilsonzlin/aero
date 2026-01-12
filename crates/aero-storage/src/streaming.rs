@@ -34,12 +34,13 @@ const CACHE_META_VERSION: u32 = 2;
 // Bound per-request allocation size when streaming from untrusted servers. `StreamingDisk`
 // downloads whole chunks into memory before persisting them to the cache backend, so the
 // chunk size must remain reasonably small.
-const MAX_STREAMING_CHUNK_SIZE: u64 = 64 * 1024 * 1024; // 64 MiB
-                                                        // Bound best-effort sequential prefetch. When `read_ahead_chunks` is misconfigured (or attacker
-                                                        // controlled), prefetching too far ahead can cause large background downloads and cache growth.
-                                                        //
-                                                        // We cap both the number of chunks and the total prefetched byte volume to keep the work bounded
-                                                        // even when `chunk_size` is very small.
+// 64 MiB.
+const MAX_STREAMING_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
+// Bound best-effort sequential prefetch. When `read_ahead_chunks` is misconfigured (or attacker
+// controlled), prefetching too far ahead can cause large background downloads and cache growth.
+//
+// We cap both the number of chunks and the total prefetched byte volume to keep the work bounded
+// even when `chunk_size` is very small.
 const MAX_STREAMING_READ_AHEAD_CHUNKS: u64 = 1024;
 const MAX_STREAMING_READ_AHEAD_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
 

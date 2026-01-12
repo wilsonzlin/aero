@@ -335,7 +335,10 @@ mod jit_abi_constants_tests {
         assert_eq!(read_u32(&obj, "jit_tlb_flag_read"), TLB_FLAG_READ as u32);
         assert_eq!(read_u32(&obj, "jit_tlb_flag_write"), TLB_FLAG_WRITE as u32);
         assert_eq!(read_u32(&obj, "jit_tlb_flag_exec"), TLB_FLAG_EXEC as u32);
-        assert_eq!(read_u32(&obj, "jit_tlb_flag_is_ram"), TLB_FLAG_IS_RAM as u32);
+        assert_eq!(
+            read_u32(&obj, "jit_tlb_flag_is_ram"),
+            TLB_FLAG_IS_RAM as u32
+        );
         assert_eq!(read_u32(&obj, "tier2_ctx_offset"), TIER2_CTX_OFFSET);
         assert_eq!(read_u32(&obj, "tier2_ctx_size"), TIER2_CTX_SIZE);
         assert_eq!(
