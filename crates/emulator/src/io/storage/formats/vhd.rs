@@ -21,6 +21,14 @@ const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
 // Bound bitmap caching when reading large fully-allocated dynamic VHDs.
 const VHD_BITMAP_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
+fn try_alloc_zeroed(len: usize) -> DiskResult<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| DiskError::QuotaExceeded)?;
+    buf.resize(len, 0);
+    Ok(buf)
+}
+
 #[derive(Debug, Clone)]
 struct VhdFooter {
     data_offset: u64,
@@ -469,7 +477,7 @@ impl<S: ByteStorage> VhdDisk<S> {
         }
         let bytes = usize::try_from(bitmap_size)
             .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
-        let mut bitmap = vec![0u8; bytes];
+        let mut bitmap = try_alloc_zeroed(bytes)?;
         self.storage.read_at(block_start, &mut bitmap)?;
         let _ = self.bitmap_cache.push(block_start, bitmap.clone());
         Ok(bitmap)
@@ -536,9 +544,11 @@ impl<S: ByteStorage> VhdDisk<S> {
         self.storage.write_at(new_footer_offset, &footer.raw)?;
         self.storage.flush()?;
 
-        let _ = self
-            .bitmap_cache
-            .push(old_footer_offset, vec![0u8; bitmap_size_usize]);
+        // Best-effort: caching the zero bitmap avoids re-reading from storage, but allocation
+        // failure should not take down the emulator or block writes.
+        if let Ok(bitmap) = try_alloc_zeroed(bitmap_size_usize) {
+            let _ = self.bitmap_cache.push(old_footer_offset, bitmap);
+        }
         Ok(old_footer_offset)
     }
 }

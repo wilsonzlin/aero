@@ -24,6 +24,14 @@ const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const QCOW2_L2_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 const QCOW2_REFCOUNT_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
 
+fn try_alloc_zeroed(len: usize) -> DiskResult<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| DiskError::QuotaExceeded)?;
+    buf.resize(len, 0);
+    Ok(buf)
+}
+
 #[derive(Debug, Clone)]
 struct Qcow2Header {
     cluster_bits: u32,
@@ -504,9 +512,12 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         self.validate_cluster_present(l2_offset, "qcow2 l2 table truncated")?;
         let cluster_size =
             usize::try_from(self.cluster_size()).map_err(|_| DiskError::OutOfBounds)?;
-        let mut buf = vec![0u8; cluster_size];
+        let mut buf = try_alloc_zeroed(cluster_size)?;
         self.storage.read_at(l2_offset, &mut buf)?;
-        let mut entries = Vec::with_capacity(cluster_size / 8);
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(cluster_size / 8)
+            .map_err(|_| DiskError::QuotaExceeded)?;
         for chunk in buf.chunks_exact(8) {
             entries.push(be_u64(chunk));
         }
@@ -737,9 +748,12 @@ impl<S: ByteStorage> Qcow2Disk<S> {
         self.validate_cluster_present(block_offset, "qcow2 refcount block truncated")?;
         let cluster_size =
             usize::try_from(self.cluster_size()).map_err(|_| DiskError::OutOfBounds)?;
-        let mut buf = vec![0u8; cluster_size];
+        let mut buf = try_alloc_zeroed(cluster_size)?;
         self.storage.read_at(block_offset, &mut buf)?;
-        let mut entries = Vec::with_capacity(cluster_size / 2);
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(cluster_size / 2)
+            .map_err(|_| DiskError::QuotaExceeded)?;
         for chunk in buf.chunks_exact(2) {
             entries.push(u16::from_be_bytes([chunk[0], chunk[1]]));
         }
