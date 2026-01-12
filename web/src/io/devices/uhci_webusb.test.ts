@@ -43,6 +43,8 @@ describe("UhciWebUsbPciDevice", () => {
       },
       irqSink: { raiseIrq, lowerIrq },
     });
+    // Allow the controller to DMA into guest memory.
+    dev.onPciCommandWrite?.(1 << 2);
 
     dev.tick(1000);
     expect(step_frames).not.toHaveBeenCalled();

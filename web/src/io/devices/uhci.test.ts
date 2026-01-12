@@ -52,6 +52,8 @@ describe("io/devices/UhciPciDevice", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new UhciPciDevice({ bridge, irqSink });
+    // Allow the controller to DMA into guest memory.
+    dev.onPciCommandWrite(1 << 2);
 
     dev.tick(0);
     dev.tick(8);
@@ -86,6 +88,8 @@ describe("io/devices/UhciPciDevice", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new UhciPciDevice({ bridge, irqSink });
+    // Allow the controller to DMA into guest memory.
+    dev.onPciCommandWrite(1 << 2);
     dev.tick(0);
     dev.tick(10_000);
 
@@ -105,6 +109,8 @@ describe("io/devices/UhciPciDevice", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new UhciPciDevice({ bridge, irqSink });
+    // Allow the controller to DMA into guest memory.
+    dev.onPciCommandWrite(1 << 2);
     dev.tick(0);
     dev.tick(8);
 
@@ -124,6 +130,8 @@ describe("io/devices/UhciPciDevice", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new UhciPciDevice({ bridge, irqSink });
+    // Allow the controller to DMA into guest memory.
+    dev.onPciCommandWrite(1 << 2);
     dev.tick(0);
     dev.tick(3);
 

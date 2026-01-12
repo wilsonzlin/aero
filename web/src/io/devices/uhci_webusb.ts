@@ -48,6 +48,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
 
   #lastTickMs: number | null = null;
   #accumulatedMs = 0;
+  #pciCommand = 0;
   #irqLevel = false;
   #destroyed = false;
 
@@ -80,6 +81,14 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     this.#syncIrq();
   }
 
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+    this.#pciCommand = command & 0xffff;
+
+    // Interrupt Disable bit can immediately drop INTx level.
+    this.#syncIrq();
+  }
+
   tick(nowMs: number): void {
     if (this.#destroyed) return;
 
@@ -93,6 +102,18 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     this.#lastTickMs = nowMs;
 
     if (!Number.isFinite(deltaMs) || deltaMs <= 0) {
+      this.#syncIrq();
+      return;
+    }
+
+    // PCI Bus Master Enable (command bit 2) gates whether the controller is allowed to DMA into
+    // guest memory (frame list / QH / TD traversal and data stage transfers).
+    //
+    // When bus mastering is disabled, drop elapsed time so we do not "catch up" later; DMA must not
+    // occur until the guest enables BME.
+    const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+    if (!busMasterEnabled) {
+      this.#accumulatedMs = 0;
       this.#syncIrq();
       return;
     }
@@ -129,6 +150,12 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     try {
       asserted = Boolean(this.#bridge.irq_level());
     } catch {
+      asserted = false;
+    }
+
+    // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must not
+    // assert INTx.
+    if ((this.#pciCommand & (1 << 10)) !== 0) {
       asserted = false;
     }
     if (asserted === this.#irqLevel) return;
