@@ -976,6 +976,11 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 		if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
 			return STATUS_INVALID_PARAMETER;
 		}
+		/*
+		 * Ensure all descriptor / avail ring writes are globally visible before
+		 * ringing the doorbell.
+		 */
+		VirtioPciModernMb(t);
 		*(volatile UINT16 *)(t->NotifyBase + (UINT32)byte_off) = q;
 		VirtioPciModernMb(t);
 		return STATUS_SUCCESS;
@@ -998,6 +1003,11 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 	}
 
 	/* Notify uses a 16-bit write by contract. */
+	/*
+	 * Ensure all descriptor / avail ring writes are globally visible before
+	 * ringing the doorbell.
+	 */
+	VirtioPciModernMb(t);
 	*(volatile UINT16 *)(t->NotifyBase + (UINT32)byte_off) = q;
 	VirtioPciModernMb(t);
 	return STATUS_SUCCESS;

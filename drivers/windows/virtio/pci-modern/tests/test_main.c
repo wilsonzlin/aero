@@ -59,6 +59,9 @@ typedef struct _FAKE_DEV {
 	UINT16 MbForcedMsixConfigMismatch;
 	BOOLEAN MbForceQueueMsixVectorMismatch;
 	UINT16 MbForcedQueueMsixVectorMismatch;
+	BOOLEAN MbPoisonNotifyOnNextMb;
+	UINT32 MbPoisonNotifyBar0Off;
+	UINT16 MbPoisonNotifyValue;
 } FAKE_DEV;
 
 static void WriteLe16(UINT8 *p, UINT16 v)
@@ -298,6 +301,19 @@ static void OsMb(void *ctx)
 	}
 	if (dev->MbForceQueueMsixVectorMismatch) {
 		common->queue_msix_vector = dev->MbForcedQueueMsixVectorMismatch;
+	}
+
+	/*
+	 * One-shot "poison" write hook used by notify ordering tests.
+	 *
+	 * When armed, the next MemoryBarrier() call will overwrite the notify
+	 * register. This lets unit tests detect whether the transport issues a
+	 * barrier before or only after ringing the notify doorbell.
+	 */
+	if (dev->MbPoisonNotifyOnNextMb) {
+		dev->MbPoisonNotifyOnNextMb = FALSE;
+		assert(dev->MbPoisonNotifyBar0Off + sizeof(UINT16) <= BAR0_LEN);
+		*(volatile UINT16 *)(dev->Bar0 + dev->MbPoisonNotifyBar0Off) = dev->MbPoisonNotifyValue;
 	}
 }
 
@@ -1134,6 +1150,42 @@ static void TestQueueMsixVectorMismatchFails(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestNotifyHasPreBarrier(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	/*
+	 * Pre-notify barrier regression test:
+	 *
+	 * Arm a one-shot hook that overwrites the notify register on the next
+	 * MemoryBarrier() callback.
+	 *
+	 * - Old implementation: only does a post-doorbell barrier, so the hook runs
+	 *   after the doorbell write and overwrites it (fail).
+	 * - Fixed implementation: does a pre-doorbell barrier, so the hook runs
+	 *   before the doorbell write and is overwritten by it (pass).
+	 */
+	*(UINT16 *)(dev.Bar0 + 0x1000) = 0xFFFFu;
+	dev.MbPoisonNotifyOnNextMb = TRUE;
+	dev.MbPoisonNotifyBar0Off = 0x1000u;
+	dev.MbPoisonNotifyValue = 0xFFFFu;
+
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_SUCCESS);
+	assert(*(UINT16 *)(dev.Bar0 + 0x1000) == 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestCompatInitAcceptsRelocatedCaps(void)
 {
 	FAKE_DEV dev;
@@ -1513,6 +1565,7 @@ int main(void)
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestNegotiateFeaturesRejectsRequiredPackedRing();
 	TestQueueSetupAndNotify();
+	TestNotifyHasPreBarrier();
 	TestMsixConfigVectorRefusedFails();
 	TestQueueMsixVectorRefusedFails();
 	TestMsixConfigVectorMismatchFails();
