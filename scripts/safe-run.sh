@@ -171,12 +171,16 @@ should_retry_rustc_thread_error() {
     # - "failed to spawn work thread: ... Resource temporarily unavailable"
     # - "failed to spawn coordinator thread: ... Resource temporarily unavailable"
     # - "Unable to install ctrlc handler: ... Resource temporarily unavailable"
+    # - "fork: retry: Resource temporarily unavailable"
     # - "ThreadPoolBuildError { ... Resource temporarily unavailable }" (Rayon thread pool init)
     # - "std::system_error: Resource temporarily unavailable" (observed from linkers like lld)
     if grep -q "Unable to install ctrlc handler" "${stderr_log}"; then
         return 0
     fi
     if grep -q "failed to create helper thread" "${stderr_log}"; then
+        return 0
+    fi
+    if grep -q "fork: retry: Resource temporarily unavailable" "${stderr_log}"; then
         return 0
     fi
     if grep -q "failed to spawn" "${stderr_log}" \
