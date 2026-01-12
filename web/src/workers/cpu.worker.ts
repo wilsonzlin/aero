@@ -347,9 +347,8 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   let api: WasmApi;
   try {
     // The WASM module uses a custom allocator that reserves a fixed low-address
-    // region of linear memory for the runtime (so guest RAM can live above it).
-    //
-    // When we
+    // region of linear memory for the runtime (currently 128MiB) so guest RAM can
+    // live above it. When we
     // instantiate the module without a coordinator-provided `WebAssembly.Memory`,
     // the wasm-bindgen glue defaults to a ~1MiB memory, leaving essentially no
     // heap and causing `HdaPlaybackDemo::new()` to abort on allocation.
