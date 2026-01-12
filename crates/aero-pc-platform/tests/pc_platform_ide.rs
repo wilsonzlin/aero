@@ -142,6 +142,48 @@ fn pc_platform_ide_pio_reads_boot_sector() {
 }
 
 #[test]
+fn pc_platform_ide_pio_write_multi_sector_round_trip() {
+    let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Two-sector payload with distinct halves.
+    let mut payload = vec![0u8; 2 * SECTOR_SIZE];
+    payload[..SECTOR_SIZE].fill(0x11);
+    payload[SECTOR_SIZE..].fill(0x22);
+
+    // WRITE SECTORS for LBA 0, 2 sectors.
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 2); // count
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0); // lba0
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // lba1
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // lba2
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x30); // WRITE SECTORS
+
+    for i in 0..(payload.len() / 2) {
+        let w = u16::from_le_bytes([payload[i * 2], payload[i * 2 + 1]]);
+        pc.io.write(PRIMARY_PORTS.cmd_base, 2, u32::from(w));
+    }
+
+    // Re-read via PIO to validate the write stuck.
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 2); // count
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0); // lba0
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // lba1
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // lba2
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+
+    let mut readback = vec![0u8; 2 * SECTOR_SIZE];
+    for i in 0..(readback.len() / 2) {
+        let w = pc.io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+        readback[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+
+    assert_eq!(readback, payload);
+}
+
+#[test]
 fn pc_platform_ide_dma_and_irq14_routing_work() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
@@ -218,6 +260,104 @@ fn pc_platform_ide_dma_and_irq14_routing_work() {
     let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_ide_dma_requires_pci_bus_master_enable() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[..4].copy_from_slice(b"DMA!");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    let bdf = IDE_PIIX3.bdf;
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+
+    // PRD table at 0x1000: one entry, end-of-table, 512 bytes.
+    let prd_addr = 0x1000u64;
+    let read_buf = 0x2000u64;
+    pc.memory.write_u32(prd_addr, read_buf as u32);
+    pc.memory.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    pc.memory.write_u16(prd_addr + 6, 0x8000);
+    pc.io.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Ensure IO decode is enabled but bus mastering is disabled.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+
+    // Issue READ DMA (LBA 0, 1 sector) and start bus master.
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+    pc.io.write(bm_base, 1, 0x09);
+
+    pc.process_ide();
+    assert_eq!(pc.memory.read_u8(read_buf), 0, "DMA should be gated off");
+
+    // Now enable bus mastering and retry.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+    pc.process_ide();
+
+    let mut out = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out, b"DMA!");
+}
+
+#[test]
+fn pc_platform_ide_dma_scatter_gather_prd_splits_transfer() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[..256].fill(0xAA);
+    sector0[256..].fill(0xBB);
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    let bdf = IDE_PIIX3.bdf;
+    let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
+
+    // Enable IO decode + bus mastering.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+
+    // PRD table at 0x1000: two 256-byte segments, end-of-table on second.
+    let prd_addr = 0x1000u64;
+    let buf1 = 0x2000u64;
+    let buf2 = 0x2100u64;
+    // Entry 0.
+    pc.memory.write_u32(prd_addr, buf1 as u32);
+    pc.memory.write_u16(prd_addr + 4, 256);
+    pc.memory.write_u16(prd_addr + 6, 0);
+    // Entry 1 (EOT).
+    pc.memory.write_u32(prd_addr + 8, buf2 as u32);
+    pc.memory.write_u16(prd_addr + 12, 256);
+    pc.memory.write_u16(prd_addr + 14, 0x8000);
+
+    pc.io.write(bm_base + 4, 4, prd_addr as u32);
+
+    // READ DMA for LBA 0, 1 sector.
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    pc.io.write(bm_base, 1, 0x09);
+    pc.process_ide();
+
+    let mut out1 = vec![0u8; 256];
+    let mut out2 = vec![0u8; 256];
+    pc.memory.read_physical(buf1, &mut out1);
+    pc.memory.read_physical(buf2, &mut out2);
+    assert!(out1.iter().all(|b| *b == 0xAA));
+    assert!(out2.iter().all(|b| *b == 0xBB));
 }
 
 fn send_atapi_packet(pc: &mut PcPlatform, base: u16, features: u8, pkt: &[u8; 12], byte_count: u16) {
