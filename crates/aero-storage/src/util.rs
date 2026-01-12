@@ -4,12 +4,12 @@ pub fn align_up_u64(value: u64, alignment: u64) -> Result<u64> {
     if alignment == 0 {
         return Err(DiskError::OffsetOverflow);
     }
-    let mask = alignment - 1;
-    if value & mask == 0 {
+    let rem = value % alignment;
+    if rem == 0 {
         return Ok(value);
     }
     value
-        .checked_add(alignment - (value & mask))
+        .checked_add(alignment - rem)
         .ok_or(DiskError::OffsetOverflow)
 }
 
@@ -32,4 +32,34 @@ pub fn checked_range(offset: u64, len: usize, capacity: u64) -> Result<()> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn align_up_u64_supports_non_power_of_two_alignments() {
+        assert_eq!(align_up_u64(0, 10).unwrap(), 0);
+        assert_eq!(align_up_u64(20, 10).unwrap(), 20);
+        assert_eq!(align_up_u64(1, 10).unwrap(), 10);
+        assert_eq!(align_up_u64(12, 10).unwrap(), 20);
+    }
+
+    #[test]
+    fn align_up_u64_errors_on_zero_alignment() {
+        assert!(matches!(
+            align_up_u64(1, 0).unwrap_err(),
+            DiskError::OffsetOverflow
+        ));
+    }
+
+    #[test]
+    fn align_up_u64_reports_overflow() {
+        // u64::MAX is not 10-byte aligned and cannot be rounded up without overflowing.
+        assert!(matches!(
+            align_up_u64(u64::MAX, 10).unwrap_err(),
+            DiskError::OffsetOverflow
+        ));
+    }
 }
