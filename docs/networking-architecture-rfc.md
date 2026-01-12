@@ -216,9 +216,10 @@ The Option C implementation is split into a small set of concrete components:
   - Emulator-side abstraction (`TunnelBackend` / `L2TunnelBackend`) that the NIC device model calls
     into, instead of running a full TCP/IP stack in WASM.
   - In-memory queues; useful for native test harnesses and non-browser hosts.
-- `crates/emulator/src/io/net/l2_ring_backend.rs`
+- `crates/aero-net-backend`
   - Ring-buffer-backed `L2TunnelBackend` implementation for the browser runtime (`NET_TX`/`NET_RX`
     AIPC queues in `ioIpcSab`).
+  - (Re-exported via `crates/emulator/src/io/net/l2_ring_backend.rs` for compatibility.)
 - `crates/aero-l2-proxy`
   - Unprivileged proxy service implementing a user-space Ethernet/IP stack + NAT + policy.
   - Terminates the L2 tunnel and returns frames (ARP/DHCP/DNS/etc.) back to the browser.

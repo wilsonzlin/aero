@@ -92,7 +92,8 @@ Planned/active code paths:
 
 - Browser tunnel client: `web/src/net/l2Tunnel.ts`
 - Emulator tunnel abstraction: `crates/emulator/src/io/net/tunnel_backend.rs`
-- Emulator ring-backed bridge (browser): `crates/emulator/src/io/net/l2_ring_backend.rs`
+- Ring-backed bridge (browser): `crates/aero-net-backend`
+  - (Re-exported via `crates/emulator/src/io/net/l2_ring_backend.rs` for compatibility.)
 - WebSocket L2 proxy (unprivileged): `crates/aero-l2-proxy`
 - WebRTC transport (optional): `proxy/webrtc-udp-relay` (DataChannel carrying the L2 tunnel)
 
