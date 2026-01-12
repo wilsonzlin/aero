@@ -72,6 +72,7 @@ This framing enables **backward-compatible schema evolution**:
   - Canonical Windows 7 storage topology mapping (see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md)):
     - `disk_id = 0` → AHCI ICH9 port 0 HDD
     - `disk_id = 1` → IDE PIIX3 secondary master ATAPI CD-ROM
+    - `disk_id = 2` → (optional) IDE PIIX3 primary master ATA disk
 - `CPUS` entries are written in canonical order: ascending `apic_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
 
