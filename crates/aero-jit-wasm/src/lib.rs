@@ -90,10 +90,6 @@ pub fn compile_tier1_block(
     inline_tlb: bool,
     memory_shared: bool,
 ) -> Result<JsValue, JsValue> {
-    // `Tier1WasmOptions` does not yet have a `memory_shared` flag (see task description). Keep the
-    // JS surface stable and plumb it through once the option exists.
-    let _ = memory_shared;
-
     let code_len = code_bytes.length() as usize;
     if code_len > MAX_CODE_BYTES {
         return Err(js_error(format!(
@@ -119,6 +115,13 @@ pub fn compile_tier1_block(
 
     let mut options = Tier1WasmOptions::default();
     options.inline_tlb = inline_tlb;
+    options.memory_shared = memory_shared;
+    if memory_shared && options.memory_max_pages.is_none() {
+        // Shared memories require a declared maximum. We pick the largest valid wasm32 page count
+        // (4GiB / 64KiB) to keep the generated block modules compatible with a wide range of guest
+        // memory configurations.
+        options.memory_max_pages = Some(65_536);
+    }
 
     let compilation =
         compile_tier1_block_with_options(&bus, entry_rip, limits, options).map_err(|e| {
