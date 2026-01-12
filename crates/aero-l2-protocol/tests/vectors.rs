@@ -247,16 +247,17 @@ fn l2_tunnel_vectors_match_golden_bytes() {
                     let code = json_u16(json_get(v, "code", &ctx), &format!("{ctx}.code"));
                     let message = json_str(json_get(v, "message", &ctx), &format!("{ctx}.message"));
 
-                    // Verify the payload matches the documented structured encoding:
-                    // code (u16 BE) | msg_len (u16 BE) | msg (UTF-8)
-                    let mut expected_payload = Vec::new();
-                    expected_payload.extend_from_slice(&code.to_be_bytes());
-                    expected_payload.extend_from_slice(&(message.len() as u16).to_be_bytes());
-                    expected_payload.extend_from_slice(message.as_bytes());
+                    let expected_payload =
+                        encode_structured_error_payload(code, message, usize::MAX);
                     assert_eq!(
                         expected_payload, payload,
                         "{name}: ERROR payload must match structured encoding"
                     );
+
+                    let decoded = decode_structured_error_payload(&payload)
+                        .expect("{name}: expected structured ERROR payload");
+                    assert_eq!(decoded.0, code, "{name}: structured ERROR code");
+                    assert_eq!(decoded.1, message, "{name}: structured ERROR message");
                 }
             }
             other => panic!("{name}: unexpected l2 tunnel message type 0x{other:02x}"),
