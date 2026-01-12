@@ -55,13 +55,13 @@ describe("WebSocketUdpProxyClient", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketUdpProxyClient("ws://example.com", () => {}, {
+      const client = new WebSocketUdpProxyClient("ws://gateway.example.com", () => {}, {
         auth: { apiKey: "secret" },
       });
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("ws://example.com/udp");
+      expect(lastSocket!.url).toBe("ws://gateway.example.com/udp");
       lastSocket!.triggerOpen();
 
       expect(lastSocket!.sent[0]).toBe(JSON.stringify({ type: "auth", token: "secret", apiKey: "secret" }));
@@ -86,11 +86,11 @@ describe("WebSocketUdpProxyClient", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketUdpProxyClient("https://example.com/base", () => {});
+      const client = new WebSocketUdpProxyClient("https://gateway.example.com/base", () => {});
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
+      expect(lastSocket!.url).toBe("wss://gateway.example.com/base/udp");
 
       lastSocket!.triggerOpen();
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
@@ -107,11 +107,11 @@ describe("WebSocketUdpProxyClient", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketUdpProxyClient("https://example.com/base/", () => {});
+      const client = new WebSocketUdpProxyClient("https://gateway.example.com/base/", () => {});
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
+      expect(lastSocket!.url).toBe("wss://gateway.example.com/base/udp");
 
       lastSocket!.triggerOpen();
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
@@ -128,11 +128,11 @@ describe("WebSocketUdpProxyClient", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketUdpProxyClient("http://example.com/base", () => {});
+      const client = new WebSocketUdpProxyClient("http://gateway.example.com/base", () => {});
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("ws://example.com/base/udp");
+      expect(lastSocket!.url).toBe("ws://gateway.example.com/base/udp");
 
       lastSocket!.triggerOpen();
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
@@ -149,11 +149,11 @@ describe("WebSocketUdpProxyClient", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketUdpProxyClient("wss://example.com/base", () => {});
+      const client = new WebSocketUdpProxyClient("wss://gateway.example.com/base", () => {});
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
+      expect(lastSocket!.url).toBe("wss://gateway.example.com/base/udp");
 
       lastSocket!.triggerOpen();
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
@@ -170,14 +170,14 @@ describe("WebSocketUdpProxyClient", () => {
     const originalLocation = (g as { location?: unknown }).location;
 
     g.WebSocket = FakeWebSocket;
-    (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
+    (g as { location?: unknown }).location = { href: "https://gateway.example.com/app/index.html" };
 
     try {
       const client = new WebSocketUdpProxyClient("/base", () => {});
       const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
-      expect(lastSocket!.url).toBe("wss://example.com/base/udp");
+      expect(lastSocket!.url).toBe("wss://gateway.example.com/base/udp");
 
       lastSocket!.triggerOpen();
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));

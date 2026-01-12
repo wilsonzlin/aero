@@ -38,13 +38,13 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpProxyClient("https://example.com/base", () => {});
+      const client = new WebSocketTcpProxyClient("https://gateway.example.com/base", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("wss:");
-      expect(url.hostname).toBe("example.com");
+      expect(url.hostname).toBe("gateway.example.com");
       expect(url.pathname).toBe("/base/tcp");
       expect(url.searchParams.get("v")).toBe("1");
       expect(url.searchParams.get("host")).toBe("127.0.0.1");
@@ -61,13 +61,13 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpProxyClient("https://example.com/base/", () => {});
+      const client = new WebSocketTcpProxyClient("https://gateway.example.com/base/", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("wss:");
-      expect(url.hostname).toBe("example.com");
+      expect(url.hostname).toBe("gateway.example.com");
       expect(url.pathname).toBe("/base/tcp");
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -81,13 +81,13 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpProxyClient("http://example.com/base", () => {});
+      const client = new WebSocketTcpProxyClient("http://gateway.example.com/base", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("ws:");
-      expect(url.hostname).toBe("example.com");
+      expect(url.hostname).toBe("gateway.example.com");
       expect(url.pathname).toBe("/base/tcp");
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -101,13 +101,13 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpProxyClient("ws://example.com/base", () => {});
+      const client = new WebSocketTcpProxyClient("ws://gateway.example.com/base", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("ws:");
-      expect(url.hostname).toBe("example.com");
+      expect(url.hostname).toBe("gateway.example.com");
       expect(url.pathname).toBe("/base/tcp");
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -121,13 +121,13 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpProxyClient("wss://example.com/base", () => {});
+      const client = new WebSocketTcpProxyClient("wss://gateway.example.com/base", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("wss:");
-      expect(url.hostname).toBe("example.com");
+      expect(url.hostname).toBe("gateway.example.com");
       expect(url.pathname).toBe("/base/tcp");
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -141,17 +141,17 @@ describe("WebSocketTcpProxyClient URL normalization", () => {
     const originalLocation = (g as { location?: unknown }).location;
 
     g.WebSocket = FakeWebSocket;
-    (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
+    (g as { location?: unknown }).location = { href: "https://gateway.example.com/app/index.html" };
 
     try {
       const client = new WebSocketTcpProxyClient("/base", () => {});
       client.connect(1, "127.0.0.1", 1234);
 
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toContain("wss://example.com/base/tcp");
+      expect(FakeWebSocket.last!.url).toContain("wss://gateway.example.com/base/tcp");
       const url = new URL(FakeWebSocket.last!.url);
       expect(url.protocol).toBe("wss:");
-      expect(url.hostname).toBe("example.com");
+      expect(url.hostname).toBe("gateway.example.com");
       expect(url.pathname).toBe("/base/tcp");
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;

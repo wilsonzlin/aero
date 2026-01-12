@@ -55,9 +55,9 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpMuxProxyClient("https://example.com/base");
+      const client = new WebSocketTcpMuxProxyClient("https://gateway.example.com/base");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("wss://example.com/base/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("wss://gateway.example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -71,9 +71,9 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpMuxProxyClient("https://example.com/base/");
+      const client = new WebSocketTcpMuxProxyClient("https://gateway.example.com/base/");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("wss://example.com/base/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("wss://gateway.example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -87,9 +87,9 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpMuxProxyClient("http://example.com/base");
+      const client = new WebSocketTcpMuxProxyClient("http://gateway.example.com/base");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("ws://example.com/base/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("ws://gateway.example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -103,9 +103,9 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpMuxProxyClient("ws://example.com/base");
+      const client = new WebSocketTcpMuxProxyClient("ws://gateway.example.com/base");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("ws://example.com/base/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("ws://gateway.example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -119,9 +119,9 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     g.WebSocket = FakeWebSocket;
 
     try {
-      const client = new WebSocketTcpMuxProxyClient("wss://example.com/base");
+      const client = new WebSocketTcpMuxProxyClient("wss://gateway.example.com/base");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("wss://example.com/base/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("wss://gateway.example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
@@ -135,12 +135,12 @@ describe("WebSocketTcpMuxProxyClient URL normalization", () => {
     const originalLocation = (g as { location?: unknown }).location;
 
     g.WebSocket = FakeWebSocket;
-    (g as { location?: unknown }).location = { href: "https://example.com/app/index.html" };
+    (g as { location?: unknown }).location = { href: "https://gateway.example.com/app/index.html" };
 
     try {
       const client = new WebSocketTcpMuxProxyClient("/base");
       expect(FakeWebSocket.last).not.toBeNull();
-      expect(FakeWebSocket.last!.url).toBe("wss://example.com/base/tcp-mux");
+      expect(FakeWebSocket.last!.url).toBe("wss://gateway.example.com/base/tcp-mux");
       await client.shutdown();
     } finally {
       if (originalWebSocket === undefined) delete g.WebSocket;
