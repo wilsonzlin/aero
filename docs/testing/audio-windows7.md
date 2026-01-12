@@ -10,6 +10,11 @@ This is a **manual**, **reproducible** smoke test to validate that Windows 7’s
 > Windows 7 uses the inbox `hdaudbus.sys` (bus) + `hdaudio.sys` (function) drivers.
 > The goal of this smoke test is to confirm we do **not** need a custom driver just to get basic sound.
 
+Important:
+
+- This checklist is for the **baseline HDA device**.
+  - If your VM profile/device model is set to **virtio-snd**, Windows will enumerate a different device and this checklist won’t apply.
+
 ---
 
 ## Prerequisites (host/browser)
@@ -206,6 +211,11 @@ out?.ringBuffer?.header && {
 };
 ```
 
+Quick interpretation tips:
+
+- If `writeFrameIndex` is **not** increasing: the emulator side is not producing audio (guest DMA not progressing, HDA stream not running, etc).
+- If `readFrameIndex` is **not** increasing: the AudioWorklet consumer is not running (AudioContext suspended, worklet not connected, etc).
+
 ### 3.3 Observe guest DMA progress (if debug UI exists)
 
 If the build exposes HDA stream debug state, confirm that **guest-visible DMA progress advances** while the sound plays:
@@ -283,6 +293,9 @@ Collect:
   - Frequent underruns (buffer too small or CPU stalls)
 - **Overruns increasing**
   - Producer writing too fast or not respecting backpressure
+- **Ring indices don’t move**
+  - `writeFrameIndex` stuck: emulator isn’t writing to the ring (guest DMA / HDA stream / wiring issue)
+  - `readFrameIndex` stuck: AudioWorklet not consuming (AudioContext suspended / node not connected)
 
 Collect:
 
