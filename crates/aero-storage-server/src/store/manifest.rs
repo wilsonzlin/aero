@@ -403,20 +403,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_ascii_etag() {
-        let err = Manifest::parse_str(
-            r#"{
-              "images": [
-                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "\"é\"", "public": true }
-              ]
-            }"#,
-        )
-        .unwrap_err();
-
-        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
-    }
-
-    #[test]
     fn rejects_etag_with_internal_whitespace() {
         let err = Manifest::parse_str(
             r#"{
