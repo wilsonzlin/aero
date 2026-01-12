@@ -31,8 +31,12 @@ use crate::guest_layout::{RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES};
 // This is intentionally small (<< 1 page) so it doesn't materially reduce available heap.
 const HEAP_TAIL_GUARD_BYTES: usize = 64;
 
-// Ensure the tail guard can host at least two distinct u32 probe words (IO + CPU workers).
-const _: () = assert!(HEAP_TAIL_GUARD_BYTES >= 8);
+// Ensure the tail guard is large enough for the JS-side memory wiring probes.
+//
+// `web/src/runtime/wasm_memory_probe.ts` spreads probe contexts across a 16-word window (64 bytes)
+// to reduce cross-worker races, so reserve at least that much space at the end of the runtime
+// reserved region.
+const _: () = assert!(HEAP_TAIL_GUARD_BYTES >= 64);
 
 unsafe extern "C" {
     static __heap_base: u8;
