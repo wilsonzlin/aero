@@ -1571,12 +1571,33 @@ impl PcPlatform {
 
         if let Some(uhci) = self.uhci.as_ref() {
             const NS_PER_MS: u64 = 1_000_000;
+            let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+            let (command, bar4_base) = {
+                let mut pci_cfg = self.pci_cfg.borrow_mut();
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let bar4_base = cfg
+                    .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
+                    .map(|range| range.base)
+                    .unwrap_or(0);
+                (command, bar4_base)
+            };
+
+            // Keep the UHCI model's view of PCI config state in sync so it can apply bus mastering
+            // gating when used via `tick_1ms`.
+            let mut uhci = uhci.borrow_mut();
+            uhci.config_mut().set_command(command);
+            if bar4_base != 0 {
+                uhci.config_mut()
+                    .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
+            }
+
             self.uhci_ns_remainder = self.uhci_ns_remainder.saturating_add(delta_ns);
             let mut ticks = self.uhci_ns_remainder / NS_PER_MS;
             self.uhci_ns_remainder %= NS_PER_MS;
 
             while ticks != 0 {
-                uhci.borrow_mut().tick_1ms(&mut self.memory);
+                uhci.tick_1ms(&mut self.memory);
                 ticks -= 1;
             }
         }

@@ -49,21 +49,37 @@ impl UhciPciDevice {
 
     /// Advance the controller by 1ms using the platform's canonical physical memory bus.
     pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
-        struct AeroUsbMemoryBus<'a> {
-            inner: &'a mut MemoryBus,
+        enum AeroUsbMemoryBus<'a> {
+            Dma(&'a mut MemoryBus),
+            NoDma,
         }
 
         impl aero_usb::MemoryBus for AeroUsbMemoryBus<'_> {
             fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-                self.inner.read_physical(paddr, buf);
+                match self {
+                    AeroUsbMemoryBus::Dma(inner) => inner.read_physical(paddr, buf),
+                    AeroUsbMemoryBus::NoDma => buf.fill(0xFF),
+                }
             }
 
             fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-                self.inner.write_physical(paddr, buf);
+                match self {
+                    AeroUsbMemoryBus::Dma(inner) => inner.write_physical(paddr, buf),
+                    AeroUsbMemoryBus::NoDma => {}
+                }
             }
         }
 
-        let mut adapter = AeroUsbMemoryBus { inner: mem };
+        // Gate DMA on PCI command Bus Master Enable (bit 2). When bus mastering is disabled the
+        // controller still advances its internal frame counter and root hub state, but it must not
+        // access guest memory for the schedule/frame list.
+        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
+        let mut adapter = if dma_enabled {
+            AeroUsbMemoryBus::Dma(mem)
+        } else {
+            AeroUsbMemoryBus::NoDma
+        };
+
         self.controller.tick_1ms(&mut adapter);
     }
 
