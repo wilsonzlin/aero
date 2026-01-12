@@ -3526,11 +3526,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .pipelines
                 .get(&(rt_tex.format, rt_is_x8))
                 .ok_or_else(|| {
-                ExecutorError::Validation(format!(
-                    "no pipeline configured for render target format {:?}",
-                    rt_tex.format
-                ))
-            })?;
+                    ExecutorError::Validation(format!(
+                        "no pipeline configured for render target format {:?}",
+                        rt_tex.format
+                    ))
+                })?;
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.set_vertex_buffer(
@@ -3651,11 +3651,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .pipelines
                 .get(&(rt_tex.format, rt_is_x8))
                 .ok_or_else(|| {
-                ExecutorError::Validation(format!(
-                    "no pipeline configured for render target format {:?}",
-                    rt_tex.format
-                ))
-            })?;
+                    ExecutorError::Validation(format!(
+                        "no pipeline configured for render target format {:?}",
+                        rt_tex.format
+                    ))
+                })?;
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.set_vertex_buffer(

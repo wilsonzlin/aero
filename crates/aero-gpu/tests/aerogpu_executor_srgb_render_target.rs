@@ -728,7 +728,10 @@ fn executor_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
             });
 
             let report = exec.process_cmd_stream(&stream, &mut guest, None);
-            assert!(report.is_ok(), "executor reported errors ({label}): {report:?}");
+            assert!(
+                report.is_ok(),
+                "executor reported errors ({label}): {report:?}"
+            );
 
             let rt = exec.texture(rt_handle).expect("render target texture");
             let rgba = readback_rgba8(
@@ -752,7 +755,10 @@ fn executor_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
                 px[0] >= 254 && px[1] >= 254 && px[2] >= 254,
                 "{label}: expected draw to write white into RGB channels, got {px:?}"
             );
-            assert_eq!(px[3], 255, "{label}: X8 render target alpha must remain opaque");
+            assert_eq!(
+                px[3], 255,
+                "{label}: X8 render target alpha must remain opaque"
+            );
         }
     });
 }

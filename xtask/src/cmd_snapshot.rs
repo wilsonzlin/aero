@@ -789,17 +789,14 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                 let expected_len = 1u64
                     .saturating_add(4)
                     .saturating_add(u64::from(pending_len));
-                let mut s = format!(
-                    " interrupt_inhibit={interrupt_inhibit} pending_len={pending_len}"
-                );
+                let mut s =
+                    format!(" interrupt_inhibit={interrupt_inhibit} pending_len={pending_len}");
                 if expected_len != len {
                     s.push_str(&format!(" (expected_len={expected_len})"));
                 }
 
                 let preview_avail = header_len.saturating_sub(5);
-                let preview_len = preview_avail
-                    .min(pending_len as usize)
-                    .min(8);
+                let preview_len = preview_avail.min(pending_len as usize).min(8);
                 if preview_len != 0 {
                     s.push_str(" pending_preview=[");
                     for (idx, b) in header[5..5 + preview_len].iter().copied().enumerate() {

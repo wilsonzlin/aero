@@ -933,6 +933,10 @@ fn snapshot_inspect_decodes_cpu_internal_device_state_header() {
         .assert()
         .success()
         .stdout(predicate::str::contains("CPU_INTERNAL(9)"))
-        .stdout(predicate::str::contains("interrupt_inhibit=7 pending_len=3"))
-        .stdout(predicate::str::contains("pending_preview=[0x20, 0x21, 0x28]"));
+        .stdout(predicate::str::contains(
+            "interrupt_inhibit=7 pending_len=3",
+        ))
+        .stdout(predicate::str::contains(
+            "pending_preview=[0x20, 0x21, 0x28]",
+        ));
 }
