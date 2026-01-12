@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
+use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, NIC_E1000_82540EM, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
@@ -46,4 +46,12 @@ fn machine_helper_enables_canonical_win7_storage_topology_pci_functions() {
     let ide_id = read_cfg_u32(&mut m, IDE_PIIX3.bdf, 0x00);
     assert_eq!(ide_id & 0xFFFF, u32::from(IDE_PIIX3.vendor_id));
     assert_eq!(ide_id >> 16, u32::from(IDE_PIIX3.device_id));
+
+    // Callers can opt into E1000 by flipping the config field on the returned preset.
+    let mut cfg_e1000 = cfg;
+    cfg_e1000.enable_e1000 = true;
+    let mut m = Machine::new(cfg_e1000).unwrap();
+    let e1000_id = read_cfg_u32(&mut m, NIC_E1000_82540EM.bdf, 0x00);
+    assert_eq!(e1000_id & 0xFFFF, u32::from(NIC_E1000_82540EM.vendor_id));
+    assert_eq!(e1000_id >> 16, u32::from(NIC_E1000_82540EM.device_id));
 }
