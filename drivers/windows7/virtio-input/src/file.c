@@ -40,6 +40,9 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
     }
 
     PIRP irp = WdfRequestWdmGetIrp(Request);
+    if (irp == NULL) {
+        return 0;
+    }
     PIO_STACK_LOCATION irpSp = IoGetCurrentIrpStackLocation(irp);
 
     if (irpSp == NULL) {
