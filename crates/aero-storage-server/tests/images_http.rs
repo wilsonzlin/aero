@@ -80,10 +80,25 @@ async fn overly_long_image_id_is_rejected_with_404() {
         .expect("write long id file");
 
     let res = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method(Method::GET)
                 .uri(format!("/v1/images/{long_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // The legacy `/data` alias should behave the same.
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/images/{long_id}/data"))
                 .body(Body::empty())
                 .unwrap(),
         )
