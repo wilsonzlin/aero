@@ -118,7 +118,7 @@ fn decode_size(bits: u8) -> usize {
     }
 }
 
-fn build_known_offsets(port_base: u64) -> Vec<u64> {
+fn build_known_offsets(num_ports: usize) -> Vec<u64> {
     let mut offsets = vec![
         HBA_REG_CAP,
         HBA_REG_GHC,
@@ -128,16 +128,22 @@ fn build_known_offsets(port_base: u64) -> Vec<u64> {
         HBA_REG_CAP2,
         HBA_REG_BOHC,
     ];
-    offsets.extend_from_slice(&[
-        port_base + PORT_REG_CLB,
-        port_base + PORT_REG_CLBU,
-        port_base + PORT_REG_FB,
-        port_base + PORT_REG_FBU,
-        port_base + PORT_REG_IS,
-        port_base + PORT_REG_IE,
-        port_base + PORT_REG_CMD,
-        port_base + PORT_REG_CI,
-    ]);
+
+    // Include per-port register windows for all instantiated ports so we cover both the active
+    // port (with an attached drive) and inactive ports (no drive present).
+    for port_idx in 0..num_ports.min(32) {
+        let port_base = PORT_BASE + (port_idx as u64) * 0x80;
+        offsets.extend_from_slice(&[
+            port_base + PORT_REG_CLB,
+            port_base + PORT_REG_CLBU,
+            port_base + PORT_REG_FB,
+            port_base + PORT_REG_FBU,
+            port_base + PORT_REG_IS,
+            port_base + PORT_REG_IE,
+            port_base + PORT_REG_CMD,
+            port_base + PORT_REG_CI,
+        ]);
+    }
     offsets
 }
 
@@ -198,7 +204,7 @@ fuzz_target!(|data: &[u8]| {
         (port_sel_seed as usize) % num_ports
     };
     let port_base = PORT_BASE + (port_idx as u64) * 0x80;
-    let known_offsets = build_known_offsets(port_base);
+    let known_offsets = build_known_offsets(num_ports);
 
     // Seeds used to bias the location of command list/FIS/table/buffers.
     let clb_seed: u64 = u.arbitrary().unwrap_or(0);
