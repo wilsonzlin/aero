@@ -138,7 +138,7 @@ impl Default for MachineConfig {
             enable_pc_platform: false,
             enable_ahci: false,
             enable_ide: false,
-            enable_vga: false,
+            enable_vga: true,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,
@@ -994,7 +994,6 @@ pub struct Machine {
 
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
-
     /// Deterministic guest time accumulator used when converting CPU cycles (TSC ticks) into
     /// nanoseconds for platform device ticking.
     guest_time: GuestTime,
@@ -1821,6 +1820,7 @@ impl Machine {
         self.serial_log.clear();
         self.ps2_mouse_buttons = 0;
         self.guest_time.reset();
+        self.restored_disk_overlays = None;
 
         // Reset chipset lines.
         self.chipset.a20().set_enabled(false);
@@ -2817,12 +2817,25 @@ impl snapshot::SnapshotSource for Machine {
     fn disk_overlays(&self) -> snapshot::DiskOverlayRefs {
         let mut disks = Vec::new();
         // Deterministic ordering (by stable disk_id); see `docs/16-snapshots.md`.
-        if let Some(disk) = self.ahci_port0_overlay.clone() {
-            disks.push(disk);
-        }
-        if let Some(disk) = self.ide_secondary_master_atapi_overlay.clone() {
-            disks.push(disk);
-        }
+        //
+        // Always emit entries for the canonical Win7 disks so `disk_id` mapping remains stable
+        // even when the host has not populated overlay refs yet.
+        disks.push(
+            self.ahci_port0_overlay.clone().unwrap_or(snapshot::DiskOverlayRef {
+                disk_id: Self::DISK_ID_PRIMARY_HDD,
+                base_image: String::new(),
+                overlay_image: String::new(),
+            }),
+        );
+        disks.push(
+            self.ide_secondary_master_atapi_overlay
+                .clone()
+                .unwrap_or(snapshot::DiskOverlayRef {
+                    disk_id: Self::DISK_ID_INSTALL_MEDIA,
+                    base_image: String::new(),
+                    overlay_image: String::new(),
+                }),
+        );
         if let Some(disk) = self.ide_primary_master_overlay.clone() {
             disks.push(disk);
         }
@@ -2893,6 +2906,8 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn restore_cpu_state(&mut self, state: snapshot::CpuState) {
+        // Clear any stale restore-only state before applying new snapshot sections.
+        self.restored_disk_overlays = None;
         snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
     }
 
@@ -3269,7 +3284,10 @@ impl snapshot::SnapshotTarget for Machine {
         }
     }
 
-    fn restore_disk_overlays(&mut self, overlays: snapshot::DiskOverlayRefs) {
+    fn restore_disk_overlays(&mut self, mut overlays: snapshot::DiskOverlayRefs) {
+        // Preserve a stable ordering for host integrations regardless of snapshot file ordering.
+        overlays.disks.sort_by_key(|disk| disk.disk_id);
+
         // Record the restored refs for the host/coordinator so it can re-open and re-attach the
         // appropriate storage backends after restore.
         self.restored_disk_overlays = Some(overlays.clone());
