@@ -901,6 +901,20 @@ mod tests {
         dev.write_config(1, &[EV_KEY as u8]);
         let key_bitmap = dev.read_config(8, 128);
         assert_ne!(key_bitmap[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8)), 0);
+        // Contract-required keys for Win7 virtio-input support.
+        assert_ne!(key_bitmap[(KEY_F1 / 8) as usize] & (1u8 << (KEY_F1 % 8)), 0);
+        assert_ne!(
+            key_bitmap[(KEY_F12 / 8) as usize] & (1u8 << (KEY_F12 % 8)),
+            0
+        );
+        assert_ne!(
+            key_bitmap[(KEY_NUMLOCK / 8) as usize] & (1u8 << (KEY_NUMLOCK % 8)),
+            0
+        );
+        assert_ne!(
+            key_bitmap[(KEY_SCROLLLOCK / 8) as usize] & (1u8 << (KEY_SCROLLLOCK % 8)),
+            0
+        );
     }
 
     #[test]
