@@ -72,6 +72,12 @@ struct ControlState {
 ///
 /// This wrapper tracks the device address and provides an endpoint-0 control pipe state machine
 /// over a [`UsbDeviceModel`] which operates at the SETUP request level.
+///
+/// ## Snapshot/restore
+///
+/// `AttachedUsbDevice` snapshots embed a nested snapshot of the inner [`UsbDeviceModel`] so hub
+/// snapshots can reconstruct device instances during restore when the host has not pre-attached
+/// devices.
 pub struct AttachedUsbDevice {
     address: u8,
     pending_address: Option<u8>,

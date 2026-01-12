@@ -24,6 +24,15 @@
 //! | `hid::UsbHidPassthrough` / `hid::UsbHidPassthroughHandle` | `b"HIDP"` |
 //! | `passthrough::UsbPassthroughDevice` | `b"USBP"` |
 //! | `passthrough_device::UsbWebUsbPassthroughDevice` | `b"WUSB"` |
+//!
+//! `UhciController` snapshots include the full USB topology: each hub port stores an
+//! [`device::AttachedUsbDevice`] (`ADEV`) snapshot, and `ADEV` snapshots embed a nested snapshot of
+//! the concrete inner device model (e.g. `UHUB`, `UKBD`, `HIDP`, `WUSB`). During restore, hubs will
+//! reconstruct missing device instances from these nested model snapshots so hosts do not need to
+//! pre-attach devices purely to satisfy snapshot loading.
+//!
+//! Hosts may still choose to pre-attach devices (e.g. passthrough devices that require an external
+//! handle) and the restore logic will prefer the existing device instance over reconstruction.
 
 pub mod descriptor_fixups;
 pub mod device;
