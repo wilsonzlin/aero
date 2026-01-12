@@ -87,6 +87,7 @@ fn ata_boot_sector_read_via_legacy_pio_ports() {
     ide.borrow_mut()
         .controller
         .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut io = IoPortBus::new();
     register_piix3_ide_ports(&mut io, ide.clone());
@@ -118,6 +119,7 @@ fn ata_bus_master_dma_read_write_roundtrip() {
     ide.borrow_mut()
         .controller
         .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
 
     let mut ioports = IoPortBus::new();
     register_piix3_ide_ports(&mut ioports, ide.clone());
@@ -240,6 +242,7 @@ fn atapi_inquiry_and_read_10_pio() {
         .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
             Box::new(iso),
         )));
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
     register_piix3_ide_ports(&mut ioports, ide.clone());
@@ -294,6 +297,7 @@ fn bus_master_bar4_relocation_affects_registered_ports() {
 
     // Reprogram BAR4 before wiring the device onto the IO bus.
     ide.borrow_mut().config_mut().write(0x20, 4, 0x0000_d000);
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut ioports = IoPortBus::new();
     register_piix3_ide_ports(&mut ioports, ide.clone());
@@ -319,6 +323,7 @@ fn atapi_read_10_dma_via_bus_master() {
         .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
             Box::new(iso),
         )));
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
 
     let mut ioports = IoPortBus::new();
     register_piix3_ide_ports(&mut ioports, ide.clone());
@@ -389,6 +394,7 @@ fn ata_dma_missing_prd_eot_sets_error_status() {
     ide.borrow_mut()
         .controller
         .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
 
     let mut ioports = IoPortBus::new();
     register_piix3_ide_ports(&mut ioports, ide.clone());

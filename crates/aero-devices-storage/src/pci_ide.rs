@@ -988,16 +988,32 @@ impl Piix3IdePciDevice {
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus) {
+        // Only allow the device to DMA when PCI Bus Mastering is enabled (PCI command bit 2).
+        if (self.config.command() & (1 << 2)) == 0 {
+            return;
+        }
         self.controller.tick(mem);
     }
 
     pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
         self.sync_bus_master_base_from_config();
+        // IO space decode is gated by PCI command bit 0.
+        if (self.config.command() & 0x1) == 0 {
+            return match size {
+                1 => 0xFF,
+                2 => 0xFFFF,
+                4 => 0xFFFF_FFFF,
+                _ => 0xFFFF_FFFF,
+            };
+        }
         self.controller.io_read(port, size)
     }
 
     pub fn io_write(&mut self, port: u16, size: u8, value: u32) {
         self.sync_bus_master_base_from_config();
+        if (self.config.command() & 0x1) == 0 {
+            return;
+        }
         self.controller.io_write(port, size, value)
     }
 }
