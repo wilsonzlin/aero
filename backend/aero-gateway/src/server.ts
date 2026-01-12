@@ -54,13 +54,6 @@ function joinBasePath(basePath: string, endpointPath: string): string {
   return `${basePath}${suffix}`;
 }
 
-function stripBasePathPrefix(basePath: string, requestPath: string): string {
-  if (basePath === '' || basePath === '/') return requestPath;
-  if (requestPath === basePath) return '/';
-  if (requestPath.startsWith(`${basePath}/`)) return requestPath.slice(basePath.length);
-  return requestPath;
-}
-
 function findFrontendDistDir(): string | null {
   const candidates = [
     path.resolve(process.cwd(), '../../dist'),
@@ -339,15 +332,17 @@ export function buildServer(config: Config): ServerBundle {
       return;
     }
 
-    const requestPath = stripBasePathPrefix(basePath, url.pathname);
-
-    if (requestPath === '/tcp') {
+    // The gateway may be deployed behind a reverse proxy under a base path
+    // prefix (e.g. `/aero`). Some proxies strip that prefix before forwarding
+    // to the gateway, while others forward it verbatim. Support both.
+    if (url.pathname === '/tcp' || url.pathname === endpoints.tcp) {
       const session = sessions.verifySessionCookie(req.headers.cookie);
       if (!session) {
         respondUpgradeHttp(socket, 401, 'Unauthorized');
         return;
       }
       handleTcpProxyUpgrade(req, socket, head, {
+        expectedPathname: url.pathname,
         allowedOrigins: config.ALLOWED_ORIGINS,
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
         allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
@@ -363,13 +358,14 @@ export function buildServer(config: Config): ServerBundle {
       return;
     }
 
-    if (requestPath === '/tcp-mux') {
+    if (url.pathname === '/tcp-mux' || url.pathname === endpoints.tcpMux) {
       const session = sessions.verifySessionCookie(req.headers.cookie);
       if (!session) {
         respondUpgradeHttp(socket, 401, 'Unauthorized');
         return;
       }
       handleTcpMuxUpgrade(req, socket, head, {
+        expectedPathname: url.pathname,
         allowedOrigins: config.ALLOWED_ORIGINS,
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
         allowedTargetHosts: config.TCP_ALLOWED_HOSTS,

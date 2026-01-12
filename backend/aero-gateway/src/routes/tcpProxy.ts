@@ -43,6 +43,14 @@ export function handleTcpProxyUpgrade(
   socket: Duplex,
   head: Buffer,
   opts: TcpProxyUpgradePolicy & {
+    /**
+     * Expected request pathname for this upgrade. Defaults to `/tcp`.
+     *
+     * The gateway may be deployed under a base-path prefix (e.g. `/aero/tcp`).
+     * In those cases the HTTP server can route upgrades by pathname and then
+     * pass that pathname here for an additional defense-in-depth check.
+     */
+    expectedPathname?: string;
     allowPrivateIps?: boolean;
     createConnection?: typeof net.createConnection;
     metrics?: TcpProxyEgressMetricSink;
@@ -62,7 +70,8 @@ export function handleTcpProxyUpgrade(
   let target: TcpTarget;
   try {
     const url = new URL(req.url ?? "", "http://localhost");
-    if (url.pathname !== "/tcp") {
+    const expectedPathname = opts.expectedPathname ?? "/tcp";
+    if (url.pathname !== expectedPathname) {
       respondHttp(socket, 404, "Not Found");
       return;
     }

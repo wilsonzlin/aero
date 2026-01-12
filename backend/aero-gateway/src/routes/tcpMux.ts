@@ -36,6 +36,14 @@ class TcpMuxIpPolicyDeniedError extends Error {
 
 export type TcpMuxUpgradeOptions = TcpProxyUpgradePolicy &
   Readonly<{
+    /**
+     * Expected request pathname for this upgrade. Defaults to `/tcp-mux`.
+     *
+     * The gateway may be deployed under a base-path prefix (e.g. `/aero/tcp-mux`).
+     * In those cases the HTTP server can route upgrades by pathname and then
+     * pass that pathname here for an additional defense-in-depth check.
+     */
+    expectedPathname?: string;
     allowPrivateIps?: boolean;
     maxStreams?: number;
     maxStreamBufferedBytes?: number;
@@ -68,7 +76,8 @@ export function handleTcpMuxUpgrade(
     respondHttp(socket, 400, "Invalid request");
     return;
   }
-  if (url.pathname !== "/tcp-mux") {
+  const expectedPathname = opts.expectedPathname ?? "/tcp-mux";
+  if (url.pathname !== expectedPathname) {
     respondHttp(socket, 404, "Not Found");
     return;
   }
