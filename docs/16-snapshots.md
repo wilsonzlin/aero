@@ -169,7 +169,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | DeviceId enum | Numeric id | Web runtime `kind` | Notes |
 |---|---:|---|---|
 | `PIC` | `1` | `device.1` | Legacy PIC (guest-visible state) |
-| `APIC` | `2` | `device.2` | Local APIC (guest-visible state) |
+| `APIC` | `2` | `device.2` | Legacy id for the platform interrupt controller complex (`PlatformInterrupts`, inner `INTR`); prefer `PLATFORM_INTERRUPTS` (`21`) |
 | `PIT` | `3` | `device.3` | PIT timer |
 | `RTC` | `4` | `device.4` | RTC/CMOS |
 | `PCI` | `5` | `device.5` | Legacy PCI core state (old snapshots; prefer `PCI_CFG` + `PCI_INTX_ROUTER`) |
