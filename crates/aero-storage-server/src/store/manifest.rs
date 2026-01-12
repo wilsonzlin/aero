@@ -361,6 +361,33 @@ mod tests {
     }
 
     #[test]
+    fn trims_last_modified_whitespace() {
+        let manifest = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "disk", "file": "disk.img", "name": "Disk", "last_modified": "  2026-01-10T00:00:00Z  ", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            manifest.images[0].last_modified.as_deref(),
+            Some("2026-01-10T00:00:00Z")
+        );
+
+        let dt = time::OffsetDateTime::parse(
+            "2026-01-10T00:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        let expected =
+            super::system_time_from_unix_timestamp_nanos(dt.unix_timestamp_nanos()).unwrap();
+
+        assert_eq!(manifest.images[0].last_modified_time, Some(expected));
+    }
+
+    #[test]
     fn invalid_id_error_is_truncated() {
         let long_id = "a".repeat(super::super::MAX_IMAGE_ID_LEN + 10);
         let json = format!(
