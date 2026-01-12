@@ -27,7 +27,9 @@ fn uhci_controller_bridge_snapshot_is_deterministic_and_roundtrips() {
     let mut bridge =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
 
-    bridge.attach_hub(0, 1).expect("attach_hub ok");
+    // Hub ports 1..=3 are reserved for synthetic HID devices, so use port 4+ for this generic
+    // passthrough device.
+    bridge.attach_hub(0, 4).expect("attach_hub ok");
 
     let dev = UsbHidPassthroughBridge::new(
         0x1234,
@@ -41,7 +43,7 @@ fn uhci_controller_bridge_snapshot_is_deterministic_and_roundtrips() {
         None,
     );
 
-    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path to_value");
     bridge
         .attach_usb_hid_passthrough_device(path, &dev)
         .expect("attach_usb_hid_passthrough_device ok");
@@ -78,7 +80,7 @@ fn webusb_uhci_bridge_snapshot_is_deterministic_and_roundtrips() {
     let mut bridge = WebUsbUhciBridge::new(0);
     bridge.set_connected(true);
 
-    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path to_value");
     bridge
         .attach_usb_hid_passthrough_device(path, &dev)
         .expect("attach_usb_hid_passthrough_device ok");

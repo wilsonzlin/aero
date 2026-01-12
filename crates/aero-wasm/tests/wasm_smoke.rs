@@ -216,11 +216,12 @@ fn webusb_uhci_bridge_can_attach_and_detach_usb_hid_passthrough_device() {
 
     let mut bridge = WebUsbUhciBridge::new(0);
 
-    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
+    // Hub ports 1..=3 are reserved for synthetic HID devices, so use port 4+ for arbitrary tests.
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path to_value");
     bridge
         .attach_usb_hid_passthrough_device(path, &dev)
         .expect("attach_usb_hid_passthrough_device ok");
 
-    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path to_value");
     bridge.detach_at_path(path).expect("detach_at_path ok");
 }
