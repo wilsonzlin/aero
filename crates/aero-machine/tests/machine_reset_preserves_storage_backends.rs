@@ -334,7 +334,7 @@ fn set_disk_image_does_not_clobber_custom_virtio_blk_backend() {
     };
 
     // Explicitly attach a custom virtio-blk backend so the machine should not overwrite it when
-    // the canonical SharedDisk backend changes (e.g. via `set_disk_image`).
+    // the canonical SharedDisk image changes (e.g. via `set_disk_image`).
     m.attach_virtio_blk_disk(Box::new(disk))
         .expect("attaching virtio-blk disk should succeed");
 
@@ -352,7 +352,8 @@ fn set_disk_image_does_not_clobber_custom_virtio_blk_backend() {
     );
 
     // Re-attaching the shared disk should drop the custom backend (sanity check).
-    m.attach_shared_disk_to_virtio_blk().unwrap();
+    m.attach_shared_disk_to_virtio_blk()
+        .expect("attaching shared disk to virtio-blk should succeed");
     assert!(
         dropped.load(Ordering::SeqCst),
         "re-attaching SharedDisk should drop the previous custom virtio-blk backend"
