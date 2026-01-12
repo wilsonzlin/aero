@@ -47,11 +47,11 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_buttons_mask(aero_wasm::MouseButtons::Back as u8);
     m.inject_mouse_buttons_mask(0x00);
     m.inject_mouse_buttons_mask(
-      (aero_wasm::MouseButtons::Left as u8)
-        | (aero_wasm::MouseButtons::Right as u8)
-        | (aero_wasm::MouseButtons::Middle as u8)
-        | (aero_wasm::MouseButtons::Back as u8)
-        | (aero_wasm::MouseButtons::Forward as u8),
+        (aero_wasm::MouseButtons::Left as u8)
+            | (aero_wasm::MouseButtons::Right as u8)
+            | (aero_wasm::MouseButtons::Middle as u8)
+            | (aero_wasm::MouseButtons::Back as u8)
+            | (aero_wasm::MouseButtons::Forward as u8),
     );
     m.inject_mouse_buttons_mask(0x00);
 }

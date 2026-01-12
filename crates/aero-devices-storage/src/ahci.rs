@@ -1245,8 +1245,8 @@ mod tests {
             prdtl: 40_000,
         };
 
-        let err = dma_read_sectors_into_guest(&mut mem, &header, &mut drive, 0, SECTOR_SIZE)
-            .unwrap_err();
+        let err =
+            dma_read_sectors_into_guest(&mut mem, &header, &mut drive, 0, SECTOR_SIZE).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(err.to_string(), "PRDT too large for DMA read");
 

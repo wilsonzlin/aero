@@ -3,7 +3,8 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
 use aero_net_e1000::{
-    E1000Device, E1000_MMIO_SIZE, ICR_TXDW, MAX_L2_FRAME_LEN, MAX_TX_AGGREGATE_LEN, MIN_L2_FRAME_LEN,
+    E1000Device, E1000_MMIO_SIZE, ICR_TXDW, MAX_L2_FRAME_LEN, MAX_TX_AGGREGATE_LEN,
+    MIN_L2_FRAME_LEN,
 };
 use memory::MemoryBus;
 use nt_packetlib::io::net::packet::checksum::ipv4_header_checksum;

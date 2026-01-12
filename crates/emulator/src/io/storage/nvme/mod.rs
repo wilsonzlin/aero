@@ -90,7 +90,7 @@ impl NvmeController {
 
     fn enable(&mut self) {
         self.csts &= !CSTS_CFS;
-        let mps = ((self.cc >> 7) & 0xf) as u32;
+        let mps = (self.cc >> 7) & 0xf;
         let page_size = 4096usize.checked_shl(mps).unwrap_or(0);
         if !(4096..=NVME_MAX_PAGE_SIZE).contains(&page_size) {
             // Unsupported memory page size; fail the enable attempt rather than risking huge
@@ -110,10 +110,10 @@ impl NvmeController {
         self.csts |= CSTS_RDY;
         self.page_size = page_size;
 
-        let asqs = ((self.aqa & 0xffff) as u32 + 1)
+        let asqs = ((self.aqa & 0xffff) + 1)
             .min(NVME_MAX_QUEUE_ENTRIES as u32)
             .max(1) as u16;
-        let acqs = (((self.aqa >> 16) & 0xffff) as u32 + 1)
+        let acqs = (((self.aqa >> 16) & 0xffff) + 1)
             .min(NVME_MAX_QUEUE_ENTRIES as u32)
             .max(1) as u16;
         let admin_sq = SubmissionQueue {
@@ -485,11 +485,11 @@ impl NvmeController {
         match cmd.feature_id() {
             FID_NUMBER_OF_QUEUES => {
                 let requested = cmd.cdw11;
-                let req_ncq = (requested & 0xffff) as u32 + 1;
-                let req_nsq = (requested >> 16) as u32 + 1;
+                let _req_ncq = (requested & 0xffff) + 1;
+                let _req_nsq = (requested >> 16) + 1;
                 // We only support a single IO SQ/CQ pair for now; clamp any request to 1.
-                self.num_io_cqs = req_ncq.min(1).max(1) as u16;
-                self.num_io_sqs = req_nsq.min(1).max(1) as u16;
+                self.num_io_cqs = 1;
+                self.num_io_sqs = 1;
                 let val = ((self.num_io_sqs.saturating_sub(1) as u32) << 16)
                     | (self.num_io_cqs.saturating_sub(1) as u32);
                 (val, NvmeStatus::success())

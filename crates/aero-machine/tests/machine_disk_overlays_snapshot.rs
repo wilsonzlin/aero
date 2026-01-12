@@ -177,7 +177,10 @@ fn machine_snapshot_restores_with_placeholder_disk_overlay_refs_when_unconfigure
     restored.restore_snapshot_bytes(&snap).unwrap();
 
     assert_eq!(restored.restored_disk_overlays(), Some(&expected));
-    assert_eq!(restored.take_restored_disk_overlays(), Some(expected.clone()));
+    assert_eq!(
+        restored.take_restored_disk_overlays(),
+        Some(expected.clone())
+    );
 
     // Disk overlay config should also be reflected in subsequent snapshots.
     assert_eq!(restored.disk_overlays(), expected);

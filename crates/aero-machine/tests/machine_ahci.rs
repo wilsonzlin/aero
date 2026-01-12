@@ -189,7 +189,11 @@ fn machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
         );
         u8::try_from(gsi).unwrap()
     };
-    let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    let vector = if irq < 8 {
+        0x20 + irq
+    } else {
+        0x28 + (irq - 8)
+    };
     let handler_addr = 0x8000u64;
     let code_base = 0x9000u64;
     let flag_addr = 0x0500u16;

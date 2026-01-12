@@ -918,7 +918,8 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
             });
         });
 
-        exec.device().push_error_scope(wgpu::ErrorFilter::Validation);
+        exec.device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
         let report = exec.process_cmd_stream(&stream, &mut guest, None);
         assert!(report.is_ok(), "report had errors: {:#?}", report.events);
 

@@ -575,7 +575,7 @@ fn machine_ide_primary_dma_write_updates_disk_and_wakes_halted_cpu_via_irq14() {
     // Program BMIDE (PRDT base + start bit; direction=FromMemory for ATA writes).
     m.io_write(bm_base + 4, 4, prd_addr as u32);
     m.io_write(bm_base + 2, 1, 0x06); // clear error/irq bits (defensive)
-    m.io_write(bm_base + 0, 1, 0x01); // start, direction=0 (from memory)
+    m.io_write(bm_base, 1, 0x01); // start, direction=0 (from memory)
 
     // Issue ATA WRITE DMA (0xCA) for LBA 1, count 1, primary master.
     m.io_write(0x1F2, 1, 1);
@@ -617,7 +617,11 @@ fn machine_ide_primary_dma_write_updates_disk_and_wakes_halted_cpu_via_irq14() {
 
             let bm_status = m.io_read(bm_base + 2, 1) as u8;
             assert_ne!(bm_status & 0x04, 0, "BMIDE status IRQ bit should be set");
-            assert_eq!(bm_status & 0x03, 0, "BMIDE status should not show active/error");
+            assert_eq!(
+                bm_status & 0x03,
+                0,
+                "BMIDE status should not show active/error"
+            );
             return;
         }
     }

@@ -1488,7 +1488,7 @@ mod tests {
 
         let mut pci = VirtioPciDevice::new_legacy_only(
             Box::new(CountingDevice::new(8)),
-            Box::new(NoopInterrupts::default()),
+            Box::new(NoopInterrupts),
         );
 
         // Enable queue 0 using a legacy PFN at 0x1000.

@@ -445,8 +445,7 @@ fn handle_int13(
 
             cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
             // DL = number of drives; DH = max head.
-            cpu.gpr[gpr::RDX] =
-                (cpu.gpr[gpr::RDX] & !0xFFFF) | (dl as u64) | ((dh as u64) << 8);
+            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (dl as u64) | ((dh as u64) << 8);
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;

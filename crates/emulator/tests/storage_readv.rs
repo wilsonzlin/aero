@@ -16,7 +16,7 @@ fn virtual_drive_readv_rejects_unaligned_buffer() {
     .unwrap();
 
     let mut buf0 = vec![0u8; 512];
-    let mut buf1 = vec![0u8; 1];
+    let mut buf1 = [0u8; 1];
     let mut bufs: [&mut [u8]; 2] = [&mut buf0[..], &mut buf1[..]];
     let err = drive.readv_sectors(0, &mut bufs).unwrap_err();
     assert!(matches!(
@@ -39,7 +39,7 @@ fn virtual_drive_writev_rejects_unaligned_buffer() {
     .unwrap();
 
     let buf0 = vec![0u8; 512];
-    let buf1 = vec![0u8; 1];
+    let buf1 = [0u8; 1];
     let bufs: [&[u8]; 2] = [&buf0[..], &buf1[..]];
     let err = drive.writev_sectors(0, &bufs).unwrap_err();
     assert!(matches!(

@@ -104,7 +104,8 @@ fn dirty_pages_for_remapped_high_ram_are_reported_in_ram_offset_space() {
 
     // Dirty pages must be indexed in contiguous RAM-offset space, so this should correspond to the
     // page containing `PCIE_ECAM_BASE`.
-    let expected = firmware::bios::PCIE_ECAM_BASE / u64::from(snapshot::SnapshotSource::dirty_page_size(&m));
+    let expected =
+        firmware::bios::PCIE_ECAM_BASE / u64::from(snapshot::SnapshotSource::dirty_page_size(&m));
     assert_eq!(
         snapshot::SnapshotSource::take_dirty_pages(&mut m).unwrap(),
         vec![expected]

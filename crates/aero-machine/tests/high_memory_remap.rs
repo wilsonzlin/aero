@@ -24,9 +24,15 @@ fn machine_high_memory_remap_does_not_require_dense_multi_gib_allocations() {
 
     // The PCIe ECAM window begins at PCIE_ECAM_BASE and should behave as open bus when no MMIO
     // device claims it.
-    assert_eq!(m.read_physical_bytes(PCIE_ECAM_BASE + 0x1000, 4), vec![0xFF; 4]);
+    assert_eq!(
+        m.read_physical_bytes(PCIE_ECAM_BASE + 0x1000, 4),
+        vec![0xFF; 4]
+    );
     m.write_physical(PCIE_ECAM_BASE + 0x1000, &[0x11, 0x22, 0x33, 0x44]);
-    assert_eq!(m.read_physical_bytes(PCIE_ECAM_BASE + 0x1000, 4), vec![0xFF; 4]);
+    assert_eq!(
+        m.read_physical_bytes(PCIE_ECAM_BASE + 0x1000, 4),
+        vec![0xFF; 4]
+    );
 
     // Low RAM stops at PCIE_ECAM_BASE; reads that straddle into the hole should include open-bus
     // bytes.
@@ -52,4 +58,3 @@ fn machine_high_memory_remap_does_not_require_dense_multi_gib_allocations() {
     assert_eq!(&straddle_rom_high[..16], &reset_low);
     assert_eq!(&straddle_rom_high[16..], &pattern);
 }
-

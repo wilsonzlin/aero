@@ -860,6 +860,7 @@ fn upload_with_alignment(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]

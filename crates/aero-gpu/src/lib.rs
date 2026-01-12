@@ -87,8 +87,8 @@ pub use surface::{
     present_with_retry, GpuPresenter, GpuSurfaceError, PresentOutcome, SimulatedSurface,
     SurfaceFrame, SurfaceProvider,
 };
-pub use texture_format::{TextureFormat, TextureFormatSelection, TextureUploadTransform};
 pub use texture_format::wgpu_bc_texture_dimensions_compatible;
+pub use texture_format::{TextureFormat, TextureFormatSelection, TextureUploadTransform};
 pub use texture_manager::{
     SamplerDesc, TextureDesc, TextureKey, TextureManager, TextureManagerError, TextureManagerStats,
     TextureRegion, TextureViewDesc,

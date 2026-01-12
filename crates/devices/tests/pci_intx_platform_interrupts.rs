@@ -52,6 +52,10 @@ fn pci_intx_can_be_delivered_via_pic_in_legacy_mode_through_platform_interrupts(
 
     router.assert_intx(bdf, pin, &mut interrupts);
 
-    let expected = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    let expected = if irq < 8 {
+        0x20 + irq
+    } else {
+        0x28 + (irq - 8)
+    };
     assert_eq!(interrupts.get_pending(), Some(expected));
 }

@@ -211,7 +211,11 @@ fn snapshot_restore_redrives_pci_intx_into_legacy_pic_after_ack() {
             "expected PCI INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
         );
         let irq = u8::try_from(gsi).unwrap();
-        let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+        let vector = if irq < 8 {
+            0x20 + irq
+        } else {
+            0x28 + (irq - 8)
+        };
         (gsi, irq, vector)
     };
 

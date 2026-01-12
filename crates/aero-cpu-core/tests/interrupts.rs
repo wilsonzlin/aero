@@ -128,8 +128,8 @@ fn hlt_is_cleared_when_an_external_interrupt_is_delivered() -> Result<(), CpuExi
 }
 
 #[test]
-fn real_mode_external_interrupt_records_pending_bios_int_for_hlt_stub_hypercall() -> Result<(), CpuExit>
-{
+fn real_mode_external_interrupt_records_pending_bios_int_for_hlt_stub_hypercall(
+) -> Result<(), CpuExit> {
     let mut mem = FlatTestBus::new(0x20000);
 
     // IVT[0x08] -> 0000:1000

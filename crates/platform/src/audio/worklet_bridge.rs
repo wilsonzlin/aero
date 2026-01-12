@@ -311,7 +311,10 @@ mod tests {
     #[test]
     fn test_new_clamps_excessive_capacity_to_avoid_oom() {
         let rb = InterleavedRingBuffer::new(u32::MAX, 2);
-        assert_eq!(rb.snapshot_state().capacity_frames, MAX_RING_CAPACITY_FRAMES);
+        assert_eq!(
+            rb.snapshot_state().capacity_frames,
+            MAX_RING_CAPACITY_FRAMES
+        );
     }
 
     #[test]

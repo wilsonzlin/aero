@@ -7,8 +7,12 @@ fn i8042_port_bus_delivers_translated_scancodes() {
     let i8042 = I8042Ports::new();
     let controller = i8042.controller();
 
-    platform.io.register(I8042_DATA_PORT, Box::new(i8042.port60()));
-    platform.io.register(I8042_STATUS_PORT, Box::new(i8042.port64()));
+    platform
+        .io
+        .register(I8042_DATA_PORT, Box::new(i8042.port60()));
+    platform
+        .io
+        .register(I8042_STATUS_PORT, Box::new(i8042.port64()));
 
     controller.borrow_mut().inject_browser_key("KeyA", true);
 
@@ -27,8 +31,12 @@ fn i8042_command_byte_read_write_roundtrip() {
     let mut platform = Platform::new(2 * 1024 * 1024);
     let i8042 = I8042Ports::new();
 
-    platform.io.register(I8042_DATA_PORT, Box::new(i8042.port60()));
-    platform.io.register(I8042_STATUS_PORT, Box::new(i8042.port64()));
+    platform
+        .io
+        .register(I8042_DATA_PORT, Box::new(i8042.port60()));
+    platform
+        .io
+        .register(I8042_STATUS_PORT, Box::new(i8042.port64()));
 
     // Read the default command byte.
     platform.io.write_u8(I8042_STATUS_PORT, 0x20);

@@ -24,7 +24,9 @@ fn uhci_tick_increments_frnum_when_running() {
     let mut m = Machine::new(cfg).unwrap();
 
     let bar4_base = {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should expose pci_cfg");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
@@ -32,7 +34,10 @@ fn uhci_tick_increments_frnum_when_running() {
             .expect("UHCI PCI function should exist");
         cfg.bar_range(4).map(|range| range.base).unwrap_or(0)
     };
-    assert_ne!(bar4_base, 0, "UHCI BAR4 base should be assigned by BIOS POST");
+    assert_ne!(
+        bar4_base, 0,
+        "UHCI BAR4 base should be assigned by BIOS POST"
+    );
     let base = u16::try_from(bar4_base).expect("UHCI BAR4 base should fit in u16");
 
     // Start the controller (USBCMD.RS).
@@ -63,7 +68,9 @@ fn uhci_portsc_reflects_device_attach_and_detach() {
 
     let mut m = Machine::new(cfg).unwrap();
     let base = {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should expose pci_cfg");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
@@ -74,7 +81,11 @@ fn uhci_portsc_reflects_device_attach_and_detach() {
     };
 
     let portsc_before = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
-    assert_eq!(portsc_before & 0x0003, 0, "PORTSC1 should start disconnected");
+    assert_eq!(
+        portsc_before & 0x0003,
+        0,
+        "PORTSC1 should start disconnected"
+    );
 
     // Attach a built-in USB HID keyboard directly to UHCI root port 0.
     let keyboard = UsbHidKeyboardHandle::new();
@@ -85,8 +96,16 @@ fn uhci_portsc_reflects_device_attach_and_detach() {
         .attach(0, Box::new(keyboard));
 
     let portsc_attached = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
-    assert_ne!(portsc_attached & 0x0001, 0, "CCS should be set after attach");
-    assert_ne!(portsc_attached & 0x0002, 0, "CSC should be set after attach");
+    assert_ne!(
+        portsc_attached & 0x0001,
+        0,
+        "CCS should be set after attach"
+    );
+    assert_ne!(
+        portsc_attached & 0x0002,
+        0,
+        "CSC should be set after attach"
+    );
 
     // Detach and ensure connect status clears but change bit remains latched.
     let uhci = m.uhci().expect("UHCI device should exist");

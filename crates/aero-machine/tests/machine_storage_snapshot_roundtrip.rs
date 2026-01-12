@@ -1065,13 +1065,7 @@ fn machine_restore_applies_only_present_controllers_from_dskc_wrapper_ahci_only(
 
     let ahci_abar = {
         let bdf = profile::SATA_AHCI_ICH9.bdf;
-        u64::from(read_cfg_u32(
-            &mut src,
-            bdf.bus,
-            bdf.device,
-            bdf.function,
-            0x24,
-        ) & 0xFFFF_FFF0)
+        u64::from(read_cfg_u32(&mut src, bdf.bus, bdf.device, bdf.function, 0x24) & 0xFFFF_FFF0)
     };
     assert!(ahci_abar != 0, "AHCI BAR5 must be programmed");
 

@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use firmware::bios::{BlockDevice, DiskError as BiosDiskError};
@@ -18,14 +19,14 @@ pub struct SharedDisk {
     // NOTE: `VirtualDisk` backends are not necessarily `Send` on wasm32 (e.g. OPFS backends may
     // hold JS values). The canonical `aero_machine::Machine` is single-threaded today (it holds
     // `Rc<RefCell<_>>` device models), so we intentionally do *not* require `Send` here.
-    inner: Arc<Mutex<Box<dyn VirtualDisk>>>,
+    inner: Rc<RefCell<Box<dyn VirtualDisk>>>,
 }
 
 impl SharedDisk {
     /// Construct a new shared disk wrapper around an existing [`VirtualDisk`] backend.
     pub fn new(backend: Box<dyn VirtualDisk>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(backend)),
+            inner: Rc::new(RefCell::new(backend)),
         }
     }
 
@@ -41,8 +42,8 @@ impl SharedDisk {
     pub fn set_backend(&self, backend: Box<dyn VirtualDisk>) {
         *self
             .inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned") = backend;
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed") = backend;
     }
 
     /// Replace the underlying disk image for **all** shared handles.
@@ -54,9 +55,7 @@ impl SharedDisk {
         Ok(())
     }
 
-    fn virtual_disk_from_bytes(
-        mut bytes: Vec<u8>,
-    ) -> Result<Box<dyn VirtualDisk>, MachineError> {
+    fn virtual_disk_from_bytes(mut bytes: Vec<u8>) -> Result<Box<dyn VirtualDisk>, MachineError> {
         if !bytes.len().is_multiple_of(SECTOR_SIZE) {
             return Err(MachineError::InvalidDiskSize(bytes.len()));
         }
@@ -76,29 +75,29 @@ impl SharedDisk {
 impl VirtualDisk for SharedDisk {
     fn capacity_bytes(&self) -> u64 {
         self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
+            .try_borrow()
+            .expect("shared disk refcell should not already be mutably borrowed")
             .capacity_bytes()
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
         self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
             .read_at(offset, buf)
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
         self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
             .write_at(offset, buf)
     }
 
     fn flush(&mut self) -> aero_storage::Result<()> {
         self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed")
             .flush()
     }
 }
@@ -114,8 +113,8 @@ impl BlockDevice for SharedDisk {
 
         let mut disk = self
             .inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned");
+            .try_borrow_mut()
+            .expect("shared disk refcell should not already be borrowed");
         if end > disk.capacity_bytes() {
             return Err(BiosDiskError::OutOfRange);
         }
@@ -126,8 +125,8 @@ impl BlockDevice for SharedDisk {
 
     fn size_in_sectors(&self) -> u64 {
         self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
+            .try_borrow()
+            .expect("shared disk refcell should not already be mutably borrowed")
             .capacity_bytes()
             / SECTOR_SIZE as u64
     }

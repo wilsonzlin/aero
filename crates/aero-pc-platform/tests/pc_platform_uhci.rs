@@ -122,19 +122,11 @@ fn td_status(active: bool) -> u32 {
     v
 }
 
-fn write_td(
-    pc: &mut PcPlatform,
-    addr: u32,
-    link: u32,
-    status: u32,
-    token: u32,
-    buffer: u32,
-) {
+fn write_td(pc: &mut PcPlatform, addr: u32, link: u32, status: u32, token: u32, buffer: u32) {
     pc.memory.write_u32(addr as u64, link);
     pc.memory.write_u32(addr.wrapping_add(4) as u64, status);
     pc.memory.write_u32(addr.wrapping_add(8) as u64, token);
-    pc.memory
-        .write_u32(addr.wrapping_add(12) as u64, buffer);
+    pc.memory.write_u32(addr.wrapping_add(12) as u64, buffer);
 }
 
 fn write_qh(pc: &mut PcPlatform, elem: u32) {
@@ -159,8 +151,7 @@ fn read_portsc(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16) -> u16 {
 }
 
 fn write_portsc(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16, value: u16) {
-    pc.io
-        .write(bar4_base + portsc_offset, 2, u32::from(value));
+    pc.io.write(bar4_base + portsc_offset, 2, u32::from(value));
 }
 
 fn write_portsc_w1c(pc: &mut PcPlatform, bar4_base: u16, portsc_offset: u16, w1c: u16) {
@@ -907,8 +898,7 @@ fn pc_platform_uhci_interrupt_in_reads_hid_keyboard_reports_via_dma() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
@@ -983,8 +973,7 @@ fn pc_platform_uhci_interrupt_in_reads_hid_keyboard_reports_via_dma() {
     assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
 
     // Poll again without new input: should NAK and remain active.
-    pc.memory
-        .write_u32(TD0 as u64 + 4, td_status(true));
+    pc.memory.write_u32(TD0 as u64 + 4, td_status(true));
     run_one_frame(&mut pc, TD0);
     let st = pc.memory.read_u32(TD0 as u64 + 4);
     assert_ne!(st & TD_STATUS_ACTIVE, 0);
@@ -1031,8 +1020,7 @@ fn pc_platform_uhci_ioc_completion_asserts_intx_via_pic() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io
         .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_IOC));
@@ -1167,8 +1155,7 @@ fn pc_platform_uhci_interrupt_in_reads_hid_mouse_reports_via_dma() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
@@ -1240,8 +1227,7 @@ fn pc_platform_uhci_interrupt_in_reads_hid_mouse_reports_via_dma() {
     assert_eq!(report, [0x00, 5, 0xFD, 0x00]);
 
     // Poll again without new input: should NAK and remain active.
-    pc.memory
-        .write_u32(TD0 as u64 + 4, td_status(true));
+    pc.memory.write_u32(TD0 as u64 + 4, td_status(true));
     run_one_frame(&mut pc, TD0);
     let st = pc.memory.read_u32(TD0 as u64 + 4);
     assert_ne!(st & TD_STATUS_ACTIVE, 0);
@@ -1278,8 +1264,7 @@ fn pc_platform_uhci_interrupt_in_reads_hid_gamepad_reports_via_dma() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
@@ -1351,8 +1336,7 @@ fn pc_platform_uhci_interrupt_in_reads_hid_gamepad_reports_via_dma() {
     assert_eq!(report, [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
     // Poll again without new input: should NAK and remain active.
-    pc.memory
-        .write_u32(TD0 as u64 + 4, td_status(true));
+    pc.memory.write_u32(TD0 as u64 + 4, td_status(true));
     run_one_frame(&mut pc, TD0);
     let st = pc.memory.read_u32(TD0 as u64 + 4);
     assert_ne!(st & TD_STATUS_ACTIVE, 0);

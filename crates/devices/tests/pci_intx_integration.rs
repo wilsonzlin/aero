@@ -57,6 +57,10 @@ fn pci_intx_can_drive_ioapic_and_be_mirrored_to_pic() {
 
     assert_eq!(lapic.get_pending_vector(), Some(vector));
     let irq = u8::try_from(gsi).unwrap();
-    let expected_pic = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    let expected_pic = if irq < 8 {
+        0x20 + irq
+    } else {
+        0x28 + (irq - 8)
+    };
     assert_eq!(pic.get_pending_vector(), Some(expected_pic));
 }

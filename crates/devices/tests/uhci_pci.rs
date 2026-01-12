@@ -40,7 +40,10 @@ fn uhci_pci_config_and_bar_io() {
         let router = PciIntxRouter::new(PciIntxRouterConfig::default());
         let bdf = PciBdf::new(0, 1, 2);
         let expected_gsi = router.gsi_for_intx(bdf, PciInterruptPin::IntA);
-        assert_eq!(cfg.read(0x3d, 1) as u8, PciInterruptPin::IntA.to_config_u8());
+        assert_eq!(
+            cfg.read(0x3d, 1) as u8,
+            PciInterruptPin::IntA.to_config_u8()
+        );
         assert_eq!(cfg.read(0x3c, 1) as u8, u8::try_from(expected_gsi).unwrap());
 
         // Program BAR4 and enable I/O decoding.

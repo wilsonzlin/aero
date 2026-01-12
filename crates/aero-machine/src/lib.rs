@@ -52,8 +52,8 @@ use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
-pub use aero_devices_input::Ps2MouseButton;
 use aero_devices::usb::uhci::UhciPciDevice;
+pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
@@ -1374,7 +1374,10 @@ impl PciIoBarHandler for UhciIoBar {
     fn io_read(&mut self, offset: u64, size: usize) -> u32 {
         self.sync_config();
         let offset = u16::try_from(offset).unwrap_or(0);
-        self.uhci.borrow_mut().controller_mut().io_read(offset, size)
+        self.uhci
+            .borrow_mut()
+            .controller_mut()
+            .io_read(offset, size)
     }
 
     fn io_write(&mut self, offset: u64, size: usize, value: u32) {

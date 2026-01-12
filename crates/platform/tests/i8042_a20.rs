@@ -16,8 +16,12 @@ fn i8042_output_port_toggles_a20_gate_in_platform_memory() {
         PlatformSystemControlSink::with_reset_sink(platform.chipset.a20(), reset_latch.clone()),
     ));
 
-    platform.io.register(I8042_DATA_PORT, Box::new(i8042.port60()));
-    platform.io.register(I8042_STATUS_PORT, Box::new(i8042.port64()));
+    platform
+        .io
+        .register(I8042_DATA_PORT, Box::new(i8042.port60()));
+    platform
+        .io
+        .register(I8042_STATUS_PORT, Box::new(i8042.port64()));
 
     // Before enabling A20, 0x1_00000 aliases 0x0.
     platform.memory.write_u8(0x0, 0xAA);

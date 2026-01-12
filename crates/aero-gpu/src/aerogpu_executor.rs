@@ -2327,7 +2327,8 @@ fn fs_main() -> @location(0) vec4<f32> {
 
             let mut copy_extent_width = tex.width;
             let mut copy_extent_height = extent_height;
-            if tex.upload_transform == TextureUploadTransform::Direct && is_bc_format(tex.format_raw)
+            if tex.upload_transform == TextureUploadTransform::Direct
+                && is_bc_format(tex.format_raw)
             {
                 copy_extent_width = align_up_u32(copy_extent_width, 4)?;
                 copy_extent_height = align_up_u32(copy_extent_height, 4)?;
@@ -2929,13 +2930,13 @@ fn fs_main() -> @location(0) vec4<f32> {
             (&src.texture, &dst.texture)
         };
 
-        let (wgpu_copy_width, wgpu_copy_height) =
-            if is_bc_format(dst_format_raw) && dst_upload_transform == TextureUploadTransform::Direct
-            {
-                (align_up_u32(width, 4)?, align_up_u32(height, 4)?)
-            } else {
-                (width, height)
-            };
+        let (wgpu_copy_width, wgpu_copy_height) = if is_bc_format(dst_format_raw)
+            && dst_upload_transform == TextureUploadTransform::Direct
+        {
+            (align_up_u32(width, 4)?, align_up_u32(height, 4)?)
+        } else {
+            (width, height)
+        };
 
         let mut encoder = self
             .device
