@@ -19,6 +19,10 @@ pub struct SharedDisk {
     // NOTE: `VirtualDisk` backends are not necessarily `Send` on wasm32 (e.g. OPFS backends may
     // hold JS values). The canonical `aero_machine::Machine` is single-threaded today (it holds
     // `Rc<RefCell<_>>` device models), so we intentionally do *not* require `Send` here.
+    //
+    // Callers that need a `Send` disk (e.g. some controller/device models) should use a backend
+    // type that is itself `Send` and plumb it through the relevant controller wiring rather than
+    // relying on this wrapper to add thread-safety.
     inner: Rc<RefCell<Box<dyn VirtualDisk>>>,
 }
 
@@ -39,6 +43,10 @@ impl SharedDisk {
     }
 
     /// Replace the underlying disk backend for **all** shared handles.
+    ///
+    /// Note: for [`crate::Machine`], prefer [`crate::Machine::set_disk_backend`] so any storage
+    /// controllers that derive ATA IDENTIFY geometry from disk capacity can be rebuilt when the
+    /// backend changes.
     pub fn set_backend(&self, backend: Box<dyn VirtualDisk>) {
         *self
             .inner

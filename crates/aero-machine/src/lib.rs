@@ -1881,6 +1881,11 @@ impl Machine {
     ///
     /// This is the same disk used by BIOS INT13 services, and (when enabled) is also attached as
     /// the backend for emulated storage controllers such as AHCI.
+    ///
+    /// Note: mutating the returned handle directly (e.g. via [`SharedDisk::set_backend`]) updates
+    /// the underlying bytes for all users, but may *not* rebuild attached controller drive models
+    /// that derive geometry from capacity (ATA IDENTIFY). Prefer [`Machine::set_disk_backend`] /
+    /// [`Machine::set_disk_image`] when changing the disk contents.
     pub fn shared_disk(&self) -> SharedDisk {
         self.disk.clone()
     }
