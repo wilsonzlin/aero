@@ -135,6 +135,7 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction | null {
       if (!isUsbSetupPacket(obj.setup)) return null;
       const data = normalizeBytes(obj.data);
       if (!data) return null;
+      if (data.byteLength !== obj.setup.wLength) return null;
       return { kind: "controlOut", id, setup: obj.setup, data };
     }
     case "bulkIn": {

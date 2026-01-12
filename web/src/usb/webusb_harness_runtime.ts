@@ -264,7 +264,11 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction {
     case "controlOut": {
       const setup = obj.setup;
       if (!isUsbSetupPacket(setup)) throw new Error("controlOut missing/invalid setup packet");
-      return { kind: "controlOut", id, setup, data: normalizeBytes(obj.data) };
+      const data = normalizeBytes(obj.data);
+      if (data.byteLength !== setup.wLength) {
+        throw new Error(`controlOut payload length mismatch (wLength=${setup.wLength} data=${data.byteLength})`);
+      }
+      return { kind: "controlOut", id, setup, data };
     }
     case "bulkIn": {
       const endpoint = normalizeU8(obj.endpoint);

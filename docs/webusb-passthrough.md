@@ -305,8 +305,8 @@ Important rules:
 - The **direction bit** (`bmRequestType & 0x80`) must match the WebUSB call you make.
   - For `controlTransferIn`, require Device→Host.
   - For `controlTransferOut`, require Host→Device.
-- For OUT transfers, pass a payload buffer only when `wLength > 0`. For a zero-length OUT request,
-  omit the data argument.
+- For OUT transfers, the payload length must match `wLength`. For a zero-length OUT request (`wLength == 0`),
+  omit the data argument (or use an empty payload in the `UsbHostAction` contract).
 
 In this repo:
 

@@ -21,7 +21,13 @@ export interface SetupPacket {
 // - OUT endpoints have bit7 clear (e.g. `0x02`)
 export type UsbHostAction =
   | { kind: "controlIn"; id: number; setup: SetupPacket }
-  | { kind: "controlOut"; id: number; setup: SetupPacket; data: Uint8Array }
+  | {
+      kind: "controlOut";
+      id: number;
+      setup: SetupPacket;
+      /** Data stage bytes (must match `setup.wLength`; use empty payload when `wLength` is 0). */
+      data: Uint8Array;
+    }
   | { kind: "bulkIn"; id: number; endpoint: number; length: number }
   | { kind: "bulkOut"; id: number; endpoint: number; data: Uint8Array };
 

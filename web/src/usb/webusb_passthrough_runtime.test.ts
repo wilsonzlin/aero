@@ -417,6 +417,37 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(completion.status).toBe("error");
   });
 
+  it("pushes an error completion when WASM emits a controlOut action whose data length does not match wLength", async () => {
+    const port = new FakePort();
+    const rawAction = {
+      kind: "controlOut",
+      id: 3,
+      setup: { bmRequestType: 0, bRequest: 9, wValue: 1, wIndex: 0, wLength: 1 },
+      data: [1, 2],
+    };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
+    expect(reset).not.toHaveBeenCalled();
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    const completion = push_completion.mock.calls[0]?.[0] as UsbHostCompletion;
+    expect(completion.kind).toBe("controlOut");
+    expect(completion.id).toBe(3);
+    expect(completion.status).toBe("error");
+  });
+
   it("resets the bridge when WASM emits an invalid action without id/kind", async () => {
     const port = new FakePort();
     const rawAction = { endpoint: 1, length: 8 };

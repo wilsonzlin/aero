@@ -315,6 +315,36 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     expect(snapshot.lastError).toMatch(/length/i);
   });
 
+  it("stops when the harness emits a controlOut action whose payload length does not match wLength", () => {
+    const port = new FakePort();
+
+    const action: unknown = {
+      kind: "controlOut",
+      id: 1,
+      setup: { bmRequestType: 0, bRequest: 9, wValue: 1, wIndex: 0, wLength: 1 },
+      data: [1, 2],
+    };
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => [action]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+    runtime.start();
+    runtime.pollOnce();
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.enabled).toBe(false);
+    expect(snapshot.lastError).toMatch(/controlOut/i);
+  });
+
   it("validates usb.harness.status messages with a strict type guard", () => {
     const msg = {
       type: "usb.harness.status",

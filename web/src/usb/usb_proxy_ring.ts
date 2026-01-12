@@ -269,6 +269,11 @@ export class UsbProxyRing {
           if (fixed > remaining) throw new Error("USB proxy ring corrupted (controlOut record straddles wrap boundary).");
           const setup = decodeSetupPacket(this.#view, base);
           const dataLen = this.#view.getUint32(base + SETUP_PACKET_BYTES, true) >>> 0;
+          if (dataLen !== setup.wLength) {
+            throw new Error(
+              `USB proxy ring corrupted (controlOut payload length mismatch: wLength=${setup.wLength} dataLen=${dataLen}).`,
+            );
+          }
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (controlOut payload exceeds ring segment).");
