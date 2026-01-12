@@ -153,6 +153,13 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
   const ext = filename?.split(".").pop()?.toLowerCase();
 
   // qcow2: "QFI\xfb" at offset 0 + a plausible version at offset 4.
+  //
+  // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
+  // get a corruption error instead of silently falling back to raw.
+  if (src.size >= 4 && src.size < 8) {
+    const sig4 = await src.readAt(0, 4);
+    if (sig4[0] === 0x51 && sig4[1] === 0x46 && sig4[2] === 0x49 && sig4[3] === 0xfb) return "qcow2";
+  }
   if (src.size >= 8) {
     const sig = await src.readAt(0, 8);
     if (sig[0] === 0x51 && sig[1] === 0x46 && sig[2] === 0x49 && sig[3] === 0xfb) {
@@ -954,6 +961,7 @@ function nextPow2(n: number): number {
 
 class Qcow2 {
   static async open(src: RandomAccessSource, signal?: AbortSignal): Promise<Qcow2> {
+    if (src.size < 72) throw new Error("qcow2 header truncated");
     const hdr72 = await src.readAt(0, 72);
     if (hdr72[0] !== 0x51 || hdr72[1] !== 0x46 || hdr72[2] !== 0x49 || hdr72[3] !== 0xfb) {
       throw new Error("invalid qcow2 magic");
@@ -962,6 +970,7 @@ class Qcow2 {
     if (version !== 2 && version !== 3) throw new Error(`unsupported qcow2 version ${version}`);
     const hdr = version === 3 ? new Uint8Array(104) : hdr72;
     if (version === 3) {
+      if (src.size < 104) throw new Error("qcow2 v3 header truncated");
       hdr.set(hdr72, 0);
       hdr.set(await src.readAt(72, 32), 72);
     }

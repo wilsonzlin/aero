@@ -495,6 +495,12 @@ test("detectFormat: qcow2/vhd/iso signatures", async () => {
   }
 });
 
+test("detectFormat: detects truncated qcow2 magic", async () => {
+  const file = new Uint8Array([0x51, 0x46, 0x49, 0xfb]); // "QFI\xfb"
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "qcow2");
+});
+
 test("detectFormat: does not misclassify qcow2 magic with invalid version", async () => {
   const file = new Uint8Array(8);
   file.set([0x51, 0x46, 0x49, 0xfb], 0);
@@ -624,6 +630,29 @@ test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () 
   assert.notEqual(parsed.table[0], 0);
   assert.equal(parsed.table[1], 0, "unallocated qcow2 cluster should remain sparse");
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: rejects truncated qcow2 header", async () => {
+  const file = new Uint8Array([0x51, 0x46, 0x49, 0xfb]); // "QFI\xfb"
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 header truncated/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: rejects truncated qcow2 v3 header", async () => {
+  const file = new Uint8Array(72);
+  file.set([0x51, 0x46, 0x49, 0xfb], 0); // magic
+  writeU32BE(file, 4, 3); // version 3 requires 104-byte header
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /qcow2 v3 header truncated/i.test(err.message),
+  );
 });
 
 test("convertToAeroSparse: rejects qcow2 with compressed l1 entry", async () => {
