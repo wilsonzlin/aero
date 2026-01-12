@@ -376,6 +376,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-devices",
  "aero-devices-input",
+ "aero-net-backend",
  "aero-platform",
  "aero-snapshot",
  "firmware",
@@ -405,6 +406,13 @@ version = "0.1.0"
 dependencies = [
  "aero-mem",
  "memory",
+]
+
+[[package]]
+name = "aero-net-backend"
+version = "0.1.0"
+dependencies = [
+ "aero-ipc",
 ]
 
 [[package]]
@@ -1643,6 +1651,7 @@ dependencies = [
  "aero-gpu-trace",
  "aero-io-snapshot",
  "aero-ipc",
+ "aero-net-backend",
  "aero-net-e1000",
  "aero-net-stack",
  "aero-platform",

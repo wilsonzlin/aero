@@ -28,6 +28,7 @@ aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
+aero-net-backend = { path = "../aero-net-backend" }
 aero-gpu-trace = { path = "../aero-gpu-trace", optional = true }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu = { path = "../aero-gpu", optional = true }
