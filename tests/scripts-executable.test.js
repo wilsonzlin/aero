@@ -29,13 +29,13 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 function scriptsReferencedByDocs() {
   // Only scan tracked Markdown files to avoid walking huge untracked dirs like
   // node_modules/ or target/ (which may exist in CI/local checkouts).
-  const markdownFiles = execFileSync("git", ["ls-files", "*.md"], {
+  const markdownFiles = execFileSync("git", ["ls-files"], {
     cwd: repoRoot,
     encoding: "utf8",
   })
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line) => line.length > 0 && line.endsWith(".md"));
 
   // Match docs that invoke a shell script directly, e.g.:
   //   ./scripts/safe-run.sh cargo test --locked
