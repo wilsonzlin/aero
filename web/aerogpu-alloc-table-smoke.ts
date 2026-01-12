@@ -184,10 +184,13 @@ async function main(): Promise<void> {
     // Build an ACMD stream that creates a texture backed by alloc_table + backing_alloc_id,
     // then uploads only the first row via RESOURCE_DIRTY_RANGE, and finally PRESENTs it.
     const writer = new AerogpuCmdWriter();
+    // Prefer the ABI 1.2+ sRGB variant when available; the CPU executor treats it the same as
+    // UNORM (no colorspace conversion), so this remains a pure row_pitch_bytes/backing test.
+    const format = (AerogpuFormat as any).R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
     writer.createTexture2d(
       /* textureHandle */ 1,
       /* usageFlags */ AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-      /* format */ AerogpuFormat.R8G8B8A8Unorm,
+      /* format */ format,
       texWidth,
       texHeight,
       /* mipLevels */ 1,
