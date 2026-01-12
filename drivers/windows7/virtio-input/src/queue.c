@@ -95,6 +95,7 @@ VOID VirtioInputEvtIoInternalDeviceControl(
     WDFDEVICE device = WdfIoQueueGetDevice(Queue);
     PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(device);
     PCSTR name = VioInputHidIoctlToString(IoControlCode);
+    NTSTATUS status;
 
     VioInputCountHidIoctl(&devCtx->Counters, IoControlCode);
 
