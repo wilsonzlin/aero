@@ -217,11 +217,11 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
 
 # Run D3D9 integration test
-bash ./scripts/safe-run.sh cargo test -p aero --test d3d9_blend_depth_stencil --locked
-bash ./scripts/safe-run.sh cargo test -p aero --test d3d9_vertex_input --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_blend_depth_stencil --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_vertex_input --locked
 
 # Run D3D11 smoke test
-bash ./scripts/safe-run.sh cargo test -p aero --test d3d11_smoke --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test d3d11_smoke --locked
 ```
 
 **Note:** GPU tests may be skipped on headless/GPU-less machines. Set `AERO_REQUIRE_WEBGPU=1` to force failure if no GPU is available.
