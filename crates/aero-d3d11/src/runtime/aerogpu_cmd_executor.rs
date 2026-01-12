@@ -4721,9 +4721,16 @@ impl AerogpuD3d11Executor {
             bail!("COPY_TEXTURE2D: dst rect out of bounds");
         }
 
-        // WebGPU requires BC-compressed copies to be aligned to 4x4 blocks, except when the region
-        // reaches the mip edge (partial blocks are only representable at the edge).
-        if bc_block_bytes(src_desc.format).is_some() {
+        // Block-compressed textures (BC1/2/3/7) require 4x4 block-aligned copies, except when the
+        // region reaches the mip edge (partial blocks are only representable at the edge).
+        //
+        // IMPORTANT: This validation must be based on the *guest-requested* Aerogpu format, not the
+        // mapped host `wgpu::TextureFormat`. When texture compression features are disabled (e.g.
+        // wgpu GL backend or `AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1`), BC textures are
+        // represented as RGBA8 host textures, but guest BC copy semantics still apply.
+        let guest_format_layout = aerogpu_texture_format_layout(src_format_u32)?;
+        let guest_is_bc = guest_format_layout.is_block_compressed();
+        if guest_is_bc {
             if !src_x.is_multiple_of(4)
                 || !src_y.is_multiple_of(4)
                 || !dst_x.is_multiple_of(4)
@@ -4745,7 +4752,8 @@ impl AerogpuD3d11Executor {
         // WebGPU additionally requires BC copy extents to be block-aligned, even for smaller-than-a-
         // block mips. (E.g. a 2x2 mip still uses a 4x4 physical extent.) Keep guest-facing
         // semantics and round up for the host copy.
-        let (wgpu_copy_width, wgpu_copy_height) = if bc_block_bytes(src_desc.format).is_some() {
+        let host_is_bc = bc_block_bytes(src_desc.format).is_some();
+        let (wgpu_copy_width, wgpu_copy_height) = if host_is_bc {
             (align_to(width, 4)?, align_to(height, 4)?)
         } else {
             (width, height)
@@ -4848,7 +4856,7 @@ impl AerogpuD3d11Executor {
             self.ensure_texture_uploaded(encoder, dst_texture, allocs, guest_mem)?;
         }
 
-        let is_bc = bc_block_bytes(src_desc.format).is_some();
+        let is_bc = host_is_bc;
         let bc_copy_requires_cpu_fallback = is_bc && matches!(self.backend, wgpu::Backend::Gl);
 
         if bc_copy_requires_cpu_fallback {
