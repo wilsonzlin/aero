@@ -22,6 +22,8 @@ export type SharedRingBufferHandle = {
     free(): void;
 };
 
+export type WasmEnum<K extends string> = Readonly<Record<K, number>>;
+
 export type UhciControllerBridgeHandle = {
     io_read(offset: number, size: number): number;
     io_write(offset: number, size: number, value: number): void;
@@ -82,6 +84,19 @@ export interface WasmApi {
         readonly guest_size: number;
         readonly runtime_reserved: number;
     };
+
+    /**
+     * DOM-style mouse button IDs (mirrors `MouseEvent.button`).
+     *
+     * Optional for older WASM builds.
+     */
+    MouseButton?: WasmEnum<"Left" | "Middle" | "Right">;
+    /**
+     * Mouse button bit values matching `MouseEvent.buttons` (bitmask).
+     *
+     * Optional for older WASM builds.
+     */
+    MouseButtons?: WasmEnum<"Left" | "Right" | "Middle">;
 
     /**
      * Guest-visible virtio-input device exposed via virtio-pci (BAR0 MMIO).
@@ -785,6 +800,8 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        MouseButton: mod.MouseButton,
+        MouseButtons: mod.MouseButtons,
         VirtioInputPciDevice: mod.VirtioInputPciDevice,
         SharedRingBuffer: mod.SharedRingBuffer,
         open_ring_by_kind: mod.open_ring_by_kind,

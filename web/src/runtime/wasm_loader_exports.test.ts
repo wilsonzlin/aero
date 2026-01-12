@@ -25,6 +25,35 @@ function sharedMemorySupported(): boolean {
 }
 
 describe("runtime/wasm_loader (optional exports)", () => {
+  it("surfaces MouseButton/MouseButtons when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const MouseButton = { Left: 0, Middle: 1, Right: 2 } as const;
+    const MouseButtons = { Left: 1, Right: 2, Middle: 4 } as const;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        MouseButton,
+        MouseButtons,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.MouseButton).toBe(MouseButton);
+    expect(api.MouseButtons).toBe(MouseButtons);
+    expect(api.MouseButton?.Left).toBe(0);
+    expect(api.MouseButtons?.Middle).toBe(4);
+  });
+
   it("surfaces SharedRingBuffer/open_ring_by_kind when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
