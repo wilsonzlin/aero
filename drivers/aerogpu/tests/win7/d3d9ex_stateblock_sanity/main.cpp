@@ -2,6 +2,7 @@
 #include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
+#include <cstring>
 
 using aerogpu_test::ComPtr;
 
@@ -236,6 +237,44 @@ static HRESULT DrawQuad(IDirect3DDevice9Ex* dev) {
   return S_OK;
 }
 
+static void FillGammaRamp(D3DGAMMARAMP* ramp, WORD base) {
+  if (!ramp) {
+    return;
+  }
+  ZeroMemory(ramp, sizeof(*ramp));
+  for (UINT i = 0; i < 256; ++i) {
+    const DWORD raw = (DWORD)i * 257u;
+    const DWORD biased = (raw + (DWORD)base > 0xFFFFu) ? 0xFFFFu : (raw + (DWORD)base);
+    const WORD v = (WORD)biased;
+    ramp->red[i] = v;
+    ramp->green[i] = v;
+    ramp->blue[i] = v;
+  }
+}
+
+static bool GammaRampEqual(const D3DGAMMARAMP& a, const D3DGAMMARAMP& b) {
+  return memcmp(&a, &b, sizeof(D3DGAMMARAMP)) == 0;
+}
+
+static void FillPaletteEntries(PALETTEENTRY* entries, BYTE seed) {
+  if (!entries) {
+    return;
+  }
+  for (UINT i = 0; i < 256; ++i) {
+    entries[i].peRed = (BYTE)(seed + i);
+    entries[i].peGreen = (BYTE)(seed + i * 3);
+    entries[i].peBlue = (BYTE)(seed + i * 7);
+    entries[i].peFlags = 0;
+  }
+}
+
+static bool PaletteEntriesEqual(const PALETTEENTRY* a, const PALETTEENTRY* b) {
+  if (!a || !b) {
+    return false;
+  }
+  return memcmp(a, b, sizeof(PALETTEENTRY) * 256u) == 0;
+}
+
 static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   const char* kTestName = "d3d9ex_stateblock_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -460,6 +499,45 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
     return reporter.FailHresult("BeginStateBlock", hr);
   }
 
+  // Record additional cached-only legacy state into the block so we can validate
+  // ApplyStateBlock restores it.
+  D3DGAMMARAMP gamma_a;
+  FillGammaRamp(&gamma_a, /*base=*/1);
+  dev->SetGammaRamp(0, 0, &gamma_a);
+
+  D3DCLIPSTATUS9 clip_a;
+  ZeroMemory(&clip_a, sizeof(clip_a));
+  clip_a.ClipUnion = 0x00000011u;
+  clip_a.ClipIntersection = 0x00000022u;
+  hr = dev->SetClipStatus(&clip_a);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetClipStatus(record)", hr);
+  }
+
+  bool palette_ok = true;
+  PALETTEENTRY pal_a[256];
+  FillPaletteEntries(pal_a, /*seed=*/5);
+  PALETTEENTRY pal_b[256];
+  FillPaletteEntries(pal_b, /*seed=*/77);
+  hr = dev->SetPaletteEntries(0, pal_a);
+  if (FAILED(hr)) {
+    // Some runtimes/drivers may reject palette APIs when palettized textures are
+    // not supported. Treat this as a supported skip.
+    aerogpu_test::PrintfStdout("INFO: %s: skipping palette stateblock checks (SetPaletteEntries hr=0x%08lX)",
+                               kTestName,
+                               (unsigned long)hr);
+    palette_ok = false;
+  } else {
+    hr = dev->SetCurrentTexturePalette(0);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout(
+          "INFO: %s: skipping palette stateblock checks (SetCurrentTexturePalette hr=0x%08lX)",
+          kTestName,
+          (unsigned long)hr);
+      palette_ok = false;
+    }
+  }
+
   hr = dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetRenderState(CULLMODE)", hr);
@@ -535,6 +613,30 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
 
   // Mutate state away from recorded values.
   float c0_white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  D3DGAMMARAMP gamma_b;
+  FillGammaRamp(&gamma_b, /*base=*/7);
+  dev->SetGammaRamp(0, 0, &gamma_b);
+
+  D3DCLIPSTATUS9 clip_b;
+  ZeroMemory(&clip_b, sizeof(clip_b));
+  clip_b.ClipUnion = 0x000000AAu;
+  clip_b.ClipIntersection = 0x000000BBu;
+  hr = dev->SetClipStatus(&clip_b);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetClipStatus(mutate)", hr);
+  }
+
+  if (palette_ok) {
+    hr = dev->SetPaletteEntries(1, pal_b);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPaletteEntries(mutate)", hr);
+    }
+    hr = dev->SetCurrentTexturePalette(1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetCurrentTexturePalette(mutate)", hr);
+    }
+  }
+
   hr = dev->SetTexture(0, tex_b.get());
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture B", hr);
@@ -569,6 +671,49 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   hr = sb->Apply();
   if (FAILED(hr)) {
     return reporter.FailHresult("StateBlock Apply", hr);
+  }
+
+  // Validate legacy state was restored.
+  D3DGAMMARAMP got_gamma;
+  ZeroMemory(&got_gamma, sizeof(got_gamma));
+  dev->GetGammaRamp(0, &got_gamma);
+  if (!GammaRampEqual(got_gamma, gamma_a)) {
+    return reporter.Fail("GetGammaRamp mismatch after Apply");
+  }
+
+  D3DCLIPSTATUS9 got_clip;
+  ZeroMemory(&got_clip, sizeof(got_clip));
+  hr = dev->GetClipStatus(&got_clip);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetClipStatus(after Apply)", hr);
+  }
+  if (got_clip.ClipUnion != clip_a.ClipUnion || got_clip.ClipIntersection != clip_a.ClipIntersection) {
+    return reporter.Fail("GetClipStatus mismatch after Apply: got {union=0x%08lX inter=0x%08lX} expected {union=0x%08lX inter=0x%08lX}",
+                         (unsigned long)got_clip.ClipUnion,
+                         (unsigned long)got_clip.ClipIntersection,
+                         (unsigned long)clip_a.ClipUnion,
+                         (unsigned long)clip_a.ClipIntersection);
+  }
+
+  if (palette_ok) {
+    PALETTEENTRY got_pal[256];
+    ZeroMemory(got_pal, sizeof(got_pal));
+    hr = dev->GetPaletteEntries(0, got_pal);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPaletteEntries(after Apply)", hr);
+    }
+    if (!PaletteEntriesEqual(got_pal, pal_a)) {
+      return reporter.Fail("GetPaletteEntries mismatch after Apply");
+    }
+    UINT got_cur = 0xFFFFFFFFu;
+    hr = dev->GetCurrentTexturePalette(&got_cur);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetCurrentTexturePalette(after Apply)", hr);
+    }
+    if (got_cur != 0) {
+      return reporter.Fail("GetCurrentTexturePalette mismatch after Apply: got=%u expected=0",
+                           (unsigned)got_cur);
+    }
   }
 
   hr = DrawQuad(dev.get());
@@ -678,6 +823,22 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("SetStreamSource(NULL mutate 2)", hr);
   }
+  // Mutate cached-only legacy state too, so we can validate Apply restores it.
+  dev->SetGammaRamp(0, 0, &gamma_b);
+  hr = dev->SetClipStatus(&clip_b);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetClipStatus(mutate 2)", hr);
+  }
+  if (palette_ok) {
+    hr = dev->SetPaletteEntries(0, pal_b);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPaletteEntries(mutate 2)", hr);
+    }
+    hr = dev->SetCurrentTexturePalette(1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetCurrentTexturePalette(mutate 2)", hr);
+    }
+  }
 
   hr = sb_created->Apply();
   if (FAILED(hr)) {
@@ -694,6 +855,41 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   }
   if ((px & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
     return reporter.Fail("pixel mismatch after CreateStateBlock Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
+  }
+
+  // Validate cached-only legacy state was restored by Apply.
+  ZeroMemory(&got_gamma, sizeof(got_gamma));
+  dev->GetGammaRamp(0, &got_gamma);
+  if (!GammaRampEqual(got_gamma, gamma_a)) {
+    return reporter.Fail("GetGammaRamp mismatch after CreateStateBlock Apply");
+  }
+  ZeroMemory(&got_clip, sizeof(got_clip));
+  hr = dev->GetClipStatus(&got_clip);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetClipStatus(after CreateStateBlock Apply)", hr);
+  }
+  if (got_clip.ClipUnion != clip_a.ClipUnion || got_clip.ClipIntersection != clip_a.ClipIntersection) {
+    return reporter.Fail("GetClipStatus mismatch after CreateStateBlock Apply");
+  }
+  if (palette_ok) {
+    PALETTEENTRY got_pal[256];
+    ZeroMemory(got_pal, sizeof(got_pal));
+    hr = dev->GetPaletteEntries(0, got_pal);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPaletteEntries(after CreateStateBlock Apply)", hr);
+    }
+    if (!PaletteEntriesEqual(got_pal, pal_a)) {
+      return reporter.Fail("GetPaletteEntries mismatch after CreateStateBlock Apply");
+    }
+    UINT got_cur = 0xFFFFFFFFu;
+    hr = dev->GetCurrentTexturePalette(&got_cur);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetCurrentTexturePalette(after CreateStateBlock Apply)", hr);
+    }
+    if (got_cur != 0) {
+      return reporter.Fail("GetCurrentTexturePalette mismatch after CreateStateBlock Apply: got=%u expected=0",
+                           (unsigned)got_cur);
+    }
   }
 
   // Exercise D3DSBT_PIXELSTATE: it should restore pixel state (texture/PS
@@ -717,6 +913,18 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   hr = dev->SetPixelShaderConstantF(0, c0_white, 1);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetPixelShaderConstantF(white pixelstate mutate)", hr);
+  }
+  // Mutate pixel-state gamma ramp/palettes as well.
+  dev->SetGammaRamp(0, 0, &gamma_b);
+  if (palette_ok) {
+    hr = dev->SetPaletteEntries(0, pal_b);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPaletteEntries(pixelstate mutate)", hr);
+    }
+    hr = dev->SetCurrentTexturePalette(1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetCurrentTexturePalette(pixelstate mutate)", hr);
+    }
   }
 
   hr = sb_pixel->Apply();
@@ -753,6 +961,33 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
                          (unsigned)expected_green);
   }
 
+  // PIXELSTATE blocks should restore gamma ramp and palette state.
+  ZeroMemory(&got_gamma, sizeof(got_gamma));
+  dev->GetGammaRamp(0, &got_gamma);
+  if (!GammaRampEqual(got_gamma, gamma_a)) {
+    return reporter.Fail("GetGammaRamp mismatch after PIXELSTATE Apply");
+  }
+  if (palette_ok) {
+    PALETTEENTRY got_pal[256];
+    ZeroMemory(got_pal, sizeof(got_pal));
+    hr = dev->GetPaletteEntries(0, got_pal);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPaletteEntries(after PIXELSTATE Apply)", hr);
+    }
+    if (!PaletteEntriesEqual(got_pal, pal_a)) {
+      return reporter.Fail("GetPaletteEntries mismatch after PIXELSTATE Apply");
+    }
+    UINT got_cur = 0xFFFFFFFFu;
+    hr = dev->GetCurrentTexturePalette(&got_cur);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetCurrentTexturePalette(after PIXELSTATE Apply)", hr);
+    }
+    if (got_cur != 0) {
+      return reporter.Fail("GetCurrentTexturePalette mismatch after PIXELSTATE Apply: got=%u expected=0",
+                           (unsigned)got_cur);
+    }
+  }
+
   // Restore the full-screen VB for subsequent tests (vertex-state and later
   // Capture/Apply phases expect to validate center pixels).
   hr = dev->SetStreamSource(0, vb.get(), 0, sizeof(VertexPosTex));
@@ -772,6 +1007,11 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   hr = dev->SetStreamSource(0, NULL, 0, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetStreamSource(NULL mutate for vertexstate)", hr);
+  }
+  // Mutate cached vertex-state clip status too.
+  hr = dev->SetClipStatus(&clip_b);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetClipStatus(vertexstate mutate)", hr);
   }
 
   // Mutate pixel state: make output blue (blue texture * white constant).
@@ -800,6 +1040,14 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   const D3DCOLOR expected_blue = 0xFF0000FFu;
   if ((px & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu)) {
     return reporter.Fail("pixel mismatch after vertexstate Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_blue);
+  }
+  ZeroMemory(&got_clip, sizeof(got_clip));
+  hr = dev->GetClipStatus(&got_clip);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetClipStatus(after VERTEXSTATE Apply)", hr);
+  }
+  if (got_clip.ClipUnion != clip_a.ClipUnion || got_clip.ClipIntersection != clip_a.ClipIntersection) {
+    return reporter.Fail("GetClipStatus mismatch after VERTEXSTATE Apply");
   }
 
   // Capture should update the existing block to the current device state.
