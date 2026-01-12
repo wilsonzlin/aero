@@ -10,6 +10,7 @@ const VHD_DYNAMIC_COOKIE: [u8; 8] = *b"cxsparse";
 
 const VHD_DISK_TYPE_FIXED: u32 = 2;
 const VHD_DISK_TYPE_DYNAMIC: u32 = 3;
+const VHD_FILE_FORMAT_VERSION: u32 = 0x0001_0000;
 
 // Hard caps to avoid absurd allocations from untrusted images.
 const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
@@ -32,6 +33,11 @@ impl VhdFooter {
             return Err(DiskError::CorruptImage("vhd footer cookie mismatch"));
         }
 
+        let file_format_version = be_u32(&raw[12..16]);
+        if file_format_version != VHD_FILE_FORMAT_VERSION {
+            return Err(DiskError::Unsupported("vhd file format version"));
+        }
+
         let disk_type = be_u32(&raw[60..64]);
         let current_size = be_u64(&raw[48..56]);
         let data_offset = be_u64(&raw[16..24]);
@@ -44,6 +50,21 @@ impl VhdFooter {
 
         if current_size == 0 || !current_size.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd current_size invalid"));
+        }
+
+        match disk_type {
+            VHD_DISK_TYPE_FIXED => {
+                // Per spec, fixed VHDs use 0xFFFF..FFFF to indicate there is no dynamic header.
+                if data_offset != u64::MAX {
+                    return Err(DiskError::CorruptImage("vhd fixed data_offset invalid"));
+                }
+            }
+            VHD_DISK_TYPE_DYNAMIC => {
+                if data_offset == u64::MAX {
+                    return Err(DiskError::CorruptImage("vhd dynamic header offset invalid"));
+                }
+            }
+            _ => {}
         }
 
         Ok(Self {
@@ -77,6 +98,10 @@ impl VhdDynamicHeader {
         }
 
         let table_offset = be_u64(&raw[16..24]);
+        let header_version = be_u32(&raw[24..28]);
+        if header_version != VHD_FILE_FORMAT_VERSION {
+            return Err(DiskError::Unsupported("vhd dynamic header version"));
+        }
         let max_table_entries = be_u32(&raw[28..32]);
         let block_size = be_u32(&raw[32..36]);
 

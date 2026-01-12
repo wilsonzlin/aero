@@ -1345,6 +1345,47 @@ fn vhd_fixed_write_last_sector_persists_and_footer_remains_valid() {
 }
 
 #[test]
+fn vhd_fixed_rejects_bad_file_format_version() {
+    let virtual_size = 64 * 1024u64;
+    let mut backend = make_vhd_fixed_with_pattern();
+
+    let footer_offset = virtual_size;
+    let mut footer = [0u8; SECTOR_SIZE];
+    backend.read_at(footer_offset, &mut footer).unwrap();
+
+    // Corrupt file_format_version at offset 12..16 and fix up checksum.
+    footer[12..16].copy_from_slice(&0u32.to_be_bytes());
+    let checksum = vhd_footer_checksum(&footer);
+    footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+    backend.write_at(footer_offset, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported("vhd file format version")));
+}
+
+#[test]
+fn vhd_fixed_rejects_data_offset_not_max() {
+    let virtual_size = 64 * 1024u64;
+    let mut backend = make_vhd_fixed_with_pattern();
+
+    let footer_offset = virtual_size;
+    let mut footer = [0u8; SECTOR_SIZE];
+    backend.read_at(footer_offset, &mut footer).unwrap();
+
+    // Set data_offset to 0 (invalid for fixed) and fix up checksum.
+    footer[16..24].copy_from_slice(&0u64.to_be_bytes());
+    let checksum = vhd_footer_checksum(&footer);
+    footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+    backend.write_at(footer_offset, &footer).unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd fixed data_offset invalid")
+    ));
+}
+
+#[test]
 fn vhd_dynamic_unallocated_reads_zero_and_writes_allocate() {
     let backend = make_vhd_dynamic_empty(64 * 1024, 16 * 1024);
     let mut disk = VhdDisk::open(backend).unwrap();
@@ -1896,6 +1937,25 @@ fn vhd_dynamic_rejects_bad_dynamic_header_cookie() {
     assert!(matches!(
         err,
         DiskError::CorruptImage("vhd dynamic header cookie mismatch")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_bad_dynamic_header_version() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    // dynamic header version is at offset 24 in the dynamic header.
+    backend
+        .write_at(dyn_header_offset + 24, &0u32.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::Unsupported("vhd dynamic header version")
     ));
 }
 
