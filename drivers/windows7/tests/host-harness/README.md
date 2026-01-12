@@ -128,7 +128,7 @@ If the guest reports `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|...`, t
 
 Note: If the guest selftest is too old (or otherwise misconfigured) and does not emit any `virtio-input-events`
 marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early
-(PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.
+(PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.
 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).

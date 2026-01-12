@@ -119,7 +119,7 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
       If the guest reports `...|virtio-input-events|FAIL|...`, the harness fails
       (PowerShell: `VIRTIO_INPUT_EVENTS_FAILED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_FAILED: ...`).
     - Note: if the guest selftest does not emit any `virtio-input-events` marker at all (READY/SKIP/PASS/FAIL) after
-      completing `virtio-input`, the harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints
+      completing `virtio-input`, the harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python:
       `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.
       If QMP input injection fails, the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python:
       `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
