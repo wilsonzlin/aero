@@ -57,6 +57,14 @@ From the repo root:
 
 ```bash
 npm ci
+
+# If this is a fresh checkout, build the wasm-pack outputs first (gitignored):
+# - web/src/wasm/pkg-single/
+# - web/src/wasm/pkg-threaded/
+# - web/src/wasm/pkg-*-gpu/
+npm -w web run wasm:build
+
+# Start the web UI (served from web/):
 npm run dev:web
 ```
 
@@ -64,6 +72,8 @@ Open the printed local URL (usually `http://127.0.0.1:5173/`).
 
 Notes:
 
+- If the page errors with “Missing single-thread WASM package” / “Missing threaded WASM package”, you skipped the build step above.
+  - Run `npm -w web run wasm:build` and reload.
 - `npm run dev:web` runs the **web UI** under `web/`, which includes the **Disks** + **Workers** panels used below.
 - The repo-root harness (`npm run dev`) is primarily used by CI/Playwright and may not expose the full Win7 boot UI.
 
