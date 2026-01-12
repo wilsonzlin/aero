@@ -142,7 +142,9 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     });
   });
 
-  expect(first.lpibAfter).not.toBe(first.lpibBefore);
+  // 1024 frames @ 16-bit mono = 2048 bytes.
+  const expectedLpibDelta = 1024 * 2;
+  expect(((first.lpibAfter - first.lpibBefore) >>> 0) >>> 0).toBe(expectedLpibDelta);
 
   const bytes = new Uint8Array(first.pcm);
   let nonZero = 0;
@@ -240,7 +242,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     });
   });
 
-  expect(silence.lpibAfter).not.toBe(silence.lpibBefore);
+  expect(((silence.lpibAfter - silence.lpibBefore) >>> 0) >>> 0).toBe(expectedLpibDelta);
   const silenceBytes = new Uint8Array(silence.pcm);
   let silenceNonZero = 0;
   for (const b of silenceBytes) if (b !== 0) silenceNonZero += 1;
