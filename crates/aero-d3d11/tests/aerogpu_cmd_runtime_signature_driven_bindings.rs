@@ -710,6 +710,125 @@ fn build_vs_sample_t0_s0_to_color1_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHEX", shex)])
 }
 
+fn build_vs_matrix_texcoord_dxbc() -> Vec<u8> {
+    // Minimal VS that:
+    // - Multiplies POSITION0 (v0.xyz, with implicit w=1) by cb0[0..3] into SV_Position (o1).
+    // - Passes TEXCOORD0 (v1.xy) through to TEXCOORD0 (o0).
+    //
+    // Token stream (SM4 subset):
+    //   dp4 o1.x, v0, cb0[0]
+    //   dp4 o1.y, v0, cb0[1]
+    //   dp4 o1.z, v0, cb0[2]
+    //   dp4 o1.w, v0, cb0[3]
+    //   mov o0, v1
+    //   ret
+    //
+    // This ensures the runtime must bind resources for *both* stage-scoped groups:
+    // - group 0 (VS) cb0
+    // - group 1 (PS) t0+s0 (when paired with `ps_sample.dxbc`)
+    let isgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x07,
+        },
+        SigParam {
+            semantic_name: "TEXCOORD",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x03,
+        },
+    ]);
+    let osgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "TEXCOORD",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x03,
+        },
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+
+    // vs_4_0
+    let version_token = 0x0001_0040u32;
+
+    let dp4_token = 0x09u32 | (8u32 << 11);
+    let mov_token = 0x01u32 | (5u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o1_x = 0x0010_1022u32;
+    let dst_o1_y = 0x0010_2022u32;
+    let dst_o1_z = 0x0010_4022u32;
+    let dst_o1_w = 0x0010_8022u32;
+    let dst_o0 = 0x0010_f022u32;
+
+    let src_v0 = 0x001e_4016u32;
+    let src_v1 = 0x001e_4016u32;
+    let cb = 0x002e_4086u32;
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // dp4 o1.x, v0, cb0[0]
+        dp4_token,
+        dst_o1_x,
+        1, // o1
+        src_v0,
+        0, // v0
+        cb,
+        0, // cb slot
+        0, // cb reg
+        // dp4 o1.y, v0, cb0[1]
+        dp4_token,
+        dst_o1_y,
+        1,
+        src_v0,
+        0,
+        cb,
+        0,
+        1,
+        // dp4 o1.z, v0, cb0[2]
+        dp4_token,
+        dst_o1_z,
+        1,
+        src_v0,
+        0,
+        cb,
+        0,
+        2,
+        // dp4 o1.w, v0, cb0[3]
+        dp4_token,
+        dst_o1_w,
+        1,
+        src_v0,
+        0,
+        cb,
+        0,
+        3,
+        // mov o0, v1
+        mov_token,
+        dst_o0,
+        0, // o0
+        src_v1,
+        1, // v1
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shdr = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shdr.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+}
+
 fn build_ilay_pos3() -> Vec<u8> {
     // Build an ILAY blob that matches the `vs_matrix.dxbc` fixture input signature: POSITION0 only.
     //
@@ -927,6 +1046,127 @@ fn aerogpu_cmd_runtime_signature_driven_vs_sig_v1_position_binding() {
         assert_eq!(pixels.len(), 4 * 4 * 4);
         for (i, px) in pixels.chunks_exact(4).enumerate() {
             assert_eq!(px, &[255, 0, 0, 255], "pixel index {i}");
+        }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_vs_cb0_and_ps_texture_binding() {
+    // Ensure signature-driven runtime bindings work when *both* stages declare resources:
+    // - VS: constant buffer cb0
+    // - PS: texture t0 + sampler s0
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const CB0: u32 = 5;
+        const TEX: u32 = 6;
+        const RTEX: u32 = 7;
+
+        rt.create_shader_dxbc(VS, &build_vs_matrix_texcoord_dxbc())
+            .unwrap();
+        rt.create_shader_dxbc(PS, DXBC_PS_SAMPLE).unwrap();
+        rt.create_input_layout(IL, ILAY_POS3_TEX2).unwrap();
+
+        // Fullscreen triangle with UVs.
+        let vertices: [VertexPos3Tex2; 3] = [
+            VertexPos3Tex2 {
+                pos: [-1.0, -1.0, 0.0],
+                tex: [0.0, 0.0],
+            },
+            VertexPos3Tex2 {
+                pos: [3.0, -1.0, 0.0],
+                tex: [2.0, 0.0],
+            },
+            VertexPos3Tex2 {
+                pos: [-1.0, 3.0, 0.0],
+                tex: [0.0, 2.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        // cb0 = identity matrix.
+        let identity: [[f32; 4]; 4] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        rt.create_buffer(
+            CB0,
+            std::mem::size_of_val(&identity) as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(CB0, 0, bytemuck::bytes_of(&identity))
+            .unwrap();
+        rt.set_vs_constant_buffer(0, Some(CB0));
+
+        rt.create_texture2d(
+            TEX,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let green_px: [u8; 4] = [0, 255, 0, 255];
+        let tex_data = [
+            green_px, green_px, //
+            green_px, green_px, //
+        ];
+        rt.write_texture_rgba8(TEX, 2, 2, 2 * 4, bytemuck::bytes_of(&tex_data))
+            .unwrap();
+        rt.set_ps_texture(0, Some(TEX));
+
+        rt.create_texture2d(
+            RTEX,
+            4,
+            4,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3Tex2>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels.len(), 4 * 4 * 4);
+        for (i, px) in pixels.chunks_exact(4).enumerate() {
+            assert_eq!(px, &[0, 255, 0, 255], "pixel {i}");
         }
     });
 }
