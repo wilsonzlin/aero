@@ -232,14 +232,15 @@ class I8042WasmController {
   readonly #irq: IrqSink;
   readonly #systemControl: { setA20(enabled: boolean): void; requestReset(): void };
 
-  #irqMask = 0;
+  #lastStatusObf = false;
   #a20Enabled = false;
 
   constructor(bridge: I8042Bridge, irq: IrqSink, systemControl: { setA20(enabled: boolean): void; requestReset(): void }) {
     this.#bridge = bridge;
     this.#irq = irq;
     this.#systemControl = systemControl;
-    this.#syncSideEffects();
+    // Initial device state should not deliver any IRQ pulses; just synchronize derived state.
+    this.#syncSideEffects({ suppressIrqPulses: true });
   }
 
   free(): void {
@@ -253,7 +254,7 @@ class I8042WasmController {
   portRead(port: number, size: number): number {
     if (size !== 1) return defaultReadValue(size);
     const value = this.#bridge.port_read(port & 0xffff) & 0xff;
-    this.#syncSideEffects();
+    this.#syncSideEffects({ afterPort60Read: (port & 0xffff) === 0x0060 });
     return value;
   }
 
@@ -301,21 +302,59 @@ class I8042WasmController {
 
   load_state(bytes: Uint8Array): void {
     this.#bridge.load_state(bytes);
-    this.#syncSideEffects();
+    // Snapshot restore should not emit IRQ pulses for any already-buffered output byte.
+    this.#syncSideEffects({ suppressIrqPulses: true });
   }
 
-  #syncSideEffects(): void {
-    this.#syncIrqs();
+  #syncSideEffects(opts: { afterPort60Read?: boolean; suppressIrqPulses?: boolean } = {}): void {
+    this.#syncIrqs(opts);
     this.#syncSystemControl();
   }
 
-  #syncIrqs(): void {
+  #syncIrqs(opts: { afterPort60Read?: boolean; suppressIrqPulses?: boolean }): void {
     // Prefer explicit IRQ pulses (edge-triggered semantics) when available.
     const drain = (this.#bridge as unknown as { drain_irqs?: unknown }).drain_irqs;
     if (typeof drain === "function") {
       const pulses = (drain as (...args: unknown[]) => unknown).call(this.#bridge);
       const mask = (typeof pulses === "number" ? pulses : 0) & 0xff;
       // bit0: IRQ1, bit1: IRQ12
+      if (!opts.suppressIrqPulses) {
+        if (mask & 0x01) {
+          this.#irq.raiseIrq(1);
+          this.#irq.lowerIrq(1);
+        }
+        if (mask & 0x02) {
+          this.#irq.raiseIrq(12);
+          this.#irq.lowerIrq(12);
+        }
+      }
+      return;
+    }
+
+    // Fallback: older WASM builds only expose `irq_mask()` (level) and do not provide a pulse
+    // drain. Deriving pulses by diffing the level is insufficient: the i8042 can refill the
+    // output buffer immediately after a port 0x60 read, producing multiple IRQ pulses without the
+    // level changing.
+    //
+    // Approximate pulse semantics by observing output-buffer transitions:
+    // - When the output buffer becomes full (OBF 0→1), a byte became available.
+    // - After reading port 0x60, if OBF remains set, the buffer refilled and a new byte became
+    //   available (and should generate another pulse).
+    let status = 0;
+    try {
+      status = this.#bridge.port_read(0x0064) & 0xff;
+    } catch {
+      status = 0;
+    }
+    const obf = (status & 0x01) !== 0;
+    if (opts.suppressIrqPulses) {
+      this.#lastStatusObf = obf;
+      return;
+    }
+
+    const shouldPulse = opts.afterPort60Read ? obf : !this.#lastStatusObf && obf;
+    if (shouldPulse) {
+      const mask = this.#bridge.irq_mask() & 0x03;
       if (mask & 0x01) {
         this.#irq.raiseIrq(1);
         this.#irq.lowerIrq(1);
@@ -324,25 +363,8 @@ class I8042WasmController {
         this.#irq.raiseIrq(12);
         this.#irq.lowerIrq(12);
       }
-      return;
     }
-
-    // Fallback: derive IRQ line levels from `irq_mask()` (older WASM builds).
-    const next = this.#bridge.irq_mask() & 0xff;
-    const prev = this.#irqMask;
-    if (next === prev) return;
-    this.#irqMask = next;
-
-    // bit0: IRQ1, bit1: IRQ12
-    const changes = (prev ^ next) & 0x03;
-    if (changes & 0x01) {
-      if (next & 0x01) this.#irq.raiseIrq(1);
-      else this.#irq.lowerIrq(1);
-    }
-    if (changes & 0x02) {
-      if (next & 0x02) this.#irq.raiseIrq(12);
-      else this.#irq.lowerIrq(12);
-    }
+    this.#lastStatusObf = obf;
   }
 
   #syncSystemControl(): void {
