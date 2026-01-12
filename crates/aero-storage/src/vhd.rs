@@ -142,7 +142,7 @@ impl<B: StorageBackend> VhdDisk<B> {
                     footer,
                     dynamic: None,
                     bat: Vec::new(),
-                    bitmap_cache: LruCache::new(NonZeroUsize::new(1).unwrap()),
+                    bitmap_cache: LruCache::new(NonZeroUsize::MIN),
                 })
             }
             VHD_DISK_TYPE_DYNAMIC => {
