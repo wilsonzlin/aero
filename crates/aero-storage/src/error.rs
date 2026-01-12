@@ -26,6 +26,21 @@ pub enum DiskError {
     #[error("corrupt sparse image: {0}")]
     CorruptSparseImage(&'static str),
 
+    #[error("backend not supported: {0}")]
+    NotSupported(String),
+
+    #[error("storage quota exceeded")]
+    QuotaExceeded,
+
+    #[error("backend is in use")]
+    InUse,
+
+    #[error("invalid backend state: {0}")]
+    InvalidState(String),
+
+    #[error("backend unavailable")]
+    BackendUnavailable,
+
     #[error("io error: {0}")]
-    Io(&'static str),
+    Io(String),
 }

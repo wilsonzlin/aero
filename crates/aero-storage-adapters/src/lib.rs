@@ -187,6 +187,11 @@ fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
         aero_storage::DiskError::OutOfBounds { .. } => {
             io::Error::new(io::ErrorKind::UnexpectedEof, err)
         }
+        aero_storage::DiskError::NotSupported(_) => io::Error::new(io::ErrorKind::Unsupported, err),
+        aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
+        aero_storage::DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
+        aero_storage::DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::Other, err),
+        aero_storage::DiskError::BackendUnavailable => io::Error::new(io::ErrorKind::NotConnected, err),
         aero_storage::DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err),
     }
 }

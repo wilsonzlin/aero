@@ -186,7 +186,12 @@ fn map_storage_disk_error(
         StorageDiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
         StorageDiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
         StorageDiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),
-        StorageDiskError::Io(msg) => DiskError::Io(msg.to_string()),
+        StorageDiskError::NotSupported(msg) => DiskError::NotSupported(msg),
+        StorageDiskError::QuotaExceeded => DiskError::QuotaExceeded,
+        StorageDiskError::InUse => DiskError::InUse,
+        StorageDiskError::InvalidState(msg) => DiskError::InvalidState(msg),
+        StorageDiskError::BackendUnavailable => DiskError::BackendUnavailable,
+        StorageDiskError::Io(msg) => DiskError::Io(msg),
     }
 }
 

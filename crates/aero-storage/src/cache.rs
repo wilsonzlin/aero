@@ -168,7 +168,7 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
             let entry = self
                 .cache
                 .get_mut(&key)
-                .ok_or(DiskError::Io("cache missing key during flush"))?;
+                .ok_or(DiskError::Io("cache missing key during flush".into()))?;
             if !entry.dirty {
                 continue;
             }

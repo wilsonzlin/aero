@@ -22,12 +22,21 @@ impl<S> ByteStorageBackend<S> {
     }
 }
 
-fn storage_backend_error(_err: DiskError) -> StorageDiskError {
-    // `aero-storage` uses `&'static str` errors for backend I/O failures.
-    //
-    // The concrete error message from the emulator storage layer is not currently
-    // representable, so we collapse all backend failures into a generic I/O error.
-    StorageDiskError::Io("backend io error")
+fn storage_backend_error(err: DiskError) -> StorageDiskError {
+    // `aero-storage` errors are surfaced through the disk format implementation.
+    // Preserve as much detail as possible when mapping emulator storage errors into the
+    // `aero-storage` layer.
+    match err {
+        DiskError::NotSupported(msg) => StorageDiskError::NotSupported(msg),
+        DiskError::QuotaExceeded => StorageDiskError::QuotaExceeded,
+        DiskError::InUse => StorageDiskError::InUse,
+        DiskError::InvalidState(msg) => StorageDiskError::InvalidState(msg),
+        DiskError::BackendUnavailable => StorageDiskError::BackendUnavailable,
+        DiskError::Io(msg) => StorageDiskError::Io(msg),
+        // The remaining variants are not expected from `ByteStorage` backends, but map them into a
+        // generic I/O error to avoid losing the error entirely.
+        other => StorageDiskError::Io(other.to_string()),
+    }
 }
 
 fn disk_error_from_storage(err: StorageDiskError) -> DiskError {
@@ -41,7 +50,12 @@ fn disk_error_from_storage(err: StorageDiskError) -> DiskError {
         StorageDiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
         StorageDiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
         StorageDiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),
-        StorageDiskError::Io(msg) => DiskError::Io(msg.to_string()),
+        StorageDiskError::NotSupported(msg) => DiskError::NotSupported(msg),
+        StorageDiskError::QuotaExceeded => DiskError::QuotaExceeded,
+        StorageDiskError::InUse => DiskError::InUse,
+        StorageDiskError::InvalidState(msg) => DiskError::InvalidState(msg),
+        StorageDiskError::BackendUnavailable => DiskError::BackendUnavailable,
+        StorageDiskError::Io(msg) => DiskError::Io(msg),
     }
 }
 
