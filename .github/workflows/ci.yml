@@ -109,6 +109,9 @@ jobs:
       - name: Check repository policy
         run: scripts/ci/check-repo-policy.sh
 
+      - name: Check legacy net-stack 4CC does not reappear
+        run: bash scripts/ci/check-no-legacy-net-stack-4cc.sh
+
       - name: Check Guest Tools devices.cmd is generated
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
 
