@@ -139,22 +139,28 @@ impl<B: StorageBackend> VhdDisk<B> {
                 if footer.data_offset == u64::MAX {
                     return Err(DiskError::CorruptImage("vhd dynamic header offset invalid"));
                 }
-                if footer
+                if !footer.data_offset.is_multiple_of(SECTOR_SIZE as u64) {
+                    return Err(DiskError::CorruptImage(
+                        "vhd dynamic header offset misaligned",
+                    ));
+                }
+                let footer_offset = len - SECTOR_SIZE as u64;
+                let dyn_header_end = footer
                     .data_offset
                     .checked_add(1024)
-                    .ok_or(DiskError::OffsetOverflow)?
-                    > len
-                {
+                    .ok_or(DiskError::OffsetOverflow)?;
+                if dyn_header_end > len {
                     return Err(DiskError::CorruptImage("vhd dynamic header truncated"));
+                }
+                if dyn_header_end > footer_offset {
+                    return Err(DiskError::CorruptImage(
+                        "vhd dynamic header overlaps footer",
+                    ));
                 }
 
                 let mut raw_header = [0u8; 1024];
                 backend.read_at(footer.data_offset, &mut raw_header)?;
                 let dynamic = VhdDynamicHeader::parse(&raw_header)?;
-                let dyn_header_end = footer
-                    .data_offset
-                    .checked_add(1024)
-                    .ok_or(DiskError::OffsetOverflow)?;
                 if dynamic.table_offset < dyn_header_end {
                     return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
                 }

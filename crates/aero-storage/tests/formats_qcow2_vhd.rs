@@ -1097,3 +1097,45 @@ fn vhd_dynamic_rejects_invalid_block_size() {
         DiskError::CorruptImage("vhd block_size invalid")
     ));
 }
+
+#[test]
+fn vhd_dynamic_rejects_misaligned_dynamic_header_offset() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let footer = make_vhd_footer(virtual_size, 3, 1);
+    let file_len = backend.len().unwrap();
+    backend.write_at(0, &footer).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header offset misaligned")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_dynamic_header_overlapping_footer() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Place the dynamic header at the BAT offset so it extends into the EOF footer.
+    let dyn_header_offset = (SECTOR_SIZE as u64) + 1024;
+    let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+    let file_len = backend.len().unwrap();
+    backend.write_at(0, &footer).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header overlaps footer")
+    ));
+}
