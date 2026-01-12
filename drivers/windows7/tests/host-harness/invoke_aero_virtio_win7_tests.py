@@ -154,6 +154,9 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
         if etag is not None:
             self.send_header("ETag", etag)
         self.send_header("Connection", "close")
+        # Make sure the server-side request loop terminates after this response
+        # (we always send Connection: close and do not implement keep-alive).
+        self.close_connection = True
         self.end_headers()
         if not send_body:
             return
@@ -221,6 +224,7 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
         if digest_hex is not None:
             self.send_header("X-Aero-Upload-SHA256", digest_hex)
         self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         try:
             self.wfile.write(body)
