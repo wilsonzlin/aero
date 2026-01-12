@@ -33,7 +33,7 @@ cargo test -p aero-virtio --locked --test virtio_input
 Recommended (enforces repo resource limits via `safe-run.sh`):
 
 ```bash
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
 Equivalent (name-filter based; useful when you don’t remember the test binary name):
@@ -77,11 +77,11 @@ cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 Recommended (enforces repo resource limits via `safe-run.sh`):
 
 ```bash
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_ring_features
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
-./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_ring_features
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
+bash ./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 ```
 
 ### 1.3 What to expect (key invariants)

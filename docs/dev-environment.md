@@ -42,7 +42,7 @@ From the repo root **inside the container**:
 # but it's safe to re-run.)
 just setup
 cargo xtask test-all --skip-e2e
-# (Or use the transitional wrapper: ./scripts/test-all.sh --skip-e2e)
+# (Or use the transitional wrapper: bash ./scripts/test-all.sh --skip-e2e)
 ```
 
 By default, the test runner uses the **repo root** Node workspace (`package.json` in the root) which matches CI.

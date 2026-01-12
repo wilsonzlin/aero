@@ -66,9 +66,9 @@ Note: in this repo, `cargo xtask` runs Cargo with `--locked` (matching CI). If y
 the lockfile (e.g. `cargo generate-lockfile`, or `cargo generate-lockfile --manifest-path path/to/tool/Cargo.toml`
 for standalone tools) and include the `Cargo.lock` diff in your PR.
 
-`./scripts/test-all.sh` is kept as a thin wrapper around `cargo xtask test-all`
+`bash ./scripts/test-all.sh` is kept as a thin wrapper around `cargo xtask test-all`
 for a transition period, but `cargo xtask` is the canonical implementation (and
-works on Windows without bash).
+  works on Windows without bash).
 
 The unified runner executes (in order):
 
@@ -223,10 +223,10 @@ These tests are defined under the workspace root `tests/` directory, but are reg
 
 ```bash
 # Build the synthetic boot sector used by the test (committed output is checked in CI).
-./scripts/build-bootsector.sh
+bash ./scripts/build-bootsector.sh
 
 # Download + patch FreeDOS 1.4 floppy image (written under gitignored test-images/).
-./scripts/prepare-freedos.sh
+bash ./scripts/prepare-freedos.sh
 
 # Run the QEMU boot tests.
 cargo test --locked -p emulator --test boot_sector --test freedos_boot
@@ -237,7 +237,7 @@ cargo test --locked -p emulator --test boot_sector --test freedos_boot
 The Windows boot test is intentionally gated and requires user-supplied media:
 
 ```bash
-./scripts/prepare-windows7.sh
+bash ./scripts/prepare-windows7.sh
 cargo test --locked -p emulator --test windows7_boot -- --ignored
 ```
 
@@ -471,7 +471,7 @@ Expected behavior when `AERO_REQUIRE_WEBGPU=1` is set:
 
 CI should be reproducible locally with the same top-level commands:
 
-- Full stack (recommended): `cargo xtask test-all` (or `./scripts/test-all.sh` wrapper)
+- Full stack (recommended): `cargo xtask test-all` (or `bash ./scripts/test-all.sh` wrapper)
 - Rust: `cargo test --locked --workspace`
 - WASM tests (Node): `wasm-pack test --node`
 - WASM builds (single + threaded): `npm -w web run wasm:build`
