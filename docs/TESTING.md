@@ -230,6 +230,10 @@ bash ./scripts/prepare-freedos.sh
 
 # Run the QEMU boot tests.
 cargo test --locked -p emulator --test boot_sector --test freedos_boot
+
+# In constrained/contended sandboxes (agents/CI-like), prefer safe-run.sh (timeout + memory limit).
+# The first run can take >10 minutes to compile on a cold checkout.
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test --locked -p emulator --test boot_sector --test freedos_boot
 ```
 
 ### Windows 7 (local only)
