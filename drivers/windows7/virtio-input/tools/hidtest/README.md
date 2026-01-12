@@ -2,6 +2,10 @@
 
 Minimal user-mode HID probe utility for validating the `virtio-input` HID minidriver without full emulator integration.
 
+For the consolidated end-to-end virtio-input validation plan (device model + driver + web runtime), see:
+
+- [`docs/virtio-input-test-plan.md`](../../../../../docs/virtio-input-test-plan.md)
+
 ## What it does
 
 - Enumerates present HID device interfaces (SetupDi APIs, `GUID_DEVINTERFACE_HID`).
