@@ -30,6 +30,12 @@ path = "../crates/aero-storage"
 [dependencies.aero-http-range]
 path = "../crates/aero-http-range"
 
+[dependencies.aero-gpu]
+path = "../crates/aero-gpu"
+
+[dependencies.aero-protocol]
+path = "../emulator/protocol"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -75,5 +81,11 @@ doc = false
 [[bin]]
 name = "fuzz_aero_storage_sparse_open"
 path = "fuzz_targets/fuzz_aero_storage_sparse_open.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_aerogpu_parse"
+path = "fuzz_targets/fuzz_aerogpu_parse.rs"
 test = false
 doc = false
