@@ -67,8 +67,11 @@ These drivers run **inside the guest Windows 7** and communicate with the emulat
 
 - [`docs/16-windows7-driver-build-and-signing.md`](../docs/16-windows7-driver-build-and-signing.md) — Build toolchain
 - [`docs/16-driver-packaging-and-signing.md`](../docs/16-driver-packaging-and-signing.md) — Packaging and catalogs
+- [`docs/16-guest-tools-packaging.md`](../docs/16-guest-tools-packaging.md) — Guest Tools packager specs/inputs/outputs (ISO/zip)
+- [`docs/16-virtio-drivers-win7.md`](../docs/16-virtio-drivers-win7.md) — Virtio driver plumbing notes (transport/virtqueues)
 - [`drivers/README.md`](../drivers/README.md) — What CI actually ships (artifact names, release workflow, Guest Tools media)
 - [`docs/virtio-windows-drivers.md`](../docs/virtio-windows-drivers.md) — Virtio driver packaging options (in-tree vs virtio-win)
+- [`docs/windows7-guest-tools.md`](../docs/windows7-guest-tools.md) — End-to-end Win7 install + switch to virtio + AeroGPU
 - [`docs/windows7-driver-troubleshooting.md`](../docs/windows7-driver-troubleshooting.md) — Debugging tips
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — AeroGPU VGA compat
 - [`drivers/aerogpu/README.md`](../drivers/aerogpu/README.md) — AeroGPU build/CI entrypoint + key docs
