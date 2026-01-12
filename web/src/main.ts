@@ -811,7 +811,7 @@ function renderMachinePanel(): HTMLElement {
           // existing shared-framebuffer plumbing can consume it (e.g. GPU-worker harnesses).
           const shared = ensureSharedVga(width, height, strideBytes);
           if (shared) {
-            shared.pixelsU8.set(src);
+            shared.pixelsU8.set(src.subarray(0, requiredSrcBytes));
             addHeaderI32(shared.header, HEADER_INDEX_FRAME_COUNTER, 1);
             testState.sharedFramesPublished += 1;
           }
