@@ -32,6 +32,8 @@ if not exist "%PFX_FILE%" (
 if not exist "%SYS_FILE%" (
   echo ERROR: Driver binary not found: "%SYS_FILE%"
   echo        Build the driver and copy aero_virtio_input.sys into the inf\ directory.
+  echo        Alternatively run: powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%stage-built-sys.ps1" -Arch x86
+  echo                          powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%stage-built-sys.ps1" -Arch amd64
   exit /b 1
 )
 
