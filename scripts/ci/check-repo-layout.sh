@@ -60,6 +60,18 @@ if git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >
   exit 1
 fi
 
+# Additionally, ensure that any doc line that mentions these test targets includes `-p emulator`
+# (avoid ambiguous `cargo test --test ...` invocations that would default to the workspace root
+# package).
+qemu_boot_test_any_re='cargo test.*--test (boot_sector|freedos_boot|windows7_boot|boot_basic)'
+qemu_boot_test_missing_pkg=$(git grep -n -E "${qemu_boot_test_any_re}" -- '*.md' | grep -v -- "-p emulator" || true)
+if [[ -n "${qemu_boot_test_missing_pkg}" ]]; then
+  echo "error: docs mention QEMU boot tests via 'cargo test ... --test ...' but are missing '-p emulator' on the same line:" >&2
+  echo "${qemu_boot_test_missing_pkg}" >&2
+  exit 1
+fi
+unset qemu_boot_test_missing_pkg
+
 # Keep the canonical docs in sync with the `emulator` crate `[[test]]` registration model.
 # These are the primary human-facing entrypoints for running the QEMU boot tests, and they should
 # explicitly mention `crates/emulator/Cargo.toml` `[[test]]` to prevent future drift.
