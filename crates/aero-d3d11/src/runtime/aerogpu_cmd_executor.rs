@@ -1801,7 +1801,7 @@ impl AerogpuD3d11Executor {
                     .get(&handle)
                     .and_then(|tex| tex.backing);
                 if !needs_break && texture_backing.is_some() {
-                    if render_targets.iter().any(|&rt| rt == handle)
+                    if render_targets.contains(&handle)
                         || depth_stencil.is_some_and(|ds| ds == handle)
                     {
                         needs_break = true;
