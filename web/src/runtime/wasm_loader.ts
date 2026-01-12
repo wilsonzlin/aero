@@ -611,17 +611,19 @@ export interface WasmApi {
     };
 
     /**
-     * Minimal tiered VM loop (Tier-0 interpreter + Tier-1 JIT dispatch via `globalThis.__aero_jit_call`).
-     *
-     * Intended for the root Vite harness JIT smoke test (`src/workers/cpu-worker.ts`).
-     *
-     * Optional while older WASM builds are still in circulation.
-     */
+      * Tiered VM loop (Tier-0 interpreter + Tier-1 JIT dispatch via `globalThis.__aero_jit_call`).
+      *
+      * Intended for the root Vite harness JIT smoke test (`src/workers/cpu-worker.ts`).
+      *
+      * Optional while older WASM builds are still in circulation.
+      */
     WasmTieredVm?: new (guestBase: number, guestSize: number) => {
         reset_real_mode(entryIp: number): void;
         /**
-         * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
-         */
+          * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
+          *
+          * Newer WASM builds return a structured result object; older builds return `void`.
+          */
         run_blocks(
             blocks: number,
         ):

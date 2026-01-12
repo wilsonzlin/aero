@@ -1,0 +1,187 @@
+//! Guest RAM write logging for browser-tiered execution.
+//!
+//! The CPU/JIT runtime (`aero_cpu_core::jit::runtime::JitRuntime`) tracks a monotonically
+//! increasing version per 4KiB guest page. Compiled blocks capture a snapshot of the versions for
+//! the code pages they cover; the runtime rejects / evicts blocks when the snapshot is stale.
+//!
+//! In native embeddings, the MMU/bus layer can call `jit.on_guest_write(paddr, len)` whenever a
+//! guest write hits RAM. In the browser tiered VM, Tier-0 interpreter writes occur inside the WASM
+//! module and are not automatically forwarded to the JIT runtime unless we explicitly plumb them.
+//!
+//! This module provides a small, bounded log that a `CpuBus` implementation can fill during a
+//! block/batch. The embedding is expected to drain the log at a safe boundary (e.g. after each
+//! interpreted block or after a `run_blocks` batch) and forward the writes to `JitRuntime`.
+
+/// Maximum number of write ranges to record before falling back to a coarse invalidation.
+///
+/// The log is drained at interpreter block boundaries, so typical workloads should stay well below
+/// this limit. If we overflow, we conservatively invalidate the entire guest RAM region (so stale
+/// code cannot run).
+const WRITE_LOG_CAP: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GuestWrite {
+    pub(crate) paddr: u64,
+    pub(crate) len: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct GuestWriteLog {
+    entries: Vec<GuestWrite>,
+    overflowed: bool,
+}
+
+impl GuestWriteLog {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Vec::with_capacity(WRITE_LOG_CAP),
+            overflowed: false,
+        }
+    }
+
+    /// Record a RAM write at `paddr..paddr+len`.
+    pub(crate) fn record(&mut self, paddr: u64, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        if self.overflowed {
+            return;
+        }
+
+        let len_u32 = u32::try_from(len).unwrap_or(u32::MAX);
+
+        // Cheap coalescing: merge with the previous entry if it overlaps or is directly adjacent.
+        if let Some(last) = self.entries.last_mut() {
+            let last_end = last.paddr.saturating_add(u64::from(last.len));
+            let cur_end = paddr.saturating_add(u64::from(len_u32));
+            if paddr <= last_end && cur_end >= last.paddr {
+                let start = last.paddr.min(paddr);
+                let end = last_end.max(cur_end);
+                let merged_len_u64 = end.saturating_sub(start);
+                if merged_len_u64 <= u64::from(u32::MAX) {
+                    last.paddr = start;
+                    last.len = merged_len_u64 as u32;
+                    return;
+                }
+            }
+        }
+
+        if self.entries.len() >= WRITE_LOG_CAP {
+            // Overflow: drop fine-grained detail and fall back to invalidating the full guest RAM
+            // region when drained.
+            self.entries.clear();
+            self.overflowed = true;
+            return;
+        }
+
+        self.entries.push(GuestWrite {
+            paddr,
+            len: len_u32,
+        });
+    }
+
+    /// Drain the log into `f`.
+    ///
+    /// If the log overflowed, calls `f(0, guest_size)` once (clamped to `usize`).
+    pub(crate) fn drain_to(&mut self, guest_size: u64, mut f: impl FnMut(u64, usize)) {
+        if self.overflowed {
+            self.overflowed = false;
+            self.entries.clear();
+            let len = guest_size.min(usize::MAX as u64) as usize;
+            if len != 0 {
+                f(0, len);
+            }
+            return;
+        }
+
+        for entry in self.entries.drain(..) {
+            if entry.len == 0 {
+                continue;
+            }
+            f(entry.paddr, entry.len as usize);
+        }
+    }
+}
+
+impl Default for GuestWriteLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use aero_cpu_core::jit::cache::CompiledBlockHandle;
+    use aero_cpu_core::jit::runtime::{
+        CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+    };
+
+    use super::GuestWriteLog;
+
+    #[derive(Default)]
+    struct NeverExecBackend;
+
+    impl JitBackend for NeverExecBackend {
+        type Cpu = ();
+
+        fn execute(&mut self, _table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+            panic!("JIT backend should not execute in this test");
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingCompileSink(Rc<RefCell<Vec<u64>>>);
+
+    impl RecordingCompileSink {
+        fn snapshot(&self) -> Vec<u64> {
+            self.0.borrow().clone()
+        }
+    }
+
+    impl CompileRequestSink for RecordingCompileSink {
+        fn request_compile(&mut self, entry_rip: u64) {
+            self.0.borrow_mut().push(entry_rip);
+        }
+    }
+
+    #[test]
+    fn write_log_drained_to_jit_invalidates_blocks() {
+        let entry_rip = 0x1000u64;
+        let code_len = 16u32;
+        let guest_size = 0x10_000u64;
+
+        let cfg = JitConfig {
+            enabled: true,
+            hot_threshold: 1_000_000,
+            cache_max_blocks: 16,
+            cache_max_bytes: 0,
+        };
+        let compile = RecordingCompileSink::default();
+        let mut jit = JitRuntime::new(cfg, NeverExecBackend::default(), compile.clone());
+
+        // Install a fake compiled block with a meta snapshot.
+        let meta = jit.snapshot_meta(entry_rip, code_len);
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index: 0,
+            meta,
+        });
+        assert!(jit.is_compiled(entry_rip));
+        assert!(jit.prepare_block(entry_rip).is_some());
+        assert!(compile.snapshot().is_empty());
+
+        // Simulate an interpreter write to the code page and flush it into the JIT runtime.
+        let mut log = GuestWriteLog::new();
+        log.record(entry_rip + 4, 1);
+        log.drain_to(guest_size, |paddr, len| jit.on_guest_write(paddr, len));
+
+        // Next probe should invalidate + request recompilation.
+        assert!(jit.prepare_block(entry_rip).is_none());
+        assert!(!jit.is_compiled(entry_rip));
+        assert_eq!(compile.snapshot(), vec![entry_rip]);
+    }
+}

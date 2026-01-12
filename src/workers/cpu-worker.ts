@@ -55,6 +55,12 @@ function platformSharedMemoryError(err: unknown): string {
   );
 }
 
+function u64AsNumber(v: bigint): number {
+  const u = BigInt.asUintN(64, v);
+  // This smoke harness only uses small addresses/values; clamp defensively.
+  return u > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(u);
+}
+
 function readMaybeNumber(obj: unknown, key: string): number {
   if (!obj || typeof obj !== 'object') return 0;
   const rec = obj as Record<string, unknown>;
@@ -72,12 +78,6 @@ function readMaybeNumber(obj: unknown, key: string): number {
     }
   }
   return 0;
-}
-
-function u64AsNumber(v: bigint): number {
-  const u = BigInt.asUintN(64, v);
-  // This smoke harness only uses small addresses/values; clamp defensively.
-  return u > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(u);
 }
 
 function i64ToBigInt(v: bigint): bigint {
@@ -213,6 +213,11 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   const dv = new DataView(memory.buffer);
+  const onGuestWrite = (paddr: bigint, len: number) => {
+    const notify = (vm as unknown as { on_guest_write?: (paddr: bigint, len: number) => void }).on_guest_write;
+    if (typeof notify !== 'function') return;
+    notify.call(vm, BigInt.asUintN(64, paddr), len >>> 0);
+  };
 
   // Tier-1 imports required by generated blocks (even if the smoke block doesn't use them).
   const env = {
@@ -223,15 +228,19 @@ async function runTieredVm(iterations: number, threshold: number) {
     mem_read_u64: (_cpuPtr: number, addr: bigint) => i64ToBigInt(dv.getBigUint64(guest_base + u64AsNumber(addr), true)),
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
       dv.setUint8(guest_base + u64AsNumber(addr), value & 0xff);
+      onGuestWrite(addr, 1);
     },
     mem_write_u16: (_cpuPtr: number, addr: bigint, value: number) => {
       dv.setUint16(guest_base + u64AsNumber(addr), value & 0xffff, true);
+      onGuestWrite(addr, 2);
     },
     mem_write_u32: (_cpuPtr: number, addr: bigint, value: number) => {
       dv.setUint32(guest_base + u64AsNumber(addr), value >>> 0, true);
+      onGuestWrite(addr, 4);
     },
     mem_write_u64: (_cpuPtr: number, addr: bigint, value: bigint) => {
       dv.setBigUint64(guest_base + u64AsNumber(addr), BigInt.asUintN(64, value), true);
+      onGuestWrite(addr, 8);
     },
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
       const vaddrU = BigInt.asUintN(64, vaddr);
@@ -288,7 +297,12 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     const tableIndex = nextTableIndex++;
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
-    vm.install_tier1_block(BigInt(resp.entry_rip), tableIndex, BigInt(resp.entry_rip), resp.meta.code_byte_len);
+    vm.install_tier1_block(
+      BigInt(resp.entry_rip),
+      tableIndex,
+      BigInt(resp.entry_rip),
+      resp.meta.code_byte_len,
+    );
     installedByRip.set(resp.entry_rip, tableIndex);
     return tableIndex;
   }

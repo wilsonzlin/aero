@@ -21,6 +21,9 @@ mod vm;
 #[cfg(target_arch = "wasm32")]
 pub use vm::WasmVm;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod jit_write_log;
+
 #[cfg(target_arch = "wasm32")]
 mod tiered_vm;
 #[cfg(target_arch = "wasm32")]

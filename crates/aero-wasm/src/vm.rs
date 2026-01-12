@@ -15,7 +15,8 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Object, Reflect, Uint8Array};
 
 use aero_cpu_core::{
-    CpuBus, CpuCore, Exception, PagingBus,
+    CpuBus,
+    CpuCore, Exception, PagingBus,
     assist::AssistContext,
     interp::tier0::{
         Tier0Config,
