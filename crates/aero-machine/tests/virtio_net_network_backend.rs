@@ -123,9 +123,10 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
 
     let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
 
-    // Enable PCI Bus Mastering so the device is allowed to DMA.
+    // Start with PCI Bus Mastering disabled. We'll prove that TX is gated on COMMAND.BME (bit 2)
+    // by attempting to transmit once (expecting no DMA), then enabling BME and retrying.
     let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command | (1 << 2)));
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !(1 << 2)));
 
     // Read BAR0 base address via PCI config ports.
     let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
@@ -225,6 +226,17 @@ fn virtio_net_tx_and_rx_complete_via_machine_network_backend() {
     m.write_physical_u16(tx_used + 2, 0);
 
     // Notify TX queue 1 and poll the machine once.
+    m.write_physical_u16(bar0_base + caps.notify + u64::from(caps.notify_mult), 1);
+    m.poll_network();
+
+    assert!(state.borrow().tx.is_empty(), "TX should be gated while BME=0");
+    assert_eq!(m.read_physical_u16(tx_used + 2), 0);
+
+    // Enable PCI Bus Mastering so the device is allowed to DMA.
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command | (1 << 2)));
+
+    // Notify TX queue 1 again and poll.
     m.write_physical_u16(bar0_base + caps.notify + u64::from(caps.notify_mult), 1);
     m.poll_network();
 
