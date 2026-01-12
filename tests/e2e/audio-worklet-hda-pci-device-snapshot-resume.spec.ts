@@ -79,7 +79,8 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     }
 
     // Inline snapshot RPC helper (mirrors `WorkerCoordinator.snapshotRpc`).
-    let nextRequestId = 1;
+    // Use a high requestId base to avoid colliding with any coordinator-driven snapshot ops.
+    let nextRequestId = 1_000_000;
     const rpc = async (
       worker: Worker,
       request: Record<string, unknown>,
@@ -159,7 +160,6 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
       // Resume workers and measure the immediate post-resume write delta.
       const cpuResume = rpc(cpu, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", { timeoutMs: 5_000 });
       const ioResume = rpc(io, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", { timeoutMs: 5_000 });
-      const netResume = rpc(net, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", { timeoutMs: 5_000 });
 
       // Give the IO tick loop a moment to run. Keep this well below the HDA tick max-delta clamp (100ms),
       // otherwise a regression could hide inside the expected-window math.
@@ -169,7 +169,10 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
       const read1 = Atomics.load(ring.readIndex, 0) >>> 0;
       const write1 = Atomics.load(ring.writeIndex, 0) >>> 0;
 
-      await Promise.allSettled([cpuResume, ioResume, netResume]);
+      // Resume NET after CPU/IO (matches coordinator ordering to avoid shared-ring races).
+      await Promise.allSettled([cpuResume, ioResume]);
+      const netResume = rpc(net, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", { timeoutMs: 5_000 });
+      await Promise.allSettled([netResume]);
 
       const elapsedMs = t1 - t0;
       const writeDelta = ((write1 - write0) >>> 0) as number;
@@ -188,8 +191,11 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
 
   if (!restoreResult.ok) {
     // Best-effort: tolerate environments where snapshot restore is compiled out / unavailable.
-    expect(restoreResult.error).toContain("unavailable");
-    return;
+    if (typeof restoreResult.error === "string" && restoreResult.error.includes("unavailable")) {
+      expect(restoreResult.error).toContain("unavailable");
+      return;
+    }
+    throw new Error(`snapshot restore sequence failed: ${String(restoreResult.error)}`);
   }
 
   // The producer must not burst-write significantly more than real-time audio immediately after restore.
