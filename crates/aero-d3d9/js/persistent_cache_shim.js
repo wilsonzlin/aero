@@ -87,3 +87,8 @@ export class PersistentGpuCache {
     return this._inner.deleteShader(key);
   }
 }
+
+// wasm-bindgen currently generates imports for both the JS symbol name
+// (`PersistentGpuCache`) and the Rust type name (`JsPersistentGpuCache`) when the
+// two differ. Export an alias so bundlers (Vite/Rollup) can satisfy the import.
+export { PersistentGpuCache as JsPersistentGpuCache };
