@@ -182,6 +182,9 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     write_section(w, SectionId::DISKS, 1, 0, |w| {
         let mut disks = source.disk_overlays();
         disks.disks.sort_by_key(|disk| disk.disk_id);
+        if disks.disks.windows(2).any(|w| w[0].disk_id == w[1].disk_id) {
+            return Err(SnapshotError::Corrupt("duplicate disk entry"));
+        }
         disks.encode(w)
     })?;
 
@@ -437,6 +440,12 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             id if id == SectionId::DISKS => {
                 if header.version == 1 {
                     let disks = DiskOverlayRefs::decode(&mut section_reader)?;
+                    let mut seen = HashSet::with_capacity(disks.disks.len().min(64));
+                    for disk in &disks.disks {
+                        if !seen.insert(disk.disk_id) {
+                            return Err(SnapshotError::Corrupt("duplicate disk entry"));
+                        }
+                    }
                     target.restore_disk_overlays(disks);
                 }
             }
