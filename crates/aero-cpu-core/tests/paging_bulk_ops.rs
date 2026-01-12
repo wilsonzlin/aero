@@ -351,3 +351,85 @@ fn pagingbus_bulk_set_preflight_failure_is_atomic() -> Result<(), Exception> {
     );
     Ok(())
 }
+
+#[test]
+fn pagingbus_bulk_copy_overlap_memmove_backward_small() -> Result<(), Exception> {
+    // Exercise PagingBus's bulk_copy memmove semantics for overlapping ranges where dst > src.
+    // This must copy backward so it behaves like memmove rather than memcpy.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page0 = 0x5000u64;
+    let page1 = 0x6000u64;
+
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        page0 | PTE_P | PTE_RW | PTE_US,
+        page1 | PTE_P | PTE_RW | PTE_US,
+    );
+
+    let mut init = [0u8; 32];
+    for (i, b) in init.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    phys.load(page0, &init);
+
+    let mut bus = PagingBus::new(phys);
+    bus.sync(&long_state(pml4_base));
+
+    assert!(bus.bulk_copy(4, 0, 16)?);
+
+    let mut expected = init;
+    expected[4..20].copy_from_slice(&init[0..16]);
+
+    assert_eq!(bus.inner_mut().slice(page0, expected.len()), expected.as_slice());
+    Ok(())
+}
+
+#[test]
+fn pagingbus_bulk_copy_overlap_memmove_forward_small() -> Result<(), Exception> {
+    // Exercise PagingBus's bulk_copy memmove semantics for overlapping ranges where dst < src.
+    // This must copy forward.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page0 = 0x5000u64;
+    let page1 = 0x6000u64;
+
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        page0 | PTE_P | PTE_RW | PTE_US,
+        page1 | PTE_P | PTE_RW | PTE_US,
+    );
+
+    let mut init = [0u8; 32];
+    for (i, b) in init.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    phys.load(page0, &init);
+
+    let mut bus = PagingBus::new(phys);
+    bus.sync(&long_state(pml4_base));
+
+    assert!(bus.bulk_copy(0, 4, 16)?);
+
+    let mut expected = init;
+    expected[0..16].copy_from_slice(&init[4..20]);
+
+    assert_eq!(bus.inner_mut().slice(page0, expected.len()), expected.as_slice());
+    Ok(())
+}
