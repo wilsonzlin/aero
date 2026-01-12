@@ -262,6 +262,11 @@ impl I8042Bridge {
         // Snapshot restore should not deliver IRQs for already-buffered bytes; clear any pending
         // pulses that might have been queued by prior activity.
         self.irq.borrow_mut().pending_mask = 0;
+        // Likewise, snapshot restore should not deliver any previously queued reset requests.
+        // If the guest requested a reset before the snapshot was taken, that event should have
+        // been reflected in the coordinator/CPU state; the i8042 device snapshot itself only
+        // captures controller/device state.
+        self.sys.borrow_mut().reset_requests = 0;
         Ok(())
     }
 }

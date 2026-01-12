@@ -121,12 +121,19 @@ describe("I8042Bridge (wasm)", () => {
       dev.load_state(snap);
       // Try to release after restore.
       dev.inject_mouse_buttons(0x00);
-      dev.inject_mouse_move(0, 0);
-      const s0 = dev.port_read(0x60);
-      // bit0 is left button; should be released.
-      expect(s0 & 0x01).toBe(0);
-    } finally {
-      dev.free();
-    }
-  });
+       dev.inject_mouse_move(0, 0);
+       const s0 = dev.port_read(0x60);
+       // bit0 is left button; should be released.
+       expect(s0 & 0x01).toBe(0);
+
+       // Snapshot restore should not replay any previously queued reset requests.
+       // The i8042 controller signals reset as a side effect, not as part of device state.
+       dev.port_write(0x64, 0xfe);
+       const snap2 = dev.save_state();
+       dev.load_state(snap2);
+       expect(dev.take_reset_requests()).toBe(0);
+     } finally {
+       dev.free();
+     }
+   });
 });
