@@ -792,3 +792,60 @@ fn machine_i8042_mouse_port_disable_drops_motion_until_reenabled() {
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
+
+#[test]
+fn machine_i8042_translation_disable_emits_set2_scancodes() {
+    let vector = 0x21u8; // IRQ1 with PIC base 0x20.
+    let flag_addr = 0x050Au16;
+    let flag_value = 0x55u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Configure the PIC and unmask IRQ1 so the i8042 keyboard IRQ can be delivered.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(1, false);
+    }
+
+    // Disable Set-2 -> Set-1 translation (command byte bit 6).
+    //
+    // Default command byte is 0x45; clearing bit 6 yields 0x05 (IRQ1 still enabled).
+    m.io_write(0x64, 1, 0x60);
+    m.io_write(0x60, 1, 0x05);
+
+    m.inject_browser_key("KeyA", true);
+
+    // With translation disabled, the Set-2 make code for 'A' is 0x1C.
+    assert_ne!(
+        m.io_read(0x64, 1) as u8 & 0x01,
+        0,
+        "output buffer should contain a scancode byte after key injection"
+    );
+    assert_eq!(
+        m.io_read(0x60, 1) as u8,
+        0x1C,
+        "expected Set-2 scancode when i8042 translation is disabled"
+    );
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IRQ1 handler did not run with translation disabled (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
