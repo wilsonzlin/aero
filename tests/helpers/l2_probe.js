@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import WebSocket from "../../tools/minimal_ws.js";
+import { decodeL2Message, encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TYPE_FRAME } from "../../web/src/shared/l2TunnelProtocol.ts";
 
 import {
   TCP_FLAGS,
@@ -26,28 +27,21 @@ import {
 const ETHERTYPE_ARP = 0x0806;
 const ETHERTYPE_IPV4 = 0x0800;
 
-// Production `aero-l2-tunnel-v1` framing (see `crates/aero-l2-protocol`).
-const L2_TUNNEL_MAGIC = 0xa2;
-const L2_TUNNEL_VERSION = 0x03;
-const L2_TUNNEL_TYPE_FRAME = 0x00;
-const L2_TUNNEL_HEADER_LEN = 4;
-const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
-
 function wrapL2TunnelEthernetFrame(ethernetFrame) {
-  const hdr = Buffer.allocUnsafe(L2_TUNNEL_HEADER_LEN);
-  hdr.writeUInt8(L2_TUNNEL_MAGIC, 0);
-  hdr.writeUInt8(L2_TUNNEL_VERSION, 1);
-  hdr.writeUInt8(L2_TUNNEL_TYPE_FRAME, 2);
-  hdr.writeUInt8(0, 3); // flags
-  return Buffer.concat([hdr, ethernetFrame]);
+  // `encodeL2Frame()` returns a `Uint8Array`. Convert to `Buffer` because the probe
+  // historically used Buffer payloads throughout (and `tools/minimal_ws.js` uses
+  // Buffer internally).
+  return Buffer.from(encodeL2Frame(ethernetFrame));
 }
 
 function unwrapL2TunnelEthernetFrame(msg) {
-  if (msg.length < L2_TUNNEL_HEADER_LEN) return null;
-  if (msg.readUInt8(0) !== L2_TUNNEL_MAGIC) return null;
-  if (msg.readUInt8(1) !== L2_TUNNEL_VERSION) return null;
-  if (msg.readUInt8(2) !== L2_TUNNEL_TYPE_FRAME) return null;
-  return msg.subarray(L2_TUNNEL_HEADER_LEN);
+  try {
+    const decoded = decodeL2Message(msg);
+    if (decoded.type !== L2_TUNNEL_TYPE_FRAME) return null;
+    return Buffer.isBuffer(decoded.payload) ? decoded.payload : Buffer.from(decoded.payload);
+  } catch {
+    return null;
+  }
 }
 
 class FrameQueue {
