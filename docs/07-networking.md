@@ -1114,12 +1114,14 @@ Relevant implementation files:
 
 - UI surface: `web/src/net/trace_ui.ts`
 - Tunnel forwarder owner (where the capture boundary lives): `web/src/workers/net.worker.ts`
+- Capture implementation + PCAPNG writer: `web/src/net/net_tracer.ts`, `web/src/net/pcapng.ts`
 
 #### UI workflow (“Network trace (PCAPNG)” panel)
 
 In the repo’s browser host UI, there is a panel titled **“Network trace (PCAPNG)”** that provides:
 
 - **Enable/disable** tracing via a checkbox.
+- **Clear capture** (when supported by the backend).
 - **Download capture (PCAPNG)** to your local machine.
 - **Save capture to OPFS** (Origin Private File System) at a configurable path (default
   `captures/aero-net-trace.pcapng`).
@@ -1165,8 +1167,15 @@ console.log("pcapng bytes:", bytes.byteLength);
 PCAP/PCAPNG captures can be **large** and may contain **sensitive data** (credentials, cookies, DNS
 queries, internal IPs, etc). Treat captures like secrets.
 
-The web tracing buffer is expected to gain explicit **size limits** (to prevent unbounded memory
-growth) once implemented; until then, be careful about leaving tracing enabled for long sessions.
+The web tracing buffer is held in-memory and has an explicit size cap to prevent unbounded growth:
+
+- `web/src/net/net_tracer.ts` defaults to **16 MiB** of captured Ethernet payload bytes (`maxBytes`)
+  per net worker.
+- Once the cap is reached, new frames are **dropped** (so captures may be incomplete for long or
+  high-throughput sessions).
+- Exporting via the UI (or `downloadPcapng`) uses the net worker’s `takePcapng()` path, which
+  **clears the buffer after exporting**. Use this (or the clear button / API) to keep captures
+  bounded during long debugging sessions.
 
 ### Privacy / Security Warning
 
