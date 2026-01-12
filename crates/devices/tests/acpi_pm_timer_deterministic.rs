@@ -90,3 +90,30 @@ fn pm_tmr_4byte_read_uses_single_clock_sample() {
         "PM_TMR multi-byte reads must not call Clock::now_ns once per byte"
     );
 }
+
+#[test]
+fn pm_tmr_unaligned_read_overlapping_window_uses_single_clock_sample() {
+    let cfg = AcpiPmConfig::default();
+    let clock = CountingClock::new(1_000_000_000);
+
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    clock.reset_calls();
+
+    // Guests can legally issue unaligned IN/OUT instructions. Ensure we still latch the PM_TMR
+    // once per PortIoDevice::read call even when the read spans beyond the 4-byte timer window.
+    let _ = pm.read(cfg.pm_tmr_blk + 1, 4);
+    assert_eq!(
+        clock.calls(),
+        1,
+        "PM_TMR reads that partially overlap the 4-byte window must still use a single clock sample"
+    );
+
+    clock.reset_calls();
+    let _ = pm.read(cfg.pm_tmr_blk + 3, 2);
+    assert_eq!(
+        clock.calls(),
+        1,
+        "PM_TMR reads that straddle the end of the timer window must still use a single clock sample"
+    );
+}
