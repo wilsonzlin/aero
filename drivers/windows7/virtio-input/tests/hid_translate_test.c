@@ -56,6 +56,26 @@ static void expect_report(const struct captured_reports *cap, size_t idx, const 
   assert(memcmp(cap->bytes[idx], expected, len) == 0);
 }
 
+static void test_linux_keycode_abi_values(void) {
+  /*
+   * The translator works on raw Linux input-event-codes.h values coming over the
+   * virtio wire. If these enums drift from the Linux input ABI, the mapping
+   * layer may still compile but keys will not work end-to-end.
+   */
+  assert(VIRTIO_INPUT_KEY_F1 == 59);
+  assert(VIRTIO_INPUT_KEY_F2 == 60);
+  assert(VIRTIO_INPUT_KEY_F3 == 61);
+  assert(VIRTIO_INPUT_KEY_F4 == 62);
+  assert(VIRTIO_INPUT_KEY_F5 == 63);
+  assert(VIRTIO_INPUT_KEY_F6 == 64);
+  assert(VIRTIO_INPUT_KEY_F7 == 65);
+  assert(VIRTIO_INPUT_KEY_F8 == 66);
+  assert(VIRTIO_INPUT_KEY_F9 == 67);
+  assert(VIRTIO_INPUT_KEY_F10 == 68);
+  assert(VIRTIO_INPUT_KEY_F11 == 87);
+  assert(VIRTIO_INPUT_KEY_F12 == 88);
+}
+
 static void test_mapping(void) {
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_A) == 0x04);
   assert(hid_translate_linux_key_to_hid_usage(VIRTIO_INPUT_KEY_Z) == 0x1D);
@@ -131,7 +151,7 @@ static void test_keyboard_reports(void) {
   assert(cap.count == 1);
 }
 
-static void test_keyboard_function_key_f1_report(void) {
+static void test_keyboard_function_key_reports(void) {
   struct captured_reports cap;
   struct hid_translate t;
 
@@ -150,6 +170,19 @@ static void test_keyboard_function_key_f1_report(void) {
 
   uint8_t expect2[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
   expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Press+release F12, flushing after each. */
+  send_key(&t, VIRTIO_INPUT_KEY_F12, 1);
+  send_syn(&t);
+
+  uint8_t expect3[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x45, 0, 0, 0, 0, 0};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+
+  send_key(&t, VIRTIO_INPUT_KEY_F12, 0);
+  send_syn(&t);
+
+  uint8_t expect4[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 3, expect4, sizeof(expect4));
 }
 
 static void test_keyboard_overflow_queue(void) {
@@ -300,9 +333,10 @@ static void test_mouse_only_enable(void) {
 }
 
 int main(void) {
+  test_linux_keycode_abi_values();
   test_mapping();
   test_keyboard_reports();
-  test_keyboard_function_key_f1_report();
+  test_keyboard_function_key_reports();
   test_keyboard_overflow_queue();
   test_mouse_reports();
   test_reset_emits_release_reports();
