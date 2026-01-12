@@ -1127,9 +1127,7 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnProcessVertices, D3d9TraceFunc::DeviceProcessVer
 // Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
 
-// Legacy user-pointer draw path (indexed). Not supported yet.
-AEROGPU_D3D9_DEFINE_DDI_STUB(
-    pfnDrawIndexedPrimitiveUP, D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP, D3DERR_NOTAVAILABLE);
+// Legacy user-pointer draw path (indexed). Implemented (see device_draw_indexed_primitive_up).
 
 // Various state "getters" (largely used by legacy apps). These have output
 // parameters; return a clean failure so callers don't consume uninitialized
@@ -10456,6 +10454,53 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   return trace.ret(S_OK);
 }
 
+HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw);
+
+HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive_up(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
+    uint32_t min_vertex_index,
+    uint32_t num_vertices,
+    uint32_t primitive_count,
+    const void* pIndexData,
+    D3DDDIFORMAT index_data_format,
+    const void* pVertexData,
+    uint32_t stride_bytes) {
+  const uint64_t min_num = d3d9_trace_pack_u32_u32(min_vertex_index, num_vertices);
+  const uint64_t pc_stride = d3d9_trace_pack_u32_u32(primitive_count, stride_bytes);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawIndexedPrimitiveUP,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(type),
+                      min_num,
+                      pc_stride);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (primitive_count == 0) {
+    return trace.ret(S_OK);
+  }
+  if (!pVertexData || stride_bytes == 0 || !pIndexData || num_vertices == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+  // Only INDEX16/INDEX32 are valid for DrawIndexedPrimitiveUP.
+  if (index_data_format != kD3dFmtIndex16 && index_data_format != kD3dFmtIndex32) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  D3DDDIARG_DRAWINDEXEDPRIMITIVE2 draw{};
+  draw.PrimitiveType = type;
+  draw.PrimitiveCount = primitive_count;
+  draw.MinIndex = min_vertex_index;
+  draw.NumVertices = num_vertices;
+  draw.pIndexData = pIndexData;
+  draw.IndexDataFormat = index_data_format;
+  draw.pVertexStreamZeroData = pVertexData;
+  draw.VertexStreamZeroStride = stride_bytes;
+  return trace.ret(device_draw_indexed_primitive2(hDevice, &draw));
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     D3DDDI_HDEVICE hDevice,
     const D3DDDIARG_DRAWPRIMITIVE2* pDraw) {
@@ -13068,9 +13113,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     AEROGPU_SET_D3D9DDI_FN(pfnDrawPrimitiveUP, device_draw_primitive_up);
   }
   if constexpr (aerogpu_has_member_pfnDrawIndexedPrimitiveUP<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(
-        pfnDrawIndexedPrimitiveUP,
-        aerogpu_d3d9_stub_pfnDrawIndexedPrimitiveUP<decltype(pDeviceFuncs->pfnDrawIndexedPrimitiveUP)>::pfnDrawIndexedPrimitiveUP);
+    AEROGPU_SET_D3D9DDI_FN(pfnDrawIndexedPrimitiveUP, device_draw_indexed_primitive_up);
   }
   AEROGPU_SET_D3D9DDI_FN(pfnDrawIndexedPrimitive, device_draw_indexed_primitive);
   if constexpr (aerogpu_has_member_pfnDrawPrimitive2<D3D9DDI_DEVICEFUNCS>::value) {

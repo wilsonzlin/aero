@@ -158,6 +158,11 @@ aerogpu_add_win7_test(d3d9ex_stateblock_sanity
 )
 target_link_libraries(d3d9ex_stateblock_sanity PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_draw_indexed_primitive_up
+  d3d9ex_draw_indexed_primitive_up/main.cpp
+)
+target_link_libraries(d3d9ex_draw_indexed_primitive_up PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_multiframe_triangle
   d3d9ex_multiframe_triangle/main.cpp
 )
