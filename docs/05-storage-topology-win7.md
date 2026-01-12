@@ -22,7 +22,7 @@ and the corresponding tests:
 
 ## Summary (normative)
 
-### Controllers present by default (Win7)
+### Controllers present (canonical Win7 boot/install topology)
 
 | Purpose | Controller | Canonical PCI BDF | Attachment |
 |---|---|---:|---|
