@@ -269,8 +269,11 @@ impl QemuVm {
         }
 
         // Keep it simple: QEMU i386 is the lowest-common-denominator for our early boot tests.
-        // If it isn't present, skip locally; CI installs it.
-        which::which("qemu-system-i386")
+        // If it isn't present, fall back to x86_64 (more commonly installed on dev machines).
+        //
+        // CI installs `qemu-system-i386` explicitly; this fallback mainly improves local
+        // developer ergonomics.
+        which::which("qemu-system-i386").or_else(|| which::which("qemu-system-x86_64"))
     }
 
     pub async fn spawn(cfg: QemuConfig) -> Result<Option<Self>> {
@@ -278,7 +281,7 @@ impl QemuVm {
             Some(path) => path,
             None => {
                 eprintln!(
-                    "skipping: qemu-system-i386 not found (install QEMU or set AERO_QEMU=...)"
+                    "skipping: qemu-system-i386/qemu-system-x86_64 not found (install QEMU or set AERO_QEMU=...)"
                 );
                 return Ok(None);
             }
