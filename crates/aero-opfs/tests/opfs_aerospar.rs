@@ -30,6 +30,7 @@ async fn opfs_aerospar_roundtrip() {
         Ok(s) => s,
         Err(DiskError::NotSupported(_)) => return,
         Err(DiskError::QuotaExceeded) => return,
+        Err(DiskError::BackendUnavailable) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
 
