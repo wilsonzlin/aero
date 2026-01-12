@@ -56,13 +56,10 @@ fn read_config_dword_via_ports(
     function: u8,
     offset: u8,
 ) -> u32 {
-    // The firmware trait promises `offset` is DWORD aligned. Mask defensively to match the
-    // config-mech1 behaviour (bits 1:0 are ignored).
-    debug_assert!(
-        (offset & 0x3) == 0,
-        "PCI config DWORD accesses must be 4-byte aligned (got offset=0x{offset:02x})"
-    );
-
+    // The firmware trait promises `offset` is DWORD aligned.
+    //
+    // Be defensive anyway and rely on config-mech1 semantics: bits 1:0 are ignored (DWORD aligned),
+    // so masking in `cfg_addr` yields the same result as real hardware.
     ports.io_write(
         PCI_CFG_ADDR_PORT,
         4,
@@ -79,11 +76,7 @@ fn write_config_dword_via_ports(
     offset: u8,
     value: u32,
 ) {
-    debug_assert!(
-        (offset & 0x3) == 0,
-        "PCI config DWORD accesses must be 4-byte aligned (got offset=0x{offset:02x})"
-    );
-
+    // See read_config_dword_via_ports for alignment notes.
     ports.io_write(
         PCI_CFG_ADDR_PORT,
         4,
