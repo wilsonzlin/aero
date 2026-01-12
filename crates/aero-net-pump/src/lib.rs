@@ -1186,14 +1186,22 @@ mod tests {
 
         // RX rings keep one descriptor unused to distinguish full/empty conditions.
         // desc_count=8, tail=7 gives us 7 usable RX descriptors (indices 0..6).
+        const RX_BUF_SIZE: usize = 2048;
+        const RX_SENTINEL: u8 = 0xCC;
         let rx_desc_count = 8u32;
         configure_rx_ring(&mut nic, 0x2000, rx_desc_count, rx_desc_count - 1);
 
         let rx_bufs: Vec<u64> = (0..rx_desc_count)
-            .map(|i| 0x3000u64 + (i as u64) * 0x800) // 2048 bytes per buffer
+            .map(|i| 0x3000u64 + (i as u64) * (RX_BUF_SIZE as u64))
             .collect();
         for (i, buf) in rx_bufs.iter().enumerate() {
             write_rx_desc(&mut mem, 0x2000 + (i as u64) * 16, *buf, 0);
+        }
+
+        // Fill RX buffers with a sentinel byte so we can detect DMA overruns / unexpected writes.
+        let sentinel_buf = vec![RX_SENTINEL; RX_BUF_SIZE];
+        for buf in &rx_bufs {
+            mem.write(*buf, &sentinel_buf);
         }
 
         let mut backend = DeterministicNetStackBackend::new(StackConfig::default());
@@ -1240,6 +1248,16 @@ mod tests {
             0,
             "TX desc 0 should have DD set after DMA (status={tx0_status:#04x})"
         );
+        assert_eq!(
+            nic.mmio_read_u32(0x3810),
+            1,
+            "expected TDH==1 after processing first TX descriptor"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x2810),
+            2,
+            "expected RDH==2 after receiving 2 DHCP OFFER frames"
+        );
 
         const DD_EOP: u8 = 0b0000_0011;
         let (rx0_len, rx0_status) = read_rx_desc_len_status(&mem, 0x2000);
@@ -1261,6 +1279,14 @@ mod tests {
             rx1_status & DD_EOP,
             DD_EOP,
             "RX desc 1 should have DD|EOP set (status={rx1_status:#04x})"
+        );
+        assert!(
+            (rx0_len as usize) <= RX_BUF_SIZE,
+            "RX desc 0 length exceeds RX buffer size: len={rx0_len} buf_size={RX_BUF_SIZE}"
+        );
+        assert!(
+            (rx1_len as usize) <= RX_BUF_SIZE,
+            "RX desc 1 length exceeds RX buffer size: len={rx1_len} buf_size={RX_BUF_SIZE}"
         );
 
         let offer0_frame = mem.read_vec(rx_bufs[0], rx0_len as usize);
@@ -1312,6 +1338,25 @@ mod tests {
             saw_broadcast && saw_unicast,
             "expected one broadcast and one unicast DHCP OFFER (saw_broadcast={saw_broadcast} saw_unicast={saw_unicast})"
         );
+        // Verify no overrun beyond the reported RX length.
+        assert!(
+            mem.read_vec(
+                rx_bufs[0] + rx0_len as u64,
+                RX_BUF_SIZE - rx0_len as usize
+            )
+            .iter()
+            .all(|b| *b == RX_SENTINEL),
+            "RX buffer 0 was modified beyond reported frame length"
+        );
+        assert!(
+            mem.read_vec(
+                rx_bufs[1] + rx1_len as u64,
+                RX_BUF_SIZE - rx1_len as usize
+            )
+            .iter()
+            .all(|b| *b == RX_SENTINEL),
+            "RX buffer 1 was modified beyond reported frame length"
+        );
 
         // --- DHCP REQUEST → ACK ---
         let request = build_dhcp_request(
@@ -1354,6 +1399,16 @@ mod tests {
             0,
             "TX desc 1 should have DD set after DMA (status={tx1_status:#04x})"
         );
+        assert_eq!(
+            nic.mmio_read_u32(0x3810),
+            2,
+            "expected TDH==2 after processing second TX descriptor"
+        );
+        assert_eq!(
+            nic.mmio_read_u32(0x2810),
+            4,
+            "expected RDH==4 after receiving 2 DHCP ACK frames"
+        );
 
         let (rx2_len, rx2_status) = read_rx_desc_len_status(&mem, 0x2020);
         let (rx3_len, rx3_status) = read_rx_desc_len_status(&mem, 0x2030);
@@ -1374,6 +1429,14 @@ mod tests {
             rx3_status & DD_EOP,
             DD_EOP,
             "RX desc 3 should have DD|EOP set (status={rx3_status:#04x})"
+        );
+        assert!(
+            (rx2_len as usize) <= RX_BUF_SIZE,
+            "RX desc 2 length exceeds RX buffer size: len={rx2_len} buf_size={RX_BUF_SIZE}"
+        );
+        assert!(
+            (rx3_len as usize) <= RX_BUF_SIZE,
+            "RX desc 3 length exceeds RX buffer size: len={rx3_len} buf_size={RX_BUF_SIZE}"
         );
 
         let ack0_frame = mem.read_vec(rx_bufs[2], rx2_len as usize);
@@ -1421,6 +1484,42 @@ mod tests {
             saw_broadcast && saw_unicast,
             "expected one broadcast and one unicast DHCP ACK (saw_broadcast={saw_broadcast} saw_unicast={saw_unicast})"
         );
+        // Verify no overrun beyond the reported RX length.
+        assert!(
+            mem.read_vec(
+                rx_bufs[2] + rx2_len as u64,
+                RX_BUF_SIZE - rx2_len as usize
+            )
+            .iter()
+            .all(|b| *b == RX_SENTINEL),
+            "RX buffer 2 was modified beyond reported frame length"
+        );
+        assert!(
+            mem.read_vec(
+                rx_bufs[3] + rx3_len as u64,
+                RX_BUF_SIZE - rx3_len as usize
+            )
+            .iter()
+            .all(|b| *b == RX_SENTINEL),
+            "RX buffer 3 was modified beyond reported frame length"
+        );
+
+        // Remaining RX descriptors/buffers should be untouched (we only expect 4 total frames).
+        for i in 4..rx_desc_count {
+            let desc_addr = 0x2000 + (i as u64) * 16;
+            let (len, status) = read_rx_desc_len_status(&mem, desc_addr);
+            assert_eq!(len, 0, "unexpected RX desc {i} length (expected unused)");
+            assert_eq!(
+                status, 0,
+                "unexpected RX desc {i} status (expected unused)"
+            );
+            assert!(
+                mem.read_vec(rx_bufs[i as usize], RX_BUF_SIZE)
+                    .iter()
+                    .all(|b| *b == RX_SENTINEL),
+                "unexpected write into unused RX buffer {i}"
+            );
+        }
         assert!(
             backend.stack().is_ip_assigned(),
             "expected backend stack to mark IP assigned after DHCP ACK"
