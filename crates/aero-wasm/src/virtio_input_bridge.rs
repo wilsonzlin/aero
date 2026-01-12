@@ -82,6 +82,7 @@ pub struct VirtioInputPciDeviceCore {
     kind: VirtioInputDeviceKind,
     pci: VirtioPciDevice,
     irq: InterruptState,
+    pci_command: u16,
 }
 
 impl VirtioInputPciDeviceCore {
@@ -89,7 +90,23 @@ impl VirtioInputPciDeviceCore {
         let (irq, sink) = InterruptState::new();
         let input = VirtioInput::new(kind);
         let pci = VirtioPciDevice::new(Box::new(input), Box::new(sink));
-        Self { kind, pci, irq }
+        Self {
+            kind,
+            pci,
+            irq,
+            pci_command: 0,
+        }
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.pci_command & (1 << 2)) != 0
+    }
+
+    /// Mirror the guest-written PCI command register (0x04, low 16 bits) into this wrapper.
+    ///
+    /// This is used to enforce PCI Bus Master Enable gating for DMA.
+    pub fn set_pci_command(&mut self, command: u32) {
+        self.pci_command = (command & 0xffff) as u16;
     }
 
     fn input_mut(&mut self) -> &mut VirtioInput {
@@ -131,10 +148,18 @@ impl VirtioInputPciDeviceCore {
         // In the browser/WASM integration we have direct access to guest RAM, so process notified
         // queues immediately (so buffers posted during driver init are consumed even if the host
         // does not call `poll()` until later).
-        self.pci.process_notified_queues(mem);
+        //
+        // Only DMA when PCI Bus Master Enable is set (command bit 2).
+        if self.bus_master_enabled() {
+            self.pci.process_notified_queues(mem);
+        }
     }
 
     pub fn poll(&mut self, mem: &mut dyn GuestMemory) {
+        // Only DMA when PCI Bus Master Enable is set (command bit 2).
+        if !self.bus_master_enabled() {
+            return;
+        }
         self.pci.poll(mem);
     }
 
@@ -337,6 +362,13 @@ mod wasm {
             let mem = WasmGuestMemory::new(guest_base, guest_size)?;
             let inner = VirtioInputPciDeviceCore::new(kind_enum);
             Ok(Self { inner, mem })
+        }
+
+        /// Mirror the guest-written PCI command register (0x04, low 16 bits) into the device.
+        ///
+        /// This is required for enforcing PCI Bus Master Enable gating for DMA.
+        pub fn set_pci_command(&mut self, command: u32) {
+            self.inner.set_pci_command(command);
         }
 
         /// Read from the virtio-pci BAR0 MMIO region.

@@ -134,8 +134,8 @@ describe("io/devices/virtio-input (pci bridge integration)", () => {
       cfgWriteU32(pciAddr, 0x10, newBar0Low);
       cfgWriteU32(pciAddr, 0x14, newBar0High);
 
-      // Enable PCI memory decoding.
-      cfgWriteU16(pciAddr, 0x04, cfgReadU16(pciAddr, 0x04) | 0x2);
+      // Enable PCI memory decoding + bus mastering (DMA).
+      cfgWriteU16(pciAddr, 0x04, cfgReadU16(pciAddr, 0x04) | 0x6);
 
       const bar0Low = cfgReadU32(pciAddr, 0x10);
       const bar0High = cfgReadU32(pciAddr, 0x14);
@@ -367,8 +367,8 @@ describe("io/devices/virtio-input (pci bridge integration)", () => {
       cfgWriteU32(pciAddr, 0x10, newBar0Low);
       cfgWriteU32(pciAddr, 0x14, newBar0High);
 
-      // Enable PCI memory decoding.
-      cfgWriteU16(pciAddr, 0x04, cfgReadU16(pciAddr, 0x04) | 0x2);
+      // Enable PCI memory decoding + bus mastering (DMA).
+      cfgWriteU16(pciAddr, 0x04, cfgReadU16(pciAddr, 0x04) | 0x6);
 
       const bar0Low = cfgReadU32(pciAddr, 0x10);
       const bar0High = cfgReadU32(pciAddr, 0x14);

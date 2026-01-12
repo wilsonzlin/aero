@@ -177,6 +177,12 @@ export interface WasmApi {
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
         poll(): void;
+        /**
+         * Update the device model's PCI command register (offset 0x04, low 16 bits).
+         *
+         * Optional for older WASM builds.
+         */
+        set_pci_command?(command: number): void;
         driver_ok(): boolean;
         irq_asserted(): boolean;
         inject_key(linux_key: number, pressed: boolean): void;

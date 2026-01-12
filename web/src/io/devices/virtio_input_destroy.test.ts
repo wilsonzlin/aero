@@ -36,6 +36,9 @@ describe("io/devices/virtio_input VirtioInputPciFunction.destroy", () => {
       },
     });
 
+    // Allow polling/DMA via PCI Bus Master Enable (command bit 2).
+    fn.onPciCommandWrite(1 << 2);
+
     // Establish IRQ asserted state.
     fn.tick(0);
     expect(pollCount).toBe(1);
@@ -60,4 +63,3 @@ describe("io/devices/virtio_input VirtioInputPciFunction.destroy", () => {
     expect(lowered).toEqual([0x05]);
   });
 });
-

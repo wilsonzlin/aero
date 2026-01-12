@@ -56,6 +56,8 @@ fn virtio_input_pci_device_core_can_handshake_post_event_and_toggle_irq() {
     const ISR: u64 = 0x2000;
 
     let mut dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
+    // Allow the device to DMA into guest memory (virtqueue descriptor reads / used writes).
+    dev.set_pci_command(0x0004);
     let mut mem = GuestRam::new(0x10000);
 
     assert!(!dev.driver_ok());

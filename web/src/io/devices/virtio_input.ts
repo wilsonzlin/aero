@@ -6,6 +6,12 @@ export type VirtioInputPciDeviceLike = {
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
   poll(): void;
+  /**
+   * Optional hook for mirroring PCI command register writes into the underlying device model.
+   *
+   * When present, this can be used by WASM bridges to enforce DMA gating based on Bus Master Enable.
+   */
+  set_pci_command?(command: number): void;
   driver_ok(): boolean;
   irq_asserted(): boolean;
   inject_key(linux_key: number, pressed: boolean): void;
@@ -473,6 +479,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   readonly #irqSink: IrqSink;
   readonly #kind: VirtioInputKind;
 
+  #pciCommand = 0;
   #irqLevel = false;
   #destroyed = false;
   #driverOkLogged = false;
@@ -527,14 +534,44 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     this.#syncIrq();
   }
 
+  onPciCommandWrite(command: number): void {
+    if (this.#destroyed) return;
+    const cmd = command & 0xffff;
+    this.#pciCommand = cmd;
+
+    // Mirror into the underlying device model so it can enforce DMA gating based on Bus Master Enable.
+    const setCmd = this.#dev.set_pci_command;
+    if (typeof setCmd === "function") {
+      try {
+        setCmd.call(this.#dev, cmd >>> 0);
+      } catch {
+        // ignore device errors during PCI config writes
+      }
+    }
+
+    // Interrupt Disable bit can immediately drop INTx level.
+    this.#syncIrq();
+  }
+
   tick(_nowMs: number): void {
     if (this.#destroyed) return;
-    try {
-      // Drive notified virtqueues (especially `statusq` LED/output events) so the guest
-      // never wedges waiting for completions when no input events are flowing.
-      this.#dev.poll();
-    } catch {
-      // ignore device errors during tick
+
+    // PCI Bus Master Enable (command bit 2) gates whether the device is allowed to DMA into guest
+    // memory (virtqueue descriptor reads / used-ring writes / event buffer fills).
+    //
+    // Mirror/gating note:
+    // - Newer WASM builds can also enforce this via `set_pci_command`, but keep a wrapper-side gate
+    //   so older builds remain correct and we avoid invoking poll unnecessarily.
+    const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+
+    if (busMasterEnabled) {
+      try {
+        // Drive notified virtqueues (especially `statusq` LED/output events) so the guest
+        // never wedges waiting for completions when no input events are flowing.
+        this.#dev.poll();
+      } catch {
+        // ignore device errors during tick
+      }
     }
     this.#syncIrq();
   }
@@ -634,6 +671,12 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     try {
       asserted = Boolean(this.#dev.irq_asserted());
     } catch {
+      asserted = false;
+    }
+
+    // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must not
+    // assert INTx.
+    if ((this.#pciCommand & (1 << 10)) !== 0) {
       asserted = false;
     }
     if (asserted === this.#irqLevel) return;
