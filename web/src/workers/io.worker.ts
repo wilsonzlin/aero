@@ -254,6 +254,19 @@ const MAX_SYNTHETIC_USB_HID_OUTPUT_REPORTS_PER_TICK = 64;
 let snapshotPaused = false;
 let snapshotOpInFlight = false;
 
+// Many IO worker devices (notably audio DMA engines) advance guest-visible state based on
+// host time deltas (`nowMs` passed to `DeviceManager.tick`). During VM snapshot
+// save/restore we intentionally pause device ticking, but the browser's wall-clock
+// continues to advance. If we resume with the raw `performance.now()` timestamp,
+// devices can observe a huge delta and "fast-forward" (e.g. burst audio output or
+// DMA position jumps).
+//
+// To keep snapshot pause/resume semantics deterministic, we maintain a monotonic
+// "VM tick time" that does *not* advance while `snapshotPaused` is true. All
+// devices are ticked against this virtual time.
+let ioTickHostLastNowMs: number | null = null;
+let ioTickVirtualNowMs: number | null = null;
+
 const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
 let queuedInputBatchBytes = 0;
 const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
@@ -2366,6 +2379,13 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         case "vm.snapshot.resume": {
           snapshotPaused = false;
           flushQueuedInputBatches();
+          // Ensure the next device tick doesn't interpret wall-clock time spent in
+          // snapshot save/restore as elapsed VM time.
+          if (typeof performance?.now === "function") {
+            ioTickHostLastNowMs = performance.now();
+          } else {
+            ioTickHostLastNowMs = Date.now();
+          }
           ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
           return;
         }
@@ -2812,6 +2832,24 @@ function startIoIpcServer(): void {
     diskRead,
     diskWrite,
     tick: (nowMs) => {
+      // Convert the host tick time into a monotonic VM-relative time that does not
+      // advance while snapshotPaused is true. This prevents time-based devices
+      // (especially audio) from observing large deltas after snapshot pause/resume.
+      if (ioTickHostLastNowMs === null || ioTickVirtualNowMs === null) {
+        ioTickHostLastNowMs = nowMs;
+        ioTickVirtualNowMs = nowMs;
+      } else {
+        let deltaHostMs = nowMs - ioTickHostLastNowMs;
+        ioTickHostLastNowMs = nowMs;
+        if (!Number.isFinite(deltaHostMs) || deltaHostMs <= 0) {
+          deltaHostMs = 0;
+        }
+        if (!snapshotPaused) {
+          ioTickVirtualNowMs += deltaHostMs;
+        }
+      }
+      const vmNowMs = ioTickVirtualNowMs ?? nowMs;
+
       const perfActive = isPerfActive();
       const t0 = perfActive ? performance.now() : 0;
 
@@ -2856,7 +2894,7 @@ function startIoIpcServer(): void {
           );
         }
       }
-      mgr.tick(nowMs);
+      mgr.tick(vmNowMs);
       flushSyntheticUsbHidPendingInputReports();
       drainSyntheticUsbHidOutputReports();
       hidGuest.poll?.();

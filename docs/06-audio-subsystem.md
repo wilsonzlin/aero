@@ -262,6 +262,8 @@ Implementation references:
 
 - The browser `AudioContext` / `AudioWorkletNode` is not serializable; on restore the host audio graph is recreated.
 - Ring buffer **contents** are not restored. Producers clear the ring to silence on restore to avoid replaying stale samples.
+- Any host-time-derived audio clocks (e.g. `AudioFrameClock`-driven schedulers) must be reset on snapshot resume so devices do not
+  "fast-forward" by wall-clock time spent paused during save/restore.
 - The goal is *guest-visible determinism*: after restore, Windows should see consistent HDA/virtio-snd state and DMA position evolution.
 
 ---

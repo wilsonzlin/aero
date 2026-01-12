@@ -1218,6 +1218,14 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       }
       case "vm.snapshot.resume": {
         snapshotPaused = false;
+        // Snapshot pause/resume can introduce large wall-clock gaps (e.g. OPFS snapshot
+        // streaming or slow restore). Any time-based audio producer loops must not
+        // interpret that gap as "audio time elapsed" or they may burst-generate a
+        // large number of frames on the next tick.
+        //
+        // Reset the producer deadline so the next audio tick observes ~0 elapsed time.
+        const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+        nextAudioFillDeadlineMs = now;
         ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
         return;
       }
