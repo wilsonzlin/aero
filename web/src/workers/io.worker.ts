@@ -2523,6 +2523,7 @@ function runHdaMicCaptureTest(requestId: number): void {
     const setFmt = (0x200 << 8) | 0x10; // 48kHz, 16-bit, mono (matches fmt raw below)
 
     ensureRange(corbBase, 8);
+    ensureRange(rirbBase, 16);
     writeU32(corbBase + 0, cmd(0, 4, setStreamCh));
     writeU32(corbBase + 4, cmd(0, 4, setFmt));
 
@@ -2537,6 +2538,12 @@ function runHdaMicCaptureTest(requestId: number): void {
     // into the "mic ring empty -> silence" case).
     mmioWrite(0x08, 4, 0x0); // GCTL.CRST=0 (enter reset)
     mmioWrite(0x08, 4, 0x1); // GCTL.CRST=1 (leave reset)
+
+    // Use the smallest supported CORB/RIRB sizes (2 entries each) since the harness only
+    // submits two verbs and reads back a small number of responses.
+    // This keeps pointer masking deterministic and avoids relying on the default 256-entry rings.
+    mmioWrite(0x4e, 1, 0); // CORBSIZE: 2 entries
+    mmioWrite(0x5e, 1, 0); // RIRBSIZE: 2 entries
     mmioWrite(0x40, 4, corbBase); // CORBLBASE
     mmioWrite(0x44, 4, 0); // CORBUBASE
     mmioWrite(0x50, 4, rirbBase); // RIRBLBASE
