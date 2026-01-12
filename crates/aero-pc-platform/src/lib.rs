@@ -2081,6 +2081,9 @@ impl PcPlatform {
 
         // Reset selected runtime PCI device models that live outside the `PciBus` (which only owns
         // guest-visible config space for this platform).
+        if let Some(nvme) = self.nvme.as_ref() {
+            nvme.borrow_mut().controller_mut().reset();
+        }
         if let Some(ahci) = self.ahci.as_ref() {
             ahci.borrow_mut().reset();
         }

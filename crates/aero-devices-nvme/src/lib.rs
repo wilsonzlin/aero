@@ -398,6 +398,36 @@ impl NvmeController {
         }
     }
 
+    pub fn reset(&mut self) {
+        // Preserve the attached disk backend while restoring the controller register space and
+        // runtime queues back to their power-on defaults.
+        let mqes: u64 = 127; // 128 entries max per queue, expressed as 0-based.
+        let dstrd: u64 = 0; // 4-byte doorbell stride.
+        let mpsmin: u64 = 0; // 2^(12 + 0) = 4KiB.
+        let mpsmax: u64 = 0;
+        let css_nvm: u64 = 1; // NVM command set supported.
+
+        self.cap = (mqes & 0xffff)
+            | (css_nvm << 37)
+            | (mpsmin << 48)
+            | (mpsmax << 52)
+            | (dstrd << 32);
+        self.vs = 0x0001_0400; // NVMe 1.4.0
+        self.intms = 0;
+        self.cc = 0;
+        self.csts = 0;
+        self.aqa = 0;
+        self.asq = 0;
+        self.acq = 0;
+
+        self.admin_sq = None;
+        self.admin_cq = None;
+        self.io_sqs.clear();
+        self.io_cqs.clear();
+        self.pending_sq_tail.clear();
+        self.intx_level = false;
+    }
+
     /// Construct an NVMe controller from an [`aero_storage::VirtualDisk`].
     ///
     /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the

@@ -103,8 +103,8 @@ fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
     let bdf = IDE_PIIX3.bdf;
 
     // Attach a disk so the status register is driven by the selected device. When no drive is
-    // present, the IDE model intentionally floats the command block reads high (0xFF) to match
-    // common PATA probing logic.
+    // present, the IDE model intentionally floats command block reads high (0xFF), which would be
+    // indistinguishable from PCI COMMAND.IO gating in this test.
     let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
     pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
 
