@@ -910,4 +910,226 @@ mod tests {
         let _ = restored.read_u8(PRIMARY_BASE + 7);
         assert!(!irq14_2.level());
     }
+
+    #[test]
+    fn snapshot_rejects_invalid_pio_present_byte() {
+        const TAG_PRIMARY: u16 = 1;
+
+        let chan = Encoder::new()
+            // reg48 fields (low/high for features/sector_count/lba*)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // drive_head/status/error/dev_ctl
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // irq_asserted
+            .bool(false)
+            // invalid pio present (=2)
+            .u8(2)
+            .finish();
+
+        let mut w = SnapshotWriter::new(
+            <IdeController as IoSnapshot>::DEVICE_ID,
+            <IdeController as IoSnapshot>::DEVICE_VERSION,
+        );
+        w.field_bytes(TAG_PRIMARY, chan);
+
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14), Box::new(irq15));
+        let err = ctl.load_state(&w.finish()).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("idep pio present"));
+    }
+
+    #[test]
+    fn snapshot_rejects_invalid_pio_dir_byte() {
+        const TAG_PRIMARY: u16 = 1;
+
+        let chan = Encoder::new()
+            // reg48 fields (low/high for features/sector_count/lba*)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // drive_head/status/error/dev_ctl
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // irq_asserted
+            .bool(false)
+            // pio present
+            .u8(1)
+            // invalid dir (=2)
+            .u8(2)
+            .finish();
+
+        let mut w = SnapshotWriter::new(
+            <IdeController as IoSnapshot>::DEVICE_ID,
+            <IdeController as IoSnapshot>::DEVICE_VERSION,
+        );
+        w.field_bytes(TAG_PRIMARY, chan);
+
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14), Box::new(irq15));
+        let err = ctl.load_state(&w.finish()).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("idep pio dir"));
+    }
+
+    #[test]
+    fn snapshot_rejects_invalid_pio_kind_byte() {
+        const TAG_PRIMARY: u16 = 1;
+
+        let chan = Encoder::new()
+            // reg48 fields (low/high for features/sector_count/lba*)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // drive_head/status/error/dev_ctl
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // irq_asserted
+            .bool(false)
+            // pio present
+            .u8(1)
+            // dir (valid)
+            .u8(0)
+            // invalid kind (=2)
+            .u8(2)
+            .finish();
+
+        let mut w = SnapshotWriter::new(
+            <IdeController as IoSnapshot>::DEVICE_ID,
+            <IdeController as IoSnapshot>::DEVICE_VERSION,
+        );
+        w.field_bytes(TAG_PRIMARY, chan);
+
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14), Box::new(irq15));
+        let err = ctl.load_state(&w.finish()).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("idep pio kind"));
+    }
+
+    #[test]
+    fn snapshot_rejects_zero_remaining_sectors() {
+        const TAG_PRIMARY: u16 = 1;
+
+        let chan = Encoder::new()
+            // reg48 fields (low/high for features/sector_count/lba*)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // drive_head/status/error/dev_ctl
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // irq_asserted
+            .bool(false)
+            // pio present
+            .u8(1)
+            // dir/kind
+            .u8(0)
+            .u8(1)
+            // lba
+            .u64(0)
+            // remaining_sectors=0 (invalid)
+            .u32(0)
+            .finish();
+
+        let mut w = SnapshotWriter::new(
+            <IdeController as IoSnapshot>::DEVICE_ID,
+            <IdeController as IoSnapshot>::DEVICE_VERSION,
+        );
+        w.field_bytes(TAG_PRIMARY, chan);
+
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14), Box::new(irq15));
+        let err = ctl.load_state(&w.finish()).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("idep pio sectors"));
+    }
+
+    #[test]
+    fn snapshot_rejects_invalid_pio_index() {
+        const TAG_PRIMARY: u16 = 1;
+
+        let chan = Encoder::new()
+            // reg48 fields (low/high for features/sector_count/lba*)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // drive_head/status/error/dev_ctl
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            .u8(0)
+            // irq_asserted
+            .bool(false)
+            // pio present
+            .u8(1)
+            // dir/kind
+            .u8(0)
+            .u8(1)
+            // lba
+            .u64(0)
+            // remaining_sectors
+            .u32(1)
+            // index (invalid: 513)
+            .u32((SECTOR_SIZE + 1) as u32)
+            .finish();
+
+        let mut w = SnapshotWriter::new(
+            <IdeController as IoSnapshot>::DEVICE_ID,
+            <IdeController as IoSnapshot>::DEVICE_VERSION,
+        );
+        w.field_bytes(TAG_PRIMARY, chan);
+
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14), Box::new(irq15));
+        let err = ctl.load_state(&w.finish()).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("idep pio index"));
+    }
 }
