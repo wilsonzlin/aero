@@ -49,6 +49,8 @@ impl DeviceId {
     pub const MEMORY: DeviceId = DeviceId(11);
     /// Guest-visible USB controller/runtime state.
     pub const USB: DeviceId = DeviceId(12);
+    /// Legacy i8042 PS/2 controller state.
+    pub const I8042: DeviceId = DeviceId(13);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -64,6 +66,7 @@ impl DeviceId {
             DeviceId::BIOS => Some("BIOS"),
             DeviceId::MEMORY => Some("MEMORY"),
             DeviceId::USB => Some("USB"),
+            DeviceId::I8042 => Some("I8042"),
             _ => None,
         }
     }

@@ -29,6 +29,7 @@ use aero_devices::a20_gate::A20Gate as A20GateDevice;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
+use aero_devices_input::Ps2MouseButton;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
@@ -539,6 +540,35 @@ impl Machine {
         }
     }
 
+    /// Inject relative mouse motion into the i8042 controller, if present.
+    ///
+    /// `dx`/`dy` are in PS/2 coordinates: +X is right, +Y is down (browser-style). The underlying
+    /// PS/2 mouse model handles coordinate inversion as needed.
+    pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        if let Some(ctrl) = &self.i8042 {
+            ctrl.borrow_mut().inject_mouse_motion(dx, dy, wheel);
+        }
+    }
+
+    /// Inject a PS/2 mouse button transition into the i8042 controller, if present.
+    pub fn inject_mouse_button(&mut self, button: Ps2MouseButton, pressed: bool) {
+        if let Some(ctrl) = &self.i8042 {
+            ctrl.borrow_mut().inject_mouse_button(button, pressed);
+        }
+    }
+
+    pub fn inject_mouse_left(&mut self, pressed: bool) {
+        self.inject_mouse_button(Ps2MouseButton::Left, pressed);
+    }
+
+    pub fn inject_mouse_right(&mut self, pressed: bool) {
+        self.inject_mouse_button(Ps2MouseButton::Right, pressed);
+    }
+
+    pub fn inject_mouse_middle(&mut self, pressed: bool) {
+        self.inject_mouse_button(Ps2MouseButton::Middle, pressed);
+    }
+
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
         self.take_snapshot_with_options(snapshot::SaveOptions::default())
     }
@@ -821,6 +851,14 @@ impl snapshot::SnapshotSource for Machine {
             data: self.serial_log.clone(),
         });
 
+        if let Some(ctrl) = &self.i8042 {
+            let ctrl = ctrl.borrow();
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::I8042,
+                &*ctrl,
+            ));
+        }
+
         devices
     }
 
@@ -899,6 +937,15 @@ impl snapshot::SnapshotTarget for Machine {
                         let _ = uart.borrow_mut().take_tx();
                     }
                     self.serial_log = state.data;
+                }
+                snapshot::DeviceId::I8042 => {
+                    let Some(ctrl) = &self.i8042 else {
+                        continue;
+                    };
+                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                        &state,
+                        &mut *ctrl.borrow_mut(),
+                    );
                 }
                 _ => {}
             }
@@ -1025,5 +1072,127 @@ mod tests {
 
         assert!(!restored.cpu.pending.has_pending_event());
         assert!(restored.cpu.pending.external_interrupts.is_empty());
+    }
+
+    #[test]
+    fn inject_keyboard_and_mouse_produces_i8042_output_bytes() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        m.inject_browser_key("KeyA", true);
+        m.inject_browser_key("KeyA", false);
+
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x1e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x9e);
+
+        // Enable mouse reporting so injected motion generates stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        m.inject_mouse_motion(10, 5, 0);
+        let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(packet, vec![0x28, 10, 0xFB]);
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_i8042_pending_output_bytes() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        src.inject_browser_key("KeyA", true);
+        src.inject_browser_key("KeyA", false);
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        let ctrl = restored.i8042.as_ref().expect("i8042 enabled").clone();
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x1e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x9e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x00);
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_i8042_output_port_and_pending_write() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        let ctrl = src.i8042.as_ref().expect("i8042 enabled").clone();
+        {
+            let mut dev = ctrl.borrow_mut();
+            // Set an initial output-port value.
+            dev.write_port(0x64, 0xD1);
+            dev.write_port(0x60, 0x03);
+
+            // Leave an in-flight "write output port" pending write.
+            dev.write_port(0x64, 0xD1);
+        }
+
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        let ctrl = restored.i8042.as_ref().expect("i8042 enabled").clone();
+        let mut dev = ctrl.borrow_mut();
+
+        // Verify output port preserved.
+        dev.write_port(0x64, 0xD0);
+        assert_eq!(dev.read_port(0x60), 0x03);
+
+        // Verify pending write preserved and targets the output port.
+        dev.write_port(0x60, 0x01);
+        dev.write_port(0x64, 0xD0);
+        assert_eq!(dev.read_port(0x60), 0x01);
+    }
+
+    #[test]
+    fn restoring_i8042_state_resynchronizes_platform_a20() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let src = Machine::new(cfg.clone()).unwrap();
+        let ctrl = src.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Save a snapshot with A20 disabled in the controller output port.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD1);
+            dev.write_port(0x60, 0x01);
+        }
+        assert!(!src.chipset.a20().enabled());
+
+        let state = {
+            let dev = ctrl.borrow();
+            snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::I8042,
+                &*dev,
+            )
+        };
+
+        // Simulate restoring into an environment where A20 is currently enabled.
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.chipset.a20().set_enabled(true);
+        assert!(restored.chipset.a20().enabled());
+
+        snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![state]);
+
+        assert!(!restored.chipset.a20().enabled());
     }
 }
