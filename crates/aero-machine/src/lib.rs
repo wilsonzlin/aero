@@ -3927,12 +3927,6 @@ impl snapshot::SnapshotTarget for Machine {
             }
         }
 
-        // If we're in BIOS text mode, ensure the VGA device's cursor overlay matches the BIOS Data
-        // Area state (cursor pos/shape). This keeps the video output coherent when restoring
-        // snapshots that include BIOS state but omit low-memory RAM pages.
-        if self.bios.video.vbe.current_mode.is_none() {
-            self.sync_text_mode_cursor_bda_to_vga_crtc();
-        }
     }
 
     fn restore_disk_overlays(&mut self, mut overlays: snapshot::DiskOverlayRefs) {
@@ -4025,6 +4019,18 @@ impl snapshot::SnapshotTarget for Machine {
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.resync_guest_time_from_tsc();
+
+        // Snapshot restore applies `DEVICES` before `RAM`, so any cursor sync that reads from the
+        // BIOS Data Area must happen *after* RAM is restored (here in `post_restore`).
+        //
+        // Limit this to real/v8086 mode where the HLE BIOS/BDA contract is expected to be the
+        // authoritative cursor source; once an OS takes over (protected/long mode), software may
+        // update VGA registers directly without keeping the BDA coherent.
+        if matches!(self.cpu.state.mode, CpuMode::Real | CpuMode::Vm86)
+            && self.bios.video.vbe.current_mode.is_none()
+        {
+            self.sync_text_mode_cursor_bda_to_vga_crtc();
+        }
         Ok(())
     }
 }
