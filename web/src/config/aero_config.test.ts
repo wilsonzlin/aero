@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AERO_GUEST_MEMORY_MAX_MIB,
   detectAeroBrowserCapabilities,
   getDefaultAeroConfig,
   parseAeroConfigOverrides,
@@ -54,7 +55,7 @@ describe("AeroConfig", () => {
     },
   });
 
-  expect(resolved.effective.guestMemoryMiB).toBe(3584);
+  expect(resolved.effective.guestMemoryMiB).toBe(AERO_GUEST_MEMORY_MAX_MIB);
   expect(resolved.effective.logLevel).toBe("info");
   });
 
