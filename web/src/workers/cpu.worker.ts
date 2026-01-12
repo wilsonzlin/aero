@@ -55,10 +55,6 @@ import type { MicRingBuffer } from "../audio/mic_ring.js";
 import { AudioFrameClock, performanceNowNs } from "../audio/audio_frame_clock";
 import {
   HEADER_U32_LEN as AUDIO_HEADER_U32_LEN,
-  OVERRUN_COUNT_INDEX as AUDIO_OVERRUN_COUNT_INDEX,
-  READ_FRAME_INDEX as AUDIO_READ_FRAME_INDEX,
-  UNDERRUN_COUNT_INDEX as AUDIO_UNDERRUN_COUNT_INDEX,
-  WRITE_FRAME_INDEX as AUDIO_WRITE_FRAME_INDEX,
   framesAvailableClamped as audioFramesAvailableClamped,
   framesFree as audioFramesFree,
   getRingBufferLevelFrames as getAudioRingBufferLevelFrames,
@@ -565,7 +561,10 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
 class JsWorkletBridge {
   readonly capacity_frames: number;
   readonly channel_count: number;
-  private readonly header: Uint32Array;
+  private readonly readIndex: Uint32Array;
+  private readonly writeIndex: Uint32Array;
+  private readonly underrunCount: Uint32Array;
+  private readonly overrunCount: Uint32Array;
   private readonly samples: Float32Array;
 
   constructor(sab: SharedArrayBuffer, capacityFrames: number, channelCount: number) {
@@ -573,36 +572,39 @@ class JsWorkletBridge {
     this.channel_count = channelCount;
 
     const views = wrapAudioRingBuffer(sab, capacityFrames, channelCount);
-    this.header = views.header;
+    this.readIndex = views.readIndex;
+    this.writeIndex = views.writeIndex;
+    this.underrunCount = views.underrunCount;
+    this.overrunCount = views.overrunCount;
     this.samples = views.samples;
   }
 
   buffer_level_frames(): number {
-    const read = Atomics.load(this.header, AUDIO_READ_FRAME_INDEX) >>> 0;
-    const write = Atomics.load(this.header, AUDIO_WRITE_FRAME_INDEX) >>> 0;
+    const read = Atomics.load(this.readIndex, 0) >>> 0;
+    const write = Atomics.load(this.writeIndex, 0) >>> 0;
     return audioFramesAvailableClamped(read, write, this.capacity_frames);
   }
 
   underrun_count(): number {
-    return Atomics.load(this.header, AUDIO_UNDERRUN_COUNT_INDEX) >>> 0;
+    return Atomics.load(this.underrunCount, 0) >>> 0;
   }
 
   overrun_count(): number {
-    return Atomics.load(this.header, AUDIO_OVERRUN_COUNT_INDEX) >>> 0;
+    return Atomics.load(this.overrunCount, 0) >>> 0;
   }
 
   write_f32_interleaved(input: Float32Array): number {
     const requestedFrames = Math.floor(input.length / this.channel_count);
     if (requestedFrames === 0) return 0;
 
-    const read = Atomics.load(this.header, AUDIO_READ_FRAME_INDEX) >>> 0;
-    const write = Atomics.load(this.header, AUDIO_WRITE_FRAME_INDEX) >>> 0;
+    const read = Atomics.load(this.readIndex, 0) >>> 0;
+    const write = Atomics.load(this.writeIndex, 0) >>> 0;
 
     const free = audioFramesFree(read, write, this.capacity_frames);
     const framesToWrite = Math.min(requestedFrames, free);
     const droppedFrames = requestedFrames - framesToWrite;
     if (droppedFrames > 0) {
-      Atomics.add(this.header, AUDIO_OVERRUN_COUNT_INDEX, droppedFrames);
+      Atomics.add(this.overrunCount, 0, droppedFrames);
     }
     if (framesToWrite === 0) return 0;
 
@@ -619,7 +621,7 @@ class JsWorkletBridge {
       this.samples.set(input.subarray(firstSamples, firstSamples + secondSamples), 0);
     }
 
-    Atomics.store(this.header, AUDIO_WRITE_FRAME_INDEX, write + framesToWrite);
+    Atomics.store(this.writeIndex, 0, write + framesToWrite);
     return framesToWrite;
   }
 
