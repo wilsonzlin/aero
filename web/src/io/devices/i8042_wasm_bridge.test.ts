@@ -79,6 +79,15 @@ describe("io/devices/i8042 WASM bridge", () => {
       writeToMouse(bridge, 100);
       writeToMouse(bridge, 0xf3);
       writeToMouse(bridge, 80);
+
+      // Set an initial button state *before* enabling reporting so we don't get an extra
+      // "button-only" packet.
+      if (bridge.inject_ps2_mouse_buttons) {
+        bridge.inject_ps2_mouse_buttons(0x01);
+      } else {
+        bridge.inject_mouse_buttons(0x01);
+      }
+
       // Enable reporting.
       writeToMouse(bridge, 0xf4);
 
@@ -89,13 +98,13 @@ describe("io/devices/i8042 WASM bridge", () => {
       if (bridge.inject_ps2_mouse_motion) {
         bridge.inject_ps2_mouse_motion(5, 3, 1);
         const packet = drainOutput(bridge);
-        expect(packet).toEqual([0x08, 0x05, 0x03, 0x01]);
+        expect(packet).toEqual([0x09, 0x05, 0x03, 0x01]);
       } else {
         // Older WASM builds expose mouse motion and wheel injection as separate calls.
         bridge.inject_mouse_move(5, 3);
         bridge.inject_mouse_wheel(1);
         const packets = drainOutput(bridge);
-        expect(packets).toEqual([0x08, 0x05, 0x03, 0x00, 0x08, 0x00, 0x00, 0x01]);
+        expect(packets).toEqual([0x09, 0x05, 0x03, 0x00, 0x09, 0x00, 0x00, 0x01]);
       }
     } finally {
       bridge.free();
