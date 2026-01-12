@@ -2,6 +2,7 @@ use crate::io::state::codec::{Decoder, Encoder};
 use crate::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use std::collections::{BTreeMap, VecDeque};
 
 // Snapshots may be loaded from untrusted sources (e.g. downloaded files). Keep decoding bounded so
 // corrupted snapshots cannot force pathological allocations.
@@ -288,22 +289,64 @@ impl IoSnapshot for E1000DeviceState {
         }
         w.field_bytes(TAG_PHY, phy);
 
-        let mut other: Vec<(u32, u32)> = self.other_regs.clone();
-        other.sort_by_key(|(k, _)| *k);
-        let mut other_enc = Encoder::new().u32(other.len() as u32);
-        for (k, v) in other {
+        // Canonicalize unknown register state:
+        // - Drop out-of-range keys (outside MMIO BAR window).
+        // - Drop unaligned keys (live device model only stores u32-aligned offsets).
+        // - Deduplicate keys (last value wins).
+        // - Emit in sorted key order.
+        //
+        // This ensures `save_state()` always produces a snapshot that can be decoded by our own
+        // `load_state()` implementation even if the in-memory `other_regs` vector somehow contains
+        // duplicates or invalid keys.
+        let mut other_regs = BTreeMap::<u32, u32>::new();
+        for (key, value) in &self.other_regs {
+            if (*key & 3) != 0 {
+                continue;
+            }
+            if *key >= E1000_MMIO_SIZE {
+                continue;
+            }
+            other_regs.insert(*key, *value);
+            if other_regs.len() >= MAX_OTHER_REGS {
+                break;
+            }
+        }
+        let mut other_enc = Encoder::new().u32(other_regs.len() as u32);
+        for (k, v) in other_regs {
             other_enc = other_enc.u32(k).u32(v);
         }
         w.field_bytes(TAG_OTHER_REGS, other_enc.finish());
 
-        let mut rx_enc = Encoder::new().u32(self.rx_pending.len() as u32);
+        // Host-facing frame queues: filter invalid frames and clamp to hard limits so the snapshot
+        // remains decodable and bounded even if the in-memory queue is corrupted or misconfigured.
+        let mut rx_keep: VecDeque<&[u8]> = VecDeque::new();
         for frame in &self.rx_pending {
+            if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
+                continue;
+            }
+            if rx_keep.len() == MAX_RX_PENDING_FRAMES {
+                rx_keep.pop_front();
+            }
+            rx_keep.push_back(frame);
+        }
+        let mut rx_enc = Encoder::new().u32(rx_keep.len() as u32);
+        for frame in rx_keep {
             rx_enc = rx_enc.u32(frame.len() as u32).bytes(frame);
         }
         w.field_bytes(TAG_RX_PENDING, rx_enc.finish());
 
-        let mut tx_enc = Encoder::new().u32(self.tx_out.len() as u32);
+        let mut tx_keep: VecDeque<&[u8]> = VecDeque::new();
         for frame in &self.tx_out {
+            if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
+                continue;
+            }
+            if tx_keep.len() == MAX_TX_OUT_FRAMES {
+                tx_keep.pop_front();
+            }
+            tx_keep.push_back(frame);
+        }
+        let mut tx_enc = Encoder::new().u32(tx_keep.len() as u32);
+        for frame in tx_keep {
             tx_enc = tx_enc.u32(frame.len() as u32).bytes(frame);
         }
         w.field_bytes(TAG_TX_OUT, tx_enc.finish());

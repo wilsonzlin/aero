@@ -229,3 +229,85 @@ fn e1000_device_state_rejects_pci_bar1_probe_mismatch() {
         SnapshotError::InvalidFieldEncoding("e1000 pci bar1_probe")
     );
 }
+
+#[test]
+fn e1000_device_state_save_filters_other_regs_and_dedupes_keys() {
+    // Keep in sync with the E1000 MMIO BAR size.
+    const E1000_MMIO_SIZE: u32 = 0x20_000;
+
+    let state = E1000DeviceState {
+        other_regs: vec![
+            (0x1000, 1),
+            (0x1001, 0xDEAD_BEEF), // unaligned -> dropped on save
+            (E1000_MMIO_SIZE, 3),  // out of range -> dropped on save
+            (0x2000, 4),
+            (0x1000, 2), // duplicate -> last wins
+        ],
+        ..Default::default()
+    };
+
+    let bytes = state.save_state();
+    let mut restored = E1000DeviceState::default();
+    restored.load_state(&bytes).unwrap();
+
+    assert_eq!(restored.other_regs, vec![(0x1000, 2), (0x2000, 4)]);
+}
+
+#[test]
+fn e1000_device_state_save_filters_and_clamps_host_queues() {
+    // Keep in sync with `aero-io-snapshot/src/io/net/state.rs`.
+    const MAX_QUEUE: usize = 256;
+    const MIN_L2_FRAME_LEN: usize = 14;
+    const MAX_L2_FRAME_LEN: usize = 1522;
+
+    let mut rx_pending = Vec::new();
+    // Invalid (too small): should be dropped.
+    rx_pending.push(vec![0u8; MIN_L2_FRAME_LEN - 1]);
+    // Add MAX+10 valid frames with monotonically increasing IDs encoded in the first two bytes.
+    for i in 0..(MAX_QUEUE + 10) {
+        let mut frame = vec![0u8; MIN_L2_FRAME_LEN];
+        frame[0..2].copy_from_slice(&(i as u16).to_le_bytes());
+        rx_pending.push(frame);
+    }
+
+    let mut tx_out = Vec::new();
+    for i in 0..(MAX_QUEUE + 5) {
+        let mut frame = vec![0u8; MIN_L2_FRAME_LEN];
+        frame[0..2].copy_from_slice(&(i as u16).to_le_bytes());
+        tx_out.push(frame);
+    }
+    // Invalid (too large): should be dropped.
+    tx_out.push(vec![0u8; MAX_L2_FRAME_LEN + 1]);
+
+    let state = E1000DeviceState {
+        rx_pending,
+        tx_out,
+        ..Default::default()
+    };
+
+    let bytes = state.save_state();
+    let mut restored = E1000DeviceState::default();
+    restored.load_state(&bytes).unwrap();
+
+    assert_eq!(restored.rx_pending.len(), MAX_QUEUE);
+    assert_eq!(
+        &restored.rx_pending[0][0..2],
+        &(10u16).to_le_bytes(),
+        "expected save_state to keep the most recent {MAX_QUEUE} valid RX frames",
+    );
+    assert_eq!(
+        &restored.rx_pending[MAX_QUEUE - 1][0..2],
+        &(265u16).to_le_bytes()
+    );
+
+    assert_eq!(restored.tx_out.len(), MAX_QUEUE);
+    assert_eq!(
+        &restored.tx_out[0][0..2],
+        &(5u16).to_le_bytes(),
+        "expected save_state to keep the most recent {MAX_QUEUE} valid TX frames",
+    );
+    assert_eq!(
+        &restored.tx_out[MAX_QUEUE - 1][0..2],
+        &(260u16).to_le_bytes()
+    );
+}
