@@ -170,15 +170,23 @@ test("scancode tables cover standard, extended (E0), and multi-byte sequences", 
   ] as const) {
     assert.deepStrictEqual(webPs2Set2BytesForKeyEvent(code, true), make);
     assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent(code, true), make);
+
+    // For non-extended, non-sequence keys, break is the canonical Set-2 `F0 <make>` form.
+    assert.deepStrictEqual(webPs2Set2BytesForKeyEvent(code, false), [0xf0, make[0]]);
+    assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent(code, false), [0xf0, make[0]]);
   }
 
   // Extended keys (E0 prefix).
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("ArrowUp", true), [0xe0, 0x75]);
   assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("ArrowUp", true), [0xe0, 0x75]);
+  assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("ArrowUp", false), [0xe0, 0xf0, 0x75]);
+  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("ArrowUp", false), [0xe0, 0xf0, 0x75]);
 
   // Multi-byte sequences (PrintScreen / Pause).
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("PrintScreen", true), [0xe0, 0x12, 0xe0, 0x7c]);
   assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("PrintScreen", true), [0xe0, 0x12, 0xe0, 0x7c]);
+  assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("PrintScreen", false), [0xe0, 0xf0, 0x7c, 0xe0, 0xf0, 0x12]);
+  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("PrintScreen", false), [0xe0, 0xf0, 0x7c, 0xe0, 0xf0, 0x12]);
 
   assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("Pause", true), [
     0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77,
