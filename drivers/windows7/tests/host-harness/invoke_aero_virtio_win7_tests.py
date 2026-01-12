@@ -722,6 +722,18 @@ def main() -> int:
             "(virtio-snd testing requires modern-only virtio-pci + contract revision overrides)"
         )
 
+    if args.enable_virtio_input_events:
+        # In default (contract-v1) mode we already validate virtio-keyboard-pci/virtio-mouse-pci via
+        # `_assert_qemu_supports_aero_w7_virtio_contract_v1`. In transitional mode virtio-input is
+        # optional, but input event injection requires these devices to exist.
+        if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
+            args.qemu_system, "virtio-mouse-pci"
+        ):
+            parser.error(
+                "--with-virtio-input-events requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
+                "Upgrade QEMU or omit --with-virtio-input-events."
+            )
+
     if not args.virtio_transitional:
         try:
             _assert_qemu_supports_aero_w7_virtio_contract_v1(

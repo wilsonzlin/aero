@@ -1101,6 +1101,9 @@ try {
         "-device", "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)"
       )
     } else {
+      if ($WithVirtioInputEvents) {
+        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithVirtioInputEvents was enabled. Upgrade QEMU or omit -WithVirtioInputEvents."
+      }
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
     }
 
