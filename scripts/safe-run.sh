@@ -525,6 +525,14 @@ while true; do
             printf " %q" "${arg}" >&2
         done
         printf "\n" >&2
+
+        # Cargo frequently hangs here when multiple agents contend for a shared Cargo registry
+        # lock (stderr includes: "Blocking waiting for file lock on package cache"). Provide a
+        # targeted remediation hint.
+        if grep -q "Blocking waiting for file lock on package cache" "${stderr_log}"; then
+            echo "[safe-run] Tip: avoid shared Cargo registry lock contention by isolating Cargo state:" >&2
+            echo "[safe-run]   AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ..." >&2
+        fi
     fi
 
     if [[ "${attempt}" -lt "${MAX_RETRIES}" ]] \
