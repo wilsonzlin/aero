@@ -1,6 +1,6 @@
 use crate::{
-    AeroCowDisk, AeroSparseConfig, AeroSparseDisk, BlockCachedDisk, DiskError, MemBackend, RawDisk,
-    VirtualDisk, SECTOR_SIZE,
+    AeroCowDisk, AeroSparseConfig, AeroSparseDisk, AeroSparseHeader, BlockCachedDisk, DiskError,
+    MemBackend, RawDisk, StorageBackend, VirtualDisk, SECTOR_SIZE,
 };
 
 #[test]
@@ -121,4 +121,103 @@ fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
     let mut buf = [0u8; 4];
     cached.read_at(0, &mut buf).unwrap();
     assert_eq!(&buf, &[1, 2, 3, 4]);
+}
+
+#[test]
+fn sparse_open_rejects_oversized_allocation_table() {
+    // Craft a header that claims an allocation table larger than the hard cap.
+    // The backend only contains the header; `open` must reject the image without
+    // allocating the claimed table size.
+    let block_size_bytes = 4096u32;
+    let table_entries = (128 * 1024 * 1024 / 8) + 1;
+    let disk_size_bytes = table_entries * (block_size_bytes as u64);
+    let table_bytes = table_entries * 8;
+    let data_offset = crate::util::align_up_u64(
+        (crate::sparse::HEADER_SIZE as u64) + table_bytes,
+        block_size_bytes as u64,
+    )
+    .unwrap();
+
+    let header = AeroSparseHeader {
+        version: 1,
+        block_size_bytes,
+        disk_size_bytes,
+        table_entries: table_entries as u64,
+        data_offset,
+        allocated_blocks: 0,
+    };
+
+    let mut backend = MemBackend::new();
+    backend.write_at(0, &header.encode()).unwrap();
+
+    let err = AeroSparseDisk::open(backend).err().unwrap();
+    assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn sparse_open_rejects_table_size_overflow_usize() {
+    // On 32-bit targets, converting the claimed table size to `usize` must be checked.
+    // This image claims a table of (usize::MAX + 1) bytes.
+    let block_size_bytes = 4096u32;
+    let table_entries = (usize::MAX as u64 / 8) + 1;
+    let disk_size_bytes = table_entries * (block_size_bytes as u64);
+    let table_bytes = table_entries * 8;
+    let data_offset = crate::util::align_up_u64(
+        (crate::sparse::HEADER_SIZE as u64) + table_bytes,
+        block_size_bytes as u64,
+    )
+    .unwrap();
+
+    let header = AeroSparseHeader {
+        version: 1,
+        block_size_bytes,
+        disk_size_bytes,
+        table_entries,
+        data_offset,
+        allocated_blocks: 0,
+    };
+
+    let mut backend = MemBackend::new();
+    backend.write_at(0, &header.encode()).unwrap();
+
+    let err = AeroSparseDisk::open(backend).err().unwrap();
+    assert!(matches!(err, DiskError::Unsupported(_) | DiskError::InvalidSparseHeader(_)));
+}
+
+#[test]
+fn sparse_open_rejects_allocated_blocks_inconsistent_with_table() {
+    // Valid header/table layout, but header.allocated_blocks does not match the number
+    // of non-zero table entries.
+    let block_size_bytes = 4096u32;
+    let disk_size_bytes = 16 * 1024u64;
+    let table_entries = 4u64;
+    let table_bytes = table_entries * 8;
+    let data_offset = crate::util::align_up_u64(
+        (crate::sparse::HEADER_SIZE as u64) + table_bytes,
+        block_size_bytes as u64,
+    )
+    .unwrap();
+
+    let header = AeroSparseHeader {
+        version: 1,
+        block_size_bytes,
+        disk_size_bytes,
+        table_entries,
+        data_offset,
+        allocated_blocks: 2, // but we will only store one non-zero entry
+    };
+
+    // Create a backend large enough to cover the one allocated block we reference.
+    let mut backend = MemBackend::with_len(data_offset + block_size_bytes as u64).unwrap();
+    backend.write_at(0, &header.encode()).unwrap();
+
+    let mut table = vec![0u8; table_bytes as usize];
+    table[0..8].copy_from_slice(&data_offset.to_le_bytes());
+    backend
+        .write_at(crate::sparse::HEADER_SIZE as u64, &table)
+        .unwrap();
+
+    let err = AeroSparseDisk::open(backend).err().unwrap();
+    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
 }
