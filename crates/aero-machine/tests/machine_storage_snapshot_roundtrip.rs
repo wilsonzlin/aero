@@ -4,6 +4,7 @@ use aero_devices::pci::{profile, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DAT
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
+use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use aero_snapshot as snapshot;
@@ -412,6 +413,22 @@ fn machine_storage_snapshot_roundtrip_preserves_controllers_and_allows_backend_r
                 .expect("io-snapshot header must contain a device id"),
             b"DSKC",
             "DISK_CONTROLLER entry should be encoded as a DSKC wrapper"
+        );
+
+        let mut wrapper = DiskControllersSnapshot::default();
+        snapshot::apply_io_snapshot_to_device(&disk_controller_entries[0], &mut wrapper)
+            .expect("decode DSKC wrapper");
+        assert!(
+            wrapper
+                .controllers()
+                .contains_key(&profile::SATA_AHCI_ICH9.bdf.pack_u16()),
+            "DSKC wrapper should contain the ICH9 AHCI controller entry"
+        );
+        assert!(
+            wrapper
+                .controllers()
+                .contains_key(&profile::IDE_PIIX3.bdf.pack_u16()),
+            "DSKC wrapper should contain the PIIX3 IDE controller entry"
         );
     }
 
