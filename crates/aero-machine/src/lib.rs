@@ -45,6 +45,9 @@ pub use pci_firmware::{
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pc;
+
 /// Configuration for [`Machine`].
 #[derive(Debug, Clone)]
 pub struct MachineConfig {

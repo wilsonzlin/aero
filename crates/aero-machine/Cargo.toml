@@ -14,5 +14,8 @@ aero-net-backend = { path = "../aero-net-backend" }
 firmware = { path = "../firmware" }
 memory = { path = "../memory" }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aero-pc-platform = { path = "../aero-pc-platform" }
+
 [dev-dependencies]
 pretty_assertions = "1"

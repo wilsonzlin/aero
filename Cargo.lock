@@ -379,6 +379,7 @@ dependencies = [
  "aero-devices",
  "aero-devices-input",
  "aero-net-backend",
+ "aero-pc-platform",
  "aero-platform",
  "aero-snapshot",
  "firmware",
