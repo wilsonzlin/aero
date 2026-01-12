@@ -784,7 +784,67 @@ async function runTieredVm(iterations: number, threshold: number) {
     freeTableIndices.push(idx);
   };
 
-  async function installTier1(resp: CompileBlockResponse, pre_meta: JsCompiledBlockMeta): Promise<number> {
+  function pageSnapshotsEqual(a: JsPageVersionSnapshot[], b: JsPageVersionSnapshot[]): boolean {
+    if (a.length !== b.length) return false;
+    const byPage = new Map<number, number>();
+    for (const snap of a) {
+      byPage.set(snap.page, snap.version);
+    }
+    // Reject duplicates.
+    if (byPage.size !== a.length) return false;
+    for (const snap of b) {
+      const version = byPage.get(snap.page);
+      if (version === undefined) return false;
+      if (version !== snap.version) return false;
+    }
+    return byPage.size === b.length;
+  }
+
+  function compiledMetaMatchesCurrent(entryRipU32: number, meta: JsCompiledBlockMeta): boolean {
+    const current = vm.snapshot_meta(BigInt(entryRipU32), meta.byte_len) as unknown as JsCompiledBlockMeta;
+    return (
+      current.code_paddr === meta.code_paddr &&
+      current.byte_len === meta.byte_len &&
+      pageSnapshotsEqual(current.page_versions, meta.page_versions)
+    );
+  }
+
+  async function installTier1(resp: CompileBlockResponse, pre_meta: JsCompiledBlockMeta): Promise<number | null> {
+    const entryRipU32 = resp.entry_rip >>> 0;
+    const meta = shrinkMeta(pre_meta, resp.meta.code_byte_len);
+
+    // Safety: if we already have a valid compiled block for this RIP, the runtime will ignore a
+    // stale background compilation result. In that case we must NOT overwrite the JS call-table
+    // slot for the existing block with the stale compiled function.
+    //
+    // Detect staleness by comparing the pre-snapshotted page-version metadata (captured before the
+    // JIT worker read the code bytes) against the current page-version snapshot.
+    if (!compiledMetaMatchesCurrent(entryRipU32, meta)) {
+      // Ask the runtime to process the stale handle so it can drop any stale existing block and/or
+      // request a fresh compilation.
+      try {
+        // `tableIndex` is irrelevant because the handle will be rejected.
+        vm.install_handle(BigInt(entryRipU32), 0, meta);
+      } catch {
+        // ignore
+      }
+
+      // If the runtime dropped the compiled block, keep our JS-side table mapping in sync.
+      if (!vm.is_compiled(BigInt(entryRipU32))) {
+        const idx = installedByRip.get(entryRipU32);
+        if (idx !== undefined) {
+          installedByRip.delete(entryRipU32);
+          if (entryRipU32 === ENTRY_RIP && installedIndex === idx) {
+            installedIndex = null;
+          }
+          freeTableIndex(idx);
+        }
+        return null;
+      }
+
+      return installedByRip.get(entryRipU32) ?? null;
+    }
+
     const module =
       resp.wasm_module ??
       (resp.wasm_bytes
@@ -799,8 +859,6 @@ async function runTieredVm(iterations: number, threshold: number) {
       throw new Error('JIT block module did not export a callable `block` function');
     }
 
-    const entryRipU32 = resp.entry_rip >>> 0;
-
     // Reuse the existing table slot if this RIP was compiled before. This makes recompilation
     // (self-modifying code invalidation) overwrite the previous slot rather than growing the JS
     // call table unboundedly.
@@ -808,7 +866,6 @@ async function runTieredVm(iterations: number, threshold: number) {
     const tableIndex = existingIndex ?? allocTableIndex();
     jitFns[tableIndex] = block as (cpu_ptr: number, jit_ctx_ptr: number) => bigint;
 
-    const meta = shrinkMeta(pre_meta, resp.meta.code_byte_len);
     // wasm-bindgen APIs differ across versions. Capture as `unknown` so we can best-effort free
     // table indices without breaking typecheck if the return type changes (Array vs typed array vs
     // void in older builds).
@@ -889,7 +946,7 @@ async function runTieredVm(iterations: number, threshold: number) {
         // ignore
       }
     }
-    return tableIndex;
+    return installedByRip.get(entryRipU32) ?? null;
   }
 
   const drainCompileRequests = (): number[] => {
@@ -921,7 +978,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       const job = startCompile(entryRipU32, { max_bytes: DEFAULT_MAX_BYTES });
       const resp = await job.response;
       const idx = await installTier1(resp, job.pre_meta);
-      if (entryRipU32 === ENTRY_RIP && vm.is_compiled(BigInt(entryRipU32))) {
+      if (entryRipU32 === ENTRY_RIP && idx !== null && vm.is_compiled(BigInt(entryRipU32))) {
         installedIndex = idx;
       }
       return idx;
