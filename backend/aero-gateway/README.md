@@ -194,7 +194,7 @@ DNS-over-HTTPS:
 
 When configured, the gateway includes an `udpRelay` field in `POST /session` responses, allowing the browser to discover the UDP relay service (`proxy/webrtc-udp-relay`) and obtain short-lived credentials.
 
-- `UDP_RELAY_BASE_URL` (default: unset)
+- `UDP_RELAY_BASE_URL` (default: unset; accepts `http(s)://` or `ws(s)://`)
 - `UDP_RELAY_AUTH_MODE` (`none`, `api_key`, or `jwt`; default: `none`)
 - `UDP_RELAY_API_KEY` (used when `UDP_RELAY_AUTH_MODE=api_key`)
 - `UDP_RELAY_JWT_SECRET` (used when `UDP_RELAY_AUTH_MODE=jwt`, HS256)
