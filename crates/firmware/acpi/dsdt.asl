@@ -29,7 +29,7 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
     Field (IMCR, ByteAcc, NoLock, Preserve)
     {
         IMCS, 8, // select port (0x22)
-        IMCD, 8, // data port (0x23)
+        IMCD, 8  // data port (0x23)
     }
 
     Method (_PIC, 1, NotSerialized)
