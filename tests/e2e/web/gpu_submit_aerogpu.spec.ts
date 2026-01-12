@@ -42,26 +42,27 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
        }
 
        function buildCmdStream(textureRgba, w, h) {
-        const texHandle = 1;
-        const tightRowBytes = (w * 4) >>> 0;
-        // Force a non-tight row pitch to exercise row_pitch_bytes repacking in the GPU worker.
-        const rowPitchBytes = (tightRowBytes + 16) >>> 0;
+         const texHandle = 1;
+         const tightRowBytes = (w * 4) >>> 0;
+         // Force a non-tight row pitch to exercise row_pitch_bytes repacking in the GPU worker.
+         const rowPitchBytes = (tightRowBytes + 16) >>> 0;
         const padded = new Uint8Array(rowPitchBytes * h);
         for (let y = 0; y < h; y++) {
           padded.set(
             textureRgba.subarray(y * tightRowBytes, (y + 1) * tightRowBytes),
             y * rowPitchBytes,
           );
-        }
-        const writer = new AerogpuCmdWriter();
-        writer.createTexture2d(
-          texHandle,
-          AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
-          AerogpuFormat.R8G8B8A8Unorm,
-          w >>> 0,
-          h >>> 0,
-          1,
-          1,
+         }
+         const writer = new AerogpuCmdWriter();
+         const fmt = AerogpuFormat.R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
+         writer.createTexture2d(
+           texHandle,
+           AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_SCANOUT,
+           fmt,
+           w >>> 0,
+           h >>> 0,
+           1,
+           1,
           rowPitchBytes,
           0,
           0,
