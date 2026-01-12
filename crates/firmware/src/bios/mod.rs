@@ -84,6 +84,8 @@ pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
 pub const DISKETTE_PARAM_TABLE_OFFSET: u16 = 0xE100;
 /// IVT vector 0x41/0x46: legacy fixed disk parameter table pointer(s).
 pub const FIXED_DISK_PARAM_TABLE_OFFSET: u16 = 0xE110;
+/// IVT vector 0x1D: legacy video parameter table pointer.
+pub const VIDEO_PARAM_TABLE_OFFSET: u16 = 0xE140;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskError {
@@ -531,6 +533,16 @@ mod tests {
                 0x00, 0x00
             ]
         );
+
+        // Video Parameter Table (vector 0x1D).
+        let vpt = VIDEO_PARAM_TABLE_OFFSET as usize;
+        assert_eq!(
+            &rom_image[vpt..vpt + 16],
+            &[
+                0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F, 0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00,
+                0x00, 0x00
+            ]
+        );
     }
 
     #[test]
@@ -552,6 +564,10 @@ mod tests {
         assert_eq!(read_vec(&mut mem, 0x15), (INT15_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mut mem, 0x16), (INT16_STUB_OFFSET, BIOS_SEGMENT));
         assert_eq!(read_vec(&mut mem, 0x1A), (INT1A_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(
+            read_vec(&mut mem, 0x1D),
+            (VIDEO_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
+        );
         assert_eq!(
             read_vec(&mut mem, 0x1E),
             (DISKETTE_PARAM_TABLE_OFFSET, BIOS_SEGMENT)

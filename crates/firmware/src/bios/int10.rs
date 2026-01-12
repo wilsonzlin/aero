@@ -89,6 +89,30 @@ impl Bios {
                     },
                 );
             }
+            0x1A => {
+                // Display Combination Code (VGA).
+                //
+                // DOS-era programs use this to detect VGA presence and determine whether the
+                // active display is monochrome vs color. We model a single VGA adapter with an
+                // analog color monitor.
+                match cpu.al() {
+                    // Get Display Combination Code.
+                    0x00 => {
+                        cpu.set_al(0x1A); // function supported
+                        cpu.set_bl(0x08); // VGA + analog color display
+                        cpu.set_bh(0x00); // no alternate display
+                    }
+                    // Set Display Combination Code (ignored, but report success).
+                    0x01 => {
+                        cpu.set_al(0x1A); // function supported
+                        cpu.set_bl(0x08);
+                        cpu.set_bh(0x00);
+                    }
+                    _ => {
+                        // Unhandled subfunction.
+                    }
+                }
+            }
             0x09 => {
                 // Write Character and Attribute at Cursor
                 let ch = cpu.al();

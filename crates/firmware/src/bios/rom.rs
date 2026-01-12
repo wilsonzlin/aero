@@ -1,6 +1,7 @@
 use super::{
     BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, DISKETTE_PARAM_TABLE_OFFSET, FIXED_DISK_PARAM_TABLE_OFFSET,
     INT10_STUB_OFFSET, INT13_STUB_OFFSET, INT15_STUB_OFFSET, INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
+    VIDEO_PARAM_TABLE_OFFSET,
 };
 
 /// Build the 64KiB BIOS ROM image.
@@ -82,6 +83,18 @@ pub fn build_bios_rom() -> Vec<u8> {
         FIXED_DISK_PARAM_TABLE_OFFSET,
         &fixed_disk_param_table,
     );
+
+    // Video parameter table (IVT vector 0x1D).
+    //
+    // Many DOS-era programs read this pointer directly for timing/CRTC defaults. We provide a
+    // small, VGA-compatible table for text mode.
+    //
+    // This is not a complete hardware model; the INT 10h VGA implementation is the source of truth.
+    let video_param_table: [u8; 16] = [
+        0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F, 0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00,
+        0x00, 0x00,
+    ];
+    write_stub(&mut rom, VIDEO_PARAM_TABLE_OFFSET, &video_param_table);
 
     // Optional ROM signature (harmless and convenient for identification).
     rom[BIOS_SIZE - 2] = 0x55;
