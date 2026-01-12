@@ -32,6 +32,93 @@ if (( ${#tracked_agent_notes[@]} > 0 )); then
   die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
 fi
 
+# Doc-invoked shell scripts should always be executable.
+#
+# Some documentation recommends running scripts directly (e.g. `./path/to/foo.sh`).
+# If those targets aren't tracked as executable (100755), the docs will fail with
+# "permission denied" for users who follow them verbatim.
+#
+# We intentionally check the *git tree mode* (not the working tree) so this is
+# robust across local umasks and other filesystem quirks.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+
+tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+md_files = [p for p in tracked if p.endswith(".md")]
+
+# Match `./foo.sh` or `./some/path/foo.sh` (stopping at whitespace/backticks).
+#
+# Note: many docs embed commands inside backticks, so treat backtick as a stop
+# character in addition to whitespace.
+pattern = re.compile(r"(?<!\w)\./([^\s`]+?\.sh)\b")
+
+
+def git_mode(path):
+    # Use `ls-tree` against HEAD so we validate the committed file mode.
+    out = subprocess.check_output(["git", "ls-tree", "HEAD", path], text=True).strip()
+    if not out:
+        return None
+    return out.split()[0]
+
+
+errors = []
+doc_refs = {}
+
+for md in md_files:
+    text = (repo_root / md).read_text(encoding="utf-8", errors="ignore")
+    md_dir = Path(md).parent
+
+    for m in pattern.finditer(text):
+        referenced = m.group(0)  # includes leading `./`
+        after_dot_slash = m.group(1)
+
+        # Resolve to a repo-root relative path. If the reference is just `./foo.sh`
+        # (no slash), assume it's intended to run from the doc's directory; fall
+        # back to repo root if needed.
+        if "/" in after_dot_slash:
+            candidates = [Path(after_dot_slash)]
+        else:
+            candidates = [md_dir / after_dot_slash, Path(after_dot_slash)]
+
+        resolved = None
+        for c in candidates:
+            if (repo_root / c).is_file():
+                resolved = c
+                break
+        if resolved is None:
+            tried = ", ".join(str(c) for c in candidates)
+            errors.append("%s: references '%s', but no such file exists (tried: %s)" % (md, referenced, tried))
+            continue
+
+        resolved_str = resolved.as_posix()
+        doc_refs.setdefault(resolved_str, set()).add((md, referenced))
+
+for path in sorted(doc_refs.keys()):
+    mode = git_mode(path)
+    refs = ", ".join("%s:%s" % (md, ref) for md, ref in sorted(doc_refs[path]))
+    if mode is None:
+        errors.append("%s: referenced by docs but is not present in git (refs: %s)" % (path, refs))
+        continue
+    if mode != "100755":
+        errors.append("%s: referenced by docs but is not executable in git (mode %s; refs: %s)" % (path, mode, refs))
+
+if errors:
+    for e in errors:
+        print("error: %s" % e, file=sys.stderr)
+    raise SystemExit(1)
+
+print("Docs script executability check: OK (%d scripts referenced)" % len(doc_refs))
+PY
+else
+  echo "warning: python3 not found; skipping docs script executability check" >&2
+fi
+
 # Windows driver CI packaging template guardrails.
 #
 # These files are intended to be copied by new driver authors, so keep them present and
