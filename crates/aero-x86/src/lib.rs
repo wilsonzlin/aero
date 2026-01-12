@@ -961,12 +961,20 @@ pub mod tier1 {
                     0xa9 => (AluOp::And, false, true, Gpr::Rax),
                     _ => unreachable!(),
                 };
-                let imm32 = read_le(bytes, offset, 4)? as u32;
-                offset += 4;
-                let imm = if width == Width::W64 {
-                    sign_extend_imm(Width::W32, imm32 as u64)
+                // Immediate size follows the operand-size attribute in 16/32-bit modes; in 64-bit
+                // mode the immediate is always 32-bit and sign-extended if the destination is 64.
+                let imm = if width == Width::W16 {
+                    let imm16 = read_le(bytes, offset, 2)? as u16;
+                    offset += 2;
+                    imm16 as u64
                 } else {
-                    imm32 as u64
+                    let imm32 = read_le(bytes, offset, 4)? as u32;
+                    offset += 4;
+                    if width == Width::W64 {
+                        sign_extend_imm(Width::W32, imm32 as u64)
+                    } else {
+                        imm32 as u64
+                    }
                 };
                 let acc_reg = Operand::Reg(Reg {
                     gpr: acc,
@@ -1003,12 +1011,18 @@ pub mod tier1 {
                     offset += 1;
                     width.truncate(imm8)
                 } else {
-                    let imm32 = read_le(bytes, offset, 4)? as u32;
-                    offset += 4;
-                    if width == Width::W64 {
-                        sign_extend_imm(Width::W32, imm32 as u64)
+                    if width == Width::W16 {
+                        let imm16 = read_le(bytes, offset, 2)? as u16;
+                        offset += 2;
+                        imm16 as u64
                     } else {
-                        imm32 as u64
+                        let imm32 = read_le(bytes, offset, 4)? as u32;
+                        offset += 4;
+                        if width == Width::W64 {
+                            sign_extend_imm(Width::W32, imm32 as u64)
+                        } else {
+                            imm32 as u64
+                        }
                     }
                 };
 
@@ -1200,11 +1214,24 @@ pub mod tier1 {
                 }
             }
             0x68 => {
-                let imm32 = read_le(bytes, offset, 4)? as u32;
-                offset += 4;
-                let imm64 = sign_extend_imm(Width::W32, imm32 as u64);
+                // PUSH imm16/imm32: immediate length follows the operand-size attribute in
+                // 16/32-bit modes; in 64-bit mode the immediate is always 32-bit and
+                // sign-extended to 64.
+                let imm = if stack_width == Width::W16 {
+                    let imm16 = read_le(bytes, offset, 2)? as u16;
+                    offset += 2;
+                    imm16 as u64
+                } else {
+                    let imm32 = read_le(bytes, offset, 4)? as u32;
+                    offset += 4;
+                    if stack_width == Width::W64 {
+                        sign_extend_imm(Width::W32, imm32 as u64)
+                    } else {
+                        imm32 as u64
+                    }
+                };
                 InstKind::Push {
-                    src: Operand::Imm(imm64),
+                    src: Operand::Imm(imm),
                 }
             }
             0xe9 => {

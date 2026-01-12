@@ -1,5 +1,5 @@
 use aero_types::{Cond, Gpr, Width};
-use aero_x86::tier1::{decode_one_mode, InstKind, Operand, Reg, ShiftOp};
+use aero_x86::tier1::{decode_one_mode, AluOp, InstKind, Operand, Reg, ShiftOp};
 
 #[test]
 fn decode_one_mode_32bit_dec_ecx_is_not_rex() {
@@ -279,6 +279,93 @@ fn decode_one_mode_32bit_opsize_override_jcc_rel16() {
         InstKind::JccRel {
             cond: Cond::E,
             target: 0x4007
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_16bit_add_ax_imm16_is_not_imm32() {
+    // add ax, 0x1234
+    let inst = decode_one_mode(0x1000, &[0x05, 0x34, 0x12], 16);
+    assert_eq!(inst.len, 3);
+    assert_eq!(
+        inst.kind,
+        InstKind::Alu {
+            op: AluOp::Add,
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rax,
+                width: Width::W16,
+                high8: false,
+            }),
+            src: Operand::Imm(0x1234),
+            width: Width::W16,
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_add_ax_imm16() {
+    // 66 05 34 12 = add ax, 0x1234
+    let inst = decode_one_mode(0x1000, &[0x66, 0x05, 0x34, 0x12], 32);
+    assert_eq!(inst.len, 4);
+    assert_eq!(
+        inst.kind,
+        InstKind::Alu {
+            op: AluOp::Add,
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rax,
+                width: Width::W16,
+                high8: false,
+            }),
+            src: Operand::Imm(0x1234),
+            width: Width::W16,
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_16bit_81_group_reads_imm16() {
+    // 81 /0 = add r/m16, imm16
+    // add ax, 0x1234
+    let inst = decode_one_mode(0x1000, &[0x81, 0xc0, 0x34, 0x12], 16);
+    assert_eq!(inst.len, 4);
+    assert_eq!(
+        inst.kind,
+        InstKind::Alu {
+            op: AluOp::Add,
+            dst: Operand::Reg(Reg {
+                gpr: Gpr::Rax,
+                width: Width::W16,
+                high8: false,
+            }),
+            src: Operand::Imm(0x1234),
+            width: Width::W16,
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_16bit_push_imm16_reads_imm16() {
+    // push 0x1234
+    let inst = decode_one_mode(0x1000, &[0x68, 0x34, 0x12], 16);
+    assert_eq!(inst.len, 3);
+    assert_eq!(
+        inst.kind,
+        InstKind::Push {
+            src: Operand::Imm(0x1234),
+        }
+    );
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_push_imm16() {
+    // In 32-bit mode, 0x66 selects 16-bit operand size, and PUSH imm uses an imm16.
+    let inst = decode_one_mode(0x1000, &[0x66, 0x68, 0x34, 0x12], 32);
+    assert_eq!(inst.len, 4);
+    assert_eq!(
+        inst.kind,
+        InstKind::Push {
+            src: Operand::Imm(0x1234),
         }
     );
 }
