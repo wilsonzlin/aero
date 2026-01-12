@@ -255,8 +255,13 @@ impl SharedSurfaceTable {
         if share_token == 0 {
             return;
         }
-        self.by_token.remove(&share_token);
-        self.retired_tokens.insert(share_token);
+        // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
+        //
+        // Only retire tokens that were actually exported at some point (present in `by_token`),
+        // or that are already retired.
+        if self.by_token.remove(&share_token).is_some() {
+            self.retired_tokens.insert(share_token);
+        }
     }
 
     /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if tracked.

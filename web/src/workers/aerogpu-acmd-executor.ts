@@ -322,8 +322,13 @@ const importSharedSurface = (state: AerogpuCpuExecutorState, outHandle: number, 
 
 const releaseSharedSurface = (state: AerogpuCpuExecutorState, shareToken: bigint): void => {
   if (shareToken === 0n) return;
-  state.sharedSurfaces.byToken.delete(shareToken);
-  state.sharedSurfaces.retiredTokens.add(shareToken);
+  // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
+  //
+  // Only retire tokens that were actually exported (present in `byToken`), or that are already
+  // retired.
+  if (state.sharedSurfaces.byToken.delete(shareToken)) {
+    state.sharedSurfaces.retiredTokens.add(shareToken);
+  }
 };
 
 const destroySharedHandle = (

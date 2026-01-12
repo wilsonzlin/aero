@@ -3727,8 +3727,10 @@ impl AeroGpuSoftwareExecutor {
                     };
                 let token = u64::from_le(packet_cmd.share_token);
                 if token != 0 {
-                    self.shared_surfaces.remove(&token);
-                    self.retired_shared_surface_tokens.insert(token);
+                    // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
+                    if self.shared_surfaces.remove(&token).is_some() {
+                        self.retired_shared_surface_tokens.insert(token);
+                    }
                 }
             }
             cmd::AerogpuCmdOpcode::Present

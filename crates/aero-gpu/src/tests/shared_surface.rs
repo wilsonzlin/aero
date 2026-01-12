@@ -110,6 +110,20 @@ fn shared_surface_token_reuse_after_release_is_rejected() {
 }
 
 #[test]
+fn shared_surface_release_unknown_token_is_noop() {
+    let mut table = SharedSurfaceTable::default();
+    let token = 0xDEAD_BEEF_u64;
+
+    table.register_handle(1).unwrap();
+
+    // Unknown tokens are a no-op (no retirement).
+    assert!(!table.release_token(token));
+
+    table.export(1, token).unwrap();
+    table.import(2, token).unwrap();
+}
+
+#[test]
 fn shared_surface_register_handle_rejects_alias_handles() {
     let mut table = SharedSurfaceTable::default();
     let original = 1u32;

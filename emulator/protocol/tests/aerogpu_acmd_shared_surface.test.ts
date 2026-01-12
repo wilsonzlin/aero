@@ -109,3 +109,28 @@ test("ACMD shared surface refcounting keeps underlying resource alive until fina
     /EXPORT_SHARED_SURFACE.*previously released/i,
   );
 });
+
+test("ACMD RELEASE_SHARED_SURFACE is a no-op for unknown tokens", () => {
+  const state = createAerogpuCpuExecutorState();
+
+  const token = 0x1111n;
+  const upload = Uint8Array.from([
+    // 2x2 RGBA8
+    71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86,
+  ]);
+
+  const w = new AerogpuCmdWriter();
+  w.createTexture2d(1, 0, AerogpuFormat.R8G8B8A8Unorm, 2, 2, 1, 1, 0, 0, 0);
+  // Token has not been exported yet; this should not retire it.
+  w.releaseSharedSurface(token);
+  w.exportSharedSurface(1, token);
+  w.importSharedSurface(10, token);
+  w.uploadResource(10, 0n, upload);
+  w.setRenderTargets([10], 0);
+  w.present(0, 0);
+
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+
+  assert(state.lastPresentedFrame, "expected a present to populate lastPresentedFrame");
+  assert.deepEqual(Array.from(new Uint8Array(state.lastPresentedFrame.rgba8)), Array.from(upload));
+});

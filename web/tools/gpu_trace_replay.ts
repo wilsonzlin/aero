@@ -1049,8 +1049,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
     function releaseSharedSurface(shareToken) {
       if (shareToken === 0n) return;
-      acmdSharedSurfaces.delete(shareToken);
-      acmdRetiredSharedSurfaceTokens.add(shareToken);
+      // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
+      if (acmdSharedSurfaces.delete(shareToken)) {
+        acmdRetiredSharedSurfaceTokens.add(shareToken);
+      }
     }
 
     function destroySharedHandle(handle) {
