@@ -167,7 +167,7 @@ not snapshotted, so a post-restore sync is required to make the sink observe res
 
 The snapshot file stores device entries under an **outer numeric** `DeviceId` (the `u32` written into each `DeviceState` header).
 
-In the worker-based web runtime, device blobs are exchanged as `{ kind: string, bytes: Uint8Array }` (protocol types in `web/src/runtime/snapshot_protocol.ts`). The `kind` field is a **stable string** that maps to a numeric `DeviceId` (mapping lives in `web/src/workers/vm_snapshot_wasm.ts` and is mirrored in `crates/aero-wasm/src/vm_snapshot_builder.rs`).
+In the worker-based web runtime, device blobs are exchanged as `{ kind: string, bytes: Uint8Array }` (protocol types in `web/src/runtime/snapshot_protocol.ts`). The `kind` field is a **stable string** that maps to a numeric `DeviceId` (mapping lives in `web/src/workers/vm_snapshot_wasm.ts` and is mirrored in `crates/aero-wasm/src/vm_snapshot_device_kind.rs` (used by the WASM-side snapshot builder)).
 
 For forward compatibility, the runtime also supports a fallback spelling for unknown device IDs:
 
