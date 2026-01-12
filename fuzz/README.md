@@ -25,13 +25,15 @@ From the repository root:
 cargo +"$nightly" fuzz run fuzz_mmu_translate
 cargo +"$nightly" fuzz run fuzz_bus_rw
 cargo +"$nightly" fuzz run fuzz_ahci
+cargo +"$nightly" fuzz run fuzz_ahci_command
 cargo +"$nightly" fuzz run fuzz_ide
 cargo +"$nightly" fuzz run fuzz_piix3_ide_pci
-  cargo +"$nightly" fuzz run fuzz_http_range
-  cargo +"$nightly" fuzz run fuzz_atapi
-  cargo +"$nightly" fuzz run fuzz_aerosparse_open
-  cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
-  cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_ide_busmaster
+cargo +"$nightly" fuzz run fuzz_http_range
+cargo +"$nightly" fuzz run fuzz_atapi
+cargo +"$nightly" fuzz run fuzz_aerosparse_open
+cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
+cargo +"$nightly" fuzz run fuzz_aerogpu_parse
 ```
 
 To run time-bounded:
