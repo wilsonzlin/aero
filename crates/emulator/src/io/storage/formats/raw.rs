@@ -1,47 +1,67 @@
+use aero_storage::{RawDisk as StorageRawDisk, VirtualDisk as _};
+
+use crate::io::storage::adapters::{
+    aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
+    StorageBackendFromByteStorage,
+};
 use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
+/// Raw disk image backed by a byte-addressed storage primitive.
+///
+/// This is a thin compatibility wrapper around the canonical `aero_storage::RawDisk`
+/// implementation, preserving the emulator disk stack's configurable sector size.
 pub struct RawDisk<S> {
-    storage: S,
+    inner: StorageRawDisk<StorageBackendFromByteStorage<S>>,
     sector_size: u32,
     total_sectors: u64,
 }
 
 impl<S: ByteStorage> RawDisk<S> {
-    pub fn create(mut storage: S, sector_size: u32, total_sectors: u64) -> DiskResult<Self> {
+    pub fn create(storage: S, sector_size: u32, total_sectors: u64) -> DiskResult<Self> {
         if sector_size == 0 {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
-        let len = total_sectors
+
+        let capacity_bytes = total_sectors
             .checked_mul(sector_size as u64)
             .ok_or(DiskError::Unsupported("disk size overflow"))?;
-        storage.set_len(len)?;
+
+        let inner =
+            StorageRawDisk::create(StorageBackendFromByteStorage::new(storage), capacity_bytes)
+                .map_err(aero_storage_disk_error_to_emulator)?;
+
         Ok(Self {
-            storage,
+            inner,
             sector_size,
             total_sectors,
         })
     }
 
-    pub fn open(mut storage: S, sector_size: u32) -> DiskResult<Self> {
+    pub fn open(storage: S, sector_size: u32) -> DiskResult<Self> {
         if sector_size == 0 {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
-        let len = storage.len()?;
+
+        let inner = StorageRawDisk::open(StorageBackendFromByteStorage::new(storage))
+            .map_err(aero_storage_disk_error_to_emulator)?;
+
+        let len = inner.capacity_bytes();
         if !len.is_multiple_of(sector_size as u64) {
             return Err(DiskError::CorruptImage(
                 "raw size not multiple of sector size",
             ));
         }
+
         Ok(Self {
-            storage,
-            sector_size,
             total_sectors: len / sector_size as u64,
+            inner,
+            sector_size,
         })
     }
 
     pub fn into_storage(self) -> S {
-        self.storage
+        self.inner.into_backend().into_inner()
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<u64> {
@@ -78,6 +98,10 @@ impl<S: ByteStorage> DiskBackend for RawDisk<S> {
     }
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+        if buf.is_empty() {
+            return Ok(());
+        }
+
         let sectors = self.check_range(lba, buf.len())?;
         let offset = lba
             .checked_mul(self.sector_size as u64)
@@ -86,10 +110,22 @@ impl<S: ByteStorage> DiskBackend for RawDisk<S> {
                 sectors,
                 capacity_sectors: self.total_sectors,
             })?;
-        self.storage.read_at(offset, buf)
+
+        self.inner.read_at(offset, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                self.total_sectors,
+            )
+        })
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+        if buf.is_empty() {
+            return Ok(());
+        }
+
         let sectors = self.check_range(lba, buf.len())?;
         let offset = lba
             .checked_mul(self.sector_size as u64)
@@ -98,10 +134,20 @@ impl<S: ByteStorage> DiskBackend for RawDisk<S> {
                 sectors,
                 capacity_sectors: self.total_sectors,
             })?;
-        self.storage.write_at(offset, buf)
+
+        self.inner.write_at(offset, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                self.total_sectors,
+            )
+        })
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.storage.flush()
+        self.inner
+            .flush()
+            .map_err(aero_storage_disk_error_to_emulator)
     }
 }

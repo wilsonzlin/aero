@@ -1,634 +1,31 @@
-use std::num::NonZeroUsize;
+use aero_storage::{VhdDisk as StorageVhdDisk, VirtualDisk as _};
 
-use lru::LruCache;
-
+use crate::io::storage::adapters::{
+    aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
+    StorageBackendFromByteStorage,
+};
 use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
-const VHD_FOOTER_COOKIE: [u8; 8] = *b"conectix";
-const VHD_DYNAMIC_COOKIE: [u8; 8] = *b"cxsparse";
-
-const VHD_DISK_TYPE_FIXED: u32 = 2;
-const VHD_DISK_TYPE_DYNAMIC: u32 = 3;
-const VHD_FILE_FORMAT_VERSION: u32 = 0x0001_0000;
-
 const SECTOR_SIZE: u32 = 512;
 
-// Hard caps to avoid absurd allocations from untrusted images.
-const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
-const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
-                                                // DoS guard: keep dynamic VHD allocation units bounded. Extremely large block sizes can cause
-                                                // pathological file growth on the first guest write to a new block (the image must be extended by
-                                                // `block_size` bytes).
-                                                //
-                                                // This cap intentionally matches the Aero sparse disk block-size cap in `aero-storage` so
-                                                // untrusted VHDs can't request significantly more work per allocation unit than our native sparse
-                                                // format.
-const MAX_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
-
-// Bound bitmap caching when reading large fully-allocated dynamic VHDs.
-const VHD_BITMAP_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
-
-fn try_alloc_zeroed(len: usize) -> DiskResult<Vec<u8>> {
-    let mut buf = Vec::new();
-    buf.try_reserve_exact(len)
-        .map_err(|_| DiskError::QuotaExceeded)?;
-    buf.resize(len, 0);
-    Ok(buf)
-}
-
-#[derive(Debug, Clone)]
-struct VhdFooter {
-    data_offset: u64,
-    current_size: u64,
-    disk_type: u32,
-    raw: [u8; 512],
-}
-
-impl VhdFooter {
-    fn parse(raw: [u8; 512]) -> DiskResult<Self> {
-        if raw[..8] != VHD_FOOTER_COOKIE {
-            return Err(DiskError::CorruptImage("vhd footer cookie mismatch"));
-        }
-
-        let file_format_version = be_u32(&raw[12..16]);
-        if file_format_version != VHD_FILE_FORMAT_VERSION {
-            return Err(DiskError::Unsupported("vhd file format version"));
-        }
-
-        let disk_type = be_u32(&raw[60..64]);
-        let current_size = be_u64(&raw[48..56]);
-        let data_offset = be_u64(&raw[16..24]);
-
-        let expected = be_u32(&raw[64..68]);
-        let actual = vhd_checksum_footer(&raw);
-        if expected != actual {
-            return Err(DiskError::CorruptImage("vhd footer checksum mismatch"));
-        }
-
-        if current_size == 0 || !current_size.is_multiple_of(SECTOR_SIZE as u64) {
-            return Err(DiskError::CorruptImage("vhd current_size invalid"));
-        }
-
-        match disk_type {
-            VHD_DISK_TYPE_FIXED => {
-                // Per spec, fixed VHDs use 0xFFFF..FFFF to indicate there is no dynamic header.
-                if data_offset != u64::MAX {
-                    return Err(DiskError::CorruptImage("vhd fixed data_offset invalid"));
-                }
-            }
-            VHD_DISK_TYPE_DYNAMIC => {
-                if data_offset == u64::MAX {
-                    return Err(DiskError::CorruptImage("vhd dynamic header offset invalid"));
-                }
-            }
-            _ => {}
-        }
-
-        Ok(Self {
-            data_offset,
-            current_size,
-            disk_type,
-            raw,
-        })
-    }
-
-    fn rewrite_checksum(&mut self) {
-        self.raw[64..68].fill(0);
-        let checksum = vhd_checksum_footer(&self.raw);
-        self.raw[64..68].copy_from_slice(&checksum.to_be_bytes());
-    }
-}
-
-#[derive(Debug, Clone)]
-struct VhdDynamicHeader {
-    table_offset: u64,
-    max_table_entries: u32,
-    block_size: u32,
-}
-
-impl VhdDynamicHeader {
-    fn parse(raw: &[u8; 1024]) -> DiskResult<Self> {
-        if raw[..8] != VHD_DYNAMIC_COOKIE {
-            return Err(DiskError::CorruptImage(
-                "vhd dynamic header cookie mismatch",
-            ));
-        }
-
-        // Per spec, dynamic VHDs use 0xFFFF..FFFF to indicate there is no next header structure.
-        // We only support standalone fixed/dynamic images, so reject anything else.
-        let data_offset = be_u64(&raw[8..16]);
-        if data_offset != u64::MAX {
-            return Err(DiskError::CorruptImage(
-                "vhd dynamic header data_offset invalid",
-            ));
-        }
-
-        let table_offset = be_u64(&raw[16..24]);
-        let header_version = be_u32(&raw[24..28]);
-        if header_version != VHD_FILE_FORMAT_VERSION {
-            return Err(DiskError::Unsupported("vhd dynamic header version"));
-        }
-        let max_table_entries = be_u32(&raw[28..32]);
-        let block_size = be_u32(&raw[32..36]);
-        let expected_checksum = be_u32(&raw[36..40]);
-
-        if !table_offset.is_multiple_of(SECTOR_SIZE as u64) {
-            return Err(DiskError::CorruptImage("vhd bat offset misaligned"));
-        }
-        if max_table_entries == 0 {
-            return Err(DiskError::CorruptImage("vhd max_table_entries is zero"));
-        }
-        if block_size == 0 || !(block_size as u64).is_multiple_of(SECTOR_SIZE as u64) {
-            return Err(DiskError::CorruptImage("vhd block_size invalid"));
-        }
-        if block_size > MAX_BLOCK_SIZE_BYTES {
-            return Err(DiskError::Unsupported("vhd block_size too large"));
-        }
-
-        let actual_checksum = vhd_checksum_dynamic_header(raw);
-        if expected_checksum != actual_checksum {
-            return Err(DiskError::CorruptImage(
-                "vhd dynamic header checksum mismatch",
-            ));
-        }
-
-        Ok(Self {
-            table_offset,
-            max_table_entries,
-            block_size,
-        })
-    }
-}
-
+/// VHD (fixed + dynamic) disk image backed by an emulator [`ByteStorage`].
+///
+/// This is a thin compatibility wrapper around the canonical `aero_storage::VhdDisk`
+/// implementation.
 pub struct VhdDisk<S> {
-    storage: S,
-    footer: VhdFooter,
-    dynamic: Option<VhdDynamicHeader>,
-    bat: Vec<u32>,
-    bitmap_cache: LruCache<u64, Vec<u8>>,
-    fixed_data_offset: u64,
+    inner: StorageVhdDisk<StorageBackendFromByteStorage<S>>,
 }
 
 impl<S: ByteStorage> VhdDisk<S> {
-    pub fn open(mut storage: S) -> DiskResult<Self> {
-        let len = storage.len()?;
-        if len < 512 {
-            return Err(DiskError::CorruptImage("vhd file too small"));
-        }
-        if !len.is_multiple_of(SECTOR_SIZE as u64) {
-            return Err(DiskError::CorruptImage("vhd file length misaligned"));
-        }
-
-        let footer_offset = len - 512;
-        let mut raw_footer = [0u8; 512];
-        storage.read_at(footer_offset, &mut raw_footer)?;
-        let footer = VhdFooter::parse(raw_footer)?;
-
-        match footer.disk_type {
-            VHD_DISK_TYPE_FIXED => {
-                // Some tools store an extra copy of the footer at offset 0 even for fixed disks.
-                // When present and valid, treat the data region as starting immediately after this
-                // footer copy.
-                let mut fixed_data_offset = 0u64;
-                if len >= 1024 {
-                    let mut raw_footer_copy = [0u8; 512];
-                    storage.read_at(0, &mut raw_footer_copy)?;
-                    if raw_footer_copy[..8] == VHD_FOOTER_COOKIE {
-                        if let Ok(copy) = VhdFooter::parse(raw_footer_copy) {
-                            // Some tools populate the optional footer copy at offset 0 but do not
-                            // keep all fields perfectly in sync with the EOF footer (e.g. differing
-                            // timestamps or UUIDs). Treat any valid fixed-disk footer copy with a
-                            // matching virtual size as indicating the payload begins at offset 512.
-                            if copy.disk_type == VHD_DISK_TYPE_FIXED
-                                && copy.current_size == footer.current_size
-                            {
-                                // Only treat the footer copy as present if the file is large enough
-                                // to contain it + the data region + the required EOF footer.
-                                let required_with_copy = footer
-                                    .current_size
-                                    .checked_add(1024)
-                                    .ok_or(DiskError::CorruptImage("vhd current_size overflow"))?;
-                                if len >= required_with_copy {
-                                    fixed_data_offset = 512;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let required_len = footer
-                    .current_size
-                    .checked_add(fixed_data_offset)
-                    .and_then(|v| v.checked_add(512))
-                    .ok_or(DiskError::CorruptImage("vhd current_size overflow"))?;
-                if len < required_len {
-                    return Err(DiskError::CorruptImage("vhd fixed disk truncated"));
-                }
-                Ok(Self {
-                    storage,
-                    footer,
-                    dynamic: None,
-                    bat: Vec::new(),
-                    bitmap_cache: LruCache::new(NonZeroUsize::MIN),
-                    fixed_data_offset,
-                })
-            }
-            VHD_DISK_TYPE_DYNAMIC => {
-                // Dynamic VHDs must contain a copy of the footer at both offset 0 and EOF.
-                //
-                // We validate the footer copy up front so we don't silently treat a corrupted image
-                // as valid and later overwrite whatever lives at offset 0 when allocating blocks.
-                let mut raw_footer_copy = [0u8; 512];
-                storage.read_at(0, &mut raw_footer_copy)?;
-                let footer_copy = VhdFooter::parse(raw_footer_copy)?;
-                if footer_copy.raw != footer.raw {
-                    return Err(DiskError::CorruptImage("vhd footer copy mismatch"));
-                }
-
-                if !footer.data_offset.is_multiple_of(SECTOR_SIZE as u64) {
-                    return Err(DiskError::CorruptImage(
-                        "vhd dynamic header offset misaligned",
-                    ));
-                }
-                if footer.data_offset < 512 {
-                    return Err(DiskError::CorruptImage(
-                        "vhd dynamic header overlaps footer copy",
-                    ));
-                }
-                let dyn_header_end = footer
-                    .data_offset
-                    .checked_add(1024)
-                    .ok_or(DiskError::OutOfBounds)?;
-                if dyn_header_end > len {
-                    return Err(DiskError::CorruptImage("vhd dynamic header truncated"));
-                }
-                if dyn_header_end > footer_offset {
-                    return Err(DiskError::CorruptImage(
-                        "vhd dynamic header overlaps footer",
-                    ));
-                }
-
-                let mut raw_header = [0u8; 1024];
-                storage.read_at(footer.data_offset, &mut raw_header)?;
-                let dynamic = VhdDynamicHeader::parse(&raw_header)?;
-
-                let required_entries = footer.current_size.div_ceil(dynamic.block_size as u64);
-                if (dynamic.max_table_entries as u64) < required_entries {
-                    return Err(DiskError::CorruptImage("vhd bat too small"));
-                }
-
-                // Validate the on-disk BAT size based on `max_table_entries`. We only *read* the
-                // portion required for the advertised virtual size, but the metadata region must
-                // still be coherent.
-                let bat_size_on_disk = {
-                    let bat_bytes = (dynamic.max_table_entries as u64)
-                        .checked_mul(4)
-                        .ok_or(DiskError::OutOfBounds)?;
-                    let bat_bytes_aligned = align_up(bat_bytes, SECTOR_SIZE as u64)?;
-                    if bat_bytes_aligned > MAX_BAT_BYTES {
-                        return Err(DiskError::Unsupported("vhd bat too large"));
-                    }
-                    bat_bytes_aligned
-                };
-
-                let bat_end_on_disk = dynamic
-                    .table_offset
-                    .checked_add(bat_size_on_disk)
-                    .ok_or(DiskError::OutOfBounds)?;
-                if bat_end_on_disk > footer_offset {
-                    return Err(DiskError::CorruptImage("vhd bat truncated"));
-                }
-                if dynamic.table_offset < 512 {
-                    return Err(DiskError::CorruptImage("vhd bat overlaps footer copy"));
-                }
-                if ranges_overlap(
-                    footer.data_offset,
-                    dyn_header_end,
-                    dynamic.table_offset,
-                    bat_end_on_disk,
-                ) {
-                    return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
-                }
-
-                // Only read the BAT entries needed for the virtual size; this avoids allocating
-                // memory proportional to `max_table_entries` for sparse/truncated images.
-                let bat_bytes = required_entries
-                    .checked_mul(4)
-                    .ok_or(DiskError::OutOfBounds)?;
-                if bat_bytes > MAX_BAT_BYTES {
-                    return Err(DiskError::Unsupported("vhd bat too large"));
-                }
-                let entries: usize = required_entries
-                    .try_into()
-                    .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
-                let bat_bytes_usize: usize = bat_bytes
-                    .try_into()
-                    .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
-
-                let mut bat = Vec::new();
-                bat.try_reserve_exact(entries)
-                    .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
-
-                let mut buf = Vec::new();
-                buf.try_reserve_exact(64 * 1024)
-                    .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
-                buf.resize(64 * 1024, 0);
-
-                let mut remaining = bat_bytes_usize;
-                let mut off = dynamic.table_offset;
-                while remaining > 0 {
-                    let read_len = remaining.min(buf.len());
-                    storage.read_at(off, &mut buf[..read_len])?;
-                    for chunk in buf[..read_len].chunks_exact(4) {
-                        bat.push(be_u32(chunk));
-                    }
-                    off = off
-                        .checked_add(read_len as u64)
-                        .ok_or(DiskError::OutOfBounds)?;
-                    remaining -= read_len;
-                }
-
-                // Size bitmap caching based on the bitmap size for this image.
-                let sectors_per_block = (dynamic.block_size as u64) / SECTOR_SIZE as u64;
-                let bitmap_bytes = sectors_per_block.div_ceil(8);
-                let bitmap_size = align_up(bitmap_bytes, SECTOR_SIZE as u64)?;
-                if bitmap_size > MAX_BITMAP_BYTES {
-                    return Err(DiskError::Unsupported("vhd bitmap too large"));
-                }
-
-                // Validate that all allocated BAT entries point to blocks that fit inside the file
-                // and do not overlap the metadata region. This makes corruption fail fast at open
-                // time rather than surfacing later on guest reads/writes.
-                let block_total_size = bitmap_size
-                    .checked_add(dynamic.block_size as u64)
-                    .ok_or(DiskError::OutOfBounds)?;
-                let data_region_start = 512u64.max(dyn_header_end).max(bat_end_on_disk);
-
-                let block_total_sectors = block_total_size
-                    .checked_div(SECTOR_SIZE as u64)
-                    .ok_or(DiskError::OutOfBounds)?;
-
-                // Collect allocated block starts (in 512-byte sectors, same units as the BAT) so
-                // the overlap check doesn't require building an additional Vec<u64> of byte
-                // offsets proportional to the BAT size.
-                let allocated_count = bat.iter().filter(|e| **e != u32::MAX).count();
-                let mut allocated_blocks: Vec<u32> = Vec::new();
-                allocated_blocks
-                    .try_reserve_exact(allocated_count)
-                    .map_err(|_| DiskError::QuotaExceeded)?;
-
-                for &bat_entry in &bat {
-                    if bat_entry == u32::MAX {
-                        continue;
-                    }
-                    let block_start = (bat_entry as u64)
-                        .checked_mul(SECTOR_SIZE as u64)
-                        .ok_or(DiskError::OutOfBounds)?;
-                    if block_start < data_region_start {
-                        return Err(DiskError::CorruptImage("vhd block overlaps metadata"));
-                    }
-                    let block_end = block_start
-                        .checked_add(block_total_size)
-                        .ok_or(DiskError::OutOfBounds)?;
-                    if block_end > footer_offset {
-                        return Err(DiskError::CorruptImage("vhd block overlaps footer"));
-                    }
-
-                    allocated_blocks.push(bat_entry);
-                }
-
-                allocated_blocks.sort_unstable();
-                for w in allocated_blocks.windows(2) {
-                    let prev_start = w[0] as u64;
-                    let next_start = w[1] as u64;
-                    let prev_end = prev_start
-                        .checked_add(block_total_sectors)
-                        .ok_or(DiskError::OutOfBounds)?;
-                    if next_start < prev_end {
-                        return Err(DiskError::CorruptImage("vhd blocks overlap"));
-                    }
-                }
-
-                let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
-                let cap_entries = cap_entries
-                    .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
-                    .max(1);
-                let cap = NonZeroUsize::new(cap_entries)
-                    .ok_or(DiskError::Unsupported("vhd bitmap cache size is zero"))?;
-
-                Ok(Self {
-                    storage,
-                    footer,
-                    dynamic: Some(dynamic),
-                    bat,
-                    bitmap_cache: LruCache::new(cap),
-                    fixed_data_offset: 0,
-                })
-            }
-            _ => Err(DiskError::Unsupported("vhd disk type")),
-        }
+    pub fn open(storage: S) -> DiskResult<Self> {
+        let inner = StorageVhdDisk::open(StorageBackendFromByteStorage::new(storage))
+            .map_err(aero_storage_disk_error_to_emulator)?;
+        Ok(Self { inner })
     }
 
     pub fn into_storage(self) -> S {
-        self.storage
-    }
-
-    fn total_sectors_inner(&self) -> u64 {
-        self.footer.current_size / SECTOR_SIZE as u64
-    }
-
-    fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        if !bytes.is_multiple_of(SECTOR_SIZE as usize) {
-            return Err(DiskError::UnalignedBuffer {
-                len: bytes,
-                sector_size: SECTOR_SIZE,
-            });
-        }
-        let sectors = (bytes / SECTOR_SIZE as usize) as u64;
-        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors_inner(),
-        })?;
-        if end > self.total_sectors_inner() {
-            return Err(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: self.total_sectors_inner(),
-            });
-        }
-        Ok(())
-    }
-
-    fn dyn_params(&self) -> DiskResult<(u64, u64)> {
-        let dyn_hdr = self
-            .dynamic
-            .as_ref()
-            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
-        let sectors_per_block = (dyn_hdr.block_size as u64) / SECTOR_SIZE as u64;
-        let bitmap_bytes = sectors_per_block.div_ceil(8);
-        let bitmap_size = align_up(bitmap_bytes, SECTOR_SIZE as u64)?;
-        if bitmap_size > MAX_BITMAP_BYTES {
-            return Err(DiskError::Unsupported("vhd bitmap too large"));
-        }
-        Ok((sectors_per_block, bitmap_size))
-    }
-
-    fn data_region_start(&self) -> DiskResult<u64> {
-        let dyn_hdr = self
-            .dynamic
-            .as_ref()
-            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
-
-        // Dynamic header is always 1024 bytes starting at `footer.data_offset`.
-        let dyn_header_end = self
-            .footer
-            .data_offset
-            .checked_add(1024)
-            .ok_or(DiskError::OutOfBounds)?;
-
-        // The on-disk BAT is sized by `max_table_entries` and must be sector aligned.
-        let bat_bytes = (dyn_hdr.max_table_entries as u64)
-            .checked_mul(4)
-            .ok_or(DiskError::OutOfBounds)?;
-        let bat_size = align_up(bat_bytes, SECTOR_SIZE as u64)?;
-        let bat_end = dyn_hdr
-            .table_offset
-            .checked_add(bat_size)
-            .ok_or(DiskError::OutOfBounds)?;
-
-        Ok(512u64.max(dyn_header_end).max(bat_end))
-    }
-
-    fn validate_block_bounds(&mut self, block_start: u64, bitmap_size: u64) -> DiskResult<()> {
-        let dyn_hdr = self
-            .dynamic
-            .as_ref()
-            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
-
-        let data_start = self.data_region_start()?;
-        if block_start < data_start {
-            return Err(DiskError::CorruptImage("vhd block overlaps metadata"));
-        }
-
-        let file_len = self.storage.len()?;
-        if file_len < 512 {
-            return Err(DiskError::CorruptImage("vhd file truncated"));
-        }
-        let footer_offset = file_len - 512;
-
-        let block_total_size = bitmap_size
-            .checked_add(dyn_hdr.block_size as u64)
-            .ok_or(DiskError::OutOfBounds)?;
-        let block_end = block_start
-            .checked_add(block_total_size)
-            .ok_or(DiskError::OutOfBounds)?;
-        if block_end > footer_offset {
-            return Err(DiskError::CorruptImage("vhd block overlaps footer"));
-        }
-
-        Ok(())
-    }
-
-    fn bitmap_get(bitmap: &[u8], sector_in_block: u64) -> DiskResult<bool> {
-        let byte = usize::try_from(sector_in_block / 8).map_err(|_| DiskError::OutOfBounds)?;
-        if byte >= bitmap.len() {
-            return Err(DiskError::CorruptImage("vhd bitmap too small"));
-        }
-        let bit = 7 - (sector_in_block % 8) as u8;
-        Ok((bitmap[byte] & (1u8 << bit)) != 0)
-    }
-
-    fn bitmap_set(bitmap: &mut [u8], sector_in_block: u64) -> DiskResult<()> {
-        let byte = usize::try_from(sector_in_block / 8).map_err(|_| DiskError::OutOfBounds)?;
-        if byte >= bitmap.len() {
-            return Err(DiskError::CorruptImage("vhd bitmap too small"));
-        }
-        let bit = 7 - (sector_in_block % 8) as u8;
-        bitmap[byte] |= 1u8 << bit;
-        Ok(())
-    }
-
-    fn load_bitmap(&mut self, block_start: u64, bitmap_size: u64) -> DiskResult<Vec<u8>> {
-        if let Some(v) = self.bitmap_cache.get(&block_start) {
-            return Ok(v.clone());
-        }
-        let bytes = usize::try_from(bitmap_size)
-            .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
-        let mut bitmap = try_alloc_zeroed(bytes)?;
-        self.storage.read_at(block_start, &mut bitmap)?;
-        let _ = self.bitmap_cache.push(block_start, bitmap.clone());
-        Ok(bitmap)
-    }
-
-    fn store_bitmap(&mut self, block_start: u64, bitmap: Vec<u8>) -> DiskResult<()> {
-        self.storage.write_at(block_start, &bitmap)?;
-        let _ = self.bitmap_cache.push(block_start, bitmap);
-        Ok(())
-    }
-
-    fn allocate_block(&mut self, block_index: usize) -> DiskResult<u64> {
-        let dyn_hdr = self
-            .dynamic
-            .clone()
-            .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
-        let (_sectors_per_block, bitmap_size) = self.dyn_params()?;
-        let bitmap_size_usize: usize = bitmap_size
-            .try_into()
-            .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
-
-        if block_index >= self.bat.len() {
-            return Err(DiskError::OutOfBounds);
-        }
-        if self.bat[block_index] != u32::MAX {
-            return Err(DiskError::CorruptImage("vhd block already allocated"));
-        }
-
-        let file_len = self.storage.len()?;
-        if file_len < 512 {
-            return Err(DiskError::CorruptImage("vhd file truncated"));
-        }
-        let old_footer_offset = file_len - 512;
-
-        let block_total_size = bitmap_size
-            .checked_add(dyn_hdr.block_size as u64)
-            .ok_or(DiskError::OutOfBounds)?;
-        let new_footer_offset = old_footer_offset
-            .checked_add(block_total_size)
-            .ok_or(DiskError::OutOfBounds)?;
-        let new_len = new_footer_offset
-            .checked_add(512)
-            .ok_or(DiskError::OutOfBounds)?;
-
-        self.storage.set_len(new_len)?;
-
-        write_zeroes(&mut self.storage, old_footer_offset, bitmap_size)?;
-        self.storage.flush()?;
-
-        let block_sector = u32::try_from(old_footer_offset / SECTOR_SIZE as u64)
-            .map_err(|_| DiskError::Unsupported("vhd block offset"))?;
-        self.bat[block_index] = block_sector;
-        let bat_entry_offset = dyn_hdr
-            .table_offset
-            .checked_add((block_index as u64) * 4)
-            .ok_or(DiskError::OutOfBounds)?;
-        self.storage
-            .write_at(bat_entry_offset, &block_sector.to_be_bytes())?;
-        self.storage.flush()?;
-
-        let mut footer = self.footer.clone();
-        footer.rewrite_checksum();
-        self.storage.write_at(0, &footer.raw)?;
-        self.storage.write_at(new_footer_offset, &footer.raw)?;
-        self.storage.flush()?;
-
-        // Best-effort: caching the zero bitmap avoids re-reading from storage, but allocation
-        // failure should not take down the emulator or block writes.
-        if let Ok(bitmap) = try_alloc_zeroed(bitmap_size_usize) {
-            let _ = self.bitmap_cache.push(old_footer_offset, bitmap);
-        }
-        Ok(old_footer_offset)
+        self.inner.into_backend().into_inner()
     }
 }
 
@@ -638,322 +35,86 @@ impl<S: ByteStorage> DiskBackend for VhdDisk<S> {
     }
 
     fn total_sectors(&self) -> u64 {
-        self.total_sectors_inner()
+        self.inner.capacity_bytes() / SECTOR_SIZE as u64
     }
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
-        self.check_range(lba, buf.len())?;
         if buf.is_empty() {
             return Ok(());
         }
 
-        if self.dynamic.is_none() {
-            let offset = lba
-                .checked_mul(SECTOR_SIZE as u64)
-                .and_then(|v| v.checked_add(self.fixed_data_offset))
-                .ok_or(DiskError::OutOfBounds)?;
-            self.storage.read_at(offset, buf)?;
-            return Ok(());
+        if !buf.len().is_multiple_of(SECTOR_SIZE as usize) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buf.len(),
+                sector_size: SECTOR_SIZE,
+            });
         }
 
-        let (sectors_per_block, bitmap_size) = self.dyn_params()?;
-
-        let mut buf_off = 0usize;
-        while buf_off < buf.len() {
-            let sector_index = (buf_off / SECTOR_SIZE as usize) as u64;
-            let cur_lba = lba
-                .checked_add(sector_index)
-                .ok_or(DiskError::OutOfBounds)?;
-            let block_index =
-                usize::try_from(cur_lba / sectors_per_block).map_err(|_| DiskError::OutOfBounds)?;
-            let sector_in_block = cur_lba % sectors_per_block;
-
-            if block_index >= self.bat.len() {
-                return Err(DiskError::OutOfBounds);
-            }
-
-            let bat_entry = self.bat[block_index];
-            if bat_entry == u32::MAX {
-                buf[buf_off..buf_off + SECTOR_SIZE as usize].fill(0);
-                buf_off += SECTOR_SIZE as usize;
-                continue;
-            }
-
-            let block_start = (bat_entry as u64)
-                .checked_mul(SECTOR_SIZE as u64)
-                .ok_or(DiskError::OutOfBounds)?;
-            self.validate_block_bounds(block_start, bitmap_size)?;
-            let bitmap = self.load_bitmap(block_start, bitmap_size)?;
-            if !Self::bitmap_get(&bitmap, sector_in_block)? {
-                buf[buf_off..buf_off + SECTOR_SIZE as usize].fill(0);
-                buf_off += SECTOR_SIZE as usize;
-                continue;
-            }
-
-            let data_offset = block_start
-                .checked_add(bitmap_size)
-                .and_then(|v| v.checked_add(sector_in_block * SECTOR_SIZE as u64))
-                .ok_or(DiskError::OutOfBounds)?;
-            self.storage.read_at(
-                data_offset,
-                &mut buf[buf_off..buf_off + SECTOR_SIZE as usize],
-            )?;
-            buf_off += SECTOR_SIZE as usize;
+        let sectors = (buf.len() / SECTOR_SIZE as usize) as u64;
+        let capacity_sectors = self.total_sectors();
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        })?;
+        if end > capacity_sectors {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors,
+            });
         }
 
-        Ok(())
+        self.inner.read_sectors(lba, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                capacity_sectors,
+            )
+        })
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
-        self.check_range(lba, buf.len())?;
         if buf.is_empty() {
             return Ok(());
         }
 
-        if self.dynamic.is_none() {
-            let offset = lba
-                .checked_mul(SECTOR_SIZE as u64)
-                .and_then(|v| v.checked_add(self.fixed_data_offset))
-                .ok_or(DiskError::OutOfBounds)?;
-            self.storage.write_at(offset, buf)?;
-            return Ok(());
+        if !buf.len().is_multiple_of(SECTOR_SIZE as usize) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buf.len(),
+                sector_size: SECTOR_SIZE,
+            });
         }
 
-        let (sectors_per_block, bitmap_size) = self.dyn_params()?;
-
-        let mut buf_off = 0usize;
-        while buf_off < buf.len() {
-            let sector_index = (buf_off / SECTOR_SIZE as usize) as u64;
-            let cur_lba = lba
-                .checked_add(sector_index)
-                .ok_or(DiskError::OutOfBounds)?;
-            let block_index =
-                usize::try_from(cur_lba / sectors_per_block).map_err(|_| DiskError::OutOfBounds)?;
-            let sector_in_block = cur_lba % sectors_per_block;
-
-            if block_index >= self.bat.len() {
-                return Err(DiskError::OutOfBounds);
-            }
-
-            let bat_entry = self.bat[block_index];
-            let block_start = if bat_entry == u32::MAX {
-                self.allocate_block(block_index)?
-            } else {
-                (bat_entry as u64)
-                    .checked_mul(SECTOR_SIZE as u64)
-                    .ok_or(DiskError::OutOfBounds)?
-            };
-            self.validate_block_bounds(block_start, bitmap_size)?;
-
-            let data_offset = block_start
-                .checked_add(bitmap_size)
-                .and_then(|v| v.checked_add(sector_in_block * SECTOR_SIZE as u64))
-                .ok_or(DiskError::OutOfBounds)?;
-            self.storage
-                .write_at(data_offset, &buf[buf_off..buf_off + SECTOR_SIZE as usize])?;
-
-            let mut bitmap = self.load_bitmap(block_start, bitmap_size)?;
-            Self::bitmap_set(&mut bitmap, sector_in_block)?;
-            self.store_bitmap(block_start, bitmap)?;
-
-            buf_off += SECTOR_SIZE as usize;
+        let sectors = (buf.len() / SECTOR_SIZE as usize) as u64;
+        let capacity_sectors = self.total_sectors();
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        })?;
+        if end > capacity_sectors {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors,
+            });
         }
 
-        Ok(())
+        self.inner.write_sectors(lba, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                capacity_sectors,
+            )
+        })
     }
 
     fn flush(&mut self) -> DiskResult<()> {
-        self.storage.flush()
-    }
-}
-
-fn be_u32(bytes: &[u8]) -> u32 {
-    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-}
-
-fn be_u64(bytes: &[u8]) -> u64 {
-    u64::from_be_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ])
-}
-
-fn align_up(value: u64, align: u64) -> DiskResult<u64> {
-    if align == 0 {
-        return Ok(value);
-    }
-    let rem = value % align;
-    if rem == 0 {
-        Ok(value)
-    } else {
-        value.checked_add(align - rem).ok_or(DiskError::OutOfBounds)
-    }
-}
-
-fn vhd_checksum_footer(raw: &[u8; 512]) -> u32 {
-    let mut sum: u32 = 0;
-    for (i, b) in raw.iter().enumerate() {
-        if (64..68).contains(&i) {
-            continue;
-        }
-        sum = sum.wrapping_add(*b as u32);
-    }
-    !sum
-}
-
-fn vhd_checksum_dynamic_header(raw: &[u8; 1024]) -> u32 {
-    let mut sum: u32 = 0;
-    for (i, b) in raw.iter().enumerate() {
-        if (36..40).contains(&i) {
-            continue;
-        }
-        sum = sum.wrapping_add(*b as u32);
-    }
-    !sum
-}
-
-fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) -> DiskResult<()> {
-    const CHUNK: usize = 64 * 1024;
-    let buf = [0u8; CHUNK];
-    while len > 0 {
-        let to_write_u64 = len.min(CHUNK as u64);
-        let to_write = to_write_u64 as usize;
-        storage.write_at(offset, &buf[..to_write])?;
-        offset = offset
-            .checked_add(to_write_u64)
-            .ok_or(DiskError::OutOfBounds)?;
-        len -= to_write_u64;
-    }
-    Ok(())
-}
-
-fn ranges_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
-    start_a < end_b && start_b < end_a
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Default, Clone)]
-    struct MemStorage {
-        data: Vec<u8>,
-    }
-
-    impl MemStorage {
-        fn with_len(len: usize) -> Self {
-            Self { data: vec![0; len] }
-        }
-    }
-
-    impl ByteStorage for MemStorage {
-        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
-            let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
-            let end = offset
-                .checked_add(buf.len())
-                .ok_or(DiskError::OutOfBounds)?;
-            if end > self.data.len() {
-                return Err(DiskError::OutOfBounds);
-            }
-            buf.copy_from_slice(&self.data[offset..end]);
-            Ok(())
-        }
-
-        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
-            let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
-            let end = offset
-                .checked_add(buf.len())
-                .ok_or(DiskError::OutOfBounds)?;
-            if end > self.data.len() {
-                self.data.resize(end, 0);
-            }
-            self.data[offset..end].copy_from_slice(buf);
-            Ok(())
-        }
-
-        fn flush(&mut self) -> DiskResult<()> {
-            Ok(())
-        }
-
-        fn len(&mut self) -> DiskResult<u64> {
-            Ok(self.data.len() as u64)
-        }
-
-        fn set_len(&mut self, len: u64) -> DiskResult<()> {
-            let len = usize::try_from(len).map_err(|_| DiskError::OutOfBounds)?;
-            self.data.resize(len, 0);
-            Ok(())
-        }
-    }
-
-    fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
-        buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
-    }
-
-    fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
-        buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
-    }
-
-    fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; 512] {
-        let mut footer = [0u8; 512];
-        footer[0..8].copy_from_slice(&VHD_FOOTER_COOKIE);
-        write_be_u32(&mut footer, 12, VHD_FILE_FORMAT_VERSION);
-        write_be_u64(&mut footer, 16, data_offset);
-        write_be_u64(&mut footer, 48, virtual_size);
-        write_be_u32(&mut footer, 60, disk_type);
-        let checksum = vhd_checksum_footer(&footer);
-        write_be_u32(&mut footer, 64, checksum);
-        footer
-    }
-
-    #[test]
-    fn vhd_bitmap_cache_is_bounded() {
-        let block_size = 512 * 1024 * 1024u32; // 512 MiB
-        let virtual_size = 512u64; // 1 sector; keeps BAT small
-
-        let dyn_header_offset = 512u64;
-        let table_offset = dyn_header_offset + 1024;
-
-        // Large enough for bitmap reads while still keeping the test lightweight.
-        let file_len = 512 * 1024u64; // 512 KiB
-        assert!(file_len.is_multiple_of(SECTOR_SIZE as u64));
-
-        let mut storage = MemStorage::with_len(file_len as usize);
-
-        let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_DYNAMIC, dyn_header_offset);
-        storage.write_at(0, &footer).unwrap();
-        storage.write_at(file_len - 512, &footer).unwrap();
-
-        let mut dyn_header = [0u8; 1024];
-        dyn_header[0..8].copy_from_slice(&VHD_DYNAMIC_COOKIE);
-        write_be_u64(&mut dyn_header, 8, u64::MAX);
-        write_be_u64(&mut dyn_header, 16, table_offset);
-        write_be_u32(&mut dyn_header, 24, VHD_FILE_FORMAT_VERSION);
-        write_be_u32(&mut dyn_header, 28, 1); // max_table_entries
-        write_be_u32(&mut dyn_header, 32, block_size);
-        let checksum = vhd_checksum_dynamic_header(&dyn_header);
-        write_be_u32(&mut dyn_header, 36, checksum);
-        storage.write_at(dyn_header_offset, &dyn_header).unwrap();
-
-        // One BAT entry, unallocated (u32::MAX).
-        storage
-            .write_at(table_offset, &u32::MAX.to_be_bytes())
-            .unwrap();
-
-        let mut disk = VhdDisk::open(storage).unwrap();
-        let (_sectors_per_block, bitmap_size) = disk.dyn_params().unwrap();
-        let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
-        let cap_entries = cap_entries
-            .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
-            .max(1);
-
-        // Start after the metadata region; offsets don't need to match real VHD block placements,
-        // we just need distinct keys and valid reads.
-        let base = 2048u64;
-        for i in 0..(cap_entries + 4) {
-            let off = base + (i as u64) * SECTOR_SIZE as u64;
-            disk.load_bitmap(off, bitmap_size).unwrap();
-        }
-
-        assert_eq!(disk.bitmap_cache.len(), cap_entries);
+        self.inner
+            .flush()
+            .map_err(aero_storage_disk_error_to_emulator)
     }
 }

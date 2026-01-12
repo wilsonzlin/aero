@@ -125,7 +125,6 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
             }
         }
     }
-
     Ok(DiskFormat::Raw)
 }
 

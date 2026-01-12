@@ -42,6 +42,28 @@ pub trait ByteStorage {
     fn set_len(&mut self, len: u64) -> DiskResult<()>;
 }
 
+impl<T: ByteStorage + ?Sized> ByteStorage for &mut T {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+        (**self).write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        (**self).flush()
+    }
+
+    fn len(&mut self) -> DiskResult<u64> {
+        (**self).len()
+    }
+
+    fn set_len(&mut self, len: u64) -> DiskResult<()> {
+        (**self).set_len(len)
+    }
+}
+
 /// Synchronous virtual block device interface.
 ///
 /// # Canonical trait note
