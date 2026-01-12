@@ -239,7 +239,8 @@ fn s32_to_f32(sample: i32) -> f32 {
 ./scripts/safe-run.sh cargo test -p aero-audio --locked
 
 # Manual testing
-# Boot Windows 7 and play a sound file or system sound
+# Boot Windows 7 and validate that the in-box HDA driver enumerates + plays/records audio:
+#   docs/testing/audio-windows7.md
 ```
 
 Audio is hard to test automatically. Focus on:
