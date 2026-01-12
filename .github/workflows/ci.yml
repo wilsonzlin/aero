@@ -132,6 +132,12 @@ jobs:
       - name: Check AeroGPU WDK guard macros
         run: python3 scripts/ci/check-aerogpu-wdk-guards.py
 
+      - name: Check AeroGPU D3D9 UMD exports (.def stdcall decoration)
+        run: python3 scripts/ci/check-aerogpu-d3d9-def-stdcall.py
+
+      - name: Check AeroGPU D3D10/11 UMD exports (.def stdcall decoration)
+        run: python3 scripts/ci/check-aerogpu-d3d10-def-stdcall.py
+
       - name: Check aero-d3d11 guest-memory imports
         run: python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
 
