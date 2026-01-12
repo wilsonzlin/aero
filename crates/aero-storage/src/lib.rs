@@ -19,7 +19,8 @@
 //!
 //! // In production this could be an OPFS backend such as `aero_opfs::OpfsByteStorage` (wasm32).
 //! // IndexedDB-based storage is generally async and is not currently exposed as a sync
-//! // `aero_storage::StorageBackend` in this crate.
+//! // `aero_storage::StorageBackend` in this crate; see `docs/19-indexeddb-storage-story.md` and
+//! // `docs/20-storage-trait-consolidation.md`.
 //! let backend = MemBackend::with_len(1024 * 1024).unwrap();
 //! let mut disk = DiskImage::open_auto(backend).unwrap();
 //!
@@ -39,7 +40,8 @@
 //!
 //! Note: IndexedDB-based storage is generally async and is not currently exposed as a
 //! synchronous [`StorageBackend`] in this crate. The async IndexedDB block store lives in
-//! `crates/st-idb`.
+//! `crates/st-idb`. See `docs/19-indexeddb-storage-story.md` and
+//! `docs/20-storage-trait-consolidation.md`.
 //!
 //! ## Errors
 //!

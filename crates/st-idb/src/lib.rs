@@ -10,6 +10,10 @@
 //! The boot-critical synchronous storage path in the browser uses OPFS sync access handles
 //! via `crates/aero-opfs`.
 //!
+//! See:
+//! - `docs/19-indexeddb-storage-story.md`
+//! - `docs/20-storage-trait-consolidation.md`
+//!
 //! Note: the Cargo package name is `st-idb`, but it is imported as `st_idb` in Rust code
 //! (hyphens become underscores).
 
