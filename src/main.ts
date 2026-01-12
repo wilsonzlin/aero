@@ -23,12 +23,16 @@ import { VmCoordinator } from './emulator/vmCoordinator.js';
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from '../web/src/audio/mic_capture';
 import {
   CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  DROPPED_SAMPLES_INDEX as MIC_DROPPED_SAMPLES_INDEX,
   HEADER_BYTES as MIC_HEADER_BYTES,
   HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+  READ_POS_INDEX as MIC_READ_POS_INDEX,
+  WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
 } from '../web/src/audio/mic_ring.js';
 import { startSyntheticMic, type SyntheticMicSource } from '../web/src/audio/synthetic_mic';
 import type { AeroConfig } from '../web/src/config/aero_config';
 import { WorkerCoordinator } from '../web/src/runtime/coordinator';
+import { StatusIndex } from '../web/src/runtime/shared_layout';
 import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webusb_troubleshooting';
 
 declare global {
@@ -904,6 +908,14 @@ function renderAudioPanel(): HTMLElement {
   let hdaDemoStats: { [k: string]: unknown } | null = null;
   let loopbackTimer: number | null = null;
   let syntheticMic: SyntheticMicSource | null = null;
+  let hdaCaptureRequestId = 1;
+
+  function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(resolve, ms);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+  }
 
   function stopTone() {
     if (toneTimer !== null) {
@@ -1383,11 +1395,196 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const hdaCaptureButton = el("button", {
+    id: "init-audio-hda-capture-synthetic",
+    text: "Init HDA capture (synthetic mic)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopLoopback();
+      stopHdaDemo();
+
+      const globals =
+        globalThis as typeof globalThis & {
+          __aeroSyntheticMic?: unknown;
+          __aeroAudioHdaCaptureSyntheticResult?: unknown;
+        };
+
+      const result: {
+        done: boolean;
+        ok: boolean;
+        error?: string;
+        pcmNonZero?: boolean;
+        pcmNonZeroBytes?: number;
+        pcmFirst16?: number[];
+        micReadDelta?: number;
+        micWriteDelta?: number;
+        micDroppedDelta?: number;
+      } = { done: false, ok: false };
+      globals.__aeroAudioHdaCaptureSyntheticResult = result;
+
+      try {
+        syntheticMic = startSyntheticMic({
+          sampleRate: 48_000,
+          bufferMs: 250,
+          freqHz: 440,
+          gain: 0.1,
+        });
+        globals.__aeroSyntheticMic = syntheticMic;
+
+        const header = new Uint32Array(syntheticMic.ringBuffer, 0, MIC_HEADER_U32_LEN);
+        const startMicReadPos = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+        const startMicWritePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+        const startMicDropped = Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
+
+        const workerConfig: AeroConfig = {
+          guestMemoryMiB: 64,
+          enableWorkers: true,
+          enableWebGPU: false,
+          proxyUrl: null,
+          activeDiskImage: null,
+          logLevel: "info",
+        };
+
+        workerCoordinator.start(workerConfig);
+        workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
+        workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
+
+        const statusView = workerCoordinator.getStatusView();
+        if (!statusView) throw new Error("Missing worker status view.");
+
+        const readyDeadlineMs = performance.now() + 20_000;
+        while (performance.now() < readyDeadlineMs) {
+          const cpuReady = Atomics.load(statusView, StatusIndex.CpuReady);
+          const ioReady = Atomics.load(statusView, StatusIndex.IoReady);
+          if (cpuReady === 1 && ioReady === 1) break;
+          await sleepMs(50);
+        }
+        if (Atomics.load(statusView, StatusIndex.CpuReady) !== 1 || Atomics.load(statusView, StatusIndex.IoReady) !== 1) {
+          throw new Error("Timed out waiting for CPU/I/O workers to become ready.");
+        }
+
+        const cpuWorker = workerCoordinator.getWorker("cpu");
+        if (!cpuWorker) throw new Error("CPU worker is not available.");
+
+        const requestId = hdaCaptureRequestId++;
+
+        type ReadyMsg = {
+          type: "audioHdaCaptureSynthetic.ready";
+          requestId: number;
+          pcmBase: number;
+          pcmBytes: number;
+        };
+        type ErrorMsg = { type: "audioHdaCaptureSynthetic.error"; requestId: number; message: string };
+
+        const readyMsg = await new Promise<ReadyMsg>((resolve, reject) => {
+          const timeoutMs = 20_000;
+          const timer = window.setTimeout(() => {
+            cleanup();
+            reject(new Error(`Timed out waiting for HDA capture setup (${timeoutMs}ms).`));
+          }, timeoutMs);
+          (timer as unknown as { unref?: () => void }).unref?.();
+
+          const onMessage = (ev: MessageEvent) => {
+            const data = ev.data as Partial<ReadyMsg | ErrorMsg> | null;
+            if (!data || typeof data !== "object") return;
+            if (data.requestId !== requestId) return;
+            if (data.type === "audioHdaCaptureSynthetic.ready") {
+              cleanup();
+              resolve(data as ReadyMsg);
+            } else if (data.type === "audioHdaCaptureSynthetic.error") {
+              cleanup();
+              reject(new Error(typeof data.message === "string" ? data.message : "HDA capture setup failed."));
+            }
+          };
+
+          const cleanup = () => {
+            window.clearTimeout(timer);
+            cpuWorker.removeEventListener("message", onMessage);
+          };
+
+          cpuWorker.addEventListener("message", onMessage);
+          cpuWorker.postMessage({ type: "audioHdaCaptureSynthetic.start", requestId });
+        });
+
+        const memory = workerCoordinator.getGuestMemory();
+        if (!memory) throw new Error("Missing guest memory.");
+
+        const guestBase = Atomics.load(statusView, StatusIndex.GuestBase) >>> 0;
+        const guestSize = Atomics.load(statusView, StatusIndex.GuestSize) >>> 0;
+        if (guestBase === 0 || guestSize === 0) throw new Error("Guest RAM layout is not initialized.");
+
+        const guestU8 = new Uint8Array(memory.buffer, guestBase, guestSize);
+        const pcmBase = readyMsg.pcmBase >>> 0;
+        const pcmBytes = readyMsg.pcmBytes >>> 0;
+        if (pcmBase + pcmBytes > guestU8.byteLength) {
+          throw new Error(`PCM buffer out of bounds (pcmBase=0x${pcmBase.toString(16)} pcmBytes=0x${pcmBytes.toString(16)}).`);
+        }
+
+        const pcm = guestU8.subarray(pcmBase, pcmBase + pcmBytes);
+
+        status.textContent = "Waiting for HDA capture DMA…";
+
+        const captureDeadlineMs = performance.now() + 5_000;
+        let pcmNonZero = false;
+        let pcmNonZeroBytes = 0;
+        while (performance.now() < captureDeadlineMs) {
+          pcmNonZeroBytes = 0;
+          for (let i = 0; i < pcm.length; i++) {
+            if (pcm[i] !== 0) {
+              pcmNonZero = true;
+              pcmNonZeroBytes += 1;
+              // Scan a small prefix for metrics; we only need to know it's not all zeros.
+              if (pcmNonZeroBytes >= 8) break;
+            }
+          }
+          if (pcmNonZero) break;
+          await sleepMs(50);
+        }
+
+        const endMicReadPos = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+        const endMicWritePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+        const endMicDropped = Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
+
+        const micReadDelta = ((endMicReadPos - startMicReadPos) >>> 0) >>> 0;
+        const micWriteDelta = ((endMicWritePos - startMicWritePos) >>> 0) >>> 0;
+        const micDroppedDelta = ((endMicDropped - startMicDropped) >>> 0) >>> 0;
+
+        result.pcmNonZero = pcmNonZero;
+        result.pcmNonZeroBytes = pcmNonZeroBytes;
+        result.pcmFirst16 = Array.from(pcm.slice(0, 16));
+        result.micReadDelta = micReadDelta;
+        result.micWriteDelta = micWriteDelta;
+        result.micDroppedDelta = micDroppedDelta;
+
+        if (!pcmNonZero) {
+          throw new Error("Capture DMA did not write any non-zero PCM bytes into guest RAM.");
+        }
+        if (micReadDelta === 0) {
+          throw new Error("Mic ring buffer read_pos did not advance (consumer inactive).");
+        }
+
+        result.ok = true;
+        status.textContent =
+          `HDA capture OK.\n` +
+          `micReadDelta=${micReadDelta} micWriteDelta=${micWriteDelta} micDroppedDelta=${micDroppedDelta}\n` +
+          `pcmFirst16=${result.pcmFirst16.join(",")}`;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result.error = message;
+        result.ok = false;
+        status.textContent = message;
+      } finally {
+        result.done = true;
+      }
+    },
+  });
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton, hdaDemoButton, loopbackButton),
+    el("div", { class: "row" }, button, workerButton, hdaDemoButton, loopbackButton, hdaCaptureButton),
     status,
   );
 }

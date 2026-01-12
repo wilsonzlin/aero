@@ -1048,7 +1048,15 @@ async function tryDrainAerogpuWasmEvents(): Promise<GpuRuntimeErrorEvent[]> {
   if (!shouldPollAerogpuWasmTelemetry()) return [];
   try {
     const mod = await loadAerogpuWasm();
-    const raw = await mod.drain_gpu_events();
+    const modAny = mod as unknown as Record<string, unknown>;
+    const fn =
+      (modAny["drain_gpu_events"] as unknown) ??
+      (modAny["drain_gpu_error_events"] as unknown) ??
+      (modAny["take_gpu_events"] as unknown) ??
+      (modAny["take_gpu_error_events"] as unknown) ??
+      (modAny["drainGpuEvents"] as unknown);
+    if (typeof fn !== "function") return [];
+    const raw = await (fn as (...args: unknown[]) => unknown)();
     return normalizeGpuEventBatch(raw);
   } catch {
     return [];
@@ -1059,11 +1067,17 @@ async function tryGetAerogpuWasmTelemetry(): Promise<unknown | undefined> {
   if (!shouldPollAerogpuWasmTelemetry()) return undefined;
   try {
     const mod = await loadAerogpuWasm();
-    const stats = parseMaybeJson(await mod.get_gpu_stats());
+    const modAny = mod as unknown as Record<string, unknown>;
+    const statsFn = (modAny["get_gpu_stats"] as unknown) ?? (modAny["getGpuStats"] as unknown);
+    if (typeof statsFn !== "function") return undefined;
+    const stats = parseMaybeJson(await (statsFn as (...args: unknown[]) => unknown)());
     let frameTimings: unknown | undefined = undefined;
     try {
-      const timings = mod.get_frame_timings();
-      if (timings != null) frameTimings = timings;
+      const timingsFn = (modAny["get_frame_timings"] as unknown) ?? (modAny["getFrameTimings"] as unknown);
+      if (typeof timingsFn === "function") {
+        const timings = (timingsFn as (...args: unknown[]) => unknown)();
+        if (timings != null) frameTimings = timings;
+      }
     } catch {
       frameTimings = undefined;
     }

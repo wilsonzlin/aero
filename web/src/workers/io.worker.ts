@@ -49,6 +49,7 @@ import {
 } from "../io/irq_refcount";
 import { I8042Controller } from "../io/devices/i8042";
 import { E1000PciDevice } from "../io/devices/e1000";
+import { HdaPciDevice, type HdaControllerBridgeLike } from "../io/devices/hda";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { VirtioInputPciFunction, hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
@@ -214,6 +215,10 @@ let uhciControllerBridge: UhciControllerBridge | null = null;
 let e1000Device: E1000PciDevice | null = null;
 type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
 let e1000Bridge: E1000Bridge | null = null;
+
+let hdaDevice: HdaPciDevice | null = null;
+type HdaControllerBridge = InstanceType<NonNullable<WasmApi["HdaControllerBridge"]>>;
+let hdaControllerBridge: HdaControllerBridge | null = null;
 
 type VirtioInputPciDevice = InstanceType<WasmApi["VirtioInputPciDevice"]>;
 let virtioInputKeyboard: VirtioInputPciFunction | null = null;
@@ -890,14 +895,14 @@ function maybeInitVirtioInput(): void {
     // If wrapper construction failed before we took ownership, free the raw WASM objects.
     if (!keyboardFn) {
       try {
-        keyboardDev?.free();
+        (keyboardDev as VirtioInputPciDevice | null)?.free();
       } catch {
         // ignore
       }
     }
     if (!mouseFn) {
       try {
-        mouseDev?.free();
+        (mouseDev as VirtioInputPciDevice | null)?.free();
       } catch {
         // ignore
       }
@@ -1073,9 +1078,55 @@ function maybeInitUhciDevice(): void {
       } else {
         webUsbGuestLastError = null;
       }
-    }
+  }
 
-    emitWebUsbGuestStatus();
+  emitWebUsbGuestStatus();
+  }
+}
+
+function maybeInitHdaDevice(): void {
+  if (hdaDevice) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  if (!guestBase || !guestSize) return;
+
+  const Bridge = api.HdaControllerBridge;
+  if (!Bridge) return;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Ctor = Bridge as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let bridge: any;
+  try {
+    const base = guestBase >>> 0;
+    const size = guestSize >>> 0;
+    try {
+      bridge = Ctor.length >= 2 ? new Ctor(base, size) : new Ctor(base);
+    } catch {
+      // Retry with the opposite arity to support older/newer wasm-bindgen outputs.
+      bridge = Ctor.length >= 2 ? new Ctor(base) : new Ctor(base, size);
+    }
+    const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
+    hdaControllerBridge = bridge;
+    hdaDevice = dev;
+    mgr.registerPciDevice(dev);
+    mgr.addTickable(dev);
+
+    // Apply any existing microphone ring-buffer attachment.
+    if (micRingBuffer) {
+      dev.setMicRingBuffer(micRingBuffer);
+      if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
+    }
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize HDA controller bridge", err);
+    try {
+      bridge?.free?.();
+    } catch {
+      // ignore
+    }
+    hdaControllerBridge = null;
+    hdaDevice = null;
   }
 }
 
@@ -1632,6 +1683,14 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
 
   micRingBuffer = ringBuffer;
   micSampleRate = (sampleRate ?? 0) | 0;
+
+  const dev = hdaDevice;
+  if (dev) {
+    dev.setMicRingBuffer(ringBuffer);
+    if (ringBuffer && micSampleRate > 0) {
+      dev.setCaptureSampleRateHz(micSampleRate);
+    }
+  }
 }
 
 function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFrames?: number, channelCount?: number): void {
@@ -2020,6 +2079,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         maybeInitE1000Device();
         maybeInitVirtioInput();
         maybeInitVirtioNetDevice();
+        maybeInitHdaDevice();
 
         maybeInitWasmHidGuestBridge();
         if (!api.UhciRuntime && api.UsbPassthroughDemo && !usbDemo) {
@@ -2227,6 +2287,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       maybeInitE1000Device();
       maybeInitVirtioInput();
       maybeInitVirtioNetDevice();
+      maybeInitHdaDevice();
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
@@ -3273,6 +3334,9 @@ function shutdown(): void {
       virtioInputMouse?.destroy();
       virtioInputMouse = null;
       uhciHidTopology.setUhciBridge(null);
+      hdaDevice?.destroy();
+      hdaDevice = null;
+      hdaControllerBridge = null;
       try {
         usbDemoApi?.free();
       } catch {

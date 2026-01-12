@@ -120,6 +120,30 @@ type AudioOutputHdaDemoStopMessage = {
   type: "audioOutputHdaDemo.stop";
 };
 
+type AudioHdaCaptureSyntheticStartMessage = {
+  type: "audioHdaCaptureSynthetic.start";
+  requestId: number;
+};
+
+type AudioHdaCaptureSyntheticReadyMessage = {
+  type: "audioHdaCaptureSynthetic.ready";
+  requestId: number;
+  pciDevice: number;
+  bar0: number;
+  mmioBaseLo: number;
+  corbBase: number;
+  rirbBase: number;
+  bdlBase: number;
+  pcmBase: number;
+  pcmBytes: number;
+};
+
+type AudioHdaCaptureSyntheticErrorMessage = {
+  type: "audioHdaCaptureSynthetic.error";
+  requestId: number;
+  message: string;
+};
+
 type AudioOutputHdaDemoStatsMessage = {
   type: "audioOutputHdaDemo.stats";
   bufferLevelFrames: number;
@@ -977,6 +1001,172 @@ let diskDemoResponses = 0;
 let cursorDemoEnabled = false;
 let snapshotPaused = false;
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as unknown as { unref?: () => void }).unref?.();
+  });
+}
+
+function guestWriteU32(addr: number, value: number): void {
+  const view = new DataView(guestU8.buffer);
+  view.setUint32(guestU8.byteOffset + (addr >>> 0), value >>> 0, true);
+}
+
+function guestWriteU64(addr: number, value: bigint): void {
+  const view = new DataView(guestU8.buffer);
+  const off = guestU8.byteOffset + (addr >>> 0);
+  view.setUint32(off, Number(value & 0xffff_ffffn) >>> 0, true);
+  view.setUint32(off + 4, Number((value >> 32n) & 0xffff_ffffn) >>> 0, true);
+}
+
+async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessage): Promise<void> {
+  const requestId = msg.requestId >>> 0;
+  try {
+    const ioClient = io;
+    if (!ioClient) throw new Error("I/O client is not initialized (CPU worker not ready).");
+    if (typeof guestU8 === "undefined") throw new Error("guest memory is not initialized.");
+
+    // PCI config scan for Intel ICH6 HDA (8086:2668).
+    const PCI_ENABLE = 0x8000_0000;
+    const pciCfgAddr = (device: number, reg: number): number => (PCI_ENABLE | ((device & 0x1f) << 11) | (reg & 0xfc)) >>> 0;
+    const pciReadDword = (device: number, reg: number): number => {
+      ioClient.portWrite(0x0cf8, 4, pciCfgAddr(device, reg));
+      return ioClient.portRead(0x0cfc, 4) >>> 0;
+    };
+    const pciWriteDword = (device: number, reg: number, value: number): void => {
+      ioClient.portWrite(0x0cf8, 4, pciCfgAddr(device, reg));
+      ioClient.portWrite(0x0cfc, 4, value >>> 0);
+    };
+
+    let pciDevice = -1;
+    let bar0 = 0;
+    const deadlineMs = performance.now() + 15_000;
+    while (performance.now() < deadlineMs) {
+      for (let dev = 0; dev < 32; dev++) {
+        const id = pciReadDword(dev, 0x00);
+        const vendorId = id & 0xffff;
+        const deviceId = (id >>> 16) & 0xffff;
+        if (vendorId === 0xffff) continue;
+        if (vendorId === 0x8086 && deviceId === 0x2668) {
+          pciDevice = dev;
+          bar0 = pciReadDword(dev, 0x10) >>> 0;
+          break;
+        }
+      }
+      if (pciDevice >= 0 && bar0 !== 0) break;
+      await sleepMs(50);
+    }
+    if (pciDevice < 0) {
+      throw new Error("HDA PCI function (8086:2668) not found on bus 0.");
+    }
+    if (bar0 === 0) {
+      throw new Error(`HDA PCI BAR0 is not programmed (dev=${pciDevice}).`);
+    }
+
+    // Enable memory-space decoding (and bus mastering for realism).
+    const cmd = pciReadDword(pciDevice, 0x04);
+    pciWriteDword(pciDevice, 0x04, (cmd | 0x0000_0006) >>> 0);
+
+    const mmioBase = BigInt(bar0 >>> 0) & 0xffff_fff0n;
+
+    const hdaWrite = (offset: number, size: number, value: number): void => {
+      ioClient.mmioWrite(mmioBase + BigInt(offset >>> 0), size, value >>> 0);
+    };
+    const hdaRead = (offset: number, size: number): number => {
+      return ioClient.mmioRead(mmioBase + BigInt(offset >>> 0), size) >>> 0;
+    };
+
+    // Bring controller out of reset (GCTL.CRST).
+    hdaWrite(0x08, 4, 0x1);
+
+    // Guest memory layout for this debug harness.
+    const corbBase = 0x0010_0000;
+    const rirbBase = 0x0010_1000;
+    const bdlBase = 0x0020_0000; // 128-byte aligned
+    const pcmBase = 0x0021_0000;
+    const pcmBytes = 0x4000;
+
+    // Clear the target PCM buffer so the main thread can detect progress reliably.
+    guestU8.fill(0, pcmBase, pcmBase + pcmBytes);
+
+    // Setup CORB/RIRB in guest memory (2 entries each).
+    hdaWrite(0x4e, 1, 0); // CORBSIZE: 2 entries
+    hdaWrite(0x5e, 1, 0); // RIRBSIZE: 2 entries
+    hdaWrite(0x40, 4, corbBase);
+    hdaWrite(0x44, 4, 0);
+    hdaWrite(0x50, 4, rirbBase);
+    hdaWrite(0x54, 4, 0);
+
+    // Set pointers so first command/response lands at entry 0.
+    hdaWrite(0x4a, 2, 0x00ff); // CORBRP
+    hdaWrite(0x58, 2, 0x00ff); // RIRBWP
+
+    // Start rings.
+    hdaWrite(0x5c, 1, 0x02); // RIRBCTL.RUN
+    hdaWrite(0x4c, 1, 0x02); // CORBCTL.RUN
+
+    // Queue one verb: SET_STREAM_CHANNEL on input converter (NID 4) to stream 2, channel 0.
+    // cmd = (cad<<28) | (nid<<20) | verb_20
+    const verb20 = ((0x706 << 8) | 0x20) >>> 0;
+    const cmdWord = ((4 << 20) | verb20) >>> 0;
+    guestWriteU32(corbBase, cmdWord);
+    hdaWrite(0x48, 2, 0x0000); // CORBWP = 0
+
+    // Wait (briefly) for the verb to be processed so the capture stream is accepted.
+    const rirbDeadline = performance.now() + 1000;
+    while (performance.now() < rirbDeadline) {
+      const rirbSts = hdaRead(0x5d, 1) & 0xff;
+      if ((rirbSts & 0x1) !== 0) break;
+      await sleepMs(10);
+    }
+
+    // Program capture stream 1 BDL entry.
+    guestWriteU64(bdlBase + 0x00, BigInt(pcmBase));
+    guestWriteU32(bdlBase + 0x08, pcmBytes);
+    guestWriteU32(bdlBase + 0x0c, 0);
+
+    const SD_BASE = 0x80;
+    const SD_STRIDE = 0x20;
+    const sd1 = SD_BASE + SD_STRIDE * 1;
+    const SD_CTL = sd1 + 0x00;
+    const SD_CBL = sd1 + 0x08;
+    const SD_LVI = sd1 + 0x0c;
+    const SD_FMT = sd1 + 0x12;
+    const SD_BDPL = sd1 + 0x18;
+    const SD_BDPU = sd1 + 0x1c;
+
+    // 48kHz, 16-bit, mono (matches `aero_audio` tests).
+    const fmtRaw = 1 << 4;
+    hdaWrite(SD_BDPL, 4, bdlBase);
+    hdaWrite(SD_BDPU, 4, 0);
+    hdaWrite(SD_CBL, 4, pcmBytes);
+    hdaWrite(SD_LVI, 2, 0);
+    hdaWrite(SD_FMT, 2, fmtRaw);
+    // SRST | RUN | stream number 2.
+    const SD_CTL_SRST = 1 << 0;
+    const SD_CTL_RUN = 1 << 1;
+    const ctl = (SD_CTL_SRST | SD_CTL_RUN | (2 << 20)) >>> 0;
+    hdaWrite(SD_CTL, 4, ctl);
+
+    ctx.postMessage({
+      type: "audioHdaCaptureSynthetic.ready",
+      requestId,
+      pciDevice,
+      bar0,
+      mmioBaseLo: Number(mmioBase & 0xffff_ffffn) >>> 0,
+      corbBase,
+      rirbBase,
+      bdlBase,
+      pcmBase,
+      pcmBytes,
+    } satisfies AudioHdaCaptureSyntheticReadyMessage);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.postMessage({ type: "audioHdaCaptureSynthetic.error", requestId, message } satisfies AudioHdaCaptureSyntheticErrorMessage);
+  }
+}
+
 function startCursorDemo(): void {
   cursorDemoEnabled = true;
 
@@ -1009,6 +1199,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     | Partial<CoordinatorToWorkerSnapshotMessage>
     | Partial<AudioOutputHdaDemoStartMessage>
     | Partial<AudioOutputHdaDemoStopMessage>
+    | Partial<AudioHdaCaptureSyntheticStartMessage>
     | Partial<CursorDemoStartMessage>
     | Partial<CursorDemoStopMessage>
     | undefined;
@@ -1110,6 +1301,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       ctx.postMessage({ type: "audioOutputHdaDemo.error", message } satisfies AudioOutputHdaDemoErrorMessage);
       stopHdaDemo();
     });
+    return;
+  }
+
+  if ((msg as Partial<AudioHdaCaptureSyntheticStartMessage>).type === "audioHdaCaptureSynthetic.start") {
+    void startHdaCaptureSynthetic(msg as AudioHdaCaptureSyntheticStartMessage);
     return;
   }
 

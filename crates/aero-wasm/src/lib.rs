@@ -50,6 +50,11 @@ mod uhci_runtime;
 pub use uhci_runtime::UhciRuntime;
 
 #[cfg(target_arch = "wasm32")]
+mod hda_controller_bridge;
+#[cfg(target_arch = "wasm32")]
+pub use hda_controller_bridge::HdaControllerBridge;
+
+#[cfg(target_arch = "wasm32")]
 mod worker_vm_snapshot;
 #[cfg(target_arch = "wasm32")]
 pub use worker_vm_snapshot::WorkerVmSnapshot;

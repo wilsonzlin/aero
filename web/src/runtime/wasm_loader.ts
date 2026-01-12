@@ -748,6 +748,22 @@ export interface WasmApi {
         tick(frames: number): number;
         free(): void;
     };
+
+    /**
+     * IO-worker bridge around the Rust `aero_audio::hda::HdaController` device model.
+     *
+     * Exposes MMIO read/write + a coarse `step_frames` entrypoint for advancing the
+     * device on the IO worker tick.
+     */
+    HdaControllerBridge?: new (guestBase: number, guestSize: number) => {
+        mmio_read(offset: number, size: number): number;
+        mmio_write(offset: number, size: number, value: number): void;
+        step_frames(frames: number): void;
+        irq_level(): boolean;
+        set_mic_ring_buffer(sab?: SharedArrayBuffer): void;
+        set_capture_sample_rate_hz(sampleRateHz: number): void;
+        free(): void;
+    };
 }
 
 export interface WasmInitMemoryInfo {
@@ -898,6 +914,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         SineTone: mod.SineTone,
         HdaPcmWriter: mod.HdaPcmWriter,
         HdaPlaybackDemo: mod.HdaPlaybackDemo,
+        HdaControllerBridge: mod.HdaControllerBridge,
     };
 }
 
