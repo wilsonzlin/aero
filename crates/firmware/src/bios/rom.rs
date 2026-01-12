@@ -50,12 +50,10 @@ pub fn build_bios_rom() -> Vec<u8> {
     //
     // Values below match common 1.44MiB defaults:
     // - 512 bytes/sector, 18 sectors/track.
-    let diskette_param_table: [u8; 11] = [0xAF, 0x02, 0x25, 0x02, 0x12, 0x1B, 0xFF, 0x6C, 0xF6, 0x0F, 0x08];
-    write_stub(
-        &mut rom,
-        DISKETTE_PARAM_TABLE_OFFSET,
-        &diskette_param_table,
-    );
+    let diskette_param_table: [u8; 11] = [
+        0xAF, 0x02, 0x25, 0x02, 0x12, 0x1B, 0xFF, 0x6C, 0xF6, 0x0F, 0x08,
+    ];
+    write_stub(&mut rom, DISKETTE_PARAM_TABLE_OFFSET, &diskette_param_table);
 
     // Fixed Disk Parameter Table (IVT vectors 0x41/0x46).
     //

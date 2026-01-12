@@ -219,7 +219,10 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             device_version: (u16, u16),
             format_version: (u16, u16),
         },
-        LegacyAero { version: u16, flags: u16 },
+        LegacyAero {
+            version: u16,
+            flags: u16,
+        },
     }
 
     fn is_ascii_tag_byte(b: u8) -> bool {
@@ -389,7 +392,8 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             }) => {
                 let (major, minor) = *device_version;
                 let (fmt_major, fmt_minor) = *format_version;
-                let mut suffix = format!(" inner={} v{}.{}", format_fourcc(*device_id), major, minor);
+                let mut suffix =
+                    format!(" inner={} v{}.{}", format_fourcc(*device_id), major, minor);
                 if fmt_major != 1 || fmt_minor != 0 {
                     suffix.push_str(&format!(" fmt{}.{}", fmt_major, fmt_minor));
                 }

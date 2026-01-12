@@ -2697,8 +2697,8 @@ impl AeroGpuSoftwareExecutor {
 
                             let (row_pitch_u64, rows_u32) = match layout_format {
                                 Texture2DLayoutFormat::Uncompressed { bytes_per_texel } => {
-                                    let min_pitch = u64::from(mip_w)
-                                        .checked_mul(u64::from(bytes_per_texel))?;
+                                    let min_pitch =
+                                        u64::from(mip_w).checked_mul(u64::from(bytes_per_texel))?;
                                     let row_pitch = if mip_level == 0 {
                                         u64::from(mip0_row_pitch_bytes)
                                     } else {
@@ -2709,8 +2709,8 @@ impl AeroGpuSoftwareExecutor {
                                 Texture2DLayoutFormat::BlockCompressed { block_bytes } => {
                                     let blocks_w = mip_w.div_ceil(4);
                                     let blocks_h = mip_h.div_ceil(4);
-                                    let min_pitch = u64::from(blocks_w)
-                                        .checked_mul(u64::from(block_bytes))?;
+                                    let min_pitch =
+                                        u64::from(blocks_w).checked_mul(u64::from(block_bytes))?;
                                     let row_pitch = if mip_level == 0 {
                                         u64::from(mip0_row_pitch_bytes)
                                     } else {
@@ -3172,7 +3172,8 @@ impl AeroGpuSoftwareExecutor {
                         Self::record_error(regs);
                         return true;
                     };
-                    if src_mip_level >= src_tex.mip_levels || src_array_layer >= src_tex.array_layers
+                    if src_mip_level >= src_tex.mip_levels
+                        || src_array_layer >= src_tex.array_layers
                     {
                         Self::record_error(regs);
                         return true;
@@ -3278,54 +3279,60 @@ impl AeroGpuSoftwareExecutor {
                     (src_tex.format, tmp)
                 };
 
-                let (dst_backing_present, dst_sub_offset_bytes, dst_sub_row_pitch_bytes, dst_sub_w, dst_sub_h, bpp) =
-                    {
-                        let Some(dst_tex) = self.textures.get(&dst_handle) else {
-                            Self::record_error(regs);
-                            return true;
-                        };
-                        if dst_tex.format != src_format {
-                            Self::record_error(regs);
-                            return true;
-                        }
-                        if dst_mip_level >= dst_tex.mip_levels
-                            || dst_array_layer >= dst_tex.array_layers
-                        {
-                            Self::record_error(regs);
-                            return true;
-                        }
-                        let Some(bpp) = Self::texture_bytes_per_pixel(dst_tex.format) else {
-                            Self::record_error(regs);
-                            return true;
-                        };
-                        if bpp != 4 {
-                            Self::record_error(regs);
-                            return true;
-                        }
-
-                        let dst_sub_index = match dst_array_layer
-                            .checked_mul(dst_tex.mip_levels)
-                            .and_then(|v| v.checked_add(dst_mip_level))
-                        {
-                            Some(v) => v as usize,
-                            None => {
-                                Self::record_error(regs);
-                                return true;
-                            }
-                        };
-                        let Some(dst_sub) = dst_tex.subresources.get(dst_sub_index) else {
-                            Self::record_error(regs);
-                            return true;
-                        };
-                        (
-                            dst_tex.backing.is_some(),
-                            dst_sub.offset_bytes,
-                            dst_sub.row_pitch_bytes,
-                            dst_sub.width,
-                            dst_sub.height,
-                            bpp,
-                        )
+                let (
+                    dst_backing_present,
+                    dst_sub_offset_bytes,
+                    dst_sub_row_pitch_bytes,
+                    dst_sub_w,
+                    dst_sub_h,
+                    bpp,
+                ) = {
+                    let Some(dst_tex) = self.textures.get(&dst_handle) else {
+                        Self::record_error(regs);
+                        return true;
                     };
+                    if dst_tex.format != src_format {
+                        Self::record_error(regs);
+                        return true;
+                    }
+                    if dst_mip_level >= dst_tex.mip_levels
+                        || dst_array_layer >= dst_tex.array_layers
+                    {
+                        Self::record_error(regs);
+                        return true;
+                    }
+                    let Some(bpp) = Self::texture_bytes_per_pixel(dst_tex.format) else {
+                        Self::record_error(regs);
+                        return true;
+                    };
+                    if bpp != 4 {
+                        Self::record_error(regs);
+                        return true;
+                    }
+
+                    let dst_sub_index = match dst_array_layer
+                        .checked_mul(dst_tex.mip_levels)
+                        .and_then(|v| v.checked_add(dst_mip_level))
+                    {
+                        Some(v) => v as usize,
+                        None => {
+                            Self::record_error(regs);
+                            return true;
+                        }
+                    };
+                    let Some(dst_sub) = dst_tex.subresources.get(dst_sub_index) else {
+                        Self::record_error(regs);
+                        return true;
+                    };
+                    (
+                        dst_tex.backing.is_some(),
+                        dst_sub.offset_bytes,
+                        dst_sub.row_pitch_bytes,
+                        dst_sub.width,
+                        dst_sub.height,
+                        bpp,
+                    )
+                };
                 let dst_x_end = match dst_x.checked_add(width) {
                     Some(v) => v,
                     None => {

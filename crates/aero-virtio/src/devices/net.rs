@@ -931,9 +931,7 @@ mod tests {
         }
 
         let mut backend = CountingBackend::default();
-        backend
-            .rx
-            .push_back(vec![0x22u8; MAX_L2_FRAME_LEN + 1]); // oversize
+        backend.rx.push_back(vec![0x22u8; MAX_L2_FRAME_LEN + 1]); // oversize
         let frame = vec![0x33u8; MAX_L2_FRAME_LEN];
         backend.rx.push_back(frame.clone());
 
@@ -990,10 +988,7 @@ mod tests {
 
         let len_bytes = mem.get_slice(used + 8, 4).unwrap();
         let used_len = u32::from_le_bytes(len_bytes.try_into().unwrap());
-        assert_eq!(
-            used_len,
-            (VirtioNetHdr::BASE_LEN + frame.len()) as u32
-        );
+        assert_eq!(used_len, (VirtioNetHdr::BASE_LEN + frame.len()) as u32);
 
         let hdr = mem.get_slice(buf_addr, VirtioNetHdr::BASE_LEN).unwrap();
         assert_eq!(hdr, vec![0u8; VirtioNetHdr::BASE_LEN]);

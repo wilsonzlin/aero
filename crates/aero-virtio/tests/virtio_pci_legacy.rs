@@ -1,3 +1,4 @@
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk, VIRTIO_BLK_T_FLUSH};
 use aero_virtio::memory::{
     read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -10,7 +11,6 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
-use aero_platform::interrupts::msi::MsiMessage;
 use std::cell::RefCell;
 use std::rc::Rc;
 

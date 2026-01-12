@@ -28,10 +28,10 @@ use std::rc::Rc;
 
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
 use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::net::{NetBackend, VirtioNet};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY};
-use aero_platform::interrupts::msi::MsiMessage;
+use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()

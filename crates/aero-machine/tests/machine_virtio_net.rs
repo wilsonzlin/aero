@@ -38,15 +38,7 @@ fn enable_a20(m: &mut Machine) {
     m.io_write(0x92, 1, 0x02);
 }
 
-fn write_desc(
-    m: &mut Machine,
-    table: u64,
-    index: u16,
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-) {
+fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
     let base = table + u64::from(index) * 16;
     m.write_physical_u64(base, addr);
     m.write_physical_u32(base + 8, len);
@@ -71,7 +63,9 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
     enable_a20(&mut m);
 
     let state = Rc::new(RefCell::new(StubNetState::default()));
-    m.set_network_backend(Box::new(StubNetBackend { state: state.clone() }));
+    m.set_network_backend(Box::new(StubNetBackend {
+        state: state.clone(),
+    }));
 
     let bdf = profile::VIRTIO_NET.bdf;
     let pci_cfg = m
@@ -82,10 +76,7 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
     let (bar0_lo, bar0_hi) = {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
-        (
-            bus.read_config(bdf, 0x10, 4),
-            bus.read_config(bdf, 0x14, 4),
-        )
+        (bus.read_config(bdf, 0x10, 4), bus.read_config(bdf, 0x14, 4))
     };
     let bar0_base = ((u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xFFFF_FFF0)) as u64;
     assert_ne!(bar0_base, 0, "BAR0 must be assigned by platform PCI POST");
@@ -168,7 +159,10 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
     // RX queue 0.
     m.write_physical_u16(bar0_base + COMMON + 0x16, 0);
     let rx_qsize = m.read_physical_u16(bar0_base + COMMON + 0x18);
-    assert!(rx_qsize >= 8, "expected virtqueue size >= 8, got {rx_qsize}");
+    assert!(
+        rx_qsize >= 8,
+        "expected virtqueue size >= 8, got {rx_qsize}"
+    );
     m.write_physical_u64(bar0_base + COMMON + 0x20, rx_desc);
     m.write_physical_u64(bar0_base + COMMON + 0x28, rx_avail);
     m.write_physical_u64(bar0_base + COMMON + 0x30, rx_used);
@@ -177,7 +171,10 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
     // TX queue 1.
     m.write_physical_u16(bar0_base + COMMON + 0x16, 1);
     let tx_qsize = m.read_physical_u16(bar0_base + COMMON + 0x18);
-    assert!(tx_qsize >= 8, "expected virtqueue size >= 8, got {tx_qsize}");
+    assert!(
+        tx_qsize >= 8,
+        "expected virtqueue size >= 8, got {tx_qsize}"
+    );
     m.write_physical_u64(bar0_base + COMMON + 0x20, tx_desc);
     m.write_physical_u64(bar0_base + COMMON + 0x28, tx_avail);
     m.write_physical_u64(bar0_base + COMMON + 0x30, tx_used);
@@ -303,5 +300,8 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
         m.read_physical_bytes(rx_hdr_addr, VirtioNetHdr::BASE_LEN),
         vec![0u8; VirtioNetHdr::BASE_LEN]
     );
-    assert_eq!(m.read_physical_bytes(rx_payload_addr, rx_frame.len()), rx_frame);
+    assert_eq!(
+        m.read_physical_bytes(rx_payload_addr, rx_frame.len()),
+        rx_frame
+    );
 }

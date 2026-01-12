@@ -793,11 +793,9 @@ async fn reject_excessive_max_concurrent_fetches_inflight_bytes() {
     // Use a moderate image size so `min(chunk_size, total_size) == chunk_size` while keeping test
     // memory usage reasonable.
     let image = vec![0u8; 8 * 1024 * 1024]; // 8 MiB
-    let (url, _state, shutdown) = start_range_server_with_options(
-        image,
-        RangeServerOptions::new("etag-inflight-bytes"),
-    )
-    .await;
+    let (url, _state, shutdown) =
+        start_range_server_with_options(image, RangeServerOptions::new("etag-inflight-bytes"))
+            .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());

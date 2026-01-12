@@ -1,6 +1,6 @@
 mod common;
 
-use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable, AeroGpuExecutor};
+use aero_gpu::aerogpu_executor::{AeroGpuExecutor, AllocEntry, AllocTable};
 use aero_gpu::{readback_rgba8, GuestMemory, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -1432,7 +1432,10 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
 
 #[test]
 fn executor_bc_writeback_uses_physical_copy_extents() {
-    const TEST_NAME: &str = concat!(module_path!(), "::executor_bc_writeback_uses_physical_copy_extents");
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_bc_writeback_uses_physical_copy_extents"
+    );
     pollster::block_on(async {
         if env_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION") {
             common::skip_or_panic(

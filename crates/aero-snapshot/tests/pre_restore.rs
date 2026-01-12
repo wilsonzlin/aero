@@ -148,7 +148,8 @@ impl SnapshotTarget for PreRestoreTarget {
 fn save_tiny_snapshot() -> Vec<u8> {
     let mut source = TinySource::new(256);
     let mut w = Cursor::new(Vec::new());
-    save_snapshot(&mut w, &mut source, SaveOptions::default()).expect("save_snapshot should succeed");
+    save_snapshot(&mut w, &mut source, SaveOptions::default())
+        .expect("save_snapshot should succeed");
     w.into_inner()
 }
 
@@ -157,7 +158,8 @@ fn pre_restore_is_called_on_success() {
     let bytes = save_tiny_snapshot();
 
     let mut target = PreRestoreTarget::new(256);
-    restore_snapshot(&mut Cursor::new(&bytes), &mut target).expect("restore_snapshot should succeed");
+    restore_snapshot(&mut Cursor::new(&bytes), &mut target)
+        .expect("restore_snapshot should succeed");
 
     assert_eq!(target.pre_restore_calls, 1);
     assert!(target.restored_cpu);

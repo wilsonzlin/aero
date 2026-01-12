@@ -74,7 +74,8 @@ use aero_pc_platform::{PciIoBarHandler, PciIoBarRouter};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{
-    InterruptController as PlatformInterruptController, InterruptInput, MsiMessage, PlatformInterrupts,
+    InterruptController as PlatformInterruptController, InterruptInput, MsiMessage,
+    PlatformInterrupts,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
@@ -896,7 +897,10 @@ impl NetworkBackend for VirtioNetBackendAdapter {
         if self.rx_budget == 0 {
             return None;
         }
-        let frame = self.backend.as_mut().and_then(|backend| backend.poll_receive());
+        let frame = self
+            .backend
+            .as_mut()
+            .and_then(|backend| backend.poll_receive());
         if frame.is_some() {
             self.rx_budget = self.rx_budget.saturating_sub(1);
         }
@@ -904,7 +908,9 @@ impl NetworkBackend for VirtioNetBackendAdapter {
     }
 
     fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.backend.as_ref().and_then(|backend| backend.l2_ring_stats())
+        self.backend
+            .as_ref()
+            .and_then(|backend| backend.l2_ring_stats())
     }
 }
 
@@ -3534,10 +3540,7 @@ impl Machine {
                         Some(dev.clone())
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
-                        Box::new(VirtioNet::new(
-                            VirtioNetBackendAdapter::new(None),
-                            mac,
-                        )),
+                        Box::new(VirtioNet::new(VirtioNetBackendAdapter::new(None), mac)),
                         Box::new(NoopVirtioInterruptSink),
                     )))),
                 }

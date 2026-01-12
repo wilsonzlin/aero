@@ -6,10 +6,10 @@
 //! [`VirtioInputPciDevice::mmio_write`], and the wrapper reads/writes virtqueue structures directly
 //! from the shared guest RAM region inside the WASM linear memory.
 
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::memory::GuestMemory;
-use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_STATUS_DRIVER_OK};
-use aero_platform::interrupts::msi::MsiMessage;
+use aero_virtio::pci::{InterruptSink, VIRTIO_STATUS_DRIVER_OK, VirtioPciDevice};
 use std::cell::Cell;
 use std::rc::Rc;
 

@@ -377,7 +377,7 @@ fn detect_aerospar_magic_with_minimally_plausible_header_is_sparse() {
     header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
     header[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
     header[32..40].copy_from_slice(&64u64.to_le_bytes()); // table_offset
-    // Leave other fields zero so the header fails full validation (block_size_bytes=0).
+                                                          // Leave other fields zero so the header fails full validation (block_size_bytes=0).
     storage.write_at(0, &header).unwrap();
 
     assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);

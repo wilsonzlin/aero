@@ -349,7 +349,9 @@ pub fn js_value_copy_to_bytes(val: &JsValue, dst: &mut [u8]) -> Result<()> {
     } else if val.is_instance_of::<js_sys::ArrayBuffer>() {
         js_sys::Uint8Array::new(val)
     } else {
-        return Err(StorageError::Corrupt("expected Uint8Array for stored block"));
+        return Err(StorageError::Corrupt(
+            "expected Uint8Array for stored block",
+        ));
     };
 
     // Defensive bounds: if the IndexedDB entry is corrupt (or attacker-controlled), do not attempt

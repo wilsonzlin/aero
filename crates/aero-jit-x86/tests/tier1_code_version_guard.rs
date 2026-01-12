@@ -55,11 +55,10 @@ fn tier1_code_version_guard_ignores_trailing_invalid_page() {
     let mut jit: JitRuntime<DummyBackend, Tier1CompileQueue> =
         JitRuntime::new(config, DummyBackend::default(), queue.clone());
 
-    let mut compiler = Tier1Compiler::new(bus.clone(), NoopRegistry)
-        .with_limits(BlockLimits {
-            max_insts: 16,
-            max_bytes: 64,
-        });
+    let mut compiler = Tier1Compiler::new(bus.clone(), NoopRegistry).with_limits(BlockLimits {
+        max_insts: 16,
+        max_bytes: 64,
+    });
     let handle = compiler
         .compile_handle(&jit, entry, 64)
         .expect("Tier-1 compile_handle");
@@ -81,4 +80,3 @@ fn tier1_code_version_guard_ignores_trailing_invalid_page() {
     assert!(jit.prepare_block(entry).is_none());
     assert_eq!(queue.drain(), vec![entry]);
 }
-

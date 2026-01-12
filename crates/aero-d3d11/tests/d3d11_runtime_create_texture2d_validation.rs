@@ -42,4 +42,3 @@ fn d3d11_runtime_create_texture2d_rejects_mip_levels_beyond_chain_length() {
         );
     });
 }
-

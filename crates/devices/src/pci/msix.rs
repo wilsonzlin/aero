@@ -31,7 +31,13 @@ pub struct MsixCapability {
 }
 
 impl MsixCapability {
-    pub fn new(table_size: u16, table_bir: u8, table_offset: u32, pba_bir: u8, pba_offset: u32) -> Self {
+    pub fn new(
+        table_size: u16,
+        table_bir: u8,
+        table_offset: u32,
+        pba_bir: u8,
+        pba_offset: u32,
+    ) -> Self {
         assert!(table_size > 0, "MSI-X table size must be non-zero");
         assert!(
             (table_offset & 0x7) == 0,
@@ -269,9 +275,11 @@ impl MsixCapability {
         let addr_high =
             u32::from_le_bytes(self.table[base + 4..base + 8].try_into().unwrap()) as u64;
         let addr = addr_low | (addr_high << 32);
-        let data =
-            u32::from_le_bytes(self.table[base + 8..base + 12].try_into().unwrap()) as u16;
-        Some(MsiMessage { address: addr, data })
+        let data = u32::from_le_bytes(self.table[base + 8..base + 12].try_into().unwrap()) as u16;
+        Some(MsiMessage {
+            address: addr,
+            data,
+        })
     }
 
     /// Returns the MSI message that should be delivered for the given table entry index.
@@ -378,7 +386,9 @@ impl PciCapability for MsixCapability {
 mod tests {
     use super::MsixCapability;
     use crate::pci::config::PciConfigSpace;
-    use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+    use aero_platform::interrupts::{
+        InterruptController, PlatformInterruptMode, PlatformInterrupts,
+    };
 
     #[test]
     fn capability_list_traversal_finds_msix() {

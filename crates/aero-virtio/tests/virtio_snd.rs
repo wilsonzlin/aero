@@ -1,5 +1,6 @@
 use aero_audio::sink::AudioSink;
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::snd::{
     VirtioSnd, VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL,
     VIRTIO_SND_QUEUE_EVENT, VIRTIO_SND_QUEUE_RX, VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE,
@@ -13,7 +14,6 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
 use std::cell::RefCell;

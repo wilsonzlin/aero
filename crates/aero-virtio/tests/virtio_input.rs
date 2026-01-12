@@ -1,3 +1,4 @@
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_EXTRA, BTN_LEFT, BTN_MIDDLE,
     BTN_RIGHT, BTN_SIDE, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_F1, KEY_F12, KEY_NUMLOCK,
@@ -13,7 +14,6 @@ use aero_virtio::pci::{
     VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
     VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
 use std::cell::RefCell;

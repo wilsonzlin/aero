@@ -89,4 +89,3 @@ fn machine_attach_nvme_disk_preserves_state_and_survives_reset() {
         "dropping the machine should drop the NVMe disk backend"
     );
 }
-

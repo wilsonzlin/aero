@@ -2,7 +2,9 @@ use crate::devices::VirtioDevice;
 use crate::memory::{read_u16_le, GuestMemory};
 use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig};
 use aero_devices::pci::capabilities::VendorSpecificCapability;
-use aero_devices::pci::{MsixCapability, PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds};
+use aero_devices::pci::{
+    MsixCapability, PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds,
+};
 use aero_platform::interrupts::msi::MsiMessage;
 use core::any::Any;
 
@@ -683,11 +685,7 @@ impl VirtioPciDevice {
             if let Some(q) = self.queues.get_mut(queue_index) {
                 q.pending_notify = false;
             }
-            self.process_queue_activity_bounded(
-                queue_index as u16,
-                mem,
-                max_chains_per_queue,
-            );
+            self.process_queue_activity_bounded(queue_index as u16, mem, max_chains_per_queue);
         }
     }
 
@@ -859,7 +857,11 @@ impl VirtioPciDevice {
             _ => 0,
         };
         buf[12..16].copy_from_slice(&drf.to_le_bytes());
-        buf[16..18].copy_from_slice(&self.sanitize_msix_vector(self.msix_config_vector).to_le_bytes());
+        buf[16..18].copy_from_slice(
+            &self
+                .sanitize_msix_vector(self.msix_config_vector)
+                .to_le_bytes(),
+        );
         buf[18..20].copy_from_slice(&(self.queues.len() as u16).to_le_bytes());
         buf[20] = self.device_status;
         buf[21] = self.config_generation;
@@ -1182,7 +1184,8 @@ impl VirtioPciDevice {
                 match popped {
                     PoppedDescriptorChain::Chain(chain) => {
                         let head_index = chain.head_index();
-                        need_irq |= match self.device.process_queue(queue_index, chain, queue, mem) {
+                        need_irq |= match self.device.process_queue(queue_index, chain, queue, mem)
+                        {
                             Ok(irq) => irq,
                             Err(_) => {
                                 // VirtioDevice implementations are expected to add a used entry for

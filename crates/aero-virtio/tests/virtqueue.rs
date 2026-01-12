@@ -3,8 +3,8 @@ use aero_virtio::memory::{
 };
 use aero_virtio::queue::{
     DescriptorChain, PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VirtQueueError,
-    MAX_INDIRECT_DESC_TABLE_ENTRIES,
-    VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    MAX_INDIRECT_DESC_TABLE_ENTRIES, VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT,
+    VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 
 fn write_desc(

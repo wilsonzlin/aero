@@ -1,4 +1,5 @@
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_platform::interrupts::msi::MsiMessage;
 use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
 use aero_virtio::devices::blk::{
     BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_S_IOERR, VIRTIO_BLK_S_UNSUPP,
@@ -13,7 +14,6 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_platform::interrupts::msi::MsiMessage;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

@@ -425,9 +425,7 @@ fn int10_set_active_page_updates_crtc_start_address() {
 
     assert_eq!(m.read_physical_u8(BDA_ACTIVE_PAGE_ADDR), page);
     let page_size_bytes = m.read_physical_u16(BDA_PAGE_SIZE_ADDR);
-    let expected_start = u16::from(page)
-        .saturating_mul(page_size_bytes / 2)
-        & 0x3FFF;
+    let expected_start = u16::from(page).saturating_mul(page_size_bytes / 2) & 0x3FFF;
 
     let got_start = read_crtc_start_addr(&mut m) & 0x3FFF;
     assert_eq!(got_start, expected_start);
