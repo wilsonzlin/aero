@@ -1016,13 +1016,19 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
     }
   }
 
-  if ((micRingBuffer?.sab ?? null) !== ringBuffer) {
+  const prevSab = micRingBuffer?.sab ?? null;
+  const isNewAttach = prevSab !== ringBuffer;
+  if (isNewAttach) {
     detachMicBridge();
     micResampler = null;
   }
 
   micRingBuffer = null;
   if (!ringBuffer) return;
+
+  if (ringBuffer.byteLength < MIC_HEADER_BYTES) {
+    throw new Error(`mic ring buffer is too small: need at least ${MIC_HEADER_BYTES} bytes, got ${ringBuffer.byteLength} bytes`);
+  }
 
   const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
   const capacity = Atomics.load(header, CAPACITY_SAMPLES_INDEX) >>> 0;
@@ -1037,6 +1043,21 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
 
   const data = new Float32Array(ringBuffer, MIC_HEADER_BYTES, capacity);
   micRingBuffer = { sab: ringBuffer, header, data, capacity, sampleRate: (msg.sampleRate ?? 0) | 0 };
+
+  // The AudioWorklet microphone producer can start writing before the emulator worker attaches
+  // as the ring consumer. To avoid replaying stale samples (large perceived latency), discard
+  // any buffered data when attaching by advancing readPos := writePos.
+  //
+  // Note: WASM mic bridges (`attach_mic_bridge`) perform the same flush internally; keep the
+  // JS path consistent so demo mode still has low-latency loopback even when WASM init fails.
+  if (isNewAttach) {
+    try {
+      const writePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+      Atomics.store(header, MIC_READ_POS_INDEX, writePos);
+    } catch {
+      // ignore
+    }
+  }
 
   maybeInitMicBridge();
 }
