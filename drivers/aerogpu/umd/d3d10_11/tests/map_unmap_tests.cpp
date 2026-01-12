@@ -15,6 +15,23 @@
 
 namespace {
 
+constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
+constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91; // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93; // DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
+constexpr uint32_t kDxgiFormatBc1Unorm = 71; // DXGI_FORMAT_BC1_UNORM
+constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72; // DXGI_FORMAT_BC1_UNORM_SRGB
+constexpr uint32_t kDxgiFormatBc2Unorm = 74; // DXGI_FORMAT_BC2_UNORM
+constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75; // DXGI_FORMAT_BC2_UNORM_SRGB
+constexpr uint32_t kDxgiFormatBc3Unorm = 77; // DXGI_FORMAT_BC3_UNORM
+constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78; // DXGI_FORMAT_BC3_UNORM_SRGB
+constexpr uint32_t kDxgiFormatBc7Unorm = 98; // DXGI_FORMAT_BC7_UNORM
+constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99; // DXGI_FORMAT_BC7_UNORM_SRGB
+
+constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
+constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
+constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
+
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
@@ -25,6 +42,80 @@ bool Check(bool cond, const char* msg) {
 
 size_t AlignUp(size_t v, size_t a) {
   return (v + (a - 1)) & ~(a - 1);
+}
+
+uint32_t DivRoundUp(uint32_t v, uint32_t d) {
+  return (v + (d - 1u)) / d;
+}
+
+struct DxgiTextureFormatLayout {
+  uint32_t block_width = 1;
+  uint32_t block_height = 1;
+  uint32_t bytes_per_block = 4;
+  bool valid = true;
+};
+
+DxgiTextureFormatLayout DxgiTextureFormat(uint32_t dxgi_format) {
+  switch (dxgi_format) {
+    case kDxgiFormatR8G8B8A8UnormSrgb:
+    case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8A8UnormSrgb:
+    case kDxgiFormatB8G8R8X8UnormSrgb:
+      return DxgiTextureFormatLayout{1, 1, 4, true};
+    case kDxgiFormatBc1Unorm:
+    case kDxgiFormatBc1UnormSrgb:
+      return DxgiTextureFormatLayout{4, 4, 8, true};
+    case kDxgiFormatBc2Unorm:
+    case kDxgiFormatBc2UnormSrgb:
+    case kDxgiFormatBc3Unorm:
+    case kDxgiFormatBc3UnormSrgb:
+    case kDxgiFormatBc7Unorm:
+    case kDxgiFormatBc7UnormSrgb:
+      return DxgiTextureFormatLayout{4, 4, 16, true};
+    default:
+      // Tests default to 4BPP textures; use that as a safe fallback when a DXGI
+      // format isn't modeled yet.
+      return DxgiTextureFormatLayout{1, 1, 4, true};
+  }
+}
+
+uint32_t DxgiTextureMinRowPitchBytes(uint32_t dxgi_format, uint32_t width) {
+  if (width == 0) {
+    return 0;
+  }
+  const DxgiTextureFormatLayout layout = DxgiTextureFormat(dxgi_format);
+  if (!layout.valid || layout.block_width == 0 || layout.bytes_per_block == 0) {
+    return 0;
+  }
+  const uint32_t blocks_w = DivRoundUp(width, layout.block_width);
+  const uint64_t row_bytes = static_cast<uint64_t>(blocks_w) * static_cast<uint64_t>(layout.bytes_per_block);
+  if (row_bytes == 0 || row_bytes > UINT32_MAX) {
+    return 0;
+  }
+  return static_cast<uint32_t>(row_bytes);
+}
+
+uint32_t DxgiTextureNumRows(uint32_t dxgi_format, uint32_t height) {
+  if (height == 0) {
+    return 0;
+  }
+  const DxgiTextureFormatLayout layout = DxgiTextureFormat(dxgi_format);
+  if (!layout.valid || layout.block_height == 0) {
+    return 0;
+  }
+  return DivRoundUp(height, layout.block_height);
+}
+
+uint32_t CalcFullMipLevels(uint32_t width, uint32_t height) {
+  uint32_t w = width ? width : 1u;
+  uint32_t h = height ? height : 1u;
+  uint32_t levels = 1;
+  while (w > 1 || h > 1) {
+    w = (w > 1) ? (w / 2) : 1u;
+    h = (h > 1) ? (h / 2) : 1u;
+    levels++;
+  }
+  return levels;
 }
 
 struct CmdLoc {
@@ -183,20 +274,40 @@ struct Harness {
     Allocation alloc{};
     alloc.handle = h->next_handle++;
 
+    if (out_row_pitch_bytes) {
+      *out_row_pitch_bytes = 0;
+    }
+
     uint64_t bytes = 0;
     if (desc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER) {
       bytes = desc->ByteWidth;
     } else if (desc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D) {
-      // For tests we only need buffers; keep a safe fallback in case future
-      // tests allocate a texture by mistake.
-      const uint64_t width = desc->Width ? desc->Width : 1u;
-      const uint64_t height = desc->Height ? desc->Height : 1u;
-      const uint32_t bytes_per_row = static_cast<uint32_t>(width * 4u);
-      const uint32_t row_pitch = static_cast<uint32_t>(AlignUp(bytes_per_row, 64));
-      bytes = static_cast<uint64_t>(row_pitch) * height;
+      const uint32_t width = desc->Width ? desc->Width : 1u;
+      const uint32_t height = desc->Height ? desc->Height : 1u;
+      uint32_t mip_levels = desc->MipLevels;
+      if (mip_levels == 0) {
+        mip_levels = CalcFullMipLevels(width, height);
+      }
+      const uint32_t array_layers = desc->ArraySize ? desc->ArraySize : 1u;
+
+      const uint32_t tight_row_pitch = DxgiTextureMinRowPitchBytes(desc->Format, width);
+      const uint32_t row_pitch = static_cast<uint32_t>(AlignUp(tight_row_pitch ? tight_row_pitch : (width * 4u), 64));
       if (out_row_pitch_bytes) {
         *out_row_pitch_bytes = row_pitch;
       }
+
+      uint64_t layer_stride = 0;
+      uint32_t level_w = width;
+      uint32_t level_h = height;
+      for (uint32_t level = 0; level < mip_levels; ++level) {
+        const uint32_t tight_pitch = DxgiTextureMinRowPitchBytes(desc->Format, level_w);
+        const uint32_t pitch = (level == 0) ? row_pitch : (tight_pitch ? tight_pitch : (level_w * 4u));
+        const uint32_t rows = DxgiTextureNumRows(desc->Format, level_h);
+        layer_stride += static_cast<uint64_t>(pitch) * static_cast<uint64_t>(rows ? rows : level_h);
+        level_w = (level_w > 1) ? (level_w / 2) : 1u;
+        level_h = (level_h > 1) ? (level_h / 2) : 1u;
+      }
+      bytes = layer_stride * static_cast<uint64_t>(array_layers);
     } else {
       bytes = desc->ByteWidth;
     }
@@ -208,9 +319,6 @@ struct Harness {
     h->allocations.push_back(std::move(alloc));
     *out_handle = h->allocations.back().handle;
     *out_size_bytes = bytes;
-    if (out_row_pitch_bytes && *out_row_pitch_bytes == 0) {
-      *out_row_pitch_bytes = 0;
-    }
     return S_OK;
   }
 
@@ -383,23 +491,6 @@ struct TestShaderResourceView {
   std::vector<uint8_t> storage;
 };
 
-constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
-constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91; // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
-constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93; // DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc1Unorm = 71; // DXGI_FORMAT_BC1_UNORM
-constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72; // DXGI_FORMAT_BC1_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc2Unorm = 74; // DXGI_FORMAT_BC2_UNORM
-constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75; // DXGI_FORMAT_BC2_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc3Unorm = 77; // DXGI_FORMAT_BC3_UNORM
-constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78; // DXGI_FORMAT_BC3_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc7Unorm = 98; // DXGI_FORMAT_BC7_UNORM
-constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99; // DXGI_FORMAT_BC7_UNORM_SRGB
-
-constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
-constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
-constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
-
 bool CreateBuffer(TestDevice* dev,
                   uint32_t byte_width,
                   uint32_t usage,
@@ -490,12 +581,14 @@ bool CreateBufferWithInitialData(TestDevice* dev,
   return true;
 }
 
-bool CreateStagingTexture2DWithFormat(TestDevice* dev,
-                                      uint32_t width,
-                                      uint32_t height,
-                                      uint32_t dxgi_format,
-                                      uint32_t cpu_access_flags,
-                                      TestResource* out) {
+bool CreateStagingTexture2DWithFormatAndDesc(TestDevice* dev,
+                                             uint32_t width,
+                                             uint32_t height,
+                                             uint32_t dxgi_format,
+                                             uint32_t cpu_access_flags,
+                                             uint32_t mip_levels,
+                                             uint32_t array_size,
+                                             TestResource* out) {
   if (!dev || !out) {
     return false;
   }
@@ -508,8 +601,8 @@ bool CreateStagingTexture2DWithFormat(TestDevice* dev,
   desc.CPUAccessFlags = cpu_access_flags;
   desc.Width = width;
   desc.Height = height;
-  desc.MipLevels = 1;
-  desc.ArraySize = 1;
+  desc.MipLevels = mip_levels;
+  desc.ArraySize = array_size;
   desc.Format = dxgi_format;
   desc.pInitialData = nullptr;
   desc.InitialDataCount = 0;
@@ -527,6 +620,22 @@ bool CreateStagingTexture2DWithFormat(TestDevice* dev,
     return false;
   }
   return true;
+}
+
+bool CreateStagingTexture2DWithFormat(TestDevice* dev,
+                                      uint32_t width,
+                                      uint32_t height,
+                                      uint32_t dxgi_format,
+                                      uint32_t cpu_access_flags,
+                                      TestResource* out) {
+  return CreateStagingTexture2DWithFormatAndDesc(dev,
+                                                 width,
+                                                 height,
+                                                 dxgi_format,
+                                                 cpu_access_flags,
+                                                 /*mip_levels=*/1,
+                                                 /*array_size=*/1,
+                                                 out);
 }
 
 bool CreateStagingTexture2D(TestDevice* dev,
@@ -5333,6 +5442,758 @@ bool TestSrgbTexture2DFormatPropagationGuestBacked() {
   return true;
 }
 
+bool TestGuestBackedTexture2DMipArrayCreateEncodesMipAndArray() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(mip+array create guest-backed)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     /*cpu_access_flags=*/0,
+                                                     /*mip_levels=*/0, // full chain
+                                                     /*array_size=*/2,
+                                                     &tex),
+             "CreateStagingTexture2DWithFormatAndDesc(mip+array)")) {
+    return false;
+  }
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(mip+array tex2d)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->width == 4, "CREATE_TEXTURE2D width == 4")) {
+    return false;
+  }
+  if (!Check(create_cmd->height == 4, "CREATE_TEXTURE2D height == 4")) {
+    return false;
+  }
+  if (!Check(create_cmd->mip_levels == 3, "CREATE_TEXTURE2D mip_levels full chain (4x4 => 3)")) {
+    return false;
+  }
+  if (!Check(create_cmd->array_layers == 2, "CREATE_TEXTURE2D array_layers == 2")) {
+    return false;
+  }
+  const uint32_t expected_row_pitch = static_cast<uint32_t>(AlignUp(static_cast<size_t>(4u * 4u), 64));
+  if (!Check(create_cmd->row_pitch_bytes == expected_row_pitch, "CREATE_TEXTURE2D row_pitch_bytes (mip0)")) {
+    return false;
+  }
+  if (!Check(create_cmd->backing_alloc_id != 0, "CREATE_TEXTURE2D backing_alloc_id != 0")) {
+    return false;
+  }
+
+  bool found_alloc = false;
+  for (auto h : dev.harness.last_allocs) {
+    if (h == create_cmd->backing_alloc_id) {
+      found_alloc = true;
+      break;
+    }
+  }
+  if (!Check(found_alloc, "submit alloc list contains mip+array backing allocation")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedCreateTexture2DMipArrayInitialDataDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(CreateResource initial mip+array tex2d guest-backed)")) {
+    return false;
+  }
+
+  static constexpr uint32_t kWidth = 4;
+  static constexpr uint32_t kHeight = 4;
+  static constexpr uint32_t kMipLevels = 3;
+  static constexpr uint32_t kArraySize = 2;
+
+  struct SubInit {
+    std::vector<uint8_t> bytes;
+    uint32_t row_bytes = 0;
+    uint32_t height = 0;
+  };
+
+  std::vector<SubInit> sub_inits;
+  std::vector<AEROGPU_DDI_SUBRESOURCE_DATA> inits;
+  sub_inits.reserve(static_cast<size_t>(kMipLevels) * kArraySize);
+  inits.reserve(static_cast<size_t>(kMipLevels) * kArraySize);
+
+  for (uint32_t layer = 0; layer < kArraySize; ++layer) {
+    uint32_t level_w = kWidth;
+    uint32_t level_h = kHeight;
+    for (uint32_t mip = 0; mip < kMipLevels; ++mip) {
+      SubInit sub{};
+      sub.row_bytes = level_w * 4u;
+      sub.height = level_h;
+      sub.bytes.resize(static_cast<size_t>(sub.row_bytes) * static_cast<size_t>(sub.height));
+      const uint8_t seed = static_cast<uint8_t>(0x40u + layer * 0x20u + mip * 0x08u);
+      for (size_t i = 0; i < sub.bytes.size(); ++i) {
+        sub.bytes[i] = static_cast<uint8_t>(seed + (i & 0x7u));
+      }
+      sub_inits.push_back(std::move(sub));
+
+      AEROGPU_DDI_SUBRESOURCE_DATA init = {};
+      init.pSysMem = sub_inits.back().bytes.data();
+      init.SysMemPitch = sub_inits.back().row_bytes;
+      init.SysMemSlicePitch = 0;
+      inits.push_back(init);
+
+      level_w = (level_w > 1) ? (level_w / 2) : 1u;
+      level_h = (level_h > 1) ? (level_h / 2) : 1u;
+    }
+  }
+
+  AEROGPU_DDIARG_CREATERESOURCE desc = {};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  desc.BindFlags = 0;
+  desc.MiscFlags = 0;
+  desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
+  desc.CPUAccessFlags = 0;
+  desc.Width = kWidth;
+  desc.Height = kHeight;
+  desc.MipLevels = kMipLevels;
+  desc.ArraySize = kArraySize;
+  desc.Format = kDxgiFormatB8G8R8A8Unorm;
+  desc.pInitialData = inits.data();
+  desc.InitialDataCount = static_cast<uint32_t>(inits.size());
+
+  TestResource tex{};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned a non-trivial size")) {
+    return false;
+  }
+  tex.storage.assign(static_cast<size_t>(size), 0);
+  tex.hResource.pDrvPrivate = tex.storage.data();
+
+  HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, &desc, tex.hResource);
+  if (!Check(hr == S_OK, "CreateResource(tex2d mip+array initial data)")) {
+    return false;
+  }
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(mip+array initial data)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "guest-backed CreateResource(mip+array initial tex2d) should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "guest-backed CreateResource(mip+array initial tex2d) should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->mip_levels == kMipLevels, "CREATE_TEXTURE2D mip_levels matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->array_layers == kArraySize, "CREATE_TEXTURE2D array_layers matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->backing_alloc_id != 0, "CREATE_TEXTURE2D backing_alloc_id != 0")) {
+    return false;
+  }
+  if (!Check(create_cmd->row_pitch_bytes != 0, "CREATE_TEXTURE2D row_pitch_bytes != 0")) {
+    return false;
+  }
+
+  const uint32_t row_pitch0 = create_cmd->row_pitch_bytes;
+  const uint64_t mip0_size = static_cast<uint64_t>(row_pitch0) * kHeight;
+  const uint64_t mip1_size = static_cast<uint64_t>((kWidth / 2) * 4u) * (kHeight / 2);
+  const uint64_t mip2_size = static_cast<uint64_t>(4u); // 1x1 RGBA8
+  const uint64_t layer_stride = mip0_size + mip1_size + mip2_size;
+  const uint64_t total_bytes = layer_stride * kArraySize;
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == total_bytes, "RESOURCE_DIRTY_RANGE covers full mip+array chain")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= total_bytes, "backing allocation large enough")) {
+    return false;
+  }
+
+  std::vector<uint8_t> expected(static_cast<size_t>(total_bytes), 0);
+  size_t init_index = 0;
+  size_t dst_offset = 0;
+  for (uint32_t layer = 0; layer < kArraySize; ++layer) {
+    uint32_t level_w = kWidth;
+    uint32_t level_h = kHeight;
+    for (uint32_t mip = 0; mip < kMipLevels; ++mip) {
+      const uint32_t src_pitch = inits[init_index].SysMemPitch;
+      const uint32_t dst_pitch = (mip == 0) ? row_pitch0 : src_pitch;
+      const uint32_t row_bytes = src_pitch;
+      const size_t sub_size = static_cast<size_t>(dst_pitch) * static_cast<size_t>(level_h);
+      for (uint32_t y = 0; y < level_h; ++y) {
+        std::memcpy(expected.data() + dst_offset + static_cast<size_t>(y) * dst_pitch,
+                    static_cast<const uint8_t*>(inits[init_index].pSysMem) + static_cast<size_t>(y) * src_pitch,
+                    row_bytes);
+      }
+      dst_offset += sub_size;
+      init_index++;
+      level_w = (level_w > 1) ? (level_w / 2) : 1u;
+      level_h = (level_h > 1) ? (level_h / 2) : 1u;
+    }
+  }
+
+  if (!Check(std::memcmp(alloc->bytes.data(), expected.data(), expected.size()) == 0,
+             "backing allocation bytes match all subresource initial data")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedTexture2DMipArrayMapUnmapDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(mip+array map/unmap guest-backed)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     /*cpu_access_flags=*/AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                     /*mip_levels=*/3,
+                                                     /*array_size=*/2,
+                                                     &tex),
+             "CreateStagingTexture2DWithFormatAndDesc(map/unmap mip+array)")) {
+    return false;
+  }
+
+  const uint32_t subresource = 4; // mip1 layer1 when mip_levels=3.
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                      tex.hResource,
+                                                      subresource,
+                                                      AEROGPU_DDI_MAP_WRITE,
+                                                      /*map_flags=*/0,
+                                                      &mapped);
+  if (!Check(hr == S_OK, "StagingResourceMap(WRITE) guest-backed mip+array")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped.RowPitch == 8, "Map RowPitch tight for mip1")) {
+    return false;
+  }
+  if (!Check(mapped.DepthPitch == 16, "Map DepthPitch == RowPitch*height")) {
+    return false;
+  }
+
+  uint8_t expected[16] = {};
+  for (size_t i = 0; i < sizeof(expected); ++i) {
+    expected[i] = static_cast<uint8_t>(0xD0u + i);
+  }
+  std::memcpy(mapped.pData, expected, sizeof(expected));
+  void* mapped_ptr = mapped.pData;
+
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, subresource);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after StagingResourceUnmap(mip+array)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "mip+array Unmap should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->mip_levels == 3, "CREATE_TEXTURE2D mip_levels == 3")) {
+    return false;
+  }
+  if (!Check(create_cmd->array_layers == 2, "CREATE_TEXTURE2D array_layers == 2")) {
+    return false;
+  }
+  if (!Check(create_cmd->backing_alloc_id != 0, "CREATE_TEXTURE2D backing_alloc_id != 0")) {
+    return false;
+  }
+
+  const uint32_t row_pitch0 = create_cmd->row_pitch_bytes;
+  const uint64_t mip0_size = static_cast<uint64_t>(row_pitch0) * 4u;
+  const uint64_t mip1_size = static_cast<uint64_t>(8u) * 2u;
+  const uint64_t mip2_size = 4u;
+  const uint64_t layer_stride = mip0_size + mip1_size + mip2_size;
+  const uint64_t expected_offset = layer_stride + mip0_size;
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == expected_offset, "RESOURCE_DIRTY_RANGE offset matches subresource layout")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == sizeof(expected), "RESOURCE_DIRTY_RANGE size matches subresource layout")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= expected_offset + sizeof(expected), "backing allocation large enough")) {
+    return false;
+  }
+
+  const uint8_t* alloc_base = alloc->bytes.data();
+  if (!Check(static_cast<uint8_t*>(mapped_ptr) == alloc_base + expected_offset, "Map pData points at subresource offset")) {
+    return false;
+  }
+  if (!Check(std::memcmp(alloc_base + expected_offset, expected, sizeof(expected)) == 0, "backing allocation bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedUpdateSubresourceUPTexture2DMipArrayDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(UpdateSubresourceUP mip+array tex2d guest-backed)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     /*cpu_access_flags=*/0,
+                                                     /*mip_levels=*/3,
+                                                     /*array_size=*/2,
+                                                     &tex),
+             "CreateStagingTexture2DWithFormatAndDesc(UpdateSubresourceUP mip+array)")) {
+    return false;
+  }
+
+  const uint32_t dst_subresource = 4; // mip1 layer1 when mip_levels=3.
+  std::vector<uint8_t> sysmem(16);
+  for (size_t i = 0; i < sysmem.size(); ++i) {
+    sysmem[i] = static_cast<uint8_t>(0x70u + i);
+  }
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          tex.hResource,
+                                          dst_subresource,
+                                          /*pDstBox=*/nullptr,
+                                          sysmem.data(),
+                                          /*SysMemPitch=*/8,
+                                          /*SysMemSlicePitch=*/0);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP(mip+array)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "guest-backed mip+array UpdateSubresourceUP should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "guest-backed mip+array UpdateSubresourceUP should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id != 0, "CREATE_TEXTURE2D backing_alloc_id != 0")) {
+    return false;
+  }
+
+  const uint32_t row_pitch0 = create_cmd->row_pitch_bytes;
+  const uint64_t mip0_size = static_cast<uint64_t>(row_pitch0) * 4u;
+  const uint64_t mip1_size = static_cast<uint64_t>(8u) * 2u;
+  const uint64_t mip2_size = 4u;
+  const uint64_t layer_stride = mip0_size + mip1_size + mip2_size;
+  const uint64_t expected_offset = layer_stride + mip0_size;
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == expected_offset, "RESOURCE_DIRTY_RANGE offset matches subresource layout")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == sysmem.size(), "RESOURCE_DIRTY_RANGE size matches sysmem upload")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= expected_offset + sysmem.size(), "backing allocation large enough")) {
+    return false;
+  }
+  if (!Check(std::memcmp(alloc->bytes.data() + expected_offset, sysmem.data(), sysmem.size()) == 0, "backing bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedCopySubresourceRegionTexture2DMipArrayReadback() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(copy subresource mip+array tex2d guest-backed)")) {
+    return false;
+  }
+
+  TestResource src{};
+  TestResource dst{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                     /*mip_levels=*/3,
+                                                     /*array_size=*/2,
+                                                     &src),
+             "CreateStagingTexture2DWithFormatAndDesc(src mip+array)")) {
+    return false;
+  }
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     AEROGPU_D3D11_CPU_ACCESS_READ,
+                                                     /*mip_levels=*/3,
+                                                     /*array_size=*/2,
+                                                     &dst),
+             "CreateStagingTexture2DWithFormatAndDesc(dst mip+array)")) {
+    return false;
+  }
+
+  const uint32_t src_subresource = 1; // mip1 layer0 when mip_levels=3.
+  const uint32_t dst_subresource = 4; // mip1 layer1 when mip_levels=3.
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped_src = {};
+  HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                      src.hResource,
+                                                      src_subresource,
+                                                      AEROGPU_DDI_MAP_WRITE,
+                                                      /*map_flags=*/0,
+                                                      &mapped_src);
+  if (!Check(hr == S_OK, "StagingResourceMap(WRITE) src mip+array")) {
+    return false;
+  }
+  if (!Check(mapped_src.pData != nullptr, "Map src returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped_src.RowPitch == 8, "Map src RowPitch tight for mip1")) {
+    return false;
+  }
+  if (!Check(mapped_src.DepthPitch == 16, "Map src DepthPitch == RowPitch*height")) {
+    return false;
+  }
+
+  std::vector<uint8_t> expected(static_cast<size_t>(mapped_src.DepthPitch));
+  for (size_t i = 0; i < expected.size(); ++i) {
+    expected[i] = static_cast<uint8_t>(0x30u + i);
+  }
+  std::memcpy(mapped_src.pData, expected.data(), expected.size());
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, src.hResource, src_subresource);
+
+  hr = dev.device_funcs.pfnCopySubresourceRegion(dev.hDevice,
+                                                 dst.hResource,
+                                                 dst_subresource,
+                                                 /*dst_x=*/0,
+                                                 /*dst_y=*/0,
+                                                 /*dst_z=*/0,
+                                                 src.hResource,
+                                                 src_subresource,
+                                                 /*pSrcBox=*/nullptr);
+  if (!Check(hr == S_OK, "CopySubresourceRegion(mip+array) returns S_OK")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped_dst = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              dst.hResource,
+                                              dst_subresource,
+                                              AEROGPU_DDI_MAP_READ,
+                                              /*map_flags=*/0,
+                                              &mapped_dst);
+  if (!Check(hr == S_OK, "StagingResourceMap(READ) dst mip+array")) {
+    return false;
+  }
+  if (!Check(mapped_dst.pData != nullptr, "Map dst returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped_dst.RowPitch == 8, "Map dst RowPitch tight for mip1")) {
+    return false;
+  }
+  if (!Check(mapped_dst.DepthPitch == 16, "Map dst DepthPitch == RowPitch*height")) {
+    return false;
+  }
+  if (!Check(std::memcmp(mapped_dst.pData, expected.data(), expected.size()) == 0, "CopySubresourceRegion bytes")) {
+    return false;
+  }
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, dst.hResource, dst_subresource);
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D) == 1, "COPY_TEXTURE2D emitted")) {
+    return false;
+  }
+  CmdLoc copy_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D);
+  if (!Check(copy_loc.hdr != nullptr, "COPY_TEXTURE2D location")) {
+    return false;
+  }
+  const auto* copy_cmd = reinterpret_cast<const aerogpu_cmd_copy_texture2d*>(stream + copy_loc.offset);
+  if (!Check(copy_cmd->dst_mip_level == 1, "COPY_TEXTURE2D dst_mip_level == 1")) {
+    return false;
+  }
+  if (!Check(copy_cmd->dst_array_layer == 1, "COPY_TEXTURE2D dst_array_layer == 1")) {
+    return false;
+  }
+  if (!Check(copy_cmd->src_mip_level == 1, "COPY_TEXTURE2D src_mip_level == 1")) {
+    return false;
+  }
+  if (!Check(copy_cmd->src_array_layer == 0, "COPY_TEXTURE2D src_array_layer == 0")) {
+    return false;
+  }
+  if (!Check(copy_cmd->width == 2 && copy_cmd->height == 2, "COPY_TEXTURE2D width/height match mip1 dims")) {
+    return false;
+  }
+  if (!Check((copy_cmd->flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0, "COPY_TEXTURE2D has WRITEBACK_DST flag")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedCopyResourceTexture2DMipArrayReadback() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(copy mip+array tex2d guest-backed)")) {
+    return false;
+  }
+
+  TestResource src{};
+  TestResource dst{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                     /*mip_levels=*/3,
+                                                     /*array_size=*/2,
+                                                     &src),
+             "CreateStagingTexture2DWithFormatAndDesc(src mip+array)")) {
+    return false;
+  }
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     AEROGPU_D3D11_CPU_ACCESS_READ,
+                                                     /*mip_levels=*/3,
+                                                     /*array_size=*/2,
+                                                     &dst),
+             "CreateStagingTexture2DWithFormatAndDesc(dst mip+array)")) {
+    return false;
+  }
+
+  // Fill each src subresource with a distinct byte pattern (pixel bytes only; padding stays zero).
+  for (uint32_t subresource = 0; subresource < 6; ++subresource) {
+    const uint32_t mip = subresource % 3;
+    const uint32_t mip_w = (mip == 0) ? 4u : (mip == 1) ? 2u : 1u;
+    const uint32_t mip_h = (mip == 0) ? 4u : (mip == 1) ? 2u : 1u;
+    const uint32_t tight_row_bytes = mip_w * 4u;
+    const uint8_t fill = static_cast<uint8_t>(0x10u + subresource);
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                        src.hResource,
+                                                        subresource,
+                                                        AEROGPU_DDI_MAP_WRITE,
+                                                        /*map_flags=*/0,
+                                                        &mapped);
+    if (!Check(hr == S_OK, "StagingResourceMap(WRITE) src subresource")) {
+      return false;
+    }
+    if (!Check(mapped.pData != nullptr, "Map src returned non-null pData")) {
+      return false;
+    }
+    if (!Check(mapped.RowPitch != 0, "Map src returned RowPitch")) {
+      return false;
+    }
+
+    auto* bytes = static_cast<uint8_t*>(mapped.pData);
+    const uint32_t row_pitch = mapped.RowPitch;
+    for (uint32_t y = 0; y < mip_h; ++y) {
+      std::memset(bytes + static_cast<size_t>(y) * row_pitch, fill, tight_row_bytes);
+      if (row_pitch > tight_row_bytes) {
+        std::memset(bytes + static_cast<size_t>(y) * row_pitch + tight_row_bytes, 0, row_pitch - tight_row_bytes);
+      }
+    }
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, src.hResource, subresource);
+  }
+
+  dev.device_funcs.pfnCopyResource(dev.hDevice, dst.hResource, src.hResource);
+
+  // Force submission so we can validate the COPY_TEXTURE2D count once.
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CopyResource(mip+array)")) {
+    return false;
+  }
+  const std::vector<uint8_t> submitted_stream = dev.harness.last_stream;
+
+  // Validate readback of each destination subresource.
+  for (uint32_t subresource = 0; subresource < 6; ++subresource) {
+    const uint32_t mip = subresource % 3;
+    const uint32_t mip_w = (mip == 0) ? 4u : (mip == 1) ? 2u : 1u;
+    const uint32_t mip_h = (mip == 0) ? 4u : (mip == 1) ? 2u : 1u;
+    const uint32_t tight_row_bytes = mip_w * 4u;
+    const uint8_t fill = static_cast<uint8_t>(0x10u + subresource);
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+    hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                dst.hResource,
+                                                subresource,
+                                                AEROGPU_DDI_MAP_READ,
+                                                /*map_flags=*/0,
+                                                &mapped);
+    if (!Check(hr == S_OK, "StagingResourceMap(READ) dst subresource")) {
+      return false;
+    }
+    if (!Check(mapped.pData != nullptr, "Map dst returned non-null pData")) {
+      return false;
+    }
+    if (!Check(mapped.RowPitch != 0, "Map dst returned RowPitch")) {
+      return false;
+    }
+
+    const auto* bytes = static_cast<const uint8_t*>(mapped.pData);
+    const uint32_t row_pitch = mapped.RowPitch;
+    for (uint32_t y = 0; y < mip_h; ++y) {
+      for (uint32_t x = 0; x < tight_row_bytes; ++x) {
+        if (!Check(bytes[static_cast<size_t>(y) * row_pitch + x] == fill, "CopyResource subresource bytes")) {
+          return false;
+        }
+      }
+      for (uint32_t x = tight_row_bytes; x < row_pitch; ++x) {
+        if (!Check(bytes[static_cast<size_t>(y) * row_pitch + x] == 0, "CopyResource subresource padding bytes")) {
+          return false;
+        }
+      }
+    }
+
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, dst.hResource, subresource);
+  }
+
+  if (!Check(ValidateStream(submitted_stream.data(), submitted_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = submitted_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, submitted_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D) == 6, "COPY_TEXTURE2D emitted per subresource")) {
+    return false;
+  }
+  CmdLoc copy_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D);
+  if (!Check(copy_loc.hdr != nullptr, "COPY_TEXTURE2D location")) {
+    return false;
+  }
+  const auto* copy_cmd = reinterpret_cast<const aerogpu_cmd_copy_texture2d*>(stream + copy_loc.offset);
+  if (!Check((copy_cmd->flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0, "COPY_TEXTURE2D has WRITEBACK_DST flag")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestBcTexture2DLayout() {
 #if AEROGPU_ABI_MINOR < 2
   // ABI 1.2 adds BC formats.
@@ -5600,6 +6461,12 @@ int main() {
   ok &= TestGuestBackedCreateBcTextureInitialDataDirtyRange();
   ok &= TestSrgbTexture2DFormatPropagation();
   ok &= TestSrgbTexture2DFormatPropagationGuestBacked();
+  ok &= TestGuestBackedTexture2DMipArrayCreateEncodesMipAndArray();
+  ok &= TestGuestBackedCreateTexture2DMipArrayInitialDataDirtyRange();
+  ok &= TestGuestBackedTexture2DMipArrayMapUnmapDirtyRange();
+  ok &= TestGuestBackedUpdateSubresourceUPTexture2DMipArrayDirtyRange();
+  ok &= TestGuestBackedCopySubresourceRegionTexture2DMipArrayReadback();
+  ok &= TestGuestBackedCopyResourceTexture2DMipArrayReadback();
   ok &= TestBcTexture2DLayout();
   ok &= TestMapDoNotWaitRespectsFenceCompletion();
 
