@@ -11,7 +11,28 @@ document.querySelector("#origin").textContent = location.origin;
 // This smoke page is often served from the same reverse-proxy base path as the
 // gateway (e.g. https://example.com/aero/). Avoid hard-coded absolute paths like
 // `/session` which would drop the base path prefix.
-const basePath = new URL(".", location.href).pathname.replace(/\/$/, "");
+//
+// Note: we intentionally do *not* use `new URL(".", location.href)` here because
+// it treats `https://example.com/aero` (no trailing slash) as a "file" URL and
+// resolves `"."` to `/`, dropping the `/aero` prefix.
+function computeBasePath() {
+  let pathname = location.pathname;
+
+  // If we were served from a directory URL (`/aero/`), strip the trailing `/`.
+  if (pathname.endsWith("/")) pathname = pathname.replace(/\/+$/, "");
+
+  // If we were served from an explicit file URL (`/aero/index.html`), use the
+  // dirname (`/aero`).
+  const lastSegment = pathname.split("/").pop() ?? "";
+  if (!pathname.endsWith("/") && lastSegment.lastIndexOf(".") > 0) {
+    pathname = pathname.slice(0, pathname.lastIndexOf("/"));
+  }
+
+  // Represent the origin root as an empty prefix, so `${basePath}/healthz`
+  // resolves to `/healthz` rather than `//healthz`.
+  return pathname === "" || pathname === "/" ? "" : pathname;
+}
+const basePath = computeBasePath();
 
 const checks = [
   `Secure context: ${window.isSecureContext}`,
