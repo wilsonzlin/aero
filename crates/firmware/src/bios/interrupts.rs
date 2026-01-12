@@ -205,6 +205,35 @@ fn handle_int13(
     let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     let drive = (cpu.gpr[gpr::RDX] & 0xFF) as u8;
 
+    fn set_error(bios: &mut Bios, cpu: &mut CpuState, status: u8) {
+        bios.last_int13_status = status;
+        cpu.rflags |= FLAG_CF;
+        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
+    }
+
+    fn floppy_drive_count(bus: &mut dyn BiosBus) -> u8 {
+        // Determined by the BDA equipment word (INT 11h).
+        let equip = bus.read_u16(BDA_BASE + 0x10);
+        if (equip & 1) == 0 {
+            return 0;
+        }
+        let count_minus1 = ((equip >> 6) & 0x3) as u8;
+        count_minus1.saturating_add(1)
+    }
+
+    fn fixed_drive_count(bus: &mut dyn BiosBus) -> u8 {
+        bus.read_u8(BDA_BASE + 0x75)
+    }
+
+    fn drive_present(bus: &mut dyn BiosBus, drive: u8) -> bool {
+        if drive < 0x80 {
+            drive < floppy_drive_count(bus)
+        } else {
+            let idx = drive.wrapping_sub(0x80);
+            idx < fixed_drive_count(bus)
+        }
+    }
+
     fn geometry_for_drive(drive: u8, total_sectors: u64) -> (u16, u8, u8) {
         if drive < 0x80 {
             // Floppy disk (heuristic by media size; fallback is a reasonable default).
@@ -248,6 +277,10 @@ fn handle_int13(
         }
         0x02 => {
             // Read sectors (CHS).
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             let mut count = (cpu.gpr[gpr::RAX] & 0xFF) as u16;
             if count == 0 {
                 // INT 13h AH=02h uses AL=0 as 256 sectors.
@@ -323,6 +356,10 @@ fn handle_int13(
             //
             // Verify is like a read without transferring data into memory. We implement it by
             // reading sectors and discarding the contents.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             let mut count = (cpu.gpr[gpr::RAX] & 0xFF) as u16;
             if count == 0 {
                 count = 256;
@@ -368,16 +405,26 @@ fn handle_int13(
         0x08 => {
             // Get drive parameters (very small subset).
             // Return: CF clear, AH=0, CH/CL/DH describe geometry.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             let (cylinders, heads, spt) = geometry_for_drive(drive, disk.size_in_sectors());
 
             let cyl_minus1 = cylinders - 1;
             let ch = (cyl_minus1 & 0xFF) as u8;
             let cl = (spt & 0x3F) | (((cyl_minus1 >> 2) as u8) & 0xC0);
             let dh = heads - 1;
+            let dl = if drive < 0x80 {
+                floppy_drive_count(bus)
+            } else {
+                fixed_drive_count(bus)
+            };
 
             cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
             // DL = number of drives; DH = max head.
-            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | 1u64 | ((dh as u64) << 8);
+            cpu.gpr[gpr::RDX] =
+                (cpu.gpr[gpr::RDX] & !0xFFFF) | (dl as u64) | ((dh as u64) << 8);
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
@@ -386,12 +433,20 @@ fn handle_int13(
             // Check drive ready.
             //
             // We model disk I/O synchronously; if the drive exists, it is always ready.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         0x15 => {
             // Get disk type.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             if drive < 0x80 {
                 // Floppy drive present (with change-line support).
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | 0x0200;
@@ -412,12 +467,20 @@ fn handle_int13(
             //
             // DOS programs use this to detect when a floppy disk is swapped. We do not model a
             // disk-change line; always report "not changed" and succeed.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
         }
         0x41 => {
             // Extensions check.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             if (cpu.gpr[gpr::RBX] & 0xFFFF) == 0x55AA && drive >= 0x80 {
                 // Report EDD 3.0 (AH=0x30) and that we support 42h + 48h.
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x30u64 << 8);
@@ -433,6 +496,10 @@ fn handle_int13(
         }
         0x42 => {
             // Extended read via Disk Address Packet (DAP) at DS:SI.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             if drive < 0x80 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
@@ -513,6 +580,10 @@ fn handle_int13(
             //
             // DS:SI points to a caller-supplied buffer; the first WORD is the
             // buffer size in bytes.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             if drive < 0x80 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
@@ -1097,6 +1168,7 @@ mod tests {
         cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
         cpu.a20_enabled = mem.a20_enabled();
         let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
         mem.write_u8(dap_addr, 0x10);
@@ -1129,6 +1201,7 @@ mod tests {
         cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
         cpu.a20_enabled = mem.a20_enabled();
         let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
         mem.write_u16(table_addr, 0x1E); // buffer size
@@ -1158,6 +1231,7 @@ mod tests {
         cpu.gpr[gpr::RDX] = 0x0100; // DH=1 (head), DL=0 (floppy 0)
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
@@ -1176,6 +1250,7 @@ mod tests {
         cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
@@ -1196,6 +1271,7 @@ mod tests {
         cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
@@ -1217,6 +1293,7 @@ mod tests {
         cpu.gpr[gpr::RDX] = 0x0100; // DH=1, DL=0
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
         // Pre-fill memory so we can detect unexpected writes.
         mem.write_u8(0x1000, 0xAA);
 
@@ -1238,6 +1315,7 @@ mod tests {
         cpu.gpr[gpr::RDX] = 0x0000; // DL=0
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
@@ -1255,6 +1333,7 @@ mod tests {
         cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x00);
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
@@ -1382,6 +1461,7 @@ mod tests {
         cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
         cpu.a20_enabled = mem.a20_enabled();
         let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0700);
         mem.write_u8(dap_addr, 0x10);

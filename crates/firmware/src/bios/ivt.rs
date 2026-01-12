@@ -106,12 +106,14 @@ pub fn init_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
 
     // Number of hard disks installed (used by some bootloaders/DOS utilities).
     //
-    // We always advertise at least one hard disk, but if the configured boot drive is 0x81 or
-    // higher, ensure the count includes it.
+    // This BIOS currently models exactly one boot device (backed by the single [`BlockDevice`]
+    // passed to POST/interrupt handlers). Reflect that in the BDA:
+    // - If booting from a floppy (`DL < 0x80`), report *no* hard disks installed.
+    // - If booting from a hard disk (`DL >= 0x80`), report enough drives to include the boot drive.
     let hard_disk_count = if boot_drive >= 0x80 {
         boot_drive.wrapping_sub(0x80).saturating_add(1)
     } else {
-        1
+        0
     };
     bus.write_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET, hard_disk_count);
 
@@ -173,7 +175,7 @@ mod tests {
 
         // 0x0223 = 0x0222 + diskette-present bit.
         assert_eq!(mem.read_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET), 0x0223);
-        // Hard disk count remains advertised as 1 by default.
-        assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 1);
+        // A floppy-only system should not advertise any fixed disks.
+        assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 0);
     }
 }
