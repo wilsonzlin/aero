@@ -571,6 +571,31 @@ fn vhd_fixed_footer_copy_is_supported() {
 }
 
 #[test]
+fn vhd_fixed_footer_copy_with_mismatched_fields_is_supported() {
+    // Some tools write a footer copy at offset 0 but do not keep all fields perfectly in sync with
+    // the footer at EOF. As long as both are valid fixed-disk footers with the same virtual size,
+    // we should treat the payload as starting immediately after the footer copy.
+    let mut storage = make_vhd_fixed_with_footer_copy();
+
+    let mut footer = [0u8; 512];
+    storage.read_at(0, &mut footer).unwrap();
+
+    // Corrupt a non-essential field (features at offset 8) and fix up the checksum so the footer
+    // copy remains parseable.
+    footer[8] ^= 0x01;
+    let checksum = vhd_footer_checksum(&footer);
+    footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+    storage.write_at(0, &footer).unwrap();
+
+    let mut drive = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough).unwrap();
+    assert_eq!(drive.format(), DiskFormat::Vhd);
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    drive.read_sectors(0, &mut sector).unwrap();
+    assert_eq!(&sector[..10], b"hello vhd!");
+}
+
+#[test]
 fn vhd_dynamic_unallocated_reads_zero_and_writes_allocate() {
     let storage = make_vhd_dynamic_empty(1024 * 1024, 64 * 1024);
     let mut drive = VirtualDrive::open_auto(storage, 512, WriteCachePolicy::WriteThrough).unwrap();
