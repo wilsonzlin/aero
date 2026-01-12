@@ -301,26 +301,38 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
-  const abiLayoutFn = api.tiered_vm_jit_abi_layout;
-  if (typeof abiLayoutFn !== 'function') {
-    postToMain({
-      type: 'CpuWorkerError',
-      reason:
-        'tiered_vm_jit_abi_layout export is unavailable (missing WASM ABI layout helper). Rebuild the aero-wasm package.',
-    });
-    return;
+  // Newer WASM builds expose Tier-1 JIT layout fields directly on `jit_abi_constants()` to avoid
+  // JS-side drift. Fall back to the older `tiered_vm_jit_abi_layout()` helper for backwards
+  // compatibility with deployed bundles.
+  let jitCtxHeaderBytes = readMaybeU32(jitAbi, 'jit_ctx_header_bytes') ?? 0;
+  let jitTlbEntries = readMaybeU32(jitAbi, 'jit_tlb_entries') ?? 0;
+  let jitTlbEntryBytes = readMaybeU32(jitAbi, 'jit_tlb_entry_bytes') ?? 0;
+  let tier2CtxBytes = readMaybeU32(jitAbi, 'tier2_ctx_size') ?? 0;
+  let commitFlagOffset = readMaybeU32(jitAbi, 'commit_flag_offset') ?? 0;
+
+  if (!jitCtxHeaderBytes || !jitTlbEntries || !jitTlbEntryBytes || !tier2CtxBytes || !commitFlagOffset) {
+    const abiLayoutFn = api.tiered_vm_jit_abi_layout;
+    if (typeof abiLayoutFn !== 'function') {
+      postToMain({
+        type: 'CpuWorkerError',
+        reason:
+          'Missing Tier-1 JIT ABI layout helpers from aero-wasm (need either jit_abi_constants layout fields or tiered_vm_jit_abi_layout()). Rebuild the WASM package.',
+      });
+      return;
+    }
+
+    const abiLayout = abiLayoutFn();
+    jitCtxHeaderBytes ||= readMaybeNumber(abiLayout, 'jit_ctx_header_bytes') >>> 0;
+    jitTlbEntries ||= readMaybeNumber(abiLayout, 'jit_tlb_entries') >>> 0;
+    jitTlbEntryBytes ||= readMaybeNumber(abiLayout, 'jit_tlb_entry_bytes') >>> 0;
+    tier2CtxBytes ||= readMaybeNumber(abiLayout, 'tier2_ctx_bytes') >>> 0;
+    commitFlagOffset ||= readMaybeNumber(abiLayout, 'commit_flag_offset') >>> 0;
   }
-  const abiLayout = abiLayoutFn();
-  const jitCtxHeaderBytes = readMaybeNumber(abiLayout, 'jit_ctx_header_bytes') >>> 0;
-  const jitTlbEntries = readMaybeNumber(abiLayout, 'jit_tlb_entries') >>> 0;
-  const jitTlbEntryBytes = readMaybeNumber(abiLayout, 'jit_tlb_entry_bytes') >>> 0;
-  const tier2CtxBytes = readMaybeNumber(abiLayout, 'tier2_ctx_bytes') >>> 0;
-  const commitFlagOffset = readMaybeNumber(abiLayout, 'commit_flag_offset') >>> 0;
 
   if (!jitCtxHeaderBytes || !jitTlbEntries || !jitTlbEntryBytes || !tier2CtxBytes || !commitFlagOffset) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid tiered_vm_jit_abi_layout values: ${JSON.stringify({
+      reason: `Invalid Tier-1 JIT ABI layout values: ${JSON.stringify({
         jitCtxHeaderBytes,
         jitTlbEntries,
         jitTlbEntryBytes,

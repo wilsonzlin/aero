@@ -1819,7 +1819,25 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         const commitFlagOffsetFromJitCtx = (() => {
           try {
             const api = wasmApi;
-            const layoutFn = api?.tiered_vm_jit_abi_layout;
+            if (!api) return undefined;
+
+            // Newer WASM builds expose the Tier-1 JIT layout (including commit flag offset) via
+            // `jit_abi_constants()`. Prefer that to avoid JS-side drift.
+            const jitAbiFn = api.jit_abi_constants;
+            if (typeof jitAbiFn === "function") {
+              const jitAbi = jitAbiFn();
+              const cpuStateSize = readDemoNumber(jitAbi, "cpu_state_size");
+              const commitFlagOffset = readDemoNumber(jitAbi, "commit_flag_offset");
+              if (typeof cpuStateSize === "number" && typeof commitFlagOffset === "number") {
+                if (Number.isFinite(cpuStateSize) && Number.isFinite(commitFlagOffset)) {
+                  const rel = commitFlagOffset - cpuStateSize;
+                  if (rel >= 0) return rel;
+                }
+              }
+            }
+
+            // Fallback for older builds: use the dedicated `tiered_vm_jit_abi_layout()` helper.
+            const layoutFn = api.tiered_vm_jit_abi_layout;
             if (typeof layoutFn !== "function") return undefined;
             const layout = layoutFn();
             const commitFlagOffset = readDemoNumber(layout, "commit_flag_offset");
