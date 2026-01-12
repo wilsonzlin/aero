@@ -1,7 +1,9 @@
 use aero_cpu_core::mem::CpuBus as _;
 use aero_devices::pci::profile::NIC_E1000_82540EM;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_net_e1000::{ICR_TXDW, MIN_L2_FRAME_LEN};
 use aero_pc_platform::{PcCpuBus, PcPlatform, PcPlatformConfig};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -16,6 +18,13 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io
         .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(0xCFC, 4)
+}
+
+fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    let port = 0xCFCu16 + u16::from(offset & 3);
+    pc.io.read(port, 1) as u8
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -66,6 +75,15 @@ fn build_test_frame(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
+}
+
 #[test]
 fn pc_platform_e1000_exposes_mac_addr_via_host_api() {
     let pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
@@ -96,6 +114,18 @@ fn pc_platform_enumerates_e1000_and_assigns_bars() {
     let bar1_base = read_e1000_bar1_base(&mut pc);
     assert_ne!(bar1_base, 0, "BAR1 should be assigned during BIOS POST");
     assert_eq!(bar1_base % 0x40, 0);
+}
+
+#[test]
+fn pc_platform_sets_e1000_intx_line_and_pin_registers() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bdf = NIC_E1000_82540EM.bdf;
+
+    let line = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+    assert_eq!(line, 11, "00:05.0 INTA# should route to GSI/IRQ11 by default");
+
+    let pin = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+    assert_eq!(pin, 1, "Interrupt Pin should be INTA#");
 }
 
 #[test]
@@ -306,6 +336,33 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_e1000_intx() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 11);
+}
+
+#[test]
+fn pc_platform_routes_e1000_intx_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
+    let bar0_base = read_e1000_bar0_base(&mut pc);
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program IOAPIC entry for GSI11 to vector 0x61, level-triggered, active-low (default PCI INTx wiring).
+    let vector = 0x61u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    program_ioapic_entry(&mut pc, 11, low, 0);
+
+    // Enable the interrupt and set the cause.
+    pc.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS
+    pc.memory.write_u32(bar0_base + 0x00C8, ICR_TXDW); // ICS
+
+    pc.poll_pci_intx_lines();
+
+    // IOAPIC should have delivered the vector through the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+    pc.interrupts.borrow_mut().eoi(vector as u8);
 }
 
 #[test]
