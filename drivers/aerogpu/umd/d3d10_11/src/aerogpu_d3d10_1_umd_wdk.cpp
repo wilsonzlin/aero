@@ -15,6 +15,8 @@
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 
+#include "aerogpu_d3d10_11_wdk_abi_asserts.h"
+
 #include <d3d10_1umddi.h>
 #include <d3d10_1.h>
 #include <d3dkmthk.h>
