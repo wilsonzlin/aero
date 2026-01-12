@@ -23,7 +23,7 @@ use js_sys::{Array, BigInt, Object, Reflect};
 use aero_cpu_core::exec::{ExecDispatcher, ExecutedTier, StepOutcome, Tier0Interpreter, Vcpu};
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
 };
 use aero_cpu_core::state::{
     CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
@@ -60,13 +60,27 @@ fn wasm_memory_byte_len() -> u64 {
     pages.saturating_mul(64 * 1024)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone)]
 struct WasmBus {
     guest_base: u32,
     guest_size: u64,
+    /// Pages (4KiB) written since the last drain.
+    ///
+    /// This is used to bridge guest self-modifying code in the tiered browser runtime: when the
+    /// Tier-0 interpreter writes to guest memory, we record the dirtied pages so the VM can
+    /// subsequently call `jit.on_guest_write(..)` on the embedded [`JitRuntime`].
+    dirty_pages: Vec<u64>,
 }
 
 impl WasmBus {
+    fn new(guest_base: u32, guest_size: u64) -> Self {
+        Self {
+            guest_base,
+            guest_size,
+            dirty_pages: Vec::new(),
+        }
+    }
+
     #[inline]
     fn ptr(&self, vaddr: u64, len: usize) -> Result<*const u8, Exception> {
         let len_u64 = len as u64;
@@ -106,6 +120,36 @@ impl WasmBus {
         }
         Ok(())
     }
+
+    #[inline]
+    fn note_write(&mut self, vaddr: u64, len: usize) {
+        if len == 0 {
+            return;
+        }
+        let end = match vaddr.checked_add(len as u64 - 1) {
+            Some(end) => end,
+            None => return,
+        };
+        let start_page = vaddr >> PAGE_SHIFT;
+        let end_page = end >> PAGE_SHIFT;
+        for page in start_page..=end_page {
+            if self.dirty_pages.last().copied() == Some(page) {
+                continue;
+            }
+            if self.dirty_pages.contains(&page) {
+                continue;
+            }
+            self.dirty_pages.push(page);
+        }
+    }
+
+    fn drain_dirty_pages(&mut self) -> Vec<u64> {
+        core::mem::take(&mut self.dirty_pages)
+    }
+
+    fn clear_dirty_pages(&mut self) {
+        self.dirty_pages.clear();
+    }
 }
 
 impl CpuBus for WasmBus {
@@ -136,27 +180,37 @@ impl CpuBus for WasmBus {
 
     #[inline]
     fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
-        self.write_scalar::<1>(vaddr, [val])
+        self.write_scalar::<1>(vaddr, [val])?;
+        self.note_write(vaddr, 1);
+        Ok(())
     }
 
     #[inline]
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.write_scalar::<2>(vaddr, val.to_le_bytes())
+        self.write_scalar::<2>(vaddr, val.to_le_bytes())?;
+        self.note_write(vaddr, 2);
+        Ok(())
     }
 
     #[inline]
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        self.write_scalar::<4>(vaddr, val.to_le_bytes())
+        self.write_scalar::<4>(vaddr, val.to_le_bytes())?;
+        self.note_write(vaddr, 4);
+        Ok(())
     }
 
     #[inline]
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        self.write_scalar::<8>(vaddr, val.to_le_bytes())
+        self.write_scalar::<8>(vaddr, val.to_le_bytes())?;
+        self.note_write(vaddr, 8);
+        Ok(())
     }
 
     #[inline]
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        self.write_scalar::<16>(vaddr, val.to_le_bytes())
+        self.write_scalar::<16>(vaddr, val.to_le_bytes())?;
+        self.note_write(vaddr, 16);
+        Ok(())
     }
 
     fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
@@ -174,6 +228,7 @@ impl CpuBus for WasmBus {
         unsafe {
             core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
         }
+        self.note_write(vaddr, src.len());
         Ok(())
     }
 
@@ -196,6 +251,7 @@ impl CpuBus for WasmBus {
         unsafe {
             core::ptr::copy(src_ptr, dst_ptr, len);
         }
+        self.note_write(dst, len);
         Ok(true)
     }
 
@@ -219,6 +275,7 @@ impl CpuBus for WasmBus {
                 core::ptr::copy_nonoverlapping(pattern.as_ptr(), dst_ptr.add(off), pattern.len());
             }
         }
+        self.note_write(dst, total);
         Ok(true)
     }
 
@@ -482,6 +539,19 @@ pub struct WasmTieredVm {
     total_jit_blocks: u64,
 }
 
+impl WasmTieredVm {
+    fn flush_dirty_pages(&mut self) {
+        let dirty = self.vcpu.bus.drain_dirty_pages();
+        if dirty.is_empty() {
+            return;
+        }
+        let jit = self.dispatcher.jit_mut();
+        for page in dirty {
+            jit.on_guest_write(page << PAGE_SHIFT, 1);
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl WasmTieredVm {
     #[wasm_bindgen(constructor)]
@@ -508,10 +578,7 @@ impl WasmTieredVm {
             )));
         }
 
-        let bus = WasmBus {
-            guest_base,
-            guest_size: guest_size_u64,
-        };
+        let bus = WasmBus::new(guest_base, guest_size_u64);
 
         let cpu = CpuCore::new(CpuMode::Real);
         let vcpu = Vcpu::new(cpu, bus);
@@ -599,6 +666,7 @@ impl WasmTieredVm {
         self.compile_queue.clear();
         self.total_interp_blocks = 0;
         self.total_jit_blocks = 0;
+        self.vcpu.bus.clear_dirty_pages();
 
         // Reset JIT ABI context (especially the inline-TLB fast-path state).
         self.jit_abi.clear_tlb();
@@ -614,6 +682,18 @@ impl WasmTieredVm {
             arr.push(&BigInt::from(rip).into());
         }
         arr
+    }
+
+    /// Notify the tiered runtime that the guest wrote to physical memory.
+    ///
+    /// This is intended for browser JIT integrations where Tier-1 blocks route stores through a
+    /// host-provided helper (`env.mem_write_*`). The helper can call this method to keep the
+    /// embedded [`JitRuntime`] page-version tracker in sync so cached blocks are invalidated when
+    /// the guest modifies code pages.
+    pub fn on_guest_write(&mut self, paddr: u64, len: u32) {
+        self.dispatcher
+            .jit_mut()
+            .on_guest_write(paddr, len as usize);
     }
 
     /// Install a compiled Tier-1 block into the JIT cache.
@@ -740,6 +820,9 @@ impl WasmTieredVm {
                 }
 
                 let outcome = self.dispatcher.step(&mut self.vcpu);
+                // Propagate Tier-0 writes (and interrupt-frame pushes) into the JIT page-version
+                // tracker so self-modifying code invalidation stays correct.
+                self.flush_dirty_pages();
                 match outcome {
                     StepOutcome::InterruptDelivered => {
                         // Interrupt delivery does not count as a block execution for the
