@@ -153,7 +153,6 @@ fn d3d9_x8_render_target_alpha_is_opaque() {
     const OPC_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
     const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 
-    const AEROGPU_FORMAT_B8G8R8X8_UNORM: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
     const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
 
     const RT_HANDLE: u32 = 1;
@@ -200,163 +199,173 @@ fn d3d9_x8_render_target_alpha_is_opaque() {
     push_u8(&mut vertex_decl, 0); // usage_index
     assert_eq!(vertex_decl.len(), 16);
 
-    let stream = build_stream(|out| {
-        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, RT_HANDLE);
-            push_u32(
-                out,
-                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-            );
-            push_u32(out, AEROGPU_FORMAT_B8G8R8X8_UNORM);
-            push_u32(out, width);
-            push_u32(out, height);
-            push_u32(out, 1); // mip_levels
-            push_u32(out, 1); // array_layers
-            push_u32(out, width * 4); // row_pitch_bytes
-            push_u32(out, 0); // backing_alloc_id
-            push_u32(out, 0); // backing_offset_bytes
-            push_u64(out, 0); // reserved0
+    for format in [
+        AerogpuFormat::B8G8R8X8Unorm,
+        AerogpuFormat::B8G8R8X8UnormSrgb,
+        AerogpuFormat::R8G8B8X8Unorm,
+        AerogpuFormat::R8G8B8X8UnormSrgb,
+    ] {
+        exec.reset();
+
+        let format_u32 = format as u32;
+
+        let stream = build_stream(|out| {
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, RT_HANDLE);
+                push_u32(
+                    out,
+                    AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                );
+                push_u32(out, format_u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, width * 4); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_CREATE_BUFFER, |out| {
+                push_u32(out, VB_HANDLE);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+                push_u64(out, vb_data.len() as u64);
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+                push_u32(out, VB_HANDLE);
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, vb_data.len() as u64);
+                out.extend_from_slice(&vb_data);
+            });
+
+            emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+                push_u32(out, VS_HANDLE);
+                push_u32(out, 0); // AEROGPU_SHADER_STAGE_VERTEX
+                push_u32(out, vs_bytes.len() as u32);
+                push_u32(out, 0); // reserved0
+                out.extend_from_slice(&vs_bytes);
+            });
+
+            emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+                push_u32(out, PS_HANDLE);
+                push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+                push_u32(out, ps_bytes.len() as u32);
+                push_u32(out, 0); // reserved0
+                out.extend_from_slice(&ps_bytes);
+            });
+
+            emit_packet(out, OPC_BIND_SHADERS, |out| {
+                push_u32(out, VS_HANDLE);
+                push_u32(out, PS_HANDLE);
+                push_u32(out, 0); // cs
+                push_u32(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {
+                push_u32(out, IL_HANDLE);
+                push_u32(out, vertex_decl.len() as u32);
+                push_u32(out, 0); // reserved0
+                out.extend_from_slice(&vertex_decl);
+            });
+
+            emit_packet(out, OPC_SET_INPUT_LAYOUT, |out| {
+                push_u32(out, IL_HANDLE);
+                push_u32(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // buffer_count
+                push_u32(out, VB_HANDLE);
+                push_u32(out, 16); // stride_bytes
+                push_u32(out, 0); // offset_bytes
+                push_u32(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {
+                push_u32(out, AEROGPU_TOPOLOGY_TRIANGLELIST);
+                push_u32(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, RT_HANDLE);
+                for _ in 0..7 {
+                    push_u32(out, 0);
+                }
+            });
+
+            emit_packet(out, OPC_SET_VIEWPORT, |out| {
+                push_f32(out, 0.0);
+                push_f32(out, 0.0);
+                push_f32(out, width as f32);
+                push_f32(out, height as f32);
+                push_f32(out, 0.0);
+                push_f32(out, 1.0);
+            });
+
+            emit_packet(out, OPC_SET_SCISSOR, |out| {
+                push_i32(out, 0);
+                push_i32(out, 0);
+                push_i32(out, width as i32);
+                push_i32(out, height as i32);
+            });
+
+            // Clear with alpha=0. D3D9 X8 render targets should remain opaque regardless.
+            emit_packet(out, OPC_CLEAR, |out| {
+                push_u32(out, AEROGPU_CLEAR_COLOR);
+                push_f32(out, 0.0);
+                push_f32(out, 0.0);
+                push_f32(out, 0.0);
+                push_f32(out, 0.0); // alpha (ignored for X8)
+                push_f32(out, 1.0); // depth
+                push_u32(out, 0); // stencil
+            });
+
+            // Pixel shader constant: red with alpha=0. Alpha write must be ignored for X8.
+            emit_packet(out, OPC_SET_SHADER_CONSTANTS_F, |out| {
+                push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+                push_u32(out, 0); // start_register
+                push_u32(out, 1); // vec4_count
+                push_u32(out, 0); // reserved0
+                push_f32(out, 1.0); // r
+                push_f32(out, 0.0); // g
+                push_f32(out, 0.0); // b
+                push_f32(out, 0.0); // a (ignored for X8)
+            });
+
+            emit_packet(out, OPC_DRAW, |out| {
+                push_u32(out, 3); // vertex_count
+                push_u32(out, 1); // instance_count
+                push_u32(out, 0); // first_vertex
+                push_u32(out, 0); // first_instance
+            });
+
+            emit_packet(out, OPC_PRESENT, |out| {
+                push_u32(out, 0); // scanout_id
+                push_u32(out, 0); // flags
+            });
         });
 
-        emit_packet(out, OPC_CREATE_BUFFER, |out| {
-            push_u32(out, VB_HANDLE);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
-            push_u64(out, vb_data.len() as u64);
-            push_u32(out, 0); // backing_alloc_id
-            push_u32(out, 0); // backing_offset_bytes
-            push_u64(out, 0); // reserved0
-        });
+        exec.execute_cmd_stream(&stream)
+            .expect("execute should succeed");
 
-        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
-            push_u32(out, VB_HANDLE);
-            push_u32(out, 0); // reserved0
-            push_u64(out, 0); // offset_bytes
-            push_u64(out, vb_data.len() as u64);
-            out.extend_from_slice(&vb_data);
-        });
+        let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+            .expect("readback should succeed");
+        assert_eq!((out_w, out_h), (width, height));
 
-        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
-            push_u32(out, VS_HANDLE);
-            push_u32(out, 0); // AEROGPU_SHADER_STAGE_VERTEX
-            push_u32(out, vs_bytes.len() as u32);
-            push_u32(out, 0); // reserved0
-            out.extend_from_slice(&vs_bytes);
-        });
-
-        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
-            push_u32(out, PS_HANDLE);
-            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
-            push_u32(out, ps_bytes.len() as u32);
-            push_u32(out, 0); // reserved0
-            out.extend_from_slice(&ps_bytes);
-        });
-
-        emit_packet(out, OPC_BIND_SHADERS, |out| {
-            push_u32(out, VS_HANDLE);
-            push_u32(out, PS_HANDLE);
-            push_u32(out, 0); // cs
-            push_u32(out, 0); // reserved0
-        });
-
-        emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {
-            push_u32(out, IL_HANDLE);
-            push_u32(out, vertex_decl.len() as u32);
-            push_u32(out, 0); // reserved0
-            out.extend_from_slice(&vertex_decl);
-        });
-
-        emit_packet(out, OPC_SET_INPUT_LAYOUT, |out| {
-            push_u32(out, IL_HANDLE);
-            push_u32(out, 0); // reserved0
-        });
-
-        emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
-            push_u32(out, 0); // start_slot
-            push_u32(out, 1); // buffer_count
-            push_u32(out, VB_HANDLE);
-            push_u32(out, 16); // stride_bytes
-            push_u32(out, 0); // offset_bytes
-            push_u32(out, 0); // reserved0
-        });
-
-        emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {
-            push_u32(out, AEROGPU_TOPOLOGY_TRIANGLELIST);
-            push_u32(out, 0); // reserved0
-        });
-
-        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
-            push_u32(out, 1); // color_count
-            push_u32(out, 0); // depth_stencil
-            push_u32(out, RT_HANDLE);
-            for _ in 0..7 {
-                push_u32(out, 0);
-            }
-        });
-
-        emit_packet(out, OPC_SET_VIEWPORT, |out| {
-            push_f32(out, 0.0);
-            push_f32(out, 0.0);
-            push_f32(out, width as f32);
-            push_f32(out, height as f32);
-            push_f32(out, 0.0);
-            push_f32(out, 1.0);
-        });
-
-        emit_packet(out, OPC_SET_SCISSOR, |out| {
-            push_i32(out, 0);
-            push_i32(out, 0);
-            push_i32(out, width as i32);
-            push_i32(out, height as i32);
-        });
-
-        // Clear with alpha=0. D3D9 X8 render targets should remain opaque regardless.
-        emit_packet(out, OPC_CLEAR, |out| {
-            push_u32(out, AEROGPU_CLEAR_COLOR);
-            push_f32(out, 0.0);
-            push_f32(out, 0.0);
-            push_f32(out, 0.0);
-            push_f32(out, 0.0); // alpha (ignored for X8)
-            push_f32(out, 1.0); // depth
-            push_u32(out, 0); // stencil
-        });
-
-        // Pixel shader constant: red with alpha=0. Alpha write must be ignored for X8.
-        emit_packet(out, OPC_SET_SHADER_CONSTANTS_F, |out| {
-            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
-            push_u32(out, 0); // start_register
-            push_u32(out, 1); // vec4_count
-            push_u32(out, 0); // reserved0
-            push_f32(out, 1.0); // r
-            push_f32(out, 0.0); // g
-            push_f32(out, 0.0); // b
-            push_f32(out, 0.0); // a (ignored for X8)
-        });
-
-        emit_packet(out, OPC_DRAW, |out| {
-            push_u32(out, 3); // vertex_count
-            push_u32(out, 1); // instance_count
-            push_u32(out, 0); // first_vertex
-            push_u32(out, 0); // first_instance
-        });
-
-        emit_packet(out, OPC_PRESENT, |out| {
-            push_u32(out, 0); // scanout_id
-            push_u32(out, 0); // flags
-        });
-    });
-
-    exec.execute_cmd_stream(&stream)
-        .expect("execute should succeed");
-
-    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
-        .expect("readback should succeed");
-    assert_eq!((out_w, out_h), (width, height));
-
-    let center = pixel_at(&rgba, width, width / 2, height / 2);
-    assert_eq!(
-        center,
-        [255, 0, 0, 255],
-        "X8 render targets must be treated as opaque (alpha write ignored)"
-    );
+        let center = pixel_at(&rgba, width, width / 2, height / 2);
+        assert_eq!(
+            center,
+            [255, 0, 0, 255],
+            "X8 render targets must be treated as opaque (alpha write ignored); format_u32={format_u32}"
+        );
+    }
 }
-

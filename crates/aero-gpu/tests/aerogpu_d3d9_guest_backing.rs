@@ -2632,8 +2632,6 @@ fn d3d9_copy_texture2d_writeback_encodes_x8_alpha_as_255() {
     const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
     const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
 
-    const AEROGPU_FORMAT_B8G8R8X8_UNORM: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
-
     const SRC_TEX: u32 = 1;
     const DST_TEX: u32 = 2;
 
@@ -2646,92 +2644,102 @@ fn d3d9_copy_texture2d_writeback_encodes_x8_alpha_as_255() {
     let row_pitch = 12u32;
 
     let backing_total = (BACKING_OFFSET_BYTES + row_pitch * height) as usize;
+    for format in [
+        AerogpuFormat::B8G8R8X8Unorm,
+        AerogpuFormat::B8G8R8X8UnormSrgb,
+        AerogpuFormat::R8G8B8X8Unorm,
+        AerogpuFormat::R8G8B8X8UnormSrgb,
+    ] {
+        exec.reset();
 
-    let mut upload = vec![0u8; (row_pitch * height) as usize];
-    // Row 0 (y=0): pixel(0,0)=[1,2,3,0] pixel(1,0)=[4,5,6,0]
-    upload[0..8].copy_from_slice(&[1, 2, 3, 0, 4, 5, 6, 0]);
-    // Row 1 (y=1): pixel(0,1)=[7,8,9,0] pixel(1,1)=[10,11,12,0]
-    let row1 = row_pitch as usize;
-    upload[row1..row1 + 8].copy_from_slice(&[7, 8, 9, 0, 10, 11, 12, 0]);
+        let format_u32 = format as u32;
 
-    let mut guest_memory = VecGuestMemory::new(0x4000);
-    guest_memory
-        .write(DST_GPA, &vec![0xEEu8; backing_total])
-        .unwrap();
-    let alloc_table = AllocTable::new([(
-        DST_ALLOC_ID,
-        AllocEntry {
-            flags: 0,
-            gpa: DST_GPA,
-            size_bytes: 0x1000,
-        },
-    )])
-    .expect("alloc table");
+        let mut upload = vec![0u8; (row_pitch * height) as usize];
+        // Row 0 (y=0): pixel(0,0)=[1,2,3,0] pixel(1,0)=[4,5,6,0]
+        upload[0..8].copy_from_slice(&[1, 2, 3, 0, 4, 5, 6, 0]);
+        // Row 1 (y=1): pixel(0,1)=[7,8,9,0] pixel(1,1)=[10,11,12,0]
+        let row1 = row_pitch as usize;
+        upload[row1..row1 + 8].copy_from_slice(&[7, 8, 9, 0, 10, 11, 12, 0]);
 
-    let stream = build_stream(|out| {
-        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, SRC_TEX);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AEROGPU_FORMAT_B8G8R8X8_UNORM);
-            push_u32(out, width);
-            push_u32(out, height);
-            push_u32(out, 1); // mip_levels
-            push_u32(out, 1); // array_layers
-            push_u32(out, row_pitch);
-            push_u32(out, 0); // backing_alloc_id
-            push_u32(out, 0); // backing_offset_bytes
-            push_u64(out, 0); // reserved0
+        let mut guest_memory = VecGuestMemory::new(0x4000);
+        guest_memory
+            .write(DST_GPA, &vec![0xEEu8; backing_total])
+            .unwrap();
+        let alloc_table = AllocTable::new([(
+            DST_ALLOC_ID,
+            AllocEntry {
+                flags: 0,
+                gpa: DST_GPA,
+                size_bytes: 0x1000,
+            },
+        )])
+        .expect("alloc table");
+
+        let stream = build_stream(|out| {
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, SRC_TEX);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, format_u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, row_pitch);
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+                push_u32(out, SRC_TEX);
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, upload.len() as u64); // size_bytes
+                out.extend_from_slice(&upload);
+            });
+
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, DST_TEX);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, format_u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, row_pitch);
+                push_u32(out, DST_ALLOC_ID);
+                push_u32(out, BACKING_OFFSET_BYTES);
+                push_u64(out, 0); // reserved0
+            });
+
+            // Copy src pixel (0,1) into dst pixel (1,0).
+            emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+                push_u32(out, DST_TEX);
+                push_u32(out, SRC_TEX);
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 1); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 0); // src_x
+                push_u32(out, 1); // src_y
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
         });
 
-        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
-            push_u32(out, SRC_TEX);
-            push_u32(out, 0); // reserved0
-            push_u64(out, 0); // offset_bytes
-            push_u64(out, upload.len() as u64); // size_bytes
-            out.extend_from_slice(&upload);
-        });
+        exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
+            .expect("execute should succeed");
 
-        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, DST_TEX);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AEROGPU_FORMAT_B8G8R8X8_UNORM);
-            push_u32(out, width);
-            push_u32(out, height);
-            push_u32(out, 1); // mip_levels
-            push_u32(out, 1); // array_layers
-            push_u32(out, row_pitch);
-            push_u32(out, DST_ALLOC_ID);
-            push_u32(out, BACKING_OFFSET_BYTES);
-            push_u64(out, 0); // reserved0
-        });
+        let mut out = vec![0u8; backing_total];
+        guest_memory.read(DST_GPA, &mut out).unwrap();
 
-        // Copy src pixel (0,1) into dst pixel (1,0).
-        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
-            push_u32(out, DST_TEX);
-            push_u32(out, SRC_TEX);
-            push_u32(out, 0); // dst_mip_level
-            push_u32(out, 0); // dst_array_layer
-            push_u32(out, 0); // src_mip_level
-            push_u32(out, 0); // src_array_layer
-            push_u32(out, 1); // dst_x
-            push_u32(out, 0); // dst_y
-            push_u32(out, 0); // src_x
-            push_u32(out, 1); // src_y
-            push_u32(out, 1); // width
-            push_u32(out, 1); // height
-            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
-            push_u32(out, 0); // reserved0
-        });
-    });
-
-    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
-        .expect("execute should succeed");
-
-    let mut out = vec![0u8; backing_total];
-    guest_memory.read(DST_GPA, &mut out).unwrap();
-
-    let mut expected = vec![0xEEu8; backing_total];
-    let pixel_off = (BACKING_OFFSET_BYTES + 4) as usize;
-    expected[pixel_off..pixel_off + 4].copy_from_slice(&[7, 8, 9, 255]);
-    assert_eq!(out, expected);
+        let mut expected = vec![0xEEu8; backing_total];
+        let pixel_off = (BACKING_OFFSET_BYTES + 4) as usize;
+        expected[pixel_off..pixel_off + 4].copy_from_slice(&[7, 8, 9, 255]);
+        assert_eq!(out, expected, "format_u32={format_u32}");
+    }
 }
