@@ -87,6 +87,8 @@ python3 drivers/aerogpu/umd/d3d10_11/tools/wdk_abi_probe/gen_expected_header.py 
   --out drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h
 ```
 
+If your probe output contains `offsetof(...) = <n/a>` entries for optional members, you can pass `--allow-na` to omit those macros from the generated header.
+
 3. If you prefer, you can also copy the reported values manually into:
    - `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wdk_abi_expected.h`
 4. Rebuild the UMD with `AeroGpuUseWdkHeaders=1` and ensure the build passes without

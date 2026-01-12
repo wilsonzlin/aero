@@ -28,6 +28,10 @@ _OFFSETOF_RE = re.compile(
     r"^\s*offsetof\((?P<type>[^,]+),\s*(?P<member>[^)]+)\)\s*=\s*(?P<value>\d+)\s*$",
     re.MULTILINE,
 )
+_OFFSETOF_NA_RE = re.compile(
+    r"^\s*offsetof\((?P<type>[^,]+),\s*(?P<member>[^)]+)\)\s*=\s*<n/a>\s*$",
+    re.MULTILINE,
+)
 _EXPORT_RE = re.compile(
     r"^OpenAdapter(?P<which>10_2|10|11)\s*=>\s*_[A-Za-z0-9_]+@(?P<bytes>\d+)\s*$",
     re.MULTILINE,
@@ -40,6 +44,7 @@ _UMD_IFACE_VER_RE = re.compile(r"^D3D_UMD_INTERFACE_VERSION\s*=\s*(?P<value>\d+)
 class ProbeData:
     sizeof: dict[str, int]
     offsetof: dict[tuple[str, str], int]
+    offsetof_na: set[tuple[str, str]]
     exports: dict[str, int]
     msc_ver: int | None
     d3d_umd_interface_version: int | None
@@ -48,6 +53,7 @@ class ProbeData:
 def _parse_probe_output(text: str) -> ProbeData:
     sizeof: dict[str, int] = {}
     offsetof: dict[tuple[str, str], int] = {}
+    offsetof_na: set[tuple[str, str]] = set()
     exports: dict[str, int] = {}
 
     for m in _SIZEOF_RE.finditer(text):
@@ -55,6 +61,9 @@ def _parse_probe_output(text: str) -> ProbeData:
 
     for m in _OFFSETOF_RE.finditer(text):
         offsetof[(m.group("type").strip(), m.group("member").strip())] = int(m.group("value"))
+
+    for m in _OFFSETOF_NA_RE.finditer(text):
+        offsetof_na.add((m.group("type").strip(), m.group("member").strip()))
 
     for m in _EXPORT_RE.finditer(text):
         exports[m.group("which")] = int(m.group("bytes"))
@@ -64,6 +73,7 @@ def _parse_probe_output(text: str) -> ProbeData:
     return ProbeData(
         sizeof=sizeof,
         offsetof=offsetof,
+        offsetof_na=offsetof_na,
         exports=exports,
         msc_ver=int(m_msc.group("value")) if m_msc else None,
         d3d_umd_interface_version=int(m_iface.group("value")) if m_iface else None,
@@ -85,6 +95,17 @@ def _get_off(data: ProbeData, type_name: str, member: str) -> int:
         raise SystemExit(f"Missing offsetof({type_name}, {member}) in probe output")
 
 
+def _get_off_opt(data: ProbeData, type_name: str, member: str, *, allow_na: bool) -> int | None:
+    key = (type_name, member)
+    if key in data.offsetof:
+        return data.offsetof[key]
+    if key in data.offsetof_na:
+        if allow_na:
+            return None
+        raise SystemExit(f"offsetof({type_name}, {member}) was reported as <n/a>; pass --allow-na to skip optional offsets")
+    raise SystemExit(f"Missing offsetof({type_name}, {member}) in probe output")
+
+
 def _get_export_bytes(data: ProbeData, which: str) -> int:
     try:
         return data.exports[which]
@@ -92,7 +113,7 @@ def _get_export_bytes(data: ProbeData, which: str) -> int:
         raise SystemExit(f"Missing x86 export decoration for OpenAdapter{which} in probe output")
 
 
-def _emit_header(x86: ProbeData, x64: ProbeData) -> str:
+def _emit_header(x86: ProbeData, x64: ProbeData, *, allow_na: bool) -> str:
     # Use a timezone-aware UTC timestamp; `utcnow()` is deprecated in newer
     # Python versions.
     now = _dt.datetime.now(tz=_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -111,67 +132,133 @@ def _emit_header(x86: ProbeData, x64: ProbeData) -> str:
                 ]
             )
 
-        out.extend(
-            [
-                "  // OpenAdapter arg struct (runtime -> UMD).",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10DDIARG_OPENADAPTER {_get_size(data, 'D3D10DDIARG_OPENADAPTER')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_Interface {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'Interface')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_Version {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'Version')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hRTAdapter {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'hRTAdapter')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hAdapter {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'hAdapter')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterCallbacks {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'pAdapterCallbacks')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterFuncs {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'pAdapterFuncs')}",
-                "",
-                "  // Adapter function tables (UMD -> runtime).",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10DDI_ADAPTERFUNCS {_get_size(data, 'D3D10DDI_ADAPTERFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnGetCaps {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnGetCaps')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceSize {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceSize')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnCreateDevice {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnCreateDevice')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnCloseAdapter {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnCloseAdapter')}",
-                "",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10_1DDI_ADAPTERFUNCS {_get_size(data, 'D3D10_1DDI_ADAPTERFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnGetCaps {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnGetCaps')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceSize {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceSize')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnCreateDevice {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnCreateDevice')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnCloseAdapter {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnCloseAdapter')}",
-                "",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_ADAPTERFUNCS {_get_size(data, 'D3D11DDI_ADAPTERFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnGetCaps {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnGetCaps')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceSize {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceSize')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceContextSize {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceContextSize')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCreateDevice {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCreateDevice')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCloseAdapter {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCloseAdapter')}",
-                "",
-                "  // Device function tables (UMD -> runtime).",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10DDI_DEVICEFUNCS {_get_size(data, 'D3D10DDI_DEVICEFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnDestroyDevice {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnDestroyDevice')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnCreateResource {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnCreateResource')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnPresent {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnPresent')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnFlush {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnFlush')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnRotateResourceIdentities {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnRotateResourceIdentities')}",
-                "",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10_1DDI_DEVICEFUNCS {_get_size(data, 'D3D10_1DDI_DEVICEFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnDestroyDevice {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnDestroyDevice')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnCreateResource {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnCreateResource')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnPresent {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnPresent')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnFlush {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnFlush')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnRotateResourceIdentities {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnRotateResourceIdentities')}",
-                "",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_DEVICEFUNCS {_get_size(data, 'D3D11DDI_DEVICEFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnDestroyDevice {_get_off(data, 'D3D11DDI_DEVICEFUNCS', 'pfnDestroyDevice')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnCreateResource {_get_off(data, 'D3D11DDI_DEVICEFUNCS', 'pfnCreateResource')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnPresent {_get_off(data, 'D3D11DDI_DEVICEFUNCS', 'pfnPresent')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnRotateResourceIdentities {_get_off(data, 'D3D11DDI_DEVICEFUNCS', 'pfnRotateResourceIdentities')}",
-                "",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_DEVICECONTEXTFUNCS {_get_size(data, 'D3D11DDI_DEVICECONTEXTFUNCS')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnVsSetShader {_get_off(data, 'D3D11DDI_DEVICECONTEXTFUNCS', 'pfnVsSetShader')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnDraw {_get_off(data, 'D3D11DDI_DEVICECONTEXTFUNCS', 'pfnDraw')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnFlush {_get_off(data, 'D3D11DDI_DEVICECONTEXTFUNCS', 'pfnFlush')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnPresent {_get_off(data, 'D3D11DDI_DEVICECONTEXTFUNCS', 'pfnPresent')}",
-                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnRotateResourceIdentities {_get_off(data, 'D3D11DDI_DEVICECONTEXTFUNCS', 'pfnRotateResourceIdentities')}",
-                "",
-            ]
+        # OpenAdapter arg struct (runtime -> UMD).
+        out.append("  // OpenAdapter arg struct (runtime -> UMD).")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10DDIARG_OPENADAPTER {_get_size(data, 'D3D10DDIARG_OPENADAPTER')}"
         )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_Interface {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'Interface')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_Version {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'Version')}"
+        )
+        off = _get_off_opt(data, "D3D10DDIARG_OPENADAPTER", "hRTAdapter", allow_na=allow_na)
+        if off is not None:
+            out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hRTAdapter {off}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_hAdapter {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'hAdapter')}"
+        )
+        off = _get_off_opt(data, "D3D10DDIARG_OPENADAPTER", "pAdapterCallbacks", allow_na=allow_na)
+        if off is not None:
+            out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterCallbacks {off}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDIARG_OPENADAPTER_pAdapterFuncs {_get_off(data, 'D3D10DDIARG_OPENADAPTER', 'pAdapterFuncs')}"
+        )
+        out.append("")
+
+        # Adapter function tables (UMD -> runtime).
+        out.append("  // Adapter function tables (UMD -> runtime).")
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10DDI_ADAPTERFUNCS {_get_size(data, 'D3D10DDI_ADAPTERFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnGetCaps {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnGetCaps')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceSize {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceSize')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnCreateDevice {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnCreateDevice')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_ADAPTERFUNCS_pfnCloseAdapter {_get_off(data, 'D3D10DDI_ADAPTERFUNCS', 'pfnCloseAdapter')}"
+        )
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10_1DDI_ADAPTERFUNCS {_get_size(data, 'D3D10_1DDI_ADAPTERFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnGetCaps {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnGetCaps')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceSize {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceSize')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnCreateDevice {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnCreateDevice')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_ADAPTERFUNCS_pfnCloseAdapter {_get_off(data, 'D3D10_1DDI_ADAPTERFUNCS', 'pfnCloseAdapter')}"
+        )
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_ADAPTERFUNCS {_get_size(data, 'D3D11DDI_ADAPTERFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnGetCaps {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnGetCaps')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceSize {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCalcPrivateDeviceSize')}"
+        )
+        off = _get_off_opt(data, "D3D11DDI_ADAPTERFUNCS", "pfnCalcPrivateDeviceContextSize", allow_na=allow_na)
+        if off is not None:
+            out.append(
+                f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCalcPrivateDeviceContextSize {off}"
+            )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCreateDevice {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCreateDevice')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_ADAPTERFUNCS_pfnCloseAdapter {_get_off(data, 'D3D11DDI_ADAPTERFUNCS', 'pfnCloseAdapter')}"
+        )
+        out.append("")
+
+        # Device function tables (UMD -> runtime).
+        out.append("  // Device function tables (UMD -> runtime).")
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10DDI_DEVICEFUNCS {_get_size(data, 'D3D10DDI_DEVICEFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnDestroyDevice {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnDestroyDevice')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_pfnCreateResource {_get_off(data, 'D3D10DDI_DEVICEFUNCS', 'pfnCreateResource')}"
+        )
+        for member in ("pfnPresent", "pfnFlush", "pfnRotateResourceIdentities"):
+            off = _get_off_opt(data, "D3D10DDI_DEVICEFUNCS", member, allow_na=allow_na)
+            if off is not None:
+                out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10DDI_DEVICEFUNCS_{member} {off}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D10_1DDI_DEVICEFUNCS {_get_size(data, 'D3D10_1DDI_DEVICEFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnDestroyDevice {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnDestroyDevice')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_pfnCreateResource {_get_off(data, 'D3D10_1DDI_DEVICEFUNCS', 'pfnCreateResource')}"
+        )
+        for member in ("pfnPresent", "pfnFlush", "pfnRotateResourceIdentities"):
+            off = _get_off_opt(data, "D3D10_1DDI_DEVICEFUNCS", member, allow_na=allow_na)
+            if off is not None:
+                out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D10_1DDI_DEVICEFUNCS_{member} {off}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_DEVICEFUNCS {_get_size(data, 'D3D11DDI_DEVICEFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnDestroyDevice {_get_off(data, 'D3D11DDI_DEVICEFUNCS', 'pfnDestroyDevice')}"
+        )
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_pfnCreateResource {_get_off(data, 'D3D11DDI_DEVICEFUNCS', 'pfnCreateResource')}"
+        )
+        for member in ("pfnPresent", "pfnRotateResourceIdentities"):
+            off = _get_off_opt(data, "D3D11DDI_DEVICEFUNCS", member, allow_na=allow_na)
+            if off is not None:
+                out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICEFUNCS_{member} {off}")
+        out.append("")
+
+        out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_SIZEOF_D3D11DDI_DEVICECONTEXTFUNCS {_get_size(data, 'D3D11DDI_DEVICECONTEXTFUNCS')}")
+        out.append(
+            f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_pfnVsSetShader {_get_off(data, 'D3D11DDI_DEVICECONTEXTFUNCS', 'pfnVsSetShader')}"
+        )
+        for member in ("pfnDraw", "pfnFlush", "pfnPresent", "pfnRotateResourceIdentities"):
+            off = _get_off_opt(data, "D3D11DDI_DEVICECONTEXTFUNCS", member, allow_na=allow_na)
+            if off is not None:
+                out.append(f"  #define AEROGPU_D3D10_11_WDK_ABI_EXPECT_OFFSETOF_D3D11DDI_DEVICECONTEXTFUNCS_{member} {off}")
+        out.append("")
 
         return out
 
@@ -242,6 +329,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--x86", required=True, type=pathlib.Path, help="Probe output from the x86 build (text file).")
     ap.add_argument("--x64", required=True, type=pathlib.Path, help="Probe output from the x64 build (text file).")
     ap.add_argument("--out", required=True, type=pathlib.Path, help="Output header path.")
+    ap.add_argument(
+        "--allow-na",
+        action="store_true",
+        help="Allow optional offsetof(...) entries to be <n/a> in probe output (emits no macro for that field).",
+    )
     args = ap.parse_args(argv)
 
     x86_text = args.x86.read_text(encoding="utf-8", errors="replace")
@@ -250,7 +342,7 @@ def main(argv: list[str]) -> int:
     x86 = _parse_probe_output(x86_text)
     x64 = _parse_probe_output(x64_text)
 
-    header = _emit_header(x86, x64)
+    header = _emit_header(x86, x64, allow_na=args.allow_na)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(header, encoding="utf-8", newline="\n")
 
