@@ -74,8 +74,11 @@ pub trait GpuCommandProcessor {
 ### AeroGPU Device ↔ Driver Protocol
 
 The AeroGPU Windows driver communicates with the emulator via a shared protocol. See:
-- `drivers/protocol/` — Protocol definitions
-- `emulator/protocol/` — Emulator-side protocol implementation
+- `drivers/aerogpu/protocol/` — AeroGPU protocol headers (`aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
+- `emulator/protocol/aerogpu/` — Emulator-side mirrors (Rust + TypeScript)
+
+Reference: `docs/abi/aerogpu-pci-identity.md` (canonical AeroGPU VID/DID contract; note that the canonical
+`aero_machine::Machine` still uses a transitional VGA/VBE path for boot display today).
 
 ---
 
