@@ -633,16 +633,27 @@ function maybeInitE1000Device(): void {
   if (!api || !mgr) return;
   const Bridge = api.E1000Bridge;
   if (!Bridge) return;
-  if (!guestBase || !guestSize) return;
+  if (!guestBase) return;
   const txRing = netTxRing;
   const rxRing = netRxRing;
   if (!txRing || !rxRing) return;
 
   let bridge: E1000Bridge;
   try {
-    // Pass an explicit `undefined` for the optional MAC argument so we don't rely on
-    // wasm-bindgen constructor arity quirks.
-    bridge = new Bridge(guestBase >>> 0, guestSize >>> 0, undefined);
+    // wasm-bindgen's JS glue may enforce exact constructor arity. Prefer the 3-argument
+    // form (guestBase, guestSize, mac?) but fall back to the 2-argument form if needed.
+    //
+    // `guestSize=0` is treated as "use remainder of linear memory" by the Rust bridge.
+    const base = guestBase >>> 0;
+    const size = guestSize >>> 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Ctor = Bridge as any;
+    try {
+      bridge = Ctor.length >= 3 ? new Ctor(base, size, undefined) : new Ctor(base, size);
+    } catch {
+      // Retry with opposite arity (supports older/newer wasm-bindgen outputs).
+      bridge = Ctor.length >= 3 ? new Ctor(base, size) : new Ctor(base, size, undefined);
+    }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize E1000 bridge", err);
     return;
