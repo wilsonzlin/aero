@@ -154,13 +154,13 @@ export async function detectFormat(src: RandomAccessSource, filename?: string): 
 
   // qcow2: "QFI\xfb" at offset 0 + a plausible version at offset 4.
   //
-  // For truncated images (< 8 bytes) that still match the magic, treat them as QCOW2 so callers
-  // get a corruption error instead of silently falling back to raw.
-  if (src.size >= 4 && src.size < 8) {
+  // For truncated images (< 72 bytes, the minimum v2 header size) that still match the magic,
+  // treat them as QCOW2 so callers get a corruption error instead of silently falling back to raw.
+  if (src.size >= 4 && src.size < 72) {
     const sig4 = await src.readAt(0, 4);
     if (sig4[0] === 0x51 && sig4[1] === 0x46 && sig4[2] === 0x49 && sig4[3] === 0xfb) return "qcow2";
   }
-  if (src.size >= 8) {
+  if (src.size >= 72) {
     const sig = await src.readAt(0, 8);
     if (sig[0] === 0x51 && sig[1] === 0x46 && sig[2] === 0x49 && sig[3] === 0xfb) {
       const version = readU32BE(sig, 4);

@@ -509,11 +509,22 @@ test("detectFormat: detects truncated VHD cookie", async () => {
 });
 
 test("detectFormat: does not misclassify qcow2 magic with invalid version", async () => {
-  const file = new Uint8Array(8);
+  // Use a file large enough to contain the minimum QCOW2 v2 header size. For smaller files, we
+  // intentionally classify QCOW2 magic as QCOW2 so a later open/conversion step can report a clear
+  // truncation error.
+  const file = new Uint8Array(72);
   file.set([0x51, 0x46, 0x49, 0xfb], 0);
   writeU32BE(file, 4, 99);
   const fmt = await detectFormat(new MemSource(file), "disk.unknown");
   assert.equal(fmt, "raw");
+});
+
+test("detectFormat: qcow2 magic with invalid version is still qcow2 when header is truncated", async () => {
+  const file = new Uint8Array(8);
+  file.set([0x51, 0x46, 0x49, 0xfb], 0);
+  writeU32BE(file, 4, 99);
+  const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+  assert.equal(fmt, "qcow2");
 });
 
 test("detectFormat: does not misclassify VHD cookie without valid footer", async () => {
