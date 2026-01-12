@@ -91,6 +91,24 @@ fn tier1_wasm_memory_import_can_be_shared() {
 }
 
 #[test]
+fn tier1_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum() {
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &trivial_tier1_block(),
+        Tier1WasmOptions {
+            memory_shared: true,
+            memory_min_pages: 3,
+            ..Default::default()
+        },
+    );
+    let mem = imported_memory_type(&wasm);
+    assert!(!mem.memory64);
+    assert!(mem.shared);
+    assert_eq!(mem.initial, 3);
+    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.page_size_log2, None);
+}
+
+#[test]
 fn tier2_wasm_memory_import_defaults_to_unshared() {
     let trace = trivial_tier2_trace();
     let plan = RegAllocPlan::default();
@@ -146,6 +164,27 @@ fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum() {
     assert_eq!(mem.page_size_log2, None);
 }
 
+#[test]
+fn tier2_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum() {
+    let trace = trivial_tier2_trace();
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            memory_shared: true,
+            memory_min_pages: 7,
+            ..Default::default()
+        },
+    );
+    let mem = imported_memory_type(&wasm);
+    assert!(!mem.memory64);
+    assert!(mem.shared);
+    assert_eq!(mem.initial, 7);
+    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.page_size_log2, None);
+}
+
 #[cfg(feature = "legacy-baseline")]
 #[test]
 fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum() {
@@ -163,6 +202,26 @@ fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum() {
     assert!(!mem.memory64);
     assert!(mem.shared);
     assert_eq!(mem.initial, 1);
+    assert_eq!(mem.maximum, Some(65_536));
+    assert_eq!(mem.page_size_log2, None);
+}
+
+#[cfg(feature = "legacy-baseline")]
+#[test]
+fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum_and_respects_minimum() {
+    let block = trivial_legacy_block();
+    let wasm = LegacyWasmCodegen::new().compile_block_with_options(
+        &block,
+        LegacyWasmOptions {
+            memory_shared: true,
+            memory_min_pages: 9,
+            ..Default::default()
+        },
+    );
+    let mem = imported_memory_type(&wasm);
+    assert!(!mem.memory64);
+    assert!(mem.shared);
+    assert_eq!(mem.initial, 9);
     assert_eq!(mem.maximum, Some(65_536));
     assert_eq!(mem.page_size_log2, None);
 }
