@@ -18,7 +18,7 @@ fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
 
     let mut bus = SimpleBus::new(64);
     bus.load(0, CODE);
-    let func = build_function_from_x86(&bus, 0, CfgBuildConfig::default());
+    let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
 
     let env = RuntimeEnv::default();
     let mut state = T2State::default();
@@ -46,7 +46,7 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
 
     let mut bus = SimpleBus::new(64);
     bus.load(0, CODE);
-    let func = build_function_from_x86(&bus, 0, CfgBuildConfig::default());
+    let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
 
     let env = RuntimeEnv::default();
     let mut state = T2State::default();
@@ -60,4 +60,3 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
     );
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
-
