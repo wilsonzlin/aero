@@ -149,6 +149,9 @@ When a dump trigger fires, the first dump line repeats key parts of that configu
 
 - `mode`: `unique` or `all`
 - `max`: effective record capacity (after applying `AEROGPU_D3D9_TRACE_MAX`)
+- `dump_present`: the configured `AEROGPU_D3D9_TRACE_DUMP_PRESENT` count (0 = disabled)
+- `dump_on_detach`: whether `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1` is enabled
+- `dump_on_fail`: whether `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` is enabled
 - `dump_on_stub`: whether `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is enabled
 - `stderr_on`: whether `AEROGPU_D3D9_TRACE_STDERR=1` is enabled (Windows-only echo)
 - `filter_on` / `filter_count`: whether `AEROGPU_D3D9_TRACE_FILTER` is active and how many entrypoints are included

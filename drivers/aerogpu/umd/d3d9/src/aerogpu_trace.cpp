@@ -560,11 +560,14 @@ void dump_trace_impl(const char* reason) {
   const uint32_t recorded = std::min(g_trace_write_index.load(std::memory_order_relaxed), max_entries);
 
   trace_outf(
-      "aerogpu-d3d9-trace: dump reason=%s entries=%u mode=%s max=%u dump_on_stub=%u stderr_on=%u filter_on=%u filter_count=%u\n",
+      "aerogpu-d3d9-trace: dump reason=%s entries=%u mode=%s max=%u dump_present=%u dump_on_detach=%u dump_on_fail=%u dump_on_stub=%u stderr_on=%u filter_on=%u filter_count=%u\n",
       reason ? reason : "(null)",
       static_cast<unsigned>(recorded),
       g_trace_unique_only ? "unique" : "all",
       static_cast<unsigned>(max_entries),
+      static_cast<unsigned>(g_trace_dump_present_count),
+      static_cast<unsigned>(g_trace_dump_on_detach ? 1u : 0u),
+      static_cast<unsigned>(g_trace_dump_on_fail ? 1u : 0u),
       static_cast<unsigned>(g_trace_dump_on_stub ? 1u : 0u),
       static_cast<unsigned>(g_trace_stderr_enabled ? 1u : 0u),
       static_cast<unsigned>(g_trace_filter_enabled ? 1u : 0u),
