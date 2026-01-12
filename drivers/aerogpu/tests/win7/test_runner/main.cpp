@@ -938,7 +938,6 @@ int main(int argc, char** argv) {
       "d3d11_map_do_not_wait",
       "d3d11_texture",
       "d3d11_caps_smoke",
-      "d3d11_shared_texture_ipc",
       "d3d11_rs_om_state_sanity",
       "d3d11_geometry_shader_smoke",
       "dxgi_swapchain_probe",
