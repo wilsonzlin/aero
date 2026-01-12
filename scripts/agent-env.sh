@@ -188,6 +188,15 @@ if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
     fi
     export RUSTFLAGS="${RUSTFLAGS# }"
   fi
+
+  # WASM builds use rust-lld directly (no `cc` wrapper), so the `-Wl,` indirection used for native
+  # linkers does not apply. Provide the same thread cap via per-target rustflags so `cargo ... --target
+  # wasm32-unknown-unknown` does not fail with lld thread-spawn errors under tight process limits.
+  if [[ "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}" != *"--threads="* ]]; then
+    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-} -C link-arg=--threads=${CARGO_BUILD_JOBS:-1}"
+    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS# }"
+  fi
+
   unset aero_target 2>/dev/null || true
 fi
 
