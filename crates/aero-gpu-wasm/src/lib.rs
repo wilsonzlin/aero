@@ -66,27 +66,27 @@ mod wasm {
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("presents_attempted"),
-            &BigInt::from(snapshot.presents_attempted).into(),
+            &JsValue::from_f64(snapshot.presents_attempted as f64),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("presents_succeeded"),
-            &BigInt::from(snapshot.presents_succeeded).into(),
+            &JsValue::from_f64(snapshot.presents_succeeded as f64),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("recoveries_attempted"),
-            &BigInt::from(snapshot.recoveries_attempted).into(),
+            &JsValue::from_f64(snapshot.recoveries_attempted as f64),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("recoveries_succeeded"),
-            &BigInt::from(snapshot.recoveries_succeeded).into(),
+            &JsValue::from_f64(snapshot.recoveries_succeeded as f64),
         );
         let _ = Reflect::set(
             &obj,
             &JsValue::from_str("surface_reconfigures"),
-            &BigInt::from(snapshot.surface_reconfigures).into(),
+            &JsValue::from_f64(snapshot.surface_reconfigures as f64),
         );
         obj.into()
     }

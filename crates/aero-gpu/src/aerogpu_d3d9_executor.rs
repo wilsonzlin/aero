@@ -2043,10 +2043,7 @@ impl AerogpuD3d9Executor {
     ) -> Result<(), AerogpuD3d9Error> {
         let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
 
-        let flags = aero_d3d9::runtime::ShaderTranslationFlags {
-            half_pixel_center: false,
-            caps_hash: None,
-        };
+        let flags = aero_d3d9::runtime::ShaderTranslationFlags::new(false, None);
 
         // At most one invalidation+retranslate retry for corruption defense.
         let mut invalidated_once = false;
