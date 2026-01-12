@@ -1,6 +1,6 @@
 use firmware::{
     bda::{BiosDataArea, BDA_VIDEO_MODE_ADDR},
-    bios::{Bios, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET},
+    bios::{Bios, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET, VGA_FONT_8X8_OFFSET},
     cpu::CpuState,
     memory::{MemoryBus, VecMemory},
     rtc::{CmosRtc, DateTime},
@@ -440,4 +440,25 @@ fn int10_get_font_info_returns_8x16_font_pointer() {
     // Preserve upper register bits.
     assert_eq!(cpu.rcx & !0xFFFF, 0x1234_5678_0000_0000);
     assert_eq!(cpu.rdx & !0xFF, 0xFEDC_BA98_0000_1200);
+}
+
+#[test]
+fn int10_get_font_info_returns_8x8_font_pointer_for_bh03() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Initialize text-mode BDA fields so rows-1 is well-defined.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    cpu.set_ax(0x1130); // AH=11h, AL=30h
+    cpu.set_bh(0x03); // request 8x8 font (common convention)
+
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(cpu.es(), BIOS_SEGMENT);
+    assert_eq!(cpu.bp(), VGA_FONT_8X8_OFFSET);
+    assert_eq!(cpu.cx(), 8);
+    assert_eq!(cpu.dl(), 24);
 }

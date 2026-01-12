@@ -1,7 +1,7 @@
 use super::{
     BIOS_SIZE, DEFAULT_INT_STUB_OFFSET, DISKETTE_PARAM_TABLE_OFFSET, FIXED_DISK_PARAM_TABLE_OFFSET,
     INT10_STUB_OFFSET, INT13_STUB_OFFSET, INT15_STUB_OFFSET, INT16_STUB_OFFSET, INT1A_STUB_OFFSET,
-    VGA_FONT_8X16_OFFSET, VIDEO_PARAM_TABLE_OFFSET,
+    VGA_FONT_8X16_OFFSET, VGA_FONT_8X8_OFFSET, VIDEO_PARAM_TABLE_OFFSET,
 };
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
@@ -106,6 +106,10 @@ pub fn build_bios_rom() -> Vec<u8> {
     let font_8x16 = build_font8x16();
     write_stub(&mut rom, VGA_FONT_8X16_OFFSET, &font_8x16);
 
+    // IVT vector 0x1F also historically points at an 8x8 graphics character table.
+    let font_8x8 = build_font8x8();
+    write_stub(&mut rom, VGA_FONT_8X8_OFFSET, &font_8x8);
+
     // Optional ROM signature (harmless and convenient for identification).
     rom[BIOS_SIZE - 2] = 0x55;
     rom[BIOS_SIZE - 1] = 0xAA;
@@ -128,6 +132,16 @@ fn build_font8x16() -> [u8; 256 * 16] {
             font[base + row * 2] = bits;
             font[base + row * 2 + 1] = bits;
         }
+    }
+    font
+}
+
+fn build_font8x8() -> [u8; 256 * 8] {
+    let mut font = [0u8; 256 * 8];
+    for ch in 0u16..=0xFF {
+        let glyph8 = BASIC_FONTS.get((ch as u8) as char).unwrap_or([0u8; 8]);
+        let base = usize::from(ch as u8) * 8;
+        font[base..base + 8].copy_from_slice(&glyph8);
     }
     font
 }

@@ -80,6 +80,8 @@ pub const INT15_STUB_OFFSET: u16 = 0xE600;
 pub const INT16_STUB_OFFSET: u16 = 0xE700;
 pub const INT1A_STUB_OFFSET: u16 = 0xE900;
 pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
+/// IVT vector 0x1F: pointer to the 8x8 graphics character table (font).
+pub const VGA_FONT_8X8_OFFSET: u16 = 0xC000;
 /// Offset of the built-in 8x16 font table returned by INT 10h AH=11h AL=30h ("Get Font
 /// Information").
 pub const VGA_FONT_8X16_OFFSET: u16 = 0xD000;
@@ -576,6 +578,10 @@ mod tests {
             expected[row * 2 + 1] = bits;
         }
         assert_eq!(&rom_image[a_glyph..a_glyph + 16], &expected);
+
+        // 8x8 font table (IVT vector 0x1F).
+        let a_glyph_8x8 = VGA_FONT_8X8_OFFSET as usize + (0x41usize * 8);
+        assert_eq!(&rom_image[a_glyph_8x8..a_glyph_8x8 + 8], &glyph8);
     }
 
     #[test]
@@ -605,6 +611,7 @@ mod tests {
             read_vec(&mut mem, 0x1E),
             (DISKETTE_PARAM_TABLE_OFFSET, BIOS_SEGMENT)
         );
+        assert_eq!(read_vec(&mut mem, 0x1F), (VGA_FONT_8X8_OFFSET, BIOS_SEGMENT));
         assert_eq!(
             read_vec(&mut mem, 0x41),
             (FIXED_DISK_PARAM_TABLE_OFFSET, BIOS_SEGMENT)

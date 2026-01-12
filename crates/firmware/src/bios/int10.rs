@@ -4,7 +4,7 @@ use crate::{
     memory::{real_addr, MemoryBus},
 };
 
-use super::{Bios, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
+use super::{Bios, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET, VGA_FONT_8X8_OFFSET};
 
 impl Bios {
     pub fn handle_int10(&mut self, cpu: &mut CpuState, memory: &mut impl MemoryBus) {
@@ -173,10 +173,20 @@ impl Bios {
                 // Information", which returns a pointer to the ROM font table.
                 match cpu.al() {
                     0x30 => {
-                        // Return the built-in 8x16 font table in the system BIOS ROM.
+                        // Return a pointer to a built-in ROM font table.
+                        //
+                        // Many BIOSes allow selecting which font to retrieve via BH. We support a
+                        // minimal subset:
+                        // - BH=03h returns an 8x8 font table
+                        // - all other values return the default 8x16 font table used for mode 03h
+                        let (off, bytes_per_char) = if cpu.bh() == 0x03 {
+                            (VGA_FONT_8X8_OFFSET, 8u16)
+                        } else {
+                            (VGA_FONT_8X16_OFFSET, 16u16)
+                        };
                         cpu.set_es(BIOS_SEGMENT);
-                        cpu.set_bp(VGA_FONT_8X16_OFFSET);
-                        cpu.set_cx(16); // bytes per character
+                        cpu.set_bp(off);
+                        cpu.set_cx(bytes_per_char);
                         cpu.set_dl(BiosDataArea::read_text_rows(memory).saturating_sub(1));
                     }
                     _ => {
