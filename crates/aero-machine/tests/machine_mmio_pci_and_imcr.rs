@@ -1,6 +1,7 @@
 use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
+use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use firmware::bios::PCIE_ECAM_BASE;
 use pretty_assertions::assert_eq;
@@ -302,4 +303,36 @@ fn pci_bar_routing_respects_command_bits_for_e1000() {
     cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !0x2));
     assert_ne!(m.io_read(io_base, 4), 0xFFFF_FFFF);
     assert_eq!(m.read_physical_u32(mmio_base), 0xFFFF_FFFF);
+}
+
+#[test]
+fn hpet_mmio_writes_can_raise_ioapic_interrupt_in_apic_mode() {
+    let vector = 0x61u8;
+
+    let mut m = Machine::new(mmio_machine_config()).unwrap();
+    enable_a20(&mut m);
+
+    // Enable APIC mode delivery so IOAPIC routes into the LAPIC.
+    m.platform_interrupts()
+        .unwrap()
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+
+    // Route HPET timer0 default GSI2 -> vector 0x61, level-triggered, unmasked.
+    let gsi = 2u32;
+    let low = u32::from(vector) | (1 << 15); // level-triggered, active-high
+    program_ioapic_entry(&mut m, gsi, low, 0);
+
+    // Program HPET timer0 via guest-visible MMIO.
+    //
+    // Configure Timer0: route=2, level-triggered, interrupt enabled.
+    let timer0_cfg = (2u64 << 9) | (1 << 1) | (1 << 2);
+    m.write_physical_u64(HPET_MMIO_BASE + 0x100, timer0_cfg);
+    // Arm comparator at 0 so it's immediately pending once HPET is enabled.
+    m.write_physical_u64(HPET_MMIO_BASE + 0x108, 0);
+    // Enable HPET (general config).
+    m.write_physical_u64(HPET_MMIO_BASE + 0x010, 1);
+
+    let interrupts = m.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector));
 }
