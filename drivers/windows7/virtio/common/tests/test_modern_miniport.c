@@ -1063,6 +1063,8 @@ static void test_reset_device_times_out_passive_level(void)
     VirtioPciModernMmioSimInstall(&sim);
 
     WdkTestResetDbgPrintExCount();
+    WdkTestResetKeDelayExecutionThreadCount();
+    WdkTestResetKeStallExecutionProcessorCount();
     WdkTestSetCurrentIrql(PASSIVE_LEVEL);
 
     VirtioPciResetDevice(&dev);
@@ -1070,6 +1072,8 @@ static void test_reset_device_times_out_passive_level(void)
     assert(sim.status_write_count == 1);
     assert(sim.status_writes[0] == 0);
     assert(WdkTestGetDbgPrintExCount() == 1);
+    assert(WdkTestGetKeDelayExecutionThreadCount() != 0);
+    assert(WdkTestGetKeStallExecutionProcessorCount() == 0);
 
     WdkTestSetCurrentIrql(PASSIVE_LEVEL);
     VirtioPciModernMmioSimUninstall();
@@ -1099,6 +1103,8 @@ static void test_reset_device_times_out_dispatch_level(void)
     VirtioPciModernMmioSimInstall(&sim);
 
     WdkTestResetDbgPrintExCount();
+    WdkTestResetKeDelayExecutionThreadCount();
+    WdkTestResetKeStallExecutionProcessorCount();
     WdkTestSetCurrentIrql(DISPATCH_LEVEL);
 
     VirtioPciResetDevice(&dev);
@@ -1106,8 +1112,50 @@ static void test_reset_device_times_out_dispatch_level(void)
     assert(sim.status_write_count == 1);
     assert(sim.status_writes[0] == 0);
     assert(WdkTestGetDbgPrintExCount() == 1);
+    assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
+    assert(WdkTestGetKeStallExecutionProcessorCount() != 0);
 
     WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_reset_device_fast_path(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /* Device reports reset as synchronous: device_status reads as 0 immediately. */
+    sim.device_status_read_override = 1;
+    sim.device_status_read_override_value = 0;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    WdkTestResetDbgPrintExCount();
+    WdkTestResetKeDelayExecutionThreadCount();
+    WdkTestResetKeStallExecutionProcessorCount();
+    WdkTestSetCurrentIrql(PASSIVE_LEVEL);
+
+    VirtioPciResetDevice(&dev);
+
+    assert(sim.status_write_count == 1);
+    assert(sim.status_writes[0] == 0);
+    assert(WdkTestGetDbgPrintExCount() == 0);
+    assert(WdkTestGetKeDelayExecutionThreadCount() == 0);
+    assert(WdkTestGetKeStallExecutionProcessorCount() == 0);
+
     VirtioPciModernMmioSimUninstall();
 }
 
@@ -1143,6 +1191,7 @@ int main(void)
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
     test_notify_queue_does_not_write_when_queue_missing();
+    test_reset_device_fast_path();
     test_reset_device_times_out_passive_level();
     test_reset_device_times_out_dispatch_level();
 

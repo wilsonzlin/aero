@@ -256,10 +256,12 @@ static __forceinline VOID KeReleaseSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _In_ K
     __atomic_store_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
 }
 
+VOID WdkTestOnKeStallExecutionProcessor(_In_ ULONG Microseconds);
+
 static __forceinline VOID KeStallExecutionProcessor(_In_ ULONG Microseconds)
 {
-    (void)Microseconds;
-    /* Deterministic host tests: no-op. */
+    WdkTestOnKeStallExecutionProcessor(Microseconds);
+    /* Deterministic host tests: do not actually sleep. */
 }
 
 /* Interlocked primitives (single-process host tests). */
@@ -392,3 +394,9 @@ VOID WdkTestSetIoConnectInterruptStatus(_In_ NTSTATUS Status);
 VOID WdkTestSetCurrentIrql(_In_ KIRQL Irql);
 ULONG WdkTestGetDbgPrintExCount(VOID);
 VOID WdkTestResetDbgPrintExCount(VOID);
+
+ULONG WdkTestGetKeDelayExecutionThreadCount(VOID);
+VOID WdkTestResetKeDelayExecutionThreadCount(VOID);
+
+ULONG WdkTestGetKeStallExecutionProcessorCount(VOID);
+VOID WdkTestResetKeStallExecutionProcessorCount(VOID);

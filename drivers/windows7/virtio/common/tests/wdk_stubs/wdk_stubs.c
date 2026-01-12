@@ -19,6 +19,8 @@ static KIRQL g_current_irql = PASSIVE_LEVEL;
  */
 static ULONGLONG g_interrupt_time_100ns = 0;
 static ULONG g_dbg_print_ex_count = 0;
+static ULONG g_ke_delay_execution_thread_count = 0;
+static ULONG g_ke_stall_execution_processor_count = 0;
 
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
@@ -177,6 +179,8 @@ NTSTATUS KeDelayExecutionThread(_In_ KPROCESSOR_MODE WaitMode, _In_ BOOLEAN Aler
     (void)WaitMode;
     (void)Alertable;
 
+    g_ke_delay_execution_thread_count++;
+
     if (Interval != NULL) {
         /*
          * Negative values are relative 100ns intervals.
@@ -217,6 +221,32 @@ ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Form
     (void)vfprintf(stderr, Format, ap);
     va_end(ap);
     return 0;
+}
+
+VOID WdkTestOnKeStallExecutionProcessor(_In_ ULONG Microseconds)
+{
+    g_ke_stall_execution_processor_count++;
+    g_interrupt_time_100ns += (ULONGLONG)Microseconds * 10ull;
+}
+
+ULONG WdkTestGetKeDelayExecutionThreadCount(VOID)
+{
+    return g_ke_delay_execution_thread_count;
+}
+
+VOID WdkTestResetKeDelayExecutionThreadCount(VOID)
+{
+    g_ke_delay_execution_thread_count = 0;
+}
+
+ULONG WdkTestGetKeStallExecutionProcessorCount(VOID)
+{
+    return g_ke_stall_execution_processor_count;
+}
+
+VOID WdkTestResetKeStallExecutionProcessorCount(VOID)
+{
+    g_ke_stall_execution_processor_count = 0;
 }
 
 BOOLEAN WdkTestTriggerInterrupt(_In_ PKINTERRUPT InterruptObject)
