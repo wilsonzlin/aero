@@ -211,7 +211,16 @@ if (Test-Path -LiteralPath $cerPath) { Remove-Item -LiteralPath $cerPath -Force 
 if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
 
 & certutil.exe -user -exportcert -f My $thumbprint $cerPath | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "certutil.exe -exportcert failed with exit code $LASTEXITCODE" }
 & certutil.exe -user -exportPFX -p $PfxPassword -f My $thumbprint $pfxPath | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "certutil.exe -exportPFX failed with exit code $LASTEXITCODE" }
+
+if (-not (Test-Path -LiteralPath $cerPath)) {
+  throw "Expected output file not found: $cerPath"
+}
+if (-not (Test-Path -LiteralPath $pfxPath)) {
+  throw "Expected output file not found: $pfxPath"
+}
 
 Write-Host ""
 Write-Host "Wrote:"
