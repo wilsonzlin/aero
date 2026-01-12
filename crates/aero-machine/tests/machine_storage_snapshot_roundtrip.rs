@@ -4,6 +4,7 @@ use aero_devices::pci::{profile, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DAT
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
@@ -173,6 +174,99 @@ fn rewrite_snapshot_to_legacy_multi_disk_controller_entries(bytes: &[u8]) -> Vec
             let mut encoded = Vec::new();
             encoded.extend_from_slice(&(new_states.len() as u32).to_le_bytes());
             for s in new_states {
+                s.encode(&mut encoded).expect("encode device entry");
+            }
+            payload = encoded;
+        }
+
+        out.extend_from_slice(&section.id.0.to_le_bytes());
+        out.extend_from_slice(&section.version.to_le_bytes());
+        out.extend_from_slice(&section.flags.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+        out.extend_from_slice(&payload);
+    }
+
+    out
+}
+
+/// Rewrite a canonical snapshot by injecting an extra, unknown BDF entry into the `DSKC` wrapper
+/// under `DeviceId::DISK_CONTROLLER`.
+///
+/// This is used to validate forward compatibility: restore should ignore unknown controller entries
+/// (unknown BDF / controller type) rather than failing.
+fn rewrite_snapshot_add_unknown_dskc_entry(bytes: &[u8]) -> Vec<u8> {
+    // Snapshot file header: magic (8) + version (2) + endianness (1) + reserved (1) + flags (4).
+    const SNAPSHOT_HEADER_LEN: usize = 16;
+    assert!(
+        bytes.len() >= SNAPSHOT_HEADER_LEN,
+        "snapshot too short for header"
+    );
+
+    let mut r = io::Cursor::new(bytes);
+    let index = snapshot::inspect_snapshot(&mut r).expect("snapshot should be inspectable");
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&bytes[..SNAPSHOT_HEADER_LEN]);
+
+    for section in index.sections {
+        r.seek(SeekFrom::Start(section.offset))
+            .expect("seek to section payload");
+        let mut payload = vec![0u8; section.len as usize];
+        r.read_exact(&mut payload).expect("read section payload");
+
+        if section.id == snapshot::SectionId::DEVICES {
+            let mut dev_r = io::Cursor::new(payload.as_slice());
+            let count = read_u32_le(&mut dev_r) as usize;
+            let mut states = Vec::with_capacity(count.min(64));
+            for _ in 0..count {
+                states.push(
+                    snapshot::DeviceState::decode(&mut dev_r, section.len)
+                        .expect("decode device entry"),
+                );
+            }
+
+            let disk_idx = states
+                .iter()
+                .position(|s| s.id == snapshot::DeviceId::DISK_CONTROLLER)
+                .expect("expected DISK_CONTROLLER entry");
+            let dskc_state = &states[disk_idx];
+            assert_eq!(
+                dskc_state
+                    .data
+                    .get(8..12)
+                    .expect("io-snapshot header must contain a device id"),
+                b"DSKC",
+                "expected canonical DISK_CONTROLLER to be a DSKC wrapper"
+            );
+
+            let mut wrapper = DiskControllersSnapshot::default();
+            snapshot::apply_io_snapshot_to_device(dskc_state, &mut wrapper)
+                .expect("decode DSKC wrapper");
+
+            // Insert an extra entry at a BDF that cannot exist in the canonical Q35 topology.
+            // Use the AHCI nested snapshot bytes as a well-formed payload.
+            let sample = wrapper
+                .controllers()
+                .get(&profile::SATA_AHCI_ICH9.bdf.pack_u16())
+                .or_else(|| wrapper.controllers().values().next())
+                .expect("DSKC wrapper must contain at least one controller entry")
+                .clone();
+            let unknown_bdf: u16 = 0xFFFF;
+            let _ = wrapper.insert(unknown_bdf, sample);
+
+            let new_dskc_state = snapshot::DeviceState {
+                id: snapshot::DeviceId::DISK_CONTROLLER,
+                version: DiskControllersSnapshot::DEVICE_VERSION.major,
+                flags: DiskControllersSnapshot::DEVICE_VERSION.minor,
+                data: wrapper.save_state(),
+            };
+
+            states[disk_idx] = new_dskc_state;
+            states.sort_by_key(|s| (s.id.0, s.version, s.flags));
+
+            let mut encoded = Vec::new();
+            encoded.extend_from_slice(&(states.len() as u32).to_le_bytes());
+            for s in states {
                 s.encode(&mut encoded).expect("encode device entry");
             }
             payload = encoded;
@@ -749,6 +843,83 @@ fn machine_restore_accepts_legacy_multi_disk_controller_entries() {
     restored.restore_snapshot_bytes(&legacy).unwrap();
 
     // Reattach backends after restore (controller snapshots drop host backends).
+    restored.attach_ahci_drive_port0(AtaDrive::new(Box::new(ahci_disk)).unwrap());
+    restored.attach_ide_primary_master_drive(AtaDrive::new(Box::new(ide_disk)).unwrap());
+
+    // IDE: Continue the in-flight PIO transfer; next 4 bytes should be "REST".
+    let w2 = restored.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w3 = restored.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let mut next4 = [0u8; 4];
+    next4[0..2].copy_from_slice(&w2.to_le_bytes());
+    next4[2..4].copy_from_slice(&w3.to_le_bytes());
+    assert_eq!(&next4, b"REST");
+}
+
+#[test]
+fn machine_restore_ignores_unknown_dskc_entries() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    let cfg = MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        enable_ide: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let ide_disk = SharedDisk::new(16);
+    let mut ide_seed = vec![0u8; SECTOR_SIZE];
+    ide_seed[0..8].copy_from_slice(b"BOOTREST");
+    ide_disk.clone().write_sectors(0, &ide_seed).unwrap();
+
+    let ahci_disk = SharedDisk::new(64);
+    let mut ahci_seed = vec![0u8; SECTOR_SIZE];
+    ahci_seed[0..4].copy_from_slice(&[9, 8, 7, 6]);
+    ahci_disk.clone().write_sectors(4, &ahci_seed).unwrap();
+
+    let mut iso = MemIso::new(2);
+    iso.data[2048..2053].copy_from_slice(b"WORLD");
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+    src.attach_ahci_drive_port0(AtaDrive::new(Box::new(ahci_disk.clone())).unwrap());
+    src.attach_ide_primary_master_drive(AtaDrive::new(Box::new(ide_disk.clone())).unwrap());
+    src.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(iso))));
+
+    // Enable PCI decoding + DMA.
+    {
+        let bdf = profile::SATA_AHCI_ICH9.bdf;
+        write_cfg_u16(&mut src, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    }
+    {
+        let bdf = profile::IDE_PIIX3.bdf;
+        write_cfg_u16(&mut src, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+    }
+
+    // IDE: start a PIO READ and consume only the first 4 bytes ("BOOT"), leaving "REST" pending.
+    src.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    src.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20);
+    let w0 = src.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w1 = src.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let mut first4 = [0u8; 4];
+    first4[0..2].copy_from_slice(&w0.to_le_bytes());
+    first4[2..4].copy_from_slice(&w1.to_le_bytes());
+    assert_eq!(&first4, b"BOOT");
+
+    let canonical = src.take_snapshot_full().unwrap();
+    let mutated = rewrite_snapshot_add_unknown_dskc_entry(&canonical);
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&mutated).unwrap();
+
+    // Reattach backends after restore.
     restored.attach_ahci_drive_port0(AtaDrive::new(Box::new(ahci_disk)).unwrap());
     restored.attach_ide_primary_master_drive(AtaDrive::new(Box::new(ide_disk)).unwrap());
 
