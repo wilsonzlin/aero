@@ -956,6 +956,46 @@ function Invoke-AeroQmpCommand {
   return $resp
 }
 
+function Invoke-AeroQmpInputSendEvent {
+  param(
+    [Parameter(Mandatory = $true)] [System.IO.StreamWriter]$Writer,
+    [Parameter(Mandatory = $true)] [System.IO.StreamReader]$Reader,
+    [Parameter(Mandatory = $false)] [string]$Device = "",
+    [Parameter(Mandatory = $true)] $Events
+  )
+
+  # Prefer targeting the virtio input devices by QOM id (so we don't accidentally exercise PS/2),
+  # but fall back to broadcasting the event when QEMU rejects the `device` argument.
+  $cmd = @{
+    execute   = "input-send-event"
+    arguments = @{
+      events = $Events
+    }
+  }
+  if (-not [string]::IsNullOrEmpty($Device)) {
+    $cmd.arguments.device = $Device
+  }
+
+  try {
+    $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
+    return $Device
+  } catch {
+    if ([string]::IsNullOrEmpty($Device)) {
+      throw
+    }
+
+    # Retry without device routing.
+    try {
+      $cmd.arguments.Remove("device")
+      $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
+      Write-Warning "QMP input-send-event rejected device='$Device'; falling back to broadcast: $($_.Exception.Message)"
+      return $null
+    } catch {
+      throw "QMP input-send-event failed with device='$Device' and without device: $_"
+    }
+  }
+}
+
 function Try-AeroQmpInjectVirtioInputEvents {
   param(
     [Parameter(Mandatory = $true)] [string]$Host,
@@ -981,55 +1021,39 @@ function Try-AeroQmpInjectVirtioInputEvents {
       $null = $reader.ReadLine()
       $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
 
+      $kbdDevice = $script:VirtioInputKeyboardQmpId
+      $mouseDevice = $script:VirtioInputMouseQmpId
+
       # Keyboard: 'a' down/up.
-      $cmd = @{
-        execute   = "input-send-event"
-        arguments = @{
-          device = $script:VirtioInputKeyboardQmpId
-          events = @(
-            @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "a" } } }
-          )
-        }
-      }
-      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmd
+      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+        @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "a" } } }
+      )
 
       Start-Sleep -Milliseconds 50
 
-      $cmd.arguments.events[0].data.down = $false
-      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmd
+      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+        @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "a" } } }
+      )
 
       Start-Sleep -Milliseconds 50
 
       # Mouse: move + left click.
-      $cmdMouseMove = @{
-        execute   = "input-send-event"
-        arguments = @{
-          device = $script:VirtioInputMouseQmpId
-          events = @(
-            @{ type = "rel"; data = @{ axis = "x"; value = 10 } },
-            @{ type = "rel"; data = @{ axis = "y"; value = 5 } }
-          )
-        }
-      }
-      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmdMouseMove
+      $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
+        @{ type = "rel"; data = @{ axis = "x"; value = 10 } },
+        @{ type = "rel"; data = @{ axis = "y"; value = 5 } }
+      )
 
       Start-Sleep -Milliseconds 50
 
-      $cmdMouseBtn = @{
-        execute   = "input-send-event"
-        arguments = @{
-          device = $script:VirtioInputMouseQmpId
-          events = @(
-            @{ type = "btn"; data = @{ down = $true; button = "left" } }
-          )
-        }
-      }
-      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmdMouseBtn
+      $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
+        @{ type = "btn"; data = @{ down = $true; button = "left" } }
+      )
 
       Start-Sleep -Milliseconds 50
 
-      $cmdMouseBtn.arguments.events[0].data.down = $false
-      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command $cmdMouseBtn
+      $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
+        @{ type = "btn"; data = @{ down = $false; button = "left" } }
+      )
 
       return $true
     } catch {

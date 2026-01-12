@@ -355,52 +355,49 @@ def _try_qmp_input_inject_virtio_input_events(endpoint: _QmpEndpoint) -> None:
     Guest-side verification lives in `aero-virtio-selftest.exe` under the marker:
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|...
     """
+    def send(events: list[dict[str, object]], *, device: Optional[str]) -> Optional[str]:
+        """
+        Send one `input-send-event` command.
+
+        Prefer targeting the virtio input devices by QOM id (so we don't accidentally exercise PS/2),
+        but fall back to broadcasting the event when QEMU rejects the `device` argument. This keeps
+        the harness compatible with QEMU builds that don't accept device routing for input injection.
+        """
+        if device is None:
+            _qmp_send_command(s, _qmp_input_send_event_cmd(events, device=None))
+            return None
+        try:
+            _qmp_send_command(s, _qmp_input_send_event_cmd(events, device=device))
+            return device
+        except Exception as e_with_device:
+            try:
+                _qmp_send_command(s, _qmp_input_send_event_cmd(events, device=None))
+            except Exception as e_without_device:
+                raise RuntimeError(
+                    f"QMP input-send-event failed with device={device} ({e_with_device}) and without device ({e_without_device})"
+                ) from e_without_device
+            print(
+                f"WARNING: QMP input-send-event rejected device={device}; falling back to broadcast: {e_with_device}",
+                file=sys.stderr,
+            )
+            return None
+
     with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        kbd_device: Optional[str] = _VIRTIO_INPUT_QMP_KEYBOARD_ID
+        mouse_device: Optional[str] = _VIRTIO_INPUT_QMP_MOUSE_ID
+
         # Keyboard: 'a' press + release.
-        _qmp_send_command(
-            s,
-            _qmp_input_send_event_cmd(
-                [_qmp_key_event("a", down=True)],
-                device=_VIRTIO_INPUT_QMP_KEYBOARD_ID,
-            ),
-        )
+        kbd_device = send([_qmp_key_event("a", down=True)], device=kbd_device)
         time.sleep(0.05)
-        _qmp_send_command(
-            s,
-            _qmp_input_send_event_cmd(
-                [_qmp_key_event("a", down=False)],
-                device=_VIRTIO_INPUT_QMP_KEYBOARD_ID,
-            ),
-        )
+        kbd_device = send([_qmp_key_event("a", down=False)], device=kbd_device)
 
         # Mouse: small movement then left click.
         time.sleep(0.05)
-        _qmp_send_command(
-            s,
-            _qmp_input_send_event_cmd(
-                [
-                    _qmp_rel_event("x", 10),
-                    _qmp_rel_event("y", 5),
-                ],
-                device=_VIRTIO_INPUT_QMP_MOUSE_ID,
-            ),
-        )
+        mouse_device = send([_qmp_rel_event("x", 10), _qmp_rel_event("y", 5)], device=mouse_device)
         time.sleep(0.05)
-        _qmp_send_command(
-            s,
-            _qmp_input_send_event_cmd(
-                [_qmp_btn_event("left", down=True)],
-                device=_VIRTIO_INPUT_QMP_MOUSE_ID,
-            ),
-        )
+        mouse_device = send([_qmp_btn_event("left", down=True)], device=mouse_device)
         time.sleep(0.05)
-        _qmp_send_command(
-            s,
-            _qmp_input_send_event_cmd(
-                [_qmp_btn_event("left", down=False)],
-                device=_VIRTIO_INPUT_QMP_MOUSE_ID,
-            ),
-        )
+        mouse_device = send([_qmp_btn_event("left", down=False)], device=mouse_device)
 
 
 def _find_free_tcp_port() -> Optional[int]:
