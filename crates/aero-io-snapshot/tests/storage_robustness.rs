@@ -246,6 +246,225 @@ fn ide_snapshot_rejects_oversized_pio_data_buffer() {
 }
 
 #[test]
+fn ide_snapshot_rejects_invalid_data_index() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // Build a minimally-valid primary-channel payload that declares a data buffer length
+    // smaller than the current data index.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len (data_index > data_len)
+        .u32(2)
+        .u32(1)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid data_index");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ide pio data_index"));
+}
+
+#[test]
+fn ide_snapshot_rejects_invalid_data_mode_enum() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // `data_mode` is an enum encoded as a u8; only 0..=2 are valid.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // invalid data_mode (=3)
+        .u8(3)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid data_mode");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ide data_mode"));
+}
+
+#[test]
+fn ide_snapshot_rejects_invalid_transfer_kind_enum() {
+    const TAG_PRIMARY: u16 = 2;
+
+    // `transfer_kind` is an enum encoded as a u8; only 0..=5 are valid.
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode (valid) + invalid transfer_kind (=6)
+        .u8(0)
+        .u8(6)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid transfer_kind");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ide transfer_kind"));
+}
+
+#[test]
+fn ide_snapshot_rejects_invalid_drive_kind_enum() {
+    const TAG_PRIMARY: u16 = 2;
+
+    let chan = Encoder::new()
+        // ports
+        .u16(0)
+        .u16(0)
+        .u8(0)
+        // task file (6 regs + 5 HOB regs)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        // pending flags (5 bools)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        .bool(false)
+        // status/error/control/irq
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .bool(false)
+        // data_mode + transfer_kind
+        .u8(0)
+        .u8(0)
+        // data_index + data_len (empty buffer)
+        .u32(0)
+        .u32(0)
+        // pio_write absent
+        .u8(0)
+        // pending_dma absent
+        .u8(0)
+        // bus master regs
+        .u8(0)
+        .u8(0)
+        .u32(0)
+        // invalid drive kind (=3)
+        .u8(3)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        IdeControllerState::DEVICE_ID,
+        IdeControllerState::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_PRIMARY, chan);
+
+    let mut state = IdeControllerState::default();
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject invalid drive kind");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("ide drive kind"));
+}
+
+#[test]
 fn ide_snapshot_rejects_oversized_dma_buffer() {
     let max_ide_buf = u32::try_from(MAX_IDE_DATA_BUFFER_BYTES).expect("max IDE buffer too large");
 
