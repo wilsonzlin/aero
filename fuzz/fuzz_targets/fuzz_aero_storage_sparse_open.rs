@@ -15,6 +15,9 @@ fuzz_target!(|data: &[u8]| {
 
     // Treat the fuzzer input as the backing store for a sparse image.
     let mut backend = MemBackend::new();
+    // Ensure the header read always succeeds so the fuzzer can discover valid-looking
+    // headers even when the initial corpus input is very small.
+    let _ = backend.set_len(64);
     let _ = backend.write_at(0, data);
 
     let mut disk = match AeroSparseDisk::open(backend) {
