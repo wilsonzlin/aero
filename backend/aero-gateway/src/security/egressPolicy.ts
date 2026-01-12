@@ -125,12 +125,32 @@ function assertValidAsciiHostname(hostname: string): void {
   // - labels: a-z0-9-, no leading/trailing "-"
   if (hostname.length < 1 || hostname.length > 253) throw new Error("Invalid hostname");
 
-  const labels = hostname.split(".");
-  for (const label of labels) {
-    if (label.length < 1 || label.length > 63) throw new Error("Invalid hostname");
-    if (!/^[a-z0-9-]+$/.test(label)) throw new Error("Invalid hostname");
-    if (label.startsWith("-") || label.endsWith("-")) throw new Error("Invalid hostname");
+  // Avoid allocating intermediate arrays/regex state: validate in a single scan.
+  let labelLen = 0;
+  let prev = 0;
+
+  for (let i = 0; i < hostname.length; i += 1) {
+    const c = hostname.charCodeAt(i);
+    if (c === 0x2e /* '.' */) {
+      if (labelLen < 1 || labelLen > 63) throw new Error("Invalid hostname");
+      if (prev === 0x2d /* '-' */) throw new Error("Invalid hostname");
+      labelLen = 0;
+      continue;
+    }
+
+    const isLower = c >= 0x61 /* 'a' */ && c <= 0x7a /* 'z' */;
+    const isDigit = c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */;
+    const isHyphen = c === 0x2d /* '-' */;
+    if (!isLower && !isDigit && !isHyphen) throw new Error("Invalid hostname");
+    if (labelLen === 0 && isHyphen) throw new Error("Invalid hostname");
+
+    labelLen += 1;
+    if (labelLen > 63) throw new Error("Invalid hostname");
+    prev = c;
   }
+
+  if (labelLen < 1 || labelLen > 63) throw new Error("Invalid hostname");
+  if (prev === 0x2d /* '-' */) throw new Error("Invalid hostname");
 }
 
 export function classifyTargetHost(rawHost: string): TargetHost {
