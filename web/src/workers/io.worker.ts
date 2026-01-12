@@ -2573,6 +2573,12 @@ function runHdaMicCaptureTest(requestId: number): void {
     // Stop the capture stream so subsequent IO worker ticks (if bus mastering is later enabled)
     // don't continue consuming mic samples after the harness has returned.
     mmioWrite(sd1Base + 0x00, 4, 0);
+    // Also stop the CORB/RIRB engines + interrupts so we don't leave the device asserting IRQs
+    // or doing extra work after the harness returns.
+    mmioWrite(0x4c, 1, 0); // CORBCTL
+    mmioWrite(0x5c, 1, 0); // RIRBCTL
+    mmioWrite(0x20, 4, 0); // INTCTL
+    mmioWrite(0x24, 4, 0xffff_ffff); // INTSTS (RW1C)
 
     ctx.postMessage(
       {
