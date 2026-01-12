@@ -942,7 +942,7 @@ impl D3D11Runtime {
             &self.device,
             layout_key,
             &[bind_group_layout.layout.as_ref()],
-            Some("aero-d3d11 pipeline layout"),
+            Some("aero-d3d11 compute pipeline layout"),
         );
 
         let pipeline = self
