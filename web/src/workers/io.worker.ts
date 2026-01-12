@@ -1412,10 +1412,20 @@ function maybeInitHdaDevice(): void {
     }
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
-    // Use the live HDA controller as the snapshot bridge when it supports snapshot exports.
-    // Older WASM builds may lack `save_state`/`load_state`; snapshot helpers will gracefully
-    // treat it as unavailable.
-    audioHdaBridge = bridge;
+    // Use the live HDA controller as the snapshot bridge *only when* it supports the
+    // snapshot exports. Older WASM builds (or experimental runtimes) may not expose
+    // `save_state/load_state`; in that case leave `audioHdaBridge` unset so the
+    // fallback global hook (`__aeroAudioHdaBridge`, etc.) can still provide snapshot
+    // plumbing if present.
+    const anyBridge = bridge as unknown as {
+      save_state?: unknown;
+      snapshot_state?: unknown;
+      load_state?: unknown;
+      restore_state?: unknown;
+    };
+    const canSave = typeof anyBridge.save_state === "function" || typeof anyBridge.snapshot_state === "function";
+    const canLoad = typeof anyBridge.load_state === "function" || typeof anyBridge.restore_state === "function";
+    audioHdaBridge = canSave && canLoad ? (bridge as AudioHdaSnapshotBridgeLike) : null;
     hdaDevice = dev;
     mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
