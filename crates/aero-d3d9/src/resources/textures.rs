@@ -419,6 +419,29 @@ impl ResourceManager {
             return Err(anyhow!("texture id already exists: {}", id));
         }
 
+        let (width, height) = desc.kind.dimensions();
+        if width == 0 || height == 0 {
+            return Err(anyhow!("texture dimensions must be non-zero"));
+        }
+
+        let mip_levels = desc.kind.mip_levels();
+        if mip_levels == 0 {
+            return Err(anyhow!("texture mip level count must be >= 1"));
+        }
+        // WebGPU validation requires `mip_level_count` to be within the possible chain length for
+        // the given dimensions (regardless of format).
+        let max_dim = width.max(height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if mip_levels > max_mip_levels {
+            return Err(anyhow!(
+                "texture mip level count {} exceeds maximum {} for {}x{} texture",
+                mip_levels,
+                max_mip_levels,
+                width,
+                height
+            ));
+        }
+
         let info = format_info_for_texture_desc(&desc, self.device.features())?;
 
         let texture = Arc::new(self.device.create_texture(&wgpu::TextureDescriptor {
