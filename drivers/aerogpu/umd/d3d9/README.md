@@ -138,6 +138,18 @@ For shared allocations, `alloc_id` must avoid collisions across guest processes 
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the cross-process validation test.
 
+#### Cross-API note: D3D9Ex consuming DXGI shared handles (DWM scenario)
+
+On Windows 7, the desktop compositor (`dwm.exe`, D3D9Ex) commonly consumes **DXGI shared handles**
+produced by D3D10/D3D11 apps. In this case, the preserved WDDM allocation private data blob is
+typically `aerogpu_wddm_alloc_priv_v2` and the `reserved0` field may carry a **pitch encoding**
+(rather than a D3D9 `format/width/height` descriptor marker).
+
+To support this DWM-style path, the AeroGPU D3D9 UMD `OpenResource` implementation falls back to
+the v2 metadata (`width/height/DXGI format/row_pitch_bytes`) and maps a small set of common DXGI
+formats (BGRA/RGBA) to their nearest D3D9 `D3DFORMAT` values, so `Lock` can report the correct
+`RowPitch` and CPU-side helpers can compute a consistent surface layout.
+
 ## Build
 
 This project is intended to be built in a Windows/WDK environment as a DLL for both x86 and x64:

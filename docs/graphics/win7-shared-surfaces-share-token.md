@@ -8,6 +8,10 @@ On Windows 7, D3D9/D3D9Ex exposes resource sharing via a user-mode `HANDLE` (e.g
 
 DXGI/D3D10/D3D11 exposes the same concept via `IDXGIResource::GetSharedHandle()` and the various `OpenSharedResource(...)` APIs.
 
+In the Win7 desktop composition scenario, **DWM (D3D9Ex) consumes DXGI shared handles**
+produced by D3D10/D3D11 apps; AeroGPU therefore treats “shared surfaces” as a cross-API mechanism
+(not just D3D9 ↔ D3D9 or D3D11 ↔ D3D11).
+
 That `HANDLE` is an **NT handle**, which means:
 
 - It is only meaningful in the process that owns it (each process has its own handle table).
