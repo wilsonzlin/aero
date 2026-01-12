@@ -1,6 +1,8 @@
 #include "aerogpu_trace.h"
 #include "trace_test_utils.h"
 
+#include <cstring>
+
 int main() {
   using namespace aerogpu_d3d9_trace_test;
 
@@ -15,7 +17,8 @@ int main() {
   // Trigger dump on the first present count.
   set_env("AEROGPU_D3D9_TRACE_DUMP_PRESENT", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH", "0");
-  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "0");
+  // Also enable dump-on-fail; the present-count dump should win (dump is one-shot).
+  set_env("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL", "1");
   set_env("AEROGPU_D3D9_TRACE_DUMP_ON_STUB", "0");
   set_env("AEROGPU_D3D9_TRACE_FILTER", nullptr);
   // On Windows, the trace defaults to OutputDebugStringA; enable stderr echo so
@@ -36,8 +39,20 @@ int main() {
   std::fflush(stderr);
 
   const std::string output = slurp_file(out_path);
+  int dump_count = 0;
+  for (size_t pos = 0; (pos = output.find("dump reason=", pos)) != std::string::npos; ++dump_count) {
+    pos += std::strlen("dump reason=");
+  }
+  if (dump_count != 1) {
+    std::fprintf(stdout, "FAIL: expected exactly one dump reason line (count=%d log=%s)\n", dump_count, out_path.c_str());
+    return 1;
+  }
   if (output.find("dump reason=present_count") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected dump reason present_count (log=%s)\n", out_path.c_str());
+    return 1;
+  }
+  if (output.find("dump reason=Device::PresentEx") != std::string::npos) {
+    std::fprintf(stdout, "FAIL: did not expect dump-on-fail to emit an additional dump (log=%s)\n", out_path.c_str());
     return 1;
   }
   if (output.find("Device::PresentEx") == std::string::npos) {
