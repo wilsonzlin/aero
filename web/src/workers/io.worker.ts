@@ -107,10 +107,8 @@ import {
   HEADER_BYTES as AUDIO_OUT_HEADER_BYTES,
   HEADER_U32_LEN as AUDIO_OUT_HEADER_U32_LEN,
   OVERRUN_COUNT_INDEX as AUDIO_OUT_OVERRUN_COUNT_INDEX,
-  READ_FRAME_INDEX as AUDIO_OUT_READ_FRAME_INDEX,
   UNDERRUN_COUNT_INDEX as AUDIO_OUT_UNDERRUN_COUNT_INDEX,
-  WRITE_FRAME_INDEX as AUDIO_OUT_WRITE_FRAME_INDEX,
-  framesAvailableClamped as audioOutFramesAvailableClamped,
+  getRingBufferLevelFrames as getAudioOutRingBufferLevelFrames,
 } from "../audio/audio_worklet_ring";
 import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
@@ -1598,12 +1596,6 @@ function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFra
   audioOutTelemetryNextMs = 0;
 }
 
-function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
-  const read = Atomics.load(header, AUDIO_OUT_READ_FRAME_INDEX) >>> 0;
-  const write = Atomics.load(header, AUDIO_OUT_WRITE_FRAME_INDEX) >>> 0;
-  return audioOutFramesAvailableClamped(read, write, capacityFrames >>> 0);
-}
-
 function maybePublishAudioOutTelemetry(nowMs: number): void {
   // The IO worker should only publish these counters when the guest HDA device is
   // active (i.e. during real VM runs). The CPU worker owns these counters during
@@ -1627,7 +1619,7 @@ function maybePublishAudioOutTelemetry(nowMs: number): void {
   audioOutTelemetryActive = true;
   if (audioOutTelemetryNextMs !== 0 && nowMs < audioOutTelemetryNextMs) return;
 
-  const bufferLevelFrames = ringBufferLevelFrames(header, capacityFrames);
+  const bufferLevelFrames = getAudioOutRingBufferLevelFrames(header, capacityFrames);
   const underrunCount = Atomics.load(header, AUDIO_OUT_UNDERRUN_COUNT_INDEX) >>> 0;
   const overrunCount = Atomics.load(header, AUDIO_OUT_OVERRUN_COUNT_INDEX) >>> 0;
 
