@@ -714,6 +714,22 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
 
     // Name (PICM, Zero)
     out.extend_from_slice(&aml_name_integer(*b"PICM", 0));
+    // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
+    out.extend_from_slice(&aml_op_region(
+        *b"IMCR",
+        0x01, // SystemIO
+        0x22,
+        0x02,
+    ));
+    // Field (IMCR, ByteAcc, NoLock, Preserve) { IMCS, 8, IMCD, 8 }
+    out.extend_from_slice(&aml_field(
+        *b"IMCR",
+        0x01, // ByteAcc + NoLock + Preserve
+        &[
+            (*b"IMCS", 8), // IMCR select port (0x22)
+            (*b"IMCD", 8), // IMCR data port (0x23)
+        ],
+    ));
     // Method (_PIC, 1, NotSerialized) { Store (Arg0, PICM) }
     out.extend_from_slice(&aml_method_pic());
 
@@ -847,12 +863,51 @@ fn aml_processor(cpu_id: u8) -> Vec<u8> {
     out
 }
 
+fn aml_op_region(name: [u8; 4], space: u8, offset: u64, len: u64) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&name);
+    payload.push(space);
+    payload.extend_from_slice(&aml_integer(offset));
+    payload.extend_from_slice(&aml_integer(len));
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x5B, 0x80]); // OperationRegionOp
+    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&payload);
+    out
+}
+
+fn aml_field(region: [u8; 4], field_flags: u8, fields: &[([u8; 4], usize)]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&region);
+    payload.push(field_flags);
+    for (name, bits) in fields {
+        payload.extend_from_slice(name);
+        payload.extend_from_slice(&aml_pkg_length(*bits));
+    }
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x5B, 0x81]); // FieldOp
+    out.extend_from_slice(&aml_pkg_length(payload.len()));
+    out.extend_from_slice(&payload);
+    out
+}
+
 fn aml_method_pic() -> Vec<u8> {
     let mut body = Vec::new();
     // Store (Arg0, PICM)
     body.push(0x70); // StoreOp
     body.push(0x68); // Arg0Op
     body.extend_from_slice(b"PICM"); // NameString: NameSeg
+    // Store (0x70, IMCS)
+    body.push(0x70); // StoreOp
+    body.extend_from_slice(&aml_integer(0x70));
+    body.extend_from_slice(b"IMCS");
+    // And (Arg0, One, IMCD)
+    body.push(0x7B); // AndOp
+    body.push(0x68); // Arg0Op
+    body.push(0x01); // OneOp
+    body.extend_from_slice(b"IMCD");
 
     let mut payload = Vec::new();
     payload.extend_from_slice(b"_PIC");
@@ -1336,6 +1391,47 @@ mod tests {
         assert!(
             !contains_subslice(&dsdt, &hid_pnp0a03),
             "did not expect PCI0._HID to be PNP0A03 when ECAM is enabled"
+        );
+    }
+
+    #[test]
+    fn dsdt_pic_method_programs_imcr() {
+        let cfg = AcpiConfig::default();
+        let placement = AcpiPlacement::default();
+        let tables = AcpiTables::build(&cfg, placement);
+        let aml = &tables.dsdt[36..];
+
+        // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
+        let op_region = [
+            &[0x5B, 0x80, 0x09][..], // OperationRegionOp + pkglen
+            &b"IMCR"[..],
+            &[0x01, 0x0A, 0x22, 0x0A, 0x02][..], // SystemIO, 0x22, len 2
+        ]
+        .concat();
+        assert!(
+            contains_subslice(aml, &op_region),
+            "expected DSDT AML to contain IMCR SystemIO OperationRegion at ports 0x22..0x23"
+        );
+
+        // Method (_PIC, 1) {
+        //   Store (Arg0, PICM)
+        //   Store (0x70, IMCS)
+        //   And (Arg0, One, IMCD)
+        // }
+        let pic_body = [
+            &b"_PIC"[..],
+            &[0x01][..], // flags: 1 arg
+            &[0x70, 0x68][..],
+            &b"PICM"[..],
+            &[0x70, 0x0A, 0x70][..],
+            &b"IMCS"[..],
+            &[0x7B, 0x68, 0x01][..],
+            &b"IMCD"[..],
+        ]
+        .concat();
+        assert!(
+            contains_subslice(aml, &pic_body),
+            "expected _PIC method to program the IMCR (0x22/0x23) for PIC/APIC routing"
         );
     }
 }
