@@ -1,12 +1,17 @@
 use std::borrow::Cow;
+use std::num::NonZeroUsize;
 
 use crate::hal::*;
 use crate::{GpuCapabilities, GpuError};
+
+use lru::LruCache;
 
 enum Pipeline {
     Render(wgpu::RenderPipeline),
     Compute(wgpu::ComputePipeline),
 }
+
+const PIPELINE_LAYOUT_CACHE_CAPACITY: usize = 128;
 
 /// `wgpu` implementation of the backend-agnostic HAL.
 ///
@@ -25,6 +30,12 @@ pub struct WgpuBackend {
     bind_groups: ResourceRegistry<BindGroupTag, wgpu::BindGroup>,
     pipelines: ResourceRegistry<PipelineTag, Pipeline>,
     command_buffers: ResourceRegistry<CommandBufferTag, wgpu::CommandBuffer>,
+
+    /// Cache `wgpu::PipelineLayout` objects keyed by bind-group layout IDs.
+    ///
+    /// Creating pipeline layouts can show up in profiles when pipelines are rebuilt frequently but
+    /// share identical bind-group layouts.
+    pipeline_layout_cache: LruCache<Vec<BindGroupLayoutId>, wgpu::PipelineLayout>,
 }
 
 impl WgpuBackend {
@@ -139,6 +150,10 @@ impl WgpuBackend {
             bind_groups: ResourceRegistry::new("bind_group"),
             pipelines: ResourceRegistry::new("pipeline"),
             command_buffers: ResourceRegistry::new("command_buffer"),
+            pipeline_layout_cache: LruCache::new(
+                NonZeroUsize::new(PIPELINE_LAYOUT_CACHE_CAPACITY)
+                    .expect("PIPELINE_LAYOUT_CACHE_CAPACITY must be non-zero"),
+            ),
         })
     }
 }
@@ -450,6 +465,9 @@ impl GpuBackend for WgpuBackend {
 
     fn destroy_bind_group_layout(&mut self, id: BindGroupLayoutId) -> Result<(), GpuError> {
         let _layout = self.bind_group_layouts.remove(id)?;
+        // Pipeline layouts are defined in terms of bind-group layouts; when one is destroyed,
+        // drop cached pipeline layouts to avoid pinning old layouts indefinitely.
+        self.pipeline_layout_cache.clear();
         Ok(())
     }
 
@@ -501,58 +519,79 @@ impl GpuBackend for WgpuBackend {
     }
 
     fn create_render_pipeline(&mut self, desc: RenderPipelineDesc) -> Result<PipelineId, GpuError> {
+        let RenderPipelineDesc {
+            label,
+            shader_wgsl,
+            vertex_entry,
+            fragment_entry,
+            bind_group_layouts: bind_group_layout_ids,
+            color_format,
+            depth_format,
+            topology,
+        } = desc;
+
         let shader = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: desc.label.as_deref(),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(desc.shader_wgsl)),
+                label: label.as_deref(),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_wgsl)),
             });
 
-        let bind_group_layouts: Vec<&wgpu::BindGroupLayout> = desc
-            .bind_group_layouts
-            .iter()
-            .map(|id| self.bind_group_layouts.get(*id))
-            .collect::<Result<_, _>>()?;
-
-        let pipeline_layout = if bind_group_layouts.is_empty() {
+        let pipeline_layout = if bind_group_layout_ids.is_empty() {
             None
+        } else if let Some(layout) = self.pipeline_layout_cache.get(&bind_group_layout_ids) {
+            Some(layout)
         } else {
+            let bind_group_layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layout_ids
+                .iter()
+                .map(|id| self.bind_group_layouts.get(*id))
+                .collect::<Result<_, _>>()?;
+
+            let layout = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    // Pipeline layout labels are only for debugging; cache hits may reuse a layout that
+                    // was originally created with a different label.
+                    label: label.as_deref(),
+                    bind_group_layouts: &bind_group_layouts,
+                    push_constant_ranges: &[],
+                });
+
+            self.pipeline_layout_cache
+                .put(bind_group_layout_ids.clone(), layout);
             Some(
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: desc.label.as_deref(),
-                        bind_group_layouts: &bind_group_layouts,
-                        push_constant_ranges: &[],
-                    }),
+                self.pipeline_layout_cache
+                    .get(&bind_group_layout_ids)
+                    .expect("just inserted pipeline layout"),
             )
         };
 
         let pipeline = self
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: desc.label.as_deref(),
-                layout: pipeline_layout.as_ref(),
+                label: label.as_deref(),
+                layout: pipeline_layout,
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: desc.vertex_entry.as_str(),
+                    entry_point: vertex_entry.as_str(),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: desc.fragment_entry.as_str(),
+                    entry_point: fragment_entry.as_str(),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: Self::map_texture_format(desc.color_format),
+                        format: Self::map_texture_format(color_format),
                         blend: Some(wgpu::BlendState::REPLACE),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
                 primitive: wgpu::PrimitiveState {
-                    topology: Self::map_primitive_topology(desc.topology),
+                    topology: Self::map_primitive_topology(topology),
                     ..Default::default()
                 },
-                depth_stencil: desc.depth_format.map(|format| wgpu::DepthStencilState {
+                depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
                     format: Self::map_texture_format(format),
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::LessEqual,
@@ -574,39 +613,54 @@ impl GpuBackend for WgpuBackend {
             return Err(GpuError::Unsupported("compute_pipelines"));
         }
 
+        let ComputePipelineDesc {
+            label,
+            shader_wgsl,
+            entry_point,
+            bind_group_layouts: bind_group_layout_ids,
+        } = desc;
+
         let shader = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: desc.label.as_deref(),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(desc.shader_wgsl)),
+                label: label.as_deref(),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_wgsl)),
             });
 
-        let bind_group_layouts: Vec<&wgpu::BindGroupLayout> = desc
-            .bind_group_layouts
-            .iter()
-            .map(|id| self.bind_group_layouts.get(*id))
-            .collect::<Result<_, _>>()?;
-
-        let pipeline_layout = if bind_group_layouts.is_empty() {
+        let pipeline_layout = if bind_group_layout_ids.is_empty() {
             None
+        } else if let Some(layout) = self.pipeline_layout_cache.get(&bind_group_layout_ids) {
+            Some(layout)
         } else {
+            let bind_group_layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layout_ids
+                .iter()
+                .map(|id| self.bind_group_layouts.get(*id))
+                .collect::<Result<_, _>>()?;
+
+            let layout = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: label.as_deref(),
+                    bind_group_layouts: &bind_group_layouts,
+                    push_constant_ranges: &[],
+                });
+
+            self.pipeline_layout_cache
+                .put(bind_group_layout_ids.clone(), layout);
             Some(
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: desc.label.as_deref(),
-                        bind_group_layouts: &bind_group_layouts,
-                        push_constant_ranges: &[],
-                    }),
+                self.pipeline_layout_cache
+                    .get(&bind_group_layout_ids)
+                    .expect("just inserted pipeline layout"),
             )
         };
 
         let pipeline = self
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: desc.label.as_deref(),
-                layout: pipeline_layout.as_ref(),
+                label: label.as_deref(),
+                layout: pipeline_layout,
                 module: &shader,
-                entry_point: desc.entry_point.as_str(),
+                entry_point: entry_point.as_str(),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             });
 
