@@ -1,6 +1,8 @@
 import blitShaderSource from './shaders/blit.wgsl?raw';
 import type { Presenter, PresenterInitOptions, PresenterScaleMode, PresenterScreenshot } from './presenter';
 import { PresenterError } from './presenter';
+import type { DirtyRect } from '../ipc/shared-layout';
+import { packRgba8RectToAlignedBuffer, type PackedRect } from './webgpu-rect-pack';
 
 type Viewport = { x: number; y: number; w: number; h: number };
 
@@ -68,6 +70,10 @@ export class WebGpuPresenterBackend implements Presenter {
   // Staging buffer for non-256-aligned rows.
   private staging: Uint8Array | null = null;
   private stagingBytesPerRow = 0;
+
+  // Staging buffer for dirty-rect uploads (width/height varies per rect).
+  private dirtyRectStaging: Uint8Array | null = null;
+  private dirtyRectPack: PackedRect = { x: 0, y: 0, w: 0, h: 0, bytesPerRow: 0, byteLength: 0 };
 
   // Cursor upload staging (same alignment constraints as the main frame upload).
   private cursorStaging: Uint8Array | null = null;
@@ -202,6 +208,80 @@ export class WebGpuPresenterBackend implements Presenter {
       { bytesPerRow: bytesPerRowAligned, rowsPerImage: this.srcHeight },
       { width: this.srcWidth, height: this.srcHeight, depthOrArrayLayers: 1 },
     );
+
+    this.renderToCanvas();
+  }
+
+  public presentDirtyRects(
+    frame: number | ArrayBuffer | ArrayBufferView,
+    stride: number,
+    dirtyRects: DirtyRect[],
+  ): void {
+    if (!this.canvas || !this.device || !this.queue || !this.ctx || !this.pipeline || !this.bindGroup || !this.frameTexture) {
+      throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.presentDirtyRects() called before init()');
+    }
+
+    if (stride <= 0) {
+      throw new PresenterError('invalid_stride', `presentDirtyRects() stride must be > 0; got ${stride}`);
+    }
+
+    const tightRowBytes = this.srcWidth * 4;
+    if (stride < tightRowBytes) {
+      throw new PresenterError(
+        'invalid_stride',
+        `presentDirtyRects() stride (${stride}) smaller than width*4 (${tightRowBytes})`,
+      );
+    }
+
+    if (!dirtyRects || dirtyRects.length === 0) {
+      this.present(frame, stride);
+      return;
+    }
+
+    const expectedBytes = stride * this.srcHeight;
+    const data = this.resolveFrameData(frame, expectedBytes);
+
+    const origin = { x: 0, y: 0 };
+    const dst = { texture: this.frameTexture, origin };
+    const layout = { bytesPerRow: 0, rowsPerImage: 0 };
+    const size = { width: 0, height: 0, depthOrArrayLayers: 1 };
+
+    let anyUploaded = false;
+    for (const rect of dirtyRects) {
+      const buffer = packRgba8RectToAlignedBuffer(
+        data,
+        stride,
+        this.srcWidth,
+        this.srcHeight,
+        rect,
+        this.dirtyRectStaging,
+        this.dirtyRectPack,
+      );
+      if (!buffer) continue;
+      this.dirtyRectStaging = buffer;
+      anyUploaded = true;
+
+      origin.x = this.dirtyRectPack.x;
+      origin.y = this.dirtyRectPack.y;
+      layout.bytesPerRow = this.dirtyRectPack.bytesPerRow;
+      layout.rowsPerImage = this.dirtyRectPack.h;
+      size.width = this.dirtyRectPack.w;
+      size.height = this.dirtyRectPack.h;
+
+      this.queue.writeTexture(
+        dst,
+        buffer,
+        layout,
+        size,
+      );
+    }
+
+    if (!anyUploaded) {
+      // Defensive fallback: if all rects were invalid after clamping, do a full upload so the
+      // consumer does not keep presenting a stale frame.
+      this.present(frame, stride);
+      return;
+    }
 
     this.renderToCanvas();
   }
@@ -346,6 +426,11 @@ export class WebGpuPresenterBackend implements Presenter {
     this.queue = null;
     this.ctx = null;
     this.canvas = null;
+    this.staging = null;
+    this.stagingBytesPerRow = 0;
+    this.dirtyRectStaging = null;
+    this.cursorStaging = null;
+    this.cursorStagingBytesPerRow = 0;
   }
 
   private resizeCanvas(outputWidth: number, outputHeight: number, dpr: number): void {
@@ -408,6 +493,7 @@ export class WebGpuPresenterBackend implements Presenter {
     this.bindGroup = null;
     this.staging = null;
     this.stagingBytesPerRow = 0;
+    this.dirtyRectStaging = null;
 
     const usage =
       ((globalThis as any).GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
