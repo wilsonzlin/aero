@@ -294,6 +294,62 @@ fn hda_controller_deferred_ring_restore_tolerates_capacity_mismatch() {
 }
 
 #[wasm_bindgen_test]
+fn hda_controller_load_state_tolerates_capacity_mismatch_when_ring_attached() {
+    let snapshot_capacity_frames = 8;
+    let restored_capacity_frames = 4;
+    let channel_count = 2;
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+
+    // Create a snapshot with a larger AudioWorklet ring.
+    let mut hda1 = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+    let ring = WorkletBridge::new(snapshot_capacity_frames, channel_count).unwrap();
+    let sab = ring.shared_buffer();
+    hda1.attach_audio_ring(sab, snapshot_capacity_frames, channel_count)
+        .unwrap();
+
+    // Fill the ring so the write index is ahead of the read index by more than the restored ring
+    // can hold.
+    let input: Vec<f32> = (0..(snapshot_capacity_frames * channel_count))
+        .map(|v| (v + 1) as f32)
+        .collect();
+    assert_eq!(ring.write_f32_interleaved(&input), snapshot_capacity_frames);
+    let snap = hda1.save_state();
+
+    // Attach a smaller ring before restoring snapshot bytes (capacity mismatch at restore-time).
+    let mut hda2 = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+    let ring2 = WorkletBridge::new(restored_capacity_frames, channel_count).unwrap();
+    let sab2 = ring2.shared_buffer();
+    hda2.attach_audio_ring(sab2.clone(), restored_capacity_frames, channel_count)
+        .unwrap();
+
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab2, 0, HEADER_U32_LEN as u32);
+    let samples = Float32Array::new_with_byte_offset_and_length(
+        &sab2,
+        HEADER_BYTES as u32,
+        restored_capacity_frames * channel_count,
+    );
+
+    // Corrupt indices and samples to ensure restore changes them.
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 123);
+    atomics_store_u32(&header, WRITE_FRAME_INDEX as u32, 456);
+    let _ = samples.fill(123.0, 0, samples.length());
+
+    // Restoring should not panic, should clear samples, and should clamp indices to the active ring
+    // capacity (even though the snapshot encodes a different capacity).
+    hda2.load_state(&snap).unwrap();
+    assert_eq!(atomics_load_u32(&header, READ_FRAME_INDEX as u32), 4);
+    assert_eq!(atomics_load_u32(&header, WRITE_FRAME_INDEX as u32), 8);
+    for i in 0..samples.length() {
+        assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
+    }
+
+    drop(guest);
+}
+
+#[wasm_bindgen_test]
 fn hda_controller_attach_mic_ring_discards_buffered_samples() {
     let capacity_samples = 16u32;
     let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
