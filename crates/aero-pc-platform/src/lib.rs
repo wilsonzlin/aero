@@ -8,7 +8,7 @@ use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBarDefinition, PciBdf, PciConfigPorts, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciBarKind, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -433,19 +433,24 @@ struct PciIoWindowPort {
 impl PciIoWindowPort {
     fn map_port(&mut self, port: u16) -> Option<(PciIoBarKey, u16)> {
         let port_u64 = u64::from(port);
-        let mapped = {
-            // `mapped_io_bars` already respects the PCI command I/O decode bit.
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg.bus_mut().mapped_io_bars()
-        };
+        // Iterate only over BARs with registered handlers to avoid per-access allocations.
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
 
-        for bar in mapped {
-            let range = bar.range;
+        let handlers = self.handlers.borrow();
+        for (key, _handler) in handlers.iter() {
+            let (bdf, bar) = *key;
+            let Some(range) = bus.mapped_bar_range(bdf, bar) else {
+                continue;
+            };
+            if range.kind != PciBarKind::Io {
+                continue;
+            }
             if port_u64 >= range.base && port_u64 < range.end_exclusive() {
                 let dev_offset = port_u64
                     .checked_sub(range.base)
                     .and_then(|v| u16::try_from(v).ok())?;
-                return Some(((bar.bdf, bar.bar), dev_offset));
+                return Some((*key, dev_offset));
             }
         }
 

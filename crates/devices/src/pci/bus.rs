@@ -55,6 +55,14 @@ impl PciBus {
             .collect()
     }
 
+    /// Returns the currently decoded BAR range for a single BAR, if any.
+    ///
+    /// This consults the bus' internal BAR decode tracking (`mapped_bars`), which already respects
+    /// the PCI command register I/O + memory decode enable bits and BAR relocation.
+    pub fn mapped_bar_range(&self, bdf: PciBdf, bar: u8) -> Option<PciBarRange> {
+        self.mapped_bars.get(&(bdf, bar)).copied()
+    }
+
     pub fn mapped_mmio_bars(&self) -> Vec<PciMappedBar> {
         self.mapped_bars()
             .into_iter()
