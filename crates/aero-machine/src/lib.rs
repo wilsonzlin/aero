@@ -1028,6 +1028,9 @@ struct VgaLegacyMmio {
 
 impl MmioHandler for VgaLegacyMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         if !(1..=8).contains(&size) {
             return u64::MAX;
         }
@@ -1044,7 +1047,7 @@ impl MmioHandler for VgaLegacyMmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if !(1..=8).contains(&size) {
+        if size == 0 || !(1..=8).contains(&size) {
             return;
         }
 
@@ -4127,6 +4130,22 @@ mod tests {
         vga.borrow_mut().vram_mut()[0] = 0xAA;
 
         let mut mmio = VgaLfbMmio { dev: vga.clone() };
+
+        assert_eq!(MmioHandler::read(&mut mmio, 0, 0), 0);
+        MmioHandler::write(&mut mmio, 0, 0, 0x55);
+
+        assert_eq!(vga.borrow().vram()[0], 0xAA);
+    }
+
+    #[test]
+    fn vga_legacy_mmio_size0_is_noop() {
+        let vga = Rc::new(RefCell::new(VgaDevice::new()));
+        vga.borrow_mut().vram_mut()[0] = 0xAA;
+
+        let mut mmio = VgaLegacyMmio {
+            base: 0xA0000,
+            vga: vga.clone(),
+        };
 
         assert_eq!(MmioHandler::read(&mut mmio, 0, 0), 0);
         MmioHandler::write(&mut mmio, 0, 0, 0x55);
