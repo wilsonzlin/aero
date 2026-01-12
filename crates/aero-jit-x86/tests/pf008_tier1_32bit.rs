@@ -77,7 +77,7 @@ fn collect_block_entries<B: Tier1Bus>(bus: &B, entry_rip: u64, bitness: u32) -> 
     out
 }
 
-fn run_pf008_payload_32(payload: &[u8], expected_checksum: u32) {
+fn run_pf008_payload_32(payload: &[u8], expected_checksum: u32, scratch: Option<(u64, usize)>) {
     let bitness = 32;
     let iters: u32 = 10_000;
 
@@ -91,6 +91,11 @@ fn run_pf008_payload_32(payload: &[u8], expected_checksum: u32) {
         backend.write_u8(code_base + i as u64, *b);
     }
     backend.write(stack_top, Width::W32, sentinel_ret);
+    if let Some((base, len)) = scratch {
+        for i in 0..len {
+            backend.write_u8(base + i as u64, 0);
+        }
+    }
 
     let queue = Tier1CompileQueue::new();
     let config = JitConfig {
@@ -117,6 +122,10 @@ fn run_pf008_payload_32(payload: &[u8], expected_checksum: u32) {
     cpu.state.rip = code_base;
     cpu.state.gpr[Gpr::Rsp.as_u8() as usize] = stack_top;
     cpu.state.gpr[Gpr::Rcx.as_u8() as usize] = iters as u64;
+    if let Some((base, _len)) = scratch {
+        // PF-008 32-bit memory payloads use EDI as the scratch base register.
+        cpu.state.gpr[Gpr::Rdi.as_u8() as usize] = base;
+    }
 
     // Run until the payload returns to the sentinel.
     let mut steps = 0u64;
@@ -153,7 +162,7 @@ fn pf008_alu32_checksum() {
         0xb8, 0xf0, 0xde, 0xbc, 0x9a, 0xba, 0x15, 0x7c, 0x4a, 0x7f, 0x01, 0xd0, 0x89, 0xc3,
         0xc1, 0xeb, 0x0d, 0x31, 0xd8, 0xd1, 0xe0, 0x49, 0x75, 0xf2, 0xc3,
     ];
-    run_pf008_payload_32(payload, 0x30aae0b8);
+    run_pf008_payload_32(payload, 0x30aae0b8, None);
 }
 
 #[test]
@@ -164,5 +173,28 @@ fn pf008_call_ret32_checksum() {
         0x00, 0x49, 0x75, 0xf8, 0xc3, 0x53, 0x56, 0x01, 0xd8, 0x35, 0xb5, 0x3b, 0x12, 0x1f,
         0xc1, 0xe0, 0x03, 0x5e, 0x5b, 0xc3,
     ];
-    run_pf008_payload_32(payload, 0x71df5500);
+    run_pf008_payload_32(payload, 0x71df5500, None);
+}
+
+#[test]
+fn pf008_branch_pred32_checksum() {
+    // From `docs/16-guest-cpu-benchmark-suite.md` (PF-008), `branch_pred32` payload bytes.
+    let payload: &[u8] = &[
+        0xb8, 0xf0, 0xde, 0xbc, 0x9a, 0xbb, 0x15, 0x7c, 0x4a, 0x7f, 0x31, 0xd2, 0x75, 0x02,
+        0x01, 0xd8, 0x31, 0xd2, 0x75, 0x02, 0x31, 0xd8, 0xd1, 0xe0, 0x83, 0xc0, 0x01, 0x49,
+        0x75, 0xec, 0xc3,
+    ];
+    run_pf008_payload_32(payload, 0xaad6_afab, None);
+}
+
+#[test]
+fn pf008_mem_seq32_checksum() {
+    // From `docs/16-guest-cpu-benchmark-suite.md` (PF-008), `mem_seq32` payload bytes.
+    let payload: &[u8] = &[
+        0xb8, 0xef, 0xcd, 0xab, 0x89, 0x31, 0xf6, 0x8b, 0x14, 0x37, 0x01, 0xd0, 0x31, 0xc2,
+        0x89, 0x14, 0x37, 0x83, 0xc6, 0x04, 0x81, 0xe6, 0xff, 0x0f, 0x00, 0x00, 0x49, 0x75,
+        0xea, 0xc3,
+    ];
+    let scratch_base = 0xa000u64;
+    run_pf008_payload_32(payload, 0x0cc5_0aff, Some((scratch_base, 4096)));
 }
