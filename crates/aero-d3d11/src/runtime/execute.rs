@@ -478,6 +478,25 @@ impl D3D11Runtime {
         let format = DxgiFormat::from_word(payload[5]);
         let usage = TextureUsage::from_bits_truncate(payload[6]);
 
+        if width == 0 || height == 0 {
+            bail!("CreateTexture2D width/height must be non-zero");
+        }
+        if array_layers == 0 {
+            bail!("CreateTexture2D array_layers must be >= 1");
+        }
+        if mip_level_count == 0 {
+            bail!("CreateTexture2D mip_level_count must be >= 1");
+        }
+        // WebGPU validation requires `mip_level_count` to be within the possible chain length for
+        // the given dimensions.
+        let max_dim = width.max(height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if mip_level_count > max_mip_levels {
+            bail!(
+                "CreateTexture2D mip_level_count {mip_level_count} exceeds maximum {max_mip_levels} for {width}x{height} texture"
+            );
+        }
+
         let format = map_texture_format(format)?;
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d11 texture2d"),
