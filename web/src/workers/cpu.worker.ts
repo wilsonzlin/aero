@@ -253,7 +253,7 @@ let hdaDemoClockStarted = false;
 
 type PendingHdaPciDeviceStart = { msg: AudioOutputHdaPciDeviceStartMessage; token: number };
 let pendingHdaPciDeviceStart: PendingHdaPciDeviceStart | null = null;
-let hdaPciDeviceBar0Base: bigint | null = null;
+let hdaPciDeviceBar0Base: { base: bigint; token: number } | null = null;
 let hdaPciDeviceOpToken = 0;
 
 function allocHdaPciDeviceToken(): number {
@@ -499,10 +499,11 @@ const HDA_REG_SD0_CTL = 0x80n;
 
 function stopHdaPciDeviceHardware(): void {
   const client = io;
-  const bar0Base = hdaPciDeviceBar0Base;
+  const bar = hdaPciDeviceBar0Base;
   hdaPciDeviceBar0Base = null;
 
-  if (!client || bar0Base === null) return;
+  if (!client || bar === null) return;
+  const bar0Base = bar.base;
 
   try {
     // Stop the stream DMA engine.
@@ -523,6 +524,13 @@ function stopHdaPciDeviceHardware(): void {
   } catch {
     // ignore
   }
+}
+
+function stopHdaPciDeviceHardwareIfToken(token: number): void {
+  const bar = hdaPciDeviceBar0Base;
+  if (!bar) return;
+  if ((bar.token >>> 0) !== (token >>> 0)) return;
+  stopHdaPciDeviceHardware();
 }
 
 function stopHdaPciDevice(): void {
@@ -642,7 +650,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   if (bar0Base === 0n) {
     throw new Error("HDA BAR0 is zero after enabling MEM decoding.");
   }
-  hdaPciDeviceBar0Base = bar0Base;
+  hdaPciDeviceBar0Base = { base: bar0Base, token };
 
   // MMIO register offsets (subset).
   const REG_GCTL = 0x08n;
@@ -674,7 +682,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   const gctlDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 1_000;
   while ((client.mmioRead(bar0Base + REG_GCTL, 4) & 0x1) === 0) {
     if (!isHdaPciDeviceTokenActive(token)) {
-      stopHdaPciDeviceHardware();
+      stopHdaPciDeviceHardwareIfToken(token);
       return;
     }
     const now = typeof performance?.now === "function" ? performance.now() : Date.now();
@@ -744,7 +752,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   const rirbDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 1_000;
   while ((client.mmioRead(bar0Base + REG_RIRBWP, 2) & 0xffff) !== 0x0001) {
     if (!isHdaPciDeviceTokenActive(token)) {
-      stopHdaPciDeviceHardware();
+      stopHdaPciDeviceHardwareIfToken(token);
       return;
     }
     const now = typeof performance?.now === "function" ? performance.now() : Date.now();
@@ -784,7 +792,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
 
   // Program stream descriptor 0.
   if (!isHdaPciDeviceTokenActive(token)) {
-    stopHdaPciDeviceHardware();
+    stopHdaPciDeviceHardwareIfToken(token);
     return;
   }
   client.mmioWrite(bar0Base + REG_SD0_BDPL, 4, bdlBase);
@@ -801,7 +809,7 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   client.mmioWrite(bar0Base + REG_INTCTL, 4, 0x8000_0000 | 0x1);
 
   if (!isHdaPciDeviceTokenActive(token)) {
-    stopHdaPciDeviceHardware();
+    stopHdaPciDeviceHardwareIfToken(token);
     return;
   }
 
@@ -1742,7 +1750,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       console.error(err);
       // If the device was partially programmed before failing, ensure we don't leave
       // a running stream/CORB/RIRB behind in the long-lived worker runtime.
-      stopHdaPciDeviceHardware();
+      stopHdaPciDeviceHardwareIfToken(token);
       ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
     });
     return;
@@ -2027,7 +2035,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           if (!isHdaPciDeviceTokenActive(pending.token)) return;
           const message = err instanceof Error ? err.message : String(err);
           console.error(err);
-          stopHdaPciDeviceHardware();
+          stopHdaPciDeviceHardwareIfToken(pending.token);
           ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
         });
       }
