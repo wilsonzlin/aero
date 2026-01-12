@@ -1,6 +1,7 @@
 use aero_devices::acpi_pm::AcpiPmCallbacks;
 use aero_devices::clock::Clock;
 use aero_devices::acpi_pm::{AcpiPmConfig, AcpiPmIo};
+use aero_devices::clock::ManualClock;
 use aero_platform::io::PortIoDevice;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -116,4 +117,39 @@ fn pm_tmr_unaligned_read_overlapping_window_uses_single_clock_sample() {
         1,
         "PM_TMR reads that straddle the end of the timer window must still use a single clock sample"
     );
+}
+
+#[test]
+fn pm_tmr_advance_ns_does_not_double_advance_when_clock_already_advanced() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(0);
+
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4), 0);
+
+    // If the backing clock has already advanced by `delta_ns`, calling `advance_ns(delta_ns)`
+    // should not advance the timer a second time.
+    clock.advance_ns(1_000_000_000);
+    pm.advance_ns(1_000_000_000);
+
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4), 3_579_545);
+}
+
+#[test]
+fn pm_tmr_advance_ns_makes_up_delta_not_covered_by_backing_clock() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+    clock.set_ns(0);
+
+    let mut pm =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock.clone());
+
+    // If the backing clock advanced less than `delta_ns`, `advance_ns(delta_ns)` should adjust the
+    // timer base so the *effective* elapsed time increases by the full delta.
+    clock.advance_ns(500_000_000);
+    pm.advance_ns(1_000_000_000);
+
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4), 3_579_545);
 }
