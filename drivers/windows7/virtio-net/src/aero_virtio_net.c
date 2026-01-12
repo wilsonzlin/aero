@@ -898,13 +898,25 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
   LIST_ENTRY AbortTxReqs;
   PNET_BUFFER_LIST CompleteHead;
   PNET_BUFFER_LIST CompleteTail;
+  BOOLEAN SurpriseRemoved;
 
   if (!Adapter) {
     return;
   }
 
-  // Stop the device first to prevent further DMA/interrupts.
-  VirtioPciResetDevice(&Adapter->Vdev);
+  NdisAcquireSpinLock(&Adapter->Lock);
+  SurpriseRemoved = Adapter->SurpriseRemoved;
+  NdisReleaseSpinLock(&Adapter->Lock);
+
+  // Stop the device first to prevent further DMA/interrupts. After surprise
+  // removal, the device may no longer be accessible and any BAR MMIO access can
+  // fault/hang on real hardware or strict virtual PCI implementations.
+  if (SurpriseRemoved) {
+    DbgPrint("aero_virtio_net: stop: SurpriseRemoved=TRUE; skipping virtio MMIO reset\n");
+  } else {
+    DbgPrint("aero_virtio_net: stop: resetting virtio device\n");
+    VirtioPciResetDevice(&Adapter->Vdev);
+  }
 
   // HaltEx is expected to run at PASSIVE_LEVEL; waiting here avoids freeing
   // memory while an NDIS SG mapping callback might still reference it.
