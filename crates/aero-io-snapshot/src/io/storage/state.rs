@@ -104,9 +104,8 @@ impl IoSnapshot for DiskControllersSnapshot {
                         "disk controller snapshot too large",
                     ));
                 }
-                let entry = d.bytes(len)?;
-                let bdf = u16::from_le_bytes([entry[0], entry[1]]);
-                let nested = entry[2..].to_vec();
+                let bdf = d.u16()?;
+                let nested = d.bytes_vec(len - 2)?;
                 if out.insert(bdf, nested).is_some() {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "disk controller duplicate bdf",
@@ -1046,7 +1045,7 @@ impl IdeChannelState {
         if data_index as usize > data_len {
             return Err(SnapshotError::InvalidFieldEncoding("ide pio data_index"));
         }
-        let data = d.bytes(data_len)?.to_vec();
+        let data = d.bytes_vec(data_len)?;
 
         let pio_write = match d.u8()? {
             0 => None,
@@ -1072,7 +1071,7 @@ impl IdeChannelState {
                         "ide dma buffer too large",
                     ));
                 }
-                let buffer = d.bytes(len)?.to_vec();
+                let buffer = d.bytes_vec(len)?;
                 let commit = match d.u8()? {
                     0 => None,
                     1 => Some(IdeDmaCommitState::AtaWrite {

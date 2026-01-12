@@ -21,6 +21,7 @@ pub enum SnapshotError {
     },
     DuplicateFieldTag(u16),
     InvalidFieldEncoding(&'static str),
+    OutOfMemory,
 }
 
 impl fmt::Display for SnapshotError {
@@ -47,6 +48,7 @@ impl fmt::Display for SnapshotError {
             SnapshotError::InvalidFieldEncoding(msg) => {
                 write!(f, "invalid field encoding: {}", msg)
             }
+            SnapshotError::OutOfMemory => write!(f, "out of memory"),
         }
     }
 }
@@ -458,6 +460,15 @@ pub mod codec {
             self.take(len)
         }
 
+        pub fn bytes_vec(&mut self, len: usize) -> SnapshotResult<Vec<u8>> {
+            let src = self.take(len)?;
+            let mut out = Vec::new();
+            out.try_reserve_exact(src.len())
+                .map_err(|_| SnapshotError::OutOfMemory)?;
+            out.extend_from_slice(src);
+            Ok(out)
+        }
+
         pub fn vec_bytes(&mut self) -> SnapshotResult<Vec<Vec<u8>>> {
             let count = self.u32()? as usize;
             // `count` is untrusted (loaded from snapshot bytes). Avoid pre-allocating based on it
@@ -466,14 +477,16 @@ pub mod codec {
             let mut out = Vec::new();
             for _ in 0..count {
                 let len = self.u32()? as usize;
-                out.push(self.take(len)?.to_vec());
+                out.try_reserve_exact(1)
+                    .map_err(|_| SnapshotError::OutOfMemory)?;
+                out.push(self.bytes_vec(len)?);
             }
             Ok(out)
         }
 
         pub fn vec_u8(&mut self) -> SnapshotResult<Vec<u8>> {
             let count = self.u32()? as usize;
-            Ok(self.take(count)?.to_vec())
+            self.bytes_vec(count)
         }
 
         pub fn finish(self) -> SnapshotResult<()> {

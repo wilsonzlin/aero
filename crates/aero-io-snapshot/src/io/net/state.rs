@@ -494,7 +494,11 @@ impl IoSnapshot for E1000DeviceState {
             if buf.len() > MAX_TX_PARTIAL_BYTES {
                 return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_partial"));
             }
-            self.tx_partial = buf.to_vec();
+            let mut tmp = Vec::new();
+            tmp.try_reserve_exact(buf.len())
+                .map_err(|_| SnapshotError::OutOfMemory)?;
+            tmp.extend_from_slice(buf);
+            self.tx_partial = tmp;
         }
         self.tx_drop = r.bool(TAG_TX_DROP)?.unwrap_or(self.tx_drop);
 
@@ -605,6 +609,9 @@ impl IoSnapshot for E1000DeviceState {
                     "e1000 rx_pending count",
                 ));
             }
+            self.rx_pending
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
                 let len = d.u32()? as usize;
                 if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&len) {
@@ -612,7 +619,7 @@ impl IoSnapshot for E1000DeviceState {
                         "e1000 rx_pending frame",
                     ));
                 }
-                self.rx_pending.push(d.bytes(len)?.to_vec());
+                self.rx_pending.push(d.bytes_vec(len)?);
             }
             d.finish()?;
         }
@@ -624,12 +631,15 @@ impl IoSnapshot for E1000DeviceState {
             if count > MAX_TX_OUT_FRAMES {
                 return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_out count"));
             }
+            self.tx_out
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
                 let len = d.u32()? as usize;
                 if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&len) {
                     return Err(SnapshotError::InvalidFieldEncoding("e1000 tx_out frame"));
                 }
-                self.tx_out.push(d.bytes(len)?.to_vec());
+                self.tx_out.push(d.bytes_vec(len)?);
             }
             d.finish()?;
         }
