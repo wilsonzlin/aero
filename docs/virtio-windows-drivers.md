@@ -14,6 +14,7 @@ See also:
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive device/feature/transport contract.
 - [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation reference for Win7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 - [`16-windows7-driver-build-and-signing.md`](./16-windows7-driver-build-and-signing.md) — CI + local pipeline for building/cataloging/signing the in-tree Win7 driver packages (`drivers-win7.yml`).
+- virtio-input end-to-end test plan (device model + Win7 driver + web runtime): [`test-plans/virtio-input.md`](./test-plans/virtio-input.md)
 
 This document defines:
 

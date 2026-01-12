@@ -47,6 +47,10 @@ boot; very early bare-metal tests may need to do so explicitly.
 
 For best performance and lowest complexity on the host side, we also plan a **paravirtualized virtio-input** path. This avoids USB controller emulation entirely, but requires a custom Windows 7 driver to surface the virtio device as standard HID keyboard/mouse devices. The definitive virtio-input device contract for Aero (transport + queues + event codes) is specified in [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
 
+For a single end-to-end “do these steps” validation checklist (device model + Win7 driver + web runtime routing), see:
+
+- [`virtio-input-test-plan.md`](./virtio-input-test-plan.md)
+
 Physical device passthrough (optional): on Chromium-based browsers, Aero can also (optionally) attach a **real host-connected device** to the guest via WebHID/WebUSB. See:
 
 - [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md)
