@@ -880,7 +880,7 @@ while true; do
                     if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
                       echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
                     else
-                      echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
+                      echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 or AERO_ISOLATE_CARGO_HOME=<path> to pick a custom path)" >&2
                     fi
                   fi
                   unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
@@ -929,7 +929,7 @@ while true; do
                 if mkdir -p "$REPO_ROOT/.cargo-home" 2>/dev/null; then
                   echo "[safe-run] note: created ./.cargo-home to reduce Cargo lock contention on future runs" >&2
                 else
-                  echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 to pick a custom path)" >&2
+                  echo "[safe-run] warning: failed to create ./.cargo-home (set AERO_ISOLATE_CARGO_HOME=1 or AERO_ISOLATE_CARGO_HOME=<path> to pick a custom path)" >&2
                 fi
               fi
               unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
