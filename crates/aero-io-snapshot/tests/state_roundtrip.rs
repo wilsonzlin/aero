@@ -3,7 +3,7 @@ use aero_io_snapshot::io::audio::state::{
     HdaStreamRuntimeState, HdaStreamState,
 };
 use aero_io_snapshot::io::network::state::{
-    DhcpLease, Ipv4Addr, NatKey, NatProtocol, NatValue, NetworkStackState, TcpRestorePolicy,
+    DhcpLease, Ipv4Addr, LegacyNetworkStackState, NatKey, NatProtocol, NatValue, TcpRestorePolicy,
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::{
@@ -253,7 +253,7 @@ fn nvme_state_roundtrip() {
 
 #[test]
 fn network_stack_roundtrip_with_policy() {
-    let mut net = NetworkStackState {
+    let mut net = LegacyNetworkStackState {
         mac_addr: [10, 11, 12, 13, 14, 15],
         dhcp_lease: Some(DhcpLease {
             ip: Ipv4Addr::new(192, 168, 0, 2),
@@ -280,7 +280,7 @@ fn network_stack_roundtrip_with_policy() {
     let conn_id = net.open_tcp_connection(Ipv4Addr::new(93, 184, 216, 34), 80);
 
     let snap = net.save_state();
-    let mut restored = NetworkStackState::default();
+    let mut restored = LegacyNetworkStackState::default();
     restored.load_state(&snap).unwrap();
 
     assert!(restored.tcp_proxy_conns.contains_key(&conn_id));

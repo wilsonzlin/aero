@@ -457,6 +457,7 @@ dependencies = [
 name = "aero-net-stack"
 version = "0.1.0"
 dependencies = [
+ "aero-io-snapshot",
  "futures-util",
  "nt-packetlib",
  "tokio",

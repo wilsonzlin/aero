@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 nt-packetlib = { path = "../nt-packetlib" }
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 futures-util = "0.3"

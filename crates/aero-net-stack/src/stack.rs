@@ -8,6 +8,10 @@ use crate::packet::{
     ARP_OP_REPLY, ARP_OP_REQUEST, HTYPE_ETHERNET, PTYPE_IPV4,
 };
 use crate::policy::HostPolicy;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use core::net::Ipv4Addr;
 use std::collections::{HashMap, VecDeque};
 
@@ -201,6 +205,23 @@ pub struct NetworkStack {
     next_tcp_id: u32,
     next_dns_id: u32,
     ipv4_ident: u16,
+    /// Offset applied to caller-provided `now_ms` to produce a stable internal time base that
+    /// survives snapshot/restore.
+    ///
+    /// Internal time is computed as:
+    /// `internal_now_ms = now_ms + time_offset_ms` (with saturating bounds).
+    time_offset_ms: i64,
+    /// When `Some`, the next call that supplies a `now_ms` value will recompute `time_offset_ms`
+    /// so that `internal_now_ms` matches this anchor.
+    ///
+    /// This is used during snapshot restore because the host's monotonic time base is typically
+    /// reset when a backend is recreated.
+    restore_time_anchor_ms: Option<Millis>,
+    /// Most recently observed internal time.
+    ///
+    /// Snapshots store this value so DNS cache expiry timestamps can be interpreted correctly after
+    /// restore, even if the host's `now_ms` starts over from 0.
+    last_now_ms: Millis,
 
     tcp: HashMap<TcpKey, TcpConn>,
     pending_dns: HashMap<u32, PendingDns>,
@@ -217,6 +238,9 @@ impl NetworkStack {
             next_tcp_id: 1,
             next_dns_id: 1,
             ipv4_ident: 1,
+            time_offset_ms: 0,
+            restore_time_anchor_ms: None,
+            last_now_ms: 0,
             tcp: HashMap::new(),
             pending_dns: HashMap::new(),
             dns_cache: HashMap::new(),
@@ -236,7 +260,36 @@ impl NetworkStack {
         self.cfg.host_policy.enabled = enabled;
     }
 
+    /// Convert the host-supplied `now_ms` into the stack's internal time base.
+    ///
+    /// The host glue (`NetStackBackend`) typically supplies `now_ms` as milliseconds since the
+    /// backend was created. When restoring from a snapshot, that clock usually restarts from 0, but
+    /// the stack stores DNS cache expiry timestamps as absolute-ish `expires_at_ms` values.
+    ///
+    /// To keep TTL behavior stable across snapshot/restore, we align the post-restore time base to
+    /// the snapshotted `last_now_ms` on the first call after `load_state()`.
+    fn to_internal_now_ms(&mut self, now_ms: Millis) -> Millis {
+        if let Some(anchor) = self.restore_time_anchor_ms.take() {
+            let diff = anchor as i128 - now_ms as i128;
+            self.time_offset_ms = diff.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        }
+
+        let internal = {
+            let sum = now_ms as i128 + self.time_offset_ms as i128;
+            if sum < 0 {
+                0
+            } else if sum > u64::MAX as i128 {
+                u64::MAX
+            } else {
+                sum as u64
+            }
+        };
+        self.last_now_ms = internal;
+        internal
+    }
+
     pub fn process_outbound_ethernet(&mut self, frame: &[u8], now_ms: Millis) -> Vec<Action> {
+        let now_ms = self.to_internal_now_ms(now_ms);
         let eth = match EthernetFrame::parse(frame) {
             Ok(eth) => eth,
             Err(_) => return Vec::new(),
@@ -252,7 +305,10 @@ impl NetworkStack {
         }
     }
 
-    pub fn handle_tcp_proxy_event(&mut self, event: TcpProxyEvent, _now_ms: Millis) -> Vec<Action> {
+    pub fn handle_tcp_proxy_event(&mut self, event: TcpProxyEvent, now_ms: Millis) -> Vec<Action> {
+        // Keep the internal time base in sync even though most TCP proxy events don't currently
+        // depend on `now_ms`.
+        let _ = self.to_internal_now_ms(now_ms);
         let mut out = Vec::new();
 
         // Data is latency-sensitive; handle it without any extra bookkeeping first.
@@ -325,7 +381,8 @@ impl NetworkStack {
         out
     }
 
-    pub fn handle_udp_proxy_event(&mut self, event: UdpProxyEvent, _now_ms: Millis) -> Vec<Action> {
+    pub fn handle_udp_proxy_event(&mut self, event: UdpProxyEvent, now_ms: Millis) -> Vec<Action> {
+        let _ = self.to_internal_now_ms(now_ms);
         let guest_mac = match self.guest_mac {
             Some(m) => m,
             None => return Vec::new(),
@@ -372,6 +429,7 @@ impl NetworkStack {
     }
 
     pub fn handle_dns_resolved(&mut self, resolved: DnsResolved, now_ms: Millis) -> Vec<Action> {
+        let now_ms = self.to_internal_now_ms(now_ms);
         let pending = match self.pending_dns.remove(&resolved.request_id) {
             Some(p) => p,
             None => return Vec::new(),
@@ -1531,5 +1589,159 @@ impl NetworkStack {
         while self.dns_cache_fifo.len() > max {
             self.dns_cache_fifo.pop_front();
         }
+    }
+}
+
+// Snapshot format (device id "NETS", version 1.0)
+//
+// This snapshots only config-independent dynamic state required for reasonable resume semantics.
+//
+// On restore we intentionally drop:
+// - in-flight DNS resolutions (`pending_dns`) because host-side DoH/proxy requests are not
+//   restartable and could otherwise accumulate unbounded state in snapshots.
+// - active TCP connections (`tcp`) because the host transport (WebSocket/WebRTC/TCP) is not
+//   bit-restorable; preserving these would imply reconnection logic that cannot provide correct TCP
+//   semantics for the guest. We still preserve `next_tcp_id` to avoid reusing connection IDs.
+//
+// Persisted:
+// - learned guest MAC (needed to emit frames back to the guest)
+// - DHCP/IP-assigned flag (whether we should accept TCP/UDP/ICMP traffic)
+// - next ID counters
+// - DNS cache entries (bounded), with expiry based on a stable internal time base.
+impl IoSnapshot for NetworkStack {
+    const DEVICE_ID: [u8; 4] = *b"NETS";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_LAST_NOW_MS: u16 = 1;
+        const TAG_GUEST_MAC: u16 = 2;
+        const TAG_IP_ASSIGNED: u16 = 3;
+        const TAG_NEXT_TCP_ID: u16 = 4;
+        const TAG_NEXT_DNS_ID: u16 = 5;
+        const TAG_IPV4_IDENT: u16 = 6;
+        const TAG_DNS_CACHE: u16 = 7;
+
+        const MAX_SNAPSHOT_DNS_CACHE_ENTRIES: usize = 10_000;
+        const MAX_DNS_NAME_LEN: usize = 1024;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u64(TAG_LAST_NOW_MS, self.last_now_ms);
+        w.field_bool(TAG_IP_ASSIGNED, self.ip_assigned);
+        w.field_u32(TAG_NEXT_TCP_ID, self.next_tcp_id);
+        w.field_u32(TAG_NEXT_DNS_ID, self.next_dns_id);
+        w.field_u16(TAG_IPV4_IDENT, self.ipv4_ident);
+
+        if let Some(mac) = self.guest_mac {
+            w.field_bytes(TAG_GUEST_MAC, mac.0.to_vec());
+        }
+
+        // Encode DNS cache entries in FIFO order for deterministic output.
+        let now_ms = self.last_now_ms;
+        let mut entries: Vec<(&str, &DnsCacheEntry)> = Vec::new();
+        for name in &self.dns_cache_fifo {
+            if entries.len() >= MAX_SNAPSHOT_DNS_CACHE_ENTRIES {
+                break;
+            }
+            if name.len() > MAX_DNS_NAME_LEN {
+                continue;
+            }
+            let Some(entry) = self.dns_cache.get(name) else {
+                continue;
+            };
+            // Skip already-expired entries to keep snapshots compact.
+            if entry.expires_at_ms <= now_ms {
+                continue;
+            }
+            entries.push((name.as_str(), entry));
+        }
+
+        let mut enc = Encoder::new().u32(entries.len() as u32);
+        for (name, entry) in entries {
+            enc = enc
+                .u32(name.len() as u32)
+                .bytes(name.as_bytes())
+                .bytes(&entry.addr.octets())
+                .u64(entry.expires_at_ms);
+        }
+        w.field_bytes(TAG_DNS_CACHE, enc.finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_LAST_NOW_MS: u16 = 1;
+        const TAG_GUEST_MAC: u16 = 2;
+        const TAG_IP_ASSIGNED: u16 = 3;
+        const TAG_NEXT_TCP_ID: u16 = 4;
+        const TAG_NEXT_DNS_ID: u16 = 5;
+        const TAG_IPV4_IDENT: u16 = 6;
+        const TAG_DNS_CACHE: u16 = 7;
+
+        const MAX_SNAPSHOT_DNS_CACHE_ENTRIES: usize = 10_000;
+        const MAX_DNS_NAME_LEN: usize = 1024;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset to a deterministic baseline while preserving host configuration.
+        let cfg = self.cfg.clone();
+        *self = Self::new(cfg);
+
+        let last_now_ms = r.u64(TAG_LAST_NOW_MS)?.unwrap_or(0);
+        self.last_now_ms = last_now_ms;
+        // Align the post-restore time base on the first call that supplies `now_ms`.
+        self.restore_time_anchor_ms = Some(last_now_ms);
+
+        if let Some(mac) = r.bytes(TAG_GUEST_MAC) {
+            if mac.len() != 6 {
+                return Err(SnapshotError::InvalidFieldEncoding("guest_mac"));
+            }
+            let mut bytes = [0u8; 6];
+            bytes.copy_from_slice(mac);
+            self.guest_mac = Some(MacAddr(bytes));
+        }
+
+        self.ip_assigned = r.bool(TAG_IP_ASSIGNED)?.unwrap_or(false);
+
+        self.next_tcp_id = r.u32(TAG_NEXT_TCP_ID)?.unwrap_or(1).max(1);
+        self.next_dns_id = r.u32(TAG_NEXT_DNS_ID)?.unwrap_or(1).max(1);
+        self.ipv4_ident = r.u16(TAG_IPV4_IDENT)?.unwrap_or(1).max(1);
+
+        // DNS cache.
+        if let Some(buf) = r.bytes(TAG_DNS_CACHE) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_SNAPSHOT_DNS_CACHE_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many dns cache entries",
+                ));
+            }
+            for _ in 0..count {
+                let name_len = d.u32()? as usize;
+                if name_len > MAX_DNS_NAME_LEN {
+                    return Err(SnapshotError::InvalidFieldEncoding("dns name too long"));
+                }
+                let name_bytes = d.bytes(name_len)?;
+                let name = std::str::from_utf8(name_bytes)
+                    .map_err(|_| SnapshotError::InvalidFieldEncoding("dns name utf-8"))?
+                    .to_string();
+
+                let ip_bytes = d.bytes(4)?;
+                let addr = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+
+                let expires_at_ms = d.u64()?;
+
+                // Drop already-expired entries.
+                if expires_at_ms <= last_now_ms {
+                    continue;
+                }
+
+                self.insert_dns_cache(name, DnsCacheEntry { addr, expires_at_ms });
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }

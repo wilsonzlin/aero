@@ -68,11 +68,15 @@ pub enum TcpRestorePolicy {
     Reconnect,
 }
 
-/// Host-side (user-space) network stack state.
+/// Legacy host-side (user-space) network stack state.
 ///
-/// This is separate from the emulated NIC device model (e1000/virtio-net).
+/// This snapshot state predates the current browser-friendly user-space network stack
+/// implementation in [`aero-net-stack`](https://crates.io/crates/aero-net-stack) and does **not**
+/// match its internal state.
+///
+/// New code should snapshot [`aero_net_stack::NetworkStack`] directly (device id `b"NETS"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkStackState {
+pub struct LegacyNetworkStackState {
     pub mac_addr: [u8; 6],
     pub dhcp_lease: Option<DhcpLease>,
     pub nat: BTreeMap<NatKey, NatValue>,
@@ -81,7 +85,13 @@ pub struct NetworkStackState {
     pub tcp_proxy_conns: BTreeMap<u32, ProxyConnection>,
 }
 
-impl Default for NetworkStackState {
+#[deprecated(
+    note = "Legacy NAT-based network snapshot state (device id b\"NETL\"). \
+            Snapshot aero_net_stack::NetworkStack (device id b\"NETS\") instead."
+)]
+pub type NetworkStackState = LegacyNetworkStackState;
+
+impl Default for LegacyNetworkStackState {
     fn default() -> Self {
         Self {
             mac_addr: [0; 6],
@@ -93,7 +103,7 @@ impl Default for NetworkStackState {
     }
 }
 
-impl NetworkStackState {
+impl LegacyNetworkStackState {
     pub fn open_tcp_connection(&mut self, remote_ip: Ipv4Addr, remote_port: u16) -> u32 {
         let id = self.next_conn_id;
         self.next_conn_id += 1;
@@ -123,8 +133,10 @@ impl NetworkStackState {
     }
 }
 
-impl IoSnapshot for NetworkStackState {
-    const DEVICE_ID: [u8; 4] = *b"NETS";
+impl IoSnapshot for LegacyNetworkStackState {
+    // NOTE: This is intentionally *not* `b"NETS"` to avoid colliding with the canonical
+    // `aero_net_stack::NetworkStack` snapshot encoding.
+    const DEVICE_ID: [u8; 4] = *b"NETL";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
     fn save_state(&self) -> Vec<u8> {

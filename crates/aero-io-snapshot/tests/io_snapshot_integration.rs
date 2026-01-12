@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use aero_devices_input::I8042Controller;
-use aero_io_snapshot::io::network::state::{Ipv4Addr, NetworkStackState, TcpRestorePolicy};
+use aero_io_snapshot::io::network::state::{Ipv4Addr, LegacyNetworkStackState, TcpRestorePolicy};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_io_snapshot::io::storage::state::{
     DiskBackend, DiskBackendState, DiskLayerState, LocalDiskBackendKind, LocalDiskBackendState,
@@ -70,7 +70,7 @@ fn scripted_io_snapshot_restore() {
     i8042.inject_browser_key("KeyA", true);
     i8042.inject_browser_key("KeyA", false);
 
-    let mut net = NetworkStackState::default();
+    let mut net = LegacyNetworkStackState::default();
     let conn_id = net.open_tcp_connection(Ipv4Addr::new(93, 184, 216, 34), 80);
 
     let mut sector = vec![0u8; 512];
@@ -109,7 +109,7 @@ fn scripted_io_snapshot_restore() {
     let mut i8042_2 = I8042Controller::new();
     i8042_2.load_state(r.bytes(2).unwrap()).unwrap();
 
-    let mut net2 = NetworkStackState::default();
+    let mut net2 = LegacyNetworkStackState::default();
     net2.load_state(r.bytes(3).unwrap()).unwrap();
     net2.apply_tcp_restore_policy(TcpRestorePolicy::Reconnect);
 
