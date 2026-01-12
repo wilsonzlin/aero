@@ -951,7 +951,7 @@ pub mod tier1 {
             }
             0xd0 => {
                 let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W8)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, Width::W8)?;
                 let group = modrm.reg & 0x7;
                 let op = match group {
                     4 => ShiftOp::Shl,
@@ -995,7 +995,7 @@ pub mod tier1 {
             }
             0xc0 => {
                 let (dst, modrm) =
-                    decode_modrm_operand(bytes, &mut offset, rex, rex.present, Width::W8)?;
+                    decode_modrm_operand(bytes, &mut offset, bitness, rex, rex.present, Width::W8)?;
                 let group = modrm.reg & 0x7;
                 let op = match group {
                     4 => ShiftOp::Shl,
