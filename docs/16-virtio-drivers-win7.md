@@ -9,6 +9,7 @@ The goal is to describe what needs to exist *before* writing any device-specific
 For the definitive Aero interoperability contract (virtio device IDs, required features, queue sizes, and transport rules), treat:
 
 - [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO`)
+- virtio-input end-to-end test plan (device model + Win7 driver + web runtime): [`docs/test-plans/virtio-input.md`](./test-plans/virtio-input.md)
 
 as authoritative. If this document ever disagrees with the contract, the contract wins.
 

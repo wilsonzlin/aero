@@ -5,6 +5,7 @@ This directory contains virtio-related implementation references intended for **
 ## Index
 
 - [`virtqueue-split-ring-win7.md`](./virtqueue-split-ring-win7.md) — Virtio 1.0 split-ring virtqueue implementation guide (descriptor management, ordering/barriers, EVENT_IDX, indirect descriptors).
+- virtio-input end-to-end test plan (device model + Win7 driver + web runtime): [`../test-plans/virtio-input.md`](../test-plans/virtio-input.md)
 
 Reference code in this repo:
 
