@@ -3,6 +3,9 @@ use memory::{DenseMemory, GuestMemory, GuestMemoryResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+const CMOS_INDEX_PORT: u16 = 0x70;
+const CMOS_DATA_PORT: u16 = 0x71;
+
 #[derive(Clone)]
 struct TrackingRam {
     inner: Rc<RefCell<TrackingRamInner>>,
@@ -57,8 +60,8 @@ impl GuestMemory for TrackingRam {
 }
 
 fn read_cmos_u8(platform: &mut PcPlatform, idx: u8) -> u8 {
-    platform.io.write_u8(0x70, idx);
-    platform.io.read_u8(0x71)
+    platform.io.write_u8(CMOS_INDEX_PORT, idx);
+    platform.io.read_u8(CMOS_DATA_PORT)
 }
 
 #[test]

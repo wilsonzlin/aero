@@ -2,6 +2,7 @@ use std::io::Cursor;
 
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::ioapic::IoApic;
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_devices::pci::{
     GsiLevelSink, PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
@@ -18,6 +19,8 @@ use memory::MemoryBus as _;
 
 const RAM_SIZE: usize = 2 * 1024 * 1024;
 const PORT_A20_FAST: u16 = 0x92;
+const CMOS_INDEX_PORT: u16 = 0x70;
+const CMOS_DATA_PORT: u16 = 0x71;
 const ONE_MIB: u64 = 0x10_0000;
 
 struct PcPlatformSnapshotHarness {
@@ -248,14 +251,14 @@ fn aero_snapshot_roundtrip_happy_path() {
 
     // ---- Mutate device state ----
     // PIT: program channel 0 reload to 0x1234 (mode 2, lobyte/hibyte).
-    src.platform.io.write_u8(0x43, 0x34);
-    src.platform.io.write_u8(0x40, 0x34);
-    src.platform.io.write_u8(0x40, 0x12);
+    src.platform.io.write_u8(PIT_CMD, 0x34);
+    src.platform.io.write_u8(PIT_CH0, 0x34);
+    src.platform.io.write_u8(PIT_CH0, 0x12);
     src.platform.tick(1_000_000);
 
     // RTC: write an arbitrary NVRAM byte.
-    src.platform.io.write_u8(0x70, 0x10);
-    src.platform.io.write_u8(0x71, 0xAB);
+    src.platform.io.write_u8(CMOS_INDEX_PORT, 0x10);
+    src.platform.io.write_u8(CMOS_DATA_PORT, 0xAB);
 
     // HPET: requires A20 enabled to avoid aliasing with IOAPIC base.
     src.platform.io.write_u8(PORT_A20_FAST, 0x02);

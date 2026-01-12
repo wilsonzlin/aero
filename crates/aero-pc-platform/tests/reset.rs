@@ -1,6 +1,12 @@
+use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_devices::pci::profile::{SATA_AHCI_ICH9, USB_UHCI_PIIX3};
+use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 use aero_pc_platform::{PcPlatform, ResetEvent};
-use aero_platform::interrupts::InterruptController;
+use aero_platform::interrupts::{InterruptController, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT};
+
+const CMOS_INDEX_PORT: u16 = 0x70;
+const CMOS_DATA_PORT: u16 = 0x71;
 
 fn mmio_read_u32(mem: &mut aero_platform::memory::MemoryBus, addr: u64) -> u32 {
     let mut buf = [0u8; 4];
@@ -23,13 +29,13 @@ fn mmio_write_u64(mem: &mut aero_platform::memory::MemoryBus, addr: u64, value: 
 }
 
 fn rtc_read_reg(p: &mut PcPlatform, reg: u8) -> u8 {
-    p.io.write_u8(0x70, reg);
-    p.io.read_u8(0x71)
+    p.io.write_u8(CMOS_INDEX_PORT, reg);
+    p.io.read_u8(CMOS_DATA_PORT)
 }
 
 fn rtc_write_reg(p: &mut PcPlatform, reg: u8, value: u8) {
-    p.io.write_u8(0x70, reg);
-    p.io.write_u8(0x71, value);
+    p.io.write_u8(CMOS_INDEX_PORT, reg);
+    p.io.write_u8(CMOS_DATA_PORT, value);
 }
 
 fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -40,25 +46,44 @@ fn pci_cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
         | (offset as u32 & 0xFC)
 }
 
-fn pci_read_u16(p: &mut PcPlatform, bdf: aero_devices::pci::PciBdf, offset: u8) -> u16 {
-    p.io.write(0xCF8, 4, pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset));
-    p.io.read(0xCFC + u16::from(offset & 0x3), 2) as u16
+fn pci_read_u16(p: &mut PcPlatform, bdf: PciBdf, offset: u8) -> u16 {
+    p.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
+    );
+    p.io.read(PCI_CFG_DATA_PORT + u16::from(offset & 0x3), 2) as u16
 }
 
-fn pci_read_u32(p: &mut PcPlatform, bdf: aero_devices::pci::PciBdf, offset: u8) -> u32 {
-    p.io.write(0xCF8, 4, pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset));
-    p.io.read(0xCFC, 4)
+fn pci_read_u32(p: &mut PcPlatform, bdf: PciBdf, offset: u8) -> u32 {
+    p.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
+    );
+    p.io.read(PCI_CFG_DATA_PORT, 4)
 }
 
-fn pci_write_u16(p: &mut PcPlatform, bdf: aero_devices::pci::PciBdf, offset: u8, value: u16) {
-    p.io.write(0xCF8, 4, pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset));
-    p.io
-        .write(0xCFC + u16::from(offset & 0x3), 2, value as u32);
+fn pci_write_u16(p: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u16) {
+    p.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
+    );
+    p.io.write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 0x3),
+        2,
+        value as u32,
+    );
 }
 
-fn pci_write_u32(p: &mut PcPlatform, bdf: aero_devices::pci::PciBdf, offset: u8, value: u32) {
-    p.io.write(0xCF8, 4, pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset));
-    p.io.write(0xCFC, 4, value);
+fn pci_write_u32(p: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u32) {
+    p.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        pci_cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
+    );
+    p.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn ioapic_read_reg(p: &mut PcPlatform, reg: u32) -> u32 {
@@ -98,13 +123,13 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     plat.io.write_u8(0x92, 0x02);
 
     // Mutate IMCR state (switch to APIC mode).
-    plat.io.write_u8(0x22, 0x70);
-    plat.io.write_u8(0x23, 0x01);
+    plat.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    plat.io.write_u8(IMCR_DATA_PORT, 0x01);
 
     // Program PIT channel 0 (mode 2, divisor 0x2211).
-    plat.io.write_u8(0x43, 0x34);
-    plat.io.write_u8(0x40, 0x11);
-    plat.io.write_u8(0x40, 0x22);
+    plat.io.write_u8(PIT_CMD, 0x34);
+    plat.io.write_u8(PIT_CH0, 0x11);
+    plat.io.write_u8(PIT_CH0, 0x22);
 
     // Program RTC Status B (enable update-ended interrupts).
     rtc_write_reg(&mut plat, 0x0B, 0x02 | 0x10);
@@ -122,8 +147,8 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     );
 
     // Mutate i8042 command byte (disable IRQs/translation).
-    plat.io.write_u8(0x64, 0x60);
-    plat.io.write_u8(0x60, 0x00);
+    plat.io.write_u8(I8042_STATUS_PORT, 0x60);
+    plat.io.write_u8(I8042_DATA_PORT, 0x00);
 
     // Mutate ACPI enable state via SMI_CMD.
     plat.io.write_u8(aero_devices::acpi_pm::DEFAULT_SMI_CMD_PORT, 0xA0);
@@ -135,13 +160,13 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     // Stomp BAR5 (MMIO).
     pci_write_u32(&mut plat, ahci_bdf, 0x24, 0xDEAD_0000);
     // Leave a non-zero CF8 latch value behind.
-    plat.io.write(0xCF8, 4, 0x8000_0000);
+    plat.io.write(PCI_CFG_ADDR_PORT, 4, 0x8000_0000);
 
     // Mutate PCI INTx router bookkeeping by asserting INTA# and leaving it asserted.
     let uhci_bdf = USB_UHCI_PIIX3.bdf;
     plat.pci_intx.assert_intx(
         uhci_bdf,
-        aero_devices::pci::PciInterruptPin::IntA,
+        PciInterruptPin::IntA,
         &mut *plat.interrupts.borrow_mut(),
     );
 
@@ -169,22 +194,34 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     assert_eq!(plat.io.read_u8(0x92), fresh.io.read_u8(0x92));
 
     // IMCR reset (legacy PIC mode).
-    plat.io.write_u8(0x22, 0x70);
-    fresh.io.write_u8(0x22, 0x70);
-    assert_eq!(plat.io.read_u8(0x23), fresh.io.read_u8(0x23));
+    plat.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    fresh.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    assert_eq!(
+        plat.io.read_u8(IMCR_DATA_PORT),
+        fresh.io.read_u8(IMCR_DATA_PORT)
+    );
 
     // PIT reset: channel reads should match.
-    assert_eq!(plat.io.read_u8(0x40), fresh.io.read_u8(0x40));
+    assert_eq!(plat.io.read_u8(PIT_CH0), fresh.io.read_u8(PIT_CH0));
 
     // RTC reset: index port and Status B should match.
-    assert_eq!(plat.io.read_u8(0x70), fresh.io.read_u8(0x70));
+    assert_eq!(
+        plat.io.read_u8(CMOS_INDEX_PORT),
+        fresh.io.read_u8(CMOS_INDEX_PORT)
+    );
     assert_eq!(rtc_read_reg(&mut plat, 0x0B), rtc_read_reg(&mut fresh, 0x0B));
 
     // i8042 reset: status port and command byte should match.
-    assert_eq!(plat.io.read_u8(0x64), fresh.io.read_u8(0x64));
-    plat.io.write_u8(0x64, 0x20);
-    fresh.io.write_u8(0x64, 0x20);
-    assert_eq!(plat.io.read_u8(0x60), fresh.io.read_u8(0x60));
+    assert_eq!(
+        plat.io.read_u8(I8042_STATUS_PORT),
+        fresh.io.read_u8(I8042_STATUS_PORT)
+    );
+    plat.io.write_u8(I8042_STATUS_PORT, 0x20);
+    fresh.io.write_u8(I8042_STATUS_PORT, 0x20);
+    assert_eq!(
+        plat.io.read_u8(I8042_DATA_PORT),
+        fresh.io.read_u8(I8042_DATA_PORT)
+    );
 
     // ACPI PM reset: PM1a_CNT should match (ACPI disabled).
     assert_eq!(
@@ -236,7 +273,10 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     plat.io.write_u8(0x92, 0x00);
 
     // PCI config: CF8 latch + AHCI BAR5 + AHCI command register should match a fresh BIOS POST.
-    assert_eq!(plat.io.read(0xCF8, 4), fresh.io.read(0xCF8, 4));
+    assert_eq!(
+        plat.io.read(PCI_CFG_ADDR_PORT, 4),
+        fresh.io.read(PCI_CFG_ADDR_PORT, 4)
+    );
     assert_eq!(
         pci_read_u16(&mut plat, ahci_bdf, 0x04),
         pci_read_u16(&mut fresh, ahci_bdf, 0x04)
@@ -259,7 +299,7 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     assert_eq!(plat.interrupts.borrow().get_pending(), None);
     let gsi = plat
         .pci_intx
-        .gsi_for_intx(uhci_bdf, aero_devices::pci::PciInterruptPin::IntA);
+        .gsi_for_intx(uhci_bdf, PciInterruptPin::IntA);
     let irq = u8::try_from(gsi).expect("PCI INTx GSI should fit in an ISA IRQ number");
     {
         let mut interrupts = plat.interrupts.borrow_mut();
@@ -274,7 +314,7 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     );
     plat.pci_intx.assert_intx(
         uhci_bdf,
-        aero_devices::pci::PciInterruptPin::IntA,
+        PciInterruptPin::IntA,
         &mut *plat.interrupts.borrow_mut(),
     );
     let pending_vec = plat
