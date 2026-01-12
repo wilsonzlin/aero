@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use aero_ipc::ring::{PopError, PushError};
 
@@ -116,6 +116,26 @@ impl<T: FrameRing + ?Sized> FrameRing for Mutex<T> {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_pop_vec()
+    }
+}
+
+impl<T: FrameRing + ?Sized> FrameRing for RwLock<T> {
+    fn capacity_bytes(&self) -> usize {
+        self.read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .capacity_bytes()
+    }
+
+    fn try_push(&self, payload: &[u8]) -> Result<(), PushError> {
+        self.write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_push(payload)
+    }
+
+    fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+        self.write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .try_pop_vec()
     }
@@ -289,7 +309,7 @@ mod tests {
     use std::cell::Cell;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
 
     use aero_ipc::ring::{PopError, RingBuffer};
 
@@ -611,6 +631,19 @@ mod tests {
     fn backend_works_with_mutex_rings_via_frame_ring_impl() {
         let tx = Arc::new(Mutex::new(RingBuffer::new(64)));
         let rx = Arc::new(Mutex::new(RingBuffer::new(64)));
+        let mut backend = L2TunnelRingBackend::new(tx, rx);
+
+        backend.transmit(vec![1, 2, 3]);
+        assert_eq!(backend.tx_ring().try_pop_vec(), Ok(vec![1, 2, 3]));
+
+        backend.rx_ring().try_push(&[9]).unwrap();
+        assert_eq!(backend.poll_receive(), Some(vec![9]));
+    }
+
+    #[test]
+    fn backend_works_with_rwlock_rings_via_frame_ring_impl() {
+        let tx = Arc::new(RwLock::new(RingBuffer::new(64)));
+        let rx = Arc::new(RwLock::new(RingBuffer::new(64)));
         let mut backend = L2TunnelRingBackend::new(tx, rx);
 
         backend.transmit(vec![1, 2, 3]);
