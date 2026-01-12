@@ -46,6 +46,7 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
 - `AEROGPU_D3D9_TRACE_FILTER=<TOKENS>`  
   Records only entrypoints whose trace name contains any of the comma-separated tokens (case-insensitive substring match).
   Leading/trailing whitespace around tokens is ignored.
+  If the filter value is empty or contains only commas/whitespace (for example `AEROGPU_D3D9_TRACE_FILTER=,, ,`), the filter is treated as **unset** (`filter_on=0`).
   Note: the filter applies to recording and per-entrypoint dump triggers (`AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` / `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` will only fire for filtered-in entrypoints).
   The present-count dump trigger (`AEROGPU_D3D9_TRACE_DUMP_PRESENT`) is not suppressed by the filter, but the filter still controls which calls are recorded (including whether the triggering `Present` call is force-recorded).
   Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
