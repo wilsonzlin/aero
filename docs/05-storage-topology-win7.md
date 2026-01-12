@@ -23,6 +23,7 @@ and the corresponding tests:
 - `crates/aero-machine/tests/machine_win7_storage_helper.rs` (helper preset wiring)
 - `crates/aero-machine/tests/machine_win7_storage.rs` (helper constructor: PCI BDF presence + multifunction ISA bridge)
 - `crates/aero-machine/tests/machine_disk_overlays_snapshot.rs` (snapshot `DISKS` disk_id mapping guard test)
+- `crates/aero-machine/tests/machine_storage_snapshot_roundtrip.rs` (snapshot/restore: controller state + backend reattach contract)
 
 ---
 
