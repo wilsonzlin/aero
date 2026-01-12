@@ -681,6 +681,25 @@ fn create_default_render_states() -> Vec<u32> {
     states
 }
 
+fn create_default_sampler_states_ps() -> [Vec<u32>; MAX_SAMPLERS] {
+    // `set_sampler_state_u32` caches state values and early-returns when the sampler-state value
+    // is unchanged. For states whose D3D9 defaults are non-zero, we must seed the cache with those
+    // defaults so the first explicit set-to-zero call is not dropped.
+    let mut states = vec![0u32; d3d9::D3DSAMP_SRGBTEXTURE as usize + 1];
+    states[d3d9::D3DSAMP_ADDRESSU as usize] = d3d9::D3DTADDRESS_WRAP;
+    states[d3d9::D3DSAMP_ADDRESSV as usize] = d3d9::D3DTADDRESS_WRAP;
+    states[d3d9::D3DSAMP_ADDRESSW as usize] = d3d9::D3DTADDRESS_WRAP;
+    states[d3d9::D3DSAMP_MINFILTER as usize] = d3d9::D3DTEXF_POINT;
+    states[d3d9::D3DSAMP_MAGFILTER as usize] = d3d9::D3DTEXF_POINT;
+    states[d3d9::D3DSAMP_MIPFILTER as usize] = d3d9::D3DTEXF_NONE;
+    states[d3d9::D3DSAMP_MAXANISOTROPY as usize] = 1;
+    states[d3d9::D3DSAMP_MAXMIPLEVEL as usize] = 0;
+    states[d3d9::D3DSAMP_BORDERCOLOR as usize] = 0;
+    states[d3d9::D3DSAMP_SRGBTEXTURE as usize] = 0;
+
+    std::array::from_fn(|_| states.clone())
+}
+
 fn create_default_state() -> State {
     let mut state = State {
         topology_raw: cmd::AerogpuPrimitiveTopology::TriangleList as u32,
@@ -690,6 +709,7 @@ fn create_default_state() -> State {
         ..Default::default()
     };
     state.render_states = create_default_render_states();
+    state.sampler_states_ps = create_default_sampler_states_ps();
     state
 }
 
