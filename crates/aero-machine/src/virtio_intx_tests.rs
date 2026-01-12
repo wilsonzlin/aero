@@ -385,3 +385,41 @@ fn pc_virtio_net_intx_is_synced_but_not_acknowledged_when_pending_event() {
         Some(expected_vector)
     );
 }
+
+#[test]
+fn pc_virtio_net_intx_is_synced_but_not_acknowledged_during_interrupt_shadow() {
+    let mut m = new_virtio_net_machine();
+
+    let (interrupts, expected_vector) = configure_virtio_net_pic(&mut m);
+    enable_virtio_net_pci_bme_and_mem_decode(&mut m);
+
+    let virtio = m.virtio_net().expect("virtio-net enabled");
+    let tx_used = init_virtio_net_and_post_tx_chain(&mut m, &virtio);
+
+    // Prior to running a slice, the virtio-net INTx level has not been synced into the PIC yet.
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    // Simulate an `STI` interrupt shadow at a slice boundary: IF=1, but interrupts are inhibited
+    // for exactly one instruction.
+    const ENTRY_IP: u16 = 0x1000;
+    m.write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+    init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+    m.cpu.pending.inhibit_interrupts_for_one_instruction();
+
+    // Run a single instruction. The machine must not acknowledge/enqueue the interrupt while the
+    // shadow is active, but it should still sync PCI INTx sources so the PIC sees the asserted
+    // line.
+    let exit = m.run_slice(1);
+    assert_eq!(exit, RunExit::Completed { executed: 1 });
+    assert!(m.cpu.pending.external_interrupts.is_empty());
+
+    // The TX chain should have completed, and the interrupt should remain pending in the PIC.
+    assert_eq!(m.read_physical_u16(tx_used + 2), 1);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(expected_vector)
+    );
+}
