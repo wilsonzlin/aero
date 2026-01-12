@@ -204,6 +204,9 @@ The `l2` DataChannel must be **fully reliable and ordered**:
 browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
 ```
 
+The relay does not interpret `l2` messages, but the framing constants and helper codec used by tests live in:
+`internal/l2tunnel/` (validated against `crates/conformance/test-vectors/aero-vectors-v1.json`).
+
 Configuration env vars (server → server dialing):
 
 - `L2_BACKEND_WS_URL` (optional): Backend `ws://` / `wss://` URL. When unset/empty,
