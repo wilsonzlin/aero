@@ -37,6 +37,27 @@ export function getRingBufferLevelFrames(header: Uint32Array, capacityFrames: nu
   return framesAvailableClamped(read, write, capacityFrames);
 }
 
+/**
+ * Clamp a read frame counter to a consistent state when the producer has advanced
+ * by more than the ring can hold.
+ *
+ * This mirrors the logic in the Rust snapshot restore path
+ * (`crates/platform/src/audio/worklet_bridge.rs`).
+ */
+export function clampReadFrameIndexToCapacity(
+  readFrameIndex: number,
+  writeFrameIndex: number,
+  capacityFrames: number,
+): number {
+  const cap = capacityFrames >>> 0;
+  const read = readFrameIndex >>> 0;
+  const write = writeFrameIndex >>> 0;
+  if (cap === 0) return read;
+  const available = framesAvailable(read, write);
+  if (available > cap) return (write - cap) >>> 0;
+  return read;
+}
+
 export function requiredBytes(capacityFrames: number, channelCount: number): number {
   const sampleCapacity = capacityFrames * channelCount;
   return HEADER_BYTES + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;

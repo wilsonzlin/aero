@@ -1,4 +1,5 @@
 import type { AudioRingBufferLayout } from "./audio";
+import { READ_FRAME_INDEX, WRITE_FRAME_INDEX, clampReadFrameIndexToCapacity } from "../audio/audio_worklet_ring";
 
 /**
  * Snapshot state for the AudioWorklet playback ring buffer.
@@ -23,9 +24,6 @@ export type AudioWorkletRingStateLike = {
   writePos: number;
 };
 
-const READ_FRAME_INDEX = 0;
-const WRITE_FRAME_INDEX = 1;
-
 /**
  * Restore playback ring buffer indices from snapshot state.
  *
@@ -49,15 +47,8 @@ export function restoreAudioWorkletRing(ring: AudioRingBufferLayout, state: Audi
     // Intentionally ignored; see function doc comment.
   }
 
-  let readPos = state.readPos >>> 0;
   const writePos = state.writePos >>> 0;
-
-  const available = (writePos - readPos) >>> 0;
-  if (ringCapacityFrames !== 0 && available > ringCapacityFrames) {
-    // The producer is ahead by more than the ring can hold. Clamp to a consistent "full" state
-    // so reads/writes can make progress immediately.
-    readPos = (writePos - ringCapacityFrames) >>> 0;
-  }
+  const readPos = clampReadFrameIndexToCapacity(state.readPos, writePos, ringCapacityFrames);
 
   Atomics.store(ring.header, READ_FRAME_INDEX, readPos);
   Atomics.store(ring.header, WRITE_FRAME_INDEX, writePos);

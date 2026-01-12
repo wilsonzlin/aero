@@ -2,26 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import { getRingBufferLevelFrames, type AudioRingBufferLayout } from "./audio";
 import { restoreAudioWorkletRing, type AudioWorkletRingStateLike } from "./audio_ring_restore";
+import {
+  HEADER_U32_LEN,
+  READ_FRAME_INDEX,
+  WRITE_FRAME_INDEX,
+  requiredBytes,
+  wrapRingBuffer,
+} from "../audio/audio_worklet_ring";
 
 function createTestRingBuffer(channelCount: number, capacityFrames: number): AudioRingBufferLayout {
-  const headerU32Len = 4;
-  const headerBytes = headerU32Len * Uint32Array.BYTES_PER_ELEMENT;
-  const sampleCapacity = capacityFrames * channelCount;
-  const buffer = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
+  const buffer = new SharedArrayBuffer(requiredBytes(capacityFrames, channelCount));
+  const views = wrapRingBuffer(buffer, capacityFrames, channelCount);
 
-  const header = new Uint32Array(buffer, 0, headerU32Len);
-  const samples = new Float32Array(buffer, headerBytes, sampleCapacity);
-
-  for (let i = 0; i < headerU32Len; i++) Atomics.store(header, i, 0);
+  for (let i = 0; i < HEADER_U32_LEN; i++) Atomics.store(views.header, i, 0);
 
   return {
     buffer,
-    header,
-    readIndex: header.subarray(0, 1),
-    writeIndex: header.subarray(1, 2),
-    underrunCount: header.subarray(2, 3),
-    overrunCount: header.subarray(3, 4),
-    samples,
+    ...views,
     channelCount,
     capacityFrames,
   };
@@ -33,14 +30,14 @@ describe("restoreAudioWorkletRing", () => {
     ring.samples.fill(123);
 
     // Seed to non-zero values so we know restore overwrites them.
-    Atomics.store(ring.header, 0, 111);
-    Atomics.store(ring.header, 1, 222);
+    Atomics.store(ring.header, READ_FRAME_INDEX, 111);
+    Atomics.store(ring.header, WRITE_FRAME_INDEX, 222);
 
     const state: AudioWorkletRingStateLike = { capacityFrames: 8, readPos: 2, writePos: 5 };
     restoreAudioWorkletRing(ring, state);
 
-    expect(Atomics.load(ring.header, 0)).toBe(2);
-    expect(Atomics.load(ring.header, 1)).toBe(5);
+    expect(Atomics.load(ring.header, READ_FRAME_INDEX)).toBe(2);
+    expect(Atomics.load(ring.header, WRITE_FRAME_INDEX)).toBe(5);
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
 
@@ -52,8 +49,8 @@ describe("restoreAudioWorkletRing", () => {
     restoreAudioWorkletRing(ring, state);
 
     // available = 100, but ring can only hold 8 -> clamp readPos to a consistent full state.
-    expect(Atomics.load(ring.header, 0)).toBe(92);
-    expect(Atomics.load(ring.header, 1)).toBe(100);
+    expect(Atomics.load(ring.header, READ_FRAME_INDEX)).toBe(92);
+    expect(Atomics.load(ring.header, WRITE_FRAME_INDEX)).toBe(100);
     expect(getRingBufferLevelFrames(ring)).toBe(8);
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
@@ -67,8 +64,8 @@ describe("restoreAudioWorkletRing", () => {
     const state: AudioWorkletRingStateLike = { capacityFrames: 8, readPos, writePos };
     restoreAudioWorkletRing(ring, state);
 
-    expect(Atomics.load(ring.header, 0)).toBe(readPos);
-    expect(Atomics.load(ring.header, 1)).toBe(writePos);
+    expect(Atomics.load(ring.header, READ_FRAME_INDEX)).toBe(readPos);
+    expect(Atomics.load(ring.header, WRITE_FRAME_INDEX)).toBe(writePos);
     expect(getRingBufferLevelFrames(ring)).toBe(5);
   });
 
@@ -78,8 +75,7 @@ describe("restoreAudioWorkletRing", () => {
 
     const state: AudioWorkletRingStateLike = { capacityFrames: 4, readPos: 1, writePos: 2 };
     expect(() => restoreAudioWorkletRing(ring, state)).not.toThrow();
-    expect(Atomics.load(ring.header, 0)).toBe(1);
-    expect(Atomics.load(ring.header, 1)).toBe(2);
+    expect(Atomics.load(ring.header, READ_FRAME_INDEX)).toBe(1);
+    expect(Atomics.load(ring.header, WRITE_FRAME_INDEX)).toBe(2);
   });
 });
-
