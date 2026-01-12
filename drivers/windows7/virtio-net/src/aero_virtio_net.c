@@ -498,7 +498,9 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   if (Notify) {
     if (AerovNetVirtqueueKickPrepareContractV1(&Adapter->RxVq.Vq) != VIRTIO_FALSE) {
       KeMemoryBarrier();
-      VirtioPciNotifyQueue(&Adapter->Vdev, Adapter->RxVq.QueueIndex);
+      if (!Adapter->SurpriseRemoved) {
+        VirtioPciNotifyQueue(&Adapter->Vdev, Adapter->RxVq.QueueIndex);
+      }
     }
   }
 }
@@ -563,7 +565,9 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   if (Notified) {
     if (AerovNetVirtqueueKickPrepareContractV1(&Adapter->TxVq.Vq) != VIRTIO_FALSE) {
       KeMemoryBarrier();
-      VirtioPciNotifyQueue(&Adapter->Vdev, Adapter->TxVq.QueueIndex);
+      if (!Adapter->SurpriseRemoved) {
+        VirtioPciNotifyQueue(&Adapter->Vdev, Adapter->TxVq.QueueIndex);
+      }
     }
   }
 }
@@ -1029,7 +1033,7 @@ static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _
     return FALSE;
   }
 
-  if (Adapter->State == AerovNetAdapterStopped) {
+  if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
     return FALSE;
   }
 
@@ -1078,7 +1082,7 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
 
   NdisAcquireSpinLock(&Adapter->Lock);
 
-  if (Adapter->State == AerovNetAdapterStopped) {
+  if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
     NdisReleaseSpinLock(&Adapter->Lock);
     return;
   }
@@ -1332,7 +1336,9 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
       InsertTailList(&Adapter->TxSubmittedList, &TxReq->Link);
       if (AerovNetVirtqueueKickPrepareContractV1(&Adapter->TxVq.Vq) != VIRTIO_FALSE) {
         KeMemoryBarrier();
-        VirtioPciNotifyQueue(&Adapter->Vdev, Adapter->TxVq.QueueIndex);
+        if (!Adapter->SurpriseRemoved) {
+          VirtioPciNotifyQueue(&Adapter->Vdev, Adapter->TxVq.QueueIndex);
+        }
       }
     }
   }
@@ -2055,6 +2061,17 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     NdisAcquireSpinLock(&Adapter->Lock);
     Adapter->SurpriseRemoved = TRUE;
     Adapter->State = AerovNetAdapterStopped;
+
+    // Once SurpriseRemoved is set, the device may have already disappeared.
+    // Clear BAR-backed pointers/caches so any accidental virtio access becomes a
+    // no-op instead of touching unmapped MMIO.
+    Adapter->Vdev.CommonCfg = NULL;
+    Adapter->Vdev.NotifyBase = NULL;
+    Adapter->Vdev.IsrStatus = NULL;
+    Adapter->Vdev.DeviceCfg = NULL;
+    Adapter->Vdev.QueueNotifyAddrCache = NULL;
+    Adapter->Vdev.QueueNotifyAddrCacheCount = 0;
+    RtlZeroMemory(Adapter->QueueNotifyAddrCache, sizeof(Adapter->QueueNotifyAddrCache));
     NdisReleaseSpinLock(&Adapter->Lock);
 
     // On surprise removal, the device may no longer be accessible. Avoid any
