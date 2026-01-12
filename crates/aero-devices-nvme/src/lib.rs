@@ -52,6 +52,10 @@ const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 // DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
 // Identify Controller (4MiB for 4KiB pages).
 const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
+// Maximum number of entries per submission/completion queue supported by this controller.
+//
+// This must match CAP.MQES (0-based), which we currently hard-code to 128 entries.
+const NVME_MAX_QUEUE_ENTRIES: u16 = 128;
 // DoS guard: cap the number of guest-created I/O queues. Otherwise a malicious guest can create
 // thousands of queues and force O(n) scans in interrupt paths and snapshot serialization.
 const NVME_MAX_IO_QUEUES: usize = 256;
@@ -697,6 +701,10 @@ impl NvmeController {
             self.csts = 0;
             return;
         }
+        if asqs > NVME_MAX_QUEUE_ENTRIES || acqs > NVME_MAX_QUEUE_ENTRIES {
+            self.csts = 0;
+            return;
+        }
         if self.asq & (PAGE_SIZE as u64 - 1) != 0 || self.acq & (PAGE_SIZE as u64 - 1) != 0 {
             self.csts = 0;
             return;
@@ -964,7 +972,7 @@ impl NvmeController {
         // The CQ size field is 0-based; use wrapping arithmetic so guests can't trigger a panic
         // under overflow-check builds by passing 0xFFFF (which would encode 65536 entries).
         let qsize = (((cmd.cdw10 >> 16) & 0xffff) as u16).wrapping_add(1);
-        if qsize == 0 || qsize > 128 {
+        if qsize == 0 || qsize > NVME_MAX_QUEUE_ENTRIES {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
@@ -1005,7 +1013,7 @@ impl NvmeController {
         // The SQ size field is 0-based; use wrapping arithmetic so guests can't trigger a panic
         // under overflow-check builds by passing 0xFFFF (which would encode 65536 entries).
         let qsize = (((cmd.cdw10 >> 16) & 0xffff) as u16).wrapping_add(1);
-        if qsize == 0 || qsize > 128 {
+        if qsize == 0 || qsize > NVME_MAX_QUEUE_ENTRIES {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
@@ -1300,6 +1308,83 @@ impl IoSnapshot for NvmeController {
         // `NvmeControllerState` decoder allows them for compatibility with other implementations).
         if state.io_sqs.len() > NVME_MAX_IO_QUEUES || state.io_cqs.len() > NVME_MAX_IO_QUEUES {
             return Err(SnapshotError::InvalidFieldEncoding("nvme io queue count"));
+        }
+        if state.csts & 1 != 0 && state.cc & 1 == 0 {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "nvme cc disabled but csts.rdy set",
+            ));
+        }
+        if state.csts & 1 != 0 && (state.admin_sq.is_none() || state.admin_cq.is_none()) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "nvme missing admin queues while enabled",
+            ));
+        }
+
+        fn validate_queue_base(base: u64) -> SnapshotResult<()> {
+            if base == 0 || base & (PAGE_SIZE as u64 - 1) != 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme queue base address"));
+            }
+            Ok(())
+        }
+
+        fn validate_sq(sq: &NvmeSubmissionQueueState) -> SnapshotResult<()> {
+            if sq.size == 0 || sq.size > NVME_MAX_QUEUE_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme sq size"));
+            }
+            if sq.head >= sq.size || sq.tail >= sq.size {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme sq head/tail"));
+            }
+            validate_queue_base(sq.base)?;
+            Ok(())
+        }
+
+        fn validate_cq(cq: &NvmeCompletionQueueState) -> SnapshotResult<()> {
+            if cq.size == 0 || cq.size > NVME_MAX_QUEUE_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme cq size"));
+            }
+            if cq.head >= cq.size || cq.tail >= cq.size {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme cq head/tail"));
+            }
+            validate_queue_base(cq.base)?;
+            Ok(())
+        }
+
+        if let Some(ref sq) = state.admin_sq {
+            if sq.qid != 0 || sq.cqid != 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme admin sq qid"));
+            }
+            validate_sq(sq)?;
+        }
+        if let Some(ref cq) = state.admin_cq {
+            if cq.qid != 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme admin cq qid"));
+            }
+            validate_cq(cq)?;
+        }
+
+        let mut io_cq_qids = std::collections::HashSet::new();
+        for cq in &state.io_cqs {
+            if cq.qid == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io cq qid"));
+            }
+            if !io_cq_qids.insert(cq.qid) {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme duplicate io cq"));
+            }
+            validate_cq(cq)?;
+        }
+
+        let mut io_sq_qids = std::collections::HashSet::new();
+        for sq in &state.io_sqs {
+            if sq.qid == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io sq qid"));
+            }
+            if !io_sq_qids.insert(sq.qid) {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme duplicate io sq"));
+            }
+            if sq.cqid == 0 || !io_cq_qids.contains(&sq.cqid) {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme sq cqid"));
+            }
+            validate_sq(sq)?;
         }
 
         self.cap = state.cap;
@@ -1995,6 +2080,27 @@ mod tests {
     }
 
     #[test]
+    fn enable_rejects_oversized_admin_queues() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // AQA fields are 0-based; request 129 entries for both SQ and CQ (larger than MQES=128).
+        let too_large = (NVME_MAX_QUEUE_ENTRIES as u64) << 16 | (NVME_MAX_QUEUE_ENTRIES as u64);
+        ctrl.mmio_write(0x0024, 4, too_large);
+        ctrl.mmio_write(0x0028, 8, 0x10000);
+        ctrl.mmio_write(0x0030, 8, 0x20000);
+        ctrl.mmio_write(0x0014, 4, 1);
+
+        assert_eq!(
+            ctrl.mmio_read(0x001c, 4) & 1,
+            0,
+            "CSTS.RDY must remain clear when AQA exceeds CAP.MQES"
+        );
+        assert!(ctrl.admin_sq.is_none());
+        assert!(ctrl.admin_cq.is_none());
+    }
+
+    #[test]
     fn cap_can_be_read_as_two_dwords() {
         let disk = TestDisk::new(1024);
         let ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
@@ -2458,6 +2564,80 @@ mod tests {
             err,
             SnapshotError::InvalidFieldEncoding("nvme io queue count")
         );
+    }
+
+    #[test]
+    fn load_state_rejects_invalid_queue_sizes() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        let mut state = NvmeControllerState::default();
+        state.cc = 1;
+        state.csts = 1;
+
+        state.admin_sq = Some(NvmeSubmissionQueueState {
+            qid: 0,
+            base: 0x10000,
+            size: 0,
+            head: 0,
+            tail: 0,
+            cqid: 0,
+        });
+        state.admin_cq = Some(NvmeCompletionQueueState {
+            qid: 0,
+            base: 0x20000,
+            size: 1,
+            head: 0,
+            tail: 0,
+            phase: true,
+            irq_enabled: true,
+        });
+
+        let bytes = state.save_state();
+        let err = ctrl.load_state(&bytes).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme sq size"));
+    }
+
+    #[test]
+    fn load_state_rejects_missing_io_cq_for_sq() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        let mut state = NvmeControllerState::default();
+        state.cc = 1;
+        state.csts = 1;
+
+        state.admin_sq = Some(NvmeSubmissionQueueState {
+            qid: 0,
+            base: 0x10000,
+            size: 2,
+            head: 0,
+            tail: 0,
+            cqid: 0,
+        });
+        state.admin_cq = Some(NvmeCompletionQueueState {
+            qid: 0,
+            base: 0x20000,
+            size: 2,
+            head: 0,
+            tail: 0,
+            phase: true,
+            irq_enabled: true,
+        });
+
+        state.io_sqs = vec![NvmeSubmissionQueueState {
+            qid: 1,
+            base: 0x30000,
+            size: 2,
+            head: 0,
+            tail: 0,
+            cqid: 1,
+        }];
+        state.io_cqs = Vec::new();
+
+        let bytes = state.save_state();
+        let err = ctrl.load_state(&bytes).unwrap_err();
+        assert_eq!(err, SnapshotError::InvalidFieldEncoding("nvme sq cqid"));
     }
 
     #[test]
