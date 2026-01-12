@@ -1,44 +1,13 @@
 use aero_storage::{
     AeroSparseConfig, AeroSparseDisk as StorageAeroSparseDisk, AeroSparseHeader,
-    DiskError as StorageDiskError, StorageBackend, VirtualDisk as _,
+    DiskError as StorageDiskError, VirtualDisk as _,
 };
 
+use crate::io::storage::adapters::StorageBackendFromByteStorage;
 use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SECTOR_SIZE: u32 = 512;
-
-struct ByteStorageBackend<S> {
-    storage: S,
-}
-
-impl<S> ByteStorageBackend<S> {
-    fn new(storage: S) -> Self {
-        Self { storage }
-    }
-
-    fn into_storage(self) -> S {
-        self.storage
-    }
-}
-
-fn storage_backend_error(err: DiskError) -> StorageDiskError {
-    // `aero-storage` errors are surfaced through the disk format implementation.
-    // Preserve as much detail as possible when mapping emulator storage errors into the
-    // `aero-storage` layer.
-    match err {
-        DiskError::NotSupported(msg) => StorageDiskError::NotSupported(msg),
-        DiskError::QuotaExceeded => StorageDiskError::QuotaExceeded,
-        DiskError::InUse => StorageDiskError::InUse,
-        DiskError::InvalidState(msg) => StorageDiskError::InvalidState(msg),
-        DiskError::BackendUnavailable => StorageDiskError::BackendUnavailable,
-        DiskError::Io(msg) => StorageDiskError::Io(msg),
-        // The remaining variants are not expected from `ByteStorage` backends, but map them into a
-        // generic I/O error to avoid losing the error entirely.
-        other => StorageDiskError::Io(other.to_string()),
-    }
-}
-
 fn disk_error_from_storage(err: StorageDiskError) -> DiskError {
     match err {
         StorageDiskError::UnalignedLength { len, alignment } => DiskError::UnalignedBuffer {
@@ -59,35 +28,9 @@ fn disk_error_from_storage(err: StorageDiskError) -> DiskError {
     }
 }
 
-impl<S: ByteStorage> StorageBackend for ByteStorageBackend<S> {
-    fn len(&mut self) -> aero_storage::Result<u64> {
-        self.storage.len().map_err(storage_backend_error)
-    }
-
-    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
-        self.storage.set_len(len).map_err(storage_backend_error)
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-        self.storage
-            .read_at(offset, buf)
-            .map_err(storage_backend_error)
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
-        self.storage
-            .write_at(offset, buf)
-            .map_err(storage_backend_error)
-    }
-
-    fn flush(&mut self) -> aero_storage::Result<()> {
-        self.storage.flush().map_err(storage_backend_error)
-    }
-}
-
 /// Aero sparse disk format v1 (`AEROSPAR`).
 pub struct AerosparDisk<S> {
-    inner: StorageAeroSparseDisk<ByteStorageBackend<S>>,
+    inner: StorageAeroSparseDisk<StorageBackendFromByteStorage<S>>,
 }
 
 impl<S: ByteStorage> AerosparDisk<S> {
@@ -108,7 +51,7 @@ impl<S: ByteStorage> AerosparDisk<S> {
             .ok_or(DiskError::Unsupported("disk size overflow"))?;
 
         let inner = StorageAeroSparseDisk::create(
-            ByteStorageBackend::new(storage),
+            StorageBackendFromByteStorage(storage),
             AeroSparseConfig {
                 disk_size_bytes,
                 block_size_bytes: block_size,
@@ -120,7 +63,7 @@ impl<S: ByteStorage> AerosparDisk<S> {
     }
 
     pub fn open(storage: S) -> DiskResult<Self> {
-        let inner = StorageAeroSparseDisk::open(ByteStorageBackend::new(storage))
+        let inner = StorageAeroSparseDisk::open(StorageBackendFromByteStorage(storage))
             .map_err(disk_error_from_storage)?;
 
         if inner.header().disk_size_bytes % SECTOR_SIZE as u64 != 0 {
@@ -141,7 +84,7 @@ impl<S: ByteStorage> AerosparDisk<S> {
     }
 
     pub fn into_storage(self) -> S {
-        self.inner.into_backend().into_storage()
+        self.inner.into_backend().into_inner()
     }
 }
 

@@ -1,4 +1,5 @@
 pub mod ahci;
+pub mod adapters;
 pub mod cache;
 pub mod disk;
 pub mod error;
