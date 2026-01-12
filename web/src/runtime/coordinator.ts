@@ -1547,7 +1547,14 @@ export class WorkerCoordinator {
     const { runId, segments, perfChannel } = opts;
     const roles = opts.roles ?? WORKER_ROLES;
 
-    const tryVariantOrder: WasmVariant[] = ["threaded", "single"];
+    // The worker runtime allocates a shared `WebAssembly.Memory` for guest RAM so all workers +
+    // WASM code observe the same bytes. A module built without WASM threads support (the
+    // `single` variant) cannot import a shared memory, so in shared-memory mode we must prefer
+    // the `threaded` wasm-pack output.
+    const guestBuffer = segments.guestMemory.buffer as unknown as ArrayBufferLike;
+    const wantsThreaded = typeof SharedArrayBuffer !== "undefined" && guestBuffer instanceof SharedArrayBuffer;
+
+    const tryVariantOrder: WasmVariant[] = wantsThreaded ? ["threaded"] : ["single"];
     let precompiled: { variant: WasmVariant; module: WebAssembly.Module } | null = null;
 
     for (const variant of tryVariantOrder) {
