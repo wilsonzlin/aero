@@ -161,6 +161,46 @@ function readMaybeNumber(vm: unknown, key: string): number {
     return 0;
   }
 }
+
+function readMaybeU32(vm: unknown, key: string): number | undefined {
+  if (!vm || (typeof vm !== 'object' && typeof vm !== 'function')) return undefined;
+  let value: unknown;
+  try {
+    value = (vm as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
+  if (value === undefined) return undefined;
+
+  // wasm-bindgen may represent getters as methods in some builds.
+  if (typeof value === 'function') {
+    try {
+      value = (value as (...args: never[]) => unknown).call(vm);
+    } catch {
+      return undefined;
+    }
+  }
+
+  let n: number;
+  if (typeof value === 'number') {
+    n = value;
+  } else if (typeof value === 'bigint') {
+    if (value < 0n || value > 0xffff_ffffn) return undefined;
+    n = Number(value);
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return undefined;
+    const parsed = trimmed.startsWith('0x') ? Number.parseInt(trimmed.slice(2), 16) : Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed)) return undefined;
+    n = parsed;
+  } else {
+    return undefined;
+  }
+
+  if (!Number.isFinite(n) || n < 0 || n > 0xffff_ffff || !Number.isInteger(n)) return undefined;
+  return n >>> 0;
+}
+
 async function runTieredVm(iterations: number, threshold: number) {
   let memory: WebAssembly.Memory;
   try {
@@ -218,16 +258,18 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   const jitAbi = jitAbiFn();
-  const cpu_state_size = readMaybeNumber(jitAbi, 'cpu_state_size') >>> 0;
-  const cpu_state_align = readMaybeNumber(jitAbi, 'cpu_state_align') >>> 0;
-  const cpu_rip_off = readMaybeNumber(jitAbi, 'cpu_rip_off') >>> 0;
-  const cpu_rflags_off = readMaybeNumber(jitAbi, 'cpu_rflags_off') >>> 0;
+  const cpu_state_size = readMaybeU32(jitAbi, 'cpu_state_size');
+  const cpu_state_align = readMaybeU32(jitAbi, 'cpu_state_align');
+  const cpu_rip_off = readMaybeU32(jitAbi, 'cpu_rip_off');
+  const cpu_rflags_off = readMaybeU32(jitAbi, 'cpu_rflags_off');
   const cpu_gpr_off = (jitAbi as any)?.cpu_gpr_off;
   if (
-    !cpu_state_size ||
-    !cpu_state_align ||
-    !cpu_rip_off ||
-    !cpu_rflags_off ||
+    cpu_state_size === undefined ||
+    cpu_state_size === 0 ||
+    cpu_state_align === undefined ||
+    cpu_state_align === 0 ||
+    cpu_rip_off === undefined ||
+    cpu_rflags_off === undefined ||
     !(cpu_gpr_off instanceof Uint32Array) ||
     cpu_gpr_off.length !== 16
   ) {
@@ -246,6 +288,18 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   const cpu_rax_off = cpu_gpr_off[0]! >>> 0;
+  if (cpu_rip_off + 8 > cpu_state_size || cpu_rflags_off + 8 > cpu_state_size || cpu_rax_off + 8 > cpu_state_size) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_abi_constants offsets (out of bounds): ${JSON.stringify({
+        cpu_state_size,
+        cpu_rax_off,
+        cpu_rip_off,
+        cpu_rflags_off,
+      })}`,
+    });
+    return;
+  }
 
   const abiLayoutFn = api.tiered_vm_jit_abi_layout;
   if (typeof abiLayoutFn !== 'function') {
