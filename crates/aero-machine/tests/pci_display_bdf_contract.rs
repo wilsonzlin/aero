@@ -1,4 +1,5 @@
 use aero_devices::pci::PciBdf;
+use aero_devices::pci::profile::CANONICAL_IO_DEVICES;
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -39,6 +40,17 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
 
     // Transitional VGA/VBE PCI stub used by `aero_gpu_vga` for LFB routing.
     let vga_bdf = PciBdf::new(0, 0x0c, 0);
+    // Guardrail: this slot is used by the canonical machine today. Ensure we don't accidentally
+    // assign a different canonical paravirtual device profile to the same BDF.
+    for profile in CANONICAL_IO_DEVICES {
+        assert!(
+            profile.bdf != vga_bdf,
+            "VGA PCI stub BDF {vga_bdf:?} collides with canonical device profile `{}` at {:?}",
+            profile.name,
+            profile.bdf
+        );
+    }
+
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     if vga_vendor == 0xFFFF {
         panic!(
