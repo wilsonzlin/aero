@@ -2,7 +2,7 @@
 // Source of truth: tools/gen_scancodes/scancodes.json
 //
 // Regenerate:
-//   node tools/gen_scancodes/gen_scancodes.mjs
+//   npm run gen:scancodes
 
 export type Ps2Set2Scancode =
   | { kind: 'simple'; make: number; extended: boolean }

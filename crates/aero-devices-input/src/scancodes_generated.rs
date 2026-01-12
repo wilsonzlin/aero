@@ -2,7 +2,7 @@
 // Source of truth: tools/gen_scancodes/scancodes.json
 //
 // Regenerate:
-//   node tools/gen_scancodes/gen_scancodes.mjs
+//   npm run gen:scancodes
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ps2Set2Scancode {

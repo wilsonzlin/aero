@@ -123,7 +123,7 @@ async function main() {
   ts += `// Source of truth: tools/gen_scancodes/scancodes.json\n`;
   ts += `//\n`;
   ts += `// Regenerate:\n`;
-  ts += `//   node tools/gen_scancodes/gen_scancodes.mjs\n\n`;
+  ts += `//   npm run gen:scancodes\n\n`;
   ts += `export type Ps2Set2Scancode =\n`;
   ts += `  | { kind: 'simple'; make: number; extended: boolean }\n`;
   ts += `  | { kind: 'sequence'; make: readonly number[]; break: readonly number[] };\n\n`;
@@ -178,7 +178,7 @@ async function main() {
   rs += `// Source of truth: tools/gen_scancodes/scancodes.json\n`;
   rs += `//\n`;
   rs += `// Regenerate:\n`;
-  rs += `//   node tools/gen_scancodes/gen_scancodes.mjs\n\n`;
+  rs += `//   npm run gen:scancodes\n\n`;
 
   rs += `#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n`;
   rs += `pub enum Ps2Set2Scancode {\n`;
