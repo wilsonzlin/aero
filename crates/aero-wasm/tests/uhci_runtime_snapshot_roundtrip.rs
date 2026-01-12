@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_io_snapshot::io::state::SnapshotReader;
+use aero_io_snapshot::io::state::{SnapshotReader, codec::Decoder};
 use aero_usb::hid::webhid::HidCollectionInfo;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
 use aero_wasm::UhciRuntime;
@@ -225,6 +225,50 @@ fn uhci_runtime_snapshot_is_deterministic() {
     let b = rt.save_state();
     assert_eq!(a.len(), b.len(), "save_state length must be deterministic");
     assert!(a == b, "save_state bytes must be deterministic");
+}
+
+#[wasm_bindgen_test]
+fn uhci_runtime_snapshot_truncates_webhid_product_string() {
+    let mut guest = vec![0u8; 0x20_000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+
+    let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
+
+    let long_name = "A".repeat(1000);
+    let collections_json = load_mouse_collections_json();
+    rt.webhid_attach(
+        1,
+        0x1234,
+        0x0001,
+        Some(long_name),
+        collections_json,
+        Some(0),
+    )
+    .expect("webhid_attach ok");
+
+    let snapshot = rt.save_state();
+    let r = SnapshotReader::parse(&snapshot, *b"UHRT").expect("parse UhciRuntime snapshot");
+    let webhid_bytes = r.bytes(6).expect("expected WebHID list tag");
+
+    let mut d = Decoder::new(webhid_bytes);
+    let count = d.u32().expect("decode webhid count") as usize;
+    assert_eq!(count, 1);
+    let rec_len = d.u32().expect("decode record len") as usize;
+    let rec = d.bytes(rec_len).expect("decode record bytes");
+    d.finish().expect("decode webhid list");
+
+    let mut rd = Decoder::new(rec);
+    let _device_id = rd.u32().expect("device id");
+    let _loc_kind = rd.u8().expect("loc kind");
+    let _loc_port = rd.u8().expect("loc port");
+    let _vendor_id = rd.u16().expect("vendor id");
+    let _product_id = rd.u16().expect("product id");
+    let name_len = rd.u32().expect("product name len") as usize;
+    assert_eq!(
+        name_len, 126,
+        "expected product string to be truncated to 126 UTF-16 code units"
+    );
 }
 
 #[wasm_bindgen_test]

@@ -26,6 +26,7 @@ const DEFAULT_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 const WEBUSB_ROOT_PORT: usize = 1;
 const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WEBHID_SNAPSHOT_DEVICES: usize = 1024;
+const MAX_USB_STRING_DESCRIPTOR_UTF16_UNITS: usize = 126;
 
 const UHCI_RUNTIME_DEVICE_ID: [u8; 4] = *b"UHRT";
 const UHCI_RUNTIME_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -278,6 +279,23 @@ pub struct UhciRuntime {
 
 #[wasm_bindgen]
 impl UhciRuntime {
+    fn sanitize_usb_string(mut s: String) -> String {
+        let mut units = 0usize;
+        let mut end = 0usize;
+        for (idx, ch) in s.char_indices() {
+            let next_units = units + ch.len_utf16();
+            if next_units > MAX_USB_STRING_DESCRIPTOR_UTF16_UNITS {
+                break;
+            }
+            units = next_units;
+            end = idx + ch.len_utf8();
+        }
+        if end < s.len() {
+            s.truncate(end);
+        }
+        s
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
         let mem = LinearGuestMemory::new(guest_base, guest_size)?;
@@ -353,7 +371,9 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
-        let product = product_name.unwrap_or_else(|| "WebHID HID Device".to_string());
+        let product = Self::sanitize_usb_string(
+            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
+        );
 
         let device = UsbHidPassthrough::new(
             vendor_id,
@@ -427,7 +447,9 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
-        let product = product_name.unwrap_or_else(|| "WebHID HID Device".to_string());
+        let product = Self::sanitize_usb_string(
+            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
+        );
 
         let device = UsbHidPassthrough::new(
             vendor_id,
@@ -794,6 +816,7 @@ impl UhciRuntime {
                         "Invalid WebHID record {device_id} product: expected UTF-8 string"
                     ))
                 })?;
+                let product = Self::sanitize_usb_string(product);
                 let report_descriptor = rd.vec_u8().map_err(|e| {
                     js_error(&format!(
                         "Invalid WebHID record {device_id} report descriptor: {e}"
