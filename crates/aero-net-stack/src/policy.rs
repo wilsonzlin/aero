@@ -88,5 +88,23 @@ fn domain_matches(name: &str, suffix: &str) -> bool {
     if name == suffix {
         return true;
     }
-    name.ends_with(&format!(".{suffix}"))
+    let Some(rest) = name.strip_suffix(suffix) else {
+        return false;
+    };
+    rest.ends_with('.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::domain_matches;
+
+    #[test]
+    fn domain_matches_requires_suffix_boundary() {
+        assert!(domain_matches("example.com", "example.com"));
+        assert!(domain_matches("sub.example.com", "example.com"));
+        assert!(!domain_matches("notexample.com", "example.com"));
+        assert!(!domain_matches("example.com.evil", "example.com"));
+        assert!(!domain_matches("evilcom", "com"));
+        assert!(domain_matches("example.com", "com"));
+    }
 }

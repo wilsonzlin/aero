@@ -160,7 +160,10 @@ fn domain_matches(name: &str, suffix: &str) -> bool {
     if name == suffix {
         return true;
     }
-    name.ends_with(&format!(".{suffix}"))
+    let Some(rest) = name.strip_suffix(suffix) else {
+        return false;
+    };
+    rest.ends_with('.')
 }
 
 #[cfg(test)]
