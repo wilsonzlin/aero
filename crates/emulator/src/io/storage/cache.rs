@@ -275,6 +275,14 @@ pub struct BlockCache<B> {
 impl<B: DiskBackend> BlockCache<B> {
     const LRU_COMPACT_FACTOR: usize = 16;
 
+    fn try_clone_bytes(src: &[u8]) -> DiskResult<Vec<u8>> {
+        let mut out = Vec::new();
+        out.try_reserve_exact(src.len())
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        out.extend_from_slice(src);
+        Ok(out)
+    }
+
     pub fn new(backend: B, config: BlockCacheConfig) -> DiskResult<Self> {
         let sector_size = backend.sector_size();
         if sector_size == 0 {
@@ -404,7 +412,11 @@ impl<B: DiskBackend> BlockCache<B> {
         if self.entries.contains_key(&block) {
             return Ok(());
         }
-        let mut data = vec![0u8; self.config.block_size as usize];
+        let block_size = self.config.block_size as usize;
+        let mut data = Vec::new();
+        data.try_reserve_exact(block_size)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        data.resize(block_size, 0);
         let lba = block.saturating_mul(self.sectors_per_block());
         // Don't read past end of disk.
         let max_lba = self.capacity_sectors;
@@ -531,7 +543,7 @@ impl<B: DiskBackend> DiskBackend for BlockCache<B> {
                         self.entries.insert(
                             block,
                             CacheEntry {
-                                data: remaining[..to_copy].to_vec(),
+                                data: Self::try_clone_bytes(&remaining[..to_copy])?,
                                 dirty: false,
                                 last_touch: touch,
                             },
@@ -541,7 +553,7 @@ impl<B: DiskBackend> DiskBackend for BlockCache<B> {
                         self.entries.insert(
                             block,
                             CacheEntry {
-                                data: remaining[..to_copy].to_vec(),
+                                data: Self::try_clone_bytes(&remaining[..to_copy])?,
                                 dirty: true,
                                 last_touch: touch,
                             },
