@@ -11,6 +11,33 @@ fn usb_device_id_has_stable_name() {
 }
 
 #[test]
+fn core_device_ids_have_stable_names_and_numbers() {
+    let cases = [
+        (DeviceId::PIC, 1u32, "PIC"),
+        (DeviceId::APIC, 2u32, "APIC"),
+        (DeviceId::PIT, 3u32, "PIT"),
+        (DeviceId::RTC, 4u32, "RTC"),
+        (DeviceId::PCI, 5u32, "PCI"),
+        (DeviceId::DISK_CONTROLLER, 6u32, "DISK_CONTROLLER"),
+        (DeviceId::VGA, 7u32, "VGA"),
+        (DeviceId::SERIAL, 8u32, "SERIAL"),
+        (DeviceId::CPU_INTERNAL, 9u32, "CPU_INTERNAL"),
+        (DeviceId::BIOS, 10u32, "BIOS"),
+        (DeviceId::MEMORY, 11u32, "MEMORY"),
+        (DeviceId::USB, 12u32, "USB"),
+    ];
+
+    for (id, expected_num, expected_name) in cases {
+        assert_eq!(
+            id.0, expected_num,
+            "{expected_name} DeviceId number changed; must remain stable"
+        );
+        assert_eq!(id.name(), Some(expected_name));
+        assert_eq!(format!("{id}"), format!("{expected_name}({expected_num})"));
+    }
+}
+
+#[test]
 fn platform_device_ids_have_stable_names_and_numbers() {
     let cases = [
         (DeviceId::I8042, 13u32, "I8042"),
