@@ -2,7 +2,9 @@ use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
 
-use aero_devices::acpi_pm::DEFAULT_PM_TMR_BLK;
+use aero_devices::acpi_pm::{
+    DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
+};
 use aero_devices::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PciInterruptPin};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 
@@ -145,6 +147,39 @@ fn snapshot_restore_preserves_pit_phase_and_pulse_accounting() {
 
     // The restored PIT includes pulses from before the snapshot (1) and after (1).
     assert_eq!(pit.borrow_mut().take_irq0_pulses(), 2);
+}
+
+#[test]
+fn snapshot_restore_preserves_acpi_sci_pending_irq9_vector() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+    let interrupts = src.platform_interrupts().unwrap();
+
+    // Put the PIC in a known state and ensure IRQ9 is unmasked.
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(2, false);
+        ints.pic_mut().set_masked(9, false);
+    }
+
+    // Enable ACPI (sets SCI_EN).
+    src.io_write(DEFAULT_SMI_CMD_PORT, 1, u32::from(DEFAULT_ACPI_ENABLE));
+    // Enable the power button event bit in PM1_EN (bit 8).
+    src.io_write(DEFAULT_PM1A_EVT_BLK + 2, 2, 1 << 8);
+
+    // Trigger a power button event via the device model to set PM1_STS and assert SCI.
+    src.acpi_pm().unwrap().borrow_mut().trigger_power_button();
+
+    // IRQ9 on the slave PIC with offset 0x28 => vector 0x29.
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x29));
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    let interrupts = restored.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), Some(0x29));
 }
 
 #[test]
