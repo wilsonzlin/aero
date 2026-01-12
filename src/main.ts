@@ -1802,6 +1802,14 @@ function renderAudioPanel(): HTMLElement {
         // Best-effort cleanup: stop the synthetic mic timer and detach the ring buffer so
         // other demos/tests don't inherit a background capture producer/consumer.
         try {
+          // Stop the capture stream/CORB/RIRB engines (best-effort). Without this, the capture
+          // DMA engine can remain active in the long-lived worker runtime and interfere with
+          // subsequent demos.
+          workerCoordinator.getWorker("cpu")?.postMessage({ type: "audioOutputHdaPciDevice.stop" });
+        } catch {
+          // ignore
+        }
+        try {
           syntheticMic?.stop();
         } catch {
           // ignore

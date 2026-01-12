@@ -580,6 +580,7 @@ const HDA_REG_INTCTL = 0x20n;
 const HDA_REG_CORBCTL = 0x4cn;
 const HDA_REG_RIRBCTL = 0x5cn;
 const HDA_REG_SD0_CTL = 0x80n;
+const HDA_REG_SD1_CTL = 0xa0n;
 
 function stopHdaPciDeviceHardware(): void {
   const client = io;
@@ -592,6 +593,8 @@ function stopHdaPciDeviceHardware(): void {
   try {
     // Stop the stream DMA engine.
     client.mmioWrite(bar0Base + HDA_REG_SD0_CTL, 4, 0);
+    // Stop the capture DMA engine (synthetic capture harness uses SD#1).
+    client.mmioWrite(bar0Base + HDA_REG_SD1_CTL, 4, 0);
   } catch {
     // ignore
   }
@@ -1502,6 +1505,10 @@ function guestWriteU64(addr: number, value: bigint): void {
 
 async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessage): Promise<void> {
   const requestId = msg.requestId >>> 0;
+  // Treat this as a mutually exclusive "HDA harness" operation. Cancelling any pending HDA PCI
+  // output start prevents overlapping CORB/RIRB/stream programming in the shared worker runtime.
+  cancelHdaPciDeviceOps();
+  const token = hdaPciDeviceOpToken;
   try {
     const ioClient = io;
     if (!ioClient) throw new Error("I/O client is not initialized (CPU worker not ready).");
@@ -1575,6 +1582,9 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     pciWriteDword(0, pciDevice, pciFn, 0x04, (cmd | 0x0000_0006) >>> 0);
 
     const mmioBase = BigInt(bar0 >>> 0) & 0xffff_fff0n;
+    // Record the BAR0 base so `audioOutputHdaPciDevice.stop` can tear down the capture harness
+    // once the main thread is done inspecting guest PCM.
+    hdaPciDeviceBar0Base = { base: mmioBase, token };
 
     const hdaWrite = (offset: number, size: number, value: number): void => {
       ioClient.mmioWrite(mmioBase + BigInt(offset >>> 0), size, value >>> 0);
