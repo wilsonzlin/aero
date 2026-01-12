@@ -127,3 +127,58 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
     // Disk overlay config should also be reflected in subsequent snapshots.
     assert_eq!(restored.disk_overlays(), expected);
 }
+
+#[test]
+fn machine_snapshot_restores_with_placeholder_disk_overlay_refs_when_unconfigured() {
+    // `Machine::disk_overlays` always emits stable entries for disk_id 0/1 even when the host has
+    // not configured any overlay refs yet; empty strings mean "no backend configured".
+    //
+    // This test locks that contract for the canonical Win7 storage machine.
+    let cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    use snapshot::SnapshotSource as _;
+    let expected = snapshot::DiskOverlayRefs {
+        disks: vec![
+            snapshot::DiskOverlayRef {
+                disk_id: Machine::DISK_ID_PRIMARY_HDD,
+                base_image: String::new(),
+                overlay_image: String::new(),
+            },
+            snapshot::DiskOverlayRef {
+                disk_id: Machine::DISK_ID_INSTALL_MEDIA,
+                base_image: String::new(),
+                overlay_image: String::new(),
+            },
+        ],
+    };
+
+    // The source should expose a deterministic, canonical ordering.
+    assert_eq!(src.disk_overlays(), expected);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    // Decode the snapshot and confirm the DISKS section was populated as expected (including
+    // empty-string placeholders).
+    let mut capture = CaptureDiskOverlaysTarget::new(cfg.ram_size_bytes as usize);
+    snapshot::restore_snapshot(&mut std::io::Cursor::new(&snap), &mut capture).unwrap();
+    let captured = capture
+        .disks
+        .expect("snapshot restore target did not receive DISKS section");
+    assert_eq!(captured, expected);
+
+    // DISKS entries must be strictly increasing by disk_id (sorted + deduped).
+    let disk_ids: Vec<u32> = captured.disks.iter().map(|d| d.disk_id).collect();
+    assert!(disk_ids.windows(2).all(|w| w[0] < w[1]));
+
+    // Restore into a real machine and ensure the overlay refs were recorded for host reattach.
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    assert_eq!(restored.restored_disk_overlays(), Some(&expected));
+    assert_eq!(restored.take_restored_disk_overlays(), Some(expected.clone()));
+
+    // Disk overlay config should also be reflected in subsequent snapshots.
+    assert_eq!(restored.disk_overlays(), expected);
+}

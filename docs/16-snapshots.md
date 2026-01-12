@@ -377,6 +377,13 @@ The snapshot `DISKS` section encodes external disk image references as
 - `base_image` / `overlay_image` are **opaque host identifiers** (e.g. a remote object key, a URL,
   or an OPFS path) and are not interpreted by `aero-snapshot`.
 
+Note: `aero-snapshot` validates `base_image` / `overlay_image` only as bounded-length UTF-8 strings.
+**Empty strings are allowed.** Some snapshot adapters (notably the canonical
+`aero_machine::Machine`) intentionally emit placeholder entries for the canonical disk slots
+(`disk_id = 0` and `disk_id = 1`) even when the host has not configured any disk/ISO backend yet; in
+that case `base_image == ""` and `overlay_image == ""` should be interpreted as “no backend
+configured” and ignored by restore code.
+
 On restore, the snapshot adapter receives these refs via
 `SnapshotTarget::restore_disk_overlays(...)`. Since storage controller `load_state()` drops host
 backends, the host/platform must:
