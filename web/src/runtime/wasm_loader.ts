@@ -1466,9 +1466,35 @@ async function loadThreaded(options: WasmInitOptions): Promise<WasmLoadResult> {
 }
 
 export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitResult> {
-    const requested = options.variant ?? "auto";
+    let requested: WasmVariant | "auto" = options.variant ?? "auto";
     const threadSupport = detectThreadSupport();
     const moduleVariantHint = options.module ? lookupPrecompiledWasmModuleVariant(options.module) : undefined;
+    const memoryIsShared =
+        typeof SharedArrayBuffer !== "undefined" &&
+        options.memory != null &&
+        ((options.memory.buffer as unknown as ArrayBufferLike) instanceof SharedArrayBuffer);
+
+    // Shared guest RAM (`WebAssembly.Memory({ shared: true })`) requires a shared-memory / threads-enabled wasm module.
+    // The single-threaded wasm-pack output cannot import a shared memory, so falling back from
+    // threaded->single is impossible in this configuration.
+    if (memoryIsShared) {
+        if (requested === "single") {
+            throw new Error(
+                [
+                    "Single-threaded WASM build requested but a shared WebAssembly.Memory was provided.",
+                    "",
+                    "The single-threaded WASM module cannot import shared linear memory. Use the threaded build instead.",
+                    "",
+                    "Build it with:",
+                    "  cd web",
+                    "  npm run wasm:build:threaded",
+                ].join("\n"),
+            );
+        }
+        if (requested === "auto") {
+            requested = "threaded";
+        }
+    }
 
     if (requested === "auto" && moduleVariantHint) {
         if (moduleVariantHint === "single") {

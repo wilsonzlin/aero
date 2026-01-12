@@ -1578,7 +1578,9 @@ export class WorkerCoordinator {
     if (!this.shared || this.runId !== runId) return;
 
     let moduleToSend: WebAssembly.Module | undefined = precompiled?.module;
-    let variantToSend: WasmVariant | undefined = precompiled?.variant;
+    // Even if we fail to precompile (or cannot structured-clone the module), we still know which
+    // variant workers *must* use based on the shared guest memory contract.
+    let variantToSend: WasmVariant = precompiled?.variant ?? (wantsThreaded ? "threaded" : "single");
 
     for (const role of roles) {
       const info = this.workers[role];
@@ -1613,17 +1615,16 @@ export class WorkerCoordinator {
       }
 
       try {
-        if (moduleToSend) {
-          info.worker.postMessage({ ...baseInit, wasmModule: moduleToSend, wasmVariant: variantToSend });
-        } else {
-          info.worker.postMessage(baseInit);
-        }
+        const msg: WorkerInitMessage = moduleToSend
+          ? { ...baseInit, wasmModule: moduleToSend, wasmVariant: variantToSend }
+          : { ...baseInit, wasmVariant: variantToSend };
+        info.worker.postMessage(msg);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[wasm] Failed to send precompiled module to worker (${role}); falling back. Error: ${msg}`);
         moduleToSend = undefined;
-        variantToSend = undefined;
-        info.worker.postMessage(baseInit);
+        // Preserve the variant preference even if we cannot send the precompiled module.
+        info.worker.postMessage({ ...baseInit, wasmVariant: variantToSend } satisfies WorkerInitMessage);
       }
     }
   }

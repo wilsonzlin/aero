@@ -1649,6 +1649,22 @@ function renderAudioPanel(): HTMLElement {
           throw new Error("Timed out waiting for CPU/I/O workers to become ready.");
         }
 
+        // Wait for IO worker WASM init so the HDA PCI function is registered before we attempt to
+        // program capture registers from the CPU side.
+        const wasmDeadlineMs = performance.now() + 30_000;
+        while (performance.now() < wasmDeadlineMs) {
+          const ioWasm = workerCoordinator.getWorkerWasmStatus("io");
+          if (ioWasm?.variant) break;
+          await sleepMs(50);
+        }
+        const ioWasm = workerCoordinator.getWorkerWasmStatus("io");
+        if (!ioWasm) {
+          throw new Error("Timed out waiting for IO worker WASM initialization.");
+        }
+        if (ioWasm.variant !== "threaded") {
+          throw new Error(`Unexpected IO worker WASM variant '${ioWasm.variant}'; expected 'threaded'.`);
+        }
+
         const cpuWorker = workerCoordinator.getWorker("cpu");
         if (!cpuWorker) throw new Error("CPU worker is not available.");
 
