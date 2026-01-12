@@ -375,6 +375,7 @@ pub struct Machine {
     serial: Option<SharedSerial16550>,
     i8042: Option<SharedI8042Controller>,
     serial_log: Vec<u8>,
+    ps2_mouse_buttons: u8,
 
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
@@ -422,6 +423,7 @@ impl Machine {
             serial: None,
             i8042: None,
             serial_log: Vec::new(),
+            ps2_mouse_buttons: 0,
             next_snapshot_id: 1,
             last_snapshot_id: None,
             restored_cpu_internal: None,
@@ -705,6 +707,42 @@ impl Machine {
         self.inject_mouse_button(Ps2MouseButton::Middle, pressed);
     }
 
+    /// Inject a PS/2 mouse motion event into the i8042 controller, if present.
+    ///
+    /// Coordinate conventions:
+    /// - `dy > 0` means cursor moved up.
+    /// - `wheel > 0` means wheel moved up.
+    pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
+        // `aero_devices_input::Ps2Mouse` expects browser-style +Y=down internally.
+        self.inject_mouse_motion(dx, -dy, wheel);
+    }
+
+    /// Inject a PS/2 mouse button state into the i8042 controller, if present.
+    ///
+    /// `buttons` is a bitmask:
+    /// - bit 0: left
+    /// - bit 1: right
+    /// - bit 2: middle
+    pub fn inject_ps2_mouse_buttons(&mut self, buttons: u8) {
+        let buttons = buttons & 0x07;
+        let changed = self.ps2_mouse_buttons ^ buttons;
+        if changed == 0 {
+            return;
+        }
+
+        if (changed & 0x01) != 0 {
+            self.inject_mouse_button(Ps2MouseButton::Left, (buttons & 0x01) != 0);
+        }
+        if (changed & 0x02) != 0 {
+            self.inject_mouse_button(Ps2MouseButton::Right, (buttons & 0x02) != 0);
+        }
+        if (changed & 0x04) != 0 {
+            self.inject_mouse_button(Ps2MouseButton::Middle, (buttons & 0x04) != 0);
+        }
+
+        self.ps2_mouse_buttons = buttons;
+    }
+
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
         self.take_snapshot_with_options(snapshot::SaveOptions::default())
     }
@@ -780,6 +818,7 @@ impl Machine {
     pub fn reset(&mut self) {
         self.reset_latch.clear();
         self.serial_log.clear();
+        self.ps2_mouse_buttons = 0;
         self.tsc_ns_remainder = 0;
 
         // Reset chipset lines.
