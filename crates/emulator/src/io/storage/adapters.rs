@@ -75,7 +75,6 @@ pub fn emulator_disk_error_to_aero_storage(
     len: Option<usize>,
     capacity: Option<u64>,
 ) -> aero_storage::DiskError {
-    #[allow(unreachable_patterns)]
     match err {
         DiskError::UnalignedBuffer { len, sector_size } => aero_storage::DiskError::UnalignedLength {
             len,
@@ -99,13 +98,11 @@ pub fn emulator_disk_error_to_aero_storage(
         DiskError::InvalidState(msg) => aero_storage::DiskError::InvalidState(msg),
         DiskError::BackendUnavailable => aero_storage::DiskError::BackendUnavailable,
         DiskError::Io(msg) => aero_storage::DiskError::Io(msg),
-        other => aero_storage::DiskError::Io(other.to_string()),
     }
 }
 
 /// Convert an [`aero_storage::DiskError`] into an emulator [`DiskError`].
 pub fn aero_storage_disk_error_to_emulator(err: aero_storage::DiskError) -> DiskError {
-    #[allow(unreachable_patterns)]
     match err {
         aero_storage::DiskError::UnalignedLength { len, alignment } => DiskError::UnalignedBuffer {
             len,
@@ -124,7 +121,6 @@ pub fn aero_storage_disk_error_to_emulator(err: aero_storage::DiskError) -> Disk
         aero_storage::DiskError::InvalidState(msg) => DiskError::InvalidState(msg),
         aero_storage::DiskError::BackendUnavailable => DiskError::BackendUnavailable,
         aero_storage::DiskError::Io(msg) => DiskError::Io(msg),
-        other => DiskError::Io(other.to_string()),
     }
 }
 
