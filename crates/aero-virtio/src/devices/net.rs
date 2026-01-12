@@ -320,6 +320,13 @@ impl<B: NetBackend> VirtioNet<B> {
                 .map_err(|_| VirtioDeviceError::IoError)?;
         }
 
+        // If the guest has not posted any RX buffers yet, do not poll the backend. This avoids
+        // dropping frames early (and prevents unbounded backend draining work) until the driver is
+        // ready to receive.
+        if self.rx_buffers.is_empty() {
+            return Ok(need_irq);
+        }
+
         for _ in 0..MAX_RX_FRAMES_PER_FLUSH {
             let Some(pkt) = self.backend.poll_receive() else {
                 break;
@@ -638,6 +645,74 @@ mod tests {
         }
 
         let mut dev = VirtioNet::new(InfiniteRxBackend::default(), [0; 6]);
+        dev.set_features(0);
+
+        // Post one RX buffer that is valid (hdr fits) but too small for the payload. This keeps
+        // `rx_buffers` non-empty so `flush_rx()` will attempt to poll the backend and will drop
+        // packets due to no suitable buffer.
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf_addr = 0x4000;
+        let hdr_len = VirtioNetHdr::BASE_LEN as u32;
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            buf_addr,
+            hdr_len,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: 8,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
+
+        // Without a bound, this would loop forever because the backend never returns `None` and
+        // the device has no suitable RX buffer to consume packets.
+        dev.process_rx(chain, &mut queue, &mut mem).unwrap();
+        assert_eq!(dev.backend_mut().polls, MAX_RX_FRAMES_PER_FLUSH);
+    }
+
+    #[test]
+    fn rx_does_not_poll_backend_without_posted_buffers() {
+        #[derive(Default)]
+        struct CountingBackend {
+            polls: usize,
+        }
+
+        impl NetBackend for CountingBackend {
+            fn transmit(&mut self, _packet: Vec<u8>) {}
+
+            fn poll_receive(&mut self) -> Option<Vec<u8>> {
+                self.polls += 1;
+                Some(vec![0u8; 14])
+            }
+        }
+
+        let mut dev = VirtioNet::new(CountingBackend::default(), [0; 6]);
         let mut mem = GuestRam::new(0x1000);
         let mut queue = VirtQueue::new(
             VirtQueueConfig {
@@ -650,10 +725,9 @@ mod tests {
         )
         .unwrap();
 
-        // Without a bound, this would loop forever because the backend never returns `None`.
         let irq = dev.flush_rx(&mut queue, &mut mem).unwrap();
         assert!(!irq);
-        assert_eq!(dev.backend_mut().polls, MAX_RX_FRAMES_PER_FLUSH);
+        assert_eq!(dev.backend_mut().polls, 0);
     }
 
     #[test]
