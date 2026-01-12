@@ -295,6 +295,12 @@ This requires custom Windows 7 drivers but provides 10-100x performance improvem
 | Threading     | Web Workers + SharedArrayBuffer | True parallelism                           |
 | UI            | Canvas 2D + OffscreenCanvas     | Rendering pipeline                         |
 
+Note: IndexedDB is async-only in the browser and cannot back the synchronous Rust disk/controller
+stack in the same Worker. For the repo-wide storage trait guidance + migration plan, see:
+
+- [`docs/19-indexeddb-storage-story.md`](./docs/19-indexeddb-storage-story.md)
+- [`docs/20-storage-trait-consolidation.md`](./docs/20-storage-trait-consolidation.md)
+
 
 ### Build & Toolchain
 
