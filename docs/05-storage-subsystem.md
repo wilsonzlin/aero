@@ -4,9 +4,9 @@
 
 Windows 7 requires significant storage (15-40GB installed). The storage subsystem must efficiently emulate disk controllers while using browser storage APIs that have their own constraints.
 
-While AHCI provides out-of-the-box Windows compatibility, **virtio-blk** is the preferred high-performance path once virtio drivers are available. For Windows 7 compatibility, virtio devices should be presented as **PCI transitional devices** (legacy + modern) so older virtio-win drivers can bind.
+While AHCI provides out-of-the-box Windows compatibility, **virtio-blk** is the preferred high-performance path once virtio drivers are available. Under Aero’s Windows 7 virtio contract (`AERO-W7-VIRTIO` v1), virtio devices are exposed as **virtio-pci modern-only** (virtio 1.0+) via PCI vendor-specific capabilities and a single **BAR0 MMIO** register region.
 
-See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
+Compatibility note: adding virtio-pci legacy/transitional (I/O port BAR) support may be desirable for some **upstream virtio-win** driver bundles, but it is **not required** by the Aero contract and is treated as an optional mode. See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
 
 ---
 

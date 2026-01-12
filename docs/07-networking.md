@@ -131,9 +131,9 @@ contributors.
 - Keep a minimal debug-only fallback for isolating issues (ideally off by default and not shipped
   for public deployments).
 
-For performance, **virtio-net** is the preferred paravirtualized NIC once virtio drivers are installed. For Windows 7 compatibility, expose virtio devices as **PCI transitional devices** (legacy + modern) so older virtio-win builds that rely on the legacy I/O port interface can bind.
+For performance, **virtio-net** is the preferred paravirtualized NIC once virtio drivers are installed. Under Aero’s Windows 7 virtio contract (`AERO-W7-VIRTIO` v1), virtio devices are exposed as **virtio-pci modern-only** (virtio 1.0+) via PCI vendor-specific capabilities and a single **BAR0 MMIO** register region.
 
-See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
+Compatibility note: adding virtio-pci legacy/transitional (I/O port BAR) support may be desirable for some **upstream virtio-win** driver bundles, but it is **not required** by the Aero contract and is treated as an optional mode. See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
 
 ---
 
