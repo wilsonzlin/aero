@@ -4,7 +4,9 @@ use std::rc::Rc;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN};
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter,
+};
 use aero_platform::io::PortIoDevice;
 
 #[derive(Clone, Default)]
@@ -99,4 +101,48 @@ fn snapshot_restore_preserves_pm_tmr_phase_and_advances_identically() {
     let tmr_restored_after = restored.read(cfg.pm_tmr_blk, 4);
     assert_eq!(tmr_restored_after, tmr_after);
     assert_ne!(tmr_after, tmr_before);
+}
+
+#[test]
+fn snapshot_load_ignores_unknown_tags() {
+    let cfg = AcpiPmConfig::default();
+    let clock0 = ManualClock::new();
+    let mut pm0 =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock0.clone());
+
+    pm0.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_PWRBTN));
+    pm0.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    pm0.trigger_power_button();
+    assert!(pm0.sci_level());
+
+    let mut snap = pm0.save_state();
+    // Append an unknown field tag (forward compatibility).
+    snap.extend_from_slice(&0xFFFFu16.to_le_bytes());
+    snap.extend_from_slice(&3u32.to_le_bytes());
+    snap.extend_from_slice(&[1, 2, 3]);
+
+    let clock1 = ManualClock::new();
+    clock1.set_ns(5_000_000);
+    let mut pm1 = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock1);
+    pm1.load_state(&snap).unwrap();
+
+    assert!(pm1.sci_level());
+    assert_eq!(pm1.pm1_status(), PM1_STS_PWRBTN);
+}
+
+#[test]
+fn snapshot_load_rejects_gpe0_length_mismatch() {
+    let cfg = AcpiPmConfig::default();
+    let half = (cfg.gpe0_blk_len as usize) / 2;
+
+    // Build an intentionally invalid snapshot: GPE0_STS is the wrong length.
+    const TAG_GPE0_STS: u16 = 4;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_bytes(TAG_GPE0_STS, vec![0u8; half.saturating_add(1)]);
+    let bytes = w.finish();
+
+    let clock = ManualClock::new();
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
+    let err = pm.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("gpe0_sts"));
 }
