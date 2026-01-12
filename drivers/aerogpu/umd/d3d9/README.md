@@ -256,6 +256,14 @@ The initial implementation focuses on the minimum D3D9Ex feature set needed for:
 
 Unsupported states are handled defensively; unknown state enums are accepted and forwarded as generic “set render/sampler state” commands so the emulator can decide how to interpret them.
 
+## Call tracing (bring-up / debugging)
+
+The D3D9 UMD contains a lightweight **in-process call trace** facility that can record D3D9UMDDI entrypoints (including stubs) and dump them via `OutputDebugStringA`/stderr.
+
+See:
+
+- `docs/graphics/win7-d3d9-umd-tracing.md`
+
 ## Crash-proof D3D9UMDDI vtables (Win7 runtime)
 
 The Win7 D3D9 runtime (and `dwm.exe`) can call a wider set of DDIs than the initial AeroGPU bring-up implementation provides. The UMD **must never** return a partially-populated `D3D9DDI_DEVICEFUNCS` / `D3D9DDI_ADAPTERFUNCS` table where the runtime can call a **NULL** function pointer (that would crash the process before we can even trace the call).
