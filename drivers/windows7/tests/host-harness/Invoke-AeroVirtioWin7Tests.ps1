@@ -41,6 +41,9 @@ param(
   # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
   #
+  # Also emits a host marker for each injection attempt:
+  #   AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|...
+  #
   # Note: The guest image must be provisioned with `--test-input-events` (or env var equivalent) so the
   # guest selftest runs the read-report loop.
   [Parameter(Mandatory = $false)]
