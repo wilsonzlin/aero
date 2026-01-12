@@ -7,6 +7,7 @@ import { RingBuffer } from "../ipc/ring_buffer";
 import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
 import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
 import { L2TunnelTelemetry } from "../net/l2TunnelTelemetry";
+import { NetTracer } from "../net/net_tracer";
 import { perf } from "../perf/perf";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
@@ -31,6 +32,8 @@ import {
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
+
+const tracer = new NetTracer();
 
 let role: WorkerRole = "net";
 let status!: Int32Array;
@@ -76,6 +79,8 @@ let perfIoReadBytes = 0;
 let perfIoWriteBytes = 0;
 let perfLastTxBytes = 0;
 let perfLastRxBytes = 0;
+
+let shuttingDown = false;
 
 // Even when idle, wake periodically so pending tunnel→guest frames buffered due
 // to NET_RX backpressure get a chance to flush without waiting for NET_TX
@@ -165,6 +170,15 @@ function parseGatewaySessionResponse(text: string): GatewaySessionResponse {
   const json: unknown = JSON.parse(trimmed);
   if (typeof json !== "object" || json === null) return {};
   return json as GatewaySessionResponse;
+}
+
+function shouldIgnorePostMessageResponses(): boolean {
+  if (shuttingDown) return true;
+  try {
+    return Atomics.load(status, StatusIndex.StopRequested) === 1;
+  } catch {
+    return false;
+  }
 }
 
 function pushEvent(evt: Event): void {
@@ -503,6 +517,7 @@ async function runLoop(): Promise<void> {
   }
 
   pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
+  shuttingDown = true;
   // Ignore any close/error events emitted as part of teardown.
   l2TunnelClient = null;
   l2Forwarder?.stop();
@@ -514,6 +529,7 @@ async function runLoop(): Promise<void> {
 }
 
 function fatal(err: unknown): void {
+  shuttingDown = true;
   // Ignore any close/error events emitted as part of teardown.
   l2TunnelClient = null;
   l2Forwarder?.stop();
@@ -556,6 +572,13 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
       l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
+        onFrame: (ev) => {
+          try {
+            tracer.recordEthernet(ev.direction, ev.frame);
+          } catch {
+            // Net tracing must never interfere with forwarding.
+          }
+        },
         onTunnelEvent: (ev) => {
           l2TunnelTelemetry?.onTunnelEvent(ev);
           if (ev.type === "open") {
@@ -610,8 +633,50 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   try {
-    const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage> | undefined;
+    const msg = ev.data as
+      | Partial<WorkerInitMessage | ConfigUpdateMessage>
+      | Partial<{ kind: "net.trace.enable" | "net.trace.disable" | "net.trace.clear" }>
+      | Partial<{ kind: "net.trace.take_pcapng" | "net.trace.status"; requestId: number }>
+      | undefined;
     if (!msg) return;
+
+    if (msg.kind === "net.trace.enable") {
+      tracer.enable();
+      return;
+    }
+
+    if (msg.kind === "net.trace.disable") {
+      tracer.disable();
+      return;
+    }
+
+    if (msg.kind === "net.trace.clear") {
+      tracer.clear();
+      return;
+    }
+
+    if (msg.kind === "net.trace.status") {
+      const requestId = (msg as { requestId?: unknown }).requestId;
+      if (typeof requestId !== "number") return;
+      if (shouldIgnorePostMessageResponses()) return;
+      const stats = tracer.stats();
+      if (shouldIgnorePostMessageResponses()) return;
+      ctx.postMessage({ kind: "net.trace.status", requestId, ...stats });
+      return;
+    }
+
+    if (msg.kind === "net.trace.take_pcapng") {
+      const requestId = (msg as { requestId?: unknown }).requestId;
+      if (typeof requestId !== "number") return;
+      if (shouldIgnorePostMessageResponses()) return;
+      const bytes = tracer.takePcapng();
+      if (shouldIgnorePostMessageResponses()) return;
+      // Ensure we transfer an ArrayBuffer (not a SharedArrayBuffer-backed view).
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      if (shouldIgnorePostMessageResponses()) return;
+      ctx.postMessage({ kind: "net.trace.pcapng", requestId, bytes: buf }, [buf]);
+      return;
+    }
 
     if (msg.kind === "config.update") {
       currentConfig = (msg as ConfigUpdateMessage).config;

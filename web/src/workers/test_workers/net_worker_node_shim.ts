@@ -19,7 +19,8 @@ function dispatchMessage(data: unknown): void {
 // production worker entrypoints (which expect `postMessage`, `onmessage`, and
 // `addEventListener("message")`) can run under tests.
 (globalThis as unknown as { self?: unknown }).self = globalThis;
-(globalThis as unknown as { postMessage?: unknown }).postMessage = (msg: unknown) => parentPort?.postMessage(msg);
+(globalThis as unknown as { postMessage?: unknown }).postMessage = (msg: unknown, transfer?: Transferable[]) =>
+  (parentPort as unknown as { postMessage: (msg: unknown, transferList?: unknown[]) => void } | null)?.postMessage(msg, transfer as unknown as unknown[]);
 (globalThis as unknown as { close?: unknown }).close = () => parentPort?.close();
 
 // Provide a stable location.href so the worker code can resolve same-origin

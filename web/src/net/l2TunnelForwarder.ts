@@ -37,6 +37,25 @@ export type L2TunnelForwarderOptions = Readonly<{
    * throw.
    */
   onTunnelEvent?: (ev: Exclude<L2TunnelEvent, { type: "frame" }>) => void;
+
+  /**
+   * Optional hook invoked for each Ethernet frame observed by the forwarder.
+   *
+   * Frames are reported best-effort and the hook must never throw.
+   *
+   * - `guest_tx`: The guest produced a frame and it was drained from `NET_TX`.
+   *   This is invoked immediately when the frame is read from the ring buffer
+   *   (before forwarding decisions), so captures may include frames that are
+   *   later dropped due to missing tunnel/backpressure.
+   * - `guest_rx`: The forwarder received an inbound tunnel frame. This is
+   *   invoked at the start of inbound processing, before checking `running` or
+   *   `NET_RX` capacity.
+   *
+   * Note: `guest_tx` frames come from `RingBuffer.consumeNext` and may be backed
+   * by the ring's underlying `SharedArrayBuffer`; callers MUST copy if they
+   * retain `frame` beyond the hook invocation.
+   */
+  onFrame?: (ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }) => void;
 }>;
 
 export type L2TunnelForwarderStats = Readonly<{
@@ -127,6 +146,7 @@ export class L2TunnelForwarder {
   private readonly maxFramesPerTick: number;
   private readonly maxPendingRxBytes: number;
   private readonly onTunnelEvent: ((ev: Exclude<L2TunnelEvent, { type: "frame" }>) => void) | null;
+  private readonly onFrame: ((ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }) => void) | null;
 
   private tunnel: L2TunnelClient | null = null;
   private running = false;
@@ -166,6 +186,7 @@ export class L2TunnelForwarder {
     this.maxFramesPerTick = maxFramesPerTick;
     this.maxPendingRxBytes = maxPendingRxBytes;
     this.onTunnelEvent = opts.onTunnelEvent ?? null;
+    this.onFrame = opts.onFrame ?? null;
 
     this.sink = (ev) => {
       try {
@@ -301,6 +322,15 @@ export class L2TunnelForwarder {
       const didConsume = this.netTx.consumeNext((frame) => {
         drained += 1;
 
+        const onFrame = this.onFrame;
+        if (onFrame) {
+          try {
+            onFrame({ direction: "guest_tx", frame });
+          } catch {
+            // Caller hooks must never crash the worker loop.
+          }
+        }
+
         const tunnel = this.tunnel;
         if (!this.running || !tunnel) {
           this.txDroppedNoTunnel += 1;
@@ -350,6 +380,15 @@ export class L2TunnelForwarder {
   }
 
   private handleInboundFrame(frame: Uint8Array): void {
+    const onFrame = this.onFrame;
+    if (onFrame) {
+      try {
+        onFrame({ direction: "guest_rx", frame });
+      } catch {
+        // Caller hooks must never crash the transport event handler.
+      }
+    }
+
     if (!this.running) {
       this.rxDroppedWhileStopped += 1;
       return;

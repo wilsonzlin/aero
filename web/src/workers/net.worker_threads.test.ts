@@ -16,6 +16,76 @@ import {
 } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 
+function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function parsePcapng(bytes: Uint8Array): {
+  interfaces: Array<{ name: string | null }>;
+  packets: Array<{ payload: Uint8Array; interfaceId: number }>;
+} {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const interfaces: Array<{ name: string | null }> = [];
+  const packets: Array<{ payload: Uint8Array; interfaceId: number }> = [];
+  const textDecoder = new TextDecoder();
+
+  let off = 0;
+  while (off + 12 <= bytes.byteLength) {
+    const blockType = view.getUint32(off, true);
+    const blockLen = view.getUint32(off + 4, true);
+    if (blockLen < 12) throw new Error(`pcapng: invalid block length ${blockLen} at ${off}`);
+    if (off + blockLen > bytes.byteLength) throw new Error(`pcapng: block overruns buffer at ${off} (len=${blockLen})`);
+    const trailer = view.getUint32(off + blockLen - 4, true);
+    if (trailer !== blockLen) throw new Error(`pcapng: mismatched block trailer at ${off} (${trailer} != ${blockLen})`);
+
+    const bodyStart = off + 8;
+    const bodyEnd = off + blockLen - 4;
+
+    // Interface Description Block.
+    if (blockType === 0x00000001) {
+      // IDB fixed body is 8 bytes: linktype(u16), reserved(u16), snaplen(u32).
+      let optOff = bodyStart + 8;
+      let name: string | null = null;
+      while (optOff + 4 <= bodyEnd) {
+        const code = view.getUint16(optOff, true);
+        const len = view.getUint16(optOff + 2, true);
+        const valueStart = optOff + 4;
+        const valueEnd = valueStart + len;
+        if (valueEnd > bodyEnd) throw new Error(`pcapng: IDB option overruns block at ${off}`);
+        if (code === 0) break;
+        if (code === 2) {
+          name = textDecoder.decode(bytes.subarray(valueStart, valueEnd));
+        }
+        optOff = valueStart + ((len + 3) & ~3);
+      }
+      interfaces.push({ name });
+      off += blockLen;
+      continue;
+    }
+
+    // Enhanced Packet Block.
+    if (blockType === 0x00000006) {
+      const interfaceId = view.getUint32(bodyStart, true);
+      const capturedLen = view.getUint32(bodyStart + 12, true);
+      const packetDataStart = bodyStart + 20;
+      const packetDataEnd = packetDataStart + capturedLen;
+      if (packetDataEnd > bodyEnd) throw new Error(`pcapng: EPB packet data overruns block at ${off}`);
+      const payload = bytes.subarray(packetDataStart, packetDataEnd).slice();
+      packets.push({ payload, interfaceId });
+      off += blockLen;
+      continue;
+    }
+
+    off += blockLen;
+  }
+
+  return { interfaces, packets };
+}
+
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -287,6 +357,87 @@ describe("workers/net.worker (worker_threads)", () => {
       const decoded2 = decodeL2Message(wsSent2.data!);
       expect(decoded2.type).toBe(L2_TUNNEL_TYPE_FRAME);
       expect(Array.from(decoded2.payload)).toEqual(Array.from(frame2));
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
+  it("captures guest_tx + guest_rx frames into a PCAPNG when tracing is enabled", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+
+    const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000);
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
+      worker.postMessage(makeInit(segments));
+
+      await wsCreated;
+      await workerReady;
+
+      worker.postMessage({ kind: "net.trace.clear" });
+      worker.postMessage({ kind: "net.trace.enable" });
+
+      const txFrame = Uint8Array.of(0xde, 0xad, 0xbe, 0xef);
+      while (!netTxRing.tryPush(txFrame)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      // Wait until the frame is observed by the worker.
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.sent", 10000);
+
+      const rxFrame = Uint8Array.of(0x11, 0x22, 0x33, 0x44, 0x55);
+      worker.postMessage({ type: "ws.inject", data: encodeL2Frame(rxFrame) });
+
+      const rxDeadline = Date.now() + 2000;
+      let received: Uint8Array | null = null;
+      while (!received && Date.now() < rxDeadline) {
+        received = netRxRing.tryPop();
+        if (!received) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      expect(received).not.toBeNull();
+      expect(arraysEqual(received!, rxFrame)).toBe(true);
+
+      const pcapngPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "net.trace.pcapng" && (msg as { requestId?: unknown }).requestId === 1,
+        10000,
+      ) as Promise<{ kind: string; requestId: number; bytes: ArrayBuffer }>;
+      worker.postMessage({ kind: "net.trace.take_pcapng", requestId: 1 });
+
+      const pcapngMsg = await pcapngPromise;
+      expect(pcapngMsg.bytes).toBeInstanceOf(ArrayBuffer);
+
+      const parsed = parsePcapng(new Uint8Array(pcapngMsg.bytes));
+      const guestRxId = parsed.interfaces.findIndex((iface) => iface.name === "guest_rx");
+      const guestTxId = parsed.interfaces.findIndex((iface) => iface.name === "guest_tx");
+      expect(guestRxId).toBeGreaterThanOrEqual(0);
+      expect(guestTxId).toBeGreaterThanOrEqual(0);
+
+      const tx = parsed.packets.find((p) => arraysEqual(p.payload, txFrame));
+      const rx = parsed.packets.find((p) => arraysEqual(p.payload, rxFrame));
+
+      expect(tx).toBeTruthy();
+      expect(rx).toBeTruthy();
+
+      // Direction is encoded as distinct PCAPNG interfaces.
+      expect(tx!.interfaceId).toBe(guestTxId);
+      expect(rx!.interfaceId).toBe(guestRxId);
     } finally {
       await worker.terminate();
     }
