@@ -603,6 +603,79 @@ static inline bool AerogpuMapSharedHandleDebugToken(const D3DKMT_FUNCS* f,
   return q.debug_token != 0;
 }
 
+// Convenience wrapper: open the primary adapter, issue MAP_SHARED_HANDLE, then close/unload.
+//
+// This is intended for tests that do not have an HWND handy (for example: offscreen D3D10/D3D11
+// shared-resource IPC tests). It returns the 32-bit debug token when supported.
+//
+// NOTE: This debug token is distinct from the protocol `u64 share_token` used by
+// `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE` (it exists only for bring-up tooling).
+static inline bool MapSharedHandleDebugTokenPrimary(HANDLE shared_handle, uint32_t* out_token, std::string* err) {
+  if (out_token) {
+    *out_token = 0;
+  }
+  if (err) {
+    err->clear();
+  }
+  if (!shared_handle) {
+    if (err) {
+      *err = "MapSharedHandleDebugTokenPrimary: shared_handle is NULL";
+    }
+    return false;
+  }
+
+  D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!LoadD3DKMT(&kmt, &kmt_err)) {
+    if (err) {
+      *err = kmt_err;
+    }
+    return false;
+  }
+
+  D3DKMT_HANDLE adapter = 0;
+  if (!OpenPrimaryAdapter(&kmt, &adapter, &kmt_err)) {
+    UnloadD3DKMT(&kmt);
+    if (err) {
+      *err = kmt_err;
+    }
+    return false;
+  }
+
+  uint32_t token = 0;
+  NTSTATUS st = 0;
+  const bool ok = AerogpuMapSharedHandleDebugToken(&kmt,
+                                                   adapter,
+                                                   (unsigned long long)(uintptr_t)shared_handle,
+                                                   &token,
+                                                   &st);
+
+  CloseAdapter(&kmt, adapter);
+  UnloadD3DKMT(&kmt);
+
+  if (!ok) {
+    if (err) {
+      if (st == 0) {
+        *err = "MAP_SHARED_HANDLE returned debug_token=0";
+      } else {
+        char buf[96];
+        _snprintf(buf,
+                  sizeof(buf),
+                  "D3DKMTEscape(map-shared-handle) failed (NTSTATUS=0x%08lX)",
+                  (unsigned long)st);
+        buf[sizeof(buf) - 1] = 0;
+        *err = buf;
+      }
+    }
+    return false;
+  }
+
+  if (out_token) {
+    *out_token = token;
+  }
+  return token != 0;
+}
+
 static inline bool FindRingDescByFence(const aerogpu_escape_dump_ring_v2_inout& dump,
                                        unsigned long long fence,
                                        aerogpu_dbgctl_ring_desc_v2* out_desc,
