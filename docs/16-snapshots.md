@@ -129,6 +129,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::PCI_CFG` (`14`) — PCI config I/O ports + PCI bus config-space image state (`PciConfigPorts`, inner `PCPT`)
 - `DeviceId::PCI_INTX_ROUTER` (`15`) — PCI INTx router (`PciIntxRouter`, inner `INTX`)
 - `DeviceId::PCI` (`5`) — legacy PCI core state (either a `PciCoreSnapshot` wrapper, inner `PCIC`, or a historical `PciConfigPorts` snapshot, inner `PCPT`, or a historical `PciIntxRouter` snapshot, inner `INTX`; see `PCI core state` below)
+- `DeviceId::DISK_CONTROLLER` (`6`) — Storage controller(s) (single `DSKC` wrapper containing per-BDF controller snapshots; see `Disk controllers` below)
 - `DeviceId::I8042` (`13`) — i8042 PS/2 controller (0x60/0x64; inner `8042`)
 - `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer; inner `ACPM`)
 - `DeviceId::HPET` (`17`) — HPET timer state (inner `HPET`)
@@ -174,7 +175,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `PIT` | `3` | `device.3` | PIT timer |
 | `RTC` | `4` | `device.4` | RTC/CMOS |
 | `PCI` | `5` | `device.5` | Legacy PCI core state (old snapshots; prefer `PCI_CFG` + `PCI_INTX_ROUTER`) |
-| `DISK_CONTROLLER` | `6` | `device.6` | Disk controller(s) + DMA state |
+| `DISK_CONTROLLER` | `6` | `device.6` | Disk controller(s) + DMA state (single `DSKC` wrapper; see below) |
 | `VGA` | `7` | `device.7` | VGA/VESA device model |
 | `SERIAL` | `8` | `device.8` | UART 16550 |
 | `CPU_INTERNAL` | `9` | `device.9` | Non-architectural CPU bookkeeping (pending IRQs, etc.) |
@@ -191,7 +192,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/DNS cache + connection bookkeeping) |
 | `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
 
-#### Disk controllers (`DeviceId::DISK_CONTROLLER`)
+#### Disk controllers (`DeviceId::DISK_CONTROLLER` = `6`)
 
 `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES` (see `Validation / corruption handling` above), and by convention `DeviceState.version/flags` mirror the *inner* `aero-io-snapshot` device `SnapshotVersion (major, minor)` (see `Recommended device payload convention (DEVICES)` above).
 

@@ -56,6 +56,9 @@ impl DeviceId {
     /// Snapshot adapters should store disk controller state as a **single** [`DeviceId::DISK_CONTROLLER`]
     /// entry whose payload is an `aero-io-snapshot` TLV blob with inner 4CC `DSKC`.
     ///
+    /// The wrapper can contain multiple nested controller io-snapshots keyed by PCI BDF
+    /// (bus/device/function), e.g. `AHCP` (AHCI PCI), `VPCI` (virtio-pci), and `NVMP` (NVMe PCI).
+    ///
     /// This wrapper exists to avoid `aero-snapshot`'s `DEVICES` uniqueness constraint on
     /// `(DeviceId, version, flags)` when multiple controllers are present. By convention,
     /// `DeviceState.version/flags` mirror the inner `aero-io-snapshot` device `SnapshotVersion
@@ -63,9 +66,8 @@ impl DeviceId {
     /// `AHCP` and virtio-pci `VPCI`). Storing those as two separate outer `DeviceId::DISK_CONTROLLER`
     /// entries would collide as `(DeviceId::DISK_CONTROLLER, 1, 0)`.
     ///
-    /// The canonical `DSKC` encoding nests multiple per-controller io-snapshots keyed by PCI BDF
-    /// (bus/device/function). Restore code should ignore unknown/extra controller entries if the
-    /// target machine lacks that controller.
+    /// Restore code should ignore unknown/extra controller entries if the target machine lacks that
+    /// controller.
     pub const DISK_CONTROLLER: DeviceId = DeviceId(6);
     pub const VGA: DeviceId = DeviceId(7);
     pub const SERIAL: DeviceId = DeviceId(8);
