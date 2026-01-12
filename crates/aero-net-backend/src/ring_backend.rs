@@ -281,6 +281,22 @@ mod tests {
     }
 
     #[test]
+    fn l2_ring_stats_is_available_through_boxed_trait_object() {
+        let tx = Arc::new(RingBuffer::new(64));
+        let rx = Arc::new(RingBuffer::new(64));
+        let backend = L2TunnelRingBackend::new(tx, rx);
+        let mut backend: Option<Box<dyn NetworkBackend>> = Some(Box::new(backend));
+
+        // Mirror the access pattern used by `PcMachine::network_backend_l2_ring_stats()`.
+        let stats = backend.as_ref().and_then(|b| b.l2_ring_stats()).unwrap();
+        assert_eq!(stats, L2TunnelRingBackendStats::default());
+
+        backend.as_mut().unwrap().transmit(vec![1, 2, 3]);
+        let stats = backend.as_ref().and_then(|b| b.l2_ring_stats()).unwrap();
+        assert_eq!(stats.tx_pushed_frames, 1);
+    }
+
+    #[test]
     fn oversized_tx_is_dropped_and_not_written_to_ring() {
         let tx = Arc::new(RingBuffer::new(64));
         let rx = Arc::new(RingBuffer::new(64));
