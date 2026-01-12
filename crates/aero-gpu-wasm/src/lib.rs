@@ -10,7 +10,8 @@ mod drain_queue;
 //
 // The web runtime stores guest RAM as a flat `[0..guest_size)` byte array (backed by a shared
 // `WebAssembly.Memory`). On the PC/Q35 platform, guest *physical* RAM is non-contiguous once the
-// configured guest RAM exceeds the PCIe ECAM base (0xB000_0000): the "high" portion is remapped
+// configured guest RAM exceeds the PCIe ECAM base (`aero_pc_constants::PCIE_ECAM_BASE`): the
+// "high" portion is remapped
 // above 4GiB, leaving an ECAM+PCI/MMIO hole below 4GiB.
 //
 // AeroGPU allocation tables (`alloc.gpa`) use guest physical addresses, so the browser GPU worker
@@ -476,7 +477,7 @@ mod wasm {
     ///
     /// Contract: this is a flat view of the guest RAM *backing store* (length = `guest_size`).
     ///
-    /// On PC/Q35, guest physical RAM is non-contiguous once `guest_size > 0xB000_0000` due to the
+    /// On PC/Q35, guest physical RAM is non-contiguous once `guest_size > LOW_RAM_END` due to the
     /// ECAM/PCI/MMIO hole below 4 GiB. The GPU executor translates guest physical addresses (GPAs)
     /// back into this backing store using the same low-RAM + hole + high-RAM remap layout as the
     /// rest of the wasm runtime.

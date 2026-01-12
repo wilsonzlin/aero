@@ -1174,13 +1174,14 @@ impl Emitter<'_> {
         self.func.instruction(&Instruction::I64And);
         self.func.instruction(&Instruction::I64Or);
 
-        // Q35 high-memory remap: when guest RAM is larger than the PCIe ECAM base (0xB000_0000), the
+        // Q35 high-memory remap: when guest RAM is larger than the PCIe ECAM base
+        // (`aero_pc_constants::PCIE_ECAM_BASE`), the
         // physical address space has a hole at [0xB000_0000..4GiB) and the remainder of RAM is
         // remapped to start at 4GiB. The wasm runtime stores RAM contiguously as `[0..ram_bytes)`, so
         // translate physical addresses in the high-RAM region back into that contiguous RAM offset.
         //
         // If paddr >= 4GiB:
-        //   paddr = 0xB000_0000 + (paddr - 4GiB)
+        //   paddr = LOW_RAM_END + (paddr - 4GiB)
         //
         // Note: this helper is only reached for translations that are already marked as RAM
         // (`TLB_FLAG_IS_RAM`), so we don't need to handle the hole here.

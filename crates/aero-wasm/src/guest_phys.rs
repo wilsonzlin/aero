@@ -1,11 +1,11 @@
 //! Guest physical address translation helpers shared by wasm-side device DMA bridges.
 //!
-//! When guest RAM exceeds the PCIe ECAM base (0xB000_0000), the PC/Q35 layout remaps the "high"
-//! portion of RAM above 4GiB, leaving a hole between ECAM and 4GiB:
+//! When guest RAM exceeds the PCIe ECAM base ([`PCIE_ECAM_BASE`]), the PC/Q35 layout remaps the
+//! "high" portion of RAM above 4GiB, leaving a hole between ECAM and 4GiB:
 //!
-//! - Low RAM:  [0x0000_0000 .. 0xB000_0000)
-//! - Hole:     [0xB000_0000 .. 0x1_0000_0000)  (ECAM + PCI/MMIO hole)
-//! - High RAM: [0x1_0000_0000 .. 0x1_0000_0000 + (ram_bytes - 0xB000_0000))
+//! - Low RAM:  [0x0000_0000 .. PCIE_ECAM_BASE)
+//! - Hole:     [PCIE_ECAM_BASE .. 0x1_0000_0000)  (ECAM + PCI/MMIO hole)
+//! - High RAM: [0x1_0000_0000 .. 0x1_0000_0000 + (ram_bytes - PCIE_ECAM_BASE))
 //!
 //! The wasm runtime stores guest RAM as a contiguous `[0..ram_bytes)` region in linear memory, so
 //! devices that DMA into guest RAM must translate guest physical addresses back into this RAM

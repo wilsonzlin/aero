@@ -1488,7 +1488,7 @@ impl Emitter<'_> {
         // contiguous RAM backing store used by the wasm runtime.
         //
         // If paddr >= 4GiB:
-        //   paddr = 0xB000_0000 + (paddr - 4GiB)
+        //   paddr = LOW_RAM_END + (paddr - 4GiB)
         const HIGH_RAM_BASE: i64 = 0x1_0000_0000;
         const LOW_RAM_END: i64 = aero_pc_constants::PCIE_ECAM_BASE as i64;
         self.f
