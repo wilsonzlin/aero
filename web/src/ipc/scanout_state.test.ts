@@ -6,11 +6,47 @@ import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_WDDM,
   SCANOUT_STATE_GENERATION_BUSY_BIT,
+  SCANOUT_STATE_BYTE_LEN,
   SCANOUT_STATE_U32_LEN,
+  ScanoutStateIndex,
+  publishScanoutState,
   snapshotScanoutState,
+  wrapScanoutState,
 } from "./scanout_state";
 
 describe("ipc/scanout_state", () => {
+  it("wrapScanoutState validates size and publish wraps across the busy-bit boundary", () => {
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    const words = wrapScanoutState(scanoutSab, 0);
+    expect(words.length).toBe(SCANOUT_STATE_U32_LEN);
+
+    // Force generation near the busy-bit boundary; publish should wrap without exposing the busy bit.
+    Atomics.store(words, ScanoutStateIndex.GENERATION, 0x7fff_fffe);
+    const g1 = publishScanoutState(words, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0,
+      basePaddrHi: 0,
+      width: 0,
+      height: 0,
+      pitchBytes: 0,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+    expect(g1 >>> 0).toBe(0x7fff_ffff);
+    expect((g1 & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+
+    const g2 = publishScanoutState(words, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0,
+      basePaddrHi: 0,
+      width: 0,
+      height: 0,
+      pitchBytes: 0,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+    expect(g2 >>> 0).toBe(0);
+    expect((g2 & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+  });
+
   it("snapshot observes coherent state while another worker publishes updates", async () => {
     const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * 4);
     const words = new Int32Array(scanoutSab);
