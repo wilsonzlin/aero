@@ -660,6 +660,90 @@ impl MmioHandler for VgaMmio {
 }
 
 // -----------------------------------------------------------------------------
+// VGA / SVGA integration (legacy VGA + Bochs VBE_DISPI)
+// -----------------------------------------------------------------------------
+
+// NOTE: PCI BDF allocation is currently spread across the repo (e.g. AHCI uses `00:02.0` via
+// `aero_devices::pci::profile::SATA_AHCI_ICH9`). This VGA BDF may be revised by the integration
+// planner when BDFs are centralized.
+const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 7, 0);
+const VGA_PCI_BAR_INDEX: u8 = 0;
+
+struct VgaPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VgaPciConfigDevice {
+    fn new() -> Self {
+        // Bochs/QEMU-compatible IDs for "Standard VGA".
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x1111);
+        cfg.set_class_code(0x03, 0x00, 0x00, 0x00);
+
+        cfg.set_bar_definition(
+            VGA_PCI_BAR_INDEX,
+            aero_devices::pci::PciBarDefinition::Mmio32 {
+                size: aero_gpu_vga::DEFAULT_VRAM_SIZE as u32,
+                prefetchable: false,
+            },
+        );
+        // Use a fixed BAR base so it is preserved across `PciBus::reset` + `bios_post` runs.
+        cfg.set_bar_base(VGA_PCI_BAR_INDEX, aero_gpu_vga::SVGA_LFB_BASE as u64);
+
+        Self { cfg }
+    }
+}
+
+impl PciDevice for VgaPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VgaLfbMmio {
+    dev: Rc<RefCell<VgaDevice>>,
+}
+
+impl MmioHandler for VgaLfbMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let vga = self.dev.borrow();
+        let vram = vga.vram();
+        let base = offset as usize;
+        let mut out = 0u64;
+        for i in 0..size {
+            let byte = vram.get(base + i).copied().unwrap_or(0);
+            out |= (byte as u64) << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let bytes = value.to_le_bytes();
+        let base = offset as usize;
+        let mut vga = self.dev.borrow_mut();
+        let vram = vga.vram_mut();
+        for (i, byte) in bytes.into_iter().take(size).enumerate() {
+            if let Some(dst) = vram.get_mut(base + i) {
+                *dst = byte;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
 // -----------------------------------------------------------------------------
 
@@ -2048,18 +2132,13 @@ impl Machine {
                 0x0030, // 0x3B0..0x3DF
                 Box::new(VgaPortWindow { vga: vga.clone() }),
             );
-            self.io
-                .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
+            self.io.register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
 
             // Map the VBE/SVGA linear framebuffer (fixed physical address in `aero_gpu_vga`).
             let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
             let lfb_len = vga.borrow().vram().len() as u64;
-            self.mem.map_mmio_once(lfb_base, lfb_len, || {
-                Box::new(VgaLegacyMmio {
-                    base: lfb_base,
-                    vga: vga.clone(),
-                })
-            });
+            self.mem
+                .map_mmio_once(lfb_base, lfb_len, || Box::new(VgaLfbMmio { dev: vga.clone() }));
         } else if !self.cfg.enable_pc_platform {
             self.vga = None;
         }
@@ -2156,8 +2235,6 @@ impl Machine {
             };
             register_acpi_pm(&mut self.io, acpi_pm.clone());
 
-            let mut vga_lfb_base = 0u64;
-            let mut vga_lfb_len = 0u64;
             if self.cfg.enable_vga {
                 // VGA/SVGA (VBE). Keep the device instance stable across resets so the MMIO mapping
                 // remains valid.
@@ -2187,7 +2264,9 @@ impl Machine {
                     move |_port| Box::new(VgaPortIo { dev: vga.clone() })
                 });
 
-                // Map VGA memory windows and the VBE linear framebuffer.
+                // Map the legacy VGA memory window (`0xA0000..0xC0000`). The SVGA linear framebuffer
+                // is routed via PCI BAR/MMIO when the PC platform is enabled, so do not map it
+                // directly here.
                 self.mem.map_mmio_once(0xA0000, 0x20000, {
                     let vga = vga.clone();
                     move || {
@@ -2197,21 +2276,9 @@ impl Machine {
                         })
                     }
                 });
-                vga_lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
-                vga_lfb_len = vga.borrow().vram().len() as u64;
-                self.mem.map_mmio_once(vga_lfb_base, vga_lfb_len, {
-                    let vga = vga.clone();
-                    move || {
-                        Box::new(VgaMmio {
-                            base: vga_lfb_base,
-                            dev: vga,
-                        })
-                    }
-                });
             } else {
                 self.vga = None;
             }
-
             // PCI config ports (config mechanism #1).
             let pci_cfg: SharedPciConfigPorts = match &self.pci_cfg {
                 Some(pci_cfg) => {
@@ -2226,6 +2293,15 @@ impl Machine {
                 }
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
+
+            if self.cfg.enable_vga {
+                // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
+                // MMIO router at `PciResourceAllocatorConfig::mmio_base` (0xE000_0000).
+                pci_cfg
+                    .borrow_mut()
+                    .bus_mut()
+                    .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
+            }
 
             // PCI INTx router.
             let pci_intx: Rc<RefCell<PciIntxRouter>> = match &self.pci_intx {
@@ -2330,19 +2406,7 @@ impl Machine {
 
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
-            // Reserve the Bochs VBE linear framebuffer region for VGA.
-            //
-            // `aero_gpu_vga` exposes the LFB at a fixed physical address (`SVGA_LFB_BASE`) by
-            // default. The canonical PCI allocator also uses the same address as the start of the
-            // PCI MMIO window, so we shift the PCI window up to avoid MMIO mapping overlap.
-            let mut pci_allocator_cfg = PciResourceAllocatorConfig::default();
-            if self.cfg.enable_vga
-                && pci_allocator_cfg.mmio_base == vga_lfb_base
-                && pci_allocator_cfg.mmio_size > vga_lfb_len
-            {
-                pci_allocator_cfg.mmio_base = pci_allocator_cfg.mmio_base.saturating_add(vga_lfb_len);
-                pci_allocator_cfg.mmio_size = pci_allocator_cfg.mmio_size.saturating_sub(vga_lfb_len);
-            }
+            let pci_allocator_cfg = PciResourceAllocatorConfig::default();
             {
                 let mut pci_cfg = pci_cfg.borrow_mut();
                 let mut allocator = PciResourceAllocator::new(pci_allocator_cfg.clone());
@@ -2373,6 +2437,8 @@ impl Machine {
                     .pci_config_write(0x04, 2, u32::from(command));
             }
 
+            let vga = self.vga.clone();
+
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
             // immediately without needing dynamic MMIO unmap/remap support in `PhysicalMemoryBus`.
             self.mem
@@ -2390,6 +2456,13 @@ impl Machine {
                                 ahci,
                                 bdf,
                             },
+                        );
+                    }
+                    if let Some(vga) = vga.clone() {
+                        router.register_handler(
+                            VGA_PCI_BDF,
+                            VGA_PCI_BAR_INDEX,
+                            VgaLfbMmio { dev: vga },
                         );
                     }
                     if let Some(e1000) = e1000.clone() {
