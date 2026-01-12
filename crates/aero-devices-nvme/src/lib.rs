@@ -49,6 +49,9 @@ pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
 
 const PAGE_SIZE: usize = 4096;
 const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
+// DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
+// Identify Controller (4MiB for 4KiB pages).
+const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
 
 /// Errors returned by disk backends.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -991,7 +994,10 @@ impl NvmeController {
         let slba = (cmd.cdw11 as u64) << 32 | cmd.cdw10 as u64;
         let nlb = (cmd.cdw12 & 0xffff) as u64;
         let sectors = nlb + 1;
-        let sector_size = self.disk.sector_size() as usize;
+        let sector_size = self.disk.sector_size() as u64;
+        if sector_size == 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
 
         if slba
             .checked_add(sectors)
@@ -1000,9 +1006,21 @@ impl NvmeController {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
 
-        let len = sectors as usize * sector_size;
+        let Some(len_u64) = sectors.checked_mul(sector_size) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        let Ok(len) = usize::try_from(len_u64) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        if len > NVME_MAX_DMA_BYTES {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
 
-        let mut data = vec![0u8; len];
+        let mut data = Vec::new();
+        if data.try_reserve_exact(len).is_err() {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        data.resize(len, 0);
         let status = match self.disk.read_sectors(slba, &mut data) {
             Ok(()) => NvmeStatus::SUCCESS,
             Err(_) => NvmeStatus::INVALID_FIELD,
@@ -1023,7 +1041,10 @@ impl NvmeController {
         let slba = (cmd.cdw11 as u64) << 32 | cmd.cdw10 as u64;
         let nlb = (cmd.cdw12 & 0xffff) as u64;
         let sectors = nlb + 1;
-        let sector_size = self.disk.sector_size() as usize;
+        let sector_size = self.disk.sector_size() as u64;
+        if sector_size == 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
 
         if slba
             .checked_add(sectors)
@@ -1032,9 +1053,21 @@ impl NvmeController {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
 
-        let len = sectors as usize * sector_size;
+        let Some(len_u64) = sectors.checked_mul(sector_size) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        let Ok(len) = usize::try_from(len_u64) else {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        };
+        if len > NVME_MAX_DMA_BYTES {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
 
-        let mut data = vec![0u8; len];
+        let mut data = Vec::new();
+        if data.try_reserve_exact(len).is_err() {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        data.resize(len, 0);
         let status = self.dma_read_prp(memory, cmd.prp1, cmd.prp2, &mut data);
         if status != NvmeStatus::SUCCESS {
             return (status, 0);
@@ -1111,8 +1144,9 @@ impl NvmeController {
         // NN (Number of Namespaces) at offset 516 (0x204)
         data[516..520].copy_from_slice(&1u32.to_le_bytes());
 
-        // MDTS (Maximum Data Transfer Size) at offset 77 (0x4d) (power of two, 0 = unlimited)
-        data[77] = 0;
+        // MDTS (Maximum Data Transfer Size) at offset 77 (0x4d).
+        // Max transfer = 2^MDTS * min page size (4KiB for this device).
+        data[77] = 10; // 4MiB
 
         // SQES/CQES at offset 512 (0x200) for OS queue entry size negotiation.
         data[512] = 0x66; // SQE min/max = 2^6 = 64 bytes
@@ -2141,6 +2175,67 @@ mod tests {
         let mut data = vec![0u8; sector_size];
         disk.read_at(0, &mut data).unwrap();
         assert_eq!(data, payload.as_slice());
+    }
+
+    #[test]
+    fn io_read_rejects_oversized_transfer() {
+        // Enough sectors that the LBA range check passes for a large request.
+        let disk = TestDisk::new(20_000);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut mem = TestMem::new(2 * 1024 * 1024);
+
+        let asq = 0x10000;
+        let acq = 0x20000;
+        let io_cq = 0x40000;
+        let io_sq = 0x50000;
+        let read_buf = 0x60000;
+
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
+
+        // Create IO CQ (qid=1, size=16, PC+IEN).
+        let mut cmd = build_command(0x05);
+        set_cid(&mut cmd, 1);
+        set_prp1(&mut cmd, io_cq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 0x3);
+        mem.write_physical(asq, &cmd);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
+
+        // Create IO SQ (qid=1, size=16, CQID=1).
+        let mut cmd = build_command(0x01);
+        set_cid(&mut cmd, 2);
+        set_prp1(&mut cmd, io_sq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 1);
+        mem.write_physical(asq + 64, &cmd);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
+
+        // Request one sector more than the controller's max transfer (4MiB / 512 = 8192 sectors).
+        let sectors = (NVME_MAX_DMA_BYTES / 512) as u32 + 1;
+        let nlb = sectors - 1;
+
+        let mut cmd = build_command(0x02);
+        set_cid(&mut cmd, 0x20);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, read_buf);
+        set_cdw10(&mut cmd, 0);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, nlb);
+        mem.write_physical(io_sq, &cmd);
+        ctrl.mmio_write(0x1008, 4, 1);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq);
+        assert_eq!(cqe.cid, 0x20);
+        assert_eq!(
+            cqe.status & !0x1,
+            NvmeStatus::INVALID_FIELD.encode_without_phase()
+        );
     }
 
     #[test]
