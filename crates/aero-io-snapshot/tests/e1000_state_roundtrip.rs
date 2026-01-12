@@ -75,13 +75,10 @@ fn e1000_device_state_roundtrip_is_lossless() {
 
 #[test]
 fn e1000_device_state_save_is_deterministic_with_unsorted_other_regs() {
-    let mut state = E1000DeviceState::default();
-    state.other_regs = vec![
-        (0x2000, 2),
-        (0x1000, 1),
-        (0x3000, 3),
-        (0x0000, 0),
-    ];
+    let state = E1000DeviceState {
+        other_regs: vec![(0x2000, 2), (0x1000, 1), (0x3000, 3), (0x0000, 0)],
+        ..Default::default()
+    };
 
     // Save twice: encoding should canonicalize ordering internally.
     let snap0 = state.save_state();
@@ -95,4 +92,3 @@ fn e1000_device_state_save_is_deterministic_with_unsorted_other_regs() {
         vec![(0x0000, 0), (0x1000, 1), (0x2000, 2), (0x3000, 3)]
     );
 }
-
