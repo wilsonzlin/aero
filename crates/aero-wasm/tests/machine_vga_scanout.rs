@@ -76,6 +76,100 @@ fn boot_sector_write_a_to_b8000() -> [u8; 512] {
     sector
 }
 
+fn boot_sector_vbe_64x64x32_red_pixel() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // Program a tiny Bochs VBE mode (64x64x32) and write a red pixel through the 64KiB banked
+    // window at 0xA0000 (real-mode accessible).
+
+    // cld (ensure stosb increments DI)
+    sector[i] = 0xFC;
+    i += 1;
+
+    // mov dx, 0x01CE  (Bochs VBE index port)
+    sector[i..i + 3].copy_from_slice(&[0xBA, 0xCE, 0x01]);
+    i += 3;
+
+    // Helper macro: write VBE register (index in AX, value in AX) using out dx, ax with dx toggling.
+    let write_vbe_reg = |index: u16, value: u16, sector: &mut [u8; 512], i: &mut usize| {
+        // dx is expected to be 0x01CE here.
+        // mov ax, index
+        sector[*i..*i + 3].copy_from_slice(&[0xB8, (index & 0xFF) as u8, (index >> 8) as u8]);
+        *i += 3;
+        // out dx, ax
+        sector[*i] = 0xEF;
+        *i += 1;
+        // inc dx (0x01CF)
+        sector[*i] = 0x42;
+        *i += 1;
+        // mov ax, value
+        sector[*i..*i + 3].copy_from_slice(&[0xB8, (value & 0xFF) as u8, (value >> 8) as u8]);
+        *i += 3;
+        // out dx, ax
+        sector[*i] = 0xEF;
+        *i += 1;
+        // dec dx (back to 0x01CE)
+        sector[*i] = 0x4A;
+        *i += 1;
+    };
+
+    // XRES = 64
+    write_vbe_reg(0x0001, 64, &mut sector, &mut i);
+    // YRES = 64
+    write_vbe_reg(0x0002, 64, &mut sector, &mut i);
+    // BPP = 32
+    write_vbe_reg(0x0003, 32, &mut sector, &mut i);
+    // ENABLE = 0x0041 (enable + LFB)
+    write_vbe_reg(0x0004, 0x0041, &mut sector, &mut i);
+    // BANK = 0
+    write_vbe_reg(0x0005, 0, &mut sector, &mut i);
+
+    // mov ax, 0xA000
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x00, 0xA0]);
+    i += 3;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+    // xor di, di
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xFF]);
+    i += 2;
+
+    // Write a red pixel at (0,0) in BGRX format expected by the SVGA renderer.
+    // mov al, 0x00 ; B
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x00]);
+    i += 2;
+    // stosb ; B
+    sector[i] = 0xAA;
+    i += 1;
+    // stosb ; G (still 0)
+    sector[i] = 0xAA;
+    i += 1;
+    // mov al, 0xFF ; R
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0xFF]);
+    i += 2;
+    // stosb ; R
+    sector[i] = 0xAA;
+    i += 1;
+    // mov al, 0x00 ; X
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x00]);
+    i += 2;
+    // stosb ; X
+    sector[i] = 0xAA;
+    i += 1;
+
+    // cli; hlt; jmp $
+    sector[i] = 0xFA;
+    i += 1;
+    sector[i] = 0xF4;
+    i += 1;
+    sector[i..i + 2].copy_from_slice(&[0xEB, 0xFE]);
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
@@ -100,19 +194,10 @@ fn fnv1a_blank_rgba8(len: usize) -> u64 {
     hash
 }
 
-#[test]
-fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
-    // Keep the RAM size small-ish for a fast smoke test while still being large enough for the
-    // canonical PC machine configuration.
-    let boot = boot_sector_write_a_to_b8000();
-    let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
-    m.set_disk_image(&boot)
-        .expect("set_disk_image should accept a 512-byte boot sector");
-    m.reset();
-
+fn run_until_halt(machine: &mut Machine) {
     let mut halted = false;
     for _ in 0..10_000 {
-        let exit = m.run_slice(50_000);
+        let exit = machine.run_slice(50_000);
         match exit.kind() {
             RunExitKind::Completed => {}
             RunExitKind::Halted => {
@@ -123,6 +208,18 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
         }
     }
     assert!(halted, "guest never reached HLT");
+}
+
+#[test]
+fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
+    // Keep the RAM size small-ish for a fast smoke test while still being large enough for the
+    // canonical PC machine configuration.
+    let boot = boot_sector_write_a_to_b8000();
+    let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+    m.set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+    m.reset();
+    run_until_halt(&mut m);
 
     // Ensure the front buffer is up to date (no-op if nothing is dirty).
     m.vga_present();
@@ -164,4 +261,27 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
 
     // The raw pointer view is only meaningful for wasm32 builds; native builds return 0.
     assert_eq!(m.vga_framebuffer_ptr(), 0);
+}
+
+#[test]
+fn machine_vbe_scanout_reflects_programmed_mode_and_pixels() {
+    let boot = boot_sector_vbe_64x64x32_red_pixel();
+    let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+    m.set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+    m.reset();
+    run_until_halt(&mut m);
+
+    m.vga_present();
+
+    assert_eq!(m.vga_width(), 64);
+    assert_eq!(m.vga_height(), 64);
+    assert_eq!(m.vga_stride_bytes(), 64 * 4);
+    assert_eq!(m.vga_framebuffer_len_bytes(), 64 * 64 * 4);
+
+    let copy = m.vga_framebuffer_copy_rgba8888();
+    assert_eq!(copy.len(), 64 * 64 * 4);
+
+    // First pixel should be red in RGBA8888.
+    assert_eq!(&copy[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }
