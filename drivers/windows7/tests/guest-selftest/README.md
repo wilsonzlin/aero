@@ -7,6 +7,9 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
 
 - **virtio-blk**
   - Detect a virtio disk device (SetupAPI hardware IDs).
+  - Query the `aero_virtio_blk` miniport (via `IOCTL_SCSI_MINIPORT`) and validate basic configuration/feature bits.
+  - Issue a SCSI pass-through `REPORT_LUNS` (0xA0) command (via `IOCTL_SCSI_PASS_THROUGH_DIRECT`) and validate a sane
+    single-LUN response.
   - Create a temporary file on a **virtio-backed volume** and perform:
     - sequential write + readback verification
     - `FlushFileBuffers` success check
