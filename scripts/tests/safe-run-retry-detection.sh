@@ -65,6 +65,14 @@ assert_retry "panic-unwrap-eagain-backticks" <<'EOF'
 thread 'rustc' panicked at 'called `Result::unwrap()` on an `Err` value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }', library/core/src/result.rs:1:1
 EOF
 
+assert_retry "unwrap-eagain-only" <<'EOF'
+called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+EOF
+
+assert_no_retry "unwrap-non-eagain-only" <<'EOF'
+called Result::unwrap() on an Err value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+EOF
+
 assert_retry "failed-to-spawn-eagain" <<'EOF'
 error: internal compiler error: unexpected panic
 failed to spawn helper thread: WouldBlock (os error 11)
