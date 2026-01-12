@@ -5,7 +5,7 @@ export const VM_SNAPSHOT_DEVICE_I8042_KIND = "input.i8042";
 
 // `aero_snapshot::DeviceId::USB` (see `docs/16-snapshots.md`).
 export const VM_SNAPSHOT_DEVICE_ID_USB = 12;
-// `aero_snapshot::DeviceId::I8042` (see `docs/08-input-devices.md`).
+// `aero_snapshot::DeviceId::I8042` (see `docs/16-snapshots.md`).
 // NOTE: This must match the Rust `DeviceId` assignment.
 export const VM_SNAPSHOT_DEVICE_ID_I8042 = 13;
 
