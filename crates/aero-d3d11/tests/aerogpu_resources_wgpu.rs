@@ -346,7 +346,7 @@ fn upload_resource_bc1_small_mip_reaches_edge_ok() -> Result<()> {
             tex_handle,
             Texture2dCreateDesc {
                 usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
-                format: AEROGPU_FORMAT_BC1_RGBA_UNORM,
+                format: AerogpuFormat::BC1RgbaUnorm as u32,
                 width: 2,
                 height: 2,
                 mip_levels: 1,
