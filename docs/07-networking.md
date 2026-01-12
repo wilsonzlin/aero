@@ -1174,6 +1174,8 @@ OPFS notes:
 - OPFS is origin-scoped browser storage (`navigator.storage.getDirectory()`); it is convenient for
   keeping large captures without triggering a download prompt.
 - OPFS may not be available in all browsers/contexts; the UI will error if unsupported.
+- In Chromium-based browsers, you can inspect files written to OPFS via DevTools → **Application**
+  → **Storage** → **Origin Private File System**.
 
 #### Viewing the capture (Wireshark)
 
