@@ -732,9 +732,10 @@ impl UhciRuntime {
             r.bytes(TAG_WEBHID_DEVICES)
         {
             let mut d = Decoder::new(buf);
-            let count = d.u32().map_err(|e| {
-                js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
-            })? as usize;
+            let count = d
+                .u32()
+                .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}")))?
+                as usize;
             if count > MAX_WEBHID_SNAPSHOT_DEVICES {
                 return Err(js_error(&format!(
                     "UHCI runtime snapshot has too many WebHID devices ({count}, max {MAX_WEBHID_SNAPSHOT_DEVICES})"

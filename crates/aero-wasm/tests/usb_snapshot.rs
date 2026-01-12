@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::{UhciControllerBridge, UhciRuntime, UsbHidPassthroughBridge, WebUsbUhciBridge};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_usb::uhci::UhciController;
+use aero_wasm::{UhciControllerBridge, UhciRuntime, UsbHidPassthroughBridge, WebUsbUhciBridge};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 const MIN_REPORT_DESCRIPTOR: &[u8] = &[
