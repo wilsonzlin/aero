@@ -32,18 +32,18 @@ use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
 };
 use aero_cpu_core::state::{
-    CpuMode, Segment, CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE,
+    CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
 };
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
 use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
 use aero_jit_x86::{
-    discover_block_mode, BlockLimits, Tier1Bus, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE,
+    BlockLimits, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, Tier1Bus, discover_block_mode,
 };
 
-use crate::guest_phys::{guest_ram_phys_end_exclusive, translate_guest_paddr_range, GuestRamRange};
-use crate::jit_write_log::GuestWriteLog;
 use crate::RunExitKind;
+use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
+use crate::jit_write_log::GuestWriteLog;
 
 fn js_error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
@@ -1483,12 +1483,12 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{meta_from_js, WasmBus, WasmTieredVm};
+    use super::{WasmBus, WasmTieredVm, meta_from_js};
 
     use aero_cpu_core::CpuBus;
     use js_sys::{Array, Object, Reflect};
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen(inline_js = r#"

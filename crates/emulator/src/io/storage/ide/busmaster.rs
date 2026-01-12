@@ -309,8 +309,11 @@ mod tests {
         // Direction=ToMemory (bit 3), start bit set (bit 0).
         bm.write(0, 1, 0x09);
 
-        let mut req =
-            DmaRequest::ata_read(vec![0u8; BusMasterChannel::MAX_PRD_ENTRIES_PER_DMA + 1], 0, 0);
+        let mut req = DmaRequest::ata_read(
+            vec![0u8; BusMasterChannel::MAX_PRD_ENTRIES_PER_DMA + 1],
+            0,
+            0,
+        );
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdMissingEndOfTable);
     }

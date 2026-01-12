@@ -95,7 +95,10 @@ fn network_snapshot_save_state_clamps_nat_and_tcp_connections() {
 
     assert_eq!(decoded.nat.len(), MAX_NAT_ENTRIES);
     assert!(
-        !decoded.nat.keys().any(|k| k.inside_ip == Ipv4Addr::new(10, 0, 2, 1)),
+        !decoded
+            .nat
+            .keys()
+            .any(|k| k.inside_ip == Ipv4Addr::new(10, 0, 2, 1)),
         "expected the extra NAT entry (inside_ip 10.0.2.1) to be dropped"
     );
 

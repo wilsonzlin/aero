@@ -17,7 +17,9 @@ fn should_skip_dir(path: &Path) -> bool {
 
 fn should_scan(path: &Path) -> bool {
     // Skip binary fuzz corpuses (tracked) to avoid accidental false positives.
-    if path.components().any(|c| c.as_os_str() == "fuzz") && path.components().any(|c| c.as_os_str() == "corpus") {
+    if path.components().any(|c| c.as_os_str() == "fuzz")
+        && path.components().any(|c| c.as_os_str() == "corpus")
+    {
         return false;
     }
 

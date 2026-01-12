@@ -43,10 +43,10 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler,
-    PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
-    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter,
+    PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice, PciEcamConfig,
+    PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};

@@ -93,4 +93,3 @@ fn machine_reset_does_not_detach_virtio_blk_disk_backend() {
         "dropping the machine should drop the virtio-blk disk backend"
     );
 }
-

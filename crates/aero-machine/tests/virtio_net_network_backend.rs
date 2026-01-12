@@ -662,15 +662,7 @@ fn virtio_net_rx_does_not_overconsume_net_rx_without_buffers() {
 
     // Post a single RX buffer.
     let buf_addr = 0x206000;
-    write_desc(
-        &mut m,
-        rx_desc,
-        0,
-        buf_addr,
-        64,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&mut m, rx_desc, 0, buf_addr, 64, VIRTQ_DESC_F_WRITE, 0);
 
     m.write_physical_u16(rx_avail, 0);
     m.write_physical_u16(rx_avail + 2, 1);
