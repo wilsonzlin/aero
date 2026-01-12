@@ -165,6 +165,52 @@ static HRESULT ReadBackbufferPixel(IDirect3DDevice9Ex* dev, UINT* out_width, UIN
   return S_OK;
 }
 
+static HRESULT ReadBackbufferPixelXY(IDirect3DDevice9Ex* dev, UINT x, UINT y, D3DCOLOR* out_pixel) {
+  if (!dev || !out_pixel) {
+    return E_INVALIDARG;
+  }
+
+  ComPtr<IDirect3DSurface9> rt;
+  HRESULT hr = dev->GetRenderTarget(0, rt.put());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  D3DSURFACE_DESC desc;
+  ZeroMemory(&desc, sizeof(desc));
+  hr = rt->GetDesc(&desc);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  if (x >= desc.Width || y >= desc.Height) {
+    return E_INVALIDARG;
+  }
+
+  ComPtr<IDirect3DSurface9> sys;
+  hr = dev->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, sys.put(), NULL);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = dev->GetRenderTargetData(rt.get(), sys.get());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  D3DLOCKED_RECT lr;
+  ZeroMemory(&lr, sizeof(lr));
+  hr = sys->LockRect(&lr, NULL, D3DLOCK_READONLY);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  const uint8_t* row = (const uint8_t*)lr.pBits + (size_t)y * (size_t)lr.Pitch;
+  *out_pixel = ((const D3DCOLOR*)row)[x];
+
+  sys->UnlockRect();
+  return S_OK;
+}
+
 static HRESULT DrawQuad(IDirect3DDevice9Ex* dev) {
   if (!dev) {
     return E_INVALIDARG;
@@ -358,6 +404,27 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
     return reporter.FailHresult("CreateVertexBuffer", hr);
   }
 
+  // A second VB that draws only a small quad in the top-left quadrant; used to
+  // validate D3DSBT_PIXELSTATE behavior (pixel-state blocks should not restore
+  // vertex bindings).
+  const VertexPosTex verts_tl[4] = {
+      {-1.0f,  0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+      {-1.0f,  1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+      {-0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f},
+      {-0.5f,  1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  ComPtr<IDirect3DVertexBuffer9> vb_tl;
+  hr = dev->CreateVertexBuffer(sizeof(verts_tl),
+                               D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
+                               0,
+                               D3DPOOL_DEFAULT,
+                               vb_tl.put(),
+                               NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexBuffer(vb_tl)", hr);
+  }
+
   void* vb_ptr = NULL;
   hr = vb->Lock(0, sizeof(verts), &vb_ptr, D3DLOCK_DISCARD);
   if (FAILED(hr) || !vb_ptr) {
@@ -365,6 +432,14 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   }
   memcpy(vb_ptr, verts, sizeof(verts));
   vb->Unlock();
+
+  vb_ptr = NULL;
+  hr = vb_tl->Lock(0, sizeof(verts_tl), &vb_ptr, D3DLOCK_DISCARD);
+  if (FAILED(hr) || !vb_ptr) {
+    return reporter.FailHresult("VertexBuffer Lock(vb_tl)", FAILED(hr) ? hr : E_FAIL);
+  }
+  memcpy(vb_ptr, verts_tl, sizeof(verts_tl));
+  vb_tl->Unlock();
 
   // Create textures.
   ComPtr<IDirect3DTexture9> tex_a;
@@ -619,6 +694,63 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   }
   if ((px & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
     return reporter.Fail("pixel mismatch after CreateStateBlock Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
+  }
+
+  // Exercise D3DSBT_PIXELSTATE: it should restore pixel state (texture/PS
+  // constants) but should not touch the currently-bound vertex buffer.
+  ComPtr<IDirect3DStateBlock9> sb_pixel;
+  hr = dev->CreateStateBlock(D3DSBT_PIXELSTATE, sb_pixel.put());
+  if (FAILED(hr) || !sb_pixel) {
+    return reporter.FailHresult("CreateStateBlock(D3DSBT_PIXELSTATE)", FAILED(hr) ? hr : E_FAIL);
+  }
+
+  // Mutate vertex binding to the small top-left VB, and mutate pixel state to
+  // blue (blue texture * white constant).
+  hr = dev->SetStreamSource(0, vb_tl.get(), 0, sizeof(VertexPosTex));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(vb_tl pixelstate mutate)", hr);
+  }
+  hr = dev->SetTexture(0, tex_b.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture B (pixelstate mutate)", hr);
+  }
+  hr = dev->SetPixelShaderConstantF(0, c0_white, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(white pixelstate mutate)", hr);
+  }
+
+  hr = sb_pixel->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply (pixelstate)", hr);
+  }
+  hr = DrawQuad(dev.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad (after pixelstate Apply)", hr);
+  }
+
+  // Center pixel should remain black (quad doesn't cover it), and top-left pixel
+  // should be green (pixel state restored).
+  D3DCOLOR px_center = 0;
+  hr = ReadBackbufferPixel(dev.get(), NULL, NULL, &px_center);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixel (after pixelstate Apply)", hr);
+  }
+  const D3DCOLOR expected_black = 0xFF000000u;
+  if ((px_center & 0x00FFFFFFu) != (expected_black & 0x00FFFFFFu)) {
+    return reporter.Fail("center pixel mismatch after pixelstate Apply: got=0x%08X expected=0x%08X",
+                         (unsigned)px_center,
+                         (unsigned)expected_black);
+  }
+
+  D3DCOLOR px_tl = 0;
+  hr = ReadBackbufferPixelXY(dev.get(), 5, 5, &px_tl);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixelXY(5,5) (after pixelstate Apply)", hr);
+  }
+  if ((px_tl & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+    return reporter.Fail("top-left pixel mismatch after pixelstate Apply: got=0x%08X expected=0x%08X",
+                         (unsigned)px_tl,
+                         (unsigned)expected_green);
   }
 
   // Exercise D3DSBT_VERTEXSTATE: it should restore VB bindings (so draw works),
