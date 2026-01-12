@@ -153,3 +153,22 @@ fn error_mapping_preserves_offset_overflow_roundtrip() {
     assert!(matches!(back, aero_storage::DiskError::OffsetOverflow));
 }
 
+#[test]
+fn error_mapping_preserves_corrupt_image_roundtrip() {
+    let err = aero_storage::DiskError::CorruptImage("bad");
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::CorruptImage("bad"));
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(back, aero_storage::DiskError::CorruptImage("bad")));
+}
+
+#[test]
+fn error_mapping_preserves_unsupported_roundtrip() {
+    let err = aero_storage::DiskError::Unsupported("feature");
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::Unsupported("feature"));
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(back, aero_storage::DiskError::Unsupported("feature")));
+}
