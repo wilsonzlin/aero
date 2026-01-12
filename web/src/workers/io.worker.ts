@@ -52,7 +52,7 @@ import { E1000PciDevice } from "../io/devices/e1000";
 import { HdaPciDevice, type HdaControllerBridgeLike } from "../io/devices/hda";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
-import { VirtioInputPciFunction, hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
+import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDeviceLike } from "../io/devices/virtio_input";
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
@@ -222,7 +222,7 @@ let hdaDevice: HdaPciDevice | null = null;
 type HdaControllerBridge = InstanceType<NonNullable<WasmApi["HdaControllerBridge"]>>;
 let hdaControllerBridge: HdaControllerBridge | null = null;
 
-type VirtioInputPciDevice = InstanceType<WasmApi["VirtioInputPciDevice"]>;
+type VirtioInputPciDevice = VirtioInputPciDeviceLike;
 let virtioInputKeyboard: VirtioInputPciFunction | null = null;
 let virtioInputMouse: VirtioInputPciFunction | null = null;
 
