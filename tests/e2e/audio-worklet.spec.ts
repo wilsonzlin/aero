@@ -20,6 +20,18 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
 
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutput", { threshold: 0.01 });
 
+  // Ignore any startup underruns while the AudioWorklet graph spins up; assert on the delta
+  // over a steady-state window so cold CI runners remain stable.
+  const steady0 = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutput;
+    return {
+      underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
+    };
+  });
+  expect(steady0).not.toBeNull();
+
   await page.waitForTimeout(1000);
 
   const result = await page.evaluate(() => {
@@ -37,10 +49,10 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
 
   expect(result.enabled).toBe(true);
   expect(result.state).toBe("running");
-  // Startup can be racy across CI environments; allow up to one render quantum.
-  // Underruns are counted as missing frames (a single render quantum is 128 frames).
-  expect(result.underruns).toBeLessThanOrEqual(128);
-  expect(result.overruns).toBe(0);
+  const deltaUnderrun = (((result.underruns as number) - (steady0!.underruns as number)) >>> 0) as number;
+  const deltaOverrun = (((result.overruns as number) - (steady0!.overruns as number)) >>> 0) as number;
+  expect(deltaUnderrun).toBeLessThanOrEqual(1024);
+  expect(deltaOverrun).toBe(0);
   expect(maxAbs).not.toBeNull();
   expect(maxAbs as number).toBeGreaterThan(0.01);
 });

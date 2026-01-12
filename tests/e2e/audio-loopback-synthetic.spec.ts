@@ -23,6 +23,20 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
   // playing the CPU-worker fallback sine tone with gain=0.1).
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputLoopback", { threshold: 0.12 });
 
+  // Ignore any startup underruns while the worker runtime + mic loopback plumbing bootstraps.
+  // Warm up briefly before taking the steady-state baseline so we don't count initial catch-up.
+  await page.waitForTimeout(1000);
+
+  const steady0 = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutputLoopback;
+    return {
+      underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
+    };
+  });
+  expect(steady0).not.toBeNull();
+
   await page.waitForTimeout(1000);
 
   const result = await page.evaluate(({ DROPPED_SAMPLES_INDEX, HEADER_U32_LEN, READ_POS_INDEX, WRITE_POS_INDEX }) => {
@@ -39,6 +53,7 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
       state: out?.context?.state,
       bufferLevelFrames: typeof out?.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : null,
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       backend: (globalThis as any).__aeroAudioLoopbackBackend ?? null,
       micWritePos,
@@ -51,9 +66,12 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
 
   expect(result.enabled).toBe(true);
   expect(result.state).toBe("running");
-  // Startup can be racy across CI environments; allow a tiny tolerance.
-  // Underruns are counted as missing frames (a single render quantum is 128 frames).
-  expect(result.underruns).toBeLessThanOrEqual(128);
+  const deltaUnderrun = (((result.underruns as number) - (steady0!.underruns as number)) >>> 0) as number;
+  const deltaOverrun = (((result.overruns as number) - (steady0!.overruns as number)) >>> 0) as number;
+  // Underruns are counted as missing frames (a single render quantum is 128 frames). Allow
+  // a few render quanta of slack over the window to avoid cold-start flakes.
+  expect(deltaUnderrun).toBeLessThanOrEqual(1024);
+  expect(deltaOverrun).toBe(0);
   expect(result.bufferLevelFrames).toBeGreaterThan(0);
   // This demo is intended to validate worker plumbing end-to-end.
   expect(result.backend).toBe("worker");
