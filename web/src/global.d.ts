@@ -17,7 +17,7 @@ declare global {
   }>;
 
   interface Window {
-    aero?: AeroGlobalApi & {
+    aero?: Omit<AeroGlobalApi, "bench"> & {
       netTrace?: NetTraceBackend;
       bench?: {
         runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;

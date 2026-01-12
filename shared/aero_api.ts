@@ -55,10 +55,16 @@ export type WebGpuBenchResult =
     };
 
 export interface AeroBenchApi {
+  /**
+   * Browser-installed bench hooks.
+   *
+   * These are intentionally typed as `unknown` in `shared/` to avoid
+   * cross-package dependencies on the `web/` runtime's bench types.
+   */
   runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
   runMicrobenchSuite?: (opts?: unknown) => Promise<unknown>;
   runStorageBench?: (opts?: unknown) => Promise<unknown>;
-  runGuestCpuBench?: (opts?: unknown) => Promise<unknown>;
+  runGuestCpuBench?: (opts: unknown) => Promise<unknown>;
 }
 
 export interface AeroNetTraceApi {
