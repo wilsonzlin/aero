@@ -1007,6 +1007,7 @@ fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
 
     let count = read_u32_le(&mut r) as usize;
     let mut pci_entries = 0usize;
+    let mut pci_cfg_entries = 0usize;
     let mut pci_intx_entries = 0usize;
 
     for _ in 0..count {
@@ -1056,14 +1057,18 @@ fn snapshot_stores_pci_core_under_single_device_id_pci_entry() {
 
             assert!(found_pcpt, "PCIC snapshot missing PCPT field");
             assert!(found_intx, "PCIC snapshot missing INTX field");
+        } else if id == aero_snapshot::DeviceId::PCI_CFG {
+            pci_cfg_entries += 1;
+            skip_exact(&mut r, len);
+        } else if id == aero_snapshot::DeviceId::PCI_INTX {
+            pci_intx_entries += 1;
+            skip_exact(&mut r, len);
         } else {
-            if id == aero_snapshot::DeviceId::PCI_INTX {
-                pci_intx_entries += 1;
-            }
             skip_exact(&mut r, len);
         }
     }
 
     assert_eq!(pci_entries, 1);
+    assert_eq!(pci_cfg_entries, 0);
     assert_eq!(pci_intx_entries, 0);
 }
