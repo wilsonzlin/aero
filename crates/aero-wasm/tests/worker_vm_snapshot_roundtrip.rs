@@ -33,8 +33,8 @@ fn worker_vm_snapshot_is_deterministic() {
 
     vm.set_cpu_state_v2(&cpu_bytes, &mmu_bytes)
         .expect("set_cpu_state_v2");
-    // Add multiple devices (including networking IDs) to ensure the builder keeps a canonical
-    // deterministic ordering independent of insertion order.
+    // Add multiple devices (including networking IDs) and ensure snapshot bytes are canonical and
+    // deterministic.
     vm.add_device_state(aero_snapshot::DeviceId::NET_STACK.0, 1, 0, &[0x01])
         .expect("add_device_state net.stack");
     vm.add_device_state(aero_snapshot::DeviceId::USB.0, 3, 7, &[0xAA, 0xBB, 0xCC])
@@ -47,6 +47,27 @@ fn worker_vm_snapshot_is_deterministic() {
     let a = vm.snapshot_full().expect("snapshot_full #1");
     let b = vm.snapshot_full().expect("snapshot_full #2");
     assert_eq!(a, b, "snapshot bytes must be deterministic");
+
+    // The builder should also sort devices into a canonical order, so insertion order should not
+    // affect snapshot bytes.
+    let mut vm2 = WorkerVmSnapshot::new(guest_base, guest_size).expect("new WorkerVmSnapshot #2");
+    vm2.set_cpu_state_v2(&cpu_bytes, &mmu_bytes)
+        .expect("set_cpu_state_v2 #2");
+    // Insert in a different order.
+    vm2.add_device_state(0x1234, 9, 9, &[0x99])
+        .expect("add_device_state unknown #2");
+    vm2.add_device_state(aero_snapshot::DeviceId::E1000.0, 2, 5, &[0x42, 0x43])
+        .expect("add_device_state net.e1000 #2");
+    vm2.add_device_state(aero_snapshot::DeviceId::USB.0, 3, 7, &[0xAA, 0xBB, 0xCC])
+        .expect("add_device_state usb.uhci #2");
+    vm2.add_device_state(aero_snapshot::DeviceId::NET_STACK.0, 1, 0, &[0x01])
+        .expect("add_device_state net.stack #2");
+
+    let c = vm2.snapshot_full().expect("snapshot_full #3");
+    assert_eq!(
+        a, c,
+        "snapshot bytes must be independent of device insertion order"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -130,12 +151,14 @@ fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
     let devices = Array::from(&devices_val);
     assert_eq!(devices.length(), 3, "expected three device entries");
 
-    let mut restored_by_id = std::collections::BTreeMap::<u32, (u16, u16, Vec<u8>)>::new();
+    let mut restore_ids_in_order = Vec::with_capacity(devices.length() as usize);
+    let mut restored_by_id = std::collections::HashMap::<u32, (u16, u16, Vec<u8>)>::new();
     for (idx, dev) in devices.iter().enumerate() {
         let id = Reflect::get(&dev, &JsValue::from_str("id"))
             .unwrap_or_else(|_| panic!("devices[{idx}].id missing"))
             .as_f64()
             .unwrap_or_else(|| panic!("devices[{idx}].id must be a number")) as u32;
+        restore_ids_in_order.push(id);
         let version = Reflect::get(&dev, &JsValue::from_str("version"))
             .unwrap_or_else(|_| panic!("devices[{idx}].version missing"))
             .as_f64()
@@ -158,7 +181,7 @@ fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
     }
 
     assert_eq!(
-        restored_by_id.keys().copied().collect::<Vec<_>>().as_slice(),
+        restore_ids_in_order.as_slice(),
         &[
             aero_snapshot::DeviceId::E1000.0,
             aero_snapshot::DeviceId::NET_STACK.0,
