@@ -1,0 +1,342 @@
+import { describe, expect, it } from "vitest";
+
+import { initWasm } from "../runtime/wasm_loader";
+import { computeGuestRamLayout } from "../runtime/shared_layout";
+import {
+  USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
+  USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+  USB_HID_GAMEPAD_REPORT_DESCRIPTOR,
+  USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
+  USB_HID_INTERFACE_PROTOCOL_MOUSE,
+  USB_HID_INTERFACE_SUBCLASS_BOOT,
+} from "./hid_descriptors";
+
+const REG_USBCMD = 0x00;
+const REG_USBINTR = 0x04;
+const REG_FLBASEADD = 0x08;
+const REG_PORTSC1 = 0x10;
+
+const USBCMD_RS = 1 << 0;
+const USBCMD_MAXP = 1 << 7;
+const USBINTR_IOC = 1 << 2;
+
+const PORTSC_PR = 1 << 9;
+
+const LINK_PTR_T = 1 << 0;
+const LINK_PTR_Q = 1 << 1;
+
+const TD_CTRL_ACTIVE = 1 << 23;
+const TD_CTRL_IOC = 1 << 24;
+const TD_CTRL_ACTLEN_MASK = 0x7ff;
+
+const PID_SETUP = 0x2d;
+const PID_IN = 0x69;
+const PID_OUT = 0xe1;
+
+function actlen(ctrlSts: number): number {
+  const field = ctrlSts & TD_CTRL_ACTLEN_MASK;
+  if (field === 0x7ff) return 0;
+  return field + 1;
+}
+
+function tdCtrl(active: boolean, ioc: boolean): number {
+  let v = 0x7ff;
+  if (active) v |= TD_CTRL_ACTIVE;
+  if (ioc) v |= TD_CTRL_IOC;
+  return v >>> 0;
+}
+
+function tdToken(pid: number, addr: number, ep: number, toggle: boolean, maxLen: number): number {
+  const maxLenField = maxLen === 0 ? 0x7ff : (maxLen - 1) & 0x7ff;
+  return (
+    (pid & 0xff) |
+    ((addr & 0x7f) << 8) |
+    ((ep & 0x0f) << 15) |
+    (toggle ? 1 << 19 : 0) |
+    (maxLenField << 21)
+  ) >>> 0;
+}
+
+class Alloc {
+  #next: number;
+  constructor(base: number) {
+    this.#next = base >>> 0;
+  }
+
+  alloc(size: number, align: number): number {
+    const a = Math.max(1, align >>> 0);
+    const mask = a - 1;
+    const aligned = (this.#next + mask) & ~mask;
+    this.#next = (aligned + (size >>> 0)) >>> 0;
+    return aligned >>> 0;
+  }
+}
+
+type SetupPacket = { bmRequestType: number; bRequest: number; wValue: number; wIndex: number; wLength: number };
+
+function encodeSetupPacket(setup: SetupPacket): Uint8Array {
+  const out = new Uint8Array(8);
+  out[0] = setup.bmRequestType & 0xff;
+  out[1] = setup.bRequest & 0xff;
+  out[2] = setup.wValue & 0xff;
+  out[3] = (setup.wValue >>> 8) & 0xff;
+  out[4] = setup.wIndex & 0xff;
+  out[5] = (setup.wIndex >>> 8) & 0xff;
+  out[6] = setup.wLength & 0xff;
+  out[7] = (setup.wLength >>> 8) & 0xff;
+  return out;
+}
+
+function writeTd(view: DataView, guestBase: number, addr: number, link: number, ctrlSts: number, token: number, buffer: number): void {
+  const o = guestBase + (addr >>> 0);
+  view.setUint32(o, link >>> 0, true);
+  view.setUint32(o + 4, ctrlSts >>> 0, true);
+  view.setUint32(o + 8, token >>> 0, true);
+  view.setUint32(o + 12, buffer >>> 0, true);
+}
+
+function writeQh(view: DataView, guestBase: number, addr: number, head: number, element: number): void {
+  const o = guestBase + (addr >>> 0);
+  view.setUint32(o, head >>> 0, true);
+  view.setUint32(o + 4, element >>> 0, true);
+}
+
+function installFrameList(view: DataView, guestBase: number, flBase: number, qhAddr: number): void {
+  const base = guestBase + (flBase >>> 0);
+  const entry = (qhAddr | LINK_PTR_Q) >>> 0;
+  for (let i = 0; i < 1024; i += 1) {
+    view.setUint32(base + i * 4, entry, true);
+  }
+}
+
+function tick1ms(uhci: unknown): void {
+  const u = uhci as { tick_1ms?: () => void; step_frame?: () => void };
+  if (typeof u.step_frame === "function") {
+    u.step_frame();
+    return;
+  }
+  u.tick_1ms?.();
+}
+
+function controlNoData(opts: {
+  uhci: { io_write(offset: number, size: number, value: number): void };
+  view: DataView;
+  guestBase: number;
+  alloc: Alloc;
+  flBase: number;
+  devAddr: number;
+  setup: SetupPacket;
+}): void {
+  const { uhci, view, guestBase, alloc, flBase, devAddr, setup } = opts;
+
+  const qhAddr = alloc.alloc(0x20, 0x10);
+  const setupBuf = alloc.alloc(8, 0x10);
+  const setupTd = alloc.alloc(0x20, 0x10);
+  const statusTd = alloc.alloc(0x20, 0x10);
+
+  const bytes = encodeSetupPacket(setup);
+  new Uint8Array(view.buffer).set(bytes, guestBase + setupBuf);
+
+  writeTd(view, guestBase, setupTd, statusTd, tdCtrl(true, false), tdToken(PID_SETUP, devAddr, 0, false, 8), setupBuf);
+  writeTd(view, guestBase, statusTd, LINK_PTR_T, tdCtrl(true, true), tdToken(PID_IN, devAddr, 0, true, 0), 0);
+  writeQh(view, guestBase, qhAddr, LINK_PTR_T, setupTd);
+  installFrameList(view, guestBase, flBase, qhAddr);
+
+  // The controller must be running for the schedule to be processed; assume the caller already set USBCMD.RS.
+  uhci.io_write(REG_FLBASEADD, 4, flBase >>> 0);
+  tick1ms(uhci);
+}
+
+function interruptIn(opts: {
+  uhci: { io_write(offset: number, size: number, value: number): void };
+  view: DataView;
+  guestBase: number;
+  alloc: Alloc;
+  flBase: number;
+  devAddr: number;
+  ep: number;
+  len: number;
+}): Uint8Array {
+  const { uhci, view, guestBase, alloc, flBase, devAddr, ep, len } = opts;
+  const qhAddr = alloc.alloc(0x20, 0x10);
+  const buf = alloc.alloc(len, 0x10);
+  const td = alloc.alloc(0x20, 0x10);
+
+  writeTd(view, guestBase, td, LINK_PTR_T, tdCtrl(true, true), tdToken(PID_IN, devAddr, ep, true, len), buf);
+  writeQh(view, guestBase, qhAddr, LINK_PTR_T, td);
+  installFrameList(view, guestBase, flBase, qhAddr);
+
+  uhci.io_write(REG_FLBASEADD, 4, flBase >>> 0);
+  tick1ms(uhci);
+
+  const ctrlSts = view.getUint32(guestBase + td + 4, true);
+  expect(ctrlSts & TD_CTRL_ACTIVE).toBe(0);
+  const gotLen = actlen(ctrlSts);
+  const out = new Uint8Array(gotLen);
+  out.set(new Uint8Array(view.buffer).subarray(guestBase + buf, guestBase + buf + gotLen));
+  return out;
+}
+
+describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
+  it("delivers UsbHidBridge reports through UsbHidPassthroughBridge via UHCI + external hub", async () => {
+    const desiredGuestBytes = 2 * 1024 * 1024;
+    const layoutHint = computeGuestRamLayout(desiredGuestBytes);
+    const memory = new WebAssembly.Memory({ initial: layoutHint.wasm_pages, maximum: layoutHint.wasm_pages });
+
+    let api: Awaited<ReturnType<typeof initWasm>>["api"];
+    try {
+      ({ api } = await initWasm({ variant: "single", memory }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Missing single-thread WASM package")) return;
+      throw err;
+    }
+
+    if (!api.UhciControllerBridge) return;
+    if (!api.UsbHidPassthroughBridge) return;
+
+    const layout = api.guest_ram_layout(desiredGuestBytes);
+    const guestBase = layout.guest_base >>> 0;
+    const guestSize = layout.guest_size >>> 0;
+    expect(guestBase).toBeGreaterThan(0);
+    expect(guestSize).toBeGreaterThan(0x20000);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const UhciCtor = api.UhciControllerBridge as any;
+    let uhci: any;
+    try {
+      uhci = UhciCtor.length >= 2 ? new UhciCtor(guestBase, guestSize) : new UhciCtor(guestBase);
+    } catch (err) {
+      // Older wasm-bindgen outputs might enforce arity. Retry with the opposite signature.
+      uhci = UhciCtor.length >= 2 ? new UhciCtor(guestBase) : new UhciCtor(guestBase, guestSize);
+    }
+
+    if (typeof uhci.attach_hub !== "function" || typeof uhci.attach_usb_hid_passthrough_device !== "function") return;
+
+    // Root port 0: external hub with enough ports for synthetic devices.
+    uhci.attach_hub(0, 16);
+
+    const HidBridge = api.UsbHidPassthroughBridge;
+    const keyboardDev = new HidBridge(
+      0x1234,
+      0x0001,
+      "Aero",
+      "Keyboard",
+      undefined,
+      USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
+      false,
+      USB_HID_INTERFACE_SUBCLASS_BOOT,
+      USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
+    );
+    const mouseDev = new HidBridge(
+      0x1234,
+      0x0002,
+      "Aero",
+      "Mouse",
+      undefined,
+      USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+      false,
+      USB_HID_INTERFACE_SUBCLASS_BOOT,
+      USB_HID_INTERFACE_PROTOCOL_MOUSE,
+    );
+    const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+
+    uhci.attach_usb_hid_passthrough_device([0, 1], keyboardDev);
+    uhci.attach_usb_hid_passthrough_device([0, 2], mouseDev);
+    uhci.attach_usb_hid_passthrough_device([0, 3], gamepadDev);
+
+    // Minimal guest memory map for UHCI TD/QH traversal.
+    const view = new DataView(memory.buffer);
+    const alloc = new Alloc(0x2000);
+    const flBase = 0x1000;
+
+    // Enable IOC interrupts (not strictly required for this test, but mirrors real guests).
+    uhci.io_write(REG_USBINTR, 2, USBINTR_IOC);
+
+    // Reset root port 0 and wait the UHCI-mandated ~50ms so the hub becomes enabled.
+    uhci.io_write(REG_PORTSC1, 2, PORTSC_PR);
+    for (let i = 0; i < 50; i += 1) tick1ms(uhci);
+
+    // Start the controller (RS) with 64-byte max packet size.
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS | USBCMD_MAXP);
+
+    // Enumerate + configure the hub itself at address 0 -> 1.
+    controlNoData({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 0,
+      setup: { bmRequestType: 0x00, bRequest: 0x05, wValue: 1, wIndex: 0, wLength: 0 },
+    });
+    controlNoData({
+      uhci,
+      view,
+      guestBase,
+      alloc,
+      flBase,
+      devAddr: 1,
+      setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 1, wIndex: 0, wLength: 0 },
+    });
+
+    // Hub class requests.
+    const setupHubSetPortFeature = (port: number, feature: number): SetupPacket => ({
+      bmRequestType: 0x23,
+      bRequest: 0x03,
+      wValue: feature,
+      wIndex: port,
+      wLength: 0,
+    });
+    const setupHubClearPortFeature = (port: number, feature: number): SetupPacket => ({
+      bmRequestType: 0x23,
+      bRequest: 0x01,
+      wValue: feature,
+      wIndex: port,
+      wLength: 0,
+    });
+
+    // Power+reset ports 1..3 and enumerate each device.
+    const addrs = [5, 6, 7];
+    for (let port = 1; port <= 3; port += 1) {
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 8) }); // PORT_POWER
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 4) }); // PORT_RESET
+      for (let i = 0; i < 50; i += 1) tick1ms(uhci);
+
+      // Clear change bits.
+      for (const feature of [20, 16, 17]) {
+        controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubClearPortFeature(port, feature) });
+      }
+
+      const addr = addrs[port - 1]!;
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 0, setup: { bmRequestType: 0x00, bRequest: 0x05, wValue: addr, wIndex: 0, wLength: 0 } });
+      controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: addr, setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 1, wIndex: 0, wLength: 0 } });
+    }
+
+    expect(keyboardDev.configured()).toBe(true);
+    expect(mouseDev.configured()).toBe(true);
+    expect(gamepadDev.configured()).toBe(true);
+
+    const usbHid = new api.UsbHidBridge();
+
+    usbHid.keyboard_event(0x04, true); // KeyA
+    const kbReport = usbHid.drain_next_keyboard_report();
+    expect(kbReport).toBeInstanceOf(Uint8Array);
+    keyboardDev.push_input_report(0, kbReport!);
+
+    usbHid.mouse_move(10, 5);
+    const mouseReport = usbHid.drain_next_mouse_report();
+    expect(mouseReport).toBeInstanceOf(Uint8Array);
+    mouseDev.push_input_report(0, mouseReport!);
+
+    usbHid.gamepad_report(0x04030201, 0x00070605);
+    const padReport = usbHid.drain_next_gamepad_report();
+    expect(padReport).toBeInstanceOf(Uint8Array);
+    gamepadDev.push_input_report(0, padReport!);
+
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
+  });
+});
+

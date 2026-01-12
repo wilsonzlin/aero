@@ -12,16 +12,18 @@ import {
   type GuestUsbRootPort,
   type HidPassthroughMessage,
 } from "./hid_passthrough_protocol";
+import {
+  DEFAULT_EXTERNAL_HUB_PORT_COUNT,
+  EXTERNAL_HUB_ROOT_PORT,
+  UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
+} from "../usb/uhci_external_hub";
 
 export interface HidPassthroughTarget {
   postMessage(message: HidPassthroughMessage, transfer?: Transferable[]): void;
 }
 
-export const UHCI_ROOT_PORTS: readonly GuestUsbRootPort[] = [0, 1];
-export const EXTERNAL_HUB_ROOT_PORT: GuestUsbRootPort = 0;
+export { UHCI_ROOT_PORTS, EXTERNAL_HUB_ROOT_PORT, DEFAULT_EXTERNAL_HUB_PORT_COUNT } from "../usb/uhci_external_hub";
 // Root port 1 is reserved for the guest-visible WebUSB passthrough device (see `io.worker.ts`).
-
-export const DEFAULT_EXTERNAL_HUB_PORT_COUNT = 16;
 const DEFAULT_NUMERIC_DEVICE_ID_BASE = 0x4000_0000;
 
 export function getNoFreeGuestUsbPortsMessage(options: { externalHubPortCount?: number } = {}): string {
@@ -482,7 +484,7 @@ export class WebHidPassthroughManager {
 
   #allocatePath(): GuestUsbPath | null {
     // Prefer attaching behind the emulated external hub (root port 0).
-    for (let hubPort = 1; hubPort <= this.#externalHubPortCount; hubPort += 1) {
+    for (let hubPort = UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT; hubPort <= this.#externalHubPortCount; hubPort += 1) {
       if (this.#usedExternalHubPorts.has(hubPort)) continue;
       return [EXTERNAL_HUB_ROOT_PORT, hubPort];
     }

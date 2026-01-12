@@ -111,7 +111,8 @@ describe("hid/WebHidBroker", () => {
     const attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
     expect(attach).toBeTruthy();
     expect(attach!.guestPort).toBe(0);
-    expect(attach!.guestPath).toEqual([0, 1]);
+    // First downstream hub ports are reserved for Aero's built-in synthetic HID devices (kbd/mouse/gamepad).
+    expect(attach!.guestPath).toEqual([0, 4]);
 
     device.dispatchInputReport(5, Uint8Array.of(1, 2, 3));
 

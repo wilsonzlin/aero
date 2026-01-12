@@ -67,9 +67,10 @@ describe("hid/WasmHidGuestBridge", () => {
       undefined,
     );
 
-    // Attach remaps `[0]` to `[0,1]` (first downstream hub port) because root port 0 hosts the external hub.
+    // Legacy root-port-only paths are normalized by `UhciHidTopologyManager`, so the guest bridge
+    // should forward the path hint as-is.
     expect(detachSpy).toHaveBeenCalledWith(attach.deviceId);
-    expect(attachSpy).toHaveBeenCalledWith(attach.deviceId, [0, 1], "usb-hid-passthrough", bridgeInstance);
+    expect(attachSpy).toHaveBeenCalledWith(attach.deviceId, attach.guestPath, "usb-hid-passthrough", bridgeInstance);
 
     const input: HidInputReportMessage = {
       type: "hid.inputReport",

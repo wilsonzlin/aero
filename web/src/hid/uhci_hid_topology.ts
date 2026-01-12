@@ -1,5 +1,5 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
-import { DEFAULT_EXTERNAL_HUB_PORT_COUNT } from "../platform/webhid_passthrough";
+import { DEFAULT_EXTERNAL_HUB_PORT_COUNT, remapLegacyRootPortToExternalHubPort } from "../usb/uhci_external_hub";
 
 export type UhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
 
@@ -60,7 +60,7 @@ export class UhciHidTopologyManager {
     // guest-visible WebUSB passthrough device. For backwards compatibility, callers may still
     // provide a single-element root-port path (`[0]` or `[1]`). Remap these to stable hub-backed
     // paths so we never clobber the hub or the WebUSB device.
-    if (path.length === 1 && (path[0] === 0 || path[0] === 1)) return [0, path[0] + 1];
+    if (path.length === 1 && (path[0] === 0 || path[0] === 1)) return [0, remapLegacyRootPortToExternalHubPort(path[0])];
     return path;
   }
 

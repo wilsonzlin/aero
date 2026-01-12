@@ -287,6 +287,16 @@ export interface WasmApi {
         webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
         webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;
 
+        /**
+         * Attach a pre-built USB HID passthrough device at the given topology path.
+         *
+         * Optional for older WASM builds.
+         */
+        attach_usb_hid_passthrough_device?(
+            guestPath: number[],
+            device: InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>,
+        ): void;
+
         webusb_attach(preferredPort?: number): number;
         webusb_detach(): void;
         webusb_drain_actions(): UsbHostAction[];

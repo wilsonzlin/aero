@@ -39,16 +39,16 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
 
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(1);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 1]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 4]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 4], dev);
 
     mgr.detachDevice(1);
     // Detach should use the normalized path as well.
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
-    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 1]);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 4]);
   });
 
-  it("remaps legacy root-port-only path [1] onto hub port 0.2 to avoid clobbering WebUSB", () => {
+  it("remaps legacy root-port-only path [1] onto a stable external hub port to avoid clobbering WebUSB", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
     const dev = { kind: "device" };
@@ -57,11 +57,11 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.attachDevice(1, [1], "webhid", dev);
 
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 2]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 2], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 5]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 5], dev);
 
     mgr.detachDevice(1);
-    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 2]);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 5]);
   });
 
   it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {
@@ -131,8 +131,8 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.detachDevice(1);
 
     // One detach for clearing on attach, one for explicit detach.
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 2]);
-    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, 2], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 5]);
+    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, 5], dev);
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
   });
 

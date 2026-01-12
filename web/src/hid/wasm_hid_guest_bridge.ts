@@ -36,11 +36,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
     const guestPathHint = msg.guestPath ?? (msg.guestPort !== undefined ? ([msg.guestPort] as GuestUsbPath) : undefined);
-    // Backwards compatibility: older senders may only specify a UHCI root port (`[0]` or `[1]`).
-    // Root port 0 now hosts an external hub used for WebHID passthrough, and root port 1 is
-    // reserved for WebUSB. Map a single-part path to a stable hub port behind root port 0.
-    const guestPath =
-      guestPathHint && guestPathHint.length === 1 ? ([0, (guestPathHint[0] ?? 0) + 1] as GuestUsbPath) : guestPathHint;
+    const guestPath = guestPathHint;
 
     try {
       const UsbBridge = this.api.UsbHidPassthroughBridge;

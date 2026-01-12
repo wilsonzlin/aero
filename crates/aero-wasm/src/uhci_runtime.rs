@@ -459,6 +459,27 @@ impl UhciRuntime {
         Ok(())
     }
 
+    /// Attach a generic USB HID passthrough device at the given guest USB topology path.
+    ///
+    /// This is primarily used for Aero's synthetic browser input devices (keyboard/mouse/gamepad),
+    /// which are modeled as fixed USB HID devices behind the external hub on root port 0.
+    pub fn attach_usb_hid_passthrough_device(
+        &mut self,
+        path: JsValue,
+        device: &crate::UsbHidPassthroughBridge,
+    ) -> Result<(), JsValue> {
+        let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
+        if path.len() >= 2 && path[0] as usize == EXTERNAL_HUB_ROOT_PORT {
+            let hub_port = path[1];
+            self.ensure_external_hub(hub_port)?;
+        }
+        crate::uhci_controller_bridge::attach_device_at_path(
+            &mut self.ctrl,
+            &path,
+            Box::new(device.as_usb_device()),
+        )
+    }
+
     pub fn webhid_drain_output_reports(&mut self) -> JsValue {
         let out = Array::new();
         for (&device_id, state) in self.webhid_devices.iter_mut() {

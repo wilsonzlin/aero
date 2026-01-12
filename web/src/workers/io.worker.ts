@@ -106,6 +106,20 @@ import {
   type HidPassthroughMessage,
 } from "../platform/hid_passthrough_protocol";
 import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
+import {
+  USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
+  USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+  USB_HID_GAMEPAD_REPORT_DESCRIPTOR,
+  USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
+  USB_HID_INTERFACE_PROTOCOL_MOUSE,
+  USB_HID_INTERFACE_SUBCLASS_BOOT,
+} from "../usb/hid_descriptors";
+import {
+  EXTERNAL_HUB_ROOT_PORT,
+  UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
+  UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
+  UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
+} from "../usb/uhci_external_hub";
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
@@ -162,6 +176,11 @@ let mmioWriteCount = 0;
 
 type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
 let usbHid: UsbHidBridge | null = null;
+type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>;
+let syntheticUsbKeyboard: UsbHidPassthroughBridge | null = null;
+let syntheticUsbMouse: UsbHidPassthroughBridge | null = null;
+let syntheticUsbGamepad: UsbHidPassthroughBridge | null = null;
+let syntheticUsbHidAttached = false;
 let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
@@ -190,6 +209,13 @@ let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
 
 const WEBUSB_GUEST_ROOT_PORT = 1;
+const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
+const SYNTHETIC_USB_HID_MOUSE_DEVICE_ID = 0x1000_0002;
+const SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID = 0x1000_0003;
+const SYNTHETIC_USB_HID_KEYBOARD_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT];
+const SYNTHETIC_USB_HID_MOUSE_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT];
+const SYNTHETIC_USB_HID_GAMEPAD_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT];
+const MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH = 64;
 
 let snapshotPaused = false;
 let snapshotOpInFlight = false;
@@ -722,6 +748,10 @@ function maybeInitUhciDevice(): void {
     }
   }
 
+  // Synthetic USB HID devices (keyboard/mouse/gamepad) are attached behind the external hub once
+  // a guest-visible UHCI controller exists.
+  maybeInitSyntheticUsbHidDevices();
+
   if (!webUsbGuestBridge) {
     if (uhciRuntime) {
       let runtimeBridge: UhciRuntimeWebUsbBridge;
@@ -842,6 +872,100 @@ function maybeInitUhciDevice(): void {
     }
 
     emitWebUsbGuestStatus();
+  }
+}
+
+function maybeInitSyntheticUsbHidDevices(): void {
+  if (syntheticUsbHidAttached) return;
+  const api = wasmApi;
+  if (!api) return;
+  const Bridge = api.UsbHidPassthroughBridge;
+  if (!Bridge) return;
+
+  // Ensure a UHCI controller is registered before attaching devices. This is required both for
+  // the legacy `UhciControllerBridge` path and the newer `UhciRuntime` path.
+  if (!uhciDevice) return;
+
+  try {
+    if (!syntheticUsbKeyboard) {
+      syntheticUsbKeyboard = new Bridge(
+        0x1234,
+        0x0001,
+        "Aero",
+        "Aero USB Keyboard",
+        undefined,
+        USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
+        false,
+        USB_HID_INTERFACE_SUBCLASS_BOOT,
+        USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
+      );
+    }
+    if (!syntheticUsbMouse) {
+      syntheticUsbMouse = new Bridge(
+        0x1234,
+        0x0002,
+        "Aero",
+        "Aero USB Mouse",
+        undefined,
+        USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+        false,
+        USB_HID_INTERFACE_SUBCLASS_BOOT,
+        USB_HID_INTERFACE_PROTOCOL_MOUSE,
+      );
+    }
+    if (!syntheticUsbGamepad) {
+      syntheticUsbGamepad = new Bridge(
+        0x1234,
+        0x0003,
+        "Aero",
+        "Aero USB Gamepad",
+        undefined,
+        USB_HID_GAMEPAD_REPORT_DESCRIPTOR,
+        false,
+        undefined,
+        undefined,
+      );
+    }
+  } catch (err) {
+    console.warn("[io.worker] Failed to construct synthetic USB HID devices", err);
+    return;
+  }
+
+  // UHCI runtime path: attach via a runtime-exported helper, if available.
+  const runtime = uhciRuntime as unknown as { attach_usb_hid_passthrough_device?: unknown } | null;
+  if (runtime && typeof runtime.attach_usb_hid_passthrough_device === "function") {
+    try {
+      runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_KEYBOARD_PATH, syntheticUsbKeyboard);
+      runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_MOUSE_PATH, syntheticUsbMouse);
+      runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_GAMEPAD_PATH, syntheticUsbGamepad);
+      syntheticUsbHidAttached = true;
+    } catch (err) {
+      console.warn("[io.worker] Failed to attach synthetic USB HID devices to UHCI runtime", err);
+    }
+    return;
+  }
+
+  // Legacy controller bridge path: use the topology manager so hub attachments + reattachments are handled consistently.
+  if (uhciControllerBridge) {
+    uhciHidTopology.attachDevice(
+      SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID,
+      SYNTHETIC_USB_HID_KEYBOARD_PATH,
+      "usb-hid-passthrough",
+      syntheticUsbKeyboard,
+    );
+    uhciHidTopology.attachDevice(
+      SYNTHETIC_USB_HID_MOUSE_DEVICE_ID,
+      SYNTHETIC_USB_HID_MOUSE_PATH,
+      "usb-hid-passthrough",
+      syntheticUsbMouse,
+    );
+    uhciHidTopology.attachDevice(
+      SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID,
+      SYNTHETIC_USB_HID_GAMEPAD_PATH,
+      "usb-hid-passthrough",
+      syntheticUsbGamepad,
+    );
+    syntheticUsbHidAttached = true;
   }
 }
 
@@ -2501,6 +2625,69 @@ function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIp
   });
 }
 
+function drainSyntheticUsbHidReports(): void {
+  const source = usbHid;
+  if (!source) return;
+
+  // Lazy-init so older WASM builds (or unit tests) can run without the UHCI/hid-passthrough exports.
+  maybeInitSyntheticUsbHidDevices();
+
+  const keyboard = syntheticUsbKeyboard;
+  const mouse = syntheticUsbMouse;
+  const gamepad = syntheticUsbGamepad;
+
+  if (keyboard) {
+    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+      let report: Uint8Array | null = null;
+      try {
+        report = source.drain_next_keyboard_report();
+      } catch {
+        break;
+      }
+      if (!(report instanceof Uint8Array)) break;
+      try {
+        keyboard.push_input_report(0, report);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (mouse) {
+    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+      let report: Uint8Array | null = null;
+      try {
+        report = source.drain_next_mouse_report();
+      } catch {
+        break;
+      }
+      if (!(report instanceof Uint8Array)) break;
+      try {
+        mouse.push_input_report(0, report);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (gamepad) {
+    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+      let report: Uint8Array | null = null;
+      try {
+        report = source.drain_next_gamepad_report();
+      } catch {
+        break;
+      }
+      if (!(report instanceof Uint8Array)) break;
+      try {
+        gamepad.push_input_report(0, report);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 function handleInputBatch(buffer: ArrayBuffer): void {
   const t0 = performance.now();
   // `buffer` is transferred from the main thread, so it is uniquely owned here.
@@ -2563,6 +2750,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     }
   }
 
+  // Forward newly queued USB HID reports into the guest-visible UHCI USB HID devices.
+  drainSyntheticUsbHidReports();
+
   perfIoReadBytes += buffer.byteLength;
   perfIoMs += performance.now() - t0;
 }
@@ -2606,6 +2796,14 @@ function shutdown(): void {
 
       usbHid?.free();
       usbHid = null;
+
+      syntheticUsbKeyboard?.free();
+      syntheticUsbKeyboard = null;
+      syntheticUsbMouse?.free();
+      syntheticUsbMouse = null;
+      syntheticUsbGamepad?.free();
+      syntheticUsbGamepad = null;
+      syntheticUsbHidAttached = false;
 
       webUsbGuestBridge = null;
 

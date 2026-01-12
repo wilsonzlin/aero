@@ -91,7 +91,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       attach.productId,
       attach.productName,
       attach.collections,
-      [0, 2],
+      [0, 5],
     );
     expect(webhid_attach).not.toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       attach.productId,
       attach.productName,
       attach.collections,
-      [0, 2],
+      [0, 5],
     );
     expect(webhid_attach).not.toHaveBeenCalled();
   });
