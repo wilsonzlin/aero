@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 
-import { HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX } from "../../web/src/platform/audio_worklet_ring_layout.js";
+import {
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  OVERRUN_COUNT_INDEX,
+  READ_FRAME_INDEX,
+  UNDERRUN_COUNT_INDEX,
+  WRITE_FRAME_INDEX,
+} from "../../web/src/platform/audio_worklet_ring_layout.js";
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
@@ -19,7 +26,8 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
     return !!api;
   }, undefined, { timeout: 120_000 });
 
-  const res = await page.evaluate(({ HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX }) => {
+  const res = await page.evaluate(
+    ({ HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX, UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const api = (globalThis as any).__aeroWasmApi as any;
     if (typeof SharedArrayBuffer === "undefined" || typeof Atomics === "undefined") {
@@ -62,13 +70,17 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
     // Seed indices + sample payload.
     Atomics.store(header, READ_FRAME_INDEX, 2);
     Atomics.store(header, WRITE_FRAME_INDEX, 6);
+    Atomics.store(header, UNDERRUN_COUNT_INDEX, 123);
+    Atomics.store(header, OVERRUN_COUNT_INDEX, 456);
     samples.fill(123.0);
 
     const snap = hda.save_state() as Uint8Array;
 
-    // Corrupt both indices and samples.
+    // Corrupt indices, counters, and samples.
     Atomics.store(header, READ_FRAME_INDEX, 123);
     Atomics.store(header, WRITE_FRAME_INDEX, 456);
+    Atomics.store(header, UNDERRUN_COUNT_INDEX, 777);
+    Atomics.store(header, OVERRUN_COUNT_INDEX, 888);
     samples.fill(456.0);
 
     // Restore.
@@ -76,6 +88,8 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
 
     const read1 = Atomics.load(header, READ_FRAME_INDEX) >>> 0;
     const write1 = Atomics.load(header, WRITE_FRAME_INDEX) >>> 0;
+    const underrun1 = Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0;
+    const overrun1 = Atomics.load(header, OVERRUN_COUNT_INDEX) >>> 0;
     let cleared1 = true;
     for (let i = 0; i < samples.length; i += 1) {
       if (samples[i] !== 0) {
@@ -88,6 +102,8 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
     hda.detach_audio_ring();
     Atomics.store(header, READ_FRAME_INDEX, 999);
     Atomics.store(header, WRITE_FRAME_INDEX, 1000);
+    Atomics.store(header, UNDERRUN_COUNT_INDEX, 9999);
+    Atomics.store(header, OVERRUN_COUNT_INDEX, 10000);
     samples.fill(1.0);
 
     hda.load_state(snap);
@@ -97,6 +113,8 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
 
     const read2 = Atomics.load(header, READ_FRAME_INDEX) >>> 0;
     const write2 = Atomics.load(header, WRITE_FRAME_INDEX) >>> 0;
+    const underrun2 = Atomics.load(header, UNDERRUN_COUNT_INDEX) >>> 0;
+    const overrun2 = Atomics.load(header, OVERRUN_COUNT_INDEX) >>> 0;
     let cleared2 = true;
     for (let i = 0; i < samples.length; i += 1) {
       if (samples[i] !== 0) {
@@ -111,13 +129,19 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
       ok: true,
       read1,
       write1,
+      underrun1,
+      overrun1,
       cleared1,
       deferredRead,
       read2,
       write2,
+      underrun2,
+      overrun2,
       cleared2,
     };
-  }, { HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX });
+    },
+    { HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX, UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX },
+  );
 
   if (!res.ok) {
     throw new Error(`Precondition failed: ${res.reason}`);
@@ -125,6 +149,9 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
 
   expect(res.read1).toBe(2);
   expect(res.write1).toBe(6);
+  // Restore does not touch underrun/overrun counters.
+  expect(res.underrun1).toBe(777);
+  expect(res.overrun1).toBe(888);
   expect(res.cleared1).toBe(true);
 
   // While detached, `load_state` must not be able to restore indices yet.
@@ -133,5 +160,8 @@ test("WASM HDA snapshot restores AudioWorklet ring indices and clears samples", 
   // On reattach, deferred ring state should be applied.
   expect(res.read2).toBe(2);
   expect(res.write2).toBe(6);
+  // Deferred restore should also leave counters untouched.
+  expect(res.underrun2).toBe(9999);
+  expect(res.overrun2).toBe(10000);
   expect(res.cleared2).toBe(true);
 });
