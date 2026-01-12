@@ -211,17 +211,17 @@ Key considerations:
 
 ```bash
 # Run graphics tests
-./scripts/safe-run.sh cargo test -p aero-gpu --locked
-./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
-./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
-./scripts/safe-run.sh cargo test -p aero-dxbc --locked
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
+bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
 
 # Run D3D9 integration test
-./scripts/safe-run.sh cargo test -p aero --test d3d9_blend_depth_stencil --locked
-./scripts/safe-run.sh cargo test -p aero --test d3d9_vertex_input --locked
+bash ./scripts/safe-run.sh cargo test -p aero --test d3d9_blend_depth_stencil --locked
+bash ./scripts/safe-run.sh cargo test -p aero --test d3d9_vertex_input --locked
 
 # Run D3D11 smoke test
-./scripts/safe-run.sh cargo test -p aero --test d3d11_smoke --locked
+bash ./scripts/safe-run.sh cargo test -p aero --test d3d11_smoke --locked
 ```
 
 **Note:** GPU tests may be skipped on headless/GPU-less machines. Set `AERO_REQUIRE_WEBGPU=1` to force failure if no GPU is available.
@@ -231,7 +231,7 @@ Key considerations:
 ## Quick Start Checklist
 
 1. ☐ Read [`AGENTS.md`](../AGENTS.md) completely
-2. ☐ Run `./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
+2. ☐ Run `bash ./scripts/agent-env-setup.sh` and `source ./scripts/agent-env.sh`
 3. ☐ Read [`docs/04-graphics-subsystem.md`](../docs/04-graphics-subsystem.md)
 4. ☐ Read [`docs/16-d3d9ex-dwm-compatibility.md`](../docs/16-d3d9ex-dwm-compatibility.md)
 5. ☐ Explore `crates/aero-gpu/src/` and `crates/aero-d3d9/src/`
