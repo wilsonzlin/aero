@@ -40,7 +40,7 @@ pub struct D3D11Runtime {
     sampler_cache: SamplerCache,
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
-    pipeline_layout_cache: PipelineLayoutCache,
+    pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
     /// Tracks whether the current command encoder has recorded any GPU work.
     ///
     /// `wgpu::Queue::write_buffer` / `write_texture` enqueue work immediately, so they can reorder
@@ -856,8 +856,9 @@ impl D3D11Runtime {
         };
         let pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
-            &layout_key,
+            layout_key,
             &[bind_group_layout.layout.as_ref()],
+            Some("aero-d3d11 pipeline layout"),
         );
 
         let pipeline = self
@@ -938,8 +939,9 @@ impl D3D11Runtime {
         };
         let pipeline_layout = self.pipeline_layout_cache.get_or_create(
             &self.device,
-            &layout_key,
+            layout_key,
             &[bind_group_layout.layout.as_ref()],
+            Some("aero-d3d11 pipeline layout"),
         );
 
         let pipeline = self

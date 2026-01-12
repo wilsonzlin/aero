@@ -1489,6 +1489,22 @@ impl WgslWriter {
 mod tests {
     use super::*;
 
+    #[test]
+    fn resource_usage_bindings_compute_visibility_is_compute() {
+        let mut cbuffers = BTreeMap::new();
+        cbuffers.insert(0, 1);
+
+        let usage = ResourceUsage {
+            cbuffers,
+            textures: BTreeSet::new(),
+            samplers: BTreeSet::new(),
+        };
+
+        let bindings = usage.bindings(ShaderStage::Compute);
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].visibility, wgpu::ShaderStages::COMPUTE);
+    }
+
     fn minimal_module(instructions: Vec<Sm4Inst>) -> Sm4Module {
         Sm4Module {
             stage: ShaderStage::Pixel,
