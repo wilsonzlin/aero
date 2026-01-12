@@ -250,6 +250,14 @@ host resource that may need reinitialization.
   - playback ring `readFrameIndex` / `writeFrameIndex` + `capacityFrames`
   - helpers: `aero_platform::audio::worklet_bridge::{WorkletBridge, InterleavedRingBuffer}::snapshot_state()`
 
+Implementation references:
+
+- Snapshot schema: `crates/aero-io-snapshot/src/io/audio/state.rs` (`HdaControllerState`, `AudioWorkletRingState`).
+- HDA device snapshot/restore: `crates/aero-audio/src/hda.rs` (`HdaController::snapshot_state` / `HdaController::restore_state`,
+  behind the `io-snapshot` feature).
+- Playback ring snapshot/restore: `crates/platform/src/audio/worklet_bridge.rs` (`WorkletBridge::snapshot_state` / `restore_state`).
+- Roundtrip tests: `crates/aero-io-snapshot/tests/state_roundtrip.rs`.
+
 ### Restore semantics / limitations
 
 - The browser `AudioContext` / `AudioWorkletNode` is not serializable; on restore the host audio graph is recreated.
