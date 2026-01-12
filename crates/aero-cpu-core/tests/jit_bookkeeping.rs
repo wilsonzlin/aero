@@ -28,6 +28,23 @@ impl JitBackend for FixedExitBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FirstExitSecondPanicBackend {
+    first_exit: JitBlockExit,
+}
+
+impl JitBackend for FirstExitSecondPanicBackend {
+    type Cpu = Vcpu<FlatTestBus>;
+
+    fn execute(&mut self, table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+        match table_index {
+            0 => self.first_exit,
+            1 => panic!("unexpected JIT execution: exit_to_interpreter should force an interpreter step"),
+            other => panic!("unexpected JIT table index {other}"),
+        }
+    }
+}
+
 #[derive(Default)]
 struct NoopInterpreter;
 
@@ -44,6 +61,96 @@ fn install_ivt_entry(bus: &mut FlatTestBus, vector: u8, segment: u16, offset: u1
     let base = u64::from(vector) * 4;
     bus.write_u16(base, offset).unwrap();
     bus.write_u16(base + 2, segment).unwrap();
+}
+
+#[test]
+fn committed_exit_to_interpreter_advances_tsc_and_forces_one_interpreter_step() {
+    let entry_rip = 0x1000u64;
+    let next_rip = 0x2000u64;
+    let insts = 4u32;
+    let initial_tsc = 999u64;
+
+    let backend = FirstExitSecondPanicBackend {
+        first_exit: JitBlockExit {
+            next_rip,
+            exit_to_interpreter: true,
+            committed: true,
+        },
+    };
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+    let jit = JitRuntime::new(config, backend, NullCompileSink);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+
+    // Install the exiting block and also install a block at `next_rip` so we can ensure the forced
+    // interpreter step overrides a compiled handle.
+    {
+        let jit = dispatcher.jit_mut();
+
+        let mut meta0 = jit.make_meta(0, 0);
+        meta0.instruction_count = insts;
+        meta0.inhibit_interrupts_after_block = false;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index: 0,
+            meta: meta0,
+        });
+
+        let mut meta1 = jit.make_meta(0, 0);
+        meta1.instruction_count = 1;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip: next_rip,
+            table_index: 1,
+            meta: meta1,
+        });
+    }
+
+    let mut core = CpuCore::new(CpuMode::Real);
+    core.time = TimeSource::new_deterministic(DEFAULT_TSC_HZ);
+    core.time.set_tsc(initial_tsc);
+    core.state.msr.tsc = initial_tsc;
+    core.state.set_rip(entry_rip);
+
+    let bus = FlatTestBus::new(0x20000);
+    let mut cpu = Vcpu::new(core, bus);
+
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            entry_rip: got_entry,
+            next_rip: got_next,
+            instructions_retired,
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(got_entry, entry_rip);
+            assert_eq!(got_next, next_rip);
+            assert_eq!(instructions_retired, u64::from(insts));
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+    assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc + u64::from(insts));
+
+    // The next step must run the interpreter once, even though `next_rip` is compiled.
+    match dispatcher.step(&mut cpu) {
+        StepOutcome::Block {
+            tier,
+            entry_rip: got_entry,
+            next_rip: got_next,
+            instructions_retired,
+        } => {
+            assert_eq!(tier, ExecutedTier::Interpreter);
+            assert_eq!(got_entry, next_rip);
+            assert_eq!(got_next, next_rip);
+            assert_eq!(instructions_retired, 0);
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+    // No extra retirement/time advancement from the no-op interpreter.
+    assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc + u64::from(insts));
 }
 
 #[test]
