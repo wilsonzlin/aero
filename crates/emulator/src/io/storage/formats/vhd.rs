@@ -103,7 +103,9 @@ impl VhdDynamicHeader {
         // We only support standalone fixed/dynamic images, so reject anything else.
         let data_offset = be_u64(&raw[8..16]);
         if data_offset != u64::MAX {
-            return Err(DiskError::CorruptImage("vhd dynamic header data_offset invalid"));
+            return Err(DiskError::CorruptImage(
+                "vhd dynamic header data_offset invalid",
+            ));
         }
 
         let table_offset = be_u64(&raw[16..24]);
@@ -737,4 +739,132 @@ fn write_zeroes<S: ByteStorage>(storage: &mut S, mut offset: u64, mut len: u64) 
 
 fn ranges_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
     start_a < end_b && start_b < end_a
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default, Clone)]
+    struct MemStorage {
+        data: Vec<u8>,
+    }
+
+    impl MemStorage {
+        fn with_len(len: usize) -> Self {
+            Self { data: vec![0; len] }
+        }
+    }
+
+    impl ByteStorage for MemStorage {
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
+            let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(DiskError::OutOfBounds)?;
+            if end > self.data.len() {
+                return Err(DiskError::OutOfBounds);
+            }
+            buf.copy_from_slice(&self.data[offset..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
+            let offset = usize::try_from(offset).map_err(|_| DiskError::OutOfBounds)?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(DiskError::OutOfBounds)?;
+            if end > self.data.len() {
+                self.data.resize(end, 0);
+            }
+            self.data[offset..end].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> DiskResult<()> {
+            Ok(())
+        }
+
+        fn len(&mut self) -> DiskResult<u64> {
+            Ok(self.data.len() as u64)
+        }
+
+        fn set_len(&mut self, len: u64) -> DiskResult<()> {
+            let len = usize::try_from(len).map_err(|_| DiskError::OutOfBounds)?;
+            self.data.resize(len, 0);
+            Ok(())
+        }
+    }
+
+    fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
+        buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
+    }
+
+    fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
+        buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
+    }
+
+    fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; 512] {
+        let mut footer = [0u8; 512];
+        footer[0..8].copy_from_slice(&VHD_FOOTER_COOKIE);
+        write_be_u32(&mut footer, 12, VHD_FILE_FORMAT_VERSION);
+        write_be_u64(&mut footer, 16, data_offset);
+        write_be_u64(&mut footer, 48, virtual_size);
+        write_be_u32(&mut footer, 60, disk_type);
+        let checksum = vhd_checksum_footer(&footer);
+        write_be_u32(&mut footer, 64, checksum);
+        footer
+    }
+
+    #[test]
+    fn vhd_bitmap_cache_is_bounded() {
+        let block_size = 512 * 1024 * 1024u32; // 512 MiB
+        let virtual_size = 512u64; // 1 sector; keeps BAT small
+
+        let dyn_header_offset = 512u64;
+        let table_offset = dyn_header_offset + 1024;
+
+        // Large enough for bitmap reads while still keeping the test lightweight.
+        let file_len = 512 * 1024u64; // 512 KiB
+        assert!(file_len.is_multiple_of(SECTOR_SIZE as u64));
+
+        let mut storage = MemStorage::with_len(file_len as usize);
+
+        let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_DYNAMIC, dyn_header_offset);
+        storage.write_at(0, &footer).unwrap();
+        storage.write_at(file_len - 512, &footer).unwrap();
+
+        let mut dyn_header = [0u8; 1024];
+        dyn_header[0..8].copy_from_slice(&VHD_DYNAMIC_COOKIE);
+        write_be_u64(&mut dyn_header, 8, u64::MAX);
+        write_be_u64(&mut dyn_header, 16, table_offset);
+        write_be_u32(&mut dyn_header, 24, VHD_FILE_FORMAT_VERSION);
+        write_be_u32(&mut dyn_header, 28, 1); // max_table_entries
+        write_be_u32(&mut dyn_header, 32, block_size);
+        let checksum = vhd_checksum_dynamic_header(&dyn_header);
+        write_be_u32(&mut dyn_header, 36, checksum);
+        storage.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+        // One BAT entry, unallocated (u32::MAX).
+        storage
+            .write_at(table_offset, &u32::MAX.to_be_bytes())
+            .unwrap();
+
+        let mut disk = VhdDisk::open(storage).unwrap();
+        let (_sectors_per_block, bitmap_size) = disk.dyn_params().unwrap();
+        let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
+        let cap_entries = cap_entries
+            .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
+            .max(1);
+
+        // Start after the metadata region; offsets don't need to match real VHD block placements,
+        // we just need distinct keys and valid reads.
+        let base = 2048u64;
+        for i in 0..(cap_entries + 4) {
+            let off = base + (i as u64) * SECTOR_SIZE as u64;
+            disk.load_bitmap(off, bitmap_size).unwrap();
+        }
+
+        assert_eq!(disk.bitmap_cache.len(), cap_entries);
+    }
 }
