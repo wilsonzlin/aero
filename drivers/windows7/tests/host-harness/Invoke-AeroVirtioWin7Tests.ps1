@@ -1104,6 +1104,8 @@ if (Test-Path -LiteralPath $SerialLogPath) {
 }
 
 Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
+$httpLargePath = Get-AeroSelftestLargePath -Path $HttpPath
+Write-Host "  (large payload at 127.0.0.1:$HttpPort$httpLargePath, 1 MiB deterministic bytes)"
 $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 
 try {

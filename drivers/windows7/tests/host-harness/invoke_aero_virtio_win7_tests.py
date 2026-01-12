@@ -886,6 +886,11 @@ def main() -> int:
     with httpd:
         thread = Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
+        large_path = _append_suffix_before_query_fragment(args.http_path, "-large")
+        print(
+            f"Starting HTTP server on 127.0.0.1:{args.http_port}{args.http_path} "
+            f"(large payload at {large_path}, 1 MiB deterministic bytes)"
+        )
 
         wav_path: Optional[Path] = None
         if args.virtio_transitional:
