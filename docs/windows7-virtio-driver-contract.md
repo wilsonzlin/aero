@@ -763,6 +763,8 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
 - `type = EV_KEY` for key press/release.
 - `value = 1` press, `0` release.
 - The device SHOULD NOT send auto-repeat (`value = 2`).
+- Minimum required advertised event types (device MUST advertise them via `EV_BITS` with `subsel = 0`):
+  - `EV_SYN`, `EV_KEY`, `EV_LED`
 - Minimum required supported key codes (device MUST advertise them via `EV_BITS`; it MAY support more):
   - `KEY_A`..`KEY_Z`
   - `KEY_0`..`KEY_9`
@@ -772,6 +774,8 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
   - `KEY_F1`..`KEY_F12`
   - `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`
   - `KEY_INSERT`, `KEY_DELETE`, `KEY_HOME`, `KEY_END`, `KEY_PAGEUP`, `KEY_PAGEDOWN`
+- Minimum required supported LED codes (keyboard, advertised via `EV_BITS` with `subsel = EV_LED`):
+  - `LED_NUML`, `LED_CAPSL`, `LED_SCROLLL`
 
 ##### Mouse event requirements (relative)
 
@@ -784,6 +788,8 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
 - Buttons:
   - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE`
   - `value = 1` press, `0` release
+- Minimum required advertised event types (device MUST advertise them via `EV_BITS` with `subsel = 0`):
+  - `EV_SYN`, `EV_KEY`, `EV_REL`
 
 ##### Status queue (`statusq`) behavior
 

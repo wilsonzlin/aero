@@ -132,6 +132,8 @@ These expectations should match **exactly** what is specified in:
     - `"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`
   - `ID_DEVIDS` returns BUS_VIRTUAL + virtio vendor + product id
   - `EV_BITS` bitmaps include required types/codes (keyboard vs mouse differ).
+    - Keyboard `EV_BITS` includes: `EV_SYN`, `EV_KEY`, `EV_LED` and `LED_NUML`/`LED_CAPSL`/`LED_SCROLLL`.
+    - Mouse `EV_BITS` includes: `EV_SYN`, `EV_KEY`, `EV_REL`.
 
 ---
 

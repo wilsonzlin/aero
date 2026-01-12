@@ -1114,6 +1114,57 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         UCHAR bits[128];
         UCHAR size;
 
+        /*
+         * Contract v1: devices MUST advertise supported event types via
+         * EV_BITS(subsel=0).
+         */
+        if (deviceContext->DeviceKind == VioInputDeviceKindKeyboard) {
+            static const VIOINPUT_REQUIRED_EV_CODE kRequiredKeyboardEvTypes[] = {
+                {VIRTIO_INPUT_EV_SYN, "EV_SYN"},
+                {VIRTIO_INPUT_EV_KEY, "EV_KEY"},
+                {VIRTIO_INPUT_EV_LED, "EV_LED"},
+            };
+
+            RtlZeroMemory(bits, sizeof(bits));
+            size = 0;
+            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
+            if (!NT_SUCCESS(status) || size == 0) {
+                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types) query failed: %!STATUS!\n", status);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            status = VioInputValidateEvBitsRequired(bits,
+                                                   kRequiredKeyboardEvTypes,
+                                                   RTL_NUMBER_OF(kRequiredKeyboardEvTypes),
+                                                   "virtio-input keyboard EV_BITS(types)");
+            if (!NT_SUCCESS(status)) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return status;
+            }
+        } else {
+            static const VIOINPUT_REQUIRED_EV_CODE kRequiredMouseEvTypes[] = {
+                {VIRTIO_INPUT_EV_SYN, "EV_SYN"},
+                {VIRTIO_INPUT_EV_KEY, "EV_KEY"},
+                {VIRTIO_INPUT_EV_REL, "EV_REL"},
+            };
+
+            RtlZeroMemory(bits, sizeof(bits));
+            size = 0;
+            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, bits, sizeof(bits), &size);
+            if (!NT_SUCCESS(status) || size == 0) {
+                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(types) query failed: %!STATUS!\n", status);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            status = VioInputValidateEvBitsRequired(bits, kRequiredMouseEvTypes, RTL_NUMBER_OF(kRequiredMouseEvTypes), "virtio-input mouse EV_BITS(types)");
+            if (!NT_SUCCESS(status)) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return status;
+            }
+        }
+
         if (deviceContext->DeviceKind == VioInputDeviceKindKeyboard) {
             /*
              * Contract v1: keyboard devices MUST implement EV_BITS(EV_KEY) and
@@ -1225,6 +1276,34 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             }
 
             status = VioInputValidateEvBitsRequired(bits, kRequiredKeys, RTL_NUMBER_OF(kRequiredKeys), "virtio-input keyboard EV_BITS(EV_KEY)");
+            if (!NT_SUCCESS(status)) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return status;
+            }
+
+            /*
+             * Contract v1: keyboards MUST advertise LED support. The device may
+             * ignore the statusq contents, but it must accept the events.
+             */
+            static const VIOINPUT_REQUIRED_EV_CODE kRequiredLeds[] = {
+                {VIRTIO_INPUT_LED_NUML, "LED_NUML"},
+                {VIRTIO_INPUT_LED_CAPSL, "LED_CAPSL"},
+                {VIRTIO_INPUT_LED_SCROLLL, "LED_SCROLLL"},
+            };
+
+            RtlZeroMemory(bits, sizeof(bits));
+            size = 0;
+            status = VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_EV_LED, bits, sizeof(bits), &size);
+            if (!NT_SUCCESS(status) || size == 0) {
+                VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input EV_BITS(EV_LED) query failed: %!STATUS!\n", status);
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            status = VioInputValidateEvBitsRequired(bits,
+                                                   kRequiredLeds,
+                                                   RTL_NUMBER_OF(kRequiredLeds),
+                                                   "virtio-input keyboard EV_BITS(EV_LED)");
             if (!NT_SUCCESS(status)) {
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return status;

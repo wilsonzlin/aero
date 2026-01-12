@@ -917,6 +917,21 @@ mod tests {
             key_bitmap[(KEY_SCROLLLOCK / 8) as usize] & (1u8 << (KEY_SCROLLLOCK % 8)),
             0
         );
+
+        dev.write_config(1, &[EV_LED as u8]);
+        let led_bitmap = dev.read_config(8, 128);
+        assert_ne!(
+            led_bitmap[(LED_NUML / 8) as usize] & (1u8 << (LED_NUML % 8)),
+            0
+        );
+        assert_ne!(
+            led_bitmap[(LED_CAPSL / 8) as usize] & (1u8 << (LED_CAPSL % 8)),
+            0
+        );
+        assert_ne!(
+            led_bitmap[(LED_SCROLLL / 8) as usize] & (1u8 << (LED_SCROLLL % 8)),
+            0
+        );
     }
 
     #[test]

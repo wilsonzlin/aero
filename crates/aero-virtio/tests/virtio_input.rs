@@ -1,7 +1,7 @@
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN,
-    KEY_A, KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, REL_X, VIRTIO_INPUT_CFG_EV_BITS,
-    VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    KEY_A, KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_X,
+    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -345,6 +345,25 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     );
     assert_ne!(
         key_bits[(KEY_SCROLLLOCK / 8) as usize] & (1u8 << (KEY_SCROLLLOCK % 8)),
+        0
+    );
+
+    // EV_BITS: subsel=EV_LED returns supported LED bitmap (keyboard should include common LEDs).
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_LED as u8);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    assert_eq!(size, 128);
+    let led_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(
+        led_bits[(LED_NUML / 8) as usize] & (1u8 << (LED_NUML % 8)),
+        0
+    );
+    assert_ne!(
+        led_bits[(LED_CAPSL / 8) as usize] & (1u8 << (LED_CAPSL % 8)),
+        0
+    );
+    assert_ne!(
+        led_bits[(LED_SCROLLL / 8) as usize] & (1u8 << (LED_SCROLLL % 8)),
         0
     );
 
