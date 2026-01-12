@@ -181,7 +181,19 @@ fn parse_last_modified_rfc3339(id: &str, last_modified: &str) -> Result<SystemTi
         reason: err.to_string(),
     })?;
 
-    system_time_from_unix_timestamp_nanos(dt.unix_timestamp_nanos()).map_err(|reason| {
+    let nanos = dt.unix_timestamp_nanos();
+    // Our HTTP `Last-Modified` header uses `httpdate::fmt_http_date`, which panics for times
+    // before the Unix epoch. Reject pre-epoch values at manifest-load time to avoid runtime
+    // panics and confusing caching behaviour.
+    if nanos < 0 {
+        return Err(ManifestError::InvalidLastModified {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            last_modified: super::truncate_for_error(last_modified, 256),
+            reason: "last_modified must be at or after 1970-01-01T00:00:00Z".to_string(),
+        });
+    }
+
+    system_time_from_unix_timestamp_nanos(nanos).map_err(|reason| {
         ManifestError::InvalidLastModified {
             id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
             last_modified: super::truncate_for_error(last_modified, 256),
@@ -317,5 +329,19 @@ mod tests {
             "expected truncated id, got len={}",
             id.len()
         );
+    }
+
+    #[test]
+    fn rejects_pre_epoch_last_modified() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "last_modified": "1969-12-31T23:59:59Z", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidLastModified { .. }));
     }
 }

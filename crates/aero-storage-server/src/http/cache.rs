@@ -22,6 +22,13 @@ pub fn weak_etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> St
 
 pub fn last_modified_header_value(last_modified: Option<SystemTime>) -> Option<HeaderValue> {
     let last_modified = last_modified?;
+    // `httpdate::fmt_http_date` panics if the time is before the Unix epoch.
+    //
+    // While pre-epoch mtimes are rare in practice, they can happen (filesystem metadata, or
+    // operator-specified values). Avoid crashing the server; omit the header instead.
+    if last_modified.duration_since(UNIX_EPOCH).is_err() {
+        return None;
+    }
     let s = httpdate::fmt_http_date(last_modified);
     Some(HeaderValue::from_str(&s).expect("http-date must be a valid header value"))
 }
@@ -193,5 +200,11 @@ mod tests {
             is_not_modified(&headers, None, Some(last_modified)),
             "expected If-Modified-Since to match even when the resource mtime has sub-second precision"
         );
+    }
+
+    #[test]
+    fn last_modified_header_value_does_not_panic_for_pre_epoch_times() {
+        let t = UNIX_EPOCH - Duration::from_secs(1);
+        assert!(last_modified_header_value(Some(t)).is_none());
     }
 }
