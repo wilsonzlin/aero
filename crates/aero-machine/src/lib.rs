@@ -292,7 +292,7 @@ struct SystemMemory {
 }
 
 impl SystemMemory {
-    // Reset/mapping strategy (see task "reset idempotent w.r.t ROM/MMIO mappings"):
+    // Reset/mapping strategy (Strategy C: idempotent mapping helpers):
     //
     // - The physical memory bus (RAM + ROM + MMIO routing) is constructed once in `Machine::new`
     //   and persists for the lifetime of the machine.
