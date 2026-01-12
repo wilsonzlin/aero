@@ -106,6 +106,34 @@ impl FormatInfo {
         let rows = self.upload_rows_per_image(height, level);
         bytes_per_row as usize * rows as usize
     }
+
+    pub(crate) fn force_decompress_dxt_to_bgra8(&mut self) {
+        self.wgpu = wgpu::TextureFormat::Bgra8Unorm;
+        self.decompress_to_bgra8 = true;
+        self.upload_bytes_per_block = 4;
+        self.upload_block_width = 1;
+        self.upload_block_height = 1;
+        self.upload_is_compressed = false;
+    }
+}
+
+/// Checks whether a BC (DXTn) texture can be created with native block-compression formats.
+///
+/// WebGPU requires each mip level's dimensions to be block-aligned (4x4) when that mip is at
+/// least one full block in that dimension. Smaller-than-block mips are allowed.
+pub(crate) fn bc_mip_chain_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
+    for level in 0..mip_levels {
+        let w = width.checked_shr(level).unwrap_or(0).max(1);
+        let h = height.checked_shr(level).unwrap_or(0).max(1);
+
+        if w >= 4 && (w % 4) != 0 {
+            return false;
+        }
+        if h >= 4 && (h % 4) != 0 {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn format_info(

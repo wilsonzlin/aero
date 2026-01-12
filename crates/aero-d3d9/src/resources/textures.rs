@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 use super::{
-    align_copy_bytes_per_row, format_info, D3DFormat, D3DPool, FormatInfo, GuestResourceId,
-    LockFlags, ResourceManager, TextureUploadDesc, TextureUsageKind,
+    align_copy_bytes_per_row, bc_mip_chain_compatible, format_info, D3DFormat, D3DPool, FormatInfo,
+    GuestResourceId, LockFlags, ResourceManager, TextureUploadDesc, TextureUsageKind,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +90,29 @@ pub struct Texture {
     lock_data: Vec<u8>,
 }
 
+fn format_info_for_texture_desc(
+    desc: &TextureDesc,
+    device_features: wgpu::Features,
+) -> Result<FormatInfo> {
+    let mut info = format_info(desc.format, device_features, desc.usage)?;
+
+    if device_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        && matches!(
+            desc.format,
+            D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5
+        )
+    {
+        let (width, height) = desc.kind.dimensions();
+        let mip_levels = desc.kind.mip_levels();
+
+        if !bc_mip_chain_compatible(width, height, mip_levels) {
+            info.force_decompress_dxt_to_bgra8();
+        }
+    }
+
+    Ok(info)
+}
+
 impl Texture {
     pub fn desc(&self) -> &TextureDesc {
         &self.desc
@@ -137,6 +160,19 @@ impl Texture {
     fn ensure_gpu(&mut self, device: &wgpu::Device, uploads: &mut super::UploadQueue) {
         if self.gpu.is_some() {
             return;
+        }
+
+        if device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+            && matches!(
+                self.desc.format,
+                D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5
+            )
+        {
+            let (width, height) = self.desc.kind.dimensions();
+            let mip_levels = self.desc.kind.mip_levels();
+            if !bc_mip_chain_compatible(width, height, mip_levels) {
+                self.info.force_decompress_dxt_to_bgra8();
+            }
         }
 
         let texture = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
@@ -396,7 +432,7 @@ impl ResourceManager {
             return Err(anyhow!("texture id already exists: {}", id));
         }
 
-        let info = format_info(desc.format, self.device.features(), desc.usage)?;
+        let info = format_info_for_texture_desc(&desc, self.device.features())?;
 
         let texture = Arc::new(self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d9.texture"),
@@ -749,5 +785,62 @@ mod tests {
         assert_eq!(out[1], 0); // G
         assert!(out[2] >= 250); // R
         assert_eq!(out[3], 255);
+    }
+
+    #[test]
+    fn dxt1_native_bc_when_block_aligned() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let desc = TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 8,
+                height: 8,
+                levels: 4,
+            },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        };
+
+        let info = format_info_for_texture_desc(&desc, features).unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert!(!info.decompress_to_bgra8);
+    }
+
+    #[test]
+    fn dxt1_fallback_to_bgra8_when_not_block_aligned() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let desc = TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 9,
+                height: 9,
+                levels: 4,
+            },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        };
+
+        let info = format_info_for_texture_desc(&desc, features).unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(info.decompress_to_bgra8);
+    }
+
+    #[test]
+    fn dxt1_small_mips_are_allowed_for_native_bc() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let desc = TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 4,
+                height: 4,
+                levels: 3, // 4x4, 2x2, 1x1
+            },
+            format: D3DFormat::Dxt1,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        };
+
+        let info = format_info_for_texture_desc(&desc, features).unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert!(!info.decompress_to_bgra8);
     }
 }
