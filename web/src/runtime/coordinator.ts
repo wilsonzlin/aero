@@ -1057,7 +1057,10 @@ export class WorkerCoordinator {
 
     this.snapshotInFlight = true;
     try {
-      const netWorker = net?.status.state === "ready" ? net.worker : undefined;
+      // Even if the coordinator has not yet observed a READY message from the net
+      // worker, it may already be running and touching NET_TX/NET_RX. Always pause
+      // it (when present) before resetting the shared rings.
+      const netWorker = net?.worker;
       await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
 
       const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
@@ -1109,7 +1112,10 @@ export class WorkerCoordinator {
 
     this.snapshotInFlight = true;
     try {
-      const netWorker = net?.status.state === "ready" ? net.worker : undefined;
+      // Even if the coordinator has not yet observed a READY message from the net
+      // worker, it may already be running and touching NET_TX/NET_RX. Always pause
+      // it (when present) before resetting the shared rings.
+      const netWorker = net?.worker;
       await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
 
       const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
@@ -1208,7 +1214,9 @@ export class WorkerCoordinator {
     const io = this.workers.io?.worker;
     if (!cpu || !io) return;
     const netInfo = this.workers.net;
-    const net = netInfo?.status.state === "ready" ? netInfo.worker : undefined;
+    // If a net worker exists, resume it even if we haven't yet observed its READY
+    // state (it might have been paused during startup).
+    const net = netInfo?.worker;
 
     const cpuResume = this.snapshotRpc<VmSnapshotResumedMessage>(cpu, { kind: "vm.snapshot.resume" }, "vm.snapshot.resumed", {
       timeoutMs: 5_000,
