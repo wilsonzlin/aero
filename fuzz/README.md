@@ -55,4 +55,10 @@ Run a bounded number of iterations:
 ```bash
 cd fuzz && cargo +"$nightly" fuzz run fuzz_ahci -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_ahci -- -runs=10000
+
+# IDE (PIIX3-style, includes Bus Master IDE DMA)
+cd fuzz && cargo fuzz run fuzz_ide -- -runs=10000
+
+# HTTP Range parsing/resolution (hostile headers near caps)
+cd fuzz && cargo fuzz run fuzz_http_range -- -runs=10000
 ```
