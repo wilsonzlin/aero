@@ -15,13 +15,11 @@
 //! Wrap an [`aero_storage::VirtualDisk`] for use with the NVMe device model:
 //!
 //! ```rust,ignore
-//! use aero_devices_nvme::NvmeController;
+//! use aero_devices_nvme::{from_virtual_disk, NvmeController};
 //! use aero_storage::{MemBackend, RawDisk};
-//! use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 //!
 //! let disk = RawDisk::create(MemBackend::new(), 1024 * 512).unwrap();
-//! let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
-//! let mut ctrl = NvmeController::new(Box::new(backend));
+//! let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
 //! ```
 //!
 //! Wrap an [`aero_storage::VirtualDisk`] for use with `aero-devices` virtio-blk:

@@ -145,9 +145,12 @@ impl DiskBackend for AeroStorageDiskAdapter {
 pub fn from_virtual_disk(
     d: Box<dyn aero_storage::VirtualDisk + Send>,
 ) -> DiskResult<Box<dyn DiskBackend>> {
-    // Prefer the stricter adapter that rejects disks whose byte capacity is not representable as a
-    // whole number of 512-byte LBAs.
-    Ok(Box::new(NvmeDiskFromAeroStorage::new(d)?))
+    // NVMe currently reports capacity in whole 512-byte LBAs.
+    // Reject disks that cannot be represented losslessly.
+    if !d.capacity_bytes().is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE)) {
+        return Err(DiskError::Io);
+    }
+    Ok(Box::new(AeroStorageDiskAdapter::new(d)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
