@@ -28,6 +28,7 @@ Audio is important for user experience but not on the critical boot path.
 | `crates/aero-audio/` | Guest audio device models (HDA controller + codec + PCM helpers) |
 | `crates/aero-virtio/` | Virtio device models (includes virtio-snd) |
 | `crates/platform/src/audio/` | SharedArrayBuffer ring layouts + WASM bridges (`WorkletBridge`, `MicBridge`) |
+| `crates/aero-wasm/` | wasm-pack exports used by the browser runtime (e.g. `HdaControllerBridge`, `attach_worklet_bridge`, `attach_mic_bridge`) |
 | `web/src/platform/` | Web Audio output setup + AudioWorklet consumer (`audio.ts`, `audio-worklet-processor.js`) |
 | `web/src/audio/` | Microphone capture UI + AudioWorklet producer (`mic_capture.ts`, `mic-worklet-processor.js`) |
 | `web/src/runtime/` | Coordinator↔worker control plane (ring buffer attachment messages + routing) |
@@ -65,7 +66,13 @@ Audio is important for user experience but not on the critical boot path.
 
 **Status (AU-004 / AU-008)**
 
-- **AU-004 (AudioWorklet integration)**: AudioWorklet + SharedArrayBuffer rings exist (`web/src/platform/audio.ts`, `web/src/platform/audio-worklet-processor.js`, `crates/platform/src/audio/worklet_bridge.rs`). The HDA model is integrated into the IO worker PCI/MMIO stack via `HdaControllerBridge` (`crates/aero-wasm/src/hda_controller_bridge.rs`) + `HdaPciDevice` (`web/src/io/devices/hda.ts`), with ring buffers forwarded by the coordinator (`SetAudioRingBufferMessage` / `SetMicrophoneRingBufferMessage`).
+- **AU-004 (AudioWorklet integration)**: AudioWorklet + SharedArrayBuffer rings exist:
+  - `web/src/platform/audio.ts`, `web/src/platform/audio-worklet-processor.js`
+  - `crates/platform/src/audio/worklet_bridge.rs`
+  - The HDA model is integrated into the IO worker PCI/MMIO stack via:
+    - `HdaControllerBridge` (`crates/aero-wasm/src/hda_controller_bridge.rs`)
+    - `HdaPciDevice` (`web/src/io/devices/hda.ts`)
+  - Ring buffers are forwarded by the coordinator (`SetAudioRingBufferMessage` / `SetMicrophoneRingBufferMessage`).
 - **AU-008 (Audio test suite)**: E2E coverage exists for the AudioWorklet + HDA demo (`tests/e2e/audio-worklet-hda-demo.spec.ts`), plus unit coverage for IO-worker HDA tick scheduling (`web/src/io/devices/hda.test.ts`). Remaining work is full-VM guest-driver coverage (Windows playback/capture) once the end-to-end integration is exercised regularly.
 
 ---
