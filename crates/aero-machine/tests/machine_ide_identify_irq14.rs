@@ -254,6 +254,82 @@ fn machine_ide_irq14_is_delivered_via_ioapic_in_apic_mode() {
 }
 
 #[test]
+fn machine_ide_irq15_is_delivered_via_ioapic_in_apic_mode() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+    const VECTOR: u8 = 0x61;
+
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on IDE secondary channel + IOAPIC/LAPIC routing.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Attach an ATAPI device to IDE secondary master so IDENTIFY PACKET can raise IRQ15.
+    m.attach_ide_secondary_master_atapi(AtapiCdrom::new(None));
+
+    // Route IOAPIC vector into a real-mode handler that writes a flag byte.
+    let handler_addr = 0x8000u64;
+    let code_base = 0x9000u64;
+    let flag_addr = 0x0500u16;
+    let flag_value = 0x5B_u8;
+
+    install_real_mode_handler(&mut m, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut m, code_base);
+    write_ivt_entry(&mut m, VECTOR, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut m, code_base);
+
+    // Halt the CPU first so the interrupt must wake it.
+    assert!(matches!(m.run_slice(16), RunExit::Halted { .. }));
+
+    // Switch to APIC mode and program the IOAPIC redirection entry for GSI15 -> VECTOR.
+    {
+        let interrupts = m
+            .platform_interrupts()
+            .expect("pc platform should provide interrupts");
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // ISA IRQ15 is wired to GSI15 in our platform model (no ACPI override).
+        let low = u32::from(VECTOR);
+        program_ioapic_redirection_entry(&mut ints, 15, low, 0);
+    }
+
+    // Enable PCI command I/O space decode for the IDE function.
+    let bdf = IDE_PIIX3.bdf;
+    write_cfg_u16(&mut m, bdf.bus, bdf.device, bdf.function, 0x04, 0x0001);
+
+    // ATAPI IDENTIFY PACKET DEVICE (0xA1) via secondary legacy ports.
+    m.io_write(0x176, 1, 0xA0); // select secondary master
+    m.io_write(0x177, 1, 0xA1);
+
+    // Verify that IDENTIFY data is reachable via the data port (0x170).
+    let word0 = m.io_read(0x170, 2) as u16;
+    assert_eq!(word0, 0x8581);
+
+    // Run until the interrupt handler writes the flag byte.
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "IDE IRQ15 interrupt handler did not run in APIC mode (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
 fn machine_ide_bmide_bar4_routing_tracks_pci_bar_reprogramming() {
     const RAM_SIZE: u64 = 2 * 1024 * 1024;
 
