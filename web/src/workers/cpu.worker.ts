@@ -80,7 +80,7 @@ import {
   type VmSnapshotResumedMessage,
 } from "../runtime/snapshot_protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
-import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
+import { assertWasmMemoryWiring, computeDefaultWasmMemoryProbeOffset } from "../runtime/wasm_memory_probe";
 import { AeroIpcIoClient } from "../io/ipc/aero_ipc_io";
 import {
   IRQ_REFCOUNT_SATURATED,
@@ -1873,16 +1873,16 @@ async function initWasmInBackground(
     // This enables shared-memory integration where JS + WASM + other workers
     // all observe the same guest RAM.
     //
-    // Probe within guest RAM (not the runtime-reserved low region of the wasm
-    // linear memory) so we don't risk clobbering the Rust/WASM runtime.
+    // Use a distinct offset from the IO worker probe so concurrent init cannot race on
+    // the same 32-bit word and trigger false-negative wiring failures.
     //
-    // Use a distinct offset from the IO worker probe so concurrent init cannot
-    // race on the same 32-bit word and trigger false-negative wiring failures.
-    const memProbeGuestOffset = 0x100;
+    // We probe within the runtime-reserved region (not guest RAM) to keep the probe
+    // side-effect-free from the guest's perspective.
+    const memProbeLinearOffset = (computeDefaultWasmMemoryProbeOffset({ api, memory: guestMemory }) - 4) >>> 0;
     assertWasmMemoryWiring({
       api,
       memory: guestMemory,
-      linearOffset: guestU8.byteOffset + memProbeGuestOffset,
+      linearOffset: memProbeLinearOffset,
       context: "cpu.worker",
     });
 
