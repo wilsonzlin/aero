@@ -2,6 +2,9 @@
   "name": "aero-range-harness",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "engines": {
     "node": ">=22.11.0 <23"
   }

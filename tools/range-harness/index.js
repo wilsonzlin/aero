@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { randomInt } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Range Harness
@@ -195,7 +197,7 @@ function classifyXCache(value) {
   return 'other';
 }
 
-function parseContentRange(value) {
+export function parseContentRange(value) {
   if (!value) return null;
   const trimmed = value.trim();
   // Examples:
@@ -386,7 +388,7 @@ async function getResourceInfo(url, extraHeaders) {
   );
 }
 
-function buildPlan({ size, chunkSize, count, mode, seed, unique }) {
+export function buildPlan({ size, chunkSize, count, mode, seed, unique }) {
   const chunks = Math.max(1, Math.ceil(size / chunkSize));
   const rng = seed == null ? null : makeMulberry32(seed);
   const plan = [];
@@ -635,27 +637,40 @@ async function main() {
 
         if (status === 206) {
           const parsed = parseContentRange(contentRangeHeader);
-          if (!parsed || parsed.isUnsatisfied || parsed.start == null || parsed.end == null) {
+
+          if (!parsed) {
             ok = false;
             warnings.push(`invalid Content-Range: ${contentRangeHeader ?? '(missing)'}`);
           } else {
-            if (parsed.start !== task.start || parsed.end !== task.end) {
+            if (parsed.isUnsatisfied || parsed.start == null || parsed.end == null) {
+              ok = false;
+              warnings.push(`unexpected Content-Range for 206: ${contentRangeHeader ?? '(missing)'}`);
+            }
+
+            if (
+              parsed.start != null &&
+              parsed.end != null &&
+              (parsed.start !== task.start || parsed.end !== task.end)
+            ) {
               ok = false;
               warnings.push(
                 `Content-Range mismatch (got ${parsed.start}-${parsed.end}, expected ${task.start}-${task.end})`,
               );
             }
-        if (parsed.total != null && parsed.total !== info.size) {
-          warnings.push(`Content-Range total differs from HEAD (${parsed.total} vs ${info.size})`);
-        }
-      }
-      if (bytes !== expectedLen) {
-        ok = false;
-        warnings.push(`body bytes (${bytes}) != expected (${expectedLen})`);
-      }
-    } else if (status === 200) {
-      ok = false;
-      if (!warned200) {
+
+            if (parsed.total != null && parsed.total !== info.size) {
+              ok = false;
+              warnings.push(`Content-Range total differs from HEAD (${parsed.total} vs ${info.size})`);
+            }
+          }
+
+          if (bytes !== expectedLen) {
+            ok = false;
+            warnings.push(`body bytes (${bytes}) != expected (${expectedLen})`);
+          }
+        } else if (status === 200) {
+          ok = false;
+          if (!warned200) {
             warned200 = true;
             warnings.push(
               'server returned 200 (Range ignored?). Results are still shown, but throughput/latency may not be meaningful.',
@@ -840,8 +855,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error(err && typeof err === 'object' && 'stack' in err ? err.stack : err);
-  process.exit(1);
-});
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? '')) {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error(err && typeof err === 'object' && 'stack' in err ? err.stack : err);
+    process.exit(1);
+  });
+}
