@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::tier1::ir::{IrInst, IrTerminator};
+use crate::tier1::ir::{IrInst, IrTerminator, SideEffects};
 use crate::tier1::{
     discover_block, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
 };
@@ -17,6 +17,8 @@ use aero_x86::tier1::InstKind;
 pub enum Tier1CompileError {
     #[error("Tier-1 IR contains unsupported helper call: {helper}")]
     UnsupportedHelper { helper: String },
+    #[error("Tier-1 block bails out at entry RIP 0x{entry_rip:x} (zero progress)")]
+    BailoutAtEntry { entry_rip: u64 },
 }
 
 /// Output of the Tier-1 compilation pipeline.
@@ -67,7 +69,26 @@ pub fn compile_tier1_block_with_options<B: Tier1Bus>(
         });
     }
 
-    let exit_to_interpreter = matches!(ir.terminator, IrTerminator::ExitToInterpreter { .. });
+    // After fixing Tier-1 Invalid semantics to side-exit at `inst.rip`, it's possible for the
+    // front-end to produce blocks that *immediately* exit to the interpreter at their entry RIP
+    // without executing any meaningful work (e.g. unsupported first instruction). Installing such
+    // blocks into the JIT cache causes pure overhead: every dispatch bounces into WASM only to
+    // immediately request an interpreter step.
+    //
+    // Treat these as "non-compilable" by returning a dedicated error; higher layers may leave the
+    // compile request marked as satisfied to avoid re-requesting indefinitely.
+    if matches!(
+        &ir.terminator,
+        IrTerminator::ExitToInterpreter { next_rip } if *next_rip == entry_rip
+    ) && ir
+        .insts
+        .iter()
+        .all(|inst| inst.side_effects() == SideEffects::NONE)
+    {
+        return Err(Tier1CompileError::BailoutAtEntry { entry_rip });
+    }
+
+    let exit_to_interpreter = matches!(&ir.terminator, IrTerminator::ExitToInterpreter { .. });
     let wasm_bytes = Tier1WasmCodegen::new().compile_block_with_options(&ir, options);
 
     Ok(Tier1Compilation {
