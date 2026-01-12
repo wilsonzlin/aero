@@ -43,6 +43,16 @@
 #define IOCTL_HID_GET_DEVICE_DESCRIPTOR HID_CTL_CODE(0)
 #endif
 
+#ifndef IOCTL_HID_GET_STRING
+// WDK `hidclass.h` defines IOCTL_HID_GET_STRING as a HID_CTL_CODE (function code 4).
+#define IOCTL_HID_GET_STRING HID_CTL_CODE(4)
+#endif
+
+#ifndef IOCTL_HID_GET_INDEXED_STRING
+// WDK `hidclass.h` defines IOCTL_HID_GET_INDEXED_STRING as a HID_CTL_CODE (function code 5).
+#define IOCTL_HID_GET_INDEXED_STRING HID_CTL_CODE(5)
+#endif
+
 #ifndef IOCTL_HID_WRITE_REPORT
 #define IOCTL_HID_WRITE_REPORT HID_CTL_CODE(3)
 #endif
