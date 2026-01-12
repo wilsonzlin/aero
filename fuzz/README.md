@@ -78,6 +78,15 @@ cd fuzz && cargo fuzz build
 
 Note: an explicit `RUSTUP_TOOLCHAIN=...` environment variable overrides `rust-toolchain.toml`.
 
+If you see an error like:
+
+```
+error: the option `Z` is only accepted on the nightly compiler
+```
+
+make sure you're actually using a nightly toolchain when invoking `cargo fuzz` (e.g. `cargo +"$nightly" fuzz ...`,
+or `unset RUSTUP_TOOLCHAIN` if something in your environment is forcing stable).
+
 Run a bounded number of iterations:
 
 ```bash
