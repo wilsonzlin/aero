@@ -51,6 +51,10 @@ describe("bench/guest_cpu_bench iters mode semantics", () => {
       { checksumLo: 0x1234_5678, retiredLo: 222 }, // measured run
     ];
 
+    // Ensure we load `guest_cpu_bench` fresh with our wasm_context mock even if
+    // another test file imported it earlier in this worker process.
+    vi.resetModules();
+
     const { runGuestCpuBench } = await import("./guest_cpu_bench");
     const res = await runGuestCpuBench({
       variant: "alu32",
@@ -79,6 +83,8 @@ describe("bench/guest_cpu_bench iters mode semantics", () => {
       { checksumLo: 0x2222_2222, retiredLo: 1 }, // measured
     ];
 
+    vi.resetModules();
+
     const { runGuestCpuBench } = await import("./guest_cpu_bench");
     await expect(
       runGuestCpuBench({
@@ -89,4 +95,3 @@ describe("bench/guest_cpu_bench iters mode semantics", () => {
     ).rejects.toThrow(/determinism/i);
   });
 });
-

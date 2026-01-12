@@ -58,6 +58,8 @@ describe("bench/guest_cpu_bench seconds mode semantics", () => {
       return t;
     });
 
+    vi.resetModules();
+
     const { runGuestCpuBench } = await import("./guest_cpu_bench");
     const res = await runGuestCpuBench({
       variant: "alu32",
@@ -87,6 +89,8 @@ describe("bench/guest_cpu_bench seconds mode semantics", () => {
       return t;
     });
 
+    vi.resetModules();
+
     const { runGuestCpuBench } = await import("./guest_cpu_bench");
     await expect(
       runGuestCpuBench({
@@ -97,4 +101,3 @@ describe("bench/guest_cpu_bench seconds mode semantics", () => {
     ).rejects.toThrow(/checksum mismatch/i);
   });
 });
-
