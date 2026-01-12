@@ -833,6 +833,34 @@ impl Emitter<'_> {
         self.f.instruction(&Instruction::I64And);
         self.f.instruction(&Instruction::I64Or);
 
+        // Q35 high-memory remap: translate physical addresses in the high-RAM region back into the
+        // contiguous RAM backing store used by the wasm runtime.
+        //
+        // If paddr >= 4GiB:
+        //   paddr = 0xB000_0000 + (paddr - 4GiB)
+        const HIGH_RAM_BASE: i64 = 0x1_0000_0000;
+        const LOW_RAM_END: i64 = 0xB000_0000;
+        self.f
+            .instruction(&Instruction::LocalTee(self.layout.scratch_vpn_local()));
+        self.f.instruction(&Instruction::I64Const(HIGH_RAM_BASE));
+        self.f.instruction(&Instruction::I64GeU);
+        self.f
+            .instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+        {
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+            self.f.instruction(&Instruction::I64Const(HIGH_RAM_BASE));
+            self.f.instruction(&Instruction::I64Sub);
+            self.f.instruction(&Instruction::I64Const(LOW_RAM_END));
+            self.f.instruction(&Instruction::I64Add);
+        }
+        self.f.instruction(&Instruction::Else);
+        {
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+        }
+        self.f.instruction(&Instruction::End);
+
         // wasm_addr = ram_base + paddr
         self.f
             .instruction(&Instruction::LocalGet(self.layout.ram_base_local()));

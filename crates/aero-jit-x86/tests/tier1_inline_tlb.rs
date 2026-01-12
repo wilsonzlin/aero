@@ -827,3 +827,95 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
 }
+
+#[test]
+fn tier1_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
+    // Q35 layout:
+    // - low RAM:  [0x0000_0000 .. 0xB000_0000)
+    // - hole:     [0xB000_0000 .. 0x1_0000_0000)
+    // - high RAM: [0x1_0000_0000 .. ...] remapped to start at 0xB000_0000 in the contiguous RAM
+    //             backing store.
+    const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+
+    // We'll point `JitContext.ram_base` at a value that causes the correct high-RAM remap to wrap
+    // the final wasm32 address into a small in-bounds offset, while the buggy identity-mapped
+    // computation stays huge and traps.
+    //
+    // With the expected remap:
+    //   wasm_addr = (ram_base + 0xB000_0000 + (paddr - 4GiB)) mod 2^32
+    // For paddr == 4GiB, this becomes:
+    //   wasm_addr = (ram_base + 0xB000_0000) mod 2^32
+    //
+    // Choose ram_base = 0x5000_0000 + desired_offset, so:
+    //   (ram_base + 0xB000_0000) mod 2^32 == desired_offset
+    //   (ram_base + 4GiB)        mod 2^32 == 0x5000_0000 + desired_offset   (OOB)
+    let desired_offset: usize = 0x10000;
+    let ram_base: u64 = 0x5000_0000 + desired_offset as u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, HIGH_RAM_BASE);
+    let v0 = b.load(Width::W8, addr);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Memory layout: keep it tiny, but large enough to hold CPU + JitContext + the desired test
+    // byte at `desired_offset`.
+    let mut mem = vec![0u8; desired_offset + 16];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    // Place the known byte at the address we expect the *correct* high-RAM remap to compute.
+    mem[desired_offset] = 0x7f;
+
+    let pages = mem.len().div_ceil(65_536) as u32;
+    // Make `mmu_translate` classify 4GiB as RAM so the inline-TLB fast-path is taken.
+    let ram_size = HIGH_RAM_BASE + 0x1000;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; mem.len()];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+    assert_eq!(snap.rip, 0x3000);
+    assert_eq!(snap.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x7f);
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
