@@ -58,8 +58,10 @@ tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
 md_files = [p for p in tracked if p.endswith(".md")]
 
 # Match:
-# - Explicit invocations: `./foo.sh`, `./some/path/foo.sh`
+# - Explicit invocations: `./foo.sh`, `./some/path/foo.sh` (POSIX)
+# - Explicit invocations: `.\foo.ps1`, `.\some\path\foo.cmd` (Windows)
 # - Repo-root relative paths: `drivers/scripts/foo.sh`, `scripts/ci/bar.sh`, etc.
+# - Repo-root relative paths: `drivers\scripts\foo.ps1`, `ci\build-drivers.ps1`, etc.
 # - Other repo-local helper scripts referenced in docs (PowerShell, Python, CMD).
 #
 # Note: many docs embed commands inside backticks, so treat backtick as a stop
@@ -68,7 +70,7 @@ md_files = [p for p in tracked if p.endswith(".md")]
 # We intentionally match only paths that look like repo-local references (common
 # top-level dirs) to avoid accidentally matching URLs that end in `.sh`.
 pattern = re.compile(
-    r"(?<![\w/])((?:\./|\.\./|scripts/|drivers/|infra/|deploy/|backend/|tools/|ci/|guest-tools/)[^\s`]+?\.(?:sh|py|ps1|cmd))\b"
+    r"(?<![\w/\\])((?:\./|\.\./|\.\\|\.\.\\|scripts[\\/]|drivers[\\/]|infra[\\/]|deploy[\\/]|backend[\\/]|tools[\\/]|ci[\\/]|guest-tools[\\/])[^\s`]+?\.(?:sh|py|ps1|cmd))\b"
 )
 
 
@@ -86,7 +88,7 @@ errors = []
 doc_refs = {}
 
 def normalize_rel(path_str):
-    path_str = path_str.replace("\\\\", "/")
+    path_str = path_str.replace("\\", "/")
     norm = posixpath.normpath(path_str)
     if norm in ("", ".", "/"):
         return None
@@ -122,12 +124,33 @@ for md in md_files:
             candidates.append(c2)
 
         resolved = None
+        tried_candidates = []
         for c in candidates:
+            tried_candidates.append(c)
             if (repo_root / c).is_file():
                 resolved = c
                 break
+
+        # Some docs describe running commands from a *different* directory than the
+        # markdown file location (e.g. docs under `drivers/.../docs/` telling the
+        # reader to run `.\scripts\foo.ps1` from the driver root). To keep the
+        # check useful without forcing every doc to spell out repo-root paths,
+        # fall back to resolving explicitly-relative references (`./...`, `.\...`)
+        # against ancestor directories of the markdown file.
+        if resolved is None and len(referenced) >= 2 and referenced[0] == "." and referenced[1] in ("/", "\\"):
+            anc = md_dir
+            while anc != Path("."):
+                anc = anc.parent
+                c3 = normalize_rel(posixpath.join(anc.as_posix(), referenced))
+                if c3 is None or c3 in tried_candidates:
+                    continue
+                tried_candidates.append(c3)
+                if (repo_root / c3).is_file():
+                    resolved = c3
+                    break
+
         if resolved is None:
-            tried = ", ".join(candidates) if candidates else "(no repo-local candidates)"
+            tried = ", ".join(tried_candidates) if tried_candidates else "(no repo-local candidates)"
             errors.append("%s: references '%s', but no such file exists (tried: %s)" % (md, referenced, tried))
             continue
 
