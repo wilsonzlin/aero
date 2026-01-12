@@ -101,6 +101,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       } finally {
         URL.revokeObjectURL(url);
       }
+      await refreshStats?.();
     } catch (err) {
       status.textContent = err instanceof Error ? err.message : String(err);
     }
@@ -127,6 +128,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         } finally {
           URL.revokeObjectURL(url);
         }
+        await refreshStats?.();
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
       }
