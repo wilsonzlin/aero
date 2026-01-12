@@ -338,6 +338,10 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
       hdaDemoWasmMemory = new WebAssembly.Memory({ initial: pages, maximum: pages });
     }
     ({ api } = await initWasmForContext({ variant: "single", memory: hdaDemoWasmMemory }));
+    // Sanity-check that the memory we allocated is actually wired up as the module's linear memory.
+    // (Older/out-of-date wasm-pack outputs can ignore imported memory, which would make the demo's
+    // heap sizing assumptions incorrect.)
+    assertWasmMemoryWiring({ api, memory: hdaDemoWasmMemory, context: "cpu.worker:hdaDemo" });
   } catch (err) {
     console.warn("Failed to init single-threaded WASM for HDA demo; falling back to auto:", err);
     ({ api } = await initWasmForContext());
