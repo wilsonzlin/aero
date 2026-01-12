@@ -1407,6 +1407,25 @@ pub mod tier1 {
                         )?;
                         InstKind::Setcc { cond, dst }
                     }
+                    0x1f => {
+                        // Multi-byte NOP (0F 1F /0).
+                        // The operand is ignored, but we still need to parse ModRM/SIB/displacement
+                        // to compute the correct instruction length.
+                        let (_opnd, modrm) = decode_modrm_operand(
+                            bytes,
+                            &mut offset,
+                            bitness,
+                            rex,
+                            rex.present,
+                            width,
+                        )?;
+                        let group = modrm.reg & 0x7;
+                        if group != 0 {
+                            InstKind::Invalid
+                        } else {
+                            InstKind::Nop
+                        }
+                    }
                     0x40..=0x4f => {
                         let cc = opcode2 - 0x40;
                         let cond = Cond::from_cc(cc).ok_or(DecodeError {

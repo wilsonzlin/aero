@@ -375,3 +375,27 @@ fn decode_one_mode_bails_on_address_size_override_prefix() {
     assert_eq!(inst.len, 2);
     assert_eq!(inst.kind, InstKind::Invalid);
 }
+
+#[test]
+fn decode_one_mode_multi_byte_nop_0f1f_parses_modrm_len() {
+    // nop dword ptr [rax+0x1234]
+    let inst = decode_one_mode(0x1000, &[0x0f, 0x1f, 0x80, 0x34, 0x12, 0x00, 0x00], 64);
+    assert_eq!(inst.len, 7);
+    assert_eq!(inst.kind, InstKind::Nop);
+}
+
+#[test]
+fn decode_one_mode_multi_byte_nop_0f1f_32bit_disp8_len() {
+    // nop dword ptr [eax+0x10]
+    let inst = decode_one_mode(0x1000, &[0x0f, 0x1f, 0x40, 0x10], 32);
+    assert_eq!(inst.len, 4);
+    assert_eq!(inst.kind, InstKind::Nop);
+}
+
+#[test]
+fn decode_one_mode_multi_byte_nop_0f1f_16bit_disp8_len() {
+    // nop word ptr [bx+si+0x10]
+    let inst = decode_one_mode(0x1000, &[0x0f, 0x1f, 0x40, 0x10], 16);
+    assert_eq!(inst.len, 4);
+    assert_eq!(inst.kind, InstKind::Nop);
+}
