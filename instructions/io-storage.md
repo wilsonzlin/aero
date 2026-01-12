@@ -230,7 +230,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-opfs --locked
 
 # Integration tests
 # Note: the first run in a clean/contended agent sandbox can take >10 minutes to compile.
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero --test freedos_boot --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
 ```
 
 ---
