@@ -11,14 +11,25 @@ const THREADED_AERO_WASM_BINARY_RELEASE = fileURLToPath(
 const THREADED_AERO_WASM_BINARY_DEV = fileURLToPath(
   new URL('../../web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm', import.meta.url),
 );
+const THREADED_AERO_WASM_JS_RELEASE = fileURLToPath(new URL('../../web/src/wasm/pkg-threaded/aero_wasm.js', import.meta.url));
+const THREADED_AERO_WASM_JS_DEV = fileURLToPath(new URL('../../web/src/wasm/pkg-threaded-dev/aero_wasm.js', import.meta.url));
 const HAS_THREADED_AERO_WASM_BINARY =
-  existsSync(THREADED_AERO_WASM_BINARY_RELEASE) || existsSync(THREADED_AERO_WASM_BINARY_DEV);
+  (existsSync(THREADED_AERO_WASM_BINARY_RELEASE) && existsSync(THREADED_AERO_WASM_JS_RELEASE)) ||
+  (existsSync(THREADED_AERO_WASM_BINARY_DEV) && existsSync(THREADED_AERO_WASM_JS_DEV));
 
-const JIT_WASM_BINARY_RELEASE = fileURLToPath(new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url));
+const JIT_WASM_BINARY_RELEASE = fileURLToPath(
+  new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm_bg.wasm', import.meta.url),
+);
 const JIT_WASM_BINARY_DEV = fileURLToPath(
   new URL('../../web/src/wasm/pkg-jit-single-dev/aero_jit_wasm_bg.wasm', import.meta.url),
 );
-const HAS_JIT_WASM_BINARY = existsSync(JIT_WASM_BINARY_RELEASE) || existsSync(JIT_WASM_BINARY_DEV);
+const JIT_WASM_JS_RELEASE = fileURLToPath(new URL('../../web/src/wasm/pkg-jit-single/aero_jit_wasm.js', import.meta.url));
+const JIT_WASM_JS_DEV = fileURLToPath(
+  new URL('../../web/src/wasm/pkg-jit-single-dev/aero_jit_wasm.js', import.meta.url),
+);
+const HAS_JIT_WASM_BINARY =
+  (existsSync(JIT_WASM_BINARY_RELEASE) && existsSync(JIT_WASM_JS_RELEASE)) ||
+  (existsSync(JIT_WASM_BINARY_DEV) && existsSync(JIT_WASM_JS_DEV));
 
 function getPath(obj: unknown, path: string): unknown {
   if (!obj || typeof obj !== 'object') return undefined;
