@@ -1,11 +1,13 @@
+use aero_devices::pci::PciInterruptPin;
 use aero_devices::pci::profile::{ISA_PIIX3, USB_UHCI_PIIX3};
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 use aero_snapshot::DeviceId;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs::*;
 use aero_usb::uhci::UhciController;
-use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -43,13 +45,13 @@ fn read_uhci_bar4_base(pc: &mut PcPlatform) -> u16 {
     (read_uhci_bar4_raw(pc) & 0xffff_fffc) as u16
 }
 
-fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
     let redtbl_low = 0x10u32 + gsi * 2;
     let redtbl_high = redtbl_low + 1;
-    ints.ioapic_mmio_write(0x00, redtbl_low);
-    ints.ioapic_mmio_write(0x10, low);
-    ints.ioapic_mmio_write(0x00, redtbl_high);
-    ints.ioapic_mmio_write(0x10, high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, low);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE, redtbl_high);
+    pc.memory.write_u32(IOAPIC_MMIO_BASE + 0x10, high);
 }
 
 #[test]
@@ -441,13 +443,12 @@ fn pc_platform_routes_uhci_intx_via_ioapic_in_apic_mode() {
     pc.io.write_u8(0x23, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
-    // Route GSI11 (PIIX3 UHCI 00:01.2 INTA#) to vector 0x60, level-triggered + active-low.
+    // Route the UHCI INTx line to vector 0x60, level-triggered + active-low.
     let vector = 0x60u32;
     let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
-    {
-        let mut ints = pc.interrupts.borrow_mut();
-        program_ioapic_entry(&mut ints, 11, low, 0);
-    }
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
 
     pc.io
         .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_IOC));
