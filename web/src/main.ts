@@ -3924,7 +3924,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     powerOffButton.disabled = !anyActive;
 
     const snapshotSupported = report.opfsSyncAccessHandle;
-    const snapshotReady = statuses.cpu.state === "ready" && statuses.io.state === "ready";
+    // Worker VM snapshots pause CPU → IO → NET and reset shared NET rings. Require all three
+    // workers to be READY before enabling snapshot controls so we don't deadlock waiting for a
+    // still-starting NET worker to respond to snapshot RPCs.
+    const snapshotReady = statuses.cpu.state === "ready" && statuses.io.state === "ready" && statuses.net.state === "ready";
     snapshotSaveButton.disabled = !snapshotSupported || snapshotInFlight || !snapshotReady;
     snapshotLoadButton.disabled = !snapshotSupported || snapshotInFlight || !snapshotReady;
     if (!snapshotSupported) {
