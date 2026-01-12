@@ -62,6 +62,17 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     out
 }
 
+fn env_truthy(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+    let v = raw.trim();
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
+}
+
 async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
     common::ensure_xdg_runtime_dir();
 
@@ -112,31 +123,82 @@ async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some((device, queue))
 }
 
-async fn run_bc_cpu_fallback_sample_test(
-    test_name: &str,
-    format: AerogpuFormat,
-    bc_data: &[u8],
-    expected_rgba: [u8; 4],
-) {
-    let (device, queue) = match create_device_queue().await {
-        Some(v) => v,
-        None => {
-            common::skip_or_panic(test_name, "no wgpu adapter available");
-            return;
+async fn create_device_queue_bc() -> Option<(wgpu::Device, wgpu::Queue)> {
+    common::ensure_xdg_runtime_dir();
+
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        },
+        ..Default::default()
+    });
+
+    // Try a couple different adapter options; the default request may land on an adapter that
+    // doesn't support BC compression even when another does (e.g. integrated vs discrete).
+    let adapter_opts = [
+        wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        },
+        wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+        wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+    ];
+
+    for opts in adapter_opts {
+        let Some(adapter) = instance.request_adapter(&opts).await else {
+            continue;
+        };
+        if !adapter
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        {
+            continue;
         }
-    };
 
-    let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-    let mut guest = VecGuestMemory::new(0x1000);
+        let Ok((device, queue)) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aerogpu executor bc direct test device"),
+                    required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+        else {
+            continue;
+        };
 
+        return Some((device, queue));
+    }
+
+    None
+}
+
+fn fullscreen_triangle_vb_bytes() -> Vec<u8> {
     // Full-screen triangle (pos: vec2<f32>).
     let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
     let mut vb_bytes = Vec::new();
     for v in verts {
         vb_bytes.extend_from_slice(&v.to_le_bytes());
     }
+    vb_bytes
+}
 
-    let stream = build_stream(|out| {
+fn build_bc_sample_stream(format: AerogpuFormat, bc_data: &[u8], vb_bytes: &[u8]) -> Vec<u8> {
+    build_stream(|out| {
         // CREATE_BUFFER (handle=1) vertex buffer.
         emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
             push_u32(out, 1); // buffer_handle
@@ -221,7 +283,7 @@ async fn run_bc_cpu_fallback_sample_test(
             push_u32(out, 0); // reserved0
             push_u64(out, 0); // offset_bytes
             push_u64(out, vb_bytes.len() as u64); // size_bytes
-            out.extend_from_slice(&vb_bytes);
+            out.extend_from_slice(vb_bytes);
         });
 
         // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
@@ -241,7 +303,85 @@ async fn run_bc_cpu_fallback_sample_test(
             push_u32(out, 0); // first_vertex
             push_u32(out, 0); // first_instance
         });
+    })
+}
+
+async fn assert_wgpu_texture_is_native_bc(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    tex: &wgpu::Texture,
+) {
+    // A 4x4 BC texture is a single 4x4 block, so the copy uses rows_per_image=1 (block row).
+    //
+    // If the executor fell back to an RGBA8 texture, `rows_per_image=1` would be interpreted as 1
+    // texel-row and validation should fail because the copy height is 4 texel-rows.
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+    // Allocate enough room to satisfy both interpretations of the copy:
+    // - RGBA8: 4 rows => at least bytes_per_row*(4-1)+16
+    // - BC: 1 block-row => at least 8/16 bytes
+    // (Buffer size isn't the thing we're trying to validate here.)
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("aerogpu.executor.bc.native_copy_probe"),
+        size: 1024,
+        usage: wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("aerogpu.executor.bc.native_copy_probe.encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture: tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(1),
+            },
+        },
+        wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+
+    let err = device.pop_error_scope().await;
+    assert!(
+        err.is_none(),
+        "expected native BC texture, got wgpu validation error: {err:?}"
+    );
+}
+
+async fn run_bc_cpu_fallback_sample_test(
+    test_name: &str,
+    format: AerogpuFormat,
+    bc_data: &[u8],
+    expected_rgba: [u8; 4],
+) {
+    let (device, queue) = match create_device_queue().await {
+        Some(v) => v,
+        None => {
+            common::skip_or_panic(test_name, "no wgpu adapter available");
+            return;
+        }
+    };
+
+    let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+    let mut guest = VecGuestMemory::new(0x1000);
+
+    let vb_bytes = fullscreen_triangle_vb_bytes();
+    let stream = build_bc_sample_stream(format, bc_data, &vb_bytes);
 
     let report = exec.process_cmd_stream(&stream, &mut guest, None);
     assert!(report.is_ok(), "report had errors: {:#?}", report.events);
@@ -265,9 +405,65 @@ async fn run_bc_cpu_fallback_sample_test(
     assert_eq!(&rgba[0..4], &expected_rgba);
 }
 
+async fn run_bc_direct_sample_test(
+    test_name: &str,
+    format: AerogpuFormat,
+    bc_data: &[u8],
+    expected_rgba: [u8; 4],
+) {
+    if env_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION") {
+        common::skip_or_panic(
+            test_name,
+            "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set; skipping native BC path tests",
+        );
+        return;
+    }
+
+    let (device, queue) = match create_device_queue_bc().await {
+        Some(v) => v,
+        None => {
+            common::skip_or_panic(test_name, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
+            return;
+        }
+    };
+
+    let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+    let mut guest = VecGuestMemory::new(0x1000);
+
+    let vb_bytes = fullscreen_triangle_vb_bytes();
+    let stream = build_bc_sample_stream(format, bc_data, &vb_bytes);
+
+    let report = exec.process_cmd_stream(&stream, &mut guest, None);
+    assert!(report.is_ok(), "report had errors: {:#?}", report.events);
+
+    let bc_tex = exec.texture(2).expect("sampled BC texture");
+    assert_wgpu_texture_is_native_bc(exec.device(), exec.queue(), bc_tex).await;
+
+    let rt_tex = exec.texture(3).expect("render target texture");
+    let rgba = readback_rgba8(
+        exec.device(),
+        exec.queue(),
+        rt_tex,
+        TextureRegion {
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        },
+    )
+    .await;
+    assert_eq!(&rgba[0..4], &expected_rgba);
+}
+
 #[test]
 fn executor_upload_bc1_cpu_fallback_and_sample() {
-    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc1_cpu_fallback_and_sample");
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_upload_bc1_cpu_fallback_and_sample"
+    );
     pollster::block_on(async {
         // Single BC1 block for a 4x4 texture. Make it solid red by setting
         // color0=color1=RGB565(255,0,0)=0xF800 and all indices to 0.
@@ -444,8 +640,37 @@ fn executor_upload_bc1_srgb_cpu_fallback_decodes_on_sample() {
 }
 
 #[test]
+fn executor_upload_bc1_direct_and_sample() {
+    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc1_direct_and_sample");
+    pollster::block_on(async {
+        // Single BC1 block for a 4x4 texture. Make it solid red by setting
+        // color0=color1=RGB565(255,0,0)=0xF800 and all indices to 0.
+        let bc1_solid_red = [0x00, 0xF8, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00];
+        let decompressed = aero_gpu::decompress_bc1_rgba8(4, 4, &bc1_solid_red);
+        let expected_rgba: [u8; 4] = decompressed[0..4].try_into().unwrap();
+
+        // Ensure the block is truly solid so our 1x1 sample result is stable.
+        for px in decompressed.chunks_exact(4) {
+            assert_eq!(px, &expected_rgba);
+        }
+        assert_ne!(expected_rgba, [0, 0, 0, 255]);
+
+        run_bc_direct_sample_test(
+            TEST_NAME,
+            AerogpuFormat::BC1RgbaUnorm,
+            &bc1_solid_red,
+            expected_rgba,
+        )
+        .await;
+    });
+}
+
+#[test]
 fn executor_upload_bc2_cpu_fallback_and_sample() {
-    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc2_cpu_fallback_and_sample");
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_upload_bc2_cpu_fallback_and_sample"
+    );
     pollster::block_on(async {
         // BC2 / DXT3 block for a 4x4 texture.
         // Alpha block: explicit 4-bit alpha with all texels set to 0xF (255).
@@ -467,8 +692,41 @@ fn executor_upload_bc2_cpu_fallback_and_sample() {
 }
 
 #[test]
+fn executor_upload_bc2_direct_and_sample() {
+    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc2_direct_and_sample");
+    pollster::block_on(async {
+        // BC2 / DXT3 block for a 4x4 texture.
+        // Alpha block: explicit 4-bit alpha with all texels set to 0xF (255).
+        // Color: solid red with color0=color1=RGB565(255,0,0)=0xF800 and all indices 0.
+        let bc2_solid_red = [
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // alpha (64 bits)
+            0x00, 0xf8, // color0
+            0x00, 0xf8, // color1
+            0x00, 0x00, 0x00, 0x00, // indices
+        ];
+        let decompressed = aero_gpu::decompress_bc2_rgba8(4, 4, &bc2_solid_red);
+        let expected_rgba: [u8; 4] = decompressed[0..4].try_into().unwrap();
+        for px in decompressed.chunks_exact(4) {
+            assert_eq!(px, &expected_rgba);
+        }
+        assert_ne!(expected_rgba, [0, 0, 0, 255]);
+
+        run_bc_direct_sample_test(
+            TEST_NAME,
+            AerogpuFormat::BC2RgbaUnorm,
+            &bc2_solid_red,
+            expected_rgba,
+        )
+        .await;
+    });
+}
+
+#[test]
 fn executor_upload_bc3_cpu_fallback_and_sample() {
-    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc3_cpu_fallback_and_sample");
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_upload_bc3_cpu_fallback_and_sample"
+    );
     pollster::block_on(async {
         // BC3 / DXT5 block for a 4x4 texture.
         // Alpha: alpha0=255, alpha1=0, indices all 0 -> alpha 255.
@@ -491,8 +749,42 @@ fn executor_upload_bc3_cpu_fallback_and_sample() {
 }
 
 #[test]
+fn executor_upload_bc3_direct_and_sample() {
+    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc3_direct_and_sample");
+    pollster::block_on(async {
+        // BC3 / DXT5 block for a 4x4 texture.
+        // Alpha: alpha0=255, alpha1=0, indices all 0 -> alpha 255.
+        // Color: solid red with color0=color1=RGB565(255,0,0)=0xF800 and all indices 0.
+        let bc3_solid_red = [
+            0xff, 0x00, // alpha0, alpha1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // alpha indices (48-bit LE)
+            0x00, 0xf8, // color0
+            0x00, 0xf8, // color1
+            0x00, 0x00, 0x00, 0x00, // color indices
+        ];
+        let decompressed = aero_gpu::decompress_bc3_rgba8(4, 4, &bc3_solid_red);
+        let expected_rgba: [u8; 4] = decompressed[0..4].try_into().unwrap();
+        for px in decompressed.chunks_exact(4) {
+            assert_eq!(px, &expected_rgba);
+        }
+        assert_ne!(expected_rgba, [0, 0, 0, 255]);
+
+        run_bc_direct_sample_test(
+            TEST_NAME,
+            AerogpuFormat::BC3RgbaUnorm,
+            &bc3_solid_red,
+            expected_rgba,
+        )
+        .await;
+    });
+}
+
+#[test]
 fn executor_upload_bc7_cpu_fallback_and_sample() {
-    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc7_cpu_fallback_and_sample");
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::executor_upload_bc7_cpu_fallback_and_sample"
+    );
     pollster::block_on(async {
         // Single BC7 block for a 4x4 texture. Use a simple known vector that decodes to a solid
         // color, so the executor's fixed sampling UV (0.5, 0.5) is deterministic across backends.
@@ -508,6 +800,33 @@ fn executor_upload_bc7_cpu_fallback_and_sample() {
         assert_ne!(expected_rgba, [0, 0, 0, 255]);
 
         run_bc_cpu_fallback_sample_test(
+            TEST_NAME,
+            AerogpuFormat::BC7RgbaUnorm,
+            &bc7_solid,
+            expected_rgba,
+        )
+        .await;
+    });
+}
+
+#[test]
+fn executor_upload_bc7_direct_and_sample() {
+    const TEST_NAME: &str = concat!(module_path!(), "::executor_upload_bc7_direct_and_sample");
+    pollster::block_on(async {
+        // Single BC7 block for a 4x4 texture. Use a simple known vector that decodes to a solid
+        // color, so the executor's fixed sampling UV (0.5, 0.5) is deterministic across backends.
+        let bc7_solid = [0xffu8; 16];
+        let decompressed = aero_gpu::decompress_bc7_rgba8(4, 4, &bc7_solid);
+        let expected_rgba: [u8; 4] = decompressed[0..4].try_into().unwrap();
+
+        // Ensure the block is truly solid so our 1x1 sample result is stable.
+        for px in decompressed.chunks_exact(4) {
+            assert_eq!(px, &expected_rgba);
+        }
+        // Also ensure the chosen block differs from the clear color, so the draw is observable.
+        assert_ne!(expected_rgba, [0, 0, 0, 255]);
+
+        run_bc_direct_sample_test(
             TEST_NAME,
             AerogpuFormat::BC7RgbaUnorm,
             &bc7_solid,
