@@ -273,7 +273,6 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnSetDialogBoxMode` (no-op, returns `S_OK`)
-- `pfnDrawIndexedPrimitiveUP` (implemented)
 - `pfnGetSoftwareVertexProcessing`, `pfnGetTransform`, `pfnGetClipPlane`
   (returns `D3DERR_NOTAVAILABLE`)
 - `pfnGetMaterial`, `pfnGetLight` / `pfnGetLightEnable`,
