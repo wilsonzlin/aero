@@ -401,7 +401,7 @@ http://localhost:8080/
 
 If allocation fails, try a smaller guest RAM size (browser/OS dependent).
 
-## Storage I/O microbench (PF-008)
+## Storage I/O microbench
 
 The `web/` app exposes an early, emulator-independent browser storage benchmark:
 
@@ -436,6 +436,22 @@ Check default thresholds (informational by default; add `--enforce` for CI gatin
 ```bash
 node --experimental-strip-types bench/compare.ts --input bench/results/<run>/perf_export.json
 ```
+
+## Guest CPU instruction throughput microbench (PF-008)
+
+PF-008 is a deterministic guest instruction throughput suite that runs small x86 instruction streams directly inside the CPU core (no OS / disk image required) and reports IPS/MIPS.
+
+Run from the browser devtools console:
+
+```js
+await window.aero.bench.runGuestCpuBench({ variant: 'alu32', mode: 'interpreter', seconds: 0.25 });
+await window.aero.perf.export();
+```
+
+Notes:
+
+- Only `mode: "interpreter"` is expected to work initially; JIT modes may be unimplemented.
+- The benchmark validates a payload checksum and throws on mismatch (correctness guardrail).
 
 ## Disk image manager UI (OPFS)
 
