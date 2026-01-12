@@ -35,7 +35,7 @@ impl SparseHeader {
         buf
     }
 
-    fn decode(buf: &[u8]) -> DiskResult<Self> {
+    pub(crate) fn decode(buf: &[u8]) -> DiskResult<Self> {
         if buf.len() < HEADER_SIZE as usize {
             return Err(DiskError::CorruptImage("sparse header truncated"));
         }

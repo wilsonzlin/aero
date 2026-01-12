@@ -5,6 +5,8 @@ pub mod raw;
 pub mod sparse;
 pub mod vhd;
 
+use aero_storage::AeroSparseHeader;
+
 use crate::io::storage::disk::{ByteStorage, DiskFormat};
 use crate::io::storage::error::DiskResult;
 
@@ -49,8 +51,19 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
     if len >= 8 {
         let mut magic = [0u8; 8];
         storage.read_at(0, &mut magic)?;
-        if magic == AEROSPAR_MAGIC || magic == AEROSPRS_MAGIC {
-            return Ok(DiskFormat::Sparse);
+        if magic == AEROSPAR_MAGIC && len >= 64 {
+            let mut header = [0u8; 64];
+            storage.read_at(0, &mut header)?;
+            if AeroSparseHeader::decode(&header).is_ok() {
+                return Ok(DiskFormat::Sparse);
+            }
+        }
+        if magic == AEROSPRS_MAGIC && len >= 4096 {
+            let mut header = [0u8; 4096];
+            storage.read_at(0, &mut header)?;
+            if aerosprs::SparseHeader::decode(&header).is_ok() {
+                return Ok(DiskFormat::Sparse);
+            }
         }
     }
 

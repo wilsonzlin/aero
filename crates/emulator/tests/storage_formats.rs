@@ -307,6 +307,37 @@ fn detect_vhd_cookie_without_plausible_footer_is_raw() {
 }
 
 #[test]
+fn detect_aerospar_header_is_detected_as_sparse() {
+    let storage = MemStorage::default();
+    let disk =
+        emulator::io::storage::formats::SparseDisk::create(storage, 512, 32, 1024).unwrap();
+    let mut storage = disk.into_storage();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Sparse);
+}
+
+#[test]
+fn detect_aerospar_magic_without_valid_header_is_raw() {
+    let mut storage = MemStorage::with_len(64);
+    let mut header = [0u8; 64];
+    header[..8].copy_from_slice(b"AEROSPAR");
+    // Version is at offset 8 (little-endian). Use an invalid version so header decode fails.
+    header[8..12].copy_from_slice(&99u32.to_le_bytes());
+    storage.write_at(0, &header).unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
+fn detect_aerosprs_magic_without_valid_header_is_raw() {
+    let mut storage = MemStorage::with_len(4096);
+    let mut header = [0u8; 4096];
+    header[..8].copy_from_slice(b"AEROSPRS");
+    // Version at 8 (little-endian).
+    header[8..12].copy_from_slice(&99u32.to_le_bytes());
+    storage.write_at(0, &header).unwrap();
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Raw);
+}
+
+#[test]
 fn raw_disk_create_and_rw_roundtrip() {
     let storage = MemStorage::default();
     let mut disk = emulator::io::storage::formats::RawDisk::create(storage, 512, 8).unwrap();
