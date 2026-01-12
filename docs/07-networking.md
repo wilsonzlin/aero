@@ -1120,6 +1120,7 @@ Relevant implementation files:
 
 - UI surface: `web/src/net/trace_ui.ts`
 - Tunnel forwarder owner (where the capture boundary lives): `web/src/workers/net.worker.ts`
+- Forwarder capture hook semantics: `web/src/net/l2TunnelForwarder.ts`
 - Capture implementation + PCAPNG writer: `web/src/net/net_tracer.ts`, `web/src/net/pcapng.ts`
 - Coordinator API + message types (worker runtime): `web/src/runtime/coordinator.ts`, `web/src/runtime/protocol.ts`
 
