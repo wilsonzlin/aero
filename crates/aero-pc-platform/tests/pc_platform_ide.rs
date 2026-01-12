@@ -362,6 +362,71 @@ fn pc_platform_ide_respects_nien_interrupt_disable() {
         interrupts.pic_mut().acknowledge(pending);
         interrupts.pic_mut().eoi(pending);
     }
+
+    // Clear the IDE device interrupt by reading the status register, then ensure the PIC no longer
+    // has a pending vector.
+    let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Now verify that toggling nIEN after an interrupt becomes pending suppresses delivery.
+    //
+    // In a real machine the interrupt would be asserted asynchronously; the platform polls the
+    // device's `*_irq_pending()` flags to drive the ISA IRQ line. That poll must respect nIEN.
+    pc.io.write(PRIMARY_PORTS.ctrl_base, 1, 0x00); // ensure interrupts enabled
+    pc.memory.write_u32(read_buf, 0);
+
+    // READ DMA (LBA 0, 1 sector).
+    pc.io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    pc.io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+    pc.io.write(bm_base, 1, 0x09);
+
+    pc.process_ide();
+
+    assert!(
+        pc.ide
+            .as_ref()
+            .expect("IDE controller should be present")
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "DMA completion should leave a primary IDE IRQ pending before nIEN is set"
+    );
+
+    // Disable interrupts after the IRQ has become pending.
+    pc.io.write(PRIMARY_PORTS.ctrl_base, 1, 0x02); // nIEN=1
+    assert!(
+        !pc.ide
+            .as_ref()
+            .expect("IDE controller should be present")
+            .borrow()
+            .controller
+            .primary_irq_pending(),
+        "primary_irq_pending() should respect nIEN gating"
+    );
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts.borrow().pic().get_pending_vector(),
+        None,
+        "IRQ14 should be suppressed when nIEN is set after DMA completes"
+    );
+
+    // DMA should still succeed while interrupts are gated off.
+    let mut out = [0u8; 4];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(&out, b"BOOT");
+
+    // Clear pending IRQ by reading status, then re-enable interrupts and ensure it does not
+    // retroactively deliver an IRQ.
+    let _ = pc.io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    pc.io.write(PRIMARY_PORTS.ctrl_base, 1, 0x00); // nIEN=0
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
 
 #[test]

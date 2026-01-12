@@ -958,11 +958,11 @@ impl IdeController {
     }
 
     pub fn primary_irq_pending(&self) -> bool {
-        self.primary.irq_pending
+        self.primary.irq_pending && (self.primary.control & IDE_CTRL_NIEN) == 0
     }
 
     pub fn secondary_irq_pending(&self) -> bool {
-        self.secondary.irq_pending
+        self.secondary.irq_pending && (self.secondary.control & IDE_CTRL_NIEN) == 0
     }
 }
 
