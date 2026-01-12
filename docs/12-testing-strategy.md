@@ -1107,10 +1107,23 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Run benchmarks
-        run: cargo bench --locked
+        run: |
+          cargo bench --locked
+          # Criterion writes results to `target/criterion/`. Move them out so they
+          # don't get overwritten and so we can compare them against a baseline.
+          rm -rf target/bench-new/criterion
+          mkdir -p target/bench-new
+          mv target/criterion target/bench-new/criterion
       
       - name: Compare with baseline
-        run: ./scripts/compare-benchmarks.sh
+        run: |
+          # See `.github/workflows/bench.yml` for the full baseline download + PR
+          # base/head comparison logic.
+          python3 scripts/bench_compare.py \
+            --base baseline/target/bench-new/criterion \
+            --new target/bench-new/criterion \
+            --thresholds-file bench/perf_thresholds.json \
+            --profile pr-smoke
 ```
 
 #### CI note: GPU timing is optional
