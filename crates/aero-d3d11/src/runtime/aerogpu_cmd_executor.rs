@@ -8895,6 +8895,13 @@ mod tests {
                     .is_some_and(|tex| tex.host_shadow.is_some()),
                 "UPLOAD_RESOURCE should populate host_shadow"
             );
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| !tex.guest_backing_is_current),
+                "UPLOAD_RESOURCE should mark guest backing as stale"
+            );
 
             // Simulate guest memory update without invalidating `host_shadow`.
             // This matches the pre-fix failure mode (dirty=true + stale host_shadow).
@@ -8913,6 +8920,13 @@ mod tests {
                     .get(&TEX)
                     .is_some_and(|tex| tex.host_shadow.is_none()),
                 "guest-backed upload must invalidate stale host_shadow"
+            );
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.guest_backing_is_current),
+                "upload_texture_from_guest_memory must mark guest backing as current"
             );
 
             // Recreate `host_shadow` via another UPLOAD_RESOURCE and ensure RESOURCE_DIRTY_RANGE
@@ -8943,6 +8957,13 @@ mod tests {
                     .get(&TEX)
                     .is_some_and(|tex| tex.host_shadow.is_none()),
                 "RESOURCE_DIRTY_RANGE must invalidate stale host_shadow"
+            );
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| !tex.guest_backing_is_current),
+                "RESOURCE_DIRTY_RANGE must mark guest backing as stale"
             );
         });
     }
