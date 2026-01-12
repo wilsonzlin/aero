@@ -3870,6 +3870,15 @@ impl AerogpuD3d11Executor {
                 }
             }
         } else {
+            if self.shared_surfaces.refcounts.contains_key(&handle) {
+                // This handle is no longer a live handle (it was already destroyed), but it is
+                // still reserved as an underlying shared-surface ID because aliases remain alive.
+                //
+                // Avoid removing the underlying resource (which is keyed by this numeric handle)
+                // on duplicate destroys.
+                return Ok(());
+            }
+
             // Untracked handle; treat as a best-effort destroy (robustness).
             self.resources.buffers.remove(&handle);
             self.resources.textures.remove(&handle);
