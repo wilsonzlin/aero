@@ -1,6 +1,10 @@
 use aero_storage::{
     DiskError, MemBackend, Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk, SECTOR_SIZE,
 };
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
 const QCOW2_OFLAG_COMPRESSED: u64 = 1 << 62;
@@ -187,6 +191,68 @@ fn make_qcow2_with_pattern() -> MemBackend {
     backend.write_at(data_cluster_offset, &sector).unwrap();
 
     backend
+}
+
+fn make_qcow2_two_contiguous_data_clusters() -> MemBackend {
+    let cluster_bits = 12u32;
+    let cluster_size = 1u64 << cluster_bits;
+    let virtual_size = cluster_size * 3;
+    let l2_table_offset = cluster_size * 4;
+    let data0_offset = cluster_size * 5;
+    let data1_offset = cluster_size * 6;
+
+    let mut backend = make_qcow2_empty(virtual_size);
+    backend.set_len(cluster_size * 7).unwrap();
+
+    let l2_entry0 = data0_offset | QCOW2_OFLAG_COPIED;
+    let l2_entry1 = data1_offset | QCOW2_OFLAG_COPIED;
+    backend
+        .write_at(l2_table_offset, &l2_entry0.to_be_bytes())
+        .unwrap();
+    backend
+        .write_at(l2_table_offset + 8, &l2_entry1.to_be_bytes())
+        .unwrap();
+
+    let cluster0 = vec![0xA5u8; cluster_size as usize];
+    let cluster1 = vec![0x5Au8; cluster_size as usize];
+    backend.write_at(data0_offset, &cluster0).unwrap();
+    backend.write_at(data1_offset, &cluster1).unwrap();
+
+    backend
+}
+
+struct CountingBackend {
+    inner: MemBackend,
+    reads: Arc<AtomicU64>,
+}
+
+impl CountingBackend {
+    fn new(inner: MemBackend, reads: Arc<AtomicU64>) -> Self {
+        Self { inner, reads }
+    }
+}
+
+impl StorageBackend for CountingBackend {
+    fn len(&mut self) -> aero_storage::Result<u64> {
+        self.inner.len()
+    }
+
+    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
+        self.inner.set_len(len)
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.flush()
+    }
 }
 
 fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE] {
@@ -624,6 +690,32 @@ fn qcow2_allocates_new_refcount_block_when_needed() {
         .read_at(new_refcount_block_offset, &mut refcounts)
         .unwrap();
     assert_eq!(refcounts, [0, 1, 0, 1]);
+}
+
+#[test]
+fn qcow2_read_at_merges_contiguous_data_clusters() {
+    let backend = make_qcow2_two_contiguous_data_clusters();
+
+    let reads = Arc::new(AtomicU64::new(0));
+    let backend = CountingBackend::new(backend, reads.clone());
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    // Force the L2 table to be loaded/cached by reading an unallocated cluster.
+    // This should not trigger any data cluster reads.
+    reads.store(0, Ordering::Relaxed);
+    let mut tmp = [0u8; 1];
+    disk.read_at((1u64 << 12) * 2, &mut tmp).unwrap();
+    reads.store(0, Ordering::Relaxed);
+
+    // Read two full guest clusters at once. The fixture arranges for those two clusters to be
+    // backed by contiguous physical clusters, so the implementation should be able to merge
+    // them into a single backend `read_at` call.
+    let mut buf = vec![0u8; (1 << 12) * 2];
+    disk.read_at(0, &mut buf).unwrap();
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+    assert!(buf[..(1 << 12)].iter().all(|b| *b == 0xA5));
+    assert!(buf[(1 << 12)..].iter().all(|b| *b == 0x5A));
 }
 
 #[test]

@@ -615,31 +615,113 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
         }
 
         let cluster_size = self.cluster_size();
+        let cluster_size_usize: usize = cluster_size
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
+        if cluster_size_usize == 0 {
+            return Err(DiskError::CorruptImage("qcow2 cluster size is zero"));
+        }
 
-        let mut buf_off = 0usize;
-        while buf_off < buf.len() {
+        let mut pos = 0usize;
+        while pos < buf.len() {
             let cur_guest = offset
-                .checked_add(buf_off as u64)
+                .checked_add(pos as u64)
                 .ok_or(DiskError::OffsetOverflow)?;
             let guest_cluster_index = cur_guest / cluster_size;
             let offset_in_cluster = (cur_guest % cluster_size) as usize;
-            let remaining_in_cluster = cluster_size as usize - offset_in_cluster;
-            let chunk_len = remaining_in_cluster.min(buf.len() - buf_off);
 
+            let remaining = buf.len() - pos;
+            let remaining_in_cluster = cluster_size_usize - offset_in_cluster;
+            let chunk_len = remaining_in_cluster.min(remaining);
+
+            // Fast path: if we are cluster-aligned and reading whole clusters, merge contiguous
+            // clusters into a single backend read (or zero-fill) to reduce IO calls during
+            // sequential streaming/conversion.
+            let aligned_full_cluster = offset_in_cluster == 0 && chunk_len == cluster_size_usize;
+            if aligned_full_cluster {
+                let max_clusters = (remaining / cluster_size_usize) as u64;
+                debug_assert!(max_clusters >= 1);
+
+                let first = self.lookup_data_cluster(guest_cluster_index)?;
+                match first {
+                    Some(first_phys) => {
+                        let mut run_clusters = 1u64;
+                        while run_clusters < max_clusters {
+                            let idx = guest_cluster_index
+                                .checked_add(run_clusters)
+                                .ok_or(DiskError::OffsetOverflow)?;
+                            let Some(next_phys) = self.lookup_data_cluster(idx)? else {
+                                break;
+                            };
+                            let expected = first_phys
+                                .checked_add(
+                                    run_clusters
+                                        .checked_mul(cluster_size)
+                                        .ok_or(DiskError::OffsetOverflow)?,
+                                )
+                                .ok_or(DiskError::OffsetOverflow)?;
+                            if next_phys != expected {
+                                break;
+                            }
+                            run_clusters += 1;
+                        }
+
+                        let run_bytes_u64 = run_clusters
+                            .checked_mul(cluster_size)
+                            .ok_or(DiskError::OffsetOverflow)?;
+                        let run_bytes: usize = run_bytes_u64
+                            .try_into()
+                            .map_err(|_| DiskError::OffsetOverflow)?;
+
+                        self.backend_read_at(
+                            first_phys,
+                            &mut buf[pos..pos + run_bytes],
+                            "qcow2 data cluster truncated",
+                        )?;
+                        pos += run_bytes;
+                        continue;
+                    }
+                    None => {
+                        let mut run_clusters = 1u64;
+                        while run_clusters < max_clusters {
+                            let idx = guest_cluster_index
+                                .checked_add(run_clusters)
+                                .ok_or(DiskError::OffsetOverflow)?;
+                            if self.lookup_data_cluster(idx)?.is_some() {
+                                break;
+                            }
+                            run_clusters += 1;
+                        }
+
+                        let run_bytes_u64 = run_clusters
+                            .checked_mul(cluster_size)
+                            .ok_or(DiskError::OffsetOverflow)?;
+                        let run_bytes: usize = run_bytes_u64
+                            .try_into()
+                            .map_err(|_| DiskError::OffsetOverflow)?;
+
+                        buf[pos..pos + run_bytes].fill(0);
+                        pos += run_bytes;
+                        continue;
+                    }
+                }
+            }
+
+            // Slow path: partial-cluster read.
             if let Some(data_cluster) = self.lookup_data_cluster(guest_cluster_index)? {
                 let phys = data_cluster
                     .checked_add(offset_in_cluster as u64)
                     .ok_or(DiskError::OffsetOverflow)?;
                 self.backend_read_at(
                     phys,
-                    &mut buf[buf_off..buf_off + chunk_len],
+                    &mut buf[pos..pos + chunk_len],
                     "qcow2 data cluster truncated",
                 )?;
             } else {
-                buf[buf_off..buf_off + chunk_len].fill(0);
+                buf[pos..pos + chunk_len].fill(0);
             }
 
-            buf_off += chunk_len;
+            pos += chunk_len;
         }
 
         Ok(())
