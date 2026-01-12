@@ -510,6 +510,48 @@ fn qcow2_rejects_compressed_l2_entry() {
 }
 
 #[test]
+fn qcow2_rejects_unaligned_l1_entry() {
+    let cluster_size = 1u64 << 12;
+    let l1_table_offset = cluster_size * 2;
+    let l2_table_offset = cluster_size * 4;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED | 2;
+    backend
+        .write_at(l1_table_offset, &bad_l1_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 unaligned l1 entry")
+    ));
+}
+
+#[test]
+fn qcow2_rejects_unaligned_l2_entry() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+    let data_cluster_offset = cluster_size * 5;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let bad_l2_entry = data_cluster_offset | QCOW2_OFLAG_COPIED | 2;
+    backend
+        .write_at(l2_table_offset, &bad_l2_entry.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+    let mut buf = [0u8; SECTOR_SIZE];
+    let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 unaligned l2 entry")
+    ));
+}
+
+#[test]
 fn qcow2_rejects_unaligned_refcount_block_entry() {
     let cluster_size = 1u64 << 12;
     let refcount_table_offset = cluster_size;

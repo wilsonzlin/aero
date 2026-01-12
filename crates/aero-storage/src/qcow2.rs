@@ -353,6 +353,10 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         if (l1_entry & QCOW2_OFLAG_COMPRESSED) != 0 {
             return Err(DiskError::Unsupported("qcow2 compressed l1"));
         }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
+        if (l1_entry & low_mask) != 0 {
+            return Err(DiskError::CorruptImage("qcow2 unaligned l1 entry"));
+        }
         let offset = self.mask_offset(l1_entry);
         if offset == 0 {
             return Err(DiskError::CorruptImage("qcow2 invalid l1 entry"));
@@ -367,8 +371,15 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         if (l2_entry & QCOW2_OFLAG_COMPRESSED) != 0 {
             return Err(DiskError::Unsupported("qcow2 compressed cluster"));
         }
+        let low_mask = (1u64 << self.header.cluster_bits) - 1;
         if (l2_entry & QCOW2_OFLAG_ZERO) != 0 {
+            if (l2_entry & low_mask) != QCOW2_OFLAG_ZERO {
+                return Err(DiskError::CorruptImage("qcow2 invalid zero cluster entry"));
+            }
             return Ok(None);
+        }
+        if (l2_entry & low_mask) != 0 {
+            return Err(DiskError::CorruptImage("qcow2 unaligned l2 entry"));
         }
         let offset = self.mask_offset(l2_entry);
         if offset == 0 {
