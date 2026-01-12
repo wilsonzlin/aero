@@ -1,3 +1,4 @@
+use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_net_stack::packet::*;
 use aero_net_stack::{Action, DnsResolved, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent};
@@ -192,6 +193,54 @@ fn snapshot_loads_legacy_device_id_header() {
     // Re-saving always uses the canonical device id.
     let resaved = restored.save_state();
     assert_eq!(&resaved[8..12], b"NETS");
+}
+
+#[test]
+fn snapshot_rejects_excessive_tcp_connection_count() {
+    // Tag numbers are part of the snapshot format documented in `aero-net-stack/src/stack.rs`.
+    const TAG_TCP_CONNS: u16 = 7;
+
+    let mut w = SnapshotWriter::new(
+        <NetworkStack as IoSnapshot>::DEVICE_ID,
+        <NetworkStack as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_TCP_CONNS, u32::MAX.to_le_bytes().to_vec());
+
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let err = stack
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject excessive TCP connection count");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many tcp connections"));
+}
+
+#[test]
+fn snapshot_rejects_overlong_dns_name() {
+    // Tag numbers are part of the snapshot format documented in `aero-net-stack/src/stack.rs`.
+    const TAG_DNS_CACHE: u16 = 6;
+
+    // `NetworkStackSnapshotState::load_state` caps DNS name length at 1024 bytes. Use 1025 to
+    // ensure corrupt snapshots are rejected.
+    const INVALID_DNS_NAME_LEN: u32 = 1025;
+
+    let mut w = SnapshotWriter::new(
+        <NetworkStack as IoSnapshot>::DEVICE_ID,
+        <NetworkStack as IoSnapshot>::DEVICE_VERSION,
+    );
+
+    // Nested DNS cache encoding: count + (name_len + name_bytes + addr + expires_at_ms).
+    // We intentionally omit the rest of the entry because the decoder should reject based on the
+    // declared name length before attempting to read the bytes.
+    let buf = Encoder::new()
+        .u32(1) // count
+        .u32(INVALID_DNS_NAME_LEN)
+        .finish();
+    w.field_bytes(TAG_DNS_CACHE, buf);
+
+    let mut stack = NetworkStack::new(StackConfig::default());
+    let err = stack
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject overlong DNS name");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("dns name too long"));
 }
 
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
