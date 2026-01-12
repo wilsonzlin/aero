@@ -64,6 +64,24 @@ export interface PciDevice {
    * fields after the bus has written the standard header/BARs/capabilities.
    */
   initConfigSpace?(config: Uint8Array, addr: PciAddress): void;
+  /**
+   * Optional hook called once during {@link PciBus.registerDevice}.
+   *
+   * Called after the bus has written:
+   * - vendor/device IDs
+   * - revision/class code
+   * - header type
+   * - IRQ line/pin
+   * - BARs (including any 64-bit BARs)
+   *
+   * This enables devices (e.g. virtio-pci modern) to populate fields like:
+   * - subsystem vendor/device IDs (0x2c..0x2f)
+   * - Status.CAP_LIST + capability pointer (0x34) + capability structures
+   *
+   * The PCI bus will re-assert BAR and command register invariants after this
+   * hook returns so devices cannot interfere with BAR decoding/mapping.
+   */
+  initPciConfig?(config: Uint8Array): void;
 
   mmioRead?(barIndex: number, offset: bigint, size: number): number;
   mmioWrite?(barIndex: number, offset: bigint, size: number, value: number): void;
@@ -277,8 +295,29 @@ export class PciBus implements PortIoHandler {
       this.#installCapabilities(config, device.capabilities);
     }
 
+    // Allow device to initialize additional config space (e.g. subsystem IDs,
+    // capability list structures).
+    device.initPciConfig?.(config);
+
     // Allow device to populate additional config bytes.
     device.initConfigSpace?.(config, addrFull);
+
+    // Ensure devices cannot violate BAR decoding/mapping invariants via config
+    // init hooks. (Status bits are intentionally left untouched.)
+    //
+    // Keep PCI command bits clear until the guest enables them.
+    config[0x04] = 0x00;
+    config[0x05] = 0x00;
+    // Re-encode BAR dwords from the bus-controlled state so config space stays
+    // consistent with runtime BAR mappings.
+    for (const slot of bars) {
+      if (!slot || slot.part !== "low") continue;
+      const bar = slot.bar;
+      writeU32LE(config, 0x10 + bar.index * 4, this.#encodeBarValueLow(bar));
+      if (bar.desc.kind === "mmio64") {
+        writeU32LE(config, 0x10 + (bar.index + 1) * 4, this.#encodeBarValueHigh(bar));
+      }
+    }
 
     const fn: PciFunction = { addr: addrFull, config, device, bars };
     this.#functions[devNum]![fnNum] = fn;
@@ -412,7 +451,7 @@ export class PciBus implements PortIoHandler {
       // Update BAR base. For 64-bit BARs the base can be written via either dword.
       if (bar.desc.kind === "mmio64") {
         if (slot.part === "low") {
-          const lo = BigInt(value & 0xffff_fff0);
+          const lo = BigInt((value & 0xffff_fff0) >>> 0);
           bar.base = (bar.base & 0xffff_ffff_0000_0000n) | lo;
         } else {
           const hi = BigInt(value >>> 0);
@@ -424,8 +463,8 @@ export class PciBus implements PortIoHandler {
         writeU32LE(fn.config, 0x10 + (bar.index + 1) * 4, this.#encodeBarValueHigh(bar));
       } else {
         // 32-bit MMIO or IO BAR.
-        if (bar.desc.kind === "mmio32") bar.base = BigInt(value & 0xffff_fff0);
-        else bar.base = BigInt(value & 0xffff_fffc);
+        if (bar.desc.kind === "mmio32") bar.base = BigInt((value & 0xffff_fff0) >>> 0);
+        else bar.base = BigInt((value & 0xffff_fffc) >>> 0);
         writeU32LE(fn.config, alignedOff, this.#encodeBarValueLow(bar));
       }
 

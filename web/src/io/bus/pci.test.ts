@@ -137,6 +137,13 @@ describe("io/bus/pci", () => {
     pciBus.registerDevice(dev, { device: 0, function: 0 });
 
     const cfg = makeCfgIo(portBus);
+    // Verify BAR0 encodes a 64-bit memory BAR (bits 3:0 = 0b0100) and the upper
+    // 32 bits are present in BAR1.
+    const bar0Low = cfg.readU32(0, 0, 0x10);
+    const bar0High = cfg.readU32(0, 0, 0x14);
+    expect(bar0Low & 0x0f).toBe(0x04);
+    expect(bar0High).toBe(0x0000_0000);
+
     // Write all-ones to both halves of BAR0.
     cfg.writeU32(0, 0, 0x10, 0xffff_ffff);
     cfg.writeU32(0, 0, 0x14, 0xffff_ffff);
@@ -145,6 +152,49 @@ describe("io/bus/pci", () => {
     // Low dword must include type bits for 64-bit BAR (0x4).
     expect(cfg.readU32(0, 0, 0x10)).toBe(0xffff_c004);
     expect(cfg.readU32(0, 0, 0x14)).toBe(0xffff_ffff);
+  });
+
+  it("calls initPciConfig() during registration and preserves written fields", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "init_cfg_dev",
+      vendorId: 0x3333,
+      deviceId: 0x4444,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      initPciConfig: (config) => {
+        // Subsystem IDs.
+        config[0x2c] = 0x34;
+        config[0x2d] = 0x12;
+        config[0x2e] = 0x78;
+        config[0x2f] = 0x56;
+
+        // Capabilities list present + a dummy capability.
+        config[0x06] |= 0x10;
+        config[0x34] = 0x50;
+        config[0x50] = 0x09; // vendor-specific
+        config[0x51] = 0x00; // end of list
+        config[0x52] = 0x08; // length (arbitrary)
+        config[0x53] = 0x00;
+        config[0x54] = 0xde;
+        config[0x55] = 0xad;
+        config[0x56] = 0xbe;
+        config[0x57] = 0xef;
+      },
+    };
+
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0x5678_1234);
+    expect(cfg.readU16(addr.device, addr.function, 0x06) & 0x0010).toBe(0x0010);
+    expect(cfg.readU8(addr.device, addr.function, 0x34)).toBe(0x50);
+    expect(cfg.readU32(addr.device, addr.function, 0x50)).toBe(0x0008_0009);
+    expect(cfg.readU32(addr.device, addr.function, 0x54)).toBe(0xefbe_adde);
   });
 
   it("builds a valid, acyclic PCI capability list with aligned pointers", () => {
