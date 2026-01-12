@@ -16,3 +16,12 @@ pub mod pci_ahci;
 
 pub use bus::{GuestMemory, GuestMemoryExt, IrqLine};
 pub use pci_ahci::AhciPciDevice;
+
+/// PCI PIIX3-compatible IDE controller with ATA + ATAPI + Bus Master DMA.
+pub mod pci_ide;
+
+/// Bus Master IDE (BMIDE) DMA engine used by [`pci_ide`].
+pub mod busmaster;
+
+/// ATAPI CD-ROM (packet device) used by [`pci_ide`].
+pub mod atapi;
