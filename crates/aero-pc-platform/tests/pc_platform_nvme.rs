@@ -29,6 +29,52 @@ fn read_nvme_bar0_base(pc: &mut PcPlatform) -> u64 {
     (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xffff_fff0)
 }
 
+fn build_command(opc: u8) -> [u8; 64] {
+    let mut cmd = [0u8; 64];
+    cmd[0] = opc;
+    cmd
+}
+
+fn set_cid(cmd: &mut [u8; 64], cid: u16) {
+    cmd[2..4].copy_from_slice(&cid.to_le_bytes());
+}
+
+fn set_nsid(cmd: &mut [u8; 64], nsid: u32) {
+    cmd[4..8].copy_from_slice(&nsid.to_le_bytes());
+}
+
+fn set_prp1(cmd: &mut [u8; 64], prp1: u64) {
+    cmd[24..32].copy_from_slice(&prp1.to_le_bytes());
+}
+
+fn set_cdw10(cmd: &mut [u8; 64], val: u32) {
+    cmd[40..44].copy_from_slice(&val.to_le_bytes());
+}
+
+fn set_cdw11(cmd: &mut [u8; 64], val: u32) {
+    cmd[44..48].copy_from_slice(&val.to_le_bytes());
+}
+
+fn set_cdw12(cmd: &mut [u8; 64], val: u32) {
+    cmd[48..52].copy_from_slice(&val.to_le_bytes());
+}
+
+#[derive(Debug)]
+struct CqEntry {
+    cid: u16,
+    status: u16,
+}
+
+fn read_cqe(pc: &mut PcPlatform, addr: u64) -> CqEntry {
+    let mut bytes = [0u8; 16];
+    pc.memory.read_physical(addr, &mut bytes);
+    let dw3 = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+    CqEntry {
+        cid: (dw3 & 0xffff) as u16,
+        status: (dw3 >> 16) as u16,
+    }
+}
+
 #[test]
 fn pc_platform_enumerates_nvme_and_assigns_bar0() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
@@ -56,14 +102,7 @@ fn pc_platform_nvme_admin_identify_produces_completion_and_intx() {
     let bdf = NVME_CONTROLLER.bdf;
 
     // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
-    write_cfg_u16(
-        &mut pc,
-        bdf.bus,
-        bdf.device,
-        bdf.function,
-        0x04,
-        0x0006,
-    );
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 
     // Unmask IRQ2 (cascade) and the routed NVMe INTx IRQ (device 3 INTA# -> PIRQD -> GSI/IRQ13).
     {
@@ -239,4 +278,102 @@ fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 13);
+}
+
+#[test]
+fn pc_platform_nvme_bar0_rw_flush_roundtrip() {
+    let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    // Allow bus mastering for NVMe DMA (queues + data buffers).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let io_cq = 0x40000u64;
+    let io_sq = 0x50000u64;
+    let write_buf = 0x60000u64;
+    let read_buf = 0x61000u64;
+
+    // Admin SQ/CQ setup and enable.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // 16/16 queues
+    pc.memory.write_u64(bar0_base + 0x0028, asq);
+    pc.memory.write_u64(bar0_base + 0x0030, acq);
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x001c) & 1, 1);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    pc.memory.write_physical(asq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 1); // SQ0 tail = 1
+    pc.process_nvme();
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    pc.memory.write_physical(asq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1000, 2); // SQ0 tail = 2
+    pc.process_nvme();
+
+    // Consume admin CQ completions so INTx reflects the I/O queue only.
+    pc.memory.write_u32(bar0_base + 0x1004, 2); // CQ0 head = 2
+
+    // WRITE 1 sector at LBA 0.
+    let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    pc.memory.write_physical(write_buf, &payload);
+
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 0x10);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_buf);
+    set_cdw10(&mut cmd, 0); // slba low
+    set_cdw11(&mut cmd, 0); // slba high
+    set_cdw12(&mut cmd, 0); // nlb = 0 (1 sector)
+    pc.memory.write_physical(io_sq, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 1); // SQ1 tail = 1
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq);
+    assert_eq!(cqe.cid, 0x10);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    // READ it back.
+    let mut cmd = build_command(0x02);
+    set_cid(&mut cmd, 0x11);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    pc.memory.write_physical(io_sq + 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 2); // SQ1 tail = 2
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 16);
+    assert_eq!(cqe.cid, 0x11);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; payload.len()];
+    pc.memory.read_physical(read_buf, &mut out);
+    assert_eq!(out, payload);
+
+    // FLUSH.
+    let mut cmd = build_command(0x00);
+    set_cid(&mut cmd, 0x12);
+    set_nsid(&mut cmd, 1);
+    pc.memory.write_physical(io_sq + 2 * 64, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 3); // SQ1 tail = 3
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 2 * 16);
+    assert_eq!(cqe.cid, 0x12);
+    assert_eq!(cqe.status & !0x1, 0);
 }
