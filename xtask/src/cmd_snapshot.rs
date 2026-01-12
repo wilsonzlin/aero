@@ -3,8 +3,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
-    Compression, CpuState, DeviceId, RamMode, SectionId, SnapshotError, SnapshotIndex,
-    SnapshotSectionInfo, SnapshotTarget,
+    Compression, CpuState, DeviceId, DiskOverlayRefs, RamMode, SectionId, SnapshotError,
+    SnapshotIndex, SnapshotSectionInfo, SnapshotTarget,
 };
 
 use crate::error::{Result, XtaskError};
@@ -119,6 +119,10 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
     if let Some(devices) = index.sections.iter().find(|s| s.id == SectionId::DEVICES) {
         println!("DEVICES:");
         print_devices_section_summary(&mut file, devices);
+    }
+    if let Some(disks) = index.sections.iter().find(|s| s.id == SectionId::DISKS) {
+        println!("DISKS:");
+        print_disks_section_summary(&mut file, disks);
     }
 
     println!("RAM:");
@@ -280,6 +284,44 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             println!("  <failed to skip device payload: {e}>");
             return;
         }
+    }
+}
+
+fn print_disks_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
+    const MAX_PRINT_CHARS: usize = 200;
+    const MAX_PRINT_DISKS: usize = 64;
+
+    if section.version != 1 {
+        println!("  <unsupported DISKS section version {}>", section.version);
+        return;
+    }
+    if let Err(e) = file.seek(SeekFrom::Start(section.offset)) {
+        println!("  <failed to seek: {e}>");
+        return;
+    }
+    let mut limited = file.take(section.len);
+    let Ok(disks) = DiskOverlayRefs::decode(&mut limited) else {
+        println!("  <failed to decode DISKS payload>");
+        return;
+    };
+
+    println!("  count: {}", disks.disks.len());
+    for (idx, disk) in disks.disks.iter().take(MAX_PRINT_DISKS).enumerate() {
+        fn truncate(s: &str, max_chars: usize) -> String {
+            if s.chars().count() <= max_chars {
+                return s.to_string();
+            }
+            let mut out: String = s.chars().take(max_chars).collect();
+            out.push_str("…");
+            out
+        }
+
+        let base = truncate(&disk.base_image, MAX_PRINT_CHARS);
+        let overlay = truncate(&disk.overlay_image, MAX_PRINT_CHARS);
+        println!("  - [{idx}] disk_id={} base_image={base:?} overlay_image={overlay:?}", disk.disk_id);
+    }
+    if disks.disks.len() > MAX_PRINT_DISKS {
+        println!("  ... ({} more)", disks.disks.len() - MAX_PRINT_DISKS);
     }
 }
 
