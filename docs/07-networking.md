@@ -1206,7 +1206,7 @@ The gateway (`backend/aero-gateway`) exposes operational endpoints intended for 
 
 For traffic-level debugging, prefer:
 
-- client-side PCAP/trace exports (see **Packet Tracing & Debugging** above), and/or
+- client-side PCAP/trace exports (see **Network Tracing (PCAP/PCAPNG Export)** above), and/or
 - infrastructure-level capture (reverse proxy logs, host packet capture in controlled environments).
 
 ## L2 proxy observability (health, readiness, metrics, capture)
