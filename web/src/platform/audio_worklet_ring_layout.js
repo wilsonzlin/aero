@@ -25,11 +25,15 @@ export function framesAvailable(readFrameIndex, writeFrameIndex) {
 }
 
 export function framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames) {
-  return Math.min(framesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
+  // Treat capacity as a wrapping u32 to match the Rust/WASM implementation and avoid callers
+  // accidentally passing negative/non-integer values that would make clamping behave strangely.
+  const cap = capacityFrames >>> 0;
+  return Math.min(framesAvailable(readFrameIndex, writeFrameIndex), cap);
 }
 
 export function framesFree(readFrameIndex, writeFrameIndex, capacityFrames) {
-  return capacityFrames - framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
+  const cap = capacityFrames >>> 0;
+  return (cap - framesAvailableClamped(readFrameIndex, writeFrameIndex, cap)) >>> 0;
 }
 
 export function getRingBufferLevelFrames(header, capacityFrames) {
