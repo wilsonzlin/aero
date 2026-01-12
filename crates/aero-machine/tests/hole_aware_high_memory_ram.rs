@@ -1,9 +1,16 @@
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
+use std::sync::Mutex;
+
+// These regression tests intentionally configure a VM with >2.75GiB of guest RAM to ensure the
+// PC PCI/ECAM hole behavior is correct. Serializing the tests avoids running multiple such VMs in
+// parallel under the default Rust test harness, which can otherwise spike memory usage.
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn hole_aware_ram_maps_high_memory_above_4gib_and_hole_is_open_bus() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let cfg = MachineConfig {
         ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
         // Keep the machine minimal for this regression test.
@@ -33,6 +40,7 @@ fn hole_aware_ram_maps_high_memory_above_4gib_and_hole_is_open_bus() {
 
 #[test]
 fn snapshot_roundtrip_preserves_high_memory_contents() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let cfg = MachineConfig {
         ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
         enable_serial: false,
@@ -54,6 +62,10 @@ fn snapshot_roundtrip_preserves_high_memory_contents() {
     let pattern: Vec<u8> = (0..0x2000).map(|i| (i as u8).wrapping_mul(37)).collect();
     src.write_physical(0x1_0000_0000, &pattern);
     let diff = src.take_snapshot_dirty().unwrap();
+
+    // Drop the source machine before constructing the restore target to keep peak memory usage
+    // bounded (these tests use a multi-gigabyte RAM config).
+    drop(src);
 
     let mut restored = Machine::new(cfg).unwrap();
     snapshot::SnapshotTarget::restore_meta(&mut restored, base_meta);
