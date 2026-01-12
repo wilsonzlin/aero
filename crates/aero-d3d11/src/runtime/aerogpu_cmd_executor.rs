@@ -82,6 +82,7 @@ const OPCODE_SET_INDEX_BUFFER: u32 = AerogpuCmdOpcode::SetIndexBuffer as u32;
 const OPCODE_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
 const OPCODE_SET_TEXTURE: u32 = AerogpuCmdOpcode::SetTexture as u32;
 const OPCODE_SET_SAMPLER_STATE: u32 = AerogpuCmdOpcode::SetSamplerState as u32;
+const OPCODE_SET_RENDER_STATE: u32 = AerogpuCmdOpcode::SetRenderState as u32;
 const OPCODE_CREATE_SAMPLER: u32 = AerogpuCmdOpcode::CreateSampler as u32;
 const OPCODE_DESTROY_SAMPLER: u32 = AerogpuCmdOpcode::DestroySampler as u32;
 const OPCODE_SET_SAMPLERS: u32 = AerogpuCmdOpcode::SetSamplers as u32;
@@ -1224,6 +1225,7 @@ impl AerogpuD3d11Executor {
             OPCODE_PRESENT_EX => self.exec_present_ex(encoder, cmd_bytes, report),
             OPCODE_FLUSH => self.exec_flush(encoder),
             // Known-but-ignored state that should not crash bring-up.
+            OPCODE_SET_RENDER_STATE => Ok(()),
             OPCODE_SET_BLEND_STATE => self.exec_set_blend_state(cmd_bytes),
             OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes),
             OPCODE_SET_RASTERIZER_STATE => self.exec_set_rasterizer_state(cmd_bytes),
@@ -1653,6 +1655,7 @@ impl AerogpuD3d11Executor {
                 | OPCODE_SET_PRIMITIVE_TOPOLOGY
                 | OPCODE_SET_TEXTURE
                 | OPCODE_SET_SAMPLER_STATE
+                | OPCODE_SET_RENDER_STATE
                 | OPCODE_SET_SAMPLERS
                 | OPCODE_SET_CONSTANT_BUFFERS
                 | OPCODE_CLEAR
@@ -2768,6 +2771,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_SET_PRIMITIVE_TOPOLOGY => self.exec_set_primitive_topology(cmd_bytes)?,
                 OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes)?,
                 OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes)?,
+                OPCODE_SET_RENDER_STATE => {}
                 OPCODE_CREATE_SAMPLER => self.exec_create_sampler(cmd_bytes)?,
                 OPCODE_DESTROY_SAMPLER => self.exec_destroy_sampler(cmd_bytes)?,
                 OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes)?,
