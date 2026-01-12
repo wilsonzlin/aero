@@ -511,18 +511,24 @@ impl<B: StorageBackend> Qcow2Disk<B> {
 
     fn set_l2_entry(&mut self, l2_offset: u64, l2_index: usize, entry: u64) -> Result<()> {
         self.ensure_l2_cached(l2_offset)?;
-        let table = self
-            .l2_cache
-            .get_mut(&l2_offset)
-            .ok_or(DiskError::CorruptImage("qcow2 l2 cache missing"))?;
-        if l2_index >= table.len() {
-            return Err(DiskError::CorruptImage("qcow2 l2 index out of range"));
+        {
+            let table = self
+                .l2_cache
+                .get(&l2_offset)
+                .ok_or(DiskError::CorruptImage("qcow2 l2 cache missing"))?;
+            if l2_index >= table.len() {
+                return Err(DiskError::CorruptImage("qcow2 l2 index out of range"));
+            }
         }
-        table[l2_index] = entry;
         let offset = l2_offset
             .checked_add((l2_index as u64) * 8)
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend.write_at(offset, &entry.to_be_bytes())?;
+        let table = self
+            .l2_cache
+            .get_mut(&l2_offset)
+            .ok_or(DiskError::CorruptImage("qcow2 l2 cache missing"))?;
+        table[l2_index] = entry;
         Ok(())
     }
 
@@ -543,7 +549,6 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         self.set_refcount_for_offset(new_l2_offset, 1)?;
 
         let entry = new_l2_offset | QCOW2_OFLAG_COPIED;
-        self.l1_table[l1_index] = entry;
         let l1_entry_offset = self
             .header
             .l1_table_offset
@@ -551,6 +556,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend
             .write_at(l1_entry_offset, &entry.to_be_bytes())?;
+        self.l1_table[l1_index] = entry;
 
         let l2_entries: usize = self
             .l2_entries_per_table()
@@ -627,18 +633,22 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         {
             let block = self
                 .refcount_cache
-                .get_mut(&block_offset)
+                .get(&block_offset)
                 .ok_or(DiskError::CorruptImage("qcow2 refcount cache missing"))?;
             if entry_index >= block.len() {
                 return Err(DiskError::CorruptImage("qcow2 refcount entry out of range"));
             }
-            block[entry_index] = value;
         }
 
         let entry_offset = block_offset
             .checked_add((entry_index as u64) * 2)
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend.write_at(entry_offset, &value.to_be_bytes())?;
+        let block = self
+            .refcount_cache
+            .get_mut(&block_offset)
+            .ok_or(DiskError::CorruptImage("qcow2 refcount cache missing"))?;
+        block[entry_index] = value;
         Ok(())
     }
 
@@ -672,7 +682,6 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         let new_block_offset = self.allocate_cluster_raw()?;
         write_zeroes(&mut self.backend, new_block_offset, cluster_size)?;
 
-        self.refcount_table[block_index] = new_block_offset;
         let entry_offset = self
             .header
             .refcount_table_offset
@@ -680,6 +689,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend
             .write_at(entry_offset, &new_block_offset.to_be_bytes())?;
+        self.refcount_table[block_index] = new_block_offset;
 
         self.ensure_refcount_block_cached(new_block_offset)?;
 

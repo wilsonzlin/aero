@@ -1019,6 +1019,31 @@ fn qcow2_read_at_merges_contiguous_data_clusters() {
 }
 
 #[test]
+fn qcow2_failed_l2_entry_write_does_not_leave_cached_mapping() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+
+    // Fail the 8-byte L2 entry update for guest cluster 0.
+    let backend = make_qcow2_empty(64 * 1024);
+    let backend = FailOnWriteBackend::new(backend, l2_table_offset, 8);
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    let data = vec![0x55u8; SECTOR_SIZE];
+
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // Retry should still fail (the failed metadata update must not have been cached).
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // Since the L2 entry was never persisted, reads must still return zeros.
+    let mut back = vec![0xAAu8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut back).unwrap();
+    assert!(back.iter().all(|b| *b == 0));
+}
+
+#[test]
 fn vhd_fixed_fixture_read() {
     let backend = make_vhd_fixed_with_pattern();
     let mut disk = VhdDisk::open(backend).unwrap();
