@@ -15,6 +15,7 @@ type CpuWorkerToMainMessage =
       installed_table_index: number | null;
       runtime_installed_entry_rip: number | null;
       runtime_installed_table_index: number | null;
+      rollback_ok: boolean;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
@@ -25,6 +26,22 @@ type CpuWorkerStartMessage = {
 };
 
 const ENTRY_RIP = 0x1000;
+
+// Tier-1 JIT ABI constants (mirrors `aero_cpu_core::state`).
+// If these drift, rollback will restore the wrong byte window.
+const CPU_STATE_SIZE = 1072;
+const CPU_RAX_OFF = 0;
+const CPU_RIP_OFF = 128;
+
+// Tier-1 "exit to interpreter" sentinel return value (`u64::MAX` encoded as `i64`).
+const JIT_EXIT_SENTINEL_I64 = -1n;
+
+type HostExitState = { mmio_exit: boolean; jit_exit: boolean; page_fault: boolean };
+type WriteLogEntry = { addr: number; size: number; old_value_bytes: Uint8Array };
+
+function hostExitStateShouldRollback(state: HostExitState): boolean {
+  return state.mmio_exit || state.jit_exit || state.page_fault;
+}
 
 function postToMain(msg: CpuWorkerToMainMessage) {
   ctx.postMessage(msg);
@@ -146,16 +163,62 @@ async function runTieredVm(iterations: number, threshold: number) {
 
   // Install JS-side tier-1 call table that the WASM tiered runtime imports via `globalThis.__aero_jit_call`.
   const jitFns: Array<(cpu_ptr: number, jit_ctx_ptr: number) => bigint> = [];
+
+  // Rollback state is scoped to a single `__aero_jit_call` invocation.
+  // `env.*` imports consult these while a block is executing.
+  let activeExitState: HostExitState | null = null;
+  let activeWriteLog: WriteLogEntry[] | null = null;
+
+  // Used for CPU state snapshots + write log byte copies.
+  // NOTE: This is a view, not a copy; snapshotting uses `.slice()`.
+  let memU8 = new Uint8Array(memory.buffer);
+  const refreshMemU8 = () => {
+    if (memU8.buffer === memory.buffer) return;
+    memU8 = new Uint8Array(memory.buffer);
+  };
+
   (globalThis as unknown as { __aero_jit_call?: unknown }).__aero_jit_call = (
     tableIndex: number,
     cpuPtr: number,
     jitCtxPtr: number,
-  ) => {
+  ): bigint => {
     const fn = jitFns[tableIndex];
     if (typeof fn !== 'function') {
       throw new Error(`missing JIT table entry ${tableIndex}`);
     }
-    return fn(cpuPtr, jitCtxPtr);
+
+    refreshMemU8();
+
+    // Per-call HostExitState + guest RAM write log.
+    const exitState: HostExitState = { mmio_exit: false, jit_exit: false, page_fault: false };
+    const writeLog: WriteLogEntry[] = [];
+    activeExitState = exitState;
+    activeWriteLog = writeLog;
+
+    // Snapshot the CpuState ABI region so we can roll back partial side effects on runtime exit.
+    const cpuSnapshot = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+
+    let ret: bigint;
+    try {
+      ret = fn(cpuPtr, jitCtxPtr);
+    } finally {
+      activeExitState = null;
+      activeWriteLog = null;
+    }
+
+    // Tier-1 contract: sentinel return value requests interpreter fallback.
+    const exitToInterpreter = ret === JIT_EXIT_SENTINEL_I64;
+    if (exitToInterpreter && hostExitStateShouldRollback(exitState)) {
+      // Roll back guest RAM writes (reverse order) and restore pre-block CPU state.
+      refreshMemU8();
+      for (let i = writeLog.length - 1; i >= 0; i--) {
+        const entry = writeLog[i]!;
+        memU8.set(entry.old_value_bytes, entry.addr);
+      }
+      memU8.set(cpuSnapshot, cpuPtr);
+    }
+
+    return ret;
   };
 
   // Create tiered VM and write a tiny hot-loop at 0x1000:
@@ -219,6 +282,13 @@ async function runTieredVm(iterations: number, threshold: number) {
     notify.call(vm, BigInt.asUintN(64, paddr), len >>> 0);
   };
 
+  const logWrite = (linearAddr: number, size: number) => {
+    const log = activeWriteLog;
+    if (!log) return;
+    refreshMemU8();
+    log.push({ addr: linearAddr, size, old_value_bytes: memU8.slice(linearAddr, linearAddr + size) });
+  };
+
   // Tier-1 imports required by generated blocks (even if the smoke block doesn't use them).
   const env = {
     memory,
@@ -227,19 +297,27 @@ async function runTieredVm(iterations: number, threshold: number) {
     mem_read_u32: (_cpuPtr: number, addr: bigint) => dv.getUint32(guest_base + u64AsNumber(addr), true) | 0,
     mem_read_u64: (_cpuPtr: number, addr: bigint) => i64ToBigInt(dv.getBigUint64(guest_base + u64AsNumber(addr), true)),
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
-      dv.setUint8(guest_base + u64AsNumber(addr), value & 0xff);
+      const linear = guest_base + u64AsNumber(addr);
+      logWrite(linear, 1);
+      dv.setUint8(linear, value & 0xff);
       onGuestWrite(addr, 1);
     },
     mem_write_u16: (_cpuPtr: number, addr: bigint, value: number) => {
-      dv.setUint16(guest_base + u64AsNumber(addr), value & 0xffff, true);
+      const linear = guest_base + u64AsNumber(addr);
+      logWrite(linear, 2);
+      dv.setUint16(linear, value & 0xffff, true);
       onGuestWrite(addr, 2);
     },
     mem_write_u32: (_cpuPtr: number, addr: bigint, value: number) => {
-      dv.setUint32(guest_base + u64AsNumber(addr), value >>> 0, true);
+      const linear = guest_base + u64AsNumber(addr);
+      logWrite(linear, 4);
+      dv.setUint32(linear, value >>> 0, true);
       onGuestWrite(addr, 4);
     },
     mem_write_u64: (_cpuPtr: number, addr: bigint, value: bigint) => {
-      dv.setBigUint64(guest_base + u64AsNumber(addr), BigInt.asUintN(64, value), true);
+      const linear = guest_base + u64AsNumber(addr);
+      logWrite(linear, 8);
+      dv.setBigUint64(linear, BigInt.asUintN(64, value), true);
       onGuestWrite(addr, 8);
     },
     mmu_translate: (_cpuPtr: number, jitCtxPtr: number, vaddr: bigint, _access: number) => {
@@ -261,9 +339,18 @@ async function runTieredVm(iterations: number, threshold: number) {
 
       return BigInt.asIntN(64, data);
     },
-    jit_exit_mmio: (_cpuPtr: number, _vaddr: bigint, _size: number, _isWrite: number, _value: bigint, rip: bigint) => rip,
-    jit_exit: (_kind: number, rip: bigint) => rip,
-    page_fault: (_cpuPtr: number, _addr: bigint) => -1n,
+    jit_exit_mmio: (_cpuPtr: number, _vaddr: bigint, _size: number, _isWrite: number, _value: bigint, rip: bigint) => {
+      if (activeExitState) activeExitState.mmio_exit = true;
+      return rip;
+    },
+    jit_exit: (_kind: number, rip: bigint) => {
+      if (activeExitState) activeExitState.jit_exit = true;
+      return rip;
+    },
+    page_fault: (_cpuPtr: number, _addr: bigint) => {
+      if (activeExitState) activeExitState.page_fault = true;
+      return JIT_EXIT_SENTINEL_I64;
+    },
   };
 
   let nextTableIndex = 0;
@@ -278,6 +365,67 @@ async function runTieredVm(iterations: number, threshold: number) {
     const jit = rec.jit_blocks;
     if (typeof interp === 'number') interp_executions += interp;
     if (typeof jit === 'number') jit_executions += jit;
+  };
+
+  const arraysEqual = (a: Uint8Array, b: Uint8Array): boolean => {
+    if (a.byteLength !== b.byteLength) return false;
+    for (let i = 0; i < a.byteLength; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  };
+
+  const runRollbackTest = (): boolean => {
+    try {
+      refreshMemU8();
+
+      // Pick deterministic addresses in guest RAM that are not touched by the hot-loop code at 0x1000.
+      const cpuPtr = guest_base + 0x8000;
+      const storeAddr = 0x200;
+      const storeLinear = guest_base + storeAddr;
+
+      // Initialize CPU ABI bytes + guest RAM store location.
+      const preRax = 0x1111222233334444n;
+      const preRip = 0x5555666677778888n;
+      const preStore = 0xdeadbeef;
+      dv.setBigUint64(cpuPtr + CPU_RAX_OFF, preRax, true);
+      dv.setBigUint64(cpuPtr + CPU_RIP_OFF, preRip, true);
+      dv.setUint32(storeLinear, preStore, true);
+
+      refreshMemU8();
+      const cpuBefore = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+
+      const tableIndex = nextTableIndex++;
+      jitFns[tableIndex] = (cpu_ptr: number, _jit_ctx_ptr: number): bigint => {
+        // Mutate the CpuState ABI region.
+        const rax = dv.getBigUint64(cpu_ptr + CPU_RAX_OFF, true);
+        dv.setBigUint64(cpu_ptr + CPU_RAX_OFF, rax + 1n, true);
+        const rip = dv.getBigUint64(cpu_ptr + CPU_RIP_OFF, true);
+        dv.setBigUint64(cpu_ptr + CPU_RIP_OFF, rip + 1n, true);
+
+        // Guest RAM store goes through the helper so it is logged.
+        env.mem_write_u32(cpu_ptr, BigInt(storeAddr), 0x12345678);
+
+        // Trigger a runtime bailout and request interpreter fallback.
+        env.jit_exit(0, 0n);
+        return JIT_EXIT_SENTINEL_I64;
+      };
+
+      const ret = (globalThis as unknown as { __aero_jit_call: (idx: number, cpu: number, ctx: number) => bigint })
+        .__aero_jit_call(tableIndex, cpuPtr, 0);
+      if (ret !== JIT_EXIT_SENTINEL_I64) return false;
+
+      refreshMemU8();
+      const cpuAfter = memU8.slice(cpuPtr, cpuPtr + CPU_STATE_SIZE);
+      if (!arraysEqual(cpuBefore, cpuAfter)) return false;
+
+      const storeAfter = dv.getUint32(storeLinear, true);
+      if (storeAfter !== preStore) return false;
+
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   async function installTier1(resp: CompileBlockResponse): Promise<number> {
@@ -364,6 +512,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   }
 
   void threshold;
+  const rollback_ok = runRollbackTest();
 
   const runtimeInstalledTableIndex = installedIndex;
   const runtimeInstalledEntryRip = installedIndex !== null ? ENTRY_RIP : null;
@@ -377,6 +526,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     installed_table_index: installedIndex,
     runtime_installed_entry_rip: runtimeInstalledEntryRip,
     runtime_installed_table_index: runtimeInstalledTableIndex,
+    rollback_ok,
   });
 
   jitWorker.terminate();

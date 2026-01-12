@@ -241,7 +241,6 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
   if (!result || typeof result !== 'object') {
     throw new Error('Missing JIT smoke result object');
   }
-
   const type = (result as any).type;
   expect(type).toBe('CpuWorkerResult');
   if (type !== 'CpuWorkerResult') {
@@ -300,4 +299,7 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
   // Verify RIP=0x1000 was compiled+installed.
   expect(hasCompiledRip(result, ENTRY_RIP)).toBe(true);
   expect(findBlockTableIndexByRip(result, ENTRY_RIP)).not.toBeNull();
+
+  // Correctness: runtime exits must roll back side effects so interpreter fallback can re-execute.
+  expect((result as any).rollback_ok).toBe(true);
 });

@@ -172,7 +172,8 @@ pub fn compile_tier1_block(
     options.inline_tlb = inline_tlb;
     if inline_tlb {
         // Browser tiered execution relies on the host-side runtime to observe guest stores (for
-        // MMIO classification + self-modifying code invalidation via `jit.on_guest_write(..)`).
+        // MMIO classification + self-modifying code invalidation via `jit.on_guest_write(..)`, and
+        // also requires host-side rollback on Tier-1 runtime exits (MMIO/jit_exit/page_fault).
         //
         // Inline-TLB stores emit direct `i64.store*` operations into guest RAM, bypassing those
         // hooks. Disable the store fast-path for now so stores go through the imported
@@ -221,4 +222,3 @@ pub fn compile_tier1_block(
 
     Ok(result.into())
 }
-
