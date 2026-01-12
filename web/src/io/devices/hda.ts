@@ -302,12 +302,19 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     if (dstSampleRateHz > 0 && typeof setRate === "function") {
       try {
         (setRate as (rateHz: number) => void).call(this.#bridge, dstSampleRateHz);
-        if (dstSampleRateHz !== this.#outputRateHz) {
-          this.#outputRateHz = dstSampleRateHz;
+
+        // Some WASM builds clamp the rate internally (see `MAX_HOST_SAMPLE_RATE_HZ`). Read back the
+        // reported output rate when available so our tick clock stays consistent with the device.
+        const reported = (bridgeAny as unknown as { output_sample_rate_hz?: unknown }).output_sample_rate_hz;
+        const effectiveRate =
+          typeof reported === "number" && Number.isFinite(reported) && reported > 0 ? (reported >>> 0) : dstSampleRateHz;
+
+        if (effectiveRate !== this.#outputRateHz) {
+          this.#outputRateHz = effectiveRate;
           // Recreate the clock at the new rate, preserving the last observed time
           // so we don't introduce a large delta on the next tick.
           if (this.#clock) {
-            this.#clock = new AudioFrameClock(dstSampleRateHz, this.#clock.lastTimeNs);
+            this.#clock = new AudioFrameClock(effectiveRate, this.#clock.lastTimeNs);
           }
         }
       } catch {
