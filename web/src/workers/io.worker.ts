@@ -2556,10 +2556,13 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
   const hda = hdaDevice;
   const snd = virtioSndDevice;
   if (hda) {
-    hda.setMicRingBuffer(ringBuffer);
+    // Prefer setting the sample rate before attaching so HdaPciDevice can use
+    // `attach_mic_ring(ring, sampleRate)` in one step when available (avoids an
+    // extra attach/detach cycle when the previous rate was 0).
     if (ringBuffer && micSampleRate > 0) {
       hda.setCaptureSampleRateHz(micSampleRate);
     }
+    hda.setMicRingBuffer(ringBuffer);
     // Ensure we never have two consumers racing the mic ring.
     if (snd) {
       try {
