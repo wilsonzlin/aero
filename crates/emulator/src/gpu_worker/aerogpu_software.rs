@@ -47,10 +47,26 @@ struct Texture2DResource {
     width: u32,
     height: u32,
     format: AeroGpuFormat,
+    mip_levels: u32,
+    array_layers: u32,
     row_pitch_bytes: u32,
     backing: Option<GuestBacking>,
     data: Vec<u8>,
     dirty: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Texture2DLayoutFormat {
+    Uncompressed { bytes_per_texel: u32 },
+    BlockCompressed { block_bytes: u32 },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Texture2DLinearLayout {
+    mip_levels: u32,
+    array_layers: u32,
+    mip0_row_pitch_bytes: u32,
+    total_size_bytes: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -636,6 +652,166 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    fn texture_2d_format_layout(format: AeroGpuFormat) -> Option<Texture2DLayoutFormat> {
+        match format {
+            AeroGpuFormat::B8G8R8A8Unorm
+            | AeroGpuFormat::B8G8R8X8Unorm
+            | AeroGpuFormat::R8G8B8A8Unorm
+            | AeroGpuFormat::R8G8B8X8Unorm
+            // Depth formats are treated as 4 bytes/texel for backing-size computations, matching
+            // host executors and the rest of this software backend.
+            | AeroGpuFormat::D24UnormS8Uint
+            | AeroGpuFormat::D32Float => Some(Texture2DLayoutFormat::Uncompressed {
+                bytes_per_texel: 4,
+            }),
+            AeroGpuFormat::B5G6R5Unorm | AeroGpuFormat::B5G5R5A1Unorm => {
+                Some(Texture2DLayoutFormat::Uncompressed {
+                    bytes_per_texel: 2,
+                })
+            }
+            // Block-compressed formats (4x4 blocks).
+            AeroGpuFormat::Bc1Unorm => Some(Texture2DLayoutFormat::BlockCompressed {
+                block_bytes: 8,
+            }),
+            AeroGpuFormat::Bc2Unorm
+            | AeroGpuFormat::Bc3Unorm
+            | AeroGpuFormat::Bc7Unorm => Some(Texture2DLayoutFormat::BlockCompressed {
+                block_bytes: 16,
+            }),
+            AeroGpuFormat::Invalid => None,
+        }
+    }
+
+    fn full_mip_chain_len(width: u32, height: u32) -> u32 {
+        let mut w = width.max(1);
+        let mut h = height.max(1);
+        let mut levels = 1u32;
+        while w > 1 || h > 1 {
+            w = (w >> 1).max(1);
+            h = (h >> 1).max(1);
+            levels = levels.saturating_add(1);
+            if levels >= 32 {
+                break;
+            }
+        }
+        levels.max(1)
+    }
+
+    /// Compute the total byte size of a linearly-laid-out Texture2D (including mip chain and array
+    /// layers) plus the effective mip0 row pitch.
+    ///
+    /// Layout rules (matches the host executors):
+    /// - Memory is laid out as: `for layer in 0..array_layers`, `for mip in 0..mip_levels`, append
+    ///   that subresource's bytes.
+    /// - For mip `m`:
+    ///   - `mip_w = max(1, width >> m)`, `mip_h = max(1, height >> m)`
+    ///   - Uncompressed row pitch:
+    ///     - mip0: use `row_pitch_bytes` if non-zero else `mip_w * bytes_per_texel`
+    ///     - mip>0: tight-pack: `mip_w * bytes_per_texel`
+    ///     - if `row_pitch_bytes` is provided, validate it is >= the minimum tight row pitch.
+    ///   - Block-compressed (BC) row pitch:
+    ///     - `blocks_w = ceil(mip_w/4)`, `blocks_h = ceil(mip_h/4)`
+    ///     - mip0: use `row_pitch_bytes` if non-zero else `blocks_w * block_bytes`
+    ///     - mip>0: tight-pack: `blocks_w * block_bytes`
+    ///     - subresource size = `row_pitch * blocks_h`
+    fn texture_2d_linear_layout(
+        format: AeroGpuFormat,
+        width: u32,
+        height: u32,
+        mip_levels: u32,
+        array_layers: u32,
+        row_pitch_bytes: u32,
+    ) -> Option<Texture2DLinearLayout> {
+        let max_mips = Self::full_mip_chain_len(width, height);
+        let mip_levels = if mip_levels == 0 {
+            max_mips
+        } else {
+            mip_levels.min(max_mips).max(1)
+        };
+
+        let array_layers = if array_layers == 0 { 1 } else { array_layers };
+
+        let (layout, enforce_min_row_pitch) = match Self::texture_2d_format_layout(format) {
+            Some(v) => (v, true),
+            None => (
+                // Unknown/invalid format: treat as opaque 4-byte texels for sizing, but avoid
+                // enforcing row-pitch minimums so new/unknown formats don't become fatal.
+                Texture2DLayoutFormat::Uncompressed { bytes_per_texel: 4 },
+                false,
+            ),
+        };
+
+        fn div_ceil_u32(n: u32, d: u32) -> u32 {
+            debug_assert!(d != 0);
+            (n + d - 1) / d
+        }
+
+        let mut total_size_bytes: u64 = 0;
+        let mut mip0_row_pitch_bytes_out: Option<u32> = None;
+
+        for _layer in 0..array_layers {
+            for mip in 0..mip_levels {
+                let mip_w = if mip >= 32 { 1 } else { (width >> mip).max(1) };
+                let mip_h = if mip >= 32 { 1 } else { (height >> mip).max(1) };
+
+                let (row_pitch_u64, rows_u64) = match layout {
+                    Texture2DLayoutFormat::Uncompressed { bytes_per_texel } => {
+                        let min_pitch_u64 =
+                            u64::from(mip_w).checked_mul(u64::from(bytes_per_texel))?;
+                        let row_pitch_u64 = if mip == 0 {
+                            if row_pitch_bytes != 0 {
+                                let rp = u64::from(row_pitch_bytes);
+                                if enforce_min_row_pitch && rp < min_pitch_u64 {
+                                    return None;
+                                }
+                                rp
+                            } else {
+                                min_pitch_u64
+                            }
+                        } else {
+                            min_pitch_u64
+                        };
+                        (row_pitch_u64, u64::from(mip_h))
+                    }
+                    Texture2DLayoutFormat::BlockCompressed { block_bytes } => {
+                        let blocks_w = div_ceil_u32(mip_w, 4);
+                        let blocks_h = div_ceil_u32(mip_h, 4);
+                        let min_pitch_u64 =
+                            u64::from(blocks_w).checked_mul(u64::from(block_bytes))?;
+                        let row_pitch_u64 = if mip == 0 {
+                            if row_pitch_bytes != 0 {
+                                let rp = u64::from(row_pitch_bytes);
+                                if enforce_min_row_pitch && rp < min_pitch_u64 {
+                                    return None;
+                                }
+                                rp
+                            } else {
+                                min_pitch_u64
+                            }
+                        } else {
+                            min_pitch_u64
+                        };
+                        (row_pitch_u64, u64::from(blocks_h))
+                    }
+                };
+
+                if mip == 0 && mip0_row_pitch_bytes_out.is_none() {
+                    mip0_row_pitch_bytes_out = Some(u32::try_from(row_pitch_u64).ok()?);
+                }
+
+                let sub_size = row_pitch_u64.checked_mul(rows_u64)?;
+                total_size_bytes = total_size_bytes.checked_add(sub_size)?;
+            }
+        }
+
+        Some(Texture2DLinearLayout {
+            mip_levels,
+            array_layers,
+            mip0_row_pitch_bytes: mip0_row_pitch_bytes_out?,
+            total_size_bytes,
+        })
+    }
+
     fn texture_bytes_per_pixel(format: AeroGpuFormat) -> Option<usize> {
         match format {
             AeroGpuFormat::B8G8R8A8Unorm
@@ -645,7 +821,11 @@ impl AeroGpuSoftwareExecutor {
             | AeroGpuFormat::D24UnormS8Uint
             | AeroGpuFormat::D32Float => Some(4),
             AeroGpuFormat::B5G6R5Unorm | AeroGpuFormat::B5G5R5A1Unorm => Some(2),
-            AeroGpuFormat::Invalid => None,
+            AeroGpuFormat::Bc1Unorm
+            | AeroGpuFormat::Bc2Unorm
+            | AeroGpuFormat::Bc3Unorm
+            | AeroGpuFormat::Bc7Unorm
+            | AeroGpuFormat::Invalid => None,
         }
     }
 
@@ -736,6 +916,11 @@ impl AeroGpuSoftwareExecutor {
         uv: (f32, f32),
     ) -> [f32; 4] {
         if tex.width == 0 || tex.height == 0 {
+            return [0.0, 0.0, 0.0, 1.0];
+        }
+        // MVP: only sample non-array, non-mipmapped 2D textures. Other configurations are
+        // accepted by resource creation but treated as un-sampleable by the software raster path.
+        if tex.mip_levels != 1 || tex.array_layers != 1 {
             return [0.0, 0.0, 0.0, 1.0];
         }
 
@@ -1543,26 +1728,23 @@ impl AeroGpuSoftwareExecutor {
                 .and_then(|layout| layout.texcoord0)
                 .is_some();
 
-        let can_depth_test = depth_state.depth_enable && ds_handle != 0 && ds_handle != rt_handle;
+        let can_depth_test = if depth_state.depth_enable && ds_handle != 0 && ds_handle != rt_handle
+        {
+            self.textures.get(&ds_handle).is_some_and(|tex| {
+                matches!(
+                    tex.format,
+                    AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float
+                )
+            })
+        } else {
+            false
+        };
 
         if wants_sampling {
             let Some(src_tex) = self.textures.remove(&ps_tex0) else {
                 Self::record_error(regs);
                 return;
             };
-
-            let sampleable = matches!(
-                src_tex.format,
-                AeroGpuFormat::B8G8R8A8Unorm
-                    | AeroGpuFormat::B8G8R8X8Unorm
-                    | AeroGpuFormat::R8G8B8A8Unorm
-                    | AeroGpuFormat::R8G8B8X8Unorm
-            );
-            if !sampleable {
-                self.textures.insert(ps_tex0, src_tex);
-                Self::record_error(regs);
-                return;
-            }
 
             let ps_samp0 = self.state.samplers_ps[0];
             let sampler = if ps_samp0 == 0 {
@@ -1583,16 +1765,6 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return;
                 };
-
-                if !matches!(
-                    depth_tex.format,
-                    AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float
-                ) {
-                    self.textures.insert(ds_handle, depth_tex);
-                    self.textures.insert(ps_tex0, src_tex);
-                    Self::record_error(regs);
-                    return;
-                }
 
                 // Clamp clip to depth texture bounds as well.
                 let clip_x1 = clip_x1.min(depth_tex.width as i32);
@@ -1722,15 +1894,6 @@ impl AeroGpuSoftwareExecutor {
                 Self::record_error(regs);
                 return;
             };
-
-            if !matches!(
-                depth_tex.format,
-                AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float
-            ) {
-                self.textures.insert(ds_handle, depth_tex);
-                Self::record_error(regs);
-                return;
-            }
 
             // Clamp clip to depth texture bounds as well.
             let clip_x1 = clip_x1.min(depth_tex.width as i32);
@@ -2290,34 +2453,24 @@ impl AeroGpuSoftwareExecutor {
                     return true;
                 }
 
-                // MVP: mipmapped/array textures are parsed but treated as invalid for rendering.
-                if mip_levels != 1 || array_layers != 1 {
-                    Self::record_error(regs);
-                    return true;
-                }
-
                 let format = AeroGpuFormat::from_u32(format_u32);
-                let Some(bpp) = Self::texture_bytes_per_pixel(format) else {
+                let Some(layout) = Self::texture_2d_linear_layout(
+                    format,
+                    width,
+                    height,
+                    mip_levels,
+                    array_layers,
+                    row_pitch_bytes,
+                ) else {
                     Self::record_error(regs);
                     return true;
                 };
-                if bpp != 4 {
-                    Self::record_error(regs);
-                    return true;
-                }
 
-                let min_pitch = width.saturating_mul(bpp as u32);
-                let row_pitch_bytes = if row_pitch_bytes == 0 {
-                    min_pitch
-                } else {
-                    row_pitch_bytes
-                };
-                if row_pitch_bytes < min_pitch {
-                    Self::record_error(regs);
-                    return true;
-                }
+                let mip_levels = layout.mip_levels;
+                let array_layers = layout.array_layers;
+                let row_pitch_bytes = layout.mip0_row_pitch_bytes;
+                let total_bytes = layout.total_size_bytes;
 
-                let total_bytes = (row_pitch_bytes as u64).saturating_mul(height as u64);
                 let mut backing = None;
                 if backing_alloc_id != 0 {
                     let Some(alloc) = allocs.get(&backing_alloc_id) else {
@@ -2367,6 +2520,8 @@ impl AeroGpuSoftwareExecutor {
                         width,
                         height,
                         format,
+                        mip_levels,
+                        array_layers,
                         row_pitch_bytes,
                         backing,
                         data,
@@ -2739,7 +2894,8 @@ impl AeroGpuSoftwareExecutor {
                     || src_mip_level != 0
                     || src_array_layer != 0
                 {
-                    Self::record_error(regs);
+                    // MVP: only copies mip0/layer0. Extended subresources are accepted as a no-op
+                    // for forward compatibility.
                     return true;
                 }
 
@@ -2752,11 +2908,11 @@ impl AeroGpuSoftwareExecutor {
                         return true;
                     };
                     let Some(bpp) = Self::texture_bytes_per_pixel(src_tex.format) else {
-                        Self::record_error(regs);
+                        // Unsupported format for raw-copy in the software backend.
                         return true;
                     };
                     if bpp != 4 {
-                        Self::record_error(regs);
+                        // MVP: only 32bpp uncompressed texture copies are supported.
                         return true;
                     }
                     let row_bytes = match width.checked_mul(bpp as u32) {
@@ -2827,15 +2983,12 @@ impl AeroGpuSoftwareExecutor {
                     return true;
                 };
                 if dst_tex.format != src_format {
-                    Self::record_error(regs);
                     return true;
                 }
                 let Some(bpp) = Self::texture_bytes_per_pixel(dst_tex.format) else {
-                    Self::record_error(regs);
                     return true;
                 };
                 if bpp != 4 {
-                    Self::record_error(regs);
                     return true;
                 }
                 let dst_x_end = match dst_x.checked_add(width) {
@@ -3772,5 +3925,68 @@ mod tests {
 
         assert_eq!(regs.stats.malformed_submissions, 0);
         assert_eq!(regs.irq_status, 0);
+    }
+
+    #[test]
+    fn execute_submission_create_texture2d_accepts_bc_with_mips() {
+        let cmd_gpa = 0x1000u64;
+        let cmd_size = (cmd::AerogpuCmdStreamHeader::SIZE_BYTES
+            + cmd::AerogpuCmdCreateTexture2d::SIZE_BYTES) as u32;
+
+        let handle = 1u32;
+        let width = 8u32;
+        let height = 8u32;
+        let mip_levels = 2u32;
+        let array_layers = 1u32;
+
+        let mut stream = vec![0u8; cmd_size as usize];
+        stream[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
+        stream[8..12].copy_from_slice(&cmd_size.to_le_bytes());
+        stream[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
+        stream[16..20].copy_from_slice(&0u32.to_le_bytes());
+        stream[20..24].copy_from_slice(&0u32.to_le_bytes());
+
+        let cmd_off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+        let cmd_end = cmd_off + cmd::AerogpuCmdCreateTexture2d::SIZE_BYTES;
+        let cmd_buf = &mut stream[cmd_off..cmd_end];
+        cmd_buf[0..4]
+            .copy_from_slice(&(cmd::AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+        cmd_buf[4..8]
+            .copy_from_slice(&(cmd::AerogpuCmdCreateTexture2d::SIZE_BYTES as u32).to_le_bytes());
+        cmd_buf[8..12].copy_from_slice(&handle.to_le_bytes());
+        cmd_buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // usage_flags
+        cmd_buf[16..20].copy_from_slice(&(AeroGpuFormat::Bc1Unorm as u32).to_le_bytes());
+        cmd_buf[20..24].copy_from_slice(&width.to_le_bytes());
+        cmd_buf[24..28].copy_from_slice(&height.to_le_bytes());
+        cmd_buf[28..32].copy_from_slice(&mip_levels.to_le_bytes());
+        cmd_buf[32..36].copy_from_slice(&array_layers.to_le_bytes());
+        cmd_buf[36..40].copy_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes (tight-pack)
+        cmd_buf[40..44].copy_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        cmd_buf[44..48].copy_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        cmd_buf[48..56].copy_from_slice(&0u64.to_le_bytes()); // reserved0
+
+        let mut mem = Bus::new(0x4000);
+        mem.write_physical(cmd_gpa, &stream);
+
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa,
+            cmd_size_bytes: cmd_size,
+            alloc_table_gpa: 0,
+            alloc_table_size_bytes: 0,
+            signal_fence: 0,
+        };
+
+        let mut exec = AeroGpuSoftwareExecutor::new();
+        let mut regs = AeroGpuRegs::default();
+        exec.execute_submission(&mut regs, &mut mem, &desc);
+
+        assert_eq!(regs.stats.malformed_submissions, 0);
+        assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
+        assert!(exec.textures.contains_key(&handle));
     }
 }

@@ -15,6 +15,13 @@ pub enum AeroGpuFormat {
     B5G5R5A1Unorm = ProtocolAerogpuFormat::B5G5R5A1Unorm as u32,
     D24UnormS8Uint = ProtocolAerogpuFormat::D24UnormS8Uint as u32,
     D32Float = ProtocolAerogpuFormat::D32Float as u32,
+    // Values reserved for future protocol extensions. The scanout/cursor paths do not currently
+    // support these formats, but we keep them representable so the software executor can size and
+    // safely ignore them.
+    Bc1Unorm = 64,
+    Bc2Unorm = 65,
+    Bc3Unorm = 66,
+    Bc7Unorm = 67,
 }
 
 impl AeroGpuFormat {
@@ -35,6 +42,14 @@ impl AeroGpuFormat {
             Self::D24UnormS8Uint
         } else if value == Self::D32Float as u32 {
             Self::D32Float
+        } else if value == Self::Bc1Unorm as u32 {
+            Self::Bc1Unorm
+        } else if value == Self::Bc2Unorm as u32 {
+            Self::Bc2Unorm
+        } else if value == Self::Bc3Unorm as u32 {
+            Self::Bc3Unorm
+        } else if value == Self::Bc7Unorm as u32 {
+            Self::Bc7Unorm
         } else {
             Self::Invalid
         }
@@ -42,7 +57,13 @@ impl AeroGpuFormat {
 
     pub fn bytes_per_pixel(self) -> Option<usize> {
         match self {
-            Self::Invalid | Self::D24UnormS8Uint | Self::D32Float => None,
+            Self::Invalid
+            | Self::D24UnormS8Uint
+            | Self::D32Float
+            | Self::Bc1Unorm
+            | Self::Bc2Unorm
+            | Self::Bc3Unorm
+            | Self::Bc7Unorm => None,
             Self::B8G8R8A8Unorm
             | Self::B8G8R8X8Unorm
             | Self::R8G8B8A8Unorm
@@ -166,7 +187,11 @@ impl AeroGpuScanoutConfig {
                 }
                 AeroGpuFormat::Invalid
                 | AeroGpuFormat::D24UnormS8Uint
-                | AeroGpuFormat::D32Float => return None,
+                | AeroGpuFormat::D32Float
+                | AeroGpuFormat::Bc1Unorm
+                | AeroGpuFormat::Bc2Unorm
+                | AeroGpuFormat::Bc3Unorm
+                | AeroGpuFormat::Bc7Unorm => return None,
             }
         }
 

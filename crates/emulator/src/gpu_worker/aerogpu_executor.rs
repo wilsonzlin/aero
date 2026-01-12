@@ -892,7 +892,13 @@ fn write_scanout0_rgba8(
                     dst.copy_from_slice(&pix.to_le_bytes());
                 }
             }
-            AeroGpuFormat::Invalid | AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float => {
+            AeroGpuFormat::Invalid
+            | AeroGpuFormat::D24UnormS8Uint
+            | AeroGpuFormat::D32Float
+            | AeroGpuFormat::Bc1Unorm
+            | AeroGpuFormat::Bc2Unorm
+            | AeroGpuFormat::Bc3Unorm
+            | AeroGpuFormat::Bc7Unorm => {
                 return Err(format!(
                     "unsupported scanout format {:?}",
                     regs.scanout0.format
