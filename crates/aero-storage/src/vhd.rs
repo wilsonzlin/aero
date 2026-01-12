@@ -186,8 +186,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         match footer.disk_type {
             VHD_DISK_TYPE_FIXED => {
                 // Some tools may store an extra copy of the footer at offset 0 even for fixed
-                // disks. If present and valid (and identical to the EOF footer), the disk payload
-                // begins immediately after it.
+                // disks. If present and valid, the disk payload begins immediately after it.
                 let mut fixed_data_offset = 0u64;
                 if len >= (SECTOR_SIZE as u64) * 2 {
                     let mut raw_footer_copy = [0u8; SECTOR_SIZE];

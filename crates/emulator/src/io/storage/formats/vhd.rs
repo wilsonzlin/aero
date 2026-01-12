@@ -177,8 +177,8 @@ impl<S: ByteStorage> VhdDisk<S> {
         match footer.disk_type {
             VHD_DISK_TYPE_FIXED => {
                 // Some tools store an extra copy of the footer at offset 0 even for fixed disks.
-                // When present and identical to the EOF footer, treat the data region as starting
-                // immediately after this footer copy.
+                // When present and valid, treat the data region as starting immediately after this
+                // footer copy.
                 let mut fixed_data_offset = 0u64;
                 if len >= 1024 {
                     let mut raw_footer_copy = [0u8; 512];
