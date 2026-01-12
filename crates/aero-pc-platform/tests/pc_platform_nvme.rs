@@ -435,6 +435,94 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_nvme_intx() {
 }
 
 #[test]
+fn pc_platform_resyncs_nvme_pci_command_before_polling_intx_level() {
+    let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Enable Memory Space + Bus Mastering so the platform allows DMA processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Unmask IRQ2 (cascade) and the routed NVMe INTx IRQ (device 3 INTA# -> PIRQD -> GSI/IRQ13).
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(13, false);
+    }
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+
+    // Process the admin queue so a completion is posted and INTx becomes asserted.
+    pc.process_nvme();
+    let nvme = pc.nvme.as_ref().expect("NVMe should be enabled").clone();
+    assert!(
+        nvme.borrow().irq_level(),
+        "NVMe should assert INTx when a completion is pending"
+    );
+
+    // Disable INTx in PCI command register (bit 10), then call `process_nvme` so the NVMe model's
+    // internal PCI config copy observes the new command register value.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0006 | (1 << 10),
+    );
+    pc.process_nvme();
+    assert!(
+        !nvme.borrow().irq_level(),
+        "NVMe model should suppress its IRQ when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx in guest-facing PCI config space without calling `process_nvme`. This leaves
+    // the device model with a stale copy of the PCI command register (INTx still disabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    assert!(
+        !nvme.borrow().irq_level(),
+        "NVMe model should still see stale INTx disable bit until the platform resyncs PCI config"
+    );
+
+    // Polling INTx lines must resync PCI command state before querying the device model so the
+    // cleared INTx disable bit takes effect immediately.
+    pc.poll_pci_intx_lines();
+    assert!(
+        nvme.borrow().irq_level(),
+        "poll_pci_intx_lines should resync PCI command and expose the pending NVMe interrupt"
+    );
+    assert_eq!(
+        pc.interrupts
+            .borrow()
+            .pic()
+            .get_pending_vector()
+            .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
+        Some(13)
+    );
+}
+
+#[test]
 fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
     let bdf = NVME_CONTROLLER.bdf;
@@ -484,7 +572,11 @@ fn pc_platform_gates_nvme_dma_on_pci_bus_master_enable() {
     pc.memory.read_physical(acq, &mut cqe);
     let dw3 = u32::from_le_bytes(cqe[12..16].try_into().unwrap());
     assert_eq!(dw3, 0, "completion queue entry should remain empty");
-    assert_eq!(pc.memory.read_u16(id_buf), 0, "identify data should not be written");
+    assert_eq!(
+        pc.memory.read_u16(id_buf),
+        0,
+        "identify data should not be written"
+    );
     assert!(
         !pc.nvme
             .as_ref()

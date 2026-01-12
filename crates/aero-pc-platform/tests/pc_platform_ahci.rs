@@ -158,9 +158,11 @@ fn pc_platform_gates_ahci_mmio_on_pci_command_register() {
     let bar5_base = read_ahci_bar5_base(&mut pc);
 
     // Program a known value into GHC with memory decoding enabled.
-    pc.memory
-        .write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
-    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    assert_eq!(
+        pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE),
+        GHC_AE | GHC_IE
+    );
 
     // Disable PCI memory decoding: MMIO should behave like an unmapped region (reads return 0xFF).
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
@@ -171,7 +173,10 @@ fn pc_platform_gates_ahci_mmio_on_pci_command_register() {
 
     // Re-enable decoding: state should reflect that the write above did not reach the device.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
-    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+    assert_eq!(
+        pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE),
+        GHC_AE | GHC_IE
+    );
 }
 
 #[test]
@@ -248,8 +253,7 @@ fn pc_platform_ahci_mmio_reenable_is_immediate_after_process_sync() {
     // MMIO reads should immediately work again (not return unmapped 0xFF bytes).
     let ghc = pc.memory.read_u32(bar5_base + HBA_GHC);
     assert_ne!(
-        ghc,
-        0xFFFF_FFFF,
+        ghc, 0xFFFF_FFFF,
         "MMIO should re-enable immediately after COMMAND.MEM is set"
     );
     assert_ne!(ghc & GHC_AE, 0);
@@ -276,7 +280,14 @@ fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
 
     // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
     let bar5_base: u64 = 0xE100_0000;
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        bar5_base as u32,
+    );
 
     // Enable memory decoding but keep bus mastering disabled.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
@@ -287,10 +298,12 @@ fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
     let ctba = 0x3000u64;
     let identify_buf = 0x4000u64;
 
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
 
@@ -310,8 +323,7 @@ fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
     // Ensure the buffer starts cleared so we can detect whether DMA ran.
     pc.memory.write_u32(identify_buf, 0);
 
-    pc.memory
-        .write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
     pc.process_ahci();
     pc.poll_pci_intx_lines();
 
@@ -369,9 +381,11 @@ fn pc_platform_routes_ahci_mmio_after_bar5_reprogramming() {
     let new_base = bar5_base + 0x20_000;
     assert_eq!(new_base % 0x2000, 0);
 
-    pc.memory
-        .write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
-    assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    assert_eq!(
+        pc.memory.read_u32(bar5_base + HBA_GHC) & (GHC_AE | GHC_IE),
+        GHC_AE | GHC_IE
+    );
 
     // Move BAR5 within the platform's PCI MMIO window.
     write_cfg_u32(
@@ -387,7 +401,10 @@ fn pc_platform_routes_ahci_mmio_after_bar5_reprogramming() {
     assert_eq!(pc.memory.read_u32(bar5_base + HBA_GHC), 0xFFFF_FFFF);
 
     // New base should decode and preserve controller state.
-    assert_eq!(pc.memory.read_u32(new_base + HBA_GHC) & (GHC_AE | GHC_IE), GHC_AE | GHC_IE);
+    assert_eq!(
+        pc.memory.read_u32(new_base + HBA_GHC) & (GHC_AE | GHC_IE),
+        GHC_AE | GHC_IE
+    );
 }
 
 #[test]
@@ -415,7 +432,14 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
 
     // Reprogram BAR5 within the platform's PCI MMIO window.
     let bar5_base: u64 = 0xE100_0000;
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        bar5_base as u32,
+    );
 
     // BAR5 MMIO should be gated by COMMAND.MEMORY (bit 1).
     assert_eq!(
@@ -442,13 +466,16 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
     let ctba = 0x3000u64;
     let identify_buf = 0x4000u64;
 
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
-
     pc.memory
-        .write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
     pc.memory.write_u32(
@@ -539,6 +566,106 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
 }
 
 #[test]
+fn pc_platform_resyncs_ahci_pci_command_before_polling_intx_level() {
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Unmask IRQ2 (cascade) and IRQ12 so we can observe INTx via the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(12, false);
+    }
+
+    let bar5_base = read_ahci_bar5_base(&mut pc);
+    assert_ne!(
+        bar5_base, 0,
+        "AHCI BAR5 should be assigned during BIOS POST"
+    );
+
+    // Enable bus mastering so DMA is permitted (keep memory decoding enabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Program HBA + port 0 registers.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory.write_u32(bar5_base + HBA_GHC, GHC_AE | GHC_IE);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.memory.write_u32(
+        bar5_base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // IDENTIFY DMA.
+    write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut pc, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+    pc.process_ahci();
+
+    let ahci = pc.ahci.as_ref().expect("AHCI should be enabled").clone();
+    assert!(
+        ahci.borrow().intx_level(),
+        "AHCI should assert INTx when a port interrupt is pending"
+    );
+
+    // Disable INTx in PCI command register (bit 10), then call `process_ahci` so the AHCI model's
+    // internal PCI config copy observes the new command register value.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0006 | (1 << 10),
+    );
+    pc.process_ahci();
+    assert!(
+        !ahci.borrow().intx_level(),
+        "AHCI model should suppress its IRQ when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx in guest-facing PCI config space without calling `process_ahci`. This leaves
+    // the device model with a stale copy of the PCI command register (INTx still disabled).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    assert!(
+        !ahci.borrow().intx_level(),
+        "AHCI model should still see stale INTx disable bit until the platform resyncs PCI config"
+    );
+
+    // Polling INTx lines must resync PCI command state before querying the device model so the
+    // cleared INTx disable bit takes effect immediately.
+    pc.poll_pci_intx_lines();
+    assert!(
+        ahci.borrow().intx_level(),
+        "poll_pci_intx_lines should resync PCI command and expose the pending AHCI interrupt"
+    );
+    assert_eq!(
+        pc.interrupts
+            .borrow()
+            .pic()
+            .get_pending_vector()
+            .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
+        Some(12)
+    );
+}
+
+#[test]
 fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
@@ -550,7 +677,14 @@ fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
 
     // Reprogram BAR5 within the platform's PCI MMIO window.
     let bar5_base: u64 = 0xE100_0000;
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        bar5_base as u32,
+    );
 
     // Enable bus mastering so DMA is permitted (keep memory decoding enabled).
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
@@ -561,10 +695,12 @@ fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
     let ctba = 0x3000u64;
     let identify_buf = 0x4000u64;
 
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
 
@@ -584,8 +720,7 @@ fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
     // writes performed by the device model.
     pc.memory.clear_dirty();
 
-    pc.memory
-        .write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
+    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CI, 1);
     pc.process_ahci();
 
     let mut identify = [0u8; SECTOR_SIZE];
@@ -628,7 +763,14 @@ fn pc_platform_routes_ahci_intx_via_ioapic_in_apic_mode() {
 
     // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
     let bar5_base: u64 = 0xE100_0000;
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x24, bar5_base as u32);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x24,
+        bar5_base as u32,
+    );
 
     // Enable memory decoding + bus mastering so MMIO works and DMA is permitted.
     write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
@@ -639,10 +781,12 @@ fn pc_platform_routes_ahci_intx_via_ioapic_in_apic_mode() {
     let ctba = 0x3000u64;
     let identify_buf = 0x4000u64;
 
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_CLB, clb as u32);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
-    pc.memory.write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(bar5_base + PORT_BASE + PORT_REG_FB, fb as u32);
     pc.memory
         .write_u32(bar5_base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
 
