@@ -474,15 +474,15 @@ impl AeroGpuCommandProcessor {
         }
 
         self.shared_surface_refcounts.remove(&underlying);
-        let to_retire: Vec<u64> = self
-            .shared_surface_by_token
-            .iter()
-            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
-            .collect();
-        for token in to_retire {
-            self.shared_surface_by_token.remove(&token);
-            self.retired_share_tokens.insert(token);
-        }
+        let retired = &mut self.retired_share_tokens;
+        self.shared_surface_by_token.retain(|token, v| {
+            if *v == underlying {
+                retired.insert(*token);
+                false
+            } else {
+                true
+            }
+        });
         Some(underlying)
     }
 
