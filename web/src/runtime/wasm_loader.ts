@@ -111,7 +111,7 @@ export interface WasmApi {
     /**
      * Guest-visible virtio-input device exposed via virtio-pci (BAR0 MMIO).
      */
-    VirtioInputPciDevice: new (guestBase: number, guestSize: number, kind: "keyboard" | "mouse") => {
+    VirtioInputPciDevice?: new (guestBase: number, guestSize: number, kind: "keyboard" | "mouse") => {
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
         poll(): void;
