@@ -1214,6 +1214,72 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("CreateStateBlock(D3DSBT_VERTEXSTATE)", hr);
     }
 
+    // Verify CreateStateBlock captured the baseline (world_0/vsi_0/...) without
+    // needing an explicit Capture() call.
+    {
+      D3DMATRIX world_clobber = world_0;
+      world_clobber._11 = 999.0f;
+      world_clobber._22 = 1000.0f;
+      hr = dev->SetTransform(D3DTS_WORLD, &world_clobber);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetTransform (clobber pre Apply baseline)", hr);
+      }
+
+      const int vsi_clobber[4] = {0, 0, 0, 0};
+      hr = dev->SetVertexShaderConstantI(20, vsi_clobber, 1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetVertexShaderConstantI (clobber pre Apply baseline)", hr);
+      }
+
+      if (freq_ok) {
+        hr = dev->SetStreamSourceFreq(0, freq_0 + 1);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: disabling CreateStateBlock StreamSourceFreq baseline check (clobber Set failed hr=0x%08lX)",
+              kTestName,
+              (unsigned long)hr);
+          freq_ok = false;
+        }
+      }
+
+      hr = sb_vertex->Apply();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("StateBlock::Apply (vertex baseline)", hr);
+      }
+
+      D3DMATRIX got_world;
+      ZeroMemory(&got_world, sizeof(got_world));
+      hr = dev->GetTransform(D3DTS_WORLD, &got_world);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetTransform (after Apply vertex baseline)", hr);
+      }
+      if (!MatrixEqual(got_world, world_0)) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: WORLD matrix");
+      }
+
+      int got_i[4] = {};
+      hr = dev->GetVertexShaderConstantI(20, got_i, 1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetVertexShaderConstantI (after Apply vertex baseline)", hr);
+      }
+      if (std::memcmp(got_i, vsi_0, sizeof(vsi_0)) != 0) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: VertexShaderConstantI");
+      }
+
+      if (freq_ok) {
+        UINT got_freq = 0;
+        hr = dev->GetStreamSourceFreq(0, &got_freq);
+        if (FAILED(hr)) {
+          return reporter.FailHresult("GetStreamSourceFreq (after Apply vertex baseline)", hr);
+        }
+        if (got_freq != freq_0) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: StreamSourceFreq got=%u expected=%u",
+                               (unsigned)got_freq,
+                               (unsigned)freq_0);
+        }
+      }
+    }
+
     // Mutate state to a second configuration, then Capture() it.
     D3DMATRIX world_1 = world_0;
     world_1._11 = -1.0f;
@@ -1333,6 +1399,354 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              (double)got,
                              (double)npatch_1);
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // CreateStateBlock + Capture round-trip (pixel): verify pixel processing state
+  // is captured/applied via Create/Capture/Apply.
+  // ---------------------------------------------------------------------------
+  {
+    ComPtr<IDirect3DStateBlock9> sb_pixel;
+
+    // Establish a baseline pixel-state config.
+    const DWORD alphablend_0 = TRUE;
+    hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, alphablend_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderState(D3DRS_ALPHABLENDENABLE) (pre CreateStateBlock pixel)", hr);
+    }
+
+    const DWORD samp_addr_u_0 = D3DTADDRESS_CLAMP;
+    hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, samp_addr_u_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetSamplerState(0, ADDRESSU) (pre CreateStateBlock pixel)", hr);
+    }
+
+    const DWORD colorop_0 = D3DTOP_MODULATE;
+    hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, colorop_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTextureStageState(0, COLOROP) (pre CreateStateBlock pixel)", hr);
+    }
+
+    const BOOL ps_b_0[2] = {TRUE, FALSE};
+    hr = dev->SetPixelShaderConstantB(20, ps_b_0, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantB (pre CreateStateBlock pixel)", hr);
+    }
+
+    D3DVIEWPORT9 vp_0;
+    ZeroMemory(&vp_0, sizeof(vp_0));
+    vp_0.X = 10;
+    vp_0.Y = 20;
+    vp_0.Width = 64;
+    vp_0.Height = 65;
+    vp_0.MinZ = 0.125f;
+    vp_0.MaxZ = 0.875f;
+    hr = dev->SetViewport(&vp_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetViewport (pre CreateStateBlock pixel)", hr);
+    }
+
+    RECT scissor_0;
+    scissor_0.left = 3;
+    scissor_0.top = 4;
+    scissor_0.right = 50;
+    scissor_0.bottom = 60;
+    hr = dev->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderState(D3DRS_SCISSORTESTENABLE) (pre CreateStateBlock pixel)", hr);
+    }
+    hr = dev->SetScissorRect(&scissor_0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetScissorRect (pre CreateStateBlock pixel)", hr);
+    }
+
+    // Capture the baseline via CreateStateBlock.
+    hr = dev->CreateStateBlock(D3DSBT_PIXELSTATE, sb_pixel.put());
+    if (FAILED(hr) || !sb_pixel) {
+      return reporter.FailHresult("CreateStateBlock(D3DSBT_PIXELSTATE)", hr);
+    }
+
+    // Verify CreateStateBlock captured the baseline without needing Capture().
+    {
+      hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetRenderState(D3DRS_ALPHABLENDENABLE) (clobber pre Apply pixel baseline)", hr);
+      }
+      hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetSamplerState(0, ADDRESSU) (clobber pre Apply pixel baseline)", hr);
+      }
+      hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_ADD);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetTextureStageState(0, COLOROP) (clobber pre Apply pixel baseline)", hr);
+      }
+      const BOOL ps_b_clobber[2] = {FALSE, TRUE};
+      hr = dev->SetPixelShaderConstantB(20, ps_b_clobber, 2);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetPixelShaderConstantB (clobber pre Apply pixel baseline)", hr);
+      }
+      D3DVIEWPORT9 vp_clobber = vp_0;
+      vp_clobber.X = 1;
+      vp_clobber.Y = 2;
+      vp_clobber.Width = 128;
+      vp_clobber.Height = 129;
+      hr = dev->SetViewport(&vp_clobber);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetViewport (clobber pre Apply pixel baseline)", hr);
+      }
+      RECT scissor_clobber;
+      scissor_clobber.left = 7;
+      scissor_clobber.top = 8;
+      scissor_clobber.right = 70;
+      scissor_clobber.bottom = 80;
+      hr = dev->SetScissorRect(&scissor_clobber);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetScissorRect (clobber pre Apply pixel baseline)", hr);
+      }
+
+      hr = sb_pixel->Apply();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("StateBlock::Apply (pixel baseline)", hr);
+      }
+
+      DWORD got = 0;
+      hr = dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetRenderState(D3DRS_ALPHABLENDENABLE) (after Apply pixel baseline)", hr);
+      }
+      if (got != alphablend_0) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: ALPHABLENDENABLE got=%lu expected=%lu",
+                             (unsigned long)got,
+                             (unsigned long)alphablend_0);
+      }
+
+      got = 0;
+      hr = dev->GetSamplerState(0, D3DSAMP_ADDRESSU, &got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetSamplerState(0, ADDRESSU) (after Apply pixel baseline)", hr);
+      }
+      if (got != samp_addr_u_0) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: Sampler ADDRESSU got=%lu expected=%lu",
+                             (unsigned long)got,
+                             (unsigned long)samp_addr_u_0);
+      }
+
+      got = 0;
+      hr = dev->GetTextureStageState(0, D3DTSS_COLOROP, &got);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetTextureStageState(0, COLOROP) (after Apply pixel baseline)", hr);
+      }
+      if (got != colorop_0) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: TextureStage COLOROP got=%lu expected=%lu",
+                             (unsigned long)got,
+                             (unsigned long)colorop_0);
+      }
+
+      BOOL got_b[2] = {};
+      hr = dev->GetPixelShaderConstantB(20, got_b, 2);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetPixelShaderConstantB (after Apply pixel baseline)", hr);
+      }
+      for (int i = 0; i < 2; ++i) {
+        const BOOL a = ps_b_0[i] ? TRUE : FALSE;
+        const BOOL b = got_b[i] ? TRUE : FALSE;
+        if (a != b) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: PixelShaderConstantB[%d] got=%d expected=%d",
+                               i,
+                               (int)b,
+                               (int)a);
+        }
+      }
+
+      D3DVIEWPORT9 got_vp;
+      ZeroMemory(&got_vp, sizeof(got_vp));
+      hr = dev->GetViewport(&got_vp);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetViewport (after Apply pixel baseline)", hr);
+      }
+      if (got_vp.X != vp_0.X || got_vp.Y != vp_0.Y ||
+          got_vp.Width != vp_0.Width || got_vp.Height != vp_0.Height ||
+          !NearlyEqual(got_vp.MinZ, vp_0.MinZ, 1e-6f) ||
+          !NearlyEqual(got_vp.MaxZ, vp_0.MaxZ, 1e-6f)) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: Viewport");
+      }
+
+      RECT got_scissor;
+      ZeroMemory(&got_scissor, sizeof(got_scissor));
+      hr = dev->GetScissorRect(&got_scissor);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetScissorRect (after Apply pixel baseline)", hr);
+      }
+      if (got_scissor.left != scissor_0.left || got_scissor.top != scissor_0.top ||
+          got_scissor.right != scissor_0.right || got_scissor.bottom != scissor_0.bottom) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: ScissorRect");
+      }
+    }
+
+    // Mutate state to a second configuration, then Capture() it.
+    const DWORD alphablend_1 = FALSE;
+    hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, alphablend_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderState(D3DRS_ALPHABLENDENABLE) (pre Capture pixel)", hr);
+    }
+    const DWORD samp_addr_u_1 = D3DTADDRESS_MIRROR;
+    hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, samp_addr_u_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetSamplerState(0, ADDRESSU) (pre Capture pixel)", hr);
+    }
+    const DWORD colorop_1 = D3DTOP_SUBTRACT;
+    hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, colorop_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTextureStageState(0, COLOROP) (pre Capture pixel)", hr);
+    }
+    const BOOL ps_b_1[2] = {FALSE, TRUE};
+    hr = dev->SetPixelShaderConstantB(20, ps_b_1, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantB (pre Capture pixel)", hr);
+    }
+    D3DVIEWPORT9 vp_1 = vp_0;
+    vp_1.X = 30;
+    vp_1.Y = 40;
+    vp_1.Width = 32;
+    vp_1.Height = 33;
+    vp_1.MinZ = 0.25f;
+    vp_1.MaxZ = 0.5f;
+    hr = dev->SetViewport(&vp_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetViewport (pre Capture pixel)", hr);
+    }
+    RECT scissor_1;
+    scissor_1.left = 11;
+    scissor_1.top = 12;
+    scissor_1.right = 90;
+    scissor_1.bottom = 100;
+    hr = dev->SetScissorRect(&scissor_1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetScissorRect (pre Capture pixel)", hr);
+    }
+
+    hr = sb_pixel->Capture();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("StateBlock::Capture (pixel)", hr);
+    }
+
+    // Clobber again so Apply has visible effect.
+    hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderState(D3DRS_ALPHABLENDENABLE) (pre Apply pixel)", hr);
+    }
+    hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_BORDER);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetSamplerState(0, ADDRESSU) (pre Apply pixel)", hr);
+    }
+    hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTextureStageState(0, COLOROP) (pre Apply pixel)", hr);
+    }
+    const BOOL ps_b_2[2] = {FALSE, FALSE};
+    hr = dev->SetPixelShaderConstantB(20, ps_b_2, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantB (pre Apply pixel)", hr);
+    }
+    D3DVIEWPORT9 vp_2 = vp_0;
+    vp_2.X = 0;
+    vp_2.Y = 0;
+    vp_2.Width = 200;
+    vp_2.Height = 201;
+    vp_2.MinZ = 0.0f;
+    vp_2.MaxZ = 1.0f;
+    hr = dev->SetViewport(&vp_2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetViewport (pre Apply pixel)", hr);
+    }
+    RECT scissor_2;
+    scissor_2.left = 0;
+    scissor_2.top = 0;
+    scissor_2.right = 10;
+    scissor_2.bottom = 10;
+    hr = dev->SetScissorRect(&scissor_2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetScissorRect (pre Apply pixel)", hr);
+    }
+
+    hr = sb_pixel->Apply();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("StateBlock::Apply (pixel)", hr);
+    }
+
+    // Verify state restored to the captured (alphablend_1 / ...).
+    DWORD got = 0;
+    hr = dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetRenderState(D3DRS_ALPHABLENDENABLE) (after Apply pixel)", hr);
+    }
+    if (got != alphablend_1) {
+      return reporter.Fail("CreateStateBlock restore mismatch: ALPHABLENDENABLE got=%lu expected=%lu",
+                           (unsigned long)got,
+                           (unsigned long)alphablend_1);
+    }
+
+    got = 0;
+    hr = dev->GetSamplerState(0, D3DSAMP_ADDRESSU, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetSamplerState(0, ADDRESSU) (after Apply pixel)", hr);
+    }
+    if (got != samp_addr_u_1) {
+      return reporter.Fail("CreateStateBlock restore mismatch: Sampler ADDRESSU got=%lu expected=%lu",
+                           (unsigned long)got,
+                           (unsigned long)samp_addr_u_1);
+    }
+
+    got = 0;
+    hr = dev->GetTextureStageState(0, D3DTSS_COLOROP, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetTextureStageState(0, COLOROP) (after Apply pixel)", hr);
+    }
+    if (got != colorop_1) {
+      return reporter.Fail("CreateStateBlock restore mismatch: TextureStage COLOROP got=%lu expected=%lu",
+                           (unsigned long)got,
+                           (unsigned long)colorop_1);
+    }
+
+    BOOL got_b[2] = {};
+    hr = dev->GetPixelShaderConstantB(20, got_b, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPixelShaderConstantB (after Apply pixel)", hr);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const BOOL a = ps_b_1[i] ? TRUE : FALSE;
+      const BOOL b = got_b[i] ? TRUE : FALSE;
+      if (a != b) {
+        return reporter.Fail("CreateStateBlock restore mismatch: PixelShaderConstantB[%d] got=%d expected=%d",
+                             i,
+                             (int)b,
+                             (int)a);
+      }
+    }
+
+    D3DVIEWPORT9 got_vp;
+    ZeroMemory(&got_vp, sizeof(got_vp));
+    hr = dev->GetViewport(&got_vp);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetViewport (after Apply pixel)", hr);
+    }
+    if (got_vp.X != vp_1.X || got_vp.Y != vp_1.Y ||
+        got_vp.Width != vp_1.Width || got_vp.Height != vp_1.Height ||
+        !NearlyEqual(got_vp.MinZ, vp_1.MinZ, 1e-6f) ||
+        !NearlyEqual(got_vp.MaxZ, vp_1.MaxZ, 1e-6f)) {
+      return reporter.Fail("CreateStateBlock restore mismatch: Viewport");
+    }
+
+    RECT got_scissor;
+    ZeroMemory(&got_scissor, sizeof(got_scissor));
+    hr = dev->GetScissorRect(&got_scissor);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetScissorRect (after Apply pixel)", hr);
+    }
+    if (got_scissor.left != scissor_1.left || got_scissor.top != scissor_1.top ||
+        got_scissor.right != scissor_1.right || got_scissor.bottom != scissor_1.bottom) {
+      return reporter.Fail("CreateStateBlock restore mismatch: ScissorRect");
     }
   }
 
