@@ -1317,6 +1317,16 @@ function maybeInitHdaDevice(): void {
       dev.setMicRingBuffer(micRingBuffer);
       if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
     }
+
+    // Apply any existing audio output ring-buffer attachment (producer-side).
+    if (audioOutRingBuffer) {
+      dev.setAudioRingBuffer({
+        ringBuffer: audioOutRingBuffer,
+        capacityFrames: audioOutCapacityFrames,
+        channelCount: audioOutChannelCount,
+        dstSampleRateHz: audioOutDstSampleRate,
+      });
+    }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize HDA controller bridge", err);
     try {
@@ -1811,6 +1821,8 @@ let micSampleRate = 0;
 let audioOutRingBuffer: SharedArrayBuffer | null = null;
 let audioOutHeader: Uint32Array | null = null;
 let audioOutCapacityFrames = 0;
+let audioOutChannelCount = 0;
+let audioOutDstSampleRate = 0;
 let audioOutTelemetryActive = false;
 let audioOutTelemetryNextMs = 0;
 
@@ -1895,7 +1907,12 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
   }
 }
 
-function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFrames?: number, channelCount?: number): void {
+function attachAudioRingBuffer(
+  ringBuffer: SharedArrayBuffer | null,
+  capacityFrames?: number,
+  channelCount?: number,
+  dstSampleRate?: number,
+): void {
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
@@ -1921,7 +1938,25 @@ function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFra
   audioOutRingBuffer = ringBuffer;
   audioOutHeader = ringBuffer ? new Uint32Array(ringBuffer, 0, AUDIO_OUT_HEADER_U32_LEN) : null;
   audioOutCapacityFrames = (capacityFrames ?? 0) >>> 0;
+  audioOutChannelCount = (channelCount ?? 0) >>> 0;
+  audioOutDstSampleRate = (dstSampleRate ?? 0) >>> 0;
   audioOutTelemetryNextMs = 0;
+
+  // If the guest HDA device is active, attach/detach the ring buffer so the WASM-side
+  // HDA controller can stream directly into the AudioWorklet output ring.
+  const dev = hdaDevice;
+  if (dev) {
+    try {
+      dev.setAudioRingBuffer({
+        ringBuffer,
+        capacityFrames: audioOutCapacityFrames,
+        channelCount: audioOutChannelCount,
+        dstSampleRateHz: audioOutDstSampleRate,
+      });
+    } catch (err) {
+      console.warn("[io.worker] HDA setAudioRingBuffer failed:", err);
+    }
+  }
 }
 
 function maybePublishAudioOutTelemetry(nowMs: number): void {
@@ -2710,7 +2745,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<SetAudioRingBufferMessage>).type === "setAudioRingBuffer") {
       const msg = data as Partial<SetAudioRingBufferMessage>;
-      attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames, msg.channelCount);
+      attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames, msg.channelCount, msg.dstSampleRate);
       return;
     }
 

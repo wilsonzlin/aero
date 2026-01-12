@@ -10,13 +10,28 @@ export type HdaControllerBridgeLike = {
   irq_level(): boolean;
   set_mic_ring_buffer(sab?: SharedArrayBuffer): void;
   set_capture_sample_rate_hz(sampleRateHz: number): void;
+  /**
+   * Optional audio output ring attachment helpers (newer WASM builds).
+   *
+   * When attached, the WASM-side HDA controller writes interleaved stereo `f32`
+   * into the shared AudioWorklet ring buffer.
+   */
+  attach_audio_ring?: (ringSab: SharedArrayBuffer, capacityFrames: number, channelCount: number) => void;
+  detach_audio_ring?: () => void;
+  /**
+   * Optional host sample-rate plumbing (newer WASM builds).
+   *
+   * Must match the output AudioContext's `sampleRate` when streaming into an
+   * AudioWorklet ring buffer.
+   */
+  set_output_rate_hz?: (rate: number) => void;
   free(): void;
 };
 
 const HDA_CLASS_CODE = 0x04_03_00;
 const HDA_MMIO_BAR_SIZE = 0x4000;
 const HDA_IRQ_LINE = 0x0b;
-const HDA_OUTPUT_RATE_HZ = 48_000;
+const HDA_DEFAULT_OUTPUT_RATE_HZ = 48_000;
 
 // Avoid pathological catch-up work if the tab is backgrounded or the worker stalls.
 const HDA_MAX_DELTA_MS = 100;
@@ -49,6 +64,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   readonly #irqSink: IrqSink;
 
   #clock: AudioFrameClock | null = null;
+  #outputRateHz = HDA_DEFAULT_OUTPUT_RATE_HZ;
   #irqLevel = false;
   #destroyed = false;
 
@@ -94,7 +110,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     }
 
     if (!this.#clock) {
-      this.#clock = new AudioFrameClock(HDA_OUTPUT_RATE_HZ, nowNs);
+      this.#clock = new AudioFrameClock(this.#outputRateHz, nowNs);
       this.#syncIrq();
       return;
     }
@@ -149,6 +165,62 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
       this.#bridge.set_capture_sample_rate_hz(sr);
     } catch {
       // ignore
+    }
+  }
+
+  /**
+   * Attach/detach the shared AudioWorklet output ring buffer.
+   *
+   * When attached, the WASM-side HDA controller writes interleaved stereo `f32`
+   * frames into the ring buffer (producer side). When detached, produced audio is
+   * dropped but the device still advances.
+   */
+  setAudioRingBuffer(opts: {
+    ringBuffer: SharedArrayBuffer | null;
+    capacityFrames: number;
+    channelCount: number;
+    dstSampleRateHz: number;
+  }): void {
+    if (this.#destroyed) return;
+
+    const ring = opts.ringBuffer;
+    const capacityFrames = opts.capacityFrames >>> 0;
+    const channelCount = opts.channelCount >>> 0;
+    const dstSampleRateHz = opts.dstSampleRateHz >>> 0;
+
+    // Plumb host output sample rate first so the HDA controller's time base matches
+    // the `frames` argument passed via {@link tick}.
+    if (dstSampleRateHz > 0 && typeof this.#bridge.set_output_rate_hz === "function") {
+      try {
+        this.#bridge.set_output_rate_hz(dstSampleRateHz);
+        if (dstSampleRateHz !== this.#outputRateHz) {
+          this.#outputRateHz = dstSampleRateHz;
+          // Recreate the clock at the new rate, preserving the last observed time
+          // so we don't introduce a large delta on the next tick.
+          if (this.#clock) {
+            this.#clock = new AudioFrameClock(dstSampleRateHz, this.#clock.lastTimeNs);
+          }
+        }
+      } catch {
+        // ignore invalid/missing rate plumbing
+      }
+    }
+
+    // Attach/detach the output ring buffer (newer WASM builds only).
+    if (ring) {
+      if (typeof this.#bridge.attach_audio_ring === "function") {
+        try {
+          this.#bridge.attach_audio_ring(ring, capacityFrames, channelCount);
+        } catch {
+          // ignore
+        }
+      }
+    } else if (typeof this.#bridge.detach_audio_ring === "function") {
+      try {
+        this.#bridge.detach_audio_ring();
+      } catch {
+        // ignore
+      }
     }
   }
 
