@@ -5,9 +5,6 @@
 #include <d3d9.h>
 
 using aerogpu_test::ComPtr;
-using aerogpu_test::kmt::D3DKMT_FUNCS;
-using aerogpu_test::kmt::D3DKMT_HANDLE;
-using aerogpu_test::kmt::NTSTATUS;
 
 static void DumpBytesToFile(const char* test_name,
                             aerogpu_test::TestReporter* reporter,
@@ -62,63 +59,6 @@ static void DumpTightBgra32(const char* test_name,
     memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
   }
   DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
-}
-
-static bool MapSharedHandleToken(HWND hwnd, HANDLE shared_handle, uint32_t* out_token, std::string* err) {
-  if (out_token) {
-    *out_token = 0;
-  }
-  if (!hwnd || !shared_handle) {
-    if (err) {
-      *err = "invalid hwnd/shared_handle";
-    }
-    return false;
-  }
-
-  D3DKMT_FUNCS kmt;
-  std::string kmt_err;
-  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
-    if (err) {
-      *err = kmt_err;
-    }
-    return false;
-  }
-
-  D3DKMT_HANDLE adapter = 0;
-  if (!aerogpu_test::kmt::OpenAdapterFromHwnd(&kmt, hwnd, &adapter, &kmt_err)) {
-    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
-    if (err) {
-      *err = kmt_err;
-    }
-    return false;
-  }
-
-  uint32_t token = 0;
-  NTSTATUS st = 0;
-  const bool ok = aerogpu_test::kmt::AerogpuMapSharedHandleDebugToken(
-      &kmt, adapter, (unsigned long long)(uintptr_t)shared_handle, &token, &st);
-
-  aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
-  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
-
-  if (!ok) {
-    if (err) {
-      if (st == 0) {
-        *err = "MAP_SHARED_HANDLE returned debug_token=0";
-      } else {
-        char buf[96];
-        _snprintf(buf, sizeof(buf), "D3DKMTEscape(map-shared-handle) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
-        buf[sizeof(buf) - 1] = 0;
-        *err = buf;
-      }
-    }
-    return false;
-  }
-
-  if (out_token) {
-    *out_token = token;
-  }
-  return token != 0;
 }
 
 struct Vertex {
@@ -888,7 +828,7 @@ static int RunChild(aerogpu_test::TestReporter* reporter,
   if (has_expected_debug_token) {
     uint32_t token = 0;
     std::string map_err;
-    if (!MapSharedHandleToken(hwnd, shared_handle, &token, &map_err)) {
+    if (!aerogpu_test::kmt::MapSharedHandleDebugTokenFromHwnd(hwnd, shared_handle, &token, &map_err)) {
       return reporter->Fail("MAP_SHARED_HANDLE failed: %s", map_err.c_str());
     }
     aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE debug_token=%lu (expected=%lu)",
@@ -1180,7 +1120,8 @@ static int RunParent(aerogpu_test::TestReporter* reporter,
   bool have_debug_token = false;
   std::string map_err;
   if (shared_handle_is_nt) {
-    have_debug_token = MapSharedHandleToken(hwnd, shared_handle, &debug_token, &map_err);
+    have_debug_token =
+        aerogpu_test::kmt::MapSharedHandleDebugTokenFromHwnd(hwnd, shared_handle, &debug_token, &map_err);
     if (have_debug_token) {
       aerogpu_test::PrintfStdout(
           "INFO: %s: MAP_SHARED_HANDLE debug_token=%lu", kTestName, (unsigned long)debug_token);

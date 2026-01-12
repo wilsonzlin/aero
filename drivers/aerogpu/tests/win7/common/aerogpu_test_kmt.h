@@ -676,6 +676,76 @@ static inline bool MapSharedHandleDebugTokenPrimary(HANDLE shared_handle, uint32
   return token != 0;
 }
 
+// Convenience wrapper: open the adapter matching the given HWND and issue MAP_SHARED_HANDLE.
+static inline bool MapSharedHandleDebugTokenFromHwnd(HWND hwnd,
+                                                     HANDLE shared_handle,
+                                                     uint32_t* out_token,
+                                                     std::string* err) {
+  if (out_token) {
+    *out_token = 0;
+  }
+  if (err) {
+    err->clear();
+  }
+  if (!hwnd || !shared_handle) {
+    if (err) {
+      *err = "MapSharedHandleDebugTokenFromHwnd: invalid hwnd/shared_handle";
+    }
+    return false;
+  }
+
+  D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!LoadD3DKMT(&kmt, &kmt_err)) {
+    if (err) {
+      *err = kmt_err;
+    }
+    return false;
+  }
+
+  D3DKMT_HANDLE adapter = 0;
+  if (!OpenAdapterFromHwnd(&kmt, hwnd, &adapter, &kmt_err)) {
+    UnloadD3DKMT(&kmt);
+    if (err) {
+      *err = kmt_err;
+    }
+    return false;
+  }
+
+  uint32_t token = 0;
+  NTSTATUS st = 0;
+  const bool ok = AerogpuMapSharedHandleDebugToken(&kmt,
+                                                   adapter,
+                                                   (unsigned long long)(uintptr_t)shared_handle,
+                                                   &token,
+                                                   &st);
+
+  CloseAdapter(&kmt, adapter);
+  UnloadD3DKMT(&kmt);
+
+  if (!ok) {
+    if (err) {
+      if (st == 0) {
+        *err = "MAP_SHARED_HANDLE returned debug_token=0";
+      } else {
+        char buf[96];
+        _snprintf(buf,
+                  sizeof(buf),
+                  "D3DKMTEscape(map-shared-handle) failed (NTSTATUS=0x%08lX)",
+                  (unsigned long)st);
+        buf[sizeof(buf) - 1] = 0;
+        *err = buf;
+      }
+    }
+    return false;
+  }
+
+  if (out_token) {
+    *out_token = token;
+  }
+  return token != 0;
+}
+
 static inline bool FindRingDescByFence(const aerogpu_escape_dump_ring_v2_inout& dump,
                                        unsigned long long fence,
                                        aerogpu_dbgctl_ring_desc_v2* out_desc,
