@@ -892,8 +892,8 @@ impl Machine {
     /// Advance deterministic platform time and poll any timer devices.
     ///
     /// This is used by [`Machine::run_slice`] to keep PIT/RTC/HPET/LAPIC timers progressing
-    /// deterministically (including while the CPU is halted), and is also exposed for tests and
-    /// debugging.
+    /// deterministically (based on executed CPU cycles, including while the CPU is halted), and
+    /// is also exposed for tests and debugging.
     pub fn tick_platform(&mut self, delta_ns: u64) {
         if delta_ns == 0 {
             return;
