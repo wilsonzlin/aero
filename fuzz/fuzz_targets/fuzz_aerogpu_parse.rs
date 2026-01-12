@@ -148,28 +148,38 @@ fn fuzz_alloc_table(alloc_bytes: &[u8]) {
 
     // Executor decode (GuestMemory-backed). Use the header's declared size when it is both
     // well-formed and within our input cap; otherwise, fall back to the provided buffer length.
-    let table_size_bytes = match u32::try_from(alloc_bytes.len()) {
-        Ok(len) => match declared_size_bytes {
-            0 => len,
-            declared
-                if declared as usize <= alloc_bytes.len()
-                    && declared as usize <= MAX_INPUT_SIZE_BYTES =>
-            {
-                declared
-            }
-            _ => len,
-        },
-        Err(_) => return,
+    //
+    // Also try decoding with a "capacity" larger than the declared size_bytes (when applicable) to
+    // exercise the executor's forward-compat behavior of ignoring trailing bytes.
+    let cap_size_bytes = match u32::try_from(alloc_bytes.len()) {
+        Ok(len) if len as usize <= MAX_INPUT_SIZE_BYTES => len,
+        _ => return,
     };
 
-    let guest_mem_size = (ALLOC_TABLE_GPA as usize).saturating_add(table_size_bytes as usize);
+    let table_size_bytes_primary = match declared_size_bytes {
+        0 => cap_size_bytes,
+        declared
+            if declared as usize <= alloc_bytes.len()
+                && declared as usize <= MAX_INPUT_SIZE_BYTES =>
+        {
+            declared
+        }
+        _ => cap_size_bytes,
+    };
+
+    let guest_mem_size = (ALLOC_TABLE_GPA as usize).saturating_add(cap_size_bytes as usize);
     if guest_mem_size > (ALLOC_TABLE_GPA as usize).saturating_add(MAX_INPUT_SIZE_BYTES) {
         return;
     }
 
     let mut guest = VecGuestMemory::new(guest_mem_size);
-    let _ = guest.write(ALLOC_TABLE_GPA, &alloc_bytes[..table_size_bytes as usize]);
-    let _ = AllocTable::decode_from_guest_memory(&mut guest, ALLOC_TABLE_GPA, table_size_bytes);
+    let _ = guest.write(ALLOC_TABLE_GPA, alloc_bytes);
+    let _ =
+        AllocTable::decode_from_guest_memory(&mut guest, ALLOC_TABLE_GPA, table_size_bytes_primary);
+
+    if declared_size_bytes != 0 && declared_size_bytes < cap_size_bytes {
+        let _ = AllocTable::decode_from_guest_memory(&mut guest, ALLOC_TABLE_GPA, cap_size_bytes);
+    }
 }
 
 fn fuzz_ring_layouts(ring_bytes: &[u8]) {
