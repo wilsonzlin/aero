@@ -316,7 +316,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("SetTextureStageState(D3DTSS_COLOROP)", hr);
     }
-    DWORD got = 0;
+    got = 0;
     hr = dev->GetTextureStageState(0, D3DTSS_COLOROP, &got);
     if (FAILED(hr)) {
       return reporter.FailHresult("GetTextureStageState(D3DTSS_COLOROP)", hr);
@@ -345,12 +345,37 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
 
   // ---------------------------------------------------------------------------
-  // StateBlock round-trip: record fixed-function state, clobber, apply, validate.
+  // StateBlock round-trip: record state, clobber, apply, validate.
   // ---------------------------------------------------------------------------
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
     return reporter.FailHresult("BeginStateBlock", hr);
+  }
+
+  const DWORD z_enable_sb = (DWORD)D3DZB_FALSE;
+  hr = dev->SetRenderState(D3DRS_ZENABLE, z_enable_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE) (stateblock)", hr);
+  }
+
+  const DWORD addr_u_sb = (DWORD)D3DTADDRESS_MIRROR;
+  hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, addr_u_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(D3DSAMP_ADDRESSU) (stateblock)", hr);
+  }
+
+  D3DVIEWPORT9 vp_sb;
+  ZeroMemory(&vp_sb, sizeof(vp_sb));
+  vp_sb.X = 3;
+  vp_sb.Y = 4;
+  vp_sb.Width = 63;
+  vp_sb.Height = 45;
+  vp_sb.MinZ = 0.0f;
+  vp_sb.MaxZ = 0.5f;
+  hr = dev->SetViewport(&vp_sb);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetViewport (stateblock)", hr);
   }
 
   const DWORD colorop_sb = (DWORD)D3DTOP_SUBTRACT;
@@ -374,6 +399,29 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
   // Clobber state.
   {
+    hr = dev->SetRenderState(D3DRS_ZENABLE, (DWORD)D3DZB_TRUE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetRenderState(D3DRS_ZENABLE) (clobber)", hr);
+    }
+
+    hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, (DWORD)D3DTADDRESS_CLAMP);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetSamplerState(D3DSAMP_ADDRESSU) (clobber)", hr);
+    }
+
+    D3DVIEWPORT9 vp_clobber;
+    ZeroMemory(&vp_clobber, sizeof(vp_clobber));
+    vp_clobber.X = 9;
+    vp_clobber.Y = 8;
+    vp_clobber.Width = 7;
+    vp_clobber.Height = 6;
+    vp_clobber.MinZ = 0.25f;
+    vp_clobber.MaxZ = 1.0f;
+    hr = dev->SetViewport(&vp_clobber);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetViewport (clobber)", hr);
+    }
+
     D3DMATRIX world_b = world_a;
     world_b._11 = -1.0f;
     world_b._22 = -2.0f;
@@ -395,6 +443,54 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   // Validate restored values.
   {
     DWORD got = 0;
+    hr = dev->GetRenderState(D3DRS_ZENABLE, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetRenderState(D3DRS_ZENABLE) (after Apply)", hr);
+    }
+    if (got != z_enable_sb) {
+      return reporter.Fail("stateblock restore mismatch: ZENABLE got=%lu expected=%lu",
+                           (unsigned long)got,
+                           (unsigned long)z_enable_sb);
+    }
+
+    got = 0;
+    hr = dev->GetSamplerState(0, D3DSAMP_ADDRESSU, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetSamplerState(D3DSAMP_ADDRESSU) (after Apply)", hr);
+    }
+    if (got != addr_u_sb) {
+      return reporter.Fail("stateblock restore mismatch: ADDRESSU got=%lu expected=%lu",
+                           (unsigned long)got,
+                           (unsigned long)addr_u_sb);
+    }
+
+    D3DVIEWPORT9 got_vp;
+    ZeroMemory(&got_vp, sizeof(got_vp));
+    hr = dev->GetViewport(&got_vp);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetViewport (after Apply)", hr);
+    }
+    if (got_vp.X != vp_sb.X || got_vp.Y != vp_sb.Y ||
+        got_vp.Width != vp_sb.Width || got_vp.Height != vp_sb.Height ||
+        got_vp.MinZ != vp_sb.MinZ || got_vp.MaxZ != vp_sb.MaxZ) {
+      return reporter.Fail(
+          "stateblock restore mismatch: Viewport got={X=%lu Y=%lu W=%lu H=%lu MinZ=%.3f MaxZ=%.3f} "
+          "expected={X=%lu Y=%lu W=%lu H=%lu MinZ=%.3f MaxZ=%.3f}",
+          (unsigned long)got_vp.X,
+          (unsigned long)got_vp.Y,
+          (unsigned long)got_vp.Width,
+          (unsigned long)got_vp.Height,
+          (double)got_vp.MinZ,
+          (double)got_vp.MaxZ,
+          (unsigned long)vp_sb.X,
+          (unsigned long)vp_sb.Y,
+          (unsigned long)vp_sb.Width,
+          (unsigned long)vp_sb.Height,
+          (double)vp_sb.MinZ,
+          (double)vp_sb.MaxZ);
+    }
+
+    got = 0;
     hr = dev->GetTextureStageState(0, D3DTSS_COLOROP, &got);
     if (FAILED(hr)) {
       return reporter.FailHresult("GetTextureStageState(D3DTSS_COLOROP) (after Apply)", hr);
