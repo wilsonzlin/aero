@@ -230,6 +230,7 @@ impl PciConfigSpace {
         let Some(bar) = self.bars.get_mut(index) else {
             return;
         };
+        let base = bar.def.map_or(base, |def| Self::mask_bar_base(def, base));
         bar.set_base(base);
         self.write_bar_base_to_bytes(index, base);
     }
@@ -565,6 +566,20 @@ impl PciConfigSpace {
         }
     }
 
+    fn mask_bar_base(def: PciBarDefinition, base: u64) -> u64 {
+        match def {
+            PciBarDefinition::Io { size } => {
+                let mask = u64::from(!(size.saturating_sub(1)) & 0xFFFF_FFFC);
+                base & mask
+            }
+            PciBarDefinition::Mmio32 { size, .. } => {
+                let mask = u64::from(!(size.saturating_sub(1)) & 0xFFFF_FFF0);
+                base & mask
+            }
+            PciBarDefinition::Mmio64 { size, .. } => base & !(size.saturating_sub(1)) & !0xF,
+        }
+    }
+
     fn write_bar_register(&mut self, bar_index: usize, value: u32) -> (usize, PciBarChange) {
         if bar_index >= self.bars.len() {
             return (bar_index, PciBarChange::Unchanged);
@@ -599,14 +614,17 @@ impl PciConfigSpace {
             size: def.size(),
         };
 
-        let new_base = match def {
-            PciBarDefinition::Io { .. } => u64::from(value & 0xFFFF_FFFC),
-            PciBarDefinition::Mmio32 { .. } => u64::from(value & 0xFFFF_FFF0),
-            PciBarDefinition::Mmio64 { .. } => {
-                let low_base = u64::from(value & 0xFFFF_FFF0);
-                let high = self.bars[bar_index].base >> 32;
-                low_base | (high << 32)
-            }
+        let new_base = {
+            let base = match def {
+                PciBarDefinition::Io { .. } => u64::from(value & 0xFFFF_FFFC),
+                PciBarDefinition::Mmio32 { .. } => u64::from(value & 0xFFFF_FFF0),
+                PciBarDefinition::Mmio64 { .. } => {
+                    let low_base = u64::from(value & 0xFFFF_FFF0);
+                    let high = self.bars[bar_index].base >> 32;
+                    low_base | (high << 32)
+                }
+            };
+            Self::mask_bar_base(def, base)
         };
 
         self.bars[bar_index].set_base(new_base);
@@ -631,7 +649,7 @@ impl PciConfigSpace {
     }
 
     fn write_bar64_high(&mut self, low_index: usize, value: u32) -> (usize, PciBarChange) {
-        let Some(PciBarDefinition::Mmio64 { size, .. }) = self.bars[low_index].def else {
+        let Some(def @ PciBarDefinition::Mmio64 { size, .. }) = self.bars[low_index].def else {
             return (low_index, PciBarChange::Unchanged);
         };
 
@@ -647,7 +665,7 @@ impl PciConfigSpace {
         };
 
         let low_part = self.bars[low_index].base & 0xFFFF_FFF0;
-        let new_base = low_part | (u64::from(value) << 32);
+        let new_base = Self::mask_bar_base(def, low_part | (u64::from(value) << 32));
 
         self.bars[low_index].set_base(new_base);
         self.write_bar_base_to_bytes(low_index, new_base);
@@ -692,7 +710,7 @@ pub trait PciDevice {
 
 #[cfg(test)]
 mod tests {
-    use super::PciConfigSpace;
+    use super::{PciBarDefinition, PciConfigSpace};
     use crate::pci::msi::{MsiCapability, PCI_CAP_ID_MSI};
 
     #[test]
@@ -723,5 +741,32 @@ mod tests {
         assert!(msi.enabled());
         assert_eq!(msi.message_address(), 0xfee0_0000);
         assert_eq!(msi.message_data(), 0x0045);
+    }
+
+    #[test]
+    fn bar_writes_are_masked_to_bar_size_alignment() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+
+        // Mask to BAR size (0x1000) rather than only to 16 bytes.
+        cfg.write(0x10, 4, 0x1234_5678);
+        assert_eq!(cfg.bar_range(0).unwrap().base, 0x1234_5000);
+        assert_eq!(cfg.read(0x10, 4), 0x1234_5000);
+
+        // Internal callers (firmware/allocator) use `set_bar_base`; it should apply the same mask.
+        cfg.set_bar_base(0, 0x1234_5678);
+        assert_eq!(cfg.bar_range(0).unwrap().base, 0x1234_5000);
+
+        // I/O BARs mask base to size (0x20) and always return bit0 set in the raw register.
+        cfg.write(0x14, 4, 0x1234_5678);
+        assert_eq!(cfg.bar_range(1).unwrap().base, 0x1234_5660);
+        assert_eq!(cfg.read(0x14, 4), 0x1234_5661);
     }
 }
