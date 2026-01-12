@@ -1,5 +1,7 @@
 use aero_devices::pci::profile::{ISA_PIIX3, USB_UHCI_PIIX3};
-use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{
@@ -26,6 +28,13 @@ fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: 
     pc.io
         .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(PCI_CFG_DATA_PORT, 4)
+}
+
+fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    pc.io
+        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    let port = PCI_CFG_DATA_PORT + u16::from(offset & 3);
+    pc.io.read(port, 1) as u8
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
@@ -125,6 +134,24 @@ fn pc_platform_enumerates_uhci_and_assigns_bar4() {
     assert_eq!(pc.io.read(bar4_base + REG_SOFMOD, 1) as u8, 64);
     pc.io.write(bar4_base + REG_SOFMOD, 1, 12);
     assert_eq!(pc.io.read(bar4_base + REG_SOFMOD, 1) as u8, 12);
+}
+
+#[test]
+fn pc_platform_sets_uhci_intx_line_and_pin_registers() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+
+    let line = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+    let pin = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+
+    let expected_pin = USB_UHCI_PIIX3
+        .interrupt_pin
+        .expect("profile should provide interrupt pin");
+    assert_eq!(pin, expected_pin.to_config_u8());
+
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let expected_gsi = router.gsi_for_intx(bdf, expected_pin);
+    assert_eq!(line, u8::try_from(expected_gsi).unwrap());
 }
 
 #[test]
@@ -468,13 +495,18 @@ fn pc_platform_gates_uhci_dma_on_pci_bus_master_enable() {
 fn pc_platform_routes_uhci_intx_via_pic_in_legacy_mode() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc
+        .pci_intx
+        .gsi_for_intx(USB_UHCI_PIIX3.bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
 
-    // Unmask IRQ2 (cascade) + IRQ11 so we can observe the UHCI interrupt through the legacy PIC.
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe the UHCI interrupt through the
+    // legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
         interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        interrupts.pic_mut().set_masked(irq, false);
     }
 
     // Enable IOC interrupts in the UHCI controller.
@@ -496,14 +528,14 @@ fn pc_platform_routes_uhci_intx_via_pic_in_legacy_mode() {
         .borrow()
         .pic()
         .get_pending_vector()
-        .expect("IRQ11 should be pending after UHCI asserts INTx");
-    let irq = pc
+        .expect("UHCI IRQ should be pending after UHCI asserts INTx");
+    let pending_irq = pc
         .interrupts
         .borrow()
         .pic()
         .vector_to_irq(vector)
         .expect("pending vector should decode to an IRQ number");
-    assert_eq!(irq, 11);
+    assert_eq!(pending_irq, irq);
 
     // Consume + EOI the interrupt so we can observe deassertion cleanly.
     {
@@ -524,13 +556,16 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_uhci_intx() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bdf = USB_UHCI_PIIX3.bdf;
     let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
 
-    // Unmask IRQ2 (cascade) + IRQ11 so we can observe the UHCI interrupt through the legacy PIC.
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe the UHCI interrupt through the
+    // legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
         interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        interrupts.pic_mut().set_masked(irq, false);
     }
 
     // Enable IOC interrupts in the UHCI controller and force a USBINT status bit so the controller
@@ -579,7 +614,7 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_uhci_intx() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(11)
+        Some(irq)
     );
 }
 
@@ -588,13 +623,16 @@ fn pc_platform_resyncs_uhci_pci_command_before_polling_intx_level() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bdf = USB_UHCI_PIIX3.bdf;
     let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
 
-    // Unmask IRQ2 (cascade) + IRQ11 so we can observe the UHCI interrupt through the legacy PIC.
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe the UHCI interrupt through the
+    // legacy PIC.
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);
         interrupts.pic_mut().set_masked(2, false);
-        interrupts.pic_mut().set_masked(11, false);
+        interrupts.pic_mut().set_masked(irq, false);
     }
 
     // Enable IOC interrupts in the UHCI controller and force a USBINT status bit so the controller
@@ -653,7 +691,7 @@ fn pc_platform_resyncs_uhci_pci_command_before_polling_intx_level() {
             .pic()
             .get_pending_vector()
             .and_then(|v| pc.interrupts.borrow().pic().vector_to_irq(v)),
-        Some(11)
+        Some(irq)
     );
 }
 
