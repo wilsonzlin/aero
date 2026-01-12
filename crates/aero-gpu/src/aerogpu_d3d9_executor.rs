@@ -79,6 +79,8 @@ pub struct AerogpuD3d9Executor {
 
     presented_scanouts: HashMap<u32, u32>,
 
+    triangle_fan_index_buffers: HashMap<u32, TriangleFanIndexBuffer>,
+
     contexts: HashMap<u32, ContextState>,
     current_context_id: u32,
 
@@ -334,6 +336,11 @@ struct IndexBufferBinding {
     offset_bytes: u32,
 }
 
+struct TriangleFanIndexBuffer {
+    buffer: wgpu::Buffer,
+    format: wgpu::IndexFormat,
+}
+
 #[derive(Debug, Default)]
 struct State {
     vs: u32,
@@ -346,6 +353,7 @@ struct State {
 
     vertex_buffers: [Option<VertexBufferBinding>; 16],
     index_buffer: Option<IndexBufferBinding>,
+    topology_raw: u32,
     topology: wgpu::PrimitiveTopology,
 
     blend_state: BlendState,
@@ -561,6 +569,7 @@ fn create_default_render_states() -> Vec<u32> {
 
 fn create_default_state() -> State {
     let mut state = State {
+        topology_raw: cmd::AerogpuPrimitiveTopology::TriangleList as u32,
         topology: wgpu::PrimitiveTopology::TriangleList,
         blend_constant: [1.0; 4],
         sample_mask: 0xFFFF_FFFF,
@@ -832,6 +841,7 @@ impl AerogpuD3d9Executor {
             clear_depth_pipelines: HashMap::new(),
             clear_dummy_color_targets: HashMap::new(),
             presented_scanouts: HashMap::new(),
+            triangle_fan_index_buffers: HashMap::new(),
             contexts: HashMap::new(),
             current_context_id: 0,
             state: create_default_state(),
@@ -853,6 +863,7 @@ impl AerogpuD3d9Executor {
         self.clear_pipelines.clear();
         self.clear_depth_pipelines.clear();
         self.clear_dummy_color_targets.clear();
+        self.triangle_fan_index_buffers.clear();
         self.contexts.clear();
         self.current_context_id = 0;
         self.bind_group = None;
@@ -3306,7 +3317,9 @@ impl AerogpuD3d9Executor {
                 Ok(())
             }
             AeroGpuCmd::SetPrimitiveTopology { topology } => {
-                self.state.topology = map_topology(topology)?;
+                let wgpu_topology = map_topology(topology)?;
+                self.state.topology_raw = topology;
+                self.state.topology = wgpu_topology;
                 Ok(())
             }
             AeroGpuCmd::SetTexture {
@@ -4473,6 +4486,73 @@ impl AerogpuD3d9Executor {
         Err(AerogpuD3d9Error::MissingRenderTargets)
     }
 
+    fn ensure_triangle_fan_index_buffer(&mut self, vertex_count: u32) -> Result<(), AerogpuD3d9Error> {
+        if self.triangle_fan_index_buffers.contains_key(&vertex_count) {
+            return Ok(());
+        }
+
+        if vertex_count < 3 {
+            return Err(AerogpuD3d9Error::Validation(
+                "TriangleFan draw requires vertex_count >= 3".into(),
+            ));
+        }
+
+        let format = if vertex_count <= (u16::MAX as u32) + 1 {
+            wgpu::IndexFormat::Uint16
+        } else {
+            wgpu::IndexFormat::Uint32
+        };
+
+        let tri_count = vertex_count
+            .checked_sub(2)
+            .expect("vertex_count >= 3 checked above");
+        let index_count = tri_count.checked_mul(3).ok_or_else(|| {
+            AerogpuD3d9Error::Validation("TriangleFan index count overflow".into())
+        })?;
+        let index_count_usize: usize = index_count.try_into().map_err(|_| {
+            AerogpuD3d9Error::Validation("TriangleFan index count out of range".into())
+        })?;
+
+        let label = format!("aerogpu-d3d9.triangle_fan_indices.{vertex_count}");
+        let buffer = match format {
+            wgpu::IndexFormat::Uint16 => {
+                let mut indices = Vec::with_capacity(index_count_usize);
+                for i in 0..tri_count {
+                    indices.push(0u16);
+                    indices.push((i + 1) as u16);
+                    indices.push((i + 2) as u16);
+                }
+                debug_assert_eq!(indices.len(), index_count_usize);
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&label),
+                        contents: bytemuck::cast_slice(&indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    })
+            }
+            wgpu::IndexFormat::Uint32 => {
+                let mut indices = Vec::with_capacity(index_count_usize);
+                for i in 0..tri_count {
+                    indices.push(0u32);
+                    indices.push(i + 1);
+                    indices.push(i + 2);
+                }
+                debug_assert_eq!(indices.len(), index_count_usize);
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&label),
+                        contents: bytemuck::cast_slice(&indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    })
+            }
+        };
+
+        self.triangle_fan_index_buffers
+            .insert(vertex_count, TriangleFanIndexBuffer { buffer, format });
+
+        Ok(())
+    }
+
     fn encode_draw(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -4550,6 +4630,52 @@ impl AerogpuD3d9Executor {
         } else {
             None
         };
+
+        let is_triangle_fan =
+            self.state.topology_raw == cmd::AerogpuPrimitiveTopology::TriangleFan as u32;
+        let sample_mask_allows_draw = (self.state.sample_mask & 1) != 0;
+
+        // If the guest requested a non-indexed TriangleFan draw, emulate by expanding the fan into
+        // a triangle-list index buffer (cached by vertex_count).
+        let triangle_fan_nonindexed_plan: Option<(u32, u32, i32, u32, u32)> = if is_triangle_fan {
+            match draw {
+                DrawParams::NonIndexed {
+                    vertex_count,
+                    instance_count,
+                    first_vertex,
+                    first_instance,
+                } => {
+                    if !sample_mask_allows_draw || vertex_count < 3 || instance_count == 0 {
+                        None
+                    } else {
+                        let tri_count = vertex_count
+                            .checked_sub(2)
+                            .expect("vertex_count >= 3 checked above");
+                        let index_count = tri_count.checked_mul(3).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("TriangleFan index count overflow".into())
+                        })?;
+                        let base_vertex: i32 = first_vertex.try_into().map_err(|_| {
+                            AerogpuD3d9Error::Validation(
+                                "TriangleFan first_vertex out of range".into(),
+                            )
+                        })?;
+                        Some((
+                            vertex_count,
+                            index_count,
+                            base_vertex,
+                            first_instance,
+                            instance_count,
+                        ))
+                    }
+                }
+                DrawParams::Indexed { .. } => None,
+            }
+        } else {
+            None
+        };
+        if let Some((vertex_count, ..)) = triangle_fan_nonindexed_plan {
+            self.ensure_triangle_fan_index_buffer(vertex_count)?;
+        }
 
         // Flush guest-backed resources touched by this draw before we bind them.
         let rt = self.state.render_targets;
@@ -4786,6 +4912,11 @@ impl AerogpuD3d9Executor {
             self.pipelines
                 .get(&pipeline_key)
                 .expect("pipeline was just inserted")
+        };
+
+        let triangle_fan_index_buffer = match triangle_fan_nonindexed_plan {
+            Some((vertex_count, ..)) => self.triangle_fan_index_buffers.get(&vertex_count),
+            None => None,
         };
 
         let (color_views, depth_view) = self.render_target_attachments()?;
@@ -5114,8 +5245,6 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        let sample_mask_allows_draw = (self.state.sample_mask & 1) != 0;
-
         match draw {
             DrawParams::NonIndexed {
                 vertex_count,
@@ -5123,7 +5252,16 @@ impl AerogpuD3d9Executor {
                 first_vertex,
                 first_instance,
             } => {
-                if sample_mask_allows_draw {
+                if let (Some((_vertex_count, index_count, base_vertex, first_instance, instance_count)), Some(fan_index)) =
+                    (triangle_fan_nonindexed_plan, triangle_fan_index_buffer)
+                {
+                    pass.set_index_buffer(fan_index.buffer.slice(..), fan_index.format);
+                    pass.draw_indexed(
+                        0..index_count,
+                        base_vertex,
+                        first_instance..first_instance + instance_count,
+                    );
+                } else if sample_mask_allows_draw {
                     pass.draw(
                         first_vertex..first_vertex + vertex_count,
                         first_instance..first_instance + instance_count,
@@ -5137,6 +5275,17 @@ impl AerogpuD3d9Executor {
                 base_vertex,
                 first_instance,
             } => {
+                if is_triangle_fan {
+                    debug!(
+                        index_count,
+                        instance_count,
+                        first_index,
+                        base_vertex,
+                        first_instance,
+                        "indexed TriangleFan draw is not emulated; treating indices as TriangleList"
+                    );
+                }
+
                 let index_binding = self
                     .state
                     .index_buffer
@@ -5954,7 +6103,8 @@ fn map_topology(topology: u32) -> Result<wgpu::PrimitiveTopology, AerogpuD3d9Err
             wgpu::PrimitiveTopology::TriangleStrip
         }
         x if x == cmd::AerogpuPrimitiveTopology::TriangleFan as u32 => {
-            // TriangleFan: approximated for now.
+            // wgpu/WebGPU do not support TriangleFan directly. We use a TriangleList pipeline and
+            // expand the fan into a triangle-list index buffer at draw time when needed.
             wgpu::PrimitiveTopology::TriangleList
         }
         other => return Err(AerogpuD3d9Error::UnsupportedTopology(other)),
