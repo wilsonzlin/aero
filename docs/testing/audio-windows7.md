@@ -144,7 +144,7 @@ In Windows 7:
 2. **Playback tab**:
    - Select the default playback device (often `Speakers` / `High Definition Audio Device`).
    - (If needed) click **Set Default**.
-    - Click **Test**.
+   - Click **Test**.
    - Tip: if you don’t see any devices, right-click the empty area and enable:
      - **Show Disabled Devices**
      - **Show Disconnected Devices**
