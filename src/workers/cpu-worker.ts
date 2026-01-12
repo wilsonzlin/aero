@@ -378,6 +378,17 @@ async function runTieredVm(iterations: number, threshold: number) {
       return;
     }
   }
+  if (cpu_rax_off + 16 * 8 > cpu_state_size) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_abi_constants cpu_gpr_off array (out of bounds): ${JSON.stringify({
+        cpu_state_size,
+        cpu_rax_off,
+        cpu_r15_end: cpu_rax_off + 16 * 8,
+      })}`,
+    });
+    return;
+  }
 
   // Newer WASM builds expose Tier-1 JIT layout fields directly on `jit_abi_constants()` to avoid
   // JS-side drift. Fall back to the older `tiered_vm_jit_abi_layout()` helper for backwards
