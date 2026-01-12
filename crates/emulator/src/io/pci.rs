@@ -20,11 +20,6 @@ pub struct PciConfigSpace {
     data: [u8; 256],
 }
 
-impl Default for PciConfigSpace {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl PciConfigSpace {
     pub fn new() -> Self {
@@ -57,5 +52,11 @@ impl PciConfigSpace {
             4 => self.data[offset..offset + 4].copy_from_slice(&value.to_le_bytes()),
             _ => {}
         }
+    }
+}
+
+impl Default for PciConfigSpace {
+    fn default() -> Self {
+        Self::new()
     }
 }

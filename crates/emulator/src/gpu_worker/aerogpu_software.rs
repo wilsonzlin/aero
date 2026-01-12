@@ -214,6 +214,11 @@ impl Default for DepthStencilState {
     }
 }
 
+struct DepthTarget<'a> {
+    tex: &'a mut Texture2DResource,
+    state: DepthStencilState,
+}
+
 #[derive(Clone, Debug)]
 struct PipelineState {
     render_targets: [u32; cmd::AEROGPU_MAX_RENDER_TARGETS],
@@ -1070,12 +1075,8 @@ impl AeroGpuSoftwareExecutor {
     fn rasterize_triangle(
         tex: &mut Texture2DResource,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32),
-        v1: (f32, f32),
-        v2: (f32, f32),
-        c0: [f32; 4],
-        c1: [f32; 4],
-        c2: [f32; 4],
+        verts: [(f32, f32); 3],
+        colors: [[f32; 4]; 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1084,6 +1085,9 @@ impl AeroGpuSoftwareExecutor {
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
+
+        let [v0, v1, v2] = verts;
+        let [c0, c1, c2] = colors;
 
         let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
@@ -1135,15 +1139,10 @@ impl AeroGpuSoftwareExecutor {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_depth(
         tex: &mut Texture2DResource,
-        depth_tex: &mut Texture2DResource,
-        depth_state: DepthStencilState,
+        depth: DepthTarget<'_>,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32, f32),
-        v1: (f32, f32, f32),
-        v2: (f32, f32, f32),
-        c0: [f32; 4],
-        c1: [f32; 4],
-        c2: [f32; 4],
+        verts: [(f32, f32, f32); 3],
+        colors: [[f32; 4]; 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1152,6 +1151,13 @@ impl AeroGpuSoftwareExecutor {
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
+
+        let DepthTarget {
+            tex: depth_tex,
+            state: depth_state,
+        } = depth;
+        let [v0, v1, v2] = verts;
+        let [c0, c1, c2] = colors;
 
         let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
@@ -1228,12 +1234,8 @@ impl AeroGpuSoftwareExecutor {
         src_tex: &Texture2DResource,
         sampler: SamplerResource,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32),
-        v1: (f32, f32),
-        v2: (f32, f32),
-        uv0: (f32, f32),
-        uv1: (f32, f32),
-        uv2: (f32, f32),
+        verts: [(f32, f32); 3],
+        uvs: [(f32, f32); 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1242,6 +1244,9 @@ impl AeroGpuSoftwareExecutor {
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
+
+        let [v0, v1, v2] = verts;
+        let [uv0, uv1, uv2] = uvs;
 
         let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
@@ -1295,17 +1300,12 @@ impl AeroGpuSoftwareExecutor {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_depth_textured(
         tex: &mut Texture2DResource,
-        depth_tex: &mut Texture2DResource,
+        depth: DepthTarget<'_>,
         src_tex: &Texture2DResource,
         sampler: SamplerResource,
-        depth_state: DepthStencilState,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32, f32),
-        v1: (f32, f32, f32),
-        v2: (f32, f32, f32),
-        uv0: (f32, f32),
-        uv1: (f32, f32),
-        uv2: (f32, f32),
+        verts: [(f32, f32, f32); 3],
+        uvs: [(f32, f32); 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1314,6 +1314,13 @@ impl AeroGpuSoftwareExecutor {
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
+
+        let DepthTarget {
+            tex: depth_tex,
+            state: depth_state,
+        } = depth;
+        let [v0, v1, v2] = verts;
+        let [uv0, uv1, uv2] = uvs;
 
         let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
@@ -1626,17 +1633,19 @@ impl AeroGpuSoftwareExecutor {
 
                         Self::rasterize_triangle_depth_textured(
                             tex,
-                            &mut depth_tex,
+                            DepthTarget {
+                                tex: &mut depth_tex,
+                                state: depth_state,
+                            },
                             &src_tex,
                             sampler,
-                            depth_state,
                             (clip_x0, clip_y0, clip_x1, clip_y1),
-                            (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
-                            (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
-                            (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
-                            tri[0].uv,
-                            tri[1].uv,
-                            tri[2].uv,
+                            [
+                                (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
+                                (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
+                                (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
+                            ],
+                            [tri[0].uv, tri[1].uv, tri[2].uv],
                             blend,
                         );
                     }
@@ -1686,12 +1695,8 @@ impl AeroGpuSoftwareExecutor {
                         &src_tex,
                         sampler,
                         (clip_x0, clip_y0, clip_x1, clip_y1),
-                        tri[0].pos,
-                        tri[1].pos,
-                        tri[2].pos,
-                        tri[0].uv,
-                        tri[1].uv,
-                        tri[2].uv,
+                        [tri[0].pos, tri[1].pos, tri[2].pos],
+                        [tri[0].uv, tri[1].uv, tri[2].uv],
                         blend,
                     );
                 }
@@ -1763,15 +1768,17 @@ impl AeroGpuSoftwareExecutor {
 
                     Self::rasterize_triangle_depth(
                         tex,
-                        &mut depth_tex,
-                        depth_state,
+                        DepthTarget {
+                            tex: &mut depth_tex,
+                            state: depth_state,
+                        },
                         (clip_x0, clip_y0, clip_x1, clip_y1),
-                        (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
-                        (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
-                        (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
-                        tri[0].color,
-                        tri[1].color,
-                        tri[2].color,
+                        [
+                            (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
+                            (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
+                            (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
+                        ],
+                        [tri[0].color, tri[1].color, tri[2].color],
                         blend,
                     );
                 }
@@ -1818,12 +1825,8 @@ impl AeroGpuSoftwareExecutor {
                 Self::rasterize_triangle(
                     tex,
                     (clip_x0, clip_y0, clip_x1, clip_y1),
-                    tri[0].pos,
-                    tri[1].pos,
-                    tri[2].pos,
-                    tri[0].color,
-                    tri[1].color,
-                    tri[2].color,
+                    [tri[0].pos, tri[1].pos, tri[2].pos],
+                    [tri[0].color, tri[1].color, tri[2].color],
                     blend,
                 );
             }

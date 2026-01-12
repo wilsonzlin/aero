@@ -15,6 +15,13 @@ use emulator::io::net::trace::{
     CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack,
 };
 
+#[derive(Clone, Copy, Debug)]
+struct Endpoint {
+    mac: MacAddr,
+    ip: Ipv4Addr,
+    port: u16,
+}
+
 fn wrap_udp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,
@@ -56,20 +63,16 @@ fn wrap_udp_ipv4_eth(
 
 #[allow(clippy::too_many_arguments)]
 fn wrap_tcp_ipv4_eth(
-    src_mac: MacAddr,
-    dst_mac: MacAddr,
-    src_ip: Ipv4Addr,
-    dst_ip: Ipv4Addr,
-    src_port: u16,
-    dst_port: u16,
+    src: Endpoint,
+    dst: Endpoint,
     seq: u32,
     ack: u32,
     flags: TcpFlags,
     payload: &[u8],
 ) -> Vec<u8> {
     let tcp = TcpSegmentBuilder {
-        src_port,
-        dst_port,
+        src_port: src.port,
+        dst_port: dst.port,
         seq_number: seq,
         ack_number: ack,
         flags,
@@ -78,7 +81,7 @@ fn wrap_tcp_ipv4_eth(
         options: &[],
         payload,
     }
-    .build_vec(src_ip, dst_ip)
+    .build_vec(src.ip, dst.ip)
     .expect("build TCP segment");
     let ip = Ipv4PacketBuilder {
         dscp_ecn: 0,
@@ -86,16 +89,16 @@ fn wrap_tcp_ipv4_eth(
         flags_fragment: 0,
         ttl: 64,
         protocol: Ipv4Protocol::TCP,
-        src_ip,
-        dst_ip,
+        src_ip: src.ip,
+        dst_ip: dst.ip,
         options: &[],
         payload: &tcp,
     }
     .build_vec()
     .expect("build IPv4 packet");
     EthernetFrameBuilder {
-        dest_mac: dst_mac,
-        src_mac,
+        dest_mac: dst.mac,
+        src_mac: src.mac,
         ethertype: EtherType::IPV4,
         payload: &ip,
     }
@@ -219,15 +222,21 @@ fn tcp_proxy_echo_end_to_end() {
 
     let guest_port = 40000u16;
     let guest_isn = 1_000u32;
+    let guest_ep = Endpoint {
+        mac: guest_mac,
+        ip: cfg.guest_ip,
+        port: guest_port,
+    };
+    let remote_ep = Endpoint {
+        mac: cfg.our_mac,
+        ip: remote_ip,
+        port: addr.port(),
+    };
 
     // SYN from guest to remote.
     let syn = wrap_tcp_ipv4_eth(
-        guest_mac,
-        cfg.our_mac,
-        cfg.guest_ip,
-        remote_ip,
-        guest_port,
-        addr.port(),
+        guest_ep,
+        remote_ep,
         guest_isn,
         0,
         TcpFlags::SYN,
@@ -275,12 +284,8 @@ fn tcp_proxy_echo_end_to_end() {
 
     // ACK to complete handshake.
     let ack = wrap_tcp_ipv4_eth(
-        guest_mac,
-        cfg.our_mac,
-        cfg.guest_ip,
-        remote_ip,
-        guest_port,
-        addr.port(),
+        guest_ep,
+        remote_ep,
         guest_isn + 1,
         stack_isn + 1,
         TcpFlags::ACK,
@@ -293,12 +298,8 @@ fn tcp_proxy_echo_end_to_end() {
     // Send data from guest; stack should emit a TcpProxySend action and an ACK frame.
     let payload = b"hello from guest";
     let psh = wrap_tcp_ipv4_eth(
-        guest_mac,
-        cfg.our_mac,
-        cfg.guest_ip,
-        remote_ip,
-        guest_port,
-        addr.port(),
+        guest_ep,
+        remote_ep,
         guest_isn + 1,
         stack_isn + 1,
         TcpFlags::ACK | TcpFlags::PSH,
@@ -347,12 +348,8 @@ fn tcp_proxy_echo_end_to_end() {
     // ACK the echoed data.
     let guest_next = guest_isn + 1 + payload.len() as u32;
     let ack_remote = wrap_tcp_ipv4_eth(
-        guest_mac,
-        cfg.our_mac,
-        cfg.guest_ip,
-        remote_ip,
-        guest_port,
-        addr.port(),
+        guest_ep,
+        remote_ep,
         guest_next,
         seg.seq_number() + seg.payload().len() as u32,
         TcpFlags::ACK,
@@ -364,12 +361,8 @@ fn tcp_proxy_echo_end_to_end() {
 
     // FIN close from guest.
     let fin = wrap_tcp_ipv4_eth(
-        guest_mac,
-        cfg.our_mac,
-        cfg.guest_ip,
-        remote_ip,
-        guest_port,
-        addr.port(),
+        guest_ep,
+        remote_ep,
         guest_next,
         seg.seq_number() + seg.payload().len() as u32,
         TcpFlags::ACK | TcpFlags::FIN,
@@ -400,12 +393,8 @@ fn tcp_proxy_echo_end_to_end() {
         .expect("FIN from stack");
 
     let final_ack = wrap_tcp_ipv4_eth(
-        guest_mac,
-        cfg.our_mac,
-        cfg.guest_ip,
-        remote_ip,
-        guest_port,
-        addr.port(),
+        guest_ep,
+        remote_ep,
         guest_next + 1,
         fin_seg.seq_number() + 1,
         TcpFlags::ACK,

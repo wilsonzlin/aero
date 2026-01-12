@@ -1,6 +1,8 @@
 mod common;
 
-use aero_d3d11::runtime::aerogpu_resources::{AerogpuResourceManager, DirtyRange};
+use aero_d3d11::runtime::aerogpu_resources::{
+    AerogpuResourceManager, DirtyRange, Texture2dCreateDesc,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -220,15 +222,17 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
         let tex_handle = 2;
         resources.create_texture2d(
             tex_handle,
-            AEROGPU_RESOURCE_USAGE_TEXTURE,
-            AerogpuFormat::R8G8B8A8Unorm as u32,
-            2,
-            2,
-            1,
-            1,
-            8,
-            0,
-            0,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AerogpuFormat::R8G8B8A8Unorm as u32,
+                width: 2,
+                height: 2,
+                mip_levels: 1,
+                array_layers: 1,
+                row_pitch_bytes: 8,
+                backing_alloc_id: 0,
+                backing_offset_bytes: 0,
+            },
         )?;
 
         // 2x2 RGBA8: four pixels.
@@ -271,15 +275,17 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
 
         let res = resources.create_texture2d(
             42,
-            AEROGPU_RESOURCE_USAGE_TEXTURE,
-            AerogpuFormat::R8G8B8A8Unorm as u32,
-            4,
-            4,
-            1,
-            1,
-            0,
-            1,
-            0,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AerogpuFormat::R8G8B8A8Unorm as u32,
+                width: 4,
+                height: 4,
+                mip_levels: 1,
+                array_layers: 1,
+                row_pitch_bytes: 0,
+                backing_alloc_id: 1,
+                backing_offset_bytes: 0,
+            },
         );
         let err = res.expect_err("expected create_texture2d to reject missing row_pitch_bytes");
         assert!(err

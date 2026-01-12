@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::{
     align_copy_bytes_per_row, format_info, D3DFormat, D3DPool, FormatInfo, GuestResourceId,
-    LockFlags, ResourceManager, TextureUsageKind,
+    LockFlags, ResourceManager, TextureUploadDesc, TextureUsageKind,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -239,22 +239,30 @@ impl Texture {
             )
         };
 
-        uploads.write_texture(
-            tex,
-            level,
-            wgpu::Origin3d {
+        let desc = TextureUploadDesc {
+            mip_level: level,
+            origin: wgpu::Origin3d {
                 x: 0,
                 y: 0,
                 z: layer,
             },
-            wgpu::TextureAspect::All,
-            wgpu::Extent3d {
+            aspect: wgpu::TextureAspect::All,
+            size: wgpu::Extent3d {
                 width: mip_w,
                 height: mip_h,
                 depth_or_array_layers: 1,
             },
-            padded_bpr,
-            upload_rows_per_image,
+            bytes_per_row: padded_bpr,
+            rows_per_image: upload_rows_per_image,
+        };
+        uploads.write_texture(
+            tex,
+            desc.mip_level,
+            desc.origin,
+            desc.aspect,
+            desc.size,
+            desc.bytes_per_row,
+            desc.rows_per_image,
             &padded,
         );
         Ok(())

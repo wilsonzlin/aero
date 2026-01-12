@@ -2,8 +2,8 @@ mod common;
 
 use aero_gpu::command_processor_d3d9::{CommandProcessor, ProcessorConfig, ProcessorEvent};
 use aero_gpu::protocol_d3d9::{
-    BufferUsage, RenderTarget, RenderTargetKind, ShaderStage, StreamEncoder, TextureFormat,
-    TextureUsage, VertexAttributeWire, VertexFormat,
+    BufferUsage, RenderTarget, RenderTargetKind, ShaderStage, StreamEncoder, TextureCreateDesc,
+    TextureFormat, TextureUsage, VertexAttributeWire, VertexFormat,
 };
 
 fn ensure_xdg_runtime_dir() {
@@ -53,11 +53,13 @@ fn shared_surface_import_export_aliases_texture_handles() {
         stream.texture_create(
             CONTEXT_ID,
             TEX_ORIGINAL,
-            4,
-            4,
-            1,
-            TextureFormat::Rgba8Unorm,
-            TextureUsage::RenderTarget as u32,
+            TextureCreateDesc {
+                width: 4,
+                height: 4,
+                mip_level_count: 1,
+                format: TextureFormat::Rgba8Unorm,
+                usage: TextureUsage::RenderTarget as u32,
+            },
         );
         stream.export_shared_surface(TEX_ORIGINAL, TOKEN_A);
         stream.import_shared_surface(TEX_ALIAS_A, TOKEN_A);

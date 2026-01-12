@@ -2,8 +2,8 @@ use crate::common;
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_gpu::protocol_d3d11::{
     BindingDesc, BindingType, BufferUsage, CmdWriter, DxgiFormat, PipelineKind, PrimitiveTopology,
-    ShaderStageFlags, TextureUsage, VertexAttributeDesc, VertexBufferLayoutDesc, VertexFormat,
-    VertexStepMode,
+    RenderPipelineDesc, ShaderStageFlags, Texture2dDesc, Texture2dUpdate, TextureUsage,
+    VertexAttributeDesc, VertexBufferLayoutDesc, VertexFormat, VertexStepMode,
 };
 
 #[repr(C)]
@@ -167,27 +167,51 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         w.create_shader_module_wgsl(SHADER, wgsl);
         w.create_texture2d(
             TEX_RED,
-            1,
-            1,
-            1,
-            1,
-            DxgiFormat::R8G8B8A8Unorm,
-            TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST,
+            Texture2dDesc {
+                width: 1,
+                height: 1,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST,
+            },
         );
         w.create_texture_view(TEX_RED_VIEW, TEX_RED, 0, 1, 0, 1);
-        w.update_texture2d(TEX_RED, 0, 0, 1, 1, 4, &[255, 0, 0, 255]);
+        w.update_texture2d(
+            TEX_RED,
+            Texture2dUpdate {
+                mip_level: 0,
+                array_layer: 0,
+                width: 1,
+                height: 1,
+                bytes_per_row: 4,
+                data: &[255, 0, 0, 255],
+            },
+        );
 
         w.create_texture2d(
             TEX_GREEN,
-            1,
-            1,
-            1,
-            1,
-            DxgiFormat::R8G8B8A8Unorm,
-            TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST,
+            Texture2dDesc {
+                width: 1,
+                height: 1,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST,
+            },
         );
         w.create_texture_view(TEX_GREEN_VIEW, TEX_GREEN, 0, 1, 0, 1);
-        w.update_texture2d(TEX_GREEN, 0, 0, 1, 1, 4, &[0, 255, 0, 255]);
+        w.update_texture2d(
+            TEX_GREEN,
+            Texture2dUpdate {
+                mip_level: 0,
+                array_layer: 0,
+                width: 1,
+                height: 1,
+                bytes_per_row: 4,
+                data: &[0, 255, 0, 255],
+            },
+        );
 
         // Create two identical sampler objects. The runtime should deduplicate the underlying
         // `wgpu::Sampler` and treat both IDs as equivalent for bind-group caching.
@@ -195,23 +219,27 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         w.create_sampler(SAMP_DUP, 0);
         w.create_texture2d(
             RT,
-            2,
-            1,
-            1,
-            1,
-            DxgiFormat::R8G8B8A8Unorm,
-            TextureUsage::RENDER_ATTACHMENT | TextureUsage::COPY_SRC,
+            Texture2dDesc {
+                width: 2,
+                height: 1,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::RENDER_ATTACHMENT | TextureUsage::COPY_SRC,
+            },
         );
         w.create_texture_view(RT_VIEW, RT, 0, 1, 0, 1);
         w.create_render_pipeline(
             PIPE,
-            SHADER,
-            SHADER,
-            DxgiFormat::R8G8B8A8Unorm,
-            DxgiFormat::Unknown,
-            PrimitiveTopology::TriangleList,
-            &vbs,
-            &bindings,
+            RenderPipelineDesc {
+                vs_shader: SHADER,
+                fs_shader: SHADER,
+                color_format: DxgiFormat::R8G8B8A8Unorm,
+                depth_format: DxgiFormat::Unknown,
+                topology: PrimitiveTopology::TriangleList,
+                vertex_buffers: &vbs,
+                bindings: &bindings,
+            },
         );
         w.begin_render_pass(RT_VIEW, [0.0, 0.0, 0.0, 1.0], None, 1.0, 0);
         w.set_pipeline(PipelineKind::Render, PIPE);
@@ -361,12 +389,14 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let mut w = CmdWriter::new();
         w.create_texture2d(
             TEX,
-            4,
-            4,
-            1,
-            1,
-            DxgiFormat::R8G8B8A8Unorm,
-            TextureUsage::STORAGE_BINDING | TextureUsage::COPY_SRC,
+            Texture2dDesc {
+                width: 4,
+                height: 4,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::STORAGE_BINDING | TextureUsage::COPY_SRC,
+            },
         );
         w.create_texture_view(VIEW, TEX, 0, 1, 0, 1);
         w.create_shader_module_wgsl(SHADER, wgsl);
@@ -412,14 +442,26 @@ fn d3d11_update_texture2d_unaligned_bytes_per_row() {
         let mut w = CmdWriter::new();
         w.create_texture2d(
             TEX,
-            3,
-            2,
-            1,
-            1,
-            DxgiFormat::R8G8B8A8Unorm,
-            TextureUsage::COPY_DST | TextureUsage::COPY_SRC,
+            Texture2dDesc {
+                width: 3,
+                height: 2,
+                array_layers: 1,
+                mip_level_count: 1,
+                format: DxgiFormat::R8G8B8A8Unorm,
+                usage: TextureUsage::COPY_DST | TextureUsage::COPY_SRC,
+            },
         );
-        w.update_texture2d(TEX, 0, 0, 3, 2, 12, &data);
+        w.update_texture2d(
+            TEX,
+            Texture2dUpdate {
+                mip_level: 0,
+                array_layer: 0,
+                width: 3,
+                height: 2,
+                bytes_per_row: 12,
+                data: &data,
+            },
+        );
 
         rt.execute(&w.finish()).unwrap();
         rt.poll_wait();

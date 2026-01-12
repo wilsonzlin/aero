@@ -913,17 +913,19 @@ impl E1000Device {
     }
 
     fn rx_ring_desc_count(&self) -> Option<u32> {
-        if self.rdlen < RxDesc::LEN as u32 || !self.rdlen.is_multiple_of(RxDesc::LEN as u32) {
+        let desc_len = RxDesc::LEN as u32;
+        if self.rdlen < desc_len || !self.rdlen.is_multiple_of(desc_len) {
             return None;
         }
-        Some(self.rdlen / RxDesc::LEN as u32)
+        Some(self.rdlen / desc_len)
     }
 
     fn tx_ring_desc_count(&self) -> Option<u32> {
-        if self.tdlen < TxDesc::LEN as u32 || !self.tdlen.is_multiple_of(TxDesc::LEN as u32) {
+        let desc_len = TxDesc::LEN as u32;
+        if self.tdlen < desc_len || !self.tdlen.is_multiple_of(desc_len) {
             return None;
         }
-        Some(self.tdlen / TxDesc::LEN as u32)
+        Some(self.tdlen / desc_len)
     }
 
     fn rx_desc_base(&self) -> u64 {

@@ -338,6 +338,20 @@ struct TextureResource {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct CreateTexture2dArgs {
+    texture_handle: u32,
+    usage_flags: u32,
+    format: u32,
+    width: u32,
+    height: u32,
+    mip_levels: u32,
+    array_layers: u32,
+    row_pitch_bytes: u32,
+    backing_alloc_id: u32,
+    backing_offset_bytes: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct BoundVertexBuffer {
     buffer: u32,
     stride_bytes: u32,
@@ -926,16 +940,18 @@ fn fs_main() -> @location(0) vec4<f32> {
                     backing_alloc_id,
                     backing_offset_bytes,
                 } => self.exec_create_texture2d(
-                    texture_handle,
-                    usage_flags,
-                    format,
-                    width,
-                    height,
-                    mip_levels,
-                    array_layers,
-                    row_pitch_bytes,
-                    backing_alloc_id,
-                    backing_offset_bytes,
+                    CreateTexture2dArgs {
+                        texture_handle,
+                        usage_flags,
+                        format,
+                        width,
+                        height,
+                        mip_levels,
+                        array_layers,
+                        row_pitch_bytes,
+                        backing_alloc_id,
+                        backing_offset_bytes,
+                    },
                     alloc_table,
                 ),
                 AeroGpuCmd::DestroyResource { resource_handle } => {
@@ -1385,18 +1401,22 @@ fn fs_main() -> @location(0) vec4<f32> {
     #[allow(clippy::too_many_arguments)]
     fn exec_create_texture2d(
         &mut self,
-        texture_handle: u32,
-        usage_flags: u32,
-        format: u32,
-        width: u32,
-        height: u32,
-        mip_levels: u32,
-        array_layers: u32,
-        row_pitch_bytes: u32,
-        backing_alloc_id: u32,
-        backing_offset_bytes: u32,
+        args: CreateTexture2dArgs,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
+        let CreateTexture2dArgs {
+            texture_handle,
+            usage_flags,
+            format,
+            width,
+            height,
+            mip_levels,
+            array_layers,
+            row_pitch_bytes,
+            backing_alloc_id,
+            backing_offset_bytes,
+        } = args;
+
         if texture_handle == 0 {
             return Err(ExecutorError::Validation(
                 "CREATE_TEXTURE2D texture_handle must be non-zero".into(),

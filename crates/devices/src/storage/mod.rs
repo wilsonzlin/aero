@@ -3,6 +3,7 @@ use std::io;
 pub trait DiskBackend: Send {
     /// Total disk size in bytes.
     fn len(&self) -> u64;
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -96,15 +96,15 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
 
 type Tier1Dispatcher = ExecDispatcher<Tier1Interpreter, SharedWasmtimeBackend, Tier1CompileQueue>;
 type Tier1TestCompiler = Tier1Compiler<SharedWasmtimeBackend, SharedWasmtimeBackend>;
-type RuntimeSetup = (
-    SharedWasmtimeBackend,
-    Tier1CompileQueue,
-    Tier1Dispatcher,
-    Tier1TestCompiler,
-    TestCpu,
-);
+struct RuntimeHarness {
+    backend: SharedWasmtimeBackend,
+    compile_queue: Tier1CompileQueue,
+    dispatcher: Tier1Dispatcher,
+    compiler: Tier1TestCompiler,
+    cpu: TestCpu,
+}
 
-fn setup_runtime(hot_threshold: u32) -> RuntimeSetup {
+fn setup_runtime(hot_threshold: u32) -> RuntimeHarness {
     let entry = 0x1000u64;
     let code = [
         0x83, 0xc0, 0x01, // add eax, 1
@@ -141,13 +141,25 @@ fn setup_runtime(hot_threshold: u32) -> RuntimeSetup {
         },
     };
 
-    (backend, compile_queue, dispatcher, compiler, cpu)
+    RuntimeHarness {
+        backend,
+        compile_queue,
+        dispatcher,
+        compiler,
+        cpu,
+    }
 }
 
 #[test]
 fn tier1_end_to_end_compile_install_and_execute() {
     let entry = 0x1000u64;
-    let (backend, compile_queue, mut dispatcher, mut compiler, mut cpu) = setup_runtime(3);
+    let RuntimeHarness {
+        backend,
+        compile_queue,
+        mut dispatcher,
+        mut compiler,
+        mut cpu,
+    } = setup_runtime(3);
 
     // Run blocks until hotness triggers compilation. Keep running to ensure the request is only
     // queued once.
@@ -206,7 +218,13 @@ fn tier1_end_to_end_compile_install_and_execute() {
 #[test]
 fn tier1_stale_snapshot_is_rejected_and_requeued() {
     let entry = 0x1000u64;
-    let (_backend, compile_queue, mut dispatcher, mut compiler, mut cpu) = setup_runtime(1);
+    let RuntimeHarness {
+        backend: _backend,
+        compile_queue,
+        mut dispatcher,
+        mut compiler,
+        mut cpu,
+    } = setup_runtime(1);
 
     // First block execution should request compilation immediately.
     dispatcher.step(&mut cpu);

@@ -93,11 +93,6 @@ pub struct BusMasterChannel {
     drive_dma_capable: [bool; 2],
 }
 
-impl Default for BusMasterChannel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl BusMasterChannel {
     pub fn new() -> Self {
@@ -236,5 +231,11 @@ impl BusMasterChannel {
         self.status &= !0x01;
         self.status |= 0x02; // error
         self.status |= 0x04; // interrupt
+    }
+}
+
+impl Default for BusMasterChannel {
+    fn default() -> Self {
+        Self::new()
     }
 }

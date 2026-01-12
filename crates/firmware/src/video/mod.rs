@@ -9,17 +9,17 @@ pub struct VideoDevice {
     pub vbe: VbeDevice,
 }
 
+impl Default for VideoDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VideoDevice {
     pub fn new() -> Self {
         Self {
             vga: VgaDevice::new(),
             vbe: VbeDevice::new(),
         }
-    }
-}
-
-impl Default for VideoDevice {
-    fn default() -> Self {
-        Self::new()
     }
 }

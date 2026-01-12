@@ -121,6 +121,13 @@ pub struct PresentEvent {
     pub presented_render_target: Option<u32>,
 }
 
+struct CmdStreamCtx<'a, 'b> {
+    iter: &'b mut core::iter::Peekable<AerogpuCmdStreamIter<'a>>,
+    cursor: &'b mut usize,
+    bytes: &'a [u8],
+    size: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Viewport {
     x: f32,
@@ -902,12 +909,15 @@ impl AerogpuD3d11Executor {
                 // in-flight pass before processing the opcode.
                 match opcode {
                     OPCODE_DRAW | OPCODE_DRAW_INDEXED => {
+                        let mut stream = CmdStreamCtx {
+                            iter: &mut iter,
+                            cursor: &mut cursor,
+                            bytes: stream_bytes,
+                            size: stream_size,
+                        };
                         self.exec_render_pass_load(
                             &mut encoder,
-                            &mut iter,
-                            &mut cursor,
-                            stream_bytes,
-                            stream_size,
+                            &mut stream,
                             &alloc_map,
                             guest_mem,
                             &mut report,
@@ -1246,10 +1256,7 @@ impl AerogpuD3d11Executor {
     fn exec_render_pass_load<'a>(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        iter: &mut core::iter::Peekable<AerogpuCmdStreamIter<'a>>,
-        cursor: &mut usize,
-        stream_bytes: &'a [u8],
-        stream_size: usize,
+        stream: &mut CmdStreamCtx<'a, '_>,
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
@@ -1612,7 +1619,7 @@ impl AerogpuD3d11Executor {
         let mut legacy_constants_used = [false; 3];
 
         loop {
-            let Some(next) = iter.peek() else {
+            let Some(next) = stream.iter.peek() else {
                 break;
             };
             let (cmd_size, opcode) = match next {
@@ -1620,7 +1627,7 @@ impl AerogpuD3d11Executor {
                 Err(err) => {
                     return Err(anyhow!(
                         "aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}",
-                        *cursor
+                        *stream.cursor
                     ));
                 }
             };
@@ -1664,17 +1671,18 @@ impl AerogpuD3d11Executor {
                 _ => break, // leave the opcode for the outer loop
             }
 
-            let cmd_end = cursor
+            let cmd_end = (*stream.cursor)
                 .checked_add(cmd_size)
                 .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
-            let cmd_bytes = stream_bytes
-                .get(*cursor..cmd_end)
+            let cmd_bytes = stream
+                .bytes
+                .get(*stream.cursor..cmd_end)
                 .ok_or_else(|| {
                     anyhow!(
                         "aerogpu_cmd: cmd overruns stream: cursor=0x{:x} cmd_size=0x{:x} stream_size=0x{:x}",
-                        *cursor,
+                        *stream.cursor,
                         cmd_size,
-                        stream_size
+                        stream.size
                     )
                 })?;
 
@@ -2385,8 +2393,11 @@ impl AerogpuD3d11Executor {
                 }
             }
 
-            iter.next().expect("peeked Some").map_err(|err| {
-                anyhow!("aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}", *cursor)
+            stream.iter.next().expect("peeked Some").map_err(|err| {
+                anyhow!(
+                    "aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}",
+                    *stream.cursor
+                )
             })?;
 
             match opcode {
@@ -2781,7 +2792,7 @@ impl AerogpuD3d11Executor {
             }
 
             report.commands = report.commands.saturating_add(1);
-            *cursor = cmd_end;
+            *stream.cursor = cmd_end;
         }
 
         drop(pass);

@@ -754,7 +754,7 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                                 size: data.len(),
                             });
                         }
-
+ 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
                         let usage = local
                             .usages

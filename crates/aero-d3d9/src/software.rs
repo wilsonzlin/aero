@@ -1126,20 +1126,44 @@ fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
     (px - ax) * (by - ay) - (py - ay) * (bx - ax)
 }
 
+pub struct DrawParams<'a> {
+    pub vs: &'a ShaderIr,
+    pub ps: &'a ShaderIr,
+    pub vertex_decl: &'a VertexDecl,
+    pub vertex_buffer: &'a [u8],
+    pub indices: Option<&'a [u16]>,
+    pub constants: &'a [Vec4; 256],
+    pub textures: &'a HashMap<u16, Texture2D>,
+    pub sampler_states: &'a HashMap<u16, SamplerState>,
+    pub blend_state: BlendState,
+}
+
+struct PixelContext<'a> {
+    ps: &'a ShaderIr,
+    constants: &'a [Vec4; 256],
+    textures: &'a HashMap<u16, Texture2D>,
+    sampler_states: &'a HashMap<u16, SamplerState>,
+    blend_state: BlendState,
+}
+
 /// Draw a triangle list.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     target: &mut RenderTarget,
-    vs: &ShaderIr,
-    ps: &ShaderIr,
-    vertex_decl: &VertexDecl,
-    vertex_buffer: &[u8],
-    indices: Option<&[u16]>,
-    constants: &[Vec4; 256],
-    textures: &HashMap<u16, Texture2D>,
-    sampler_states: &HashMap<u16, SamplerState>,
-    blend_state: BlendState,
+    params: DrawParams<'_>,
 ) {
+    let DrawParams {
+        vs,
+        ps,
+        vertex_decl,
+        vertex_buffer,
+        indices,
+        constants,
+        textures,
+        sampler_states,
+        blend_state,
+    } = params;
+
     let fetch_vertex = |vertex_index: u32| -> HashMap<u16, Vec4> {
         let base = vertex_index as usize * vertex_decl.stride as usize;
         let mut inputs = HashMap::<u16, Vec4>::new();
@@ -1171,6 +1195,13 @@ pub fn draw(
     };
 
     // Process vertices. For simplicity we process all unique vertices referenced by indices or by draw order.
+    let ctx = PixelContext {
+        ps,
+        constants,
+        textures,
+        sampler_states,
+        blend_state,
+    };
     match indices {
         Some(idx) => {
             let max = idx.iter().copied().max().unwrap_or(0) as u32;
@@ -1182,17 +1213,7 @@ pub fn draw(
                 let a = &verts[tri[0] as usize];
                 let b = &verts[tri[1] as usize];
                 let c = &verts[tri[2] as usize];
-                rasterize_triangle(
-                    target,
-                    ps,
-                    a,
-                    b,
-                    c,
-                    constants,
-                    textures,
-                    sampler_states,
-                    blend_state,
-                );
+                rasterize_triangle(target, &ctx, a, b, c);
             }
         }
         None => {
@@ -1204,17 +1225,7 @@ pub fn draw(
                 let a = &verts[tri[0] as usize];
                 let b = &verts[tri[1] as usize];
                 let c = &verts[tri[2] as usize];
-                rasterize_triangle(
-                    target,
-                    ps,
-                    a,
-                    b,
-                    c,
-                    constants,
-                    textures,
-                    sampler_states,
-                    blend_state,
-                );
+                rasterize_triangle(target, &ctx, a, b, c);
             }
         }
     }
@@ -1223,14 +1234,10 @@ pub fn draw(
 #[allow(clippy::too_many_arguments)]
 fn rasterize_triangle(
     target: &mut RenderTarget,
-    ps: &ShaderIr,
+    ctx: &PixelContext<'_>,
     a: &ScreenVertex,
     b: &ScreenVertex,
     c: &ScreenVertex,
-    constants: &[Vec4; 256],
-    textures: &HashMap<u16, Texture2D>,
-    sampler_states: &HashMap<u16, SamplerState>,
-    blend_state: BlendState,
 ) {
     let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
     let max_x = a.x.max(b.x).max(c.x).ceil().min(target.width as f32 - 1.0) as i32;
@@ -1301,9 +1308,16 @@ fn rasterize_triangle(
                 let attr = interp_map(&a.attr, &b.attr, &c.attr);
                 let tex = interp_map(&a.tex, &b.tex, &c.tex);
 
-                let color = run_pixel_shader(ps, &attr, &tex, constants, textures, sampler_states);
+                let color = run_pixel_shader(
+                    ctx.ps,
+                    &attr,
+                    &tex,
+                    ctx.constants,
+                    ctx.textures,
+                    ctx.sampler_states,
+                );
                 let dst = target.get(x as u32, y as u32);
-                let out = blend(blend_state, color, dst).clamp01();
+                let out = blend(ctx.blend_state, color, dst).clamp01();
                 target.set(x as u32, y as u32, out);
             }
         }

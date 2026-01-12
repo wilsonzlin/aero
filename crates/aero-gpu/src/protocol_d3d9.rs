@@ -149,6 +149,25 @@ pub enum TextureUsage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextureCreateDesc {
+    pub width: u32,
+    pub height: u32,
+    pub mip_level_count: u32,
+    pub format: TextureFormat,
+    pub usage: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewportDesc {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub min_depth: f32,
+    pub max_depth: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum BufferUsage {
     Vertex = 1 << 0,
@@ -281,20 +300,16 @@ impl StreamEncoder {
         &mut self,
         context_id: u32,
         texture_id: u32,
-        width: u32,
-        height: u32,
-        mip_level_count: u32,
-        format: TextureFormat,
-        usage: u32,
+        desc: TextureCreateDesc,
     ) {
         let mut payload = Vec::with_capacity(28);
         payload.extend_from_slice(&context_id.to_le_bytes());
         payload.extend_from_slice(&texture_id.to_le_bytes());
-        payload.extend_from_slice(&width.to_le_bytes());
-        payload.extend_from_slice(&height.to_le_bytes());
-        payload.extend_from_slice(&mip_level_count.to_le_bytes());
-        payload.extend_from_slice(&(format as u32).to_le_bytes());
-        payload.extend_from_slice(&usage.to_le_bytes());
+        payload.extend_from_slice(&desc.width.to_le_bytes());
+        payload.extend_from_slice(&desc.height.to_le_bytes());
+        payload.extend_from_slice(&desc.mip_level_count.to_le_bytes());
+        payload.extend_from_slice(&(desc.format as u32).to_le_bytes());
+        payload.extend_from_slice(&desc.usage.to_le_bytes());
         self.push_command(Opcode::TextureCreate, &payload);
     }
 
@@ -503,21 +518,16 @@ impl StreamEncoder {
     pub fn set_viewport(
         &mut self,
         context_id: u32,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        min_depth: f32,
-        max_depth: f32,
+        viewport: ViewportDesc,
     ) {
         let mut payload = Vec::with_capacity(28);
         payload.extend_from_slice(&context_id.to_le_bytes());
-        payload.extend_from_slice(&x.to_le_bytes());
-        payload.extend_from_slice(&y.to_le_bytes());
-        payload.extend_from_slice(&width.to_le_bytes());
-        payload.extend_from_slice(&height.to_le_bytes());
-        payload.extend_from_slice(&min_depth.to_le_bytes());
-        payload.extend_from_slice(&max_depth.to_le_bytes());
+        payload.extend_from_slice(&viewport.x.to_le_bytes());
+        payload.extend_from_slice(&viewport.y.to_le_bytes());
+        payload.extend_from_slice(&viewport.width.to_le_bytes());
+        payload.extend_from_slice(&viewport.height.to_le_bytes());
+        payload.extend_from_slice(&viewport.min_depth.to_le_bytes());
+        payload.extend_from_slice(&viewport.max_depth.to_le_bytes());
         self.push_command(Opcode::SetViewport, &payload);
     }
 

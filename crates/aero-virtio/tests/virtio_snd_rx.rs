@@ -243,36 +243,59 @@ fn read_pcm_status(mem: &GuestRam, addr: u64) -> (u32, u32) {
     )
 }
 
+struct CtrlSubmit<'a> {
+    desc_table: u64,
+    avail_addr: u64,
+    avail_idx: u16,
+    req_addr: u64,
+    resp_addr: u64,
+    req: &'a [u8],
+}
+
+struct RxSubmit<'a> {
+    desc_table: u64,
+    avail_addr: u64,
+    avail_idx: u16,
+    out_addr: u64,
+    out_len: u32,
+    payload_descs: &'a [(u64, u32)],
+    resp_addr: u64,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn submit_ctrl(
     dev: &mut VirtioPciDevice,
     mem: &mut GuestRam,
     caps: &Caps,
-    desc_table: u64,
-    avail_addr: u64,
-    mut avail_idx: u16,
-    req_addr: u64,
-    resp_addr: u64,
-    req: &[u8],
+    submit: CtrlSubmit<'_>,
 ) -> u16 {
-    mem.write(req_addr, req).unwrap();
-    mem.write(resp_addr, &[0xffu8; 64]).unwrap();
+    mem.write(submit.req_addr, submit.req).unwrap();
+    mem.write(submit.resp_addr, &[0xffu8; 64]).unwrap();
 
     write_desc(
         mem,
-        desc_table,
+        submit.desc_table,
         0,
-        req_addr,
-        req.len() as u32,
+        submit.req_addr,
+        submit.req.len() as u32,
         VIRTQ_DESC_F_NEXT,
         1,
     );
-    write_desc(mem, desc_table, 1, resp_addr, 64, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        mem,
+        submit.desc_table,
+        1,
+        submit.resp_addr,
+        64,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
-    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
+    let mut avail_idx = submit.avail_idx;
+    let elem_addr = submit.avail_addr + 4 + u64::from(avail_idx) * 2;
     write_u16_le(mem, elem_addr, 0).unwrap();
     avail_idx = avail_idx.wrapping_add(1);
-    write_u16_le(mem, avail_addr + 2, avail_idx).unwrap();
+    write_u16_le(mem, submit.avail_addr + 2, avail_idx).unwrap();
 
     kick_queue(dev, mem, caps, VIRTIO_SND_QUEUE_CONTROL);
     avail_idx
@@ -303,12 +326,14 @@ fn drive_capture_to_prepared(
         dev,
         mem,
         caps,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        ctrl_resp,
-        &set_params,
+        CtrlSubmit {
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            req_addr: ctrl_req,
+            resp_addr: ctrl_resp,
+            req: &set_params,
+        },
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -324,12 +349,14 @@ fn drive_capture_to_prepared(
         dev,
         mem,
         caps,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        ctrl_resp,
-        &prepare,
+        CtrlSubmit {
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            req_addr: ctrl_req,
+            resp_addr: ctrl_resp,
+            req: &prepare,
+        },
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -360,12 +387,14 @@ fn drive_capture_to_running(
         dev,
         mem,
         caps,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        ctrl_resp,
-        &start,
+        CtrlSubmit {
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            req_addr: ctrl_req,
+            resp_addr: ctrl_resp,
+            req: &start,
+        },
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -374,24 +403,25 @@ fn drive_capture_to_running(
     let _ = ctrl_avail_idx;
 }
 
-#[allow(clippy::too_many_arguments)]
 fn submit_rx(
     dev: &mut VirtioPciDevice,
     mem: &mut GuestRam,
     caps: &Caps,
-    desc_table: u64,
-    avail_addr: u64,
-    avail_idx: u16,
-    out_addr: u64,
-    out_len: u32,
-    payload_descs: &[(u64, u32)],
-    resp_addr: u64,
+    submit: RxSubmit<'_>,
 ) {
-    let resp_index = payload_descs.len() as u16 + 1;
+    let resp_index = submit.payload_descs.len() as u16 + 1;
 
-    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        mem,
+        submit.desc_table,
+        0,
+        submit.out_addr,
+        submit.out_len,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
 
-    for (i, &(addr, len)) in payload_descs.iter().enumerate() {
+    for (i, &(addr, len)) in submit.payload_descs.iter().enumerate() {
         let idx = 1 + i as u16;
         let next = if idx == resp_index - 1 {
             resp_index
@@ -400,7 +430,7 @@ fn submit_rx(
         };
         write_desc(
             mem,
-            desc_table,
+            submit.desc_table,
             idx,
             addr,
             len,
@@ -411,17 +441,22 @@ fn submit_rx(
 
     write_desc(
         mem,
-        desc_table,
+        submit.desc_table,
         resp_index,
-        resp_addr,
+        submit.resp_addr,
         8,
         VIRTQ_DESC_F_WRITE,
         0,
     );
 
-    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
+    let elem_addr = submit.avail_addr + 4 + u64::from(submit.avail_idx) * 2;
     write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(mem, avail_addr + 2, avail_idx.wrapping_add(1)).unwrap();
+    write_u16_le(
+        mem,
+        submit.avail_addr + 2,
+        submit.avail_idx.wrapping_add(1),
+    )
+    .unwrap();
 
     kick_queue(dev, mem, caps, VIRTIO_SND_QUEUE_RX);
 }
@@ -475,13 +510,15 @@ fn virtio_snd_rx_bad_msg_when_header_missing() {
         &mut dev,
         &mut mem,
         &caps,
-        rx_desc,
-        rx_avail,
-        0,
-        hdr_addr,
-        4,
-        &[(payload0_addr, 5), (payload1_addr, 7)],
-        resp_addr,
+        RxSubmit {
+            desc_table: rx_desc,
+            avail_addr: rx_avail,
+            avail_idx: 0,
+            out_addr: hdr_addr,
+            out_len: 4,
+            payload_descs: &[(payload0_addr, 5), (payload1_addr, 7)],
+            resp_addr,
+        },
     );
 
     assert_used_len(&mem, rx_used, 12 + 8);
@@ -550,13 +587,15 @@ fn virtio_snd_rx_bad_msg_when_header_has_extra_bytes() {
         &mut dev,
         &mut mem,
         &caps,
-        rx_desc,
-        rx_avail,
-        0,
-        hdr_addr,
-        12,
-        &[(payload_addr, 4)],
-        resp_addr,
+        RxSubmit {
+            desc_table: rx_desc,
+            avail_addr: rx_avail,
+            avail_idx: 0,
+            out_addr: hdr_addr,
+            out_len: 12,
+            payload_descs: &[(payload_addr, 4)],
+            resp_addr,
+        },
     );
 
     assert_used_len(&mem, rx_used, 4 + 8);
@@ -616,13 +655,15 @@ fn virtio_snd_rx_bad_msg_when_stream_id_not_capture() {
         &mut dev,
         &mut mem,
         &caps,
-        rx_desc,
-        rx_avail,
-        0,
-        hdr_addr,
-        8,
-        &[(payload_addr, 4)],
-        resp_addr,
+        RxSubmit {
+            desc_table: rx_desc,
+            avail_addr: rx_avail,
+            avail_idx: 0,
+            out_addr: hdr_addr,
+            out_len: 8,
+            payload_descs: &[(payload_addr, 4)],
+            resp_addr,
+        },
     );
 
     assert_used_len(&mem, rx_used, 4 + 8);
@@ -700,13 +741,15 @@ fn virtio_snd_rx_io_err_when_capture_stream_not_running() {
         &mut dev,
         &mut mem,
         &caps,
-        rx_desc,
-        rx_avail,
-        0,
-        hdr_addr,
-        8,
-        &[(payload_addr, 8)],
-        resp_addr,
+        RxSubmit {
+            desc_table: rx_desc,
+            avail_addr: rx_avail,
+            avail_idx: 0,
+            out_addr: hdr_addr,
+            out_len: 8,
+            payload_descs: &[(payload_addr, 8)],
+            resp_addr,
+        },
     );
 
     assert_used_len(&mem, rx_used, 8 + 8);
@@ -788,13 +831,15 @@ fn virtio_snd_rx_ok_writes_full_payload_and_pcm_status_in_last_descriptor() {
         &mut dev,
         &mut mem,
         &caps,
-        rx_desc,
-        rx_avail,
-        0,
-        hdr_addr,
-        8,
-        &[(payload0_addr, 5), (payload1_addr, 7)],
-        resp_addr,
+        RxSubmit {
+            desc_table: rx_desc,
+            avail_addr: rx_avail,
+            avail_idx: 0,
+            out_addr: hdr_addr,
+            out_len: 8,
+            payload_descs: &[(payload0_addr, 5), (payload1_addr, 7)],
+            resp_addr,
+        },
     );
 
     assert_used_len(&mem, rx_used, 12 + 8);

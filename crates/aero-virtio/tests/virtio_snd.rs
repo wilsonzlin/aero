@@ -210,11 +210,7 @@ fn configure_queue(
     write_u16_le(mem, used + 2, 0).unwrap();
 }
 
-#[allow(clippy::too_many_arguments)]
-fn submit_chain(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
+struct ChainSubmit {
     queue_index: u16,
     desc_table: u64,
     avail_addr: u64,
@@ -223,18 +219,46 @@ fn submit_chain(
     out_len: u32,
     in_addr: u64,
     in_len: u32,
+}
+
+fn submit_chain(
+    dev: &mut VirtioPciDevice,
+    mem: &mut GuestRam,
+    caps: &Caps,
+    submit: ChainSubmit,
 ) {
-    write_desc(mem, desc_table, 0, out_addr, out_len, VIRTQ_DESC_F_NEXT, 1);
-    write_desc(mem, desc_table, 1, in_addr, in_len, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        mem,
+        submit.desc_table,
+        0,
+        submit.out_addr,
+        submit.out_len,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(
+        mem,
+        submit.desc_table,
+        1,
+        submit.in_addr,
+        submit.in_len,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
     // Add to avail ring.
-    let elem_addr = avail_addr + 4 + u64::from(avail_idx) * 2;
+    let elem_addr = submit.avail_addr + 4 + u64::from(submit.avail_idx) * 2;
     write_u16_le(mem, elem_addr, 0).unwrap();
-    write_u16_le(mem, avail_addr + 2, avail_idx.wrapping_add(1)).unwrap();
+    write_u16_le(
+        mem,
+        submit.avail_addr + 2,
+        submit.avail_idx.wrapping_add(1),
+    )
+    .unwrap();
 
     dev.bar0_write(
-        caps.notify + u64::from(queue_index) * u64::from(caps.notify_mult),
-        &queue_index.to_le_bytes(),
+        caps.notify + u64::from(submit.queue_index) * u64::from(caps.notify_mult),
+        &submit.queue_index.to_le_bytes(),
         mem,
     );
 }
@@ -442,14 +466,16 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        set_params.len() as u32,
-        ctrl_resp,
-        64,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_CONTROL,
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            out_addr: ctrl_req,
+            out_len: set_params.len() as u32,
+            in_addr: ctrl_resp,
+            in_len: 64,
+        },
     );
     ctrl_avail_idx += 1;
     assert_eq!(
@@ -464,14 +490,16 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        prepare.len() as u32,
-        ctrl_resp,
-        64,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_CONTROL,
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            out_addr: ctrl_req,
+            out_len: prepare.len() as u32,
+            in_addr: ctrl_resp,
+            in_len: 64,
+        },
     );
     ctrl_avail_idx += 1;
     assert_eq!(
@@ -486,14 +514,16 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        start.len() as u32,
-        ctrl_resp,
-        64,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_CONTROL,
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            out_addr: ctrl_req,
+            out_len: start.len() as u32,
+            in_addr: ctrl_resp,
+            in_len: 64,
+        },
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -517,14 +547,16 @@ fn virtio_snd_tx_pushes_samples_to_backend() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_TX,
-        tx_desc,
-        tx_avail,
-        0,
-        tx_payload,
-        tx_bytes.len() as u32,
-        tx_status,
-        8,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_TX,
+            desc_table: tx_desc,
+            avail_addr: tx_avail,
+            avail_idx: 0,
+            out_addr: tx_payload,
+            out_len: tx_bytes.len() as u32,
+            in_addr: tx_status,
+            in_len: 8,
+        },
     );
 
     let status_bytes = mem.get_slice(tx_status, 8).unwrap();
@@ -637,14 +669,16 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        set_params.len() as u32,
-        ctrl_resp,
-        64,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_CONTROL,
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            out_addr: ctrl_req,
+            out_len: set_params.len() as u32,
+            in_addr: ctrl_resp,
+            in_len: 64,
+        },
     );
     ctrl_avail_idx += 1;
     assert_eq!(
@@ -659,14 +693,16 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        prepare.len() as u32,
-        ctrl_resp,
-        64,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_CONTROL,
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            out_addr: ctrl_req,
+            out_len: prepare.len() as u32,
+            in_addr: ctrl_resp,
+            in_len: 64,
+        },
     );
     ctrl_avail_idx += 1;
     assert_eq!(
@@ -681,14 +717,16 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
         &mut dev,
         &mut mem,
         &caps,
-        VIRTIO_SND_QUEUE_CONTROL,
-        ctrl_desc,
-        ctrl_avail,
-        ctrl_avail_idx,
-        ctrl_req,
-        start.len() as u32,
-        ctrl_resp,
-        64,
+        ChainSubmit {
+            queue_index: VIRTIO_SND_QUEUE_CONTROL,
+            desc_table: ctrl_desc,
+            avail_addr: ctrl_avail,
+            avail_idx: ctrl_avail_idx,
+            out_addr: ctrl_req,
+            out_len: start.len() as u32,
+            in_addr: ctrl_resp,
+            in_len: 64,
+        },
     );
     assert_eq!(
         u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
@@ -726,14 +764,16 @@ fn virtio_snd_tx_resamples_to_host_rate_and_is_stateful() {
             &mut dev,
             &mut mem,
             &caps,
-            VIRTIO_SND_QUEUE_TX,
-            tx_desc,
-            tx_avail,
-            tx_avail_idx,
-            tx_payload,
-            tx_bytes.len() as u32,
-            tx_status,
-            8,
+            ChainSubmit {
+                queue_index: VIRTIO_SND_QUEUE_TX,
+                desc_table: tx_desc,
+                avail_addr: tx_avail,
+                avail_idx: tx_avail_idx,
+                out_addr: tx_payload,
+                out_len: tx_bytes.len() as u32,
+                in_addr: tx_status,
+                in_len: 8,
+            },
         );
 
         let status_bytes = mem.get_slice(tx_status, 8).unwrap();

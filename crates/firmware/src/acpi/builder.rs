@@ -155,7 +155,6 @@ impl AcpiTables {
                 addr: config.pci_mmio_start,
             }
         })?;
-
         // Keep the MMIO window ending right below the IOAPIC base (matching the default).
         let default_cfg = aero_acpi::AcpiConfig::default();
         let pci_mmio_size = default_cfg.io_apic_addr.saturating_sub(pci_mmio_base);

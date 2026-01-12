@@ -189,6 +189,12 @@ pub struct TextureManagerStats {
     pub bc_cpu_fallback_output_bytes: u64,
 }
 
+struct UploadContext<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    stats: &'a mut TextureManagerStats,
+}
+
 #[derive(Debug, Error)]
 pub enum TextureManagerError {
     #[error("texture {0:#x} not found")]
@@ -426,17 +432,16 @@ impl<'a> TextureManager<'a> {
 
         validate_region(region, mip_level_count, mip_size)?;
 
+        let mut upload = UploadContext {
+            device: self.device,
+            queue: self.queue,
+            stats: &mut self.stats,
+        };
+
         match selection.upload_transform {
-            TextureUploadTransform::Direct => upload_direct(
-                self.device,
-                self.queue,
-                &mut self.stats,
-                &texture,
-                region,
-                requested_format,
-                mip_size,
-                data,
-            ),
+            TextureUploadTransform::Direct => {
+                upload_direct(&mut upload, &texture, region, requested_format, mip_size, data)
+            }
             TextureUploadTransform::Bc1ToRgba8 => {
                 let blocks_w = region.size.width.div_ceil(4) as usize;
                 let blocks_h = region.size.height.div_ceil(4) as usize;
@@ -450,18 +455,11 @@ impl<'a> TextureManager<'a> {
 
                 let decompressed =
                     decompress_bc1_rgba8(region.size.width, region.size.height, data);
-                self.stats.bc_cpu_fallback_uploads += 1;
-                self.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
-                self.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
+                upload.stats.bc_cpu_fallback_uploads += 1;
+                upload.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
+                upload.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
 
-                upload_rgba8(
-                    self.device,
-                    self.queue,
-                    &mut self.stats,
-                    &texture,
-                    region,
-                    &decompressed,
-                )
+                upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
             TextureUploadTransform::Bc2ToRgba8 => {
                 let blocks_w = region.size.width.div_ceil(4) as usize;
@@ -476,18 +474,11 @@ impl<'a> TextureManager<'a> {
 
                 let decompressed =
                     decompress_bc2_rgba8(region.size.width, region.size.height, data);
-                self.stats.bc_cpu_fallback_uploads += 1;
-                self.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
-                self.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
+                upload.stats.bc_cpu_fallback_uploads += 1;
+                upload.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
+                upload.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
 
-                upload_rgba8(
-                    self.device,
-                    self.queue,
-                    &mut self.stats,
-                    &texture,
-                    region,
-                    &decompressed,
-                )
+                upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
             TextureUploadTransform::Bc3ToRgba8 => {
                 let blocks_w = region.size.width.div_ceil(4) as usize;
@@ -502,18 +493,11 @@ impl<'a> TextureManager<'a> {
 
                 let decompressed =
                     decompress_bc3_rgba8(region.size.width, region.size.height, data);
-                self.stats.bc_cpu_fallback_uploads += 1;
-                self.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
-                self.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
+                upload.stats.bc_cpu_fallback_uploads += 1;
+                upload.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
+                upload.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
 
-                upload_rgba8(
-                    self.device,
-                    self.queue,
-                    &mut self.stats,
-                    &texture,
-                    region,
-                    &decompressed,
-                )
+                upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
             TextureUploadTransform::Bc7ToRgba8 => {
                 let blocks_w = region.size.width.div_ceil(4) as usize;
@@ -528,18 +512,11 @@ impl<'a> TextureManager<'a> {
 
                 let decompressed =
                     decompress_bc7_rgba8(region.size.width, region.size.height, data);
-                self.stats.bc_cpu_fallback_uploads += 1;
-                self.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
-                self.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
+                upload.stats.bc_cpu_fallback_uploads += 1;
+                upload.stats.bc_cpu_fallback_input_bytes += data.len() as u64;
+                upload.stats.bc_cpu_fallback_output_bytes += decompressed.len() as u64;
 
-                upload_rgba8(
-                    self.device,
-                    self.queue,
-                    &mut self.stats,
-                    &texture,
-                    region,
-                    &decompressed,
-                )
+                upload_rgba8(&mut upload, &texture, region, &decompressed)
             }
         }
     }
@@ -650,9 +627,7 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
 
 #[allow(clippy::too_many_arguments)]
 fn upload_direct(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: &mut UploadContext<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     format: TextureFormat,
@@ -661,28 +636,26 @@ fn upload_direct(
 ) -> Result<(), TextureManagerError> {
     match format {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => {
-            upload_rgba8(device, queue, stats, texture, region, data)
+            upload_rgba8(ctx, texture, region, data)
         }
 
         TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 8)
+            upload_bc(ctx, texture, region, mip_size, data, 8)
         }
         TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
+            upload_bc(ctx, texture, region, mip_size, data, 16)
         }
         TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
+            upload_bc(ctx, texture, region, mip_size, data, 16)
         }
         TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => {
-            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
+            upload_bc(ctx, texture, region, mip_size, data, 16)
         }
     }
 }
 
 fn upload_rgba8(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: &mut UploadContext<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     data: &[u8],
@@ -702,9 +675,7 @@ fn upload_rgba8(
     let layout_rows = height;
 
     upload_with_alignment(
-        device,
-        queue,
-        stats,
+        ctx,
         texture,
         region,
         data,
@@ -717,9 +688,7 @@ fn upload_rgba8(
 
 #[allow(clippy::too_many_arguments)]
 fn upload_bc(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: &mut UploadContext<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     mip_size: wgpu::Extent3d,
@@ -769,9 +738,7 @@ fn upload_bc(
     let layout_rows = blocks_h;
 
     upload_with_alignment(
-        device,
-        queue,
-        stats,
+        ctx,
         texture,
         region,
         data,
@@ -784,9 +751,7 @@ fn upload_bc(
 
 #[allow(clippy::too_many_arguments)]
 fn upload_with_alignment(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    stats: &mut TextureManagerStats,
+    ctx: &mut UploadContext<'_>,
     texture: &wgpu::Texture,
     region: TextureRegion,
     data: &[u8],
@@ -815,8 +780,8 @@ fn upload_with_alignment(
     };
 
     if data_to_upload.len() <= threshold {
-        stats.uploads_write_texture += 1;
-        queue.write_texture(
+        ctx.stats.uploads_write_texture += 1;
+        ctx.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture,
                 mip_level: region.mip_level,
@@ -834,16 +799,18 @@ fn upload_with_alignment(
         return;
     }
 
-    stats.uploads_staging_copy += 1;
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+    ctx.stats.uploads_staging_copy += 1;
+    let staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("aero-gpu.texture_upload_staging"),
         size: data_to_upload.len() as u64,
         usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&staging, 0, data_to_upload.as_ref());
+    ctx.queue.write_buffer(&staging, 0, data_to_upload.as_ref());
 
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("aero-gpu.texture_upload_staging.encoder"),
     });
     encoder.copy_buffer_to_texture(
@@ -863,5 +830,5 @@ fn upload_with_alignment(
         },
         region.size,
     );
-    queue.submit([encoder.finish()]);
+    ctx.queue.submit([encoder.finish()]);
 }

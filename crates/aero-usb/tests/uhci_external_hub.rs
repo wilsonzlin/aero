@@ -463,6 +463,7 @@ fn power_reset_and_clear_hub_port(uhci: &mut UhciTestHarness<'_>, hub_addr: u8, 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enumerate_passthrough_device(
     uhci: &mut UhciTestHarness<'_>,
     address: u8,

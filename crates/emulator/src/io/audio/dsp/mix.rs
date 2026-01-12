@@ -52,7 +52,7 @@ impl Mixer {
         if streams.is_empty() {
             return Ok(());
         }
-
+ 
         let len = streams[0].len();
         if !len.is_multiple_of(self.channels) {
             return Err(MixError::InputLengthNotAligned {

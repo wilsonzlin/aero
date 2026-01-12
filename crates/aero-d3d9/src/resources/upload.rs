@@ -30,6 +30,16 @@ pub struct UploadQueue {
     ops: Vec<UploadOp>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct TextureUploadDesc {
+    pub mip_level: u32,
+    pub origin: wgpu::Origin3d,
+    pub aspect: wgpu::TextureAspect,
+    pub size: wgpu::Extent3d,
+    pub bytes_per_row: u32,
+    pub rows_per_image: u32,
+}
+
 impl UploadQueue {
     pub fn new(initial_capacity: usize) -> Self {
         Self {
@@ -52,14 +62,12 @@ impl UploadQueue {
             return;
         }
 
-        debug_assert_eq!(
-            dst_offset % wgpu::COPY_BUFFER_ALIGNMENT,
-            0,
+        debug_assert!(
+            dst_offset.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT),
             "buffer uploads must be 4-byte aligned"
         );
-        debug_assert_eq!(
-            data.len() as u64 % wgpu::COPY_BUFFER_ALIGNMENT,
-            0,
+        debug_assert!(
+            (data.len() as u64).is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT),
             "buffer uploads must be 4-byte aligned"
         );
 

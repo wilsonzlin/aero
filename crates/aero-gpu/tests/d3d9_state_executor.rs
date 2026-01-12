@@ -2,8 +2,8 @@ mod common;
 
 use aero_gpu::command_processor_d3d9::{CommandProcessor, ProcessorConfig};
 use aero_gpu::protocol_d3d9::{
-    BufferUsage, ShaderStage, StreamEncoder, TextureFormat, TextureUsage, VertexAttributeWire,
-    VertexFormat,
+    BufferUsage, ShaderStage, StreamEncoder, TextureCreateDesc, TextureFormat, TextureUsage,
+    VertexAttributeWire, VertexFormat,
 };
 
 const DEVICE_ID: u32 = 1;
@@ -144,11 +144,13 @@ fn d3d9_state_alpha_blend_srcalpha_invsrcalpha() {
     stream.texture_create(
         CONTEXT_ID,
         1,
-        2,
-        1,
-        1,
-        TextureFormat::Rgba8Unorm,
-        TextureUsage::Sampled as u32,
+        TextureCreateDesc {
+            width: 2,
+            height: 1,
+            mip_level_count: 1,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsage::Sampled as u32,
+        },
     );
     stream.texture_update_full_mip(CONTEXT_ID, 1, 0, 2, 1, &[0, 255, 0, 0, 0, 255, 0, 255]);
 
@@ -242,22 +244,26 @@ fn d3d9_state_scissor_rect_clips_draw() {
     stream.texture_create(
         CONTEXT_ID,
         1,
-        1,
-        1,
-        1,
-        TextureFormat::Rgba8Unorm,
-        TextureUsage::Sampled as u32,
+        TextureCreateDesc {
+            width: 1,
+            height: 1,
+            mip_level_count: 1,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsage::Sampled as u32,
+        },
     );
     stream.texture_update_full_mip(CONTEXT_ID, 1, 0, 1, 1, &[255, 0, 0, 255]);
 
     stream.texture_create(
         CONTEXT_ID,
         2,
-        1,
-        1,
-        1,
-        TextureFormat::Rgba8Unorm,
-        TextureUsage::Sampled as u32,
+        TextureCreateDesc {
+            width: 1,
+            height: 1,
+            mip_level_count: 1,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsage::Sampled as u32,
+        },
     );
     stream.texture_update_full_mip(CONTEXT_ID, 2, 0, 1, 1, &[0, 255, 0, 255]);
 
@@ -341,11 +347,13 @@ fn d3d9_state_sampler_wrap_vs_clamp() {
     stream.texture_create(
         CONTEXT_ID,
         1,
-        4,
-        1,
-        1,
-        TextureFormat::Rgba8Unorm,
-        TextureUsage::Sampled as u32,
+        TextureCreateDesc {
+            width: 4,
+            height: 1,
+            mip_level_count: 1,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsage::Sampled as u32,
+        },
     );
     stream.texture_update_full_mip(
         CONTEXT_ID,

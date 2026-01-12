@@ -42,6 +42,19 @@ pub struct Texture2dDesc {
     pub row_pitch_bytes: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Texture2dCreateDesc {
+    pub usage_flags: u32,
+    pub format: u32,
+    pub width: u32,
+    pub height: u32,
+    pub mip_levels: u32,
+    pub array_layers: u32,
+    pub row_pitch_bytes: u32,
+    pub backing_alloc_id: u32,
+    pub backing_offset_bytes: u32,
+}
+
 #[derive(Debug)]
 pub struct Texture2dResource {
     pub texture: wgpu::Texture,
@@ -162,17 +175,21 @@ impl AerogpuResourceManager {
     pub fn create_texture2d(
         &mut self,
         handle: AerogpuHandle,
-        usage_flags: u32,
-        format: u32,
-        width: u32,
-        height: u32,
-        mip_levels: u32,
-        array_layers: u32,
-        row_pitch_bytes: u32,
-        backing_alloc_id: u32,
-        backing_offset_bytes: u32,
+        desc: Texture2dCreateDesc,
     ) -> Result<()> {
         self.ensure_resource_handle_unused(handle)?;
+
+        let Texture2dCreateDesc {
+            usage_flags,
+            format,
+            width,
+            height,
+            mip_levels,
+            array_layers,
+            row_pitch_bytes,
+            backing_alloc_id,
+            backing_offset_bytes,
+        } = desc;
 
         if width == 0 || height == 0 {
             bail!("CreateTexture2d: width/height must be non-zero");

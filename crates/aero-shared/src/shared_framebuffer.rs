@@ -163,10 +163,10 @@ impl SharedFramebufferLayout {
         let (tiles_x, tiles_y, dirty_words_per_buffer) = if tile_size == 0 {
             (0, 0, 0)
         } else {
-            let tiles_x = div_ceil(width, tile_size);
-            let tiles_y = div_ceil(height, tile_size);
+            let tiles_x = width.div_ceil(tile_size);
+            let tiles_y = height.div_ceil(tile_size);
             let tile_count = tiles_x as usize * tiles_y as usize;
-            let dirty_words = div_ceil_usize(tile_count, 32) as u32;
+            let dirty_words = tile_count.div_ceil(32) as u32;
             (tiles_x, tiles_y, dirty_words)
         };
 
@@ -623,16 +623,6 @@ fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
 }
 
-fn div_ceil(value: u32, divisor: u32) -> u32 {
-    debug_assert!(divisor != 0);
-    value.div_ceil(divisor)
-}
-
-fn div_ceil_usize(value: usize, divisor: usize) -> usize {
-    debug_assert!(divisor != 0);
-    value.div_ceil(divisor)
-}
-
 #[cfg(all(test, not(feature = "loom")))]
 mod tests {
     use super::*;
@@ -646,7 +636,7 @@ mod tests {
 
     impl Backing {
         fn new(layout: SharedFramebufferLayout) -> Self {
-            let word_len = div_ceil_usize(layout.total_byte_len(), 4);
+            let word_len = layout.total_byte_len().div_ceil(4);
             Self {
                 layout,
                 words: vec![0; word_len],
@@ -688,7 +678,7 @@ mod tests {
 
         // Dirty words should be enough to cover all tiles.
         let tile_count = layout.tile_count();
-        let expected_words = div_ceil_usize(tile_count, 32) as u32;
+        let expected_words = tile_count.div_ceil(32) as u32;
         assert_eq!(layout.dirty_words_per_buffer, expected_words);
     }
 

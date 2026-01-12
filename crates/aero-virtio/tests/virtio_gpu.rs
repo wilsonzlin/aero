@@ -122,42 +122,68 @@ fn push_rect(out: &mut Vec<u8>, r: proto::Rect) {
     proto::write_u32_le(out, r.height);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn submit_control(
-    dev: &mut VirtioPciDevice,
-    mem: &mut GuestRam,
-    caps: &Caps,
+struct ControlQueue {
     qsz: u16,
     desc: u64,
     avail: u64,
     used: u64,
-    avail_idx: &mut u16,
-    used_idx: &mut u16,
+    avail_idx: u16,
+    used_idx: u16,
     req_addr: u64,
     resp_addr: u64,
+}
+
+impl ControlQueue {
+    fn new(qsz: u16, desc: u64, avail: u64, used: u64, req_addr: u64, resp_addr: u64) -> Self {
+        Self {
+            qsz,
+            desc,
+            avail,
+            used,
+            avail_idx: 0,
+            used_idx: 0,
+            req_addr,
+            resp_addr,
+        }
+    }
+}
+
+fn submit_control(
+    dev: &mut VirtioPciDevice,
+    mem: &mut GuestRam,
+    caps: &Caps,
+    ctrlq: &mut ControlQueue,
     req: &[u8],
     resp_capacity: usize,
 ) -> Vec<u8> {
-    mem.write(req_addr, req).unwrap();
-    mem.write(resp_addr, &vec![0u8; resp_capacity]).unwrap();
+    mem.write(ctrlq.req_addr, req).unwrap();
+    mem.write(ctrlq.resp_addr, &vec![0u8; resp_capacity]).unwrap();
 
     // Request (read-only) + response (write-only).
-    write_desc(mem, desc, 0, req_addr, req.len() as u32, 0x0001, 1);
-    write_desc(mem, desc, 1, resp_addr, resp_capacity as u32, 0x0002, 0);
+    write_desc(mem, ctrlq.desc, 0, ctrlq.req_addr, req.len() as u32, 0x0001, 1);
+    write_desc(
+        mem,
+        ctrlq.desc,
+        1,
+        ctrlq.resp_addr,
+        resp_capacity as u32,
+        0x0002,
+        0,
+    );
 
-    let ring_index = (*avail_idx % qsz) as u64;
-    write_u16_le(mem, avail + 4 + ring_index * 2, 0).unwrap(); // head=0
-    *avail_idx = avail_idx.wrapping_add(1);
-    write_u16_le(mem, avail + 2, *avail_idx).unwrap();
+    let ring_index = u64::from(ctrlq.avail_idx % ctrlq.qsz);
+    write_u16_le(mem, ctrlq.avail + 4 + ring_index * 2, 0).unwrap(); // head=0
+    ctrlq.avail_idx = ctrlq.avail_idx.wrapping_add(1);
+    write_u16_le(mem, ctrlq.avail + 2, ctrlq.avail_idx).unwrap();
 
     dev.bar0_write(caps.notify, &0u16.to_le_bytes(), mem);
 
-    let used_ring_index = (*used_idx % qsz) as u64;
-    let used_elem = used + 4 + used_ring_index * 8;
+    let used_ring_index = u64::from(ctrlq.used_idx % ctrlq.qsz);
+    let used_elem = ctrlq.used + 4 + used_ring_index * 8;
     let len = read_u32_le(mem, used_elem + 4).unwrap() as usize;
-    *used_idx = used_idx.wrapping_add(1);
+    ctrlq.used_idx = ctrlq.used_idx.wrapping_add(1);
 
-    mem.get_slice(resp_addr, len).unwrap().to_vec()
+    mem.get_slice(ctrlq.resp_addr, len).unwrap().to_vec()
 }
 
 #[test]
@@ -245,25 +271,16 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
     write_u16_le(&mut mem, used, 0).unwrap(); // flags
     write_u16_le(&mut mem, used + 2, 0).unwrap(); // idx
 
-    let mut avail_idx = 0u16;
-    let mut used_idx = 0u16;
-
     let req_addr = 0x7000;
     let resp_addr = 0x8000;
+    let mut ctrlq = ControlQueue::new(qsz, desc, avail, used, req_addr, resp_addr);
 
     // GET_DISPLAY_INFO.
     let resp = submit_control(
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &ctrl_hdr(proto::VIRTIO_GPU_CMD_GET_DISPLAY_INFO),
         512,
     );
@@ -280,14 +297,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         2048,
     );
@@ -308,14 +318,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -346,14 +349,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -372,14 +368,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -393,14 +382,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -414,14 +396,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -461,14 +436,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -481,14 +449,7 @@ fn virtio_gpu_2d_scanout_via_virtqueue() {
         &mut dev,
         &mut mem,
         &caps,
-        qsz,
-        desc,
-        avail,
-        used,
-        &mut avail_idx,
-        &mut used_idx,
-        req_addr,
-        resp_addr,
+        &mut ctrlq,
         &req,
         64,
     );
@@ -600,18 +561,21 @@ fn virtio_gpu_rejects_oversize_request_without_wedging_queue() {
     assert_eq!(bar_read_u16(&mut dev, caps.common + 0x16), 0);
 
     // A follow-up valid request must still complete (queue not wedged).
-    let resp = submit_control(
-        &mut dev,
-        &mut mem,
-        &caps,
+    let mut ctrlq = ControlQueue {
         qsz,
         desc,
         avail,
         used,
-        &mut avail_idx,
-        &mut used_idx,
+        avail_idx,
+        used_idx,
         req_addr,
         resp_addr,
+    };
+    let resp = submit_control(
+        &mut dev,
+        &mut mem,
+        &caps,
+        &mut ctrlq,
         &ctrl_hdr(proto::VIRTIO_GPU_CMD_GET_DISPLAY_INFO),
         512,
     );

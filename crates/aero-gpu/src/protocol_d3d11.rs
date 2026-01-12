@@ -379,23 +379,18 @@ impl CmdWriter {
     pub fn create_texture2d(
         &mut self,
         id: ResourceId,
-        width: u32,
-        height: u32,
-        array_layers: u32,
-        mip_level_count: u32,
-        format: DxgiFormat,
-        usage: TextureUsage,
+        desc: Texture2dDesc,
     ) {
         self.push_cmd(
             D3D11Opcode::CreateTexture2D,
             &[
                 id,
-                width,
-                height,
-                array_layers,
-                mip_level_count,
-                format as u32,
-                usage.bits(),
+                desc.width,
+                desc.height,
+                desc.array_layers,
+                desc.mip_level_count,
+                desc.format as u32,
+                desc.usage.bits(),
             ],
         );
     }
@@ -404,24 +399,19 @@ impl CmdWriter {
     pub fn update_texture2d(
         &mut self,
         texture_id: ResourceId,
-        mip_level: u32,
-        array_layer: u32,
-        width: u32,
-        height: u32,
-        bytes_per_row: u32,
-        data: &[u8],
+        update: Texture2dUpdate<'_>,
     ) {
         self.push_cmd_with_bytes(
             D3D11Opcode::UpdateTexture2D,
             &[
                 texture_id,
-                mip_level,
-                array_layer,
-                width,
-                height,
-                bytes_per_row,
+                update.mip_level,
+                update.array_layer,
+                update.width,
+                update.height,
+                update.bytes_per_row,
             ],
-            data,
+            update.data,
         );
     }
 
@@ -468,25 +458,19 @@ impl CmdWriter {
     pub fn create_render_pipeline(
         &mut self,
         pipeline_id: ResourceId,
-        vs_shader: ResourceId,
-        fs_shader: ResourceId,
-        color_format: DxgiFormat,
-        depth_format: DxgiFormat,
-        topology: PrimitiveTopology,
-        vertex_buffers: &[VertexBufferLayoutDesc<'_>],
-        bindings: &[BindingDesc],
+        desc: RenderPipelineDesc<'_>,
     ) {
         let mut payload: Vec<u32> = vec![
             pipeline_id,
-            vs_shader,
-            fs_shader,
-            color_format as u32,
-            depth_format as u32,
-            topology as u32,
+            desc.vs_shader,
+            desc.fs_shader,
+            desc.color_format as u32,
+            desc.depth_format as u32,
+            desc.topology as u32,
         ];
 
-        payload.push(vertex_buffers.len() as u32);
-        for vb in vertex_buffers {
+        payload.push(desc.vertex_buffers.len() as u32);
+        for vb in desc.vertex_buffers {
             payload.push(vb.array_stride);
             payload.push(vb.step_mode as u32);
             payload.push(vb.attributes.len() as u32);
@@ -497,8 +481,8 @@ impl CmdWriter {
             }
         }
 
-        payload.push(bindings.len() as u32);
-        for b in bindings {
+        payload.push(desc.bindings.len() as u32);
+        for b in desc.bindings {
             payload.push(b.binding);
             payload.push(b.ty as u32);
             payload.push(b.visibility.bits());
@@ -685,10 +669,41 @@ pub struct VertexBufferLayoutDesc<'a> {
     pub attributes: &'a [VertexAttributeDesc],
 }
 
-pub struct BindingDesc {
-    pub binding: u32,
-    pub ty: BindingType,
-    pub visibility: ShaderStageFlags,
-    /// For storage textures, the declared format. Otherwise ignored.
-    pub storage_texture_format: Option<DxgiFormat>,
+    pub struct BindingDesc {
+        pub binding: u32,
+        pub ty: BindingType,
+        pub visibility: ShaderStageFlags,
+        /// For storage textures, the declared format. Otherwise ignored.
+        pub storage_texture_format: Option<DxgiFormat>,
+    }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Texture2dDesc {
+    pub width: u32,
+    pub height: u32,
+    pub array_layers: u32,
+    pub mip_level_count: u32,
+    pub format: DxgiFormat,
+    pub usage: TextureUsage,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Texture2dUpdate<'a> {
+    pub mip_level: u32,
+    pub array_layer: u32,
+    pub width: u32,
+    pub height: u32,
+    pub bytes_per_row: u32,
+    pub data: &'a [u8],
+}
+
+#[derive(Copy, Clone)]
+pub struct RenderPipelineDesc<'a> {
+    pub vs_shader: ResourceId,
+    pub fs_shader: ResourceId,
+    pub color_format: DxgiFormat,
+    pub depth_format: DxgiFormat,
+    pub topology: PrimitiveTopology,
+    pub vertex_buffers: &'a [VertexBufferLayoutDesc<'a>],
+    pub bindings: &'a [BindingDesc],
 }

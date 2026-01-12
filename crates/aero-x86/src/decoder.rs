@@ -100,14 +100,14 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
     // Some relative branch/call opcodes have operand-size-dependent immediate widths, and not all
     // upstream decoders agree on how to interpret `0x66` in 16-bit mode. Decode these cases
     // ourselves so we match iced-x86 for block formation.
+    let imm_off = prefix_len + opcode_len;
     if let Some((operands, inst_len)) = decode_relative_immediate(
         bytes,
         RelativeImmediateDecodeContext {
             mode,
             ip,
             prefixes,
-            prefix_len,
-            opcode_len,
+            imm_off,
             opcode,
             operand_size,
         },
@@ -602,8 +602,7 @@ struct RelativeImmediateDecodeContext {
     mode: DecodeMode,
     ip: u64,
     prefixes: Prefixes,
-    prefix_len: usize,
-    opcode_len: usize,
+    imm_off: usize,
     opcode: OpcodeBytes,
     operand_size: OperandSize,
 }
@@ -642,7 +641,7 @@ fn decode_relative_immediate(
         return Err(DecodeError::Invalid);
     }
 
-    let imm_off = ctx.prefix_len + ctx.opcode_len;
+    let imm_off = ctx.imm_off;
     let inst_len = imm_off + imm_len;
     if inst_len > MAX_INST_LEN {
         return Err(DecodeError::TooLong);

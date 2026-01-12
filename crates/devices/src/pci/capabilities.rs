@@ -17,6 +17,7 @@ pub trait PciCapability: Any {
     fn offset(&self) -> u8;
     fn set_offset(&mut self, offset: u8);
     fn len(&self) -> u8;
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

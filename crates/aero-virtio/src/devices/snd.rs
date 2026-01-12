@@ -329,7 +329,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         if count == 0 {
             return resp;
         }
-
+ 
         let end = start_id.saturating_add(count);
         if start_id == PLAYBACK_STREAM_ID && PLAYBACK_STREAM_ID < end {
             resp.extend_from_slice(&virtio_snd_pcm_info(

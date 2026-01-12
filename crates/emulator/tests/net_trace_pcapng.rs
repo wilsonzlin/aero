@@ -2,14 +2,17 @@
 
 use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 
+#[derive(Clone, Copy, Debug)]
+struct Endpoint {
+    mac: [u8; 6],
+    ip: [u8; 4],
+    port: u16,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_ipv4_tcp_frame(
-    src_mac: [u8; 6],
-    dst_mac: [u8; 6],
-    src_ip: [u8; 4],
-    dst_ip: [u8; 4],
-    src_port: u16,
-    dst_port: u16,
+    src: Endpoint,
+    dst: Endpoint,
     flags: u8,
     payload: &[u8],
 ) -> Vec<u8> {
@@ -20,8 +23,8 @@ fn make_ipv4_tcp_frame(
 
     let mut buf = Vec::with_capacity(14 + total_len);
 
-    buf.extend_from_slice(&dst_mac);
-    buf.extend_from_slice(&src_mac);
+    buf.extend_from_slice(&dst.mac);
+    buf.extend_from_slice(&src.mac);
     buf.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype: IPv4
 
     buf.push(0x45); // version + IHL
@@ -32,11 +35,11 @@ fn make_ipv4_tcp_frame(
     buf.push(64); // ttl
     buf.push(6); // protocol: TCP
     buf.extend_from_slice(&0u16.to_be_bytes()); // hdr checksum (ignored)
-    buf.extend_from_slice(&src_ip);
-    buf.extend_from_slice(&dst_ip);
+    buf.extend_from_slice(&src.ip);
+    buf.extend_from_slice(&dst.ip);
 
-    buf.extend_from_slice(&src_port.to_be_bytes());
-    buf.extend_from_slice(&dst_port.to_be_bytes());
+    buf.extend_from_slice(&src.port.to_be_bytes());
+    buf.extend_from_slice(&dst.port.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes()); // seq
     buf.extend_from_slice(&0u32.to_be_bytes()); // ack
     buf.push((tcp_header_len as u8 / 4) << 4); // data offset
@@ -122,22 +125,30 @@ fn synthetic_tcp_exchange_is_written_to_pcapng() {
     let remote_ip = [93, 184, 216, 34]; // example.com
 
     let syn = make_ipv4_tcp_frame(
-        guest_mac,
-        remote_mac,
-        guest_ip,
-        remote_ip,
-        12345,
-        80,
+        Endpoint {
+            mac: guest_mac,
+            ip: guest_ip,
+            port: 12345,
+        },
+        Endpoint {
+            mac: remote_mac,
+            ip: remote_ip,
+            port: 80,
+        },
         0x02,
         &[],
     );
     let syn_ack = make_ipv4_tcp_frame(
-        remote_mac,
-        guest_mac,
-        remote_ip,
-        guest_ip,
-        80,
-        12345,
+        Endpoint {
+            mac: remote_mac,
+            ip: remote_ip,
+            port: 80,
+        },
+        Endpoint {
+            mac: guest_mac,
+            ip: guest_ip,
+            port: 12345,
+        },
         0x12,
         &[],
     );
