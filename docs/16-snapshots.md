@@ -345,6 +345,7 @@ In the `crates/aero-devices-storage` stack this means:
 The platform/coordinator must **re-attach** the appropriate disks/ISOs after restore (based on external configuration) before resuming guest execution.
 
 For deterministic guest bring-up, reattachment should follow the same canonical topology/attachment mapping used at initial boot; for Windows 7 this is documented in [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
+That document also defines the canonical snapshot `DISKS` `disk_id` mapping (`DiskOverlayRefs`) for Win7 restore.
 
 ATAPI note: the guest-visible “disc present” state is snapshotted explicitly (independent of whether a host ISO backend is currently attached), so reattaching an ISO backend does not implicitly “insert media” from the guest’s perspective.
 

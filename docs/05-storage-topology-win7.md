@@ -95,6 +95,33 @@ at `00:01.0`) with the multi-function bit set in its header type (see
 
 ---
 
+## Snapshot DISKS mapping (DiskOverlayRefs) (normative)
+
+Snapshots store disk/ISO *references* separately from device/controller state in the `DISKS`
+section as `aero_snapshot::DiskOverlayRefs` entries. Each entry is keyed by a stable `disk_id`
+(`u32`) that identifies a **logical attachment point** in the machine topology.
+
+When restoring a snapshot, storage controller device snapshots intentionally restore only
+guest-visible controller state and **drop any attached host backends** (disk files, ISO handles,
+etc.). The host/runtime must:
+
+1. Read the snapshot `DISKS` section.
+2. Re-open the referenced base/overlay images on the host.
+3. Re-attach those reopened backends to the canonical attachment points below **before** resuming
+   guest execution.
+
+### Canonical `disk_id` values for Win7
+
+| `disk_id` | Attachment point | Purpose |
+|---:|---|---|
+| `0` | ICH9 AHCI, **SATA port 0** (`00:02.0`) | Primary HDD (installed OS disk) |
+| `1` | PIIX3 IDE, **secondary channel master ATAPI** (`00:01.1`) | Install media ISO (CD-ROM) |
+
+These `disk_id` values are part of the Win7 platform ABI: changing them breaks deterministic
+snapshot restore unless all producers/consumers are updated in lockstep.
+
+---
+
 ## Legacy IDE compatibility expectations (normative)
 
 Even though the IDE controller is a PCI function (`00:01.1`), the canonical topology exposes it in
