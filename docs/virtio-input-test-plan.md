@@ -43,7 +43,7 @@ Equivalent (name-filter based; useful when you don’t remember the test binary 
 # NOTE: `cargo test -- <pattern>` is a name filter. Depending on how tests are named
 # in your checkout, this may match 0 tests. Always confirm the output says
 # `running N tests` with N > 0.
-./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
 
 # Without safe-run.sh (no timeout / mem limit):
 cargo test -p aero-virtio --locked -- tests::virtio_input
@@ -55,7 +55,7 @@ cargo test -p aero-virtio --locked -- virtio_input
 Tip: if you see `running 0 tests`, prefer the explicit integration test invocation:
 
 ```bash
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
 Primary coverage lives in:
