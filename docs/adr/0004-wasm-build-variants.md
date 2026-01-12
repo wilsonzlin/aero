@@ -41,6 +41,12 @@ Additional wasm-pack packages follow the same variant split (where applicable), 
   - `web/src/wasm/pkg-jit-threaded/`
   - `web/src/wasm/pkg-jit-single/`
 
+Note: the Tier-1 compiler itself is single-threaded. The browser JIT worker loader
+(`web/src/runtime/jit_wasm_loader.ts`) currently **prefers `pkg-jit-single` even in
+crossOriginIsolated / WASM-threads-capable environments**, because a shared-memory
+wasm-bindgen build + a large `--max-memory` can cause the glue code to eagerly
+allocate a multi‑GiB `SharedArrayBuffer` during instantiation.
+
 Build commands:
 
 ```bash
