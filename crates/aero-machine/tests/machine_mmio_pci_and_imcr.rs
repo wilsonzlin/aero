@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
@@ -25,12 +26,12 @@ fn mmio_machine_config() -> MachineConfig {
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 }
 
 fn disable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 controls A20, bit0 is a reset pulse.
-    m.io_write(0x92, 1, 0x00);
+    m.io_write(A20_GATE_PORT, 1, 0x00);
 }
 
 fn program_ioapic_entry(m: &mut Machine, gsi: u32, low: u32, high: u32) {

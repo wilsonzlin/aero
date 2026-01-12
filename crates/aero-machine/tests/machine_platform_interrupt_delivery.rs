@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_devices::pic8259::{MASTER_CMD, MASTER_DATA, SLAVE_CMD, SLAVE_DATA};
@@ -35,7 +36,7 @@ fn pc_machine_mmio_config() -> MachineConfig {
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 }
 
 fn build_real_mode_interrupt_wait_boot_sector(

@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
@@ -127,7 +128,7 @@ fn machine_shared_bios_disk_is_visible_to_ahci_dma() {
     m.attach_shared_disk_to_ahci_port0().unwrap();
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Program the AHCI controller and issue a READ DMA EXT command.
     let bdf = SATA_AHCI_ICH9.bdf;

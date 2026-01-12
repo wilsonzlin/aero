@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::acpi_pm::{
     DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN,
 };
@@ -21,7 +22,7 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     assert_eq!(pc.memory.read_u8(0x1_00000), 0xAA);
 
     // Enable A20 via port 0x92.
-    pc.io.write_u8(0x92, 0x02);
+    pc.io.write_u8(A20_GATE_PORT, 0x02);
     pc.memory.write_u8(0x1_00000, 0xBB);
     assert_eq!(pc.memory.read_u8(0x0), 0xAA);
     assert_eq!(pc.memory.read_u8(0x1_00000), 0xBB);

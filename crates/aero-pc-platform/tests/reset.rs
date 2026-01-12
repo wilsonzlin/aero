@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
@@ -118,7 +119,7 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     );
 
     // Mutate chipset A20 via port 0x92.
-    plat.io.write_u8(0x92, 0x02);
+    plat.io.write_u8(A20_GATE_PORT, 0x02);
 
     // Mutate IMCR state (switch to APIC mode).
     plat.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
@@ -190,7 +191,10 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     let mut fresh = PcPlatform::new(ram_size);
 
     // Chipset A20 reset.
-    assert_eq!(plat.io.read_u8(0x92), fresh.io.read_u8(0x92));
+    assert_eq!(
+        plat.io.read_u8(A20_GATE_PORT),
+        fresh.io.read_u8(A20_GATE_PORT)
+    );
 
     // IMCR reset (legacy PIC mode).
     plat.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
@@ -257,8 +261,8 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
 
     // HPET reset: key registers should match.
     // Enable A20 so the HPET base does not alias with the IOAPIC base (differs by bit20).
-    plat.io.write_u8(0x92, 0x02);
-    fresh.io.write_u8(0x92, 0x02);
+    plat.io.write_u8(A20_GATE_PORT, 0x02);
+    fresh.io.write_u8(A20_GATE_PORT, 0x02);
     assert_eq!(
         mmio_read_u64(&mut plat.memory, aero_devices::hpet::HPET_MMIO_BASE + 0x10),
         mmio_read_u64(&mut fresh.memory, aero_devices::hpet::HPET_MMIO_BASE + 0x10)
@@ -269,7 +273,7 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     );
 
     // Disable A20 again so the legacy 1MiB wrap behaviour is observable below.
-    plat.io.write_u8(0x92, 0x00);
+    plat.io.write_u8(A20_GATE_PORT, 0x00);
 
     // PCI config: CF8 latch + AHCI BAR5 + AHCI command register should match a fresh BIOS POST.
     assert_eq!(

@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -27,7 +28,8 @@ fn build_a20_snapshot_boot_sector() -> [u8; 512] {
     let mut i = 0usize;
 
     // mov dx, 0x0092
-    sector[i..i + 3].copy_from_slice(&[0xBA, 0x92, 0x00]);
+    let a20_port = A20_GATE_PORT.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xBA, a20_port[0], a20_port[1]]);
     i += 3;
     // mov al, 0x02
     sector[i..i + 2].copy_from_slice(&[0xB0, 0x02]);

@@ -1,6 +1,6 @@
 #![allow(deprecated)]
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, RFLAGS_IF};
-use aero_devices::a20_gate::A20Gate as Port92A20Gate;
+use aero_devices::a20_gate::{A20Gate as Port92A20Gate, A20_GATE_PORT};
 use aero_devices::i8042::{
     I8042Ports, PlatformSystemControlSink, I8042_DATA_PORT, I8042_STATUS_PORT,
 };
@@ -94,7 +94,7 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     // 1) Register the fast A20 gate latch (port 0x92).
     platform
         .io
-        .register(0x92, Box::new(Port92A20Gate::new(a20.clone())));
+        .register(A20_GATE_PORT, Box::new(Port92A20Gate::new(a20.clone())));
 
     // 2) Register the i8042 controller, wiring the output port callbacks to the same A20 handle.
     let i8042 = I8042Ports::new();
@@ -133,9 +133,9 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x00);
 
     // Enable A20 via port 0x92 and verify memory separation.
-    platform.io.write_u8(0x92, 0x02);
+    platform.io.write_u8(A20_GATE_PORT, 0x02);
     assert!(a20.enabled());
-    assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x02);
+    assert_eq!(platform.io.read_u8(A20_GATE_PORT) & 0x02, 0x02);
 
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
     assert_int15_success(flags);
@@ -151,9 +151,9 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x02);
 
     // Disable A20 via port 0x92 and verify aliasing.
-    platform.io.write_u8(0x92, 0x00);
+    platform.io.write_u8(A20_GATE_PORT, 0x00);
     assert!(!a20.enabled());
-    assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x00);
+    assert_eq!(platform.io.read_u8(A20_GATE_PORT) & 0x02, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
     // i8042 output port reads should observe the same line state.
@@ -168,7 +168,7 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     platform.io.write_u8(I8042_STATUS_PORT, 0xD1);
     platform.io.write_u8(I8042_DATA_PORT, 0x03);
     assert!(a20.enabled());
-    assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x02);
+    assert_eq!(platform.io.read_u8(A20_GATE_PORT) & 0x02, 0x02);
     assert_eq!(platform.memory.read_u8(0x0), 0x11);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x22);
 
@@ -184,7 +184,7 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     // Keep reset deasserted (bit 0) but clear A20 (bit 1).
     platform.io.write_u8(I8042_DATA_PORT, 0x01);
     assert!(!a20.enabled());
-    assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x00);
+    assert_eq!(platform.io.read_u8(A20_GATE_PORT) & 0x02, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
     platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
@@ -198,7 +198,7 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2401);
     assert_int15_success(flags);
     assert!(a20.enabled());
-    assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x02);
+    assert_eq!(platform.io.read_u8(A20_GATE_PORT) & 0x02, 0x02);
     assert_eq!(platform.memory.read_u8(0x0), 0x11);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x22);
 
@@ -209,7 +209,7 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2400);
     assert_int15_success(flags);
     assert!(!a20.enabled());
-    assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x00);
+    assert_eq!(platform.io.read_u8(A20_GATE_PORT) & 0x02, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
     platform.io.write_u8(I8042_STATUS_PORT, 0xD0);

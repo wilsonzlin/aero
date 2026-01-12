@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{
     AHCI_ABAR_CFG_OFFSET, IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3, VIRTIO_BLK,
 };
@@ -189,7 +190,7 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
 
     // Mutate some state:
     // - Enable A20.
-    pc.io.write_u8(0x92, 0x02);
+    pc.io.write_u8(A20_GATE_PORT, 0x02);
     assert!(pc.chipset.a20().enabled());
 
     // - Touch the PCI config address latch (PCI config mechanism #1).
@@ -258,7 +259,7 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
     assert_eq!(bar5_base_after, bar5_base_before);
 
     // Enable A20 so the AHCI MMIO base doesn't alias across the 1MiB boundary (A20 gate).
-    pc.io.write_u8(0x92, 0x02);
+    pc.io.write_u8(A20_GATE_PORT, 0x02);
 
     // AHCI CAP register must be readable again after reset (i.e. MMIO decoding was restored).
     let cap = pc.memory.read_u32(bar5_base_after);
@@ -633,7 +634,7 @@ fn pc_platform_reset_preserves_ahci_attached_disk() {
     pc.reset();
 
     // Enable A20 so high MMIO addresses don't alias across the 1MiB boundary.
-    pc.io.write_u8(0x92, 0x02);
+    pc.io.write_u8(A20_GATE_PORT, 0x02);
 
     let bdf = SATA_AHCI_ICH9.bdf;
     // Enable MMIO decoding + DMA.

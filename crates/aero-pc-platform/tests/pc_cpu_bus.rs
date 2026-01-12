@@ -4,6 +4,7 @@ use aero_cpu_core::interrupts::{CpuCore, CpuExit};
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, CR0_PE, CR0_PG, CR4_PAE, EFER_LME};
 use aero_cpu_core::Exception;
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_pc_platform::{PcCpuBus, PcPlatform};
 use aero_platform::interrupts::InterruptInput;
@@ -132,18 +133,34 @@ fn cpu_core_bus_routes_port_io_to_toggle_a20() {
     // mov al, 0x33; mov [0x10], al                                (A20 enabled => 0x100000)
     // hlt
     let code = [
-        0x31, 0xC0, // xor ax,ax
-        0x8E, 0xD8, // mov ds,ax
-        0xB0, 0x11, // mov al,0x11
-        0xA2, 0x00, 0x00, // mov [0],al
-        0xB8, 0xFF, 0xFF, // mov ax,0xffff
-        0x8E, 0xD8, // mov ds,ax
-        0xB0, 0x22, // mov al,0x22
-        0xA2, 0x10, 0x00, // mov [0x10],al
-        0xB0, 0x02, // mov al,0x02
-        0xE6, 0x92, // out 0x92,al
-        0xB0, 0x33, // mov al,0x33
-        0xA2, 0x10, 0x00, // mov [0x10],al
+        0x31,
+        0xC0, // xor ax,ax
+        0x8E,
+        0xD8, // mov ds,ax
+        0xB0,
+        0x11, // mov al,0x11
+        0xA2,
+        0x00,
+        0x00, // mov [0],al
+        0xB8,
+        0xFF,
+        0xFF, // mov ax,0xffff
+        0x8E,
+        0xD8, // mov ds,ax
+        0xB0,
+        0x22, // mov al,0x22
+        0xA2,
+        0x10,
+        0x00, // mov [0x10],al
+        0xB0,
+        0x02, // mov al,0x02
+        0xE6,
+        A20_GATE_PORT as u8, // out 0x92,al
+        0xB0,
+        0x33, // mov al,0x33
+        0xA2,
+        0x10,
+        0x00, // mov [0x10],al
         0xF4, // hlt
     ];
     let code_base = 0x200u64;

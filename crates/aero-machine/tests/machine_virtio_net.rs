@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig};
 use aero_net_backend::NetworkBackend;
@@ -35,7 +36,7 @@ impl NetworkBackend for StubNetBackend {
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 }
 
 fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {

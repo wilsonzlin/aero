@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -15,7 +16,7 @@ fn snapshot_ram_bypasses_a20_masking_when_a20_disabled_at_snapshot_time() {
     let mut src = Machine::new(cfg.clone()).unwrap();
 
     // Enable A20 via the "fast A20 gate" at port 0x92.
-    src.io_write(0x92, 1, 0x02);
+    src.io_write(A20_GATE_PORT, 1, 0x02);
     src.write_physical_u8(0x00000, 0x11);
     src.write_physical_u8(0x1_00000, 0x22);
 
@@ -24,7 +25,7 @@ fn snapshot_ram_bypasses_a20_masking_when_a20_disabled_at_snapshot_time() {
     assert_eq!(src.read_physical_u8(0x1_00000), 0x22);
 
     // Disable A20 and verify reads alias.
-    src.io_write(0x92, 1, 0x00);
+    src.io_write(A20_GATE_PORT, 1, 0x00);
     assert_eq!(src.read_physical_u8(0x1_00000), 0x11);
 
     // Take a full snapshot while A20 is disabled. Snapshot RAM reads must still capture the true
@@ -35,7 +36,7 @@ fn snapshot_ram_bypasses_a20_masking_when_a20_disabled_at_snapshot_time() {
     restored.restore_snapshot_bytes(&snap).unwrap();
 
     // Re-enable A20 and ensure restored memory still contains distinct bytes.
-    restored.io_write(0x92, 1, 0x02);
+    restored.io_write(A20_GATE_PORT, 1, 0x02);
     assert_eq!(restored.read_physical_u8(0x00000), 0x11);
     assert_eq!(restored.read_physical_u8(0x1_00000), 0x22);
 }

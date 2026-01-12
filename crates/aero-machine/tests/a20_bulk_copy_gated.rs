@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -133,7 +134,7 @@ fn build_a20_aliasing_rep_movsb_df1_boot_sector() -> [u8; 512] {
     // Disable A20 (fast A20 gate): out 0x92, 0
     sector[i..i + 2].copy_from_slice(&[0xB0, 0x00]); // mov al, 0
     i += 2;
-    sector[i..i + 2].copy_from_slice(&[0xE6, 0x92]); // out 0x92, al
+    sector[i..i + 2].copy_from_slice(&[0xE6, A20_GATE_PORT as u8]); // out 0x92, al
     i += 2;
 
     // std (DF=1)

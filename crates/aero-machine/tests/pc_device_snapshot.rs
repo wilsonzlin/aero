@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::hpet;
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pic8259::MASTER_CMD;
@@ -49,7 +50,7 @@ fn snapshot_restore_preserves_pc_device_state() {
     let mut src = Machine::new(cfg.clone()).unwrap();
 
     // Enable A20 so high MMIO addresses (HPET) are not affected by address-line masking.
-    src.io_write(0x92, 1, 0x02);
+    src.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Enable HPET (General Configuration: enable bit).
     src.write_physical_u64(hpet::HPET_MMIO_BASE + 0x010, 1);

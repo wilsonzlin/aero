@@ -33,7 +33,7 @@ use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::interrupts::CpuExit;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
-use aero_devices::a20_gate::A20Gate as A20GateDevice;
+use aero_devices::a20_gate::{A20Gate as A20GateDevice, A20_GATE_PORT};
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
 };
@@ -97,7 +97,6 @@ use memory::{
 mod pci_firmware;
 use pci_firmware::SharedPciConfigPortsBiosAdapter;
 
-const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 const DEFAULT_VIRTIO_NET_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x57];
@@ -4075,7 +4074,7 @@ impl Machine {
 
         if self.cfg.enable_a20_gate {
             let dev = A20GateDevice::with_reset_sink(self.chipset.a20(), self.reset_latch.clone());
-            self.io.register(FAST_A20_PORT, Box::new(dev));
+            self.io.register(A20_GATE_PORT, Box::new(dev));
         }
 
         if self.cfg.enable_reset_ctrl {

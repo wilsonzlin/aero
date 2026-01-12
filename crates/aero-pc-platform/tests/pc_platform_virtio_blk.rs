@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{
     VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
 };
@@ -256,7 +257,7 @@ fn pc_platform_reset_resets_virtio_blk_transport_state() {
 
     // Platform reset starts with A20 disabled; enable it so BAR0 doesn't alias across the 1MiB
     // boundary.
-    pc.io.write_u8(0x92, 0x02);
+    pc.io.write_u8(A20_GATE_PORT, 0x02);
     assert!(pc.chipset.a20().enabled());
 
     // Re-enable memory decoding in case reset disabled it.

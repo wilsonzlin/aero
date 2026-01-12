@@ -1,5 +1,6 @@
 use std::io::Cursor;
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::ioapic::IoApic;
 use aero_devices::pci::{
@@ -20,7 +21,6 @@ use aero_snapshot::{
 use memory::MemoryBus as _;
 
 const RAM_SIZE: usize = 2 * 1024 * 1024;
-const PORT_A20_FAST: u16 = 0x92;
 const CMOS_INDEX_PORT: u16 = 0x70;
 const CMOS_DATA_PORT: u16 = 0x71;
 const ONE_MIB: u64 = 0x10_0000;
@@ -220,9 +220,9 @@ fn aero_snapshot_roundtrip_happy_path() {
     // Set physical RAM at 0 and 1MiB to different values by temporarily enabling A20.
     // The snapshot must preserve both values even though A20 is disabled at snapshot time.
     src.platform.memory.write_u8(0, 0xAA);
-    src.platform.io.write_u8(PORT_A20_FAST, 0x02); // enable A20
+    src.platform.io.write_u8(A20_GATE_PORT, 0x02); // enable A20
     src.platform.memory.write_u8(ONE_MIB, 0xBB);
-    src.platform.io.write_u8(PORT_A20_FAST, 0x00); // disable A20 again (snapshot should store 0)
+    src.platform.io.write_u8(A20_GATE_PORT, 0x00); // disable A20 again (snapshot should store 0)
 
     assert!(!src.platform.chipset.a20().enabled());
     assert_eq!(src.platform.memory.read_u8(ONE_MIB), 0xAA); // A20-masked aliasing
@@ -239,11 +239,11 @@ fn aero_snapshot_roundtrip_happy_path() {
     src.platform.io.write_u8(CMOS_DATA_PORT, 0xAB);
 
     // HPET: requires A20 enabled to avoid aliasing with IOAPIC base.
-    src.platform.io.write_u8(PORT_A20_FAST, 0x02);
+    src.platform.io.write_u8(A20_GATE_PORT, 0x02);
     src.platform.memory.write_u64(HPET_MMIO_BASE + 0x10, 0x1); // GEN_CONF_ENABLE
     src.platform.memory.write_u64(HPET_MMIO_BASE + 0xF0, 0x1234);
     src.platform.tick(123_456);
-    src.platform.io.write_u8(PORT_A20_FAST, 0x00);
+    src.platform.io.write_u8(A20_GATE_PORT, 0x00);
 
     // PCI config ports: leave the address latch on an arbitrary register and poke the command reg.
     src.platform.io.write(PCI_CFG_ADDR_PORT, 4, 0x8000_0004);
@@ -334,7 +334,7 @@ fn aero_snapshot_roundtrip_happy_path() {
     // Enabling A20 after restore should reveal the preserved 1MiB byte.
     assert!(!restored.platform.chipset.a20().enabled());
     assert_eq!(restored.platform.memory.read_u8(ONE_MIB), 0xAA);
-    restored.platform.io.write_u8(PORT_A20_FAST, 0x02);
+    restored.platform.io.write_u8(A20_GATE_PORT, 0x02);
     assert_eq!(restored.platform.memory.read_u8(ONE_MIB), 0xBB);
 }
 

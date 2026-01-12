@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::acpi_pm::{DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT};
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
@@ -13,7 +14,7 @@ use pretty_assertions::assert_eq;
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 }
 
 fn ioapic_write(m: &mut Machine, reg: u32, value: u32) {

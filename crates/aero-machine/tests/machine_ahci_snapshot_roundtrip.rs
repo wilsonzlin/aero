@@ -2,6 +2,7 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
@@ -100,7 +101,7 @@ fn machine_snapshot_roundtrip_preserves_ahci_inflight_dma_command_and_allows_res
     let mut src = Machine::new(cfg.clone()).unwrap();
 
     // Enable A20 before touching high MMIO addresses.
-    src.io_write(0x92, 1, 0x02);
+    src.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Attach a small in-memory disk with a known marker at LBA 4.
     let mut disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();

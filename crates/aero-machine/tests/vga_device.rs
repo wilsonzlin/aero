@@ -1,10 +1,11 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 }
 
 fn program_vbe_linear_64x64x32(m: &mut Machine) {

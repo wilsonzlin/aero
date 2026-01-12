@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
@@ -104,7 +105,7 @@ fn machine_reset_preserves_ahci_disk_port0_backend() {
     .unwrap();
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Attach a disk with a recognizable marker to AHCI port 0.
     let capacity = 8 * SECTOR_SIZE as u64;
@@ -118,7 +119,7 @@ fn machine_reset_preserves_ahci_disk_port0_backend() {
     m.reset();
 
     // Reset clears A20 again; re-enable before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Program the AHCI controller and read back LBA0 via DMA.
     let bdf = SATA_AHCI_ICH9.bdf;

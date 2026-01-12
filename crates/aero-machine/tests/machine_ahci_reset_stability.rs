@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
@@ -55,7 +56,7 @@ fn machine_ahci_mmio_and_device_rc_identity_remain_stable_across_reset() {
     let ptr_before = Rc::as_ptr(&ahci_before);
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     let bdf = SATA_AHCI_ICH9.bdf;
     let bar5_base: u64 = 0xE100_0000;
@@ -98,7 +99,7 @@ fn machine_ahci_mmio_and_device_rc_identity_remain_stable_across_reset() {
     );
 
     // Re-enable A20 and re-program PCI config state (reset clears guest-visible config space).
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
     write_cfg_u32(
         &mut m,
         bdf.bus,

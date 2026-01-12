@@ -1,3 +1,4 @@
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_machine::{Machine, MachineConfig};
 use firmware::bios::{PCIE_ECAM_BASE, RESET_VECTOR_ALIAS_PHYS, RESET_VECTOR_PHYS};
 use pretty_assertions::assert_eq;
@@ -20,7 +21,7 @@ fn machine_high_memory_remap_does_not_require_dense_multi_gib_allocations() {
     .expect("machine init should succeed with large (sparse) RAM");
 
     // Enable A20 via the fast A20 port (0x92) so our physical addresses are not masked.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // The PCIe ECAM window begins at PCIE_ECAM_BASE and should behave as open bus when no MMIO
     // device claims it.

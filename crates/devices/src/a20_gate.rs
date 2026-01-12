@@ -5,6 +5,13 @@ use aero_platform::chipset::A20GateHandle;
 use aero_platform::io::PortIoDevice;
 use aero_platform::reset::{PlatformResetSink, ResetKind};
 
+/// I/O port for the "fast A20 gate" latch (System Control Port A).
+///
+/// On PC-compatible hardware, port `0x92` commonly exposes:
+/// - bit 1: A20 enable
+/// - bit 0: reset pulse (self-clearing in this emulation)
+pub const A20_GATE_PORT: u16 = 0x92;
+
 pub struct A20Gate {
     a20: A20GateHandle,
     reset: Option<Box<dyn PlatformResetSink>>,

@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{AHCI_ABAR_CFG_OFFSET, SATA_AHCI_ICH9};
 use aero_devices::pci::{PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_WRITE_DMA_EXT;
@@ -163,7 +164,7 @@ fn machine_processes_ahci_and_can_wake_a_halted_cpu_via_intx() {
     .unwrap();
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Attach a small disk to AHCI port 0.
     let capacity = 8 * SECTOR_SIZE as u64;
@@ -302,7 +303,7 @@ fn machine_ahci_writes_are_visible_to_bios_disk_reads() {
     .unwrap();
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Ensure the disk is large enough for LBA 1 writes. `set_disk_image` updates the shared backend
     // and re-attaches it to AHCI so ATA IDENTIFY geometry stays coherent.
@@ -386,7 +387,7 @@ fn machine_exposes_ich9_ahci_at_canonical_bdf_and_bar5_mmio_works() {
     .unwrap();
 
     // Enable A20 for deterministic MMIO access behaviour.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     let bdf = SATA_AHCI_ICH9.bdf;
 
@@ -451,7 +452,7 @@ fn machine_gates_ahci_dma_on_pci_bus_master_enable() {
     .unwrap();
 
     // Enable A20 before touching high MMIO addresses.
-    m.io_write(0x92, 1, 0x02);
+    m.io_write(A20_GATE_PORT, 1, 0x02);
 
     // Attach a small disk to AHCI port 0.
     let capacity = 8 * SECTOR_SIZE as u64;

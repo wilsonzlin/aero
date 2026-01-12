@@ -2,7 +2,7 @@
 
 #[cfg(feature = "hda")]
 use aero_audio::hda_pci::HdaPciDevice;
-use aero_devices::a20_gate::A20Gate;
+use aero_devices::a20_gate::{A20Gate, A20_GATE_PORT};
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
 use aero_devices::clock::ManualClock;
 use aero_devices::dma::{register_dma8237, Dma8237};
@@ -1272,7 +1272,7 @@ impl PcPlatform {
         register_i8042(&mut io, i8042_ctrl.clone());
 
         io.register(
-            0x92,
+            A20_GATE_PORT,
             Box::new(A20Gate::with_reset_sink(chipset.a20(), {
                 let reset_events = reset_events.clone();
                 move |_kind| reset_events.borrow_mut().push(ResetEvent::System)
