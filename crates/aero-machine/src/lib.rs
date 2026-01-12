@@ -18,6 +18,7 @@ pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
@@ -302,6 +303,8 @@ struct SystemMemory {
     a20: A20GateHandle,
     inner: RefCell<PhysicalMemoryBus>,
     dirty: DirtyTracker,
+    mapped_roms: HashMap<u64, usize>,
+    mapped_mmio: Vec<(u64, u64)>,
 }
 
 impl SystemMemory {
@@ -346,6 +349,8 @@ impl SystemMemory {
             a20,
             inner: RefCell::new(inner),
             dirty,
+            mapped_roms: HashMap::new(),
+            mapped_mmio: Vec::new(),
         })
     }
 
@@ -384,21 +389,17 @@ impl SystemMemory {
             .checked_add(len)
             .unwrap_or_else(|| panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})"));
 
-        // Fast path: mapping already exists.
-        if self
-            .inner
-            .borrow()
-            .mmio_regions()
-            .iter()
-            .any(|r| r.start == start && r.end == end)
-        {
+        // Fast path: mapping already exists (and was recorded by this helper).
+        if self.mapped_mmio.iter().any(|&(s, e)| s == start && e == end) {
             return;
         }
 
         let handler = build();
         let mut inner = self.inner.borrow_mut();
         match inner.map_mmio(start, len, handler) {
-            Ok(()) => {}
+            Ok(()) => {
+                self.mapped_mmio.push((start, end));
+            }
             Err(MapError::Overlap) => {
                 // Treat identical overlaps as idempotent, but reject unexpected overlaps to avoid
                 // silently corrupting the bus.
@@ -406,7 +407,9 @@ impl SystemMemory {
                     .mmio_regions()
                     .iter()
                     .any(|r| r.start == start && r.end == end);
-                if !already_mapped {
+                if already_mapped {
+                    self.mapped_mmio.push((start, end));
+                } else {
                     panic!("unexpected MMIO mapping overlap at 0x{start:016x} (len=0x{len:x})");
                 }
             }
@@ -430,9 +433,21 @@ impl A20Gate for SystemMemory {
 impl FirmwareMemory for SystemMemory {
     fn map_rom(&mut self, base: u64, rom: Arc<[u8]>) {
         let len = rom.len();
+
+        if let Some(prev_len) = self.mapped_roms.get(&base).copied() {
+            // BIOS resets may re-map the same ROM windows. Treat identical re-maps as no-ops, but
+            // reject unexpected overlaps to avoid silently corrupting the address space.
+            if prev_len != len {
+                panic!("unexpected ROM mapping overlap at 0x{base:016x}");
+            }
+            return;
+        }
+
         let mut inner = self.inner.borrow_mut();
         match inner.map_rom(base, rom) {
-            Ok(()) => {}
+            Ok(()) => {
+                self.mapped_roms.insert(base, len);
+            }
             Err(MapError::Overlap) => {
                 // BIOS resets may re-map the same ROM windows. Treat identical overlaps as
                 // idempotent, but reject unexpected overlaps to avoid silently corrupting the bus.
@@ -440,7 +455,9 @@ impl FirmwareMemory for SystemMemory {
                     .rom_regions()
                     .iter()
                     .any(|r| r.start == base && r.data.len() == len);
-                if !already_mapped {
+                if already_mapped {
+                    self.mapped_roms.insert(base, len);
+                } else {
                     panic!("unexpected ROM mapping overlap at 0x{base:016x}");
                 }
             }
