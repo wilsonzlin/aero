@@ -219,3 +219,46 @@ fn hda_capture_dma_write_completes_on_dma_addr_overflow() {
     // Second tick would attempt to DMA at `near_end + bdl_offset` (overflow) and must not panic.
     hda.process_with_capture(&mut mem, 128, &mut capture);
 }
+
+#[test]
+fn hda_process_completes_on_oob_corb_rirb_addresses() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Program invalid CORB + RIRB base addresses (outside guest RAM).
+    let oob_base = mem.data.len() as u64 + 0x1000;
+    hda.mmio_write(0x40, 4, oob_base); // CORBLBASE
+    hda.mmio_write(0x44, 4, 0); // CORBUBASE
+    hda.mmio_write(0x50, 4, oob_base); // RIRBLBASE
+    hda.mmio_write(0x54, 4, 0); // RIRBUBASE
+
+    // Enable CORB + RIRB DMA engines.
+    hda.mmio_write(0x4c, 1, 0x02); // CORBCTL.RUN
+    hda.mmio_write(0x5c, 1, 0x02); // RIRBCTL.RUN
+
+    // Signal a pending command by advancing CORBWP.
+    hda.mmio_write(0x48, 2, 0x0001);
+
+    // Should complete without panicking even though ring base addresses are invalid.
+    hda.process(&mut mem, 1);
+}
+
+#[test]
+fn hda_process_completes_on_oob_posbuf_address() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Enable the DMA position buffer (POSBUF) with an out-of-bounds base address.
+    let oob_base = mem.data.len() as u64 + 0x1000;
+    hda.mmio_write(0x70, 4, oob_base | 0x1); // DPLBASE.ENABLE + base
+    hda.mmio_write(0x74, 4, 0); // DPUBASE
+
+    // Should complete without panicking; the POSBUF write is ignored by SafeGuestMemory.
+    hda.process(&mut mem, 1);
+}
