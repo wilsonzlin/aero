@@ -222,7 +222,8 @@ DHCP verification (until the automated probe covers it):
 
 - Boot a guest and confirm it receives a lease (Windows: `ipconfig /all`).
 - Force renewal (Windows: `ipconfig /renew`) and capture traffic with the built-in PCAP tracing
-  hooks described in [`07-networking.md`](./07-networking.md#network-tracing-pcappcapng-export).
+  hooks described in [`07-networking.md`](./07-networking.md#network-tracing-pcappcapng-export)
+  (browser UI panel “Network trace (PCAPNG)” / `window.aero.netTrace.downloadPcapng()`).
 
 ## Secure deployment (recommended)
 
