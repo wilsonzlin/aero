@@ -6,6 +6,10 @@
 
 use std::io;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_storage::SECTOR_SIZE;
 
 use crate::ata::{
@@ -633,6 +637,166 @@ impl IdeController {
     }
 }
 
+impl IdeChannel {
+    fn sync_irq_line(&self, irq: &dyn IrqLine) {
+        let should_high = self.irq_asserted && self.interrupts_enabled();
+        irq.set_level(should_high);
+    }
+}
+
+impl IdeController {
+    fn encode_channel(chan: &IdeChannel) -> Vec<u8> {
+        let mut e = Encoder::new()
+            .u8(chan.features.low)
+            .u8(chan.features.high)
+            .u8(chan.sector_count.low)
+            .u8(chan.sector_count.high)
+            .u8(chan.lba_low.low)
+            .u8(chan.lba_low.high)
+            .u8(chan.lba_mid.low)
+            .u8(chan.lba_mid.high)
+            .u8(chan.lba_high.low)
+            .u8(chan.lba_high.high)
+            .u8(chan.drive_head)
+            .u8(chan.status)
+            .u8(chan.error)
+            .u8(chan.dev_ctl)
+            .bool(chan.irq_asserted);
+
+        match &chan.pio {
+            None => {
+                e = e.u8(0);
+            }
+            Some(pio) => {
+                let dir = match pio.dir {
+                    PioDirection::Read => 0u8,
+                    PioDirection::Write => 1u8,
+                };
+                let kind = match pio.kind {
+                    PioKind::Identify => 0u8,
+                    PioKind::Data => 1u8,
+                };
+                e = e
+                    .u8(1)
+                    .u8(dir)
+                    .u8(kind)
+                    .u64(pio.lba)
+                    .u32(pio.remaining_sectors)
+                    .u32(pio.index as u32)
+                    .bytes(&pio.buf);
+            }
+        }
+
+        e.finish()
+    }
+
+    fn decode_channel(bytes: &[u8]) -> SnapshotResult<IdeChannel> {
+        let mut d = Decoder::new(bytes);
+        let mut chan = IdeChannel::new();
+
+        chan.features.low = d.u8()?;
+        chan.features.high = d.u8()?;
+        chan.sector_count.low = d.u8()?;
+        chan.sector_count.high = d.u8()?;
+        chan.lba_low.low = d.u8()?;
+        chan.lba_low.high = d.u8()?;
+        chan.lba_mid.low = d.u8()?;
+        chan.lba_mid.high = d.u8()?;
+        chan.lba_high.low = d.u8()?;
+        chan.lba_high.high = d.u8()?;
+        chan.drive_head = d.u8()?;
+        chan.selected = ((chan.drive_head >> 4) & 1) as usize;
+        chan.status = d.u8()?;
+        chan.error = d.u8()?;
+        chan.dev_ctl = d.u8()?;
+        chan.irq_asserted = d.bool()?;
+
+        match d.u8()? {
+            0 => {
+                chan.pio = None;
+            }
+            1 => {
+                let dir = match d.u8()? {
+                    0 => PioDirection::Read,
+                    1 => PioDirection::Write,
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("idep pio dir")),
+                };
+                let kind = match d.u8()? {
+                    0 => PioKind::Identify,
+                    1 => PioKind::Data,
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("idep pio kind")),
+                };
+                let lba = d.u64()?;
+                let remaining_sectors = d.u32()?;
+                if remaining_sectors == 0 {
+                    return Err(SnapshotError::InvalidFieldEncoding("idep pio sectors"));
+                }
+                let index = d.u32()? as usize;
+                if index > SECTOR_SIZE {
+                    return Err(SnapshotError::InvalidFieldEncoding("idep pio index"));
+                }
+                let buf_bytes = d.bytes(SECTOR_SIZE)?;
+                let mut buf = [0u8; SECTOR_SIZE];
+                buf.copy_from_slice(buf_bytes);
+
+                chan.pio = Some(PioState {
+                    dir,
+                    kind,
+                    lba,
+                    remaining_sectors,
+                    buf,
+                    index,
+                });
+            }
+            _ => return Err(SnapshotError::InvalidFieldEncoding("idep pio present")),
+        }
+
+        d.finish()?;
+        Ok(chan)
+    }
+}
+
+impl IoSnapshot for IdeController {
+    const DEVICE_ID: [u8; 4] = *b"IDEP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_PRIMARY: u16 = 1;
+        const TAG_SECONDARY: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_bytes(TAG_PRIMARY, Self::encode_channel(&self.primary));
+        w.field_bytes(TAG_SECONDARY, Self::encode_channel(&self.secondary));
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_PRIMARY: u16 = 1;
+        const TAG_SECONDARY: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset to a deterministic baseline and drop any host-side drive backends. The platform
+        // should re-attach disks after restore.
+        self.primary = IdeChannel::new();
+        self.secondary = IdeChannel::new();
+
+        if let Some(buf) = r.bytes(TAG_PRIMARY) {
+            self.primary = Self::decode_channel(buf)?;
+        }
+        if let Some(buf) = r.bytes(TAG_SECONDARY) {
+            self.secondary = Self::decode_channel(buf)?;
+        }
+
+        // Ensure the external IRQ lines reflect the restored latch state.
+        self.primary.sync_irq_line(&*self.irq14);
+        self.secondary.sync_irq_line(&*self.irq15);
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +864,50 @@ mod tests {
         let b2 = ctl.read_u8(PRIMARY_BASE);
         let b3 = ctl.read_u8(PRIMARY_BASE);
         assert_eq!([b0, b1, b2, b3], [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_pio_progress_and_irq_state() {
+        let (mut ctl, irq14, _irq15) = setup_controller();
+
+        // Read sector 1 via READ SECTORS.
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0); // LBA
+        ctl.write_u8(PRIMARY_BASE + 2, 1); // count
+        ctl.write_u8(PRIMARY_BASE + 3, 1); // lba low
+        ctl.write_u8(PRIMARY_BASE + 4, 0);
+        ctl.write_u8(PRIMARY_BASE + 5, 0);
+        ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_READ_SECTORS);
+
+        assert!(irq14.level());
+
+        // Consume first 4 bytes.
+        let b0 = ctl.read_u8(PRIMARY_BASE);
+        let b1 = ctl.read_u8(PRIMARY_BASE);
+        let b2 = ctl.read_u8(PRIMARY_BASE);
+        let b3 = ctl.read_u8(PRIMARY_BASE);
+        assert_eq!([b0, b1, b2, b3], [1, 2, 3, 4]);
+
+        let snap = ctl.save_state();
+
+        let irq14_2 = TestIrqLine::default();
+        let irq15_2 = TestIrqLine::default();
+        let mut restored = IdeController::new(Box::new(irq14_2.clone()), Box::new(irq15_2));
+        restored.load_state(&snap).unwrap();
+
+        // IRQ should still be asserted after restore.
+        assert!(irq14_2.level());
+
+        // Next byte is zero (rest of sector was zero-filled).
+        let next = restored.read_u8(PRIMARY_BASE);
+        assert_eq!(next, 0);
+
+        // Drain the remainder of the sector.
+        for _ in 0..(SECTOR_SIZE - 5) {
+            let _ = restored.read_u8(PRIMARY_BASE);
+        }
+
+        // Reading STATUS clears IRQ.
+        let _ = restored.read_u8(PRIMARY_BASE + 7);
+        assert!(!irq14_2.level());
     }
 }
