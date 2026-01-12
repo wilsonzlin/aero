@@ -54,6 +54,12 @@ test("canonical Machine worker panel: grows shared framebuffer when guest switch
   await page.goto("/web/index.html?machineWorkerVbe=1280x720", { waitUntil: "load" });
   await waitForMachineWorkerPanelReady(page);
 
+  const support = await page.evaluate(() => ({
+    sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
+    crossOriginIsolated: globalThis.crossOriginIsolated === true,
+  }));
+  test.skip(!support.sharedArrayBuffer || !support.crossOriginIsolated, "SharedArrayBuffer (COOP/COEP) required to cover shared framebuffer growth.");
+
   await page.click("#canonical-machine-vga-worker-start");
 
   // Wait for at least one frame and for the VBE mode dimensions to be observed by the UI.
@@ -73,6 +79,7 @@ test("canonical Machine worker panel: grows shared framebuffer when guest switch
 
   expect((state as any).width).toBe(1280);
   expect((state as any).height).toBe(720);
+  expect((state as any).transport).toBe("shared");
   expect((state as any).framesPresented).toBeGreaterThan(0);
 
   const sample = await page.evaluate(() => {
@@ -93,4 +100,3 @@ test("canonical Machine worker panel: grows shared framebuffer when guest switch
 
   await page.click("#canonical-machine-vga-worker-stop");
 });
-
