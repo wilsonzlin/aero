@@ -186,6 +186,33 @@ fn handle_int13(
     let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     let drive = (cpu.gpr[gpr::RDX] & 0xFF) as u8;
 
+    fn geometry_for_drive(drive: u8, total_sectors: u64) -> (u16, u8, u8) {
+        if drive < 0x80 {
+            // Floppy disk (heuristic by media size; fallback is a reasonable default).
+            match total_sectors {
+                2880 => (80, 2, 18), // 1.44 MiB (3.5")
+                2400 => (80, 2, 15), // 1.2 MiB (5.25")
+                1440 => (80, 2, 9),  // 720 KiB (3.5")
+                720 => (40, 2, 9),   // 360 KiB (5.25")
+                360 => (40, 1, 9),   // 180 KiB
+                320 => (40, 2, 8),   // 160 KiB
+                _ => {
+                    let heads = 2u8;
+                    let spt = 18u8;
+                    let denom = u64::from(heads) * u64::from(spt);
+                    let cyl = (denom != 0)
+                        .then(|| total_sectors / denom)
+                        .unwrap_or(1)
+                        .clamp(1, 1024);
+                    (cyl as u16, heads, spt)
+                }
+            }
+        } else {
+            // Fixed disk (minimal geometry; matches legacy tests + common boot expectations).
+            (1024, 16, 63)
+        }
+    }
+
     match ah {
         0x00 => {
             // Reset disk system.
@@ -218,10 +245,12 @@ fn handle_int13(
             let cylinder = ((ch as u16) | (((cl as u16) & 0xC0) << 2)) as u32;
             let head = dh as u32;
 
-            // Minimal fixed geometry.
-            let spt = 63u32;
-            let heads = 16u32;
-            if sector == 0 || sector > spt as u16 {
+            let (cylinders, heads, spt) = geometry_for_drive(drive, disk.size_in_sectors());
+            let spt = u32::from(spt);
+            let heads = u32::from(heads);
+            let cylinders = u32::from(cylinders);
+
+            if sector == 0 || sector > spt as u16 || head >= heads || cylinder >= cylinders {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
                 cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
@@ -276,9 +305,7 @@ fn handle_int13(
         0x08 => {
             // Get drive parameters (very small subset).
             // Return: CF clear, AH=0, CH/CL/DH describe geometry.
-            let cylinders = 1024u16;
-            let heads = 16u8;
-            let spt = 63u8;
+            let (cylinders, heads, spt) = geometry_for_drive(drive, disk.size_in_sectors());
 
             let cyl_minus1 = cylinders - 1;
             let ch = (cyl_minus1 & 0xFF) as u8;
@@ -295,9 +322,16 @@ fn handle_int13(
         0x15 => {
             // Get disk type.
             if drive < 0x80 {
-                cpu.gpr[gpr::RAX] = 0;
+                // Floppy drive present (with change-line support).
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | 0x0200;
             } else {
-                cpu.gpr[gpr::RAX] = 0x0300;
+                // Fixed disk present. Return sector count in CX:DX (32-bit).
+                let sectors_u32 = u32::try_from(disk.size_in_sectors()).unwrap_or(u32::MAX);
+                let cx = (sectors_u32 >> 16) as u16;
+                let dx = (sectors_u32 & 0xFFFF) as u16;
+                cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cx as u64);
+                cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (dx as u64);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | 0x0300;
             }
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
@@ -1026,6 +1060,66 @@ fn build_e820_map(
 
         assert_eq!(mem.read_u64(table_addr + 16), sectors);
         assert_eq!(mem.read_u16(table_addr + 24), 512);
+    }
+
+    #[test]
+    fn int13_chs_read_floppy_maps_head1_sector1_to_lba18() {
+        // 1.44MiB floppy = 2880 sectors. Cylinder 0, head 1, sector 1 corresponds to LBA 18.
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut disk_bytes = vec![0u8; 512 * 2880];
+        disk_bytes[18 * 512] = 0xCC;
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        cpu.gpr[gpr::RBX] = 0x1000;
+        cpu.gpr[gpr::RAX] = 0x0201; // AH=02h read, AL=1 sector
+        cpu.gpr[gpr::RCX] = 0x0001; // CH=0, CL=1 (sector 1)
+        cpu.gpr[gpr::RDX] = 0x0100; // DH=1 (head), DL=0 (floppy 0)
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        assert_eq!(mem.read_u8(0x1000), 0xCC);
+    }
+
+    #[test]
+    fn int13_get_drive_parameters_floppy_reports_1440k_geometry() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x0800; // AH=08h
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        // CH=79 (cylinders-1), CL=18 (sectors per track).
+        assert_eq!(cpu.gpr[gpr::RCX] as u16, 0x4F12);
+        // DH=heads-1=1, DL=drive count=1
+        assert_eq!(cpu.gpr[gpr::RDX] as u16, 0x0101);
+    }
+
+    #[test]
+    fn int13_get_disk_type_floppy_reports_present() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512 * 2880];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x1500; // AH=15h
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x02);
     }
 
     #[test]
