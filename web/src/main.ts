@@ -613,6 +613,11 @@ function renderMachinePanel(): HTMLElement {
     console.error(msg);
   }
 
+  // Avoid pathological allocations if the guest (or a buggy WASM build) reports
+  // an absurd scanout mode. Keep the UI responsive rather than attempting to
+  // allocate multi-gigabyte buffers.
+  const MAX_VGA_FRAME_BYTES = 32 * 1024 * 1024; // ~4K@60-ish upper bound for a demo panel.
+
   function buildSerialBootSector(message: string): Uint8Array {
     const msgBytes = encoder.encode(message);
     const sector = new Uint8Array(512);
@@ -803,6 +808,9 @@ function renderMachinePanel(): HTMLElement {
         } catch {
           return null;
         }
+        if (!Number.isFinite(requiredBytes) || requiredBytes <= 0 || requiredBytes > MAX_VGA_FRAME_BYTES + 4096) {
+          return null;
+        }
 
         if (!sharedVgaSab || sharedVgaSab.byteLength < requiredBytes) {
           try {
@@ -866,7 +874,18 @@ function renderMachinePanel(): HTMLElement {
           if (!Number.isFinite(strideBytes) || strideBytes < width * 4) return;
           if (!Number.isFinite(ptr) || !Number.isFinite(lenBytes) || ptr < 0 || lenBytes < 0) return;
 
+          const requiredDstBytes = width * height * 4;
           let requiredSrcBytes = strideBytes * height;
+          if (
+            !Number.isFinite(requiredDstBytes) ||
+            requiredDstBytes <= 0 ||
+            requiredDstBytes > MAX_VGA_FRAME_BYTES ||
+            !Number.isFinite(requiredSrcBytes) ||
+            requiredSrcBytes <= 0 ||
+            requiredSrcBytes > MAX_VGA_FRAME_BYTES
+          ) {
+            return;
+          }
           let src: Uint8Array | null = null;
           if (hasVgaPtr && wasmMemory) {
             if (lenBytes < requiredSrcBytes) return;
@@ -894,7 +913,6 @@ function renderMachinePanel(): HTMLElement {
             canvas.height = height;
           }
 
-          const requiredDstBytes = width * height * 4;
           if (
             !imageDataBytes ||
             dstWidth !== width ||
