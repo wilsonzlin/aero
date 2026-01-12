@@ -3,7 +3,8 @@ use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 use super::{
-    align_copy_bytes_per_row, bc_mip_chain_compatible, format_info, D3DFormat, D3DPool, FormatInfo,
+    align_copy_bytes_per_row, format_info_for_texture, wgpu_bc_texture_dimensions_compatible,
+    D3DFormat, D3DPool, FormatInfo,
     GuestResourceId, LockFlags, ResourceManager, TextureUploadDesc, TextureUsageKind,
 };
 
@@ -94,23 +95,16 @@ fn format_info_for_texture_desc(
     desc: &TextureDesc,
     device_features: wgpu::Features,
 ) -> Result<FormatInfo> {
-    let mut info = format_info(desc.format, device_features, desc.usage)?;
-
-    if device_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-        && matches!(
-            desc.format,
-            D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5
-        )
-    {
-        let (width, height) = desc.kind.dimensions();
-        let mip_levels = desc.kind.mip_levels();
-
-        if !bc_mip_chain_compatible(width, height, mip_levels) {
-            info.force_decompress_dxt_to_bgra8();
-        }
-    }
-
-    Ok(info)
+    let (width, height) = desc.kind.dimensions();
+    let mip_levels = desc.kind.mip_levels();
+    format_info_for_texture(
+        desc.format,
+        device_features,
+        desc.usage,
+        width,
+        height,
+        mip_levels,
+    )
 }
 
 impl Texture {
@@ -172,7 +166,7 @@ impl Texture {
         {
             let (width, height) = self.desc.kind.dimensions();
             let mip_levels = self.desc.kind.mip_levels();
-            if !bc_mip_chain_compatible(width, height, mip_levels) {
+            if !wgpu_bc_texture_dimensions_compatible(width, height, mip_levels) {
                 self.info.force_decompress_dxt_to_bgra8();
             }
         }

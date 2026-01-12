@@ -117,23 +117,67 @@ impl FormatInfo {
     }
 }
 
-/// Checks whether a BC (DXTn) texture can be created with native block-compression formats.
-///
-/// WebGPU requires each mip level's dimensions to be block-aligned (4x4) when that mip is at
-/// least one full block in that dimension. Smaller-than-block mips are allowed.
-pub(crate) fn bc_mip_chain_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
-    for level in 0..mip_levels {
-        let w = width.checked_shr(level).unwrap_or(0).max(1);
-        let h = height.checked_shr(level).unwrap_or(0).max(1);
+fn mip_extent(v: u32, level: u32) -> u32 {
+    v.checked_shr(level).unwrap_or(0).max(1)
+}
 
-        if w >= 4 && (w % 4) != 0 {
-            return false;
-        }
-        if h >= 4 && (h % 4) != 0 {
+/// Returns whether a BC-compressed texture of the given dimensions can be created under wgpu's
+/// WebGPU validation rules.
+///
+/// WebGPU requires the base mip level dimensions to be aligned to the compression block size
+/// (4×4). Additionally, some backends conservatively validate that each mip level whose extent is
+/// at least one full block is also aligned.
+pub fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
+    if mip_levels == 0 {
+        return false;
+    }
+
+    // wgpu/WebGPU validation requires compressed texture creation sizes to be block aligned.
+    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
+        return false;
+    }
+
+    for level in 0..mip_levels {
+        let w = mip_extent(width, level);
+        let h = mip_extent(height, level);
+
+        // Conservative mip validation: require block alignment for any mip level that still
+        // contains at least one full block. (Smaller-than-block mips are allowed.)
+        if (w >= 4 && !w.is_multiple_of(4)) || (h >= 4 && !h.is_multiple_of(4)) {
             return false;
         }
     }
+
     true
+}
+
+pub fn format_info_for_texture(
+    format: D3DFormat,
+    device_features: wgpu::Features,
+    usage: TextureUsageKind,
+    width: u32,
+    height: u32,
+    mip_levels: u32,
+) -> Result<FormatInfo> {
+    let info = format_info(format, device_features, usage)?;
+
+    // Even when BC formats are supported, wgpu/WebGPU validation requires block-aligned base
+    // dimensions and (conservatively on some backends) block-aligned mips. Fall back to the
+    // existing BGRA8+CPU-decompression path when dimensions are incompatible.
+    if matches!(format, D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5)
+        && matches!(
+            info.wgpu,
+            wgpu::TextureFormat::Bc1RgbaUnorm
+                | wgpu::TextureFormat::Bc2RgbaUnorm
+                | wgpu::TextureFormat::Bc3RgbaUnorm
+        )
+        && !wgpu_bc_texture_dimensions_compatible(width, height, mip_levels)
+    {
+        let features_without_bc = device_features & !wgpu::Features::TEXTURE_COMPRESSION_BC;
+        return format_info(format, features_without_bc, usage);
+    }
+
+    Ok(info)
 }
 
 pub fn format_info(
@@ -327,6 +371,37 @@ mod tests {
             assert!(!info.upload_is_compressed);
             assert!(info.d3d_is_compressed);
         }
+    }
+
+    #[test]
+    fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
+        assert!(!wgpu_bc_texture_dimensions_compatible(9, 9, 1));
+        assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 1));
+    }
+
+    #[test]
+    fn bc_dimension_compatibility_checks_mip_alignment_conservatively() {
+        // mip0 is aligned but mip1 becomes 6x6, which fails the >=4 && multiple-of-4 check.
+        assert!(!wgpu_bc_texture_dimensions_compatible(12, 12, 2));
+        // 8x8 -> 4x4 is fine.
+        assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 2));
+    }
+
+    #[test]
+    fn dxt_format_selection_falls_back_when_dims_incompatible_even_if_bc_supported() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+
+        let info =
+            format_info_for_texture(D3DFormat::Dxt1, features, TextureUsageKind::Sampled, 12, 12, 2)
+                .unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+        assert!(info.decompress_to_bgra8);
+
+        let info =
+            format_info_for_texture(D3DFormat::Dxt1, features, TextureUsageKind::Sampled, 8, 8, 2)
+                .unwrap();
+        assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert!(!info.decompress_to_bgra8);
     }
 }
 
