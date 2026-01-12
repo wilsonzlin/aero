@@ -82,7 +82,17 @@ fn map_storage_error(
         }
         // Sparse/cow/cache formats may surface structured errors; NVMe consumers treat backend
         // errors as opaque I/O failures.
-        _ => DiskError::Io,
+        StorageDiskError::CorruptImage(_)
+        | StorageDiskError::Unsupported(_)
+        | StorageDiskError::InvalidSparseHeader(_)
+        | StorageDiskError::InvalidConfig(_)
+        | StorageDiskError::CorruptSparseImage(_)
+        | StorageDiskError::NotSupported(_)
+        | StorageDiskError::QuotaExceeded
+        | StorageDiskError::InUse
+        | StorageDiskError::InvalidState(_)
+        | StorageDiskError::BackendUnavailable
+        | StorageDiskError::Io(_) => DiskError::Io,
     }
 }
 
@@ -158,5 +168,33 @@ mod tests {
                 capacity_sectors: 2
             }
         );
+    }
+
+    #[test]
+    fn nvme_adapter_maps_other_storage_errors_to_io() {
+        struct FaultyDisk;
+
+        impl VirtualDisk for FaultyDisk {
+            fn capacity_bytes(&self) -> u64 {
+                SECTOR_SIZE as u64
+            }
+
+            fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
+                Err(StorageDiskError::CorruptImage("bad"))
+            }
+
+            fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+                Err(StorageDiskError::Unsupported("feature"))
+            }
+
+            fn flush(&mut self) -> aero_storage::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut adapter = NvmeDiskFromAeroStorage::new(FaultyDisk).unwrap();
+        let mut buf = vec![0u8; SECTOR_SIZE];
+        assert_eq!(adapter.read_sectors(0, &mut buf).unwrap_err(), DiskError::Io);
+        assert_eq!(adapter.write_sectors(0, &buf).unwrap_err(), DiskError::Io);
     }
 }
