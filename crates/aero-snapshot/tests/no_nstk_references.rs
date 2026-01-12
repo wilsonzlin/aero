@@ -22,7 +22,7 @@ fn should_scan(path: &Path) -> bool {
     matches!(
         ext,
         // Rust + docs.
-        "rs" | "md" |
+        "rs" | "md" | "txt" |
         // Web runtime.
         "ts" | "tsx" | "mts" | "js" | "jsx" | "mjs" | "cjs" | "html" |
         // Scripts.
@@ -30,9 +30,11 @@ fn should_scan(path: &Path) -> bool {
         // Go (proxy services).
         "go" |
         // Native/driver sources.
-        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" |
+        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" | "hlsl" |
+        // Driver/build metadata (plaintext).
+        "inf" | "sln" | "vcxproj" | "filters" | "props" | "def" |
         // Config/metadata.
-        "toml" | "json" | "yml" | "yaml"
+        "toml" | "json" | "yml" | "yaml" | "dict"
     )
 }
 
