@@ -3960,7 +3960,8 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
 function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   const ps2Available = !!(i8042Wasm || i8042Ts);
   const syntheticUsbMouseConfigured = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse);
-  mouseInputBackend = chooseMouseInputBackend({
+  const prevBackend = mouseInputBackend;
+  const nextBackend = chooseMouseInputBackend({
     current: mouseInputBackend,
     buttonsHeld: (mouseButtonsMask & 0x07) !== 0,
     virtioOk: opts.virtioMouseOk && !!virtioInputMouse,
@@ -3968,6 +3969,22 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
     // the USB HID bridge to avoid duplicate devices in the guest.
     usbOk: !!usbHid && (!ps2Available || syntheticUsbMouseConfigured),
   });
+
+  // Optional extra robustness: when we *do* switch backends, send a "buttons=0" update to the
+  // previous backend. This should be redundant because backend switching is gated on
+  // `mouseButtonsMask===0`, but it provides a safety net in case a prior button-up was dropped.
+  if (nextBackend !== prevBackend && (mouseButtonsMask & 0x07) === 0) {
+    if (prevBackend === "virtio") {
+      virtioInputMouse?.injectMouseButtons(0);
+    } else if (prevBackend === "usb") {
+      usbHid?.mouse_buttons(0);
+    } else {
+      i8042Wasm?.injectMouseButtons(0);
+      i8042Ts?.injectMouseButtons(0);
+    }
+  }
+
+  mouseInputBackend = nextBackend;
 }
 
 function drainSyntheticUsbHidReports(): void {
