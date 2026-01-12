@@ -7,4 +7,5 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+aero-pc-constants = { path = "../aero-pc-constants" }
 proptest = "1.4"

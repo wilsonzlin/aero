@@ -445,9 +445,9 @@ mod tests {
 
     #[test]
     fn supports_large_phys_addrs_with_sparse_inner_without_allocating_gigabytes() {
-        const PCIE_ECAM_BASE: u64 = 0xB000_0000;
-        let total_memory = PCIE_ECAM_BASE + 0x2000;
-        let phys_size = 0x1_0000_0000 + (total_memory - PCIE_ECAM_BASE);
+        let pcie_ecam_base = aero_pc_constants::PCIE_ECAM_BASE;
+        let total_memory = pcie_ecam_base + 0x2000;
+        let phys_size = 0x1_0000_0000 + (total_memory - pcie_ecam_base);
 
         let inner = SparseMemory::with_chunk_size(total_memory, 2 * 1024 * 1024).unwrap();
         let mut mem = MappedGuestMemory::new(
@@ -456,13 +456,13 @@ mod tests {
             vec![
                 GuestMemoryMapping {
                     phys_start: 0x0,
-                    phys_end: PCIE_ECAM_BASE,
+                    phys_end: pcie_ecam_base,
                     inner_offset: 0x0,
                 },
                 GuestMemoryMapping {
                     phys_start: 0x1_0000_0000,
                     phys_end: phys_size,
-                    inner_offset: PCIE_ECAM_BASE,
+                    inner_offset: pcie_ecam_base,
                 },
             ],
         )
@@ -470,7 +470,7 @@ mod tests {
 
         // Verify the hole is open-bus.
         let mut hole = [0u8; 4];
-        mem.read_into(PCIE_ECAM_BASE, &mut hole).unwrap();
+        mem.read_into(pcie_ecam_base, &mut hole).unwrap();
         assert_eq!(hole, [0xFF; 4]);
 
         // Write 16 bytes at >= 4GiB and read back across the 4GiB boundary.

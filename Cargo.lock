@@ -2933,6 +2933,7 @@ dependencies = [
 name = "memory"
 version = "0.1.0"
 dependencies = [
+ "aero-pc-constants",
  "proptest",
 ]
 
