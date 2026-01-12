@@ -510,6 +510,9 @@ mod wasm {
     /// Debug helper: copy bytes out of the registered guest RAM view.
     ///
     /// Note: this necessarily copies into wasm memory; it is intended for debugging/tests.
+    ///
+    /// `gpa` is a guest physical address (subject to the same low-RAM + hole + high-RAM remap
+    /// layout as allocations and submissions).
     #[wasm_bindgen]
     pub fn read_guest_memory(gpa: u64, len: u32) -> Result<Uint8Array, JsValue> {
         let len = len as usize;
