@@ -321,11 +321,11 @@ This guarantees:
 * the driver doesn’t need partial/per-queue MSI-X logic, and
 * DPC(0) can simply “handle everything”.
 
-### Read-back verification (device may return `0xFFFF`)
+### Read-back verification (device may return `VIRTIO_PCI_MSI_NO_VECTOR`)
 
 After writing `msix_config` / `queue_msix_vector`, the driver should read back:
 
-* If it reads back `0xFFFF`, the device rejected the mapping (or MSI-X isn’t enabled).
+* If it reads back `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), the device rejected the mapping (or MSI-X isn’t enabled).
 * If it reads back something other than what you wrote, treat it as failure.
 
 In either case, fall back to vector 0 mapping (or to INTx if you decide MSI-X is unusable).
@@ -406,7 +406,7 @@ fallback_to_vec0:
 }
 ```
 
-**Important sequencing note:** a virtio **device reset** (writing `device_status = 0`) can clear `msix_config` / `queue_msix_vector` back to `0xFFFF`. If your driver resets the device in `EvtDeviceD0Entry`, you must call `ProgramVirtioMsixVectors` **after** each reset (see pitfalls).
+**Important sequencing note:** a virtio **device reset** (writing `device_status = 0`) can clear `msix_config` / `queue_msix_vector` back to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`). If your driver resets the device in `EvtDeviceD0Entry`, you must call `ProgramVirtioMsixVectors` **after** each reset (see pitfalls).
 
 ## 4) ISR/DPC behavior: INTx vs MSI-X
 
@@ -526,7 +526,7 @@ With MSI-X, Windows can deliver interrupts for different MSI-X messages to diffe
    * `queue_select` is a single global register.
    * the sequence “write `queue_select`, then read/write queue-specific fields” must not interleave across threads.
 3. **Device reset / MSI-X reprogramming vs active interrupts**
-   * reset can clear vector registers back to `0xFFFF`
+   * reset can clear vector registers back to `VIRTIO_PCI_MSI_NO_VECTOR`
    * interrupts must not run against partially initialized (or torn-down) queue state
 
 ### Locking scheme (recommended)
