@@ -247,6 +247,45 @@ fn snapshot_load_tolerates_gpe0_length_mismatch_for_forward_compat() {
 }
 
 #[test]
+fn snapshot_load_short_gpe0_fields_clear_remaining_bytes() {
+    let cfg = AcpiPmConfig::default();
+    let half = (cfg.gpe0_blk_len as usize) / 2;
+
+    let clock = ManualClock::new();
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock);
+
+    // Pre-fill GPE0 state so we can verify that bytes beyond the short snapshot payload are
+    // cleared back to baseline (0) instead of leaking the old state.
+    for i in 0..half {
+        pm.trigger_gpe0(i, 0xFF);
+        pm.write(cfg.gpe0_blk + half as u16 + i as u16, 1, 0xFF);
+    }
+
+    // Restore from a snapshot that only contains 1 byte of GPE0_STS and GPE0_EN.
+    const TAG_GPE0_STS: u16 = 4;
+    const TAG_GPE0_EN: u16 = 5;
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_bytes(TAG_GPE0_STS, vec![0xAA]);
+    w.field_bytes(TAG_GPE0_EN, vec![0x11]);
+    pm.load_state(&w.finish()).unwrap();
+
+    if half == 0 {
+        return;
+    }
+
+    assert_eq!(pm.read(cfg.gpe0_blk, 1) as u8, 0xAA);
+    assert_eq!(pm.read(cfg.gpe0_blk + half as u16, 1) as u8, 0x11);
+
+    for i in 1..half {
+        assert_eq!(pm.read(cfg.gpe0_blk + i as u16, 1) as u8, 0);
+        assert_eq!(
+            pm.read(cfg.gpe0_blk + half as u16 + i as u16, 1) as u8,
+            0
+        );
+    }
+}
+
+#[test]
 fn snapshot_load_does_not_trigger_s5_poweroff_callback() {
     // Even if a snapshot encodes a PM1 control register value that would normally request S5,
     // restoring that state must *not* invoke the host power-off callback. The callback should only
