@@ -241,6 +241,12 @@ On **Win32** builds, also confirm the raw stdcall-decorated names are present:
 - `_OpenAdapter10_2@4`
 - `_OpenAdapter11@4`
 
+Fast CI guardrail (no WDK required):
+
+- `scripts/ci/check-aerogpu-d3d10-def-stdcall.py` validates that
+  `aerogpu_d3d10_x86.def` stays in sync with the checked-in expected ABI stack
+  byte counts in `src/aerogpu_d3d10_11_wdk_abi_expected.h`.
+
 Recommended build entrypoint (MSBuild/WDK10):
 
 ```cmd
