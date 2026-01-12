@@ -7,6 +7,10 @@ pub enum OpfsBackendMode {
     /// Uses Promise-based OPFS APIs (`getFile` + `createWritable`).
     AsyncOpfs,
     /// Uses IndexedDB block storage (fallback when OPFS is unavailable).
+    ///
+    /// Note: IndexedDB is async and this mode does not currently implement the synchronous
+    /// `aero_storage::{StorageBackend, VirtualDisk}` traits used by the boot-critical Rust
+    /// controller path.
     IndexedDb,
 }
 
@@ -599,6 +603,10 @@ mod wasm {
         }
     }
 
+    /// Async OPFS backend implemented using Promise-based APIs (`getFile` + `createWritable`).
+    ///
+    /// This backend is useful in environments where `FileSystemSyncAccessHandle` is unavailable
+    /// (e.g. main thread). It is async-only and does not implement `aero_storage::VirtualDisk`.
     pub struct OpfsAsyncBackend {
         file: opfs_platform::FileHandle,
         writable: Option<opfs_platform::WritableStream>,
@@ -770,6 +778,10 @@ mod wasm {
         }
     }
 
+    /// IndexedDB-backed block storage fallback for browser environments.
+    ///
+    /// This backend uses the `st-idb` crate and is async-only. It does not currently implement
+    /// the synchronous `aero_storage::{StorageBackend, VirtualDisk}` traits.
     pub struct OpfsIndexedDbBackend {
         inner: StIndexedDbBackend,
         sector_size: u32,
@@ -882,6 +894,10 @@ mod wasm {
     }
 
     #[derive(Debug)]
+    /// Convenience wrapper that selects the best available browser persistence backend.
+    ///
+    /// The `Sync` variant uses `FileSystemSyncAccessHandle` and is suitable for synchronous
+    /// disk/controller paths. The `Async` and `IndexedDb` variants are async-only.
     pub enum OpfsStorage {
         Sync(OpfsBackend),
         Async(OpfsAsyncBackend),
