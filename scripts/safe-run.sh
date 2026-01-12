@@ -477,7 +477,12 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
             local target="${1}"
             local threads="${aero_lld_threads}"
 
-            local var="CARGO_TARGET_${target^^}_RUSTFLAGS"
+            # `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` uses an uppercased triple with `-`/`.` replaced by
+            # `_`. Avoid Bash 4+ `${var^^}` so this script remains compatible with older `/bin/bash`
+            # (notably macOS, which still ships Bash 3.2).
+            local target_upper
+            target_upper="$(printf '%s' "${target}" | tr '[:lower:]' '[:upper:]')"
+            local var="CARGO_TARGET_${target_upper}_RUSTFLAGS"
             var="${var//-/_}"
             var="${var//./_}"
 
