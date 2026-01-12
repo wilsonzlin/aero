@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn should_skip_dir(path: &Path) -> bool {
     // Avoid scanning build artifacts / third-party dependencies that may exist in local dev or some
@@ -77,6 +78,56 @@ fn scan_dir(dir: &Path, legacy: &[u8], hits: &mut Vec<PathBuf>) {
     }
 }
 
+fn scan_tracked_files_with_git(repo_root: &Path, legacy: &[u8], hits: &mut Vec<PathBuf>) -> bool {
+    let output = match Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["ls-files", "-z"])
+        .output()
+    {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    for entry in output.stdout.split(|b| *b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let rel = match std::str::from_utf8(entry) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let path = repo_root.join(rel);
+        if !should_scan(&path) {
+            continue;
+        }
+
+        let len = match std::fs::metadata(&path).map(|m| m.len()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Keep the test cheap and avoid pulling large files into memory.
+        const MAX_SCAN_BYTES: u64 = 4 * 1024 * 1024;
+        if len > MAX_SCAN_BYTES {
+            continue;
+        }
+
+        let bytes = match std::fs::read(&path) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if bytes.windows(legacy.len()).any(|w| w == legacy) {
+            hits.push(path);
+        }
+    }
+
+    true
+}
+
 #[test]
 fn no_lingering_legacy_net_stack_4cc_references_in_repo() {
     // Older snapshots used an accidental 4CC for the user-space network stack snapshot blob.
@@ -85,29 +136,34 @@ fn no_lingering_legacy_net_stack_4cc_references_in_repo() {
     const LEGACY_4CC: [u8; 4] = [0x4e, 0x53, 0x54, 0x4b];
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let roots = [
-        repo_root.join(".github"),
-        repo_root.join("bench"),
-        repo_root.join("backend"),
-        repo_root.join("ci"),
-        repo_root.join("crates"),
-        repo_root.join("deploy"),
-        repo_root.join("docs"),
-        repo_root.join("drivers"),
-        repo_root.join("emulator"),
-        repo_root.join("instructions"),
-        repo_root.join("proxy"),
-        repo_root.join("scripts"),
-        repo_root.join("src"),
-        repo_root.join("tests"),
-        repo_root.join("tools"),
-        repo_root.join("web"),
-        repo_root.join("xtask"),
-    ];
 
     let mut hits = Vec::new();
-    for root in roots {
-        scan_dir(&root, &LEGACY_4CC, &mut hits);
+    if !scan_tracked_files_with_git(&repo_root, &LEGACY_4CC, &mut hits) {
+        // Fallback for environments that don't have a git checkout (or lack the `git` binary).
+        // This intentionally scans only the project's source roots, not the entire repo root,
+        // to avoid picking up untracked developer scratch files.
+        let roots = [
+            repo_root.join(".github"),
+            repo_root.join("bench"),
+            repo_root.join("backend"),
+            repo_root.join("ci"),
+            repo_root.join("crates"),
+            repo_root.join("deploy"),
+            repo_root.join("docs"),
+            repo_root.join("drivers"),
+            repo_root.join("emulator"),
+            repo_root.join("instructions"),
+            repo_root.join("proxy"),
+            repo_root.join("scripts"),
+            repo_root.join("src"),
+            repo_root.join("tests"),
+            repo_root.join("tools"),
+            repo_root.join("web"),
+            repo_root.join("xtask"),
+        ];
+        for root in roots {
+            scan_dir(&root, &LEGACY_4CC, &mut hits);
+        }
     }
 
     assert!(
