@@ -749,6 +749,10 @@ async function convertVhdToSparse(
   const writer = new AeroSparseWriter(sync, logicalSize, dyn.blockSize);
   let crc = crc32Init();
 
+  // Cap individual reads when copying dynamic block data so remote imports don't issue extremely
+  // large HTTP range requests when `block_size` is large.
+  const VHD_COPY_RUN_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB
+
   const sectorsPerBlock = dyn.blockSize / 512;
   const bitmapBytes = Math.ceil(sectorsPerBlock / 8);
   const bitmapSize = nextPow2(Math.max(512, bitmapBytes));
@@ -844,8 +848,16 @@ async function convertVhdToSparse(
       while (sector < sectorsPerBlock && vhdBitmapBit(bitmap, sector)) sector++;
       const runLen = sector - start;
       const bytes = runLen * 512;
-      const chunk = await src.readAt(dataBase + start * 512, bytes);
-      buf.set(chunk, start * 512);
+      let remaining = bytes;
+      let rel = start * 512;
+      while (remaining > 0) {
+        if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const len = Math.min(remaining, VHD_COPY_RUN_MAX_BYTES);
+        const chunk = await src.readAt(dataBase + rel, len);
+        buf.set(chunk, rel);
+        rel += len;
+        remaining -= len;
+      }
     }
 
     writer.writeBlock(blockIndex, buf);
