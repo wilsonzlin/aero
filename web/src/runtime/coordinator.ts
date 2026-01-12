@@ -60,6 +60,13 @@ import {
   type GpuRuntimeCursorSetImageMessage,
   type GpuRuntimeCursorSetStateMessage,
 } from "../ipc/gpu-protocol";
+import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_STATE_GENERATION_BUSY_BIT,
+  ScanoutStateIndex,
+  wrapScanoutState,
+} from "../ipc/scanout_state";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
@@ -599,6 +606,7 @@ export class WorkerCoordinator {
     this.stopWorkersInternal({ clearShared: false });
 
     this.resetSharedStatus(shared);
+    this.resetScanoutState(shared);
     this.resetAllRings(shared.segments.control);
     // Reset the CPU↔I/O AIPC rings so the restarted workers don't observe stale
     // device-bus traffic from the previous run.
@@ -1376,6 +1384,30 @@ export class WorkerCoordinator {
     Atomics.store(shared.status, StatusIndex.GuestBase, layout.guest_base | 0);
     Atomics.store(shared.status, StatusIndex.GuestSize, layout.guest_size | 0);
     Atomics.store(shared.status, StatusIndex.RuntimeReserved, layout.runtime_reserved | 0);
+  }
+
+  private resetScanoutState(shared: SharedMemoryViews): void {
+    const sab = shared.scanoutState;
+    if (!(sab instanceof SharedArrayBuffer)) return;
+    const offsetBytes = shared.scanoutStateOffsetBytes ?? 0;
+    let words: Int32Array;
+    try {
+      words = wrapScanoutState(sab, offsetBytes);
+    } catch {
+      return;
+    }
+
+    // Publish a reset scanout descriptor using the seqlock busy-bit convention so any concurrent
+    // readers (e.g. the main-thread frame scheduler) never observe a partially-written state.
+    Atomics.store(words, ScanoutStateIndex.GENERATION, SCANOUT_STATE_GENERATION_BUSY_BIT | 0);
+    Atomics.store(words, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_LEGACY_TEXT | 0);
+    Atomics.store(words, ScanoutStateIndex.BASE_PADDR_LO, 0);
+    Atomics.store(words, ScanoutStateIndex.BASE_PADDR_HI, 0);
+    Atomics.store(words, ScanoutStateIndex.WIDTH, 0);
+    Atomics.store(words, ScanoutStateIndex.HEIGHT, 0);
+    Atomics.store(words, ScanoutStateIndex.PITCH_BYTES, 0);
+    Atomics.store(words, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8 | 0);
+    Atomics.store(words, ScanoutStateIndex.GENERATION, 0);
   }
 
   private resetAllRings(control: SharedArrayBuffer): void {

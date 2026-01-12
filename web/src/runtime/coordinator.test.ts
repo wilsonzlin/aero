@@ -4,6 +4,13 @@ import { perf } from "../perf/perf";
 import { WorkerCoordinator } from "./coordinator";
 import { MessageType } from "./protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
+import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_SOURCE_WDDM,
+  publishScanoutState,
+  snapshotScanoutState,
+} from "../ipc/scanout_state";
 
 class MockWorker {
   // Global postMessage trace to assert coordinator message ordering across workers.
@@ -520,5 +527,42 @@ describe("runtime/coordinator", () => {
           entry.message?.ringBuffer === micSab,
       ),
     ).toBe(false);
+  });
+
+  it("resets scanoutState back to legacy on VM reset (shared memory preserved)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+    (coordinator as any).vmState = "running";
+
+    const scanout = shared.scanoutStateI32;
+    expect(scanout).toBeTruthy();
+    if (!scanout) return;
+
+    publishScanoutState(scanout, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0,
+      basePaddrHi: 0,
+      width: 0,
+      height: 0,
+      pitchBytes: 0,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+    const before = snapshotScanoutState(scanout);
+    expect(before.source).toBe(SCANOUT_SOURCE_WDDM);
+
+    coordinator.reset("test");
+
+    const after = snapshotScanoutState(scanout);
+    expect(after.source).toBe(SCANOUT_SOURCE_LEGACY_TEXT);
   });
 });
