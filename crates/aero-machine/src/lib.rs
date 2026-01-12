@@ -2349,39 +2349,59 @@ impl Machine {
     ///
     /// Virtio-blk requires a `VirtualDisk + Send` backend (unlike AHCI/IDE which accept the
     /// non-`Send` [`SharedDisk`]).
+    ///
+    /// This method preserves the virtio-blk controller's in-flight transport state (PCI config +
+    /// virtio-pci registers/queues) by snapshotting the existing controller state and restoring it
+    /// after swapping the disk backend. This is particularly important for snapshot restore flows,
+    /// where the host needs to reattach the virtio-blk disk backend without resetting the guest's
+    /// driver-visible device state.
     pub fn attach_virtio_blk_disk(&mut self, disk: Box<dyn aero_storage::VirtualDisk + Send>) {
         let Some(virtio_blk) = &self.virtio_blk else {
             return;
         };
 
-        // Replace the inner device model while keeping the `Rc` identity stable for persistent
-        // MMIO mappings.
-        *virtio_blk.borrow_mut() = VirtioPciDevice::new(
-            Box::new(VirtioBlk::new(disk)),
-            Box::new(NoopVirtioInterruptSink),
-        );
-
-        // Keep the device model's internal PCI config state coherent with the canonical PCI config
-        // space. This ensures `save_state()` sees consistent BAR programming without requiring an
-        // immediate `reset()` cycle.
-        if let Some(pci_cfg) = &self.pci_cfg {
+        let (command, bar0_base) = if let Some(pci_cfg) = &self.pci_cfg {
             let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-            let (command, bar0_base) = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let cfg = pci_cfg.bus_mut().device_config(bdf);
-                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                let bar0_base = cfg
-                    .and_then(|cfg| cfg.bar_range(0))
-                    .map(|range| range.base)
-                    .unwrap_or(0);
-                (command, bar0_base)
-            };
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(0))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base)
+        } else {
+            (0, 0)
+        };
 
+        // Ensure the device model's internal PCI config view is coherent with the canonical PCI
+        // config space before capturing state to preserve.
+        {
             let mut dev = virtio_blk.borrow_mut();
             dev.set_pci_command(command);
             if bar0_base != 0 {
                 dev.config_mut().set_bar_base(0, bar0_base);
             }
+        }
+
+        let state = virtio_blk.borrow().save_state();
+
+        // Replace the inner device model while keeping the `Rc` identity stable for persistent MMIO
+        // mappings, then restore the preserved transport state.
+        let mut new_dev = VirtioPciDevice::new(
+            Box::new(VirtioBlk::new(disk)),
+            Box::new(NoopVirtioInterruptSink),
+        );
+        let _ = new_dev.load_state(&state);
+        *virtio_blk.borrow_mut() = new_dev;
+
+        // Keep the device model's internal PCI config state coherent with the canonical PCI config
+        // space. This ensures `save_state()` sees consistent BAR programming without requiring an
+        // immediate `reset()` cycle.
+        let mut dev = virtio_blk.borrow_mut();
+        dev.set_pci_command(command);
+        if bar0_base != 0 {
+            dev.config_mut().set_bar_base(0, bar0_base);
         }
     }
 
