@@ -56,15 +56,10 @@ let micAttachment: { ringBuffer: SharedArrayBuffer; sampleRate: number } | null 
 
 type CpuWorkerToMainMessage =
   | { type: 'CpuWorkerReady' }
-  | {
-      type: 'CpuWorkerResult';
-      jit_executions: number;
-      helper_executions: number;
-      interp_executions: number;
-      installed_table_index: number | null;
-      runtime_installed_entry_rip: number | null;
-      runtime_installed_table_index: number | null;
-    }
+  // Keep the result payload flexible: the JIT smoke pipeline evolves quickly
+  // (Tier-0/Tier-1 counters, compile/install metadata, etc.). Playwright asserts
+  // on the concrete fields at runtime; the UI only needs the message as JSON.
+  | ({ type: 'CpuWorkerResult' } & Record<string, unknown>)
   | { type: 'CpuWorkerError'; reason: string };
 
 type CpuWorkerStartMessage = {
@@ -115,11 +110,18 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
       cpuWorker.terminate();
     };
 
+    let started = false;
+    const start: CpuWorkerStartMessage = { type: 'CpuWorkerStart' };
+    const maybeStart = () => {
+      if (started) return;
+      started = true;
+      cpuWorker.postMessage(start);
+    };
+
     cpuWorker.addEventListener('message', (ev: MessageEvent<CpuWorkerToMainMessage>) => {
       const msg = ev.data;
       if (msg.type === 'CpuWorkerReady') {
-        const start: CpuWorkerStartMessage = { type: 'CpuWorkerStart' };
-        cpuWorker.postMessage(start);
+        maybeStart();
         return;
       }
       if (msg.type === 'CpuWorkerResult' || msg.type === 'CpuWorkerError') {
@@ -134,6 +136,11 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
     cpuWorker.addEventListener('messageerror', () => {
       settle({ type: 'CpuWorkerError', reason: 'worker message deserialization failed' });
     });
+
+    // Some worker implementations no longer send an explicit `CpuWorkerReady`
+    // handshake (or send it only for debug); post the start message eagerly so
+    // the smoke test still runs.
+    maybeStart();
   });
 
   window.__jit_smoke_result = result;
