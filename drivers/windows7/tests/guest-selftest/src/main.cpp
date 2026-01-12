@@ -2979,6 +2979,13 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
         break;
       }
       total_read += static_cast<uint64_t>(read);
+      if (total_read > kExpectedBytes) {
+        log.Logf("virtio-net: HTTP GET large read exceeded expected size bytes_read=%llu expected=%llu",
+                 static_cast<unsigned long long>(total_read),
+                 static_cast<unsigned long long>(kExpectedBytes));
+        read_ok = false;
+        break;
+      }
       hash = Fnv1a64Update(hash, buf.data(), read);
       available -= read;
     }
