@@ -73,7 +73,7 @@ fn hda_controller_save_load_restores_worklet_ring_and_clears_samples() {
     let guest_base = guest.as_mut_ptr() as u32;
     let guest_size = guest.len() as u32;
 
-    let mut hda = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+    let mut hda = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
 
     let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
     let sab = ring.shared_buffer();
@@ -120,7 +120,7 @@ fn hda_controller_deferred_ring_restore_applies_on_attach() {
     let guest_base = guest.as_mut_ptr() as u32;
     let guest_size = guest.len() as u32;
 
-    let mut hda = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+    let mut hda = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
 
     let ring = WorkletBridge::new(capacity_frames, channel_count).unwrap();
     let sab = ring.shared_buffer();

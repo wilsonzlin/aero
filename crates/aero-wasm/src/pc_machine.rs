@@ -62,8 +62,23 @@ impl PcMachine {
         self.inner.attach_l2_tunnel_rings(tx, rx);
     }
 
+    /// Legacy/compatibility alias for [`PcMachine::attach_l2_tunnel_rings`].
+    ///
+    /// Some older JS runtimes refer to these rings as "NET rings" rather than "L2 tunnel rings".
+    /// Prefer [`PcMachine::attach_l2_tunnel_rings`] for new code.
+    pub fn attach_net_rings(&mut self, net_tx: SharedRingBuffer, net_rx: SharedRingBuffer) {
+        self.attach_l2_tunnel_rings(net_tx, net_rx);
+    }
+
     pub fn detach_network(&mut self) {
         self.inner.detach_network();
+    }
+
+    /// Legacy/compatibility alias for [`PcMachine::detach_network`].
+    ///
+    /// Prefer [`PcMachine::detach_network`] for new code.
+    pub fn detach_net_rings(&mut self) {
+        self.detach_network();
     }
 
     /// Poll the E1000 + ring backend bridge once (without running the CPU).

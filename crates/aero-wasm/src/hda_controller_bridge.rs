@@ -463,7 +463,7 @@ mod tests {
         let guest_base = guest.as_mut_ptr() as u32;
         let guest_size = guest.len() as u32;
 
-        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
         bridge.set_output_rate_hz(44_100).unwrap();
         // Mutate some guest-visible registers to ensure we aren't snapshotting the all-zero default.
         bridge.mmio_write(0x0c, 2, 0x1234); // WAKEEN
@@ -471,7 +471,7 @@ mod tests {
 
         let snap = bridge.save_state();
 
-        let mut restored = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        let mut restored = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
         restored.load_state(&snap).unwrap();
         let snap2 = restored.save_state();
         assert_eq!(snap2, snap);
@@ -549,7 +549,7 @@ mod tests {
         let guest_base = guest.as_mut_ptr() as u32;
         let guest_size = guest.len() as u32;
 
-        let mut bridge = HdaControllerBridge::new(guest_base, guest_size).unwrap();
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
 
         // Mutate a guest-visible register (GCTL).
         bridge.mmio_write(0x08, 4, 0x1);
