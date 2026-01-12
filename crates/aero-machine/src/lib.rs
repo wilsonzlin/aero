@@ -1705,9 +1705,12 @@ pub struct Machine {
     // Aero snapshots intentionally do not embed any disk contents; only references to the host's
     // chosen base images + writable overlays are stored.
     //
-    // Storage controller device models also drop attached backends during `load_state()`, so the
-    // host/coordinator is responsible for re-opening and re-attaching the correct overlays after
-    // restore. These fields exist to make that host contract explicit and deterministic.
+    // Some storage controller device models also drop/detach host backends during `load_state()`,
+    // so snapshot restore typically requires the host/coordinator to re-open and re-attach the
+    // correct overlays/media. (Even for controllers that *do* preserve their in-memory backend
+    // pointer, snapshots still never embed disk bytes.)
+    //
+    // These fields exist to make that host contract explicit and deterministic.
     ahci_port0_overlay: Option<snapshot::DiskOverlayRef>,
     ide_secondary_master_atapi_overlay: Option<snapshot::DiskOverlayRef>,
     ide_primary_master_overlay: Option<snapshot::DiskOverlayRef>,
@@ -3558,7 +3561,6 @@ impl Machine {
                 match &self.virtio_blk {
                     Some(dev) => {
                         // Reset in-place while keeping `Rc` identity stable for persistent MMIO
-                        // mappings. This preserves any host-provided disk backend.
                         // mappings. This intentionally preserves any host-attached disk backend
                         // owned by the inner virtio-blk device.
                         dev.borrow_mut().reset();
