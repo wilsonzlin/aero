@@ -222,6 +222,15 @@ constexpr uint32_t kDxgiFormatR32G32Float = 16;
 constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
 constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
+constexpr uint32_t kDxgiFormatBc1Typeless = 70;
+constexpr uint32_t kDxgiFormatBc1Unorm = 71;
+constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72;
+constexpr uint32_t kDxgiFormatBc2Typeless = 73;
+constexpr uint32_t kDxgiFormatBc2Unorm = 74;
+constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75;
+constexpr uint32_t kDxgiFormatBc3Typeless = 76;
+constexpr uint32_t kDxgiFormatBc3Unorm = 77;
+constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78;
 constexpr uint32_t kDxgiFormatD32Float = 40;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
 constexpr uint32_t kDxgiFormatR16Uint = 57;
@@ -232,6 +241,9 @@ constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
 constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
 constexpr uint32_t kDxgiFormatB8G8R8X8Typeless = 92;
 constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
+constexpr uint32_t kDxgiFormatBc7Typeless = 97;
+constexpr uint32_t kDxgiFormatBc7Unorm = 98;
+constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99;
 
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
 constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
@@ -267,6 +279,19 @@ uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
     case kDxgiFormatR8G8B8A8Typeless:
       return kD3D11FormatSupportTexture2D | kD3D11FormatSupportRenderTarget | kD3D11FormatSupportShaderSample |
              kD3D11FormatSupportBlendable | kD3D11FormatSupportCpuLockable | kD3D11FormatSupportDisplay;
+    case kDxgiFormatBc1Typeless:
+    case kDxgiFormatBc1Unorm:
+    case kDxgiFormatBc1UnormSrgb:
+    case kDxgiFormatBc2Typeless:
+    case kDxgiFormatBc2Unorm:
+    case kDxgiFormatBc2UnormSrgb:
+    case kDxgiFormatBc3Typeless:
+    case kDxgiFormatBc3Unorm:
+    case kDxgiFormatBc3UnormSrgb:
+    case kDxgiFormatBc7Typeless:
+    case kDxgiFormatBc7Unorm:
+    case kDxgiFormatBc7UnormSrgb:
+      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportShaderSample | kD3D11FormatSupportCpuLockable;
     case kDxgiFormatD24UnormS8Uint:
     case kDxgiFormatD32Float:
       return kD3D11FormatSupportTexture2D | kD3D11FormatSupportDepthStencil;
@@ -331,6 +356,26 @@ uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
     case kDxgiFormatR8G8B8A8UnormSrgb:
     case kDxgiFormatR8G8B8A8Typeless:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
+    case kDxgiFormatBc1Typeless:
+    case kDxgiFormatBc1Unorm:
+      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
+    case kDxgiFormatBc1UnormSrgb:
+      return AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB;
+    case kDxgiFormatBc2Typeless:
+    case kDxgiFormatBc2Unorm:
+      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
+    case kDxgiFormatBc2UnormSrgb:
+      return AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB;
+    case kDxgiFormatBc3Typeless:
+    case kDxgiFormatBc3Unorm:
+      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
+    case kDxgiFormatBc3UnormSrgb:
+      return AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB;
+    case kDxgiFormatBc7Typeless:
+    case kDxgiFormatBc7Unorm:
+      return AEROGPU_FORMAT_BC7_RGBA_UNORM;
+    case kDxgiFormatBc7UnormSrgb:
+      return AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB;
     case kDxgiFormatD24UnormS8Uint:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
     case kDxgiFormatD32Float:
@@ -340,7 +385,14 @@ uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   }
 }
 
-uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
+struct AerogpuTextureFormatLayout {
+  uint32_t block_width = 0;
+  uint32_t block_height = 0;
+  uint32_t bytes_per_block = 0;
+  bool valid = false;
+};
+
+AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu_format) {
   switch (aerogpu_format) {
     case AEROGPU_FORMAT_B8G8R8A8_UNORM:
     case AEROGPU_FORMAT_B8G8R8X8_UNORM:
@@ -348,13 +400,75 @@ uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
     case AEROGPU_FORMAT_R8G8B8X8_UNORM:
     case AEROGPU_FORMAT_D24_UNORM_S8_UINT:
     case AEROGPU_FORMAT_D32_FLOAT:
-      return 4;
+      return AerogpuTextureFormatLayout{1, 1, 4, true};
     case AEROGPU_FORMAT_B5G6R5_UNORM:
     case AEROGPU_FORMAT_B5G5R5A1_UNORM:
-      return 2;
+      return AerogpuTextureFormatLayout{1, 1, 2, true};
+    case AEROGPU_FORMAT_BC1_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB:
+      return AerogpuTextureFormatLayout{4, 4, 8, true};
+    case AEROGPU_FORMAT_BC2_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB:
+    case AEROGPU_FORMAT_BC3_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB:
+    case AEROGPU_FORMAT_BC7_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB:
+      return AerogpuTextureFormatLayout{4, 4, 16, true};
     default:
-      return 4;
+      return AerogpuTextureFormatLayout{};
   }
+}
+
+bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  return layout.valid && (layout.block_width != 1 || layout.block_height != 1);
+}
+
+uint32_t aerogpu_div_round_up_u32(uint32_t value, uint32_t divisor) {
+  return (value + divisor - 1) / divisor;
+}
+
+uint32_t aerogpu_texture_min_row_pitch_bytes(uint32_t aerogpu_format, uint32_t width) {
+  if (width == 0) {
+    return 0;
+  }
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  if (!layout.valid || layout.block_width == 0 || layout.bytes_per_block == 0) {
+    return 0;
+  }
+  const uint64_t blocks_w = static_cast<uint64_t>(aerogpu_div_round_up_u32(width, layout.block_width));
+  const uint64_t row_bytes = blocks_w * static_cast<uint64_t>(layout.bytes_per_block);
+  if (row_bytes == 0 || row_bytes > UINT32_MAX) {
+    return 0;
+  }
+  return static_cast<uint32_t>(row_bytes);
+}
+
+uint32_t aerogpu_texture_num_rows(uint32_t aerogpu_format, uint32_t height) {
+  if (height == 0) {
+    return 0;
+  }
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  if (!layout.valid || layout.block_height == 0) {
+    return 0;
+  }
+  return aerogpu_div_round_up_u32(height, layout.block_height);
+}
+
+uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format, uint32_t row_pitch_bytes, uint32_t height) {
+  if (row_pitch_bytes == 0) {
+    return 0;
+  }
+  const uint32_t rows = aerogpu_texture_num_rows(aerogpu_format, height);
+  return static_cast<uint64_t>(row_pitch_bytes) * static_cast<uint64_t>(rows);
+}
+
+uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  if (!layout.valid || layout.block_width != 1 || layout.block_height != 1) {
+    return 0;
+  }
+  return layout.bytes_per_block;
 }
 
 uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
@@ -1456,9 +1570,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->mip_levels = mip_levels;
     res->array_size = pDesc->ArraySize;
     res->dxgi_format = pDesc->Format;
-    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
-    const uint32_t row_bytes = res->width * bpp;
-    res->row_pitch_bytes = row_bytes;
+    const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+    if (!min_row_bytes) {
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
+    res->row_pitch_bytes = min_row_bytes;
 
     const auto* cb = dev->device_callbacks;
     const bool can_alloc_backing = cb && cb->pfnAllocateBacking && cb->pfnMapAllocation && cb->pfnUnmapAllocation;
@@ -1491,8 +1608,13 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     uint32_t level_h = res->height ? res->height : 1u;
     uint64_t total_bytes = 0;
     for (uint32_t level = 0; level < res->mip_levels; ++level) {
-      const uint32_t level_pitch = (level == 0) ? res->row_pitch_bytes : (level_w * bpp);
-      total_bytes += static_cast<uint64_t>(level_pitch) * static_cast<uint64_t>(level_h);
+      const uint32_t level_pitch = (level == 0) ? res->row_pitch_bytes : aerogpu_texture_min_row_pitch_bytes(aer_fmt, level_w);
+      const uint32_t level_rows = aerogpu_texture_num_rows(aer_fmt, level_h);
+      if (level_pitch == 0 || level_rows == 0) {
+        res->~AeroGpuResource();
+        return E_OUTOFMEMORY;
+      }
+      total_bytes += static_cast<uint64_t>(level_pitch) * static_cast<uint64_t>(level_rows);
       level_w = (level_w > 1) ? (level_w / 2) : 1u;
       level_h = (level_h > 1) ? (level_h / 2) : 1u;
     }
@@ -1530,9 +1652,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         res->~AeroGpuResource();
         return E_INVALIDARG;
       }
-      const uint64_t bytes_per_row = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
-      const uint32_t src_pitch = init.SysMemPitch ? init.SysMemPitch : static_cast<uint32_t>(bytes_per_row);
-      if (bytes_per_row > UINT32_MAX || src_pitch < bytes_per_row || res->row_pitch_bytes < bytes_per_row) {
+      const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+      const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
+      const uint32_t src_pitch = init.SysMemPitch ? init.SysMemPitch : row_bytes;
+      if (row_bytes == 0 || rows == 0 || src_pitch < row_bytes || res->row_pitch_bytes < row_bytes) {
         res->~AeroGpuResource();
         return E_INVALIDARG;
       }
@@ -1554,15 +1677,15 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         return E_FAIL;
       }
 
-      for (uint32_t y = 0; y < res->height; y++) {
+      for (uint32_t y = 0; y < rows; y++) {
         uint8_t* dst_row = dst + static_cast<size_t>(y) * res->row_pitch_bytes;
         std::memcpy(dst_row,
                     src + static_cast<size_t>(y) * src_pitch,
-                    static_cast<size_t>(bytes_per_row));
-        if (static_cast<uint64_t>(res->row_pitch_bytes) > bytes_per_row) {
-          std::memset(dst_row + static_cast<size_t>(bytes_per_row),
+                    static_cast<size_t>(row_bytes));
+        if (res->row_pitch_bytes > row_bytes) {
+          std::memset(dst_row + static_cast<size_t>(row_bytes),
                       0,
-                      static_cast<size_t>(static_cast<uint64_t>(res->row_pitch_bytes) - bytes_per_row));
+                      static_cast<size_t>(res->row_pitch_bytes - row_bytes));
         }
       }
       if (mapped) {
@@ -1601,8 +1724,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
 
     if (has_initial_data) {
-      const uint64_t dirty_size =
-          static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+      const uint64_t dirty_size = aerogpu_texture_required_size_bytes(aer_fmt, res->row_pitch_bytes, res->height);
       if (is_guest_backed) {
         if (!wddm_initial_upload) {
           res->~AeroGpuResource();
@@ -1684,7 +1806,35 @@ uint64_t resource_total_bytes(const AeroGpuResource* res) {
     return res->size_bytes;
   }
   if (res->kind == ResourceKind::Texture2D) {
-    return static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      return 0;
+    }
+
+    uint32_t level_w = res->width ? res->width : 1u;
+    uint32_t level_h = res->height ? res->height : 1u;
+    uint64_t total_bytes = 0;
+    for (uint32_t level = 0; level < res->mip_levels; ++level) {
+      const uint32_t level_pitch =
+          (level == 0) ? res->row_pitch_bytes : aerogpu_texture_min_row_pitch_bytes(aer_fmt, level_w);
+      const uint32_t level_rows = aerogpu_texture_num_rows(aer_fmt, level_h);
+      if (level_pitch == 0 || level_rows == 0) {
+        return 0;
+      }
+      const uint64_t level_size = static_cast<uint64_t>(level_pitch) * static_cast<uint64_t>(level_rows);
+      if (level_size > UINT64_MAX - total_bytes) {
+        return 0;
+      }
+      total_bytes += level_size;
+      level_w = (level_w > 1) ? (level_w / 2) : 1u;
+      level_h = (level_h > 1) ? (level_h / 2) : 1u;
+    }
+
+    const uint64_t array_layers = res->array_size ? static_cast<uint64_t>(res->array_size) : 1ull;
+    if (total_bytes > UINT64_MAX / array_layers) {
+      return 0;
+    }
+    return total_bytes * array_layers;
   }
   return 0;
 }
@@ -2022,7 +2172,8 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     pMapped->pData = data;
     if (res->kind == ResourceKind::Texture2D) {
       pMapped->RowPitch = res->row_pitch_bytes;
-      pMapped->DepthPitch = res->row_pitch_bytes * res->height;
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      pMapped->DepthPitch = static_cast<uint32_t>(aerogpu_texture_required_size_bytes(aer_fmt, res->row_pitch_bytes, res->height));
     } else {
       pMapped->RowPitch = 0;
       pMapped->DepthPitch = 0;
@@ -2059,7 +2210,8 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   pMapped->pData = res->storage.data();
   if (res->kind == ResourceKind::Texture2D) {
     pMapped->RowPitch = res->row_pitch_bytes;
-    pMapped->DepthPitch = res->row_pitch_bytes * res->height;
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+    pMapped->DepthPitch = static_cast<uint32_t>(aerogpu_texture_required_size_bytes(aer_fmt, res->row_pitch_bytes, res->height));
   } else {
     pMapped->RowPitch = 0;
     pMapped->DepthPitch = 0;
@@ -2504,7 +2656,12 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
         cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
         return;
       }
-      const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+      const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aer_fmt);
+      const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+      if (!layout.valid || min_row_bytes == 0 || res->row_pitch_bytes < min_row_bytes) {
+        cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
+        return;
+      }
 
       uint32_t copy_left = 0;
       uint32_t copy_top = 0;
@@ -2529,27 +2686,60 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
         copy_bottom = pDstBox->bottom;
       }
 
-      const uint32_t row_bytes = (copy_right - copy_left) * bpp;
-      if (row_bytes > res->row_pitch_bytes) {
+      if (layout.block_width > 1 || layout.block_height > 1) {
+        const auto aligned_or_edge = [](uint32_t v, uint32_t align, uint32_t extent) {
+          return (v % align) == 0 || v == extent;
+        };
+        if ((copy_left % layout.block_width) != 0 || (copy_top % layout.block_height) != 0 ||
+            !aligned_or_edge(copy_right, layout.block_width, res->width) ||
+            !aligned_or_edge(copy_bottom, layout.block_height, res->height)) {
+          cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
+          return;
+        }
+      }
+
+      const uint32_t block_left = copy_left / layout.block_width;
+      const uint32_t block_top = copy_top / layout.block_height;
+      const uint32_t block_right = aerogpu_div_round_up_u32(copy_right, layout.block_width);
+      const uint32_t block_bottom = aerogpu_div_round_up_u32(copy_bottom, layout.block_height);
+      if (block_right < block_left || block_bottom < block_top) {
         cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
         return;
       }
+
+      const uint32_t copy_width_blocks = block_right - block_left;
+      const uint32_t copy_height_blocks = block_bottom - block_top;
+      const uint64_t row_bytes_u64 =
+          static_cast<uint64_t>(copy_width_blocks) * static_cast<uint64_t>(layout.bytes_per_block);
+      if (row_bytes_u64 == 0 || row_bytes_u64 > UINT32_MAX || copy_height_blocks == 0) {
+        cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
+        return;
+      }
+      const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
       const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(row_bytes);
-      if (!row_bytes || static_cast<size_t>(row_bytes) > src_pitch) {
+      if (static_cast<size_t>(row_bytes) > src_pitch) {
         cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
         return;
       }
       const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
-      const size_t dst_x_bytes = static_cast<size_t>(copy_left) * static_cast<size_t>(bpp);
-      for (uint32_t y = 0; y < (copy_bottom - copy_top); y++) {
-        uint8_t* dst_row = dst + (static_cast<size_t>(copy_top) + y) * res->row_pitch_bytes + dst_x_bytes;
+      const uint64_t dst_x_bytes_u64 =
+          static_cast<uint64_t>(block_left) * static_cast<uint64_t>(layout.bytes_per_block);
+      if (dst_x_bytes_u64 > static_cast<uint64_t>(res->row_pitch_bytes) ||
+          static_cast<uint64_t>(res->row_pitch_bytes) - dst_x_bytes_u64 < static_cast<uint64_t>(row_bytes)) {
+        cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
+        return;
+      }
+      const size_t dst_x_bytes = static_cast<size_t>(dst_x_bytes_u64);
+      for (uint32_t y = 0; y < copy_height_blocks; y++) {
+        uint8_t* dst_row = dst + (static_cast<size_t>(block_top) + y) * res->row_pitch_bytes + dst_x_bytes;
         std::memcpy(dst_row, src + y * src_pitch, row_bytes);
       }
 
       // If this is a full upload, also clear any per-row padding to keep guest
       // memory deterministic for host-side uploads.
       if (!pDstBox && res->row_pitch_bytes > row_bytes) {
-        for (uint32_t y = 0; y < res->height; y++) {
+        const uint32_t total_rows = aerogpu_texture_num_rows(aer_fmt, res->height);
+        for (uint32_t y = 0; y < total_rows; y++) {
           uint8_t* dst_row = dst + static_cast<size_t>(y) * res->row_pitch_bytes;
           std::memset(dst_row + row_bytes, 0, res->row_pitch_bytes - row_bytes);
         }
@@ -2601,10 +2791,12 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
 
     if (res->kind == ResourceKind::Texture2D) {
       const uint32_t aerogpu_format = dxgi_format_to_aerogpu(res->dxgi_format);
-      const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
-      const size_t row_bytes = static_cast<size_t>(res->width) * static_cast<size_t>(bpp);
-      const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : row_bytes;
-      if (!row_bytes || row_bytes > src_pitch || row_bytes > res->row_pitch_bytes) {
+      const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+      const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aerogpu_format, res->width);
+      const uint32_t rows = aerogpu_texture_num_rows(aerogpu_format, res->height);
+      const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(row_bytes);
+      if (!layout.valid || row_bytes == 0 || rows == 0 || static_cast<size_t>(row_bytes) > src_pitch ||
+          row_bytes > res->row_pitch_bytes) {
         return;
       }
 
@@ -2618,11 +2810,11 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       }
 
       const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
-      for (uint32_t y = 0; y < res->height; y++) {
+      for (uint32_t y = 0; y < rows; y++) {
         uint8_t* dst_row = res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes;
-        std::memcpy(dst_row, src + static_cast<size_t>(y) * src_pitch, row_bytes);
+        std::memcpy(dst_row, src + static_cast<size_t>(y) * src_pitch, static_cast<size_t>(row_bytes));
         if (res->row_pitch_bytes > row_bytes) {
-          std::memset(dst_row + row_bytes, 0, res->row_pitch_bytes - row_bytes);
+          std::memset(dst_row + static_cast<size_t>(row_bytes), 0, res->row_pitch_bytes - row_bytes);
         }
       }
 
@@ -2686,11 +2878,42 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     }
 
     const uint32_t aerogpu_format = dxgi_format_to_aerogpu(res->dxgi_format);
-    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
-    const size_t row_bytes =
-        static_cast<size_t>(pDstBox->right - pDstBox->left) * static_cast<size_t>(bpp);
+    const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+    const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aerogpu_format, res->width);
+    if (!layout.valid || min_row_bytes == 0 || res->row_pitch_bytes < min_row_bytes) {
+      return;
+    }
+
+    if (layout.block_width > 1 || layout.block_height > 1) {
+      const auto aligned_or_edge = [](uint32_t v, uint32_t align, uint32_t extent) {
+        return (v % align) == 0 || v == extent;
+      };
+      if ((pDstBox->left % layout.block_width) != 0 || (pDstBox->top % layout.block_height) != 0 ||
+          !aligned_or_edge(pDstBox->right, layout.block_width, res->width) ||
+          !aligned_or_edge(pDstBox->bottom, layout.block_height, res->height)) {
+        return;
+      }
+    }
+
+    const uint32_t block_left = pDstBox->left / layout.block_width;
+    const uint32_t block_top = pDstBox->top / layout.block_height;
+    const uint32_t block_right = aerogpu_div_round_up_u32(pDstBox->right, layout.block_width);
+    const uint32_t block_bottom = aerogpu_div_round_up_u32(pDstBox->bottom, layout.block_height);
+    if (block_right < block_left || block_bottom < block_top) {
+      return;
+    }
+
+    const uint32_t copy_width_blocks = block_right - block_left;
+    const uint32_t copy_height_blocks = block_bottom - block_top;
+    const uint64_t row_bytes_u64 =
+        static_cast<uint64_t>(copy_width_blocks) * static_cast<uint64_t>(layout.bytes_per_block);
+    if (row_bytes_u64 == 0 || row_bytes_u64 > SIZE_MAX || row_bytes_u64 > UINT32_MAX || copy_height_blocks == 0) {
+      return;
+    }
+    const size_t row_bytes = static_cast<size_t>(row_bytes_u64);
+
     const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : row_bytes;
-    if (!row_bytes || row_bytes > src_pitch || row_bytes > res->row_pitch_bytes) {
+    if (row_bytes > src_pitch) {
       return;
     }
 
@@ -2705,18 +2928,18 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
 
     const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
     const size_t dst_pitch = static_cast<size_t>(res->row_pitch_bytes);
-    const size_t dst_x_bytes = static_cast<size_t>(pDstBox->left) * static_cast<size_t>(bpp);
-    for (uint32_t y = 0; y < (pDstBox->bottom - pDstBox->top); ++y) {
-      const size_t dst_offset = (static_cast<size_t>(pDstBox->top) + y) * dst_pitch + dst_x_bytes;
+    const size_t dst_x_bytes = static_cast<size_t>(block_left) * static_cast<size_t>(layout.bytes_per_block);
+    for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+      const size_t dst_offset = (static_cast<size_t>(block_top) + y) * dst_pitch + dst_x_bytes;
       std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
     }
 
     // The browser executor currently only supports partial UPLOAD_RESOURCE updates for
     // tightly packed textures (row_pitch_bytes == width*4). When the texture has per-row
     // padding, keep the command stream compatible by uploading the entire texture.
-    const size_t tight_row_bytes = static_cast<size_t>(res->width) * static_cast<size_t>(bpp);
-    size_t upload_offset = static_cast<size_t>(pDstBox->top) * dst_pitch;
-    size_t upload_size = static_cast<size_t>(pDstBox->bottom - pDstBox->top) * dst_pitch;
+    const size_t tight_row_bytes = static_cast<size_t>(min_row_bytes);
+    size_t upload_offset = static_cast<size_t>(block_top) * dst_pitch;
+    size_t upload_size = static_cast<size_t>(copy_height_blocks) * dst_pitch;
     if (dst_pitch != tight_row_bytes) {
       upload_offset = 0;
       upload_size = res->storage.size();
@@ -2871,12 +3094,14 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
     cmd->reserved0 = 0;
 
     const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
-    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
-    const size_t row_bytes = static_cast<size_t>(cmd->width) * bpp;
-    const size_t copy_rows = static_cast<size_t>(cmd->height);
-    if (!row_bytes || !copy_rows) {
+    const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+    const uint32_t row_bytes_u32 = aerogpu_texture_min_row_pitch_bytes(aerogpu_format, cmd->width);
+    const uint32_t copy_rows_u32 = aerogpu_texture_num_rows(aerogpu_format, cmd->height);
+    if (!layout.valid || row_bytes_u32 == 0 || copy_rows_u32 == 0) {
       return;
     }
+    const size_t row_bytes = static_cast<size_t>(row_bytes_u32);
+    const size_t copy_rows = static_cast<size_t>(copy_rows_u32);
 
     if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
       return;
@@ -2894,7 +3119,8 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
     if (src_map.data && dst_map.data) {
       const size_t dst_pitch = static_cast<size_t>(dst->row_pitch_bytes);
       const size_t src_pitch = static_cast<size_t>(src->row_pitch_bytes);
-      const size_t dst_tight_row_bytes = static_cast<size_t>(dst->width) * bpp;
+      const size_t dst_tight_row_bytes =
+          static_cast<size_t>(aerogpu_texture_min_row_pitch_bytes(aerogpu_format, dst->width));
       for (size_t y = 0; y < copy_rows; y++) {
         uint8_t* dst_row = dst_map.data + y * dst_pitch;
         const uint8_t* src_row = src_map.data + y * src_pitch;
@@ -3049,12 +3275,14 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
-    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
-    const size_t row_bytes = static_cast<size_t>(cmd->width) * bpp;
-    const size_t copy_rows = static_cast<size_t>(cmd->height);
-    if (!row_bytes || !copy_rows) {
+    const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+    const uint32_t row_bytes_u32 = aerogpu_texture_min_row_pitch_bytes(aerogpu_format, cmd->width);
+    const uint32_t copy_rows_u32 = aerogpu_texture_num_rows(aerogpu_format, cmd->height);
+    if (!layout.valid || row_bytes_u32 == 0 || copy_rows_u32 == 0) {
       return S_OK;
     }
+    const size_t row_bytes = static_cast<size_t>(row_bytes_u32);
+    const size_t copy_rows = static_cast<size_t>(copy_rows_u32);
 
     if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
       return S_OK;
@@ -3072,7 +3300,8 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     if (src_map.data && dst_map.data) {
       const size_t dst_pitch = static_cast<size_t>(dst->row_pitch_bytes);
       const size_t src_pitch = static_cast<size_t>(src->row_pitch_bytes);
-      const size_t dst_tight_row_bytes = static_cast<size_t>(dst->width) * bpp;
+      const size_t dst_tight_row_bytes =
+          static_cast<size_t>(aerogpu_texture_min_row_pitch_bytes(aerogpu_format, dst->width));
       for (size_t y = 0; y < copy_rows; y++) {
         uint8_t* dst_row = dst_map.data + y * dst_pitch;
         const uint8_t* src_row = src_map.data + y * src_pitch;

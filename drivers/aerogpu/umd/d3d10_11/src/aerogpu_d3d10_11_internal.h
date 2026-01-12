@@ -71,6 +71,15 @@ constexpr uint32_t kDxgiFormatR32G32Float = 16;
 constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
 constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
+constexpr uint32_t kDxgiFormatBc1Typeless = 70;
+constexpr uint32_t kDxgiFormatBc1Unorm = 71;
+constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72;
+constexpr uint32_t kDxgiFormatBc2Typeless = 73;
+constexpr uint32_t kDxgiFormatBc2Unorm = 74;
+constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75;
+constexpr uint32_t kDxgiFormatBc3Typeless = 76;
+constexpr uint32_t kDxgiFormatBc3Unorm = 77;
+constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatD32Float = 40;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
@@ -81,6 +90,9 @@ constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
 constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
 constexpr uint32_t kDxgiFormatB8G8R8X8Typeless = 92;
 constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
+constexpr uint32_t kDxgiFormatBc7Typeless = 97;
+constexpr uint32_t kDxgiFormatBc7Unorm = 98;
+constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99;
 
 inline uint32_t f32_bits(float v) {
   uint32_t bits = 0;
@@ -126,6 +138,26 @@ inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
     case kDxgiFormatR8G8B8A8UnormSrgb:
     case kDxgiFormatR8G8B8A8Typeless:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
+    case kDxgiFormatBc1Typeless:
+    case kDxgiFormatBc1Unorm:
+      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
+    case kDxgiFormatBc1UnormSrgb:
+      return AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB;
+    case kDxgiFormatBc2Typeless:
+    case kDxgiFormatBc2Unorm:
+      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
+    case kDxgiFormatBc2UnormSrgb:
+      return AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB;
+    case kDxgiFormatBc3Typeless:
+    case kDxgiFormatBc3Unorm:
+      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
+    case kDxgiFormatBc3UnormSrgb:
+      return AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB;
+    case kDxgiFormatBc7Typeless:
+    case kDxgiFormatBc7Unorm:
+      return AEROGPU_FORMAT_BC7_RGBA_UNORM;
+    case kDxgiFormatBc7UnormSrgb:
+      return AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB;
     case kDxgiFormatD24UnormS8Uint:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
     case kDxgiFormatD32Float:
@@ -135,7 +167,19 @@ inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   }
 }
 
-inline uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
+struct AerogpuTextureFormatLayout {
+  // For linear formats, block_width/block_height are 1 and bytes_per_block is
+  // the bytes-per-texel value.
+  //
+  // For BC formats, block_width/block_height are 4 and bytes_per_block is the
+  // bytes-per-4x4-block value.
+  uint32_t block_width = 0;
+  uint32_t block_height = 0;
+  uint32_t bytes_per_block = 0;
+  bool valid = false;
+};
+
+inline AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu_format) {
   switch (aerogpu_format) {
     case AEROGPU_FORMAT_B8G8R8A8_UNORM:
     case AEROGPU_FORMAT_B8G8R8X8_UNORM:
@@ -143,13 +187,82 @@ inline uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
     case AEROGPU_FORMAT_R8G8B8X8_UNORM:
     case AEROGPU_FORMAT_D24_UNORM_S8_UINT:
     case AEROGPU_FORMAT_D32_FLOAT:
-      return 4;
+      return AerogpuTextureFormatLayout{1, 1, 4, true};
     case AEROGPU_FORMAT_B5G6R5_UNORM:
     case AEROGPU_FORMAT_B5G5R5A1_UNORM:
-      return 2;
+      return AerogpuTextureFormatLayout{1, 1, 2, true};
+    case AEROGPU_FORMAT_BC1_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB:
+      return AerogpuTextureFormatLayout{4, 4, 8, true};
+    case AEROGPU_FORMAT_BC2_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB:
+    case AEROGPU_FORMAT_BC3_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB:
+    case AEROGPU_FORMAT_BC7_RGBA_UNORM:
+    case AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB:
+      return AerogpuTextureFormatLayout{4, 4, 16, true};
     default:
-      return 4;
+      return AerogpuTextureFormatLayout{};
   }
+}
+
+inline bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  return layout.valid && (layout.block_width != 1 || layout.block_height != 1);
+}
+
+inline uint32_t aerogpu_div_round_up_u32(uint32_t value, uint32_t divisor) {
+  return (value + divisor - 1) / divisor;
+}
+
+inline uint32_t aerogpu_texture_min_row_pitch_bytes(uint32_t aerogpu_format, uint32_t width) {
+  if (width == 0) {
+    return 0;
+  }
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  if (!layout.valid || layout.block_width == 0 || layout.bytes_per_block == 0) {
+    return 0;
+  }
+
+  const uint64_t blocks_w =
+      static_cast<uint64_t>(aerogpu_div_round_up_u32(width, layout.block_width));
+  const uint64_t row_bytes = blocks_w * static_cast<uint64_t>(layout.bytes_per_block);
+  if (row_bytes == 0 || row_bytes > UINT32_MAX) {
+    return 0;
+  }
+  return static_cast<uint32_t>(row_bytes);
+}
+
+inline uint32_t aerogpu_texture_num_rows(uint32_t aerogpu_format, uint32_t height) {
+  if (height == 0) {
+    return 0;
+  }
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  if (!layout.valid || layout.block_height == 0) {
+    return 0;
+  }
+  return aerogpu_div_round_up_u32(height, layout.block_height);
+}
+
+inline uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format,
+                                                    uint32_t row_pitch_bytes,
+                                                    uint32_t height) {
+  if (row_pitch_bytes == 0) {
+    return 0;
+  }
+  const uint32_t rows = aerogpu_texture_num_rows(aerogpu_format, height);
+  return static_cast<uint64_t>(row_pitch_bytes) * static_cast<uint64_t>(rows);
+}
+
+inline uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
+  // Note: BC formats are block-compressed and do not have a bytes-per-texel
+  // representation. Callers that operate on Texture2D memory layouts should use
+  // `aerogpu_texture_format_layout` / `aerogpu_texture_min_row_pitch_bytes`.
+  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
+  if (!layout.valid || layout.block_width != 1 || layout.block_height != 1) {
+    return 0;
+  }
+  return layout.bytes_per_block;
 }
 
 inline uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
