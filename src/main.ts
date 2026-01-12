@@ -904,7 +904,15 @@ function renderAudioPanel(): HTMLElement {
   let tonePhase = 0;
   const workerCoordinator = new WorkerCoordinator();
   // Expose for Playwright E2E tests that need to drive low-level worker/device plumbing.
-  (globalThis as typeof globalThis & { __aeroWorkerCoordinator?: unknown }).__aeroWorkerCoordinator = workerCoordinator;
+  try {
+    const g = globalThis as unknown;
+    if (g && (typeof g === "object" || typeof g === "function")) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (g as any).__aeroWorkerCoordinator = workerCoordinator;
+    }
+  } catch {
+    // Best-effort only.
+  }
   installNetTraceBackendOnAeroGlobal(workerCoordinator);
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;
