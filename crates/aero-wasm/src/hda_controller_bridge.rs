@@ -452,6 +452,34 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
+    fn process_is_gated_on_pci_bus_master_enable() {
+        let mut guest = vec![0u8; 0x4000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut bridge = HdaControllerBridge::new(guest_base, guest_size, None).unwrap();
+
+        // Bring controller out of reset.
+        bridge.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+        // Enable the position buffer so `process` will DMA-write into guest memory when bus
+        // mastering is enabled.
+        let posbuf_base = 0x1000u32;
+        bridge.mem.write_u32(u64::from(posbuf_base), 0xdead_beef);
+        bridge.mmio_write(0x74, 4, 0); // DPUBASE
+        bridge.mmio_write(0x70, 4, posbuf_base | 1); // DPLBASE.ENABLE
+
+        // With BME clear, the bridge must not touch guest memory.
+        bridge.step_frames(1);
+        assert_eq!(bridge.mem.read_u32(u64::from(posbuf_base)), 0xdead_beef);
+
+        // Enabling BME should allow DMA and therefore update the position buffer entry.
+        bridge.set_pci_command(1 << 2);
+        bridge.step_frames(1);
+        assert_eq!(bridge.mem.read_u32(u64::from(posbuf_base)), 0);
+    }
+
+    #[wasm_bindgen_test]
     fn step_frames_completes_on_oob_dma_pointer() {
         let mut guest = vec![0u8; 0x4000];
         let guest_base = guest.as_mut_ptr() as u32;
