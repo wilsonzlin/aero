@@ -1530,6 +1530,14 @@ impl PciDevice for NvmePciDevice {
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
     }
+
+    fn reset(&mut self) {
+        // Preserve BAR programming but disable decoding.
+        self.config_mut().set_command(0);
+
+        // Reset controller register/queue state while preserving the attached disk backend.
+        self.controller.reset();
+    }
 }
 
 impl MmioHandler for NvmePciDevice {
