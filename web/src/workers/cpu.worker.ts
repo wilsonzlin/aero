@@ -750,12 +750,19 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   //
   // Avoid low-memory offsets that are used by other CPU-worker demos (e.g. the
   // diskRead demo uses 0x1000 as a scratch buffer) and keep this region distinct
-  // from the synthetic HDA capture harness (which also reserves a chunk of guest
-  // RAM for its own CORB/RIRB/BDL/PCM buffers).
-  const corbBase = 0x0030_0000;
-  const rirbBase = 0x0030_1000;
-  const bdlBase = 0x0040_0000;
-  const pcmBase = 0x0041_0000;
+  // from the CPU worker's ongoing framebuffer demo regions:
+  // - Shared framebuffer: starts at `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` (0x20_0000).
+  // - Demo framebuffer scratch: `DEMO_FB_OFFSET` (0x50_0000) for up to ~3MiB.
+  //
+  // Those demos continuously write guest RAM in the background, so overlapping
+  // addresses will corrupt CORB/RIRB/BDL/PCM state and cause flaky CI failures.
+  //
+  // Finally, keep this disjoint from the synthetic HDA capture harness (which
+  // also reserves a chunk of guest RAM for its own CORB/RIRB/BDL/PCM buffers).
+  const corbBase = 0x0100_0000;
+  const rirbBase = 0x0100_1000;
+  const bdlBase = 0x0110_0000;
+  const pcmBase = 0x0111_0000;
 
   const CORB_ENTRIES = 256;
   const RIRB_ENTRIES = 256;
@@ -1536,11 +1543,20 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     hdaWrite(0x08, 4, 0x1);
 
     // Guest memory layout for this debug harness.
-    const corbBase = 0x0010_0000;
-    const rirbBase = 0x0010_1000;
-    const bdlBase = 0x0020_0000; // 128-byte aligned
-    const pcmBase = 0x0021_0000;
+    //
+    // Place these buffers well above the CPU worker's shared/demo framebuffer
+    // guest memory regions (see `startHdaPciDevice` for details) so the capture
+    // harness isn't corrupted by the always-on framebuffer publish path.
+    const corbBase = 0x0120_0000;
+    const rirbBase = 0x0120_1000;
+    const bdlBase = 0x0130_0000; // 128-byte aligned
+    const pcmBase = 0x0131_0000;
     const pcmBytes = 0x4000;
+
+    guestBoundsCheck(corbBase, 8);
+    guestBoundsCheck(rirbBase, 16);
+    guestBoundsCheck(bdlBase, 16);
+    guestBoundsCheck(pcmBase, pcmBytes);
 
     // Clear the target PCM buffer so the main thread can detect progress reliably.
     guestU8.fill(0, pcmBase, pcmBase + pcmBytes);
