@@ -179,11 +179,14 @@ notes and security controls.
 In the browser, use the helper in `web/src/net/l2RelaySignalingClient.ts` to negotiate a
 `RTCPeerConnection` against the relay and obtain a **fully reliable and ordered** `RTCDataChannel` labeled `l2`:
 
-```ts
-import { connectL2Relay } from "./net";
-
-const { l2, close } = await connectL2Relay({
-  baseUrl: "https://relay.example.com",
+ ```ts
+ import { connectL2Relay } from "./net";
+ 
+ const { l2, close } = await connectL2Relay({
+  // `baseUrl` can be http(s):// or ws(s):// depending on how the relay is
+  // exposed (some deployments share a single wss:// origin behind a reverse
+  // proxy). The browser client will normalize schemes per endpoint transport.
+  baseUrl: "https://relay.example.com", // (or "wss://relay.example.com")
   authToken: "…", // optional
   mode: "ws-trickle", // default
   sink: (ev) => {
