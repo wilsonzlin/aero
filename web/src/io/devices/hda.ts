@@ -1,6 +1,7 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PciBar, PciDevice } from "../bus/pci.ts";
 import type { IrqSink, TickableDevice } from "../device_manager.ts";
+import { AudioFrameClock, perfNowMsToNs } from "../../audio/audio_frame_clock";
 
 export type HdaControllerBridgeLike = {
   mmio_read(offset: number, size: number): number;
@@ -47,8 +48,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   readonly #bridge: HdaControllerBridgeLike;
   readonly #irqSink: IrqSink;
 
-  #lastTickMs: number | null = null;
-  #accumulatedMs = 0;
+  #clock: AudioFrameClock | null = null;
   #irqLevel = false;
   #destroyed = false;
 
@@ -85,33 +85,47 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   tick(nowMs: number): void {
     if (this.#destroyed) return;
 
-    if (this.#lastTickMs === null) {
-      this.#lastTickMs = nowMs;
+    let nowNs: bigint;
+    try {
+      nowNs = perfNowMsToNs(nowMs);
+    } catch {
       this.#syncIrq();
       return;
     }
 
-    let deltaMs = nowMs - this.#lastTickMs;
-    this.#lastTickMs = nowMs;
-
-    if (!Number.isFinite(deltaMs) || deltaMs <= 0) {
+    if (!this.#clock) {
+      this.#clock = new AudioFrameClock(HDA_OUTPUT_RATE_HZ, nowNs);
       this.#syncIrq();
       return;
     }
 
-    deltaMs = Math.min(deltaMs, HDA_MAX_DELTA_MS);
-    this.#accumulatedMs += deltaMs;
+    // Avoid pathological catch-up work if the tab is backgrounded or the worker stalls.
+    // Match the legacy behavior of dropping excess time beyond `HDA_MAX_DELTA_MS`.
+    const clock = this.#clock;
+    const lastNs = clock.lastTimeNs;
+    if (nowNs <= lastNs) {
+      this.#syncIrq();
+      return;
+    }
 
-    let frames = Math.floor((this.#accumulatedMs * HDA_OUTPUT_RATE_HZ) / 1000);
-    // Bound per-tick stepping so extremely slow ticks cannot request absurdly large buffers.
-    frames = Math.min(frames, Math.floor((HDA_MAX_DELTA_MS * HDA_OUTPUT_RATE_HZ) / 1000));
+    const maxDeltaNs = BigInt(HDA_MAX_DELTA_MS) * 1_000_000n;
+    const deltaNs = nowNs - lastNs;
+
+    let frames = 0;
+    if (deltaNs > maxDeltaNs) {
+      frames = clock.advanceTo(lastNs + maxDeltaNs);
+      // Drop the remaining time (do not "catch up" on the next tick).
+      clock.lastTimeNs = nowNs;
+    } else {
+      frames = clock.advanceTo(nowNs);
+    }
+
     if (frames > 0) {
       try {
         this.#bridge.step_frames(frames >>> 0);
       } catch {
         // ignore device errors during tick
       }
-      this.#accumulatedMs -= (frames * 1000) / HDA_OUTPUT_RATE_HZ;
     }
 
     this.#syncIrq();
