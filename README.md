@@ -416,6 +416,10 @@ The `web/` app exposes an early, emulator-independent browser storage benchmark:
 - OPFS (Origin Private File System) via `navigator.storage.getDirectory()` when available
 - IndexedDB fallback when OPFS is unavailable
 
+Note: IndexedDB storage is async-only and does not currently back the synchronous Rust
+disk/controller path (`aero_storage::{StorageBackend, VirtualDisk}`); see
+[`docs/19-indexeddb-storage-story.md`](./docs/19-indexeddb-storage-story.md).
+
 ### In-app API
 
 Run from the browser devtools console:
