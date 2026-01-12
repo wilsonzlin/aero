@@ -864,16 +864,12 @@ fn aml_processor(cpu_id: u8) -> Vec<u8> {
 }
 
 fn aml_op_region(name: [u8; 4], space: u8, offset: u64, len: u64) -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&name);
-    payload.push(space);
-    payload.extend_from_slice(&aml_integer(offset));
-    payload.extend_from_slice(&aml_integer(len));
-
     let mut out = Vec::new();
     out.extend_from_slice(&[0x5B, 0x80]); // OperationRegionOp
-    out.extend_from_slice(&aml_pkg_length(payload.len()));
-    out.extend_from_slice(&payload);
+    out.extend_from_slice(&name);
+    out.push(space);
+    out.extend_from_slice(&aml_integer(offset));
+    out.extend_from_slice(&aml_integer(len));
     out
 }
 
@@ -1403,7 +1399,7 @@ mod tests {
 
         // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
         let op_region = [
-            &[0x5B, 0x80, 0x09][..], // OperationRegionOp + pkglen
+            &[0x5B, 0x80][..], // OperationRegionOp
             &b"IMCR"[..],
             &[0x01, 0x0A, 0x22, 0x0A, 0x02][..], // SystemIO, 0x22, len 2
         ]
