@@ -63,8 +63,8 @@ fn build_a20_snapshot_boot_sector() -> [u8; 512] {
     sector[i] = 0xEE;
     i += 1;
 
-    // mov cx, 0xFFFF
-    sector[i..i + 3].copy_from_slice(&[0xB9, 0xFF, 0xFF]);
+    // mov cx, 0x1000
+    sector[i..i + 3].copy_from_slice(&[0xB9, 0x00, 0x10]);
     i += 3;
     // delay: dec cx
     sector[i] = 0x49;
