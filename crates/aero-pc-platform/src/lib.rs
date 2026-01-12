@@ -407,14 +407,31 @@ struct E1000PciIoBar {
     e1000: Rc<RefCell<E1000Device>>,
 }
 
+impl E1000PciIoBar {
+    fn read_all_ones(size: u8) -> u32 {
+        match size {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+}
+
 impl PortIoDevice for E1000PciIoBar {
     fn read(&mut self, port: u16, size: u8) -> u32 {
-        let size = size.clamp(1, 4) as usize;
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return Self::read_all_ones(size),
+        };
         self.e1000.borrow_mut().io_read(u32::from(port), size)
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
-        let size = size.clamp(1, 4) as usize;
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
         self.e1000
             .borrow_mut()
             .io_write_reg(u32::from(port), size, value);
