@@ -345,17 +345,20 @@ uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
 uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
-    case kDxgiFormatB8G8R8A8UnormSrgb:
     case kDxgiFormatB8G8R8A8Typeless:
       return AEROGPU_FORMAT_B8G8R8A8_UNORM;
+    case kDxgiFormatB8G8R8A8UnormSrgb:
+      return AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB;
     case kDxgiFormatB8G8R8X8Unorm:
-    case kDxgiFormatB8G8R8X8UnormSrgb:
     case kDxgiFormatB8G8R8X8Typeless:
       return AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    case kDxgiFormatB8G8R8X8UnormSrgb:
+      return AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB;
     case kDxgiFormatR8G8B8A8Unorm:
-    case kDxgiFormatR8G8B8A8UnormSrgb:
     case kDxgiFormatR8G8B8A8Typeless:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
+    case kDxgiFormatR8G8B8A8UnormSrgb:
+      return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
     case kDxgiFormatBc1Typeless:
     case kDxgiFormatBc1Unorm:
       return AEROGPU_FORMAT_BC1_RGBA_UNORM;
@@ -398,6 +401,10 @@ AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu_format
     case AEROGPU_FORMAT_B8G8R8X8_UNORM:
     case AEROGPU_FORMAT_R8G8B8A8_UNORM:
     case AEROGPU_FORMAT_R8G8B8X8_UNORM:
+    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
     case AEROGPU_FORMAT_D24_UNORM_S8_UINT:
     case AEROGPU_FORMAT_D32_FLOAT:
       return AerogpuTextureFormatLayout{1, 1, 4, true};
