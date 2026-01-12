@@ -4,6 +4,8 @@ use aero_storage::{AeroSparseDisk, DiskError, Result, StorageBackend, VirtualDis
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
+const MAX_INPUT_BYTES: usize = 1024 * 1024; // 1 MiB
+
 /// Read-only storage backend over the fuzzer-provided byte buffer.
 ///
 /// This avoids copying the input (the backing store) while still exercising the
@@ -49,6 +51,10 @@ impl StorageBackend for FuzzBackend<'_> {
 }
 
 fuzz_target!(|data: &[u8]| {
+    if data.len() > MAX_INPUT_BYTES {
+        return;
+    }
+
     let backend = FuzzBackend { data };
 
     let Ok(mut disk) = AeroSparseDisk::open(backend) else {
@@ -59,6 +65,12 @@ fuzz_target!(|data: &[u8]| {
     let capacity = disk.capacity_bytes();
     const MAX_READ_LEN: usize = 4096;
     let mut scratch = [0u8; MAX_READ_LEN];
+
+    // Always attempt a couple of deterministic reads when `open` succeeds to maximize coverage.
+    if capacity > 0 {
+        let _ = disk.read_at(0, &mut scratch[..1]);
+        let _ = disk.read_at(capacity - 1, &mut scratch[..1]);
+    }
 
     let mut u = Unstructured::new(data);
     let read_ops: usize = u.int_in_range(0usize..=8).unwrap_or(0);
