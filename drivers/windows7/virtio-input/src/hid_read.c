@@ -87,6 +87,10 @@ static NTSTATUS VirtioInputMapUserAddress(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (Length > (SIZE_T)MAXULONG) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     PMDL mdl;
     PVOID systemAddress;
 
