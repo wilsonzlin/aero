@@ -927,6 +927,20 @@ impl PcPlatform {
         }
     }
 
+    /// Re-drives any currently asserted PCI INTx lines into the platform interrupt controller.
+    ///
+    /// This is mainly intended for snapshot restore flows: restoring a `PciIntxRouter` updates its
+    /// internal source/refcount bookkeeping, but it cannot directly reassert the corresponding
+    /// platform GSIs because it has no access to the `PlatformInterrupts` sink during
+    /// `IoSnapshot::load_state()`.
+    ///
+    /// Call this after restoring both the `PciIntxRouter` and `PlatformInterrupts` to ensure the
+    /// interrupt controller sees the restored INTx levels.
+    pub fn sync_pci_intx_levels_to_interrupts(&mut self) {
+        self.pci_intx
+            .sync_levels_to_sink(&mut *self.interrupts.borrow_mut());
+    }
+
     pub fn tick(&mut self, delta_ns: u64) {
         self.clock.advance_ns(delta_ns);
         self.pit.borrow_mut().advance_ns(delta_ns);
