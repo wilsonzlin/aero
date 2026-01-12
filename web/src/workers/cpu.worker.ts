@@ -1581,7 +1581,19 @@ async function initWasmInBackground(
     //
     // This enables shared-memory integration where JS + WASM + other workers
     // all observe the same guest RAM.
-    assertWasmMemoryWiring({ api, memory: guestMemory, context: "cpu.worker" });
+    //
+    // Probe within guest RAM (not the runtime-reserved low region of the wasm
+    // linear memory) so we don't risk clobbering the Rust/WASM runtime.
+    //
+    // Use a distinct offset from the IO worker probe so concurrent init cannot
+    // race on the same 32-bit word and trigger false-negative wiring failures.
+    const memProbeGuestOffset = 0x100;
+    assertWasmMemoryWiring({
+      api,
+      memory: guestMemory,
+      linearOffset: guestU8.byteOffset + memProbeGuestOffset,
+      context: "cpu.worker",
+    });
 
     wasmApi = api;
     cpuDemo = null;
