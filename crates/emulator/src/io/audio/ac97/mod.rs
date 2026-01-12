@@ -234,6 +234,8 @@ impl Ac97PciDevice {
         config.write(0x0b, 1, 0x04); // class
 
         // BAR0 (NAM) + BAR1 (NABM) are I/O space.
+        let nam_base = nam_base & !(NAM_SIZE - 1);
+        let nabm_base = nabm_base & !(NABM_SIZE - 1);
         config.set_u32(0x10, u32::from(nam_base) | 0x1);
         config.set_u32(0x14, u32::from(nabm_base) | 0x1);
 
@@ -307,14 +309,14 @@ impl PciDevice for Ac97PciDevice {
             match offset {
                 0x10 => {
                     return if self.bar0_probe {
-                        !(u32::from(NAM_SIZE) - 1) | 0x1
+                        (!(u32::from(NAM_SIZE) - 1) & 0xffff_fffc) | 0x1
                     } else {
                         u32::from(self.bar_nam) | 0x1
                     };
                 }
                 0x14 => {
                     return if self.bar1_probe {
-                        !(u32::from(NABM_SIZE) - 1) | 0x1
+                        (!(u32::from(NABM_SIZE) - 1) & 0xffff_fffc) | 0x1
                     } else {
                         u32::from(self.bar_nabm) | 0x1
                     };
@@ -331,7 +333,8 @@ impl PciDevice for Ac97PciDevice {
                 self.bar0_probe = true;
             } else {
                 self.bar0_probe = false;
-                self.bar_nam = (value & !0x3) as u16;
+                let addr_mask = !(u32::from(NAM_SIZE) - 1) & 0xffff_fffc;
+                self.bar_nam = (value & addr_mask) as u16;
                 self.config.set_u32(0x10, u32::from(self.bar_nam) | 0x1);
             }
             return;
@@ -341,7 +344,8 @@ impl PciDevice for Ac97PciDevice {
                 self.bar1_probe = true;
             } else {
                 self.bar1_probe = false;
-                self.bar_nabm = (value & !0x3) as u16;
+                let addr_mask = !(u32::from(NABM_SIZE) - 1) & 0xffff_fffc;
+                self.bar_nabm = (value & addr_mask) as u16;
                 self.config.set_u32(0x14, u32::from(self.bar_nabm) | 0x1);
             }
             return;
@@ -424,6 +428,31 @@ mod tests {
         dev.config_write(0x04, 2, 1 << 0);
         assert_eq!(dev.port_read(vid1_port, 2) as u16, 0x8384);
         assert_eq!(dev.port_read(master_vol_port, 2) as u16, 0x0000);
+    }
+
+    #[test]
+    fn pci_wrapper_masks_io_bar_bases_to_bar_size() {
+        let mut dev = Ac97PciDevice::new(0x1234, 0x5678);
+
+        // Initial BAR values should be masked to the BAR size alignment.
+        assert_eq!(dev.config_read(0x10, 4), 0x1201);
+        assert_eq!(dev.config_read(0x14, 4), 0x5601);
+
+        dev.config_write(0x10, 4, 0xffff_ffff);
+        let mask0 = dev.config_read(0x10, 4);
+        dev.config_write(0x10, 4, 0x1235);
+        let addr_mask0 = mask0 & !0x3;
+        let flags0 = mask0 & 0x3;
+        assert_eq!(dev.config_read(0x10, 4), (0x1235 & addr_mask0) | flags0);
+        assert_eq!(dev.bar_nam, (0x1235 & addr_mask0) as u16);
+
+        dev.config_write(0x14, 4, 0xffff_ffff);
+        let mask1 = dev.config_read(0x14, 4);
+        dev.config_write(0x14, 4, 0x5679);
+        let addr_mask1 = mask1 & !0x3;
+        let flags1 = mask1 & 0x3;
+        assert_eq!(dev.config_read(0x14, 4), (0x5679 & addr_mask1) | flags1);
+        assert_eq!(dev.bar_nabm, (0x5679 & addr_mask1) as u16);
     }
 
     #[test]

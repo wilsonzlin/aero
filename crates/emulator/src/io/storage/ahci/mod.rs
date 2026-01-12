@@ -870,7 +870,7 @@ impl AhciPciDevice {
 
         // BAR5 (ABAR) at the canonical config space BAR offset.
         // Non-prefetchable 32-bit MMIO.
-        let abar = abar & !(AhciController::ABAR_SIZE as u32 - 1) & 0xffff_fff0;
+        let abar = abar & !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0;
         config.set_u32(AHCI_ABAR_CFG_OFFSET as usize, abar);
 
         // Interrupt pin INTA#.
@@ -928,7 +928,7 @@ impl PciDevice for AhciPciDevice {
                 return;
             }
             self.abar_probe = false;
-            self.abar = value & !(AhciController::ABAR_SIZE as u32 - 1) & 0xffff_fff0;
+            self.abar = value & !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0;
             self.config.write(offset, size, self.abar);
             self.update_deferred_poll(prev_command);
             return;
