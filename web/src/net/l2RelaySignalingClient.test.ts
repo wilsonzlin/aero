@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { connectL2RelaySignaling } from "./l2RelaySignalingClient";
 
 type Listener = (evt: Event) => void;
+type WebSocketConstructor = new (url: string, protocols?: string | string[]) => WebSocket;
 
 class FakeRtcDataChannel {
   label = "";
@@ -67,6 +68,7 @@ class FakePeerConnection {
   static nextDataChannel: FakeRtcDataChannel | null = null;
 
   iceGatheringState: RTCIceGatheringState = "complete";
+  connectionState: RTCPeerConnectionState = "new";
   localDescription: RTCSessionDescriptionInit | null = null;
 
   createdLabel: string | null = null;
@@ -75,9 +77,24 @@ class FakePeerConnection {
 
   closed = false;
 
+  private readonly listeners = new Map<string, Set<(evt: Event) => void>>();
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(_config: RTCConfiguration) {
     FakePeerConnection.last = this;
+  }
+
+  addEventListener(type: string, listener: (evt: Event) => void): void {
+    let set = this.listeners.get(type);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(type, set);
+    }
+    set.add(listener);
+  }
+
+  removeEventListener(type: string, listener: (evt: Event) => void): void {
+    this.listeners.get(type)?.delete(listener);
   }
 
   createDataChannel(label: string, init?: RTCDataChannelInit): RTCDataChannel {
@@ -106,12 +123,22 @@ class FakePeerConnection {
 
   close(): void {
     this.closed = true;
+    this.connectionState = "closed";
   }
 }
 
 function resetFakePeerConnection(): void {
   FakePeerConnection.last = null;
   FakePeerConnection.nextDataChannel = null;
+}
+
+class ThrowingWebSocket {
+  static urls: string[] = [];
+
+  constructor(url: string) {
+    ThrowingWebSocket.urls.push(url);
+    throw new Error("websocket failed");
+  }
 }
 
 function installMockFetch(): () => void {
@@ -220,6 +247,37 @@ describe("net/l2RelaySignalingClient", () => {
       restoreFetch();
       if (originalPc === undefined) delete g.RTCPeerConnection;
       else g.RTCPeerConnection = originalPc;
+    }
+  });
+
+  it("normalizes wss:// relay base URLs (fetch over https and signal over wss)", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalPc = g.RTCPeerConnection;
+    const originalWs = g.WebSocket;
+    const restoreFetch = installMockFetch();
+
+    resetFakePeerConnection();
+    FakePeerConnection.nextDataChannel = new FakeRtcDataChannel("open");
+    ThrowingWebSocket.urls = [];
+    g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
+    g.WebSocket = ThrowingWebSocket as unknown as WebSocketConstructor;
+
+    try {
+      await expect(connectL2RelaySignaling({ baseUrl: "wss://relay.example.com" })).rejects.toThrow(/websocket/i);
+
+      const fetchMock = globalThis.fetch as unknown as { mock: { calls: any[][] } };
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      const [firstUrl] = fetchMock.mock.calls[0]!;
+      expect(typeof firstUrl).toBe("string");
+      expect(firstUrl).toBe("https://relay.example.com/webrtc/ice");
+
+      expect(ThrowingWebSocket.urls[0]).toBe("wss://relay.example.com/webrtc/signal");
+    } finally {
+      restoreFetch();
+      if (originalPc === undefined) delete g.RTCPeerConnection;
+      else g.RTCPeerConnection = originalPc;
+      if (originalWs === undefined) delete g.WebSocket;
+      else g.WebSocket = originalWs;
     }
   });
 });
