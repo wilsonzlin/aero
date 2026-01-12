@@ -488,6 +488,39 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
+  // Software vertex processing (cached state).
+  {
+    hr = dev->SetSoftwareVertexProcessing(TRUE);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetSoftwareVertexProcessing (Set TRUE failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      const BOOL got = dev->GetSoftwareVertexProcessing();
+      if (!got) {
+        return reporter.Fail("GetSoftwareVertexProcessing mismatch: expected TRUE");
+      }
+    }
+  }
+
+  // N-Patch mode (cached state).
+  {
+    const float kMode = 3.0f;
+    hr = dev->SetNPatchMode(kMode);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetNPatchMode (Set failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      const float got = dev->GetNPatchMode();
+      if (!NearlyEqual(got, kMode, 1e-6f)) {
+        return reporter.Fail("GetNPatchMode mismatch: got=%f expected=%f",
+                             (double)got,
+                             (double)kMode);
+      }
+    }
+  }
+
   // Shader constant int/bool caching.
   {
     int vals_i[8] = {10, 11, 12, 13, 20, 21, 22, 23}; // 2 x int4
@@ -700,6 +733,14 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   light_clobber.Position.z = -3.0f;
   bool light_test = false;
 
+  const BOOL swvp_sb = TRUE;
+  const BOOL swvp_clobber = FALSE;
+  bool swvp_test = false;
+
+  const float npatch_sb = 4.0f;
+  const float npatch_clobber = 0.0f;
+  bool npatch_test = false;
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -773,6 +814,25 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     } else {
       light_test = true;
     }
+  }
+
+  hr = dev->SetSoftwareVertexProcessing(swvp_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: skipping StateBlock Set/GetSoftwareVertexProcessing (Set in stateblock failed hr=0x%08lX)",
+        kTestName,
+        (unsigned long)hr);
+  } else {
+    swvp_test = true;
+  }
+
+  hr = dev->SetNPatchMode(npatch_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetNPatchMode (Set in stateblock failed hr=0x%08lX)",
+                               kTestName,
+                               (unsigned long)hr);
+  } else {
+    npatch_test = true;
   }
 
   hr = dev->SetVertexShaderConstantI(10, vs_i_sb, 1);
@@ -866,6 +926,27 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                                      (unsigned long)hr);
           light_test = false;
         }
+      }
+    }
+
+    if (swvp_test) {
+      hr = dev->SetSoftwareVertexProcessing(swvp_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: skipping StateBlock Set/GetSoftwareVertexProcessing (clobber Set failed hr=0x%08lX)",
+            kTestName,
+            (unsigned long)hr);
+        swvp_test = false;
+      }
+    }
+
+    if (npatch_test) {
+      hr = dev->SetNPatchMode(npatch_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetNPatchMode (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        npatch_test = false;
       }
     }
 
@@ -1011,6 +1092,24 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       }
       if (!got_enabled) {
         return reporter.Fail("stateblock restore mismatch: LightEnable expected TRUE");
+      }
+    }
+
+    if (swvp_test) {
+      const BOOL got = dev->GetSoftwareVertexProcessing();
+      if ((got ? TRUE : FALSE) != (swvp_sb ? TRUE : FALSE)) {
+        return reporter.Fail("stateblock restore mismatch: SoftwareVertexProcessing got=%d expected=%d",
+                             got ? 1 : 0,
+                             swvp_sb ? 1 : 0);
+      }
+    }
+
+    if (npatch_test) {
+      const float got = dev->GetNPatchMode();
+      if (!NearlyEqual(got, npatch_sb, 1e-6f)) {
+        return reporter.Fail("stateblock restore mismatch: NPatchMode got=%f expected=%f",
+                             (double)got,
+                             (double)npatch_sb);
       }
     }
 
