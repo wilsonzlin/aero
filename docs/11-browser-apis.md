@@ -844,9 +844,9 @@ Users can also clear the cache via browser site data controls (e.g., DevTools â†
 - Workers should still use `Atomics.notify()` after mutating shared flags/queues; additionally, workers can `postMessage({type:'queue-notify'})` as a coarse hint so the coordinator polls shared queues sooner (especially important in the polling fallback).
 
 ```javascript
-// Main thread coordinator
-import { waitUntilNotEqual } from './runtime/atomics_wait.js';
-import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from './runtime/shared_layout.js';
+// Main thread coordinator (simplified; see `web/src/runtime/coordinator.ts`)
+import { waitUntilNotEqual } from './atomics_wait.js';
+import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from './shared_layout.js';
 
 class WorkerCoordinator {
     constructor() {
