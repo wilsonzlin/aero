@@ -24,15 +24,27 @@ describe("keyboardCodeToHidUsage", () => {
     expect(Array.isArray(entries)).toBe(true);
     expect(entries.length).toBeGreaterThan(0);
 
-    const seen = new Set<string>();
+    const expectedByCode = new Map<string, number>();
     for (const entry of entries) {
-      if (seen.has(entry.code)) {
+      if (expectedByCode.has(entry.code)) {
         throw new Error(
           `duplicate fixture entry for KeyboardEvent.code=${JSON.stringify(entry.code)}`,
         );
       }
-      seen.add(entry.code);
-      expect(keyboardCodeToHidUsage(entry.code)).toBe(parseHexU8(entry.usage));
+      const expected = parseHexU8(entry.usage);
+      expectedByCode.set(entry.code, expected);
+      expect(keyboardCodeToHidUsage(entry.code)).toBe(expected);
+    }
+
+    // Ensure the TS-side mapping does not "accidentally" support additional codes without the
+    // shared fixture being updated. Use the PS/2 scancode list as a stable, project-wide superset
+    // of common `KeyboardEvent.code` values.
+    const scancodesUrl = new URL("../../../tools/gen_scancodes/scancodes.json", import.meta.url);
+    const scancodes = JSON.parse(readFileSync(scancodesUrl, "utf8")) as {
+      ps2_set2: Record<string, unknown>;
+    };
+    for (const code of Object.keys(scancodes.ps2_set2)) {
+      expect(keyboardCodeToHidUsage(code)).toBe(expectedByCode.get(code) ?? null);
     }
 
     expect(keyboardCodeToHidUsage("NoSuchKey")).toBeNull();
