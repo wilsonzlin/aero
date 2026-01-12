@@ -1676,6 +1676,17 @@ impl PcPlatform {
                 .unwrap_or(0)
         };
 
+        // Keep the device model's internal PCI command register in sync with the platform PCI bus.
+        //
+        // The E1000 model gates all DMA on COMMAND.BME (bit 2) by consulting its own PCI config
+        // state; the platform maintains a separate canonical config-space for PCI enumeration.
+        // Without this, the guest can enable bus mastering in PCI config space but the NIC would
+        // still believe it is disabled and refuse to DMA.
+        {
+            let mut e1000 = e1000.borrow_mut();
+            e1000.pci_config_write(0x04, 2, u32::from(command));
+        }
+
         // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
         let bus_master_enabled = (command & (1 << 2)) != 0;
         if !bus_master_enabled {
