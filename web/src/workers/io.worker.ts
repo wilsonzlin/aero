@@ -2963,8 +2963,6 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           if (keyCode !== null) {
             virtioKeyboard.injectKey(keyCode, pressed);
           }
-        } else {
-          usbHid?.keyboard_event(usage, pressed);
         }
         break;
       }
