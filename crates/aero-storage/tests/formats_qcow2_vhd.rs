@@ -1638,10 +1638,11 @@ fn vhd_dynamic_rejects_block_overlapping_footer() {
         .write_at(table_offset, &bat_entry.to_be_bytes())
         .unwrap();
 
-    let mut disk = VhdDisk::open(backend).unwrap();
-    let mut buf = [0u8; SECTOR_SIZE];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
-    assert!(matches!(err, DiskError::CorruptImage(_)));
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block overlaps footer")
+    ));
 }
 
 #[test]
@@ -1665,10 +1666,11 @@ fn vhd_dynamic_rejects_bat_entry_pointing_into_metadata() {
     let table_offset = dyn_header_offset + 1024u64;
     backend.write_at(table_offset, &0u32.to_be_bytes()).unwrap();
 
-    let mut disk = VhdDisk::open(backend).unwrap();
-    let mut buf = [0u8; SECTOR_SIZE];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
-    assert!(matches!(err, DiskError::CorruptImage(_)));
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block overlaps metadata")
+    ));
 }
 
 #[test]
@@ -1689,10 +1691,11 @@ fn vhd_dynamic_zero_writes_do_not_hide_corrupt_bat_entries() {
     let table_offset = dyn_header_offset + 1024u64;
     backend.write_at(table_offset, &0u32.to_be_bytes()).unwrap();
 
-    let mut disk = VhdDisk::open(backend).unwrap();
-    let zeros = vec![0u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &zeros).unwrap_err();
-    assert!(matches!(err, DiskError::CorruptImage(_)));
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block overlaps metadata")
+    ));
 }
 
 #[test]

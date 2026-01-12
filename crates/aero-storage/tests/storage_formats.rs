@@ -552,10 +552,11 @@ fn vhd_rejects_bat_entries_pointing_past_eof() {
         .write_at(table_offset, &bad_sector.to_be_bytes())
         .unwrap();
 
-    let mut disk = VhdDisk::open(storage).unwrap();
-    let mut buf = vec![0u8; SECTOR];
-    let err = disk.read_sectors(0, &mut buf).unwrap_err();
-    assert!(matches!(err, DiskError::CorruptImage(_)));
+    let err = VhdDisk::open(storage).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block overlaps footer")
+    ));
 }
 
 #[test]

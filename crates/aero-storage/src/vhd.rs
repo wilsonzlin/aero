@@ -268,6 +268,39 @@ impl<B: StorageBackend> VhdDisk<B> {
                 let sectors_per_block = (dynamic.block_size as u64) / SECTOR_SIZE as u64;
                 let bitmap_bytes = sectors_per_block.div_ceil(8);
                 let bitmap_size = align_up_u64(bitmap_bytes, SECTOR_SIZE as u64)?;
+                if bitmap_size > MAX_BITMAP_BYTES {
+                    return Err(DiskError::Unsupported("vhd bitmap too large"));
+                }
+
+                // Validate that all allocated BAT entries point to blocks that fit inside the file
+                // and do not overlap the metadata region.
+                //
+                // This makes corruption fail fast at open time rather than surfacing later on
+                // guest reads/writes.
+                let block_total_size = bitmap_size
+                    .checked_add(dynamic.block_size as u64)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                let data_region_start = (SECTOR_SIZE as u64)
+                    .max(dyn_header_end)
+                    .max(bat_end_on_disk);
+                for bat_entry in &bat {
+                    if *bat_entry == u32::MAX {
+                        continue;
+                    }
+                    let block_start = (*bat_entry as u64)
+                        .checked_mul(SECTOR_SIZE as u64)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    if block_start < data_region_start {
+                        return Err(DiskError::CorruptImage("vhd block overlaps metadata"));
+                    }
+                    let block_end = block_start
+                        .checked_add(block_total_size)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    if block_end > footer_offset {
+                        return Err(DiskError::CorruptImage("vhd block overlaps footer"));
+                    }
+                }
+
                 let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
                 let cap_entries = cap_entries
                     .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
