@@ -19,6 +19,22 @@ const AEROGPU_FORMAT_BC2_RGBA_UNORM: u32 = AerogpuFormat::BC2RgbaUnorm as u32;
 const AEROGPU_FORMAT_BC3_RGBA_UNORM: u32 = AerogpuFormat::BC3RgbaUnorm as u32;
 const AEROGPU_FORMAT_BC7_RGBA_UNORM: u32 = AerogpuFormat::BC7RgbaUnorm as u32;
 
+fn env_var_truthy(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+
+    let v = raw.trim();
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
+}
+
+fn texture_compression_disabled_by_env() -> bool {
+    env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION")
+}
+
 async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
 
@@ -74,6 +90,75 @@ async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
         downlevel_flags,
         Arc::new(GpuStats::new()),
     ))
+}
+
+async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
+    common::ensure_xdg_runtime_dir();
+
+    // Let CI opt out of any texture compression feature paths.
+    if texture_compression_disabled_by_env() {
+        return None;
+    }
+
+    async fn try_create(backends: wgpu::Backends) -> Option<AerogpuD3d9Executor> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
+
+        // Find any adapter that supports native BC sampling.
+        //
+        // Note: on Linux CI we prefer GL, but most CI environments only have software adapters
+        // (e.g. llvmpipe) where BC texture compression is often unreliable. Avoid selecting CPU
+        // adapters on Linux so the direct-BC tests skip instead of producing false failures.
+        let allow_software_adapter = !cfg!(target_os = "linux");
+        let adapter = instance
+            .enumerate_adapters(backends)
+            .into_iter()
+            .find(|a| {
+                if !a
+                    .features()
+                    .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+                {
+                    return false;
+                }
+                if allow_software_adapter {
+                    return true;
+                }
+                a.get_info().device_type != wgpu::DeviceType::Cpu
+            })?;
+
+        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aerogpu d3d9 bc (direct) test device"),
+                    required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .ok()?;
+
+        Some(AerogpuD3d9Executor::new(
+            device,
+            queue,
+            downlevel_flags,
+            Arc::new(GpuStats::new()),
+        ))
+    }
+
+    // Prefer GL on Linux CI (avoid crashes in some Vulkan software adapters), but fall back to
+    // other backends if GL doesn't expose BC support.
+    if cfg!(target_os = "linux") {
+        if let Some(exec) = try_create(wgpu::Backends::GL).await {
+            return Some(exec);
+        }
+    }
+
+    try_create(wgpu::Backends::all()).await
 }
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
@@ -239,6 +324,22 @@ fn d3d9_cmd_stream_bc2_texture_cpu_fallback_upload_and_sample() {
 }
 
 #[test]
+fn d3d9_cmd_stream_bc1_texture_direct_upload_and_sample() {
+    // BC1 4x4 block encoding a solid red color (0xF800 in RGB565).
+    let bc1_block = [
+        0x00, 0xF8, // color0
+        0x00, 0xF8, // color1
+        0x00, 0x00, 0x00, 0x00, // indices
+    ];
+
+    run_bc_texture_direct_upload_and_sample(
+        AEROGPU_FORMAT_BC1_RGBA_UNORM,
+        8, // row_pitch_bytes (1 BC1 block row)
+        &bc1_block,
+    );
+}
+
+#[test]
 fn d3d9_cmd_stream_bc3_texture_cpu_fallback_upload_and_sample() {
     // BC3/DXT5 4x4 block encoding solid red with alpha=255.
     //
@@ -283,6 +384,50 @@ fn d3d9_cmd_stream_bc7_texture_cpu_fallback_upload_and_sample() {
     );
 }
 
+#[test]
+fn d3d9_cmd_stream_bc3_texture_direct_upload_and_sample() {
+    // BC3/DXT5 4x4 block encoding solid red with alpha=255.
+    //
+    // Layout:
+    // - alpha0, alpha1
+    // - 48-bit alpha indices
+    // - BC1 color block
+    let bc3_block = [
+        0xFF, 0xFF, // alpha0, alpha1
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // alpha indices (all 0 -> alpha0)
+        0x00, 0xF8, // color0 (red)
+        0x00, 0xF8, // color1 (red)
+        0x00, 0x00, 0x00, 0x00, // color indices (all 0)
+    ];
+
+    run_bc_texture_direct_upload_and_sample(
+        AEROGPU_FORMAT_BC3_RGBA_UNORM,
+        16, // row_pitch_bytes (1 BC3 block row)
+        &bc3_block,
+    );
+}
+
+#[test]
+fn d3d9_cmd_stream_bc2_texture_direct_upload_and_sample() {
+    // BC2/DXT3 4x4 block encoding solid red with alpha=255.
+    //
+    // Layout:
+    // - 64-bit explicit alpha (4 bits per texel)
+    // - BC1 color block
+    let bc2_block = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // alpha (all 0xF)
+        0x00, 0xF8, // color0 (red)
+        0x00, 0xF8, // color1 (red)
+        0x00, 0x00, 0x00, 0x00, // color indices (all 0)
+    ];
+
+    run_bc_texture_direct_upload_and_sample(
+        AEROGPU_FORMAT_BC2_RGBA_UNORM,
+        16, // row_pitch_bytes (1 BC2 block row)
+        &bc2_block,
+    );
+}
+
 fn run_bc_texture_cpu_fallback_upload_and_sample(
     sample_format: u32,
     sample_row_pitch_bytes: u32,
@@ -297,6 +442,51 @@ fn run_bc_texture_cpu_fallback_upload_and_sample(
         }
     };
 
+    run_bc_texture_upload_and_sample(
+        &mut exec,
+        sample_format,
+        sample_row_pitch_bytes,
+        sample_block_bytes,
+    );
+}
+
+fn run_bc_texture_direct_upload_and_sample(
+    sample_format: u32,
+    sample_row_pitch_bytes: u32,
+    sample_block_bytes: &[u8],
+) {
+    let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
+        Some(exec) => exec,
+        None => {
+            if texture_compression_disabled_by_env() {
+                common::skip_or_panic(
+                    module_path!(),
+                    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set",
+                );
+            } else {
+                common::skip_or_panic(
+                    module_path!(),
+                    "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
+                );
+            }
+            return;
+        }
+    };
+
+    run_bc_texture_upload_and_sample(
+        &mut exec,
+        sample_format,
+        sample_row_pitch_bytes,
+        sample_block_bytes,
+    );
+}
+
+fn run_bc_texture_upload_and_sample(
+    exec: &mut AerogpuD3d9Executor,
+    sample_format: u32,
+    sample_row_pitch_bytes: u32,
+    sample_block_bytes: &[u8],
+) {
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
     const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
