@@ -14,6 +14,19 @@ fn decoder_vec_bytes_does_not_preallocate_on_large_count() {
 }
 
 #[test]
+fn decoder_take_rejects_len_overflow_without_panic() {
+    // `Decoder::take` previously used `self.offset + len` without checked arithmetic, which can
+    // overflow on 32-bit targets (including wasm32) and panic when slicing. Ensure we return a
+    // normal decode error instead.
+    let buf = [0u8; 2];
+    let mut d = Decoder::new(&buf);
+    let _ = d.u8().unwrap(); // advance offset to 1
+
+    let err = d.bytes(usize::MAX).unwrap_err();
+    assert_eq!(err, SnapshotError::UnexpectedEof);
+}
+
+#[test]
 fn snapshot_reader_rejects_excessive_field_count() {
     // SnapshotReader stores fields in a BTreeMap keyed by tag. A corrupted snapshot can encode many
     // tiny fields (tag + len + empty) and force pathological allocations. Ensure we cap the field
