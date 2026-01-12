@@ -493,6 +493,11 @@ impl PciIoWindowPort {
         debug_assert!(matches!(size, 1 | 2 | 4));
         let port_u64 = u64::from(port);
         let access_end = port_u64.checked_add(u64::from(size))?;
+        if access_end > 0x1_0000 {
+            // Would wrap the 16-bit I/O port space.
+            return None;
+        }
+
         // Iterate the bus' mapped BARs (deterministic order) without per-access allocations.
         let handlers = self.handlers.borrow();
         let mut pci_cfg = self.pci_cfg.borrow_mut();
