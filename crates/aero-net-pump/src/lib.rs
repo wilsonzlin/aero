@@ -1019,6 +1019,7 @@ mod tests {
     struct DeterministicNetStackBackend {
         inner: NetStackBackend,
         now_ms: u64,
+        tx_log: Vec<Vec<u8>>,
     }
 
     impl DeterministicNetStackBackend {
@@ -1026,6 +1027,7 @@ mod tests {
             Self {
                 inner: NetStackBackend::new(cfg),
                 now_ms: 0,
+                tx_log: Vec::new(),
             }
         }
 
@@ -1036,6 +1038,7 @@ mod tests {
 
     impl NetworkBackend for DeterministicNetStackBackend {
         fn transmit(&mut self, frame: Vec<u8>) {
+            self.tx_log.push(frame.clone());
             // Drive the stack with a deterministic monotonically increasing clock so this test does
             // not rely on wall-clock time.
             self.now_ms = self.now_ms.saturating_add(1);
@@ -1236,6 +1239,11 @@ mod tests {
             counts0.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP OFFER)"
         );
+        assert_eq!(
+            backend.tx_log.as_slice(),
+            [discover_frame.clone()],
+            "backend should have received exactly the DHCPDISCOVER TX frame"
+        );
         assert!(
             !backend.stack().is_ip_assigned(),
             "stack should not mark IP assigned after DHCP OFFER"
@@ -1391,6 +1399,11 @@ mod tests {
         assert_eq!(
             counts1.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP ACK)"
+        );
+        assert_eq!(
+            backend.tx_log.as_slice(),
+            [discover_frame.clone(), request_frame.clone()],
+            "backend should have received DHCPDISCOVER then DHCPREQUEST frames"
         );
 
         let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
