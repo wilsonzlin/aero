@@ -1914,6 +1914,12 @@ impl RunExit {
 #[wasm_bindgen]
 pub struct Machine {
     inner: aero_machine::Machine,
+    // Tracks the last injected mouse button state (bit0=left, bit1=right, bit2=middle).
+    //
+    // This exists solely to support the ergonomic JS-side `inject_mouse_buttons_mask` API without
+    // emitting redundant button transition packets.
+    mouse_buttons: u8,
+    mouse_buttons_known: bool,
 }
 
 #[wasm_bindgen]
@@ -1926,11 +1932,17 @@ impl Machine {
         };
         let inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            mouse_buttons: 0,
+            mouse_buttons_known: true,
+        })
     }
 
     pub fn reset(&mut self) {
         self.inner.reset();
+        self.mouse_buttons = 0;
+        self.mouse_buttons_known = true;
     }
 
     pub fn set_disk_image(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
@@ -1961,16 +1973,82 @@ impl Machine {
         self.inner.inject_mouse_motion(dx, dy, wheel);
     }
 
+    /// Inject a mouse button transition, using DOM `MouseEvent.button` mapping:
+    /// - `0`: left
+    /// - `1`: middle
+    /// - `2`: right
+    ///
+    /// Other values are ignored.
+    pub fn inject_mouse_button(&mut self, button: u8, pressed: bool) {
+        match button {
+            0 => self.inject_mouse_left(pressed),
+            1 => self.inject_mouse_middle(pressed),
+            2 => self.inject_mouse_right(pressed),
+            _ => {}
+        }
+    }
+
+    /// Set all mouse buttons at once using a bitmask matching DOM `MouseEvent.buttons`:
+    /// - bit0 (`0x01`): left
+    /// - bit1 (`0x02`): right
+    /// - bit2 (`0x04`): middle
+    ///
+    /// Bits above `0x07` are ignored.
+    pub fn inject_mouse_buttons_mask(&mut self, mask: u8) {
+        let next = mask & 0x07;
+
+        if self.mouse_buttons_known {
+            let prev = self.mouse_buttons;
+            let delta = prev ^ next;
+            if (delta & 0x01) != 0 {
+                self.inject_mouse_left((next & 0x01) != 0);
+            }
+            if (delta & 0x02) != 0 {
+                self.inject_mouse_right((next & 0x02) != 0);
+            }
+            if (delta & 0x04) != 0 {
+                self.inject_mouse_middle((next & 0x04) != 0);
+            }
+        } else {
+            // We don't know what state the underlying machine restored (e.g. after snapshot
+            // restore), so set every button explicitly.
+            self.inject_mouse_left((next & 0x01) != 0);
+            self.inject_mouse_right((next & 0x02) != 0);
+            self.inject_mouse_middle((next & 0x04) != 0);
+        }
+
+        self.mouse_buttons = next;
+        self.mouse_buttons_known = true;
+    }
+
     pub fn inject_mouse_left(&mut self, pressed: bool) {
         self.inner.inject_mouse_left(pressed);
+        if pressed {
+            self.mouse_buttons |= 0x01;
+        } else {
+            self.mouse_buttons &= !0x01;
+        }
+        self.mouse_buttons_known = true;
     }
 
     pub fn inject_mouse_right(&mut self, pressed: bool) {
         self.inner.inject_mouse_right(pressed);
+        if pressed {
+            self.mouse_buttons |= 0x02;
+        } else {
+            self.mouse_buttons &= !0x02;
+        }
+        self.mouse_buttons_known = true;
     }
 
     pub fn inject_mouse_middle(&mut self, pressed: bool) {
         self.inner.inject_mouse_middle(pressed);
+        if pressed {
+            self.mouse_buttons |= 0x04;
+        } else {
+            self.mouse_buttons &= !0x04;
+        }
+        self.mouse_buttons_known = true;
     }
 
     // -------------------------------------------------------------------------
@@ -2003,7 +2081,10 @@ impl Machine {
     pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         self.inner
             .restore_snapshot_bytes(bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Restoring rewinds machine device state; we no longer know the current mouse buttons.
+        self.mouse_buttons_known = false;
+        Ok(())
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2048,6 +2129,8 @@ impl Machine {
 
         file.close()
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Restoring rewinds machine device state; we no longer know the current mouse buttons.
+        self.mouse_buttons_known = false;
         Ok(())
     }
 }
