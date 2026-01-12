@@ -154,6 +154,7 @@ impl SnapshotWriter {
     }
 }
 
+#[derive(Debug)]
 pub struct SnapshotReader<'a> {
     header: SnapshotHeader,
     fields: BTreeMap<u16, &'a [u8]>,
