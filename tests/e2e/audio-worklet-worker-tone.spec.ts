@@ -57,12 +57,15 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
       if (typeof backend.disable === "function") backend.disable();
       const afterDisable = typeof backend.isEnabled === "function" ? backend.isEnabled() : null;
 
+      const snapshotBytes = typeof backend.exportPcapng === "function" ? await backend.exportPcapng() : null;
       const bytes = await backend.downloadPcapng();
       return {
         ok: true,
         beforeEnabled,
         afterEnable,
         afterDisable,
+        snapshotByteLength: snapshotBytes ? snapshotBytes.byteLength : null,
+        snapshotHead: snapshotBytes ? Array.from(snapshotBytes.slice(0, 4)) : null,
         byteLength: bytes.byteLength,
         head: Array.from(bytes.slice(0, 4)),
       };
@@ -75,6 +78,8 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
   if (netTrace.ok) {
     expect(netTrace.afterEnable).toBe(true);
     expect(netTrace.afterDisable).toBe(false);
+    expect(netTrace.snapshotByteLength).toBeGreaterThan(0);
+    expect(netTrace.snapshotHead).toEqual([0x0a, 0x0d, 0x0d, 0x0a]);
     expect(netTrace.byteLength).toBeGreaterThan(0);
     // PCAPNG section header block magic.
     expect(netTrace.head).toEqual([0x0a, 0x0d, 0x0d, 0x0a]);
