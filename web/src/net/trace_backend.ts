@@ -1,4 +1,5 @@
 import type { WorkerCoordinator } from "../runtime/coordinator";
+import { PCAPNG_LINKTYPE_ETHERNET, writePcapng } from "./pcapng";
 import type { NetTraceBackend } from "./trace_ui";
 
 /**
@@ -20,12 +21,44 @@ export function installNetTraceBackendOnAeroGlobal(coordinator: WorkerCoordinato
   }
   const aero = win.aero as Record<string, unknown>;
 
+  // Provide a valid-but-empty capture for best-effort exports when the net
+  // worker hasn't started yet (or is restarting).
+  const emptyCapture = (): Uint8Array<ArrayBuffer> => {
+    return writePcapng({
+      interfaces: [{ linkType: PCAPNG_LINKTYPE_ETHERNET, snapLen: 0xffff, name: "guest-eth0", tsResolPower10: 9 }],
+      packets: [],
+    });
+  };
+
+  const isNetWorkerReady = (): boolean => {
+    const state = (coordinator as unknown as { getVmState?: () => string }).getVmState?.();
+    if (state === "stopped" || state === "poweredOff" || state === "failed") return false;
+    const statuses = (coordinator as unknown as { getWorkerStatuses?: () => { net?: { state?: string } } }).getWorkerStatuses?.();
+    const netState = statuses?.net?.state;
+    if (netState !== undefined && netState !== "ready") return false;
+    return true;
+  };
+
   const backend: NetTraceBackend = {
     isEnabled: () => coordinator.isNetTraceEnabled(),
     enable: () => coordinator.setNetTraceEnabled(true),
     disable: () => coordinator.setNetTraceEnabled(false),
-    downloadPcapng: () => coordinator.takeNetTracePcapng(),
-    exportPcapng: () => coordinator.exportNetTracePcapng(),
+    downloadPcapng: async () => {
+      if (!isNetWorkerReady()) return emptyCapture();
+      try {
+        return await coordinator.takeNetTracePcapng();
+      } catch {
+        return emptyCapture();
+      }
+    },
+    exportPcapng: async () => {
+      if (!isNetWorkerReady()) return emptyCapture();
+      try {
+        return await coordinator.exportNetTracePcapng();
+      } catch {
+        return emptyCapture();
+      }
+    },
     clear: () => coordinator.clearNetTrace(),
     getStats: async () => {
       // Avoid spamming UIs (notably the repo-root harness panel) with errors when
