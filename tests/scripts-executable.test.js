@@ -462,10 +462,9 @@ test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip
     fs.chmodSync(fakeCargo, 0o755);
 
     const env = { ...process.env };
-    // Keep the test deterministic: if a caller exports CARGO_BUILD_TARGET=wasm32-...,
-    // safe-run should inject the wasm-specific linker flag instead of `-Wl,...`.
-    // These assertions target the default native path.
-    delete env.CARGO_BUILD_TARGET;
+    // Keep the test deterministic: pick an explicit native target triple so we can assert on the
+    // per-target rustflags variable that safe-run sets to cap linker parallelism.
+    env.CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
     delete env.CARGO_BUILD_JOBS;
     delete env.AERO_CARGO_BUILD_JOBS;
     delete env.AERO_RUST_CODEGEN_UNITS;
@@ -514,10 +513,9 @@ test("safe-run.sh does not force codegen-units based on AERO_CARGO_BUILD_JOBS (L
     fs.chmodSync(fakeCargo, 0o755);
 
     const env = { ...process.env };
-    // Keep the test deterministic: if a caller exports CARGO_BUILD_TARGET=wasm32-...,
-    // safe-run should inject the wasm-specific linker flag instead of `-Wl,...`.
-    // These assertions target the default native path.
-    delete env.CARGO_BUILD_TARGET;
+    // Keep the test deterministic: pick an explicit native target triple so we can assert on the
+    // per-target rustflags variable that safe-run sets to cap linker parallelism.
+    env.CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
     delete env.CARGO_BUILD_JOBS;
     delete env.RUSTFLAGS;
     delete env.AERO_RUST_CODEGEN_UNITS;
@@ -566,6 +564,7 @@ test("safe-run.sh uses wasm lld threads flag when building wasm32 targets (Linux
     delete env.AERO_CODEGEN_UNITS;
     delete env.CARGO_BUILD_TARGET;
     delete env.RUSTFLAGS;
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
     env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
 
     // Use an explicit `--target` flag to ensure safe-run does not inject the native-only
