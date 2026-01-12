@@ -355,9 +355,11 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
 * `d3d10_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
 * `d3d10_shared_surface_ipc` creates a shareable D3D10 render-target texture in one process, duplicates the shared `HANDLE` into a second process, opens it via `OpenSharedResource`, and validates the consumer can read back the producer’s clear color (catches bugs where the driver treats the numeric handle value as a stable cross-process token)
+  * When supported, it also uses `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to confirm both process-local handles map to the same stable **debug token** (separate from the protocol `share_token`).
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d10_1_map_do_not_wait` is the D3D10.1 variant of the above `Map(READ, DO_NOT_WAIT)` non-blocking poll test
 * `d3d10_1_shared_surface_ipc` is the D3D10.1 variant of `d3d10_shared_surface_ipc` (shared texture cross-process `HANDLE` duplication + `OpenSharedResource` + readback). It additionally validates that the AeroGPU UMD exports the D3D10.1 entrypoint `OpenAdapter10_2`.
+  * When supported, it also uses `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to confirm both process-local handles map to the same stable **debug token** (separate from the protocol `share_token`).
 * `d3d10_caps_smoke` validates `ID3D10Device::CheckFormatSupport` bits for a few core RT/DS + index/vertex formats used by common apps
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
 * `d3d11_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
@@ -371,6 +373,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_map_roundtrip` validates `Map/Unmap` on a `D3D11_USAGE_STAGING` texture by writing a checker pattern via `Map(WRITE)` and reading it back via `Map(READ)` (no rendering required)
 * `d3d11_update_subresource_texture_sanity` validates `UpdateSubresource` on both textures (full + boxed update, padded RowPitch) and a DEFAULT constant buffer (full + boxed range update) via staging readback
 * `d3d11_shared_surface_ipc` creates a D3D11 shareable texture in one process, duplicates the shared `HANDLE` into a second process, opens it via `OpenSharedResource`, and validates the consumer can read back the producer's clear color (catches bugs where the driver treats the numeric handle value as a stable cross-process token)
+  * When supported, it also uses `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to confirm both process-local handles map to the same stable **debug token** (separate from the protocol `share_token`).
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 * `d3d11_texture_sampling_sanity` renders a textured quad into an offscreen render target and validates a few sampled texels via readback (requires feature level >= 10_0)
 * `d3d11_dynamic_constant_buffer_sanity` draws using a dynamic constant buffer updated with `Map(WRITE_DISCARD)` between draws (blue fullscreen, then green centered triangle) and validates output via readback (requires feature level >= 10_0)
