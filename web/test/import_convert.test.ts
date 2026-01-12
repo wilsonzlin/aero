@@ -909,6 +909,57 @@ test("convertToAeroSparse: rejects qcow2 v3 incompatible features", async () => 
   );
 });
 
+test("convertToAeroSparse: dynamic VHD rejects oversized output table before reading BAT", async () => {
+  const maxTableEntries = (64 * 1024 * 1024) / 8 + 1; // just over the 64MiB aerosparse table cap
+  const blockSize = 512;
+  const logicalSize = maxTableEntries * blockSize;
+
+  const dynHeaderOffset = 512;
+  const tableOffset = 1536;
+  const batBytesOnDisk = maxTableEntries * 4;
+  const batSizeOnDisk = Math.ceil(batBytesOnDisk / 512) * 512;
+  const footerOff = tableOffset + batSizeOnDisk;
+  const fileSize = footerOff + 512;
+
+  const footer = new Uint8Array(512);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  writeU64BE(footer, 16, BigInt(dynHeaderOffset)); // data_offset
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 3); // disk type dynamic
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const dyn = new Uint8Array(1024);
+  dyn.set(new TextEncoder().encode("cxsparse"), 0);
+  writeU64BE(dyn, 8, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(dyn, 16, BigInt(tableOffset));
+  writeU32BE(dyn, 24, 0x0001_0000);
+  writeU32BE(dyn, 28, maxTableEntries);
+  writeU32BE(dyn, 32, blockSize);
+  writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
+
+  class FakeVhdSource {
+    readonly size: number;
+    constructor(size: number) {
+      this.size = size;
+    }
+    async readAt(offset: number, length: number): Promise<Uint8Array> {
+      if (offset === 0 && length === 512) return footer.slice();
+      if (offset === dynHeaderOffset && length === 1024) return dyn.slice();
+      if (offset === fileSize - 512 && length === 512) return footer.slice();
+      throw new Error(`unexpected readAt ${offset}+${length}`);
+    }
+  }
+
+  const src = new FakeVhdSource(fileSize);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src as any, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /aerosparse allocation table too large/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () => {
   const { file, logical } = buildDynamicVhdFixture();
   const src = new MemSource(file);

@@ -714,6 +714,13 @@ async function convertVhdToSparse(
     throw new Error("VHD BAT overlaps dynamic header");
   }
 
+  // Fail fast if the output AeroSparse allocation table would exceed the runtime cap (64MiB).
+  // This avoids allocating/reading a potentially large VHD BAT only to reject later when creating
+  // the output sparse writer.
+  if (expectedEntries > AEROSPAR_MAX_TABLE_ENTRIES) {
+    throw new Error("aerosparse allocation table too large");
+  }
+
   // Only read the entries required for the advertised virtual size. This avoids allocating
   // memory proportional to max_table_entries when it is larger than needed.
   const bat = await VhdBat.read(src, dyn.tableOffset, expectedEntries);
