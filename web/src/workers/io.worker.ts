@@ -2093,6 +2093,20 @@ function maybeInitVirtioSndDevice(): void {
     try {
       if (dev.loadState(pendingAudioVirtioSndSnapshotBytes)) {
         pendingAudioVirtioSndSnapshotBytes = null;
+
+        // Re-apply the current host AudioWorklet ring + sample rate plumbing. The snapshot may
+        // restore a different host sample rate; keep it consistent with the current AudioContext.
+        try {
+          const shouldAttach = !hdaDevice;
+          dev.setAudioRingBuffer({
+            ringBuffer: shouldAttach ? audioOutRingBuffer : null,
+            capacityFrames: audioOutCapacityFrames,
+            channelCount: audioOutChannelCount,
+            dstSampleRateHz: audioOutDstSampleRate,
+          });
+        } catch {
+          // ignore
+        }
       }
     } catch {
       // ignore
