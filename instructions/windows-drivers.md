@@ -89,7 +89,8 @@ Any change to PCI vendor/device IDs, BAR sizes, or feature bits requires:
 1. Update the contract document
 2. Update the emulator device model
 3. Update the driver INF files
-4. Coordinate with Graphics (B) and Integration (H) workstreams
+4. Update the unified binding manifest (`docs/windows-device-contract.json`) and regenerate Guest Tools `devices.cmd`
+5. Coordinate with Graphics (B) and Integration (H) workstreams
 
 ### CI guardrails (do not bypass)
 
