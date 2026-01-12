@@ -150,11 +150,12 @@ impl AerogpuCmdRuntime {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
+        let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("aero-d3d11 aerogpu test device"),
-                    required_features: wgpu::Features::empty(),
+                    required_features: requested_features,
                     required_limits: wgpu::Limits::downlevel_defaults(),
                 },
                 None,
