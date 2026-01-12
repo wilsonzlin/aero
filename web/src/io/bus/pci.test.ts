@@ -946,6 +946,24 @@ describe("io/bus/pci", () => {
     expect(reads2).toBe(1);
   });
 
+  it("encodes an aero-io-snapshot header with device_id=PCIB in saveState()", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = { name: "hdr_dev", vendorId: 0x1234, deviceId: 0x5678, classCode: 0 };
+    pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const snap = pciBus.saveState();
+    expect(snap.byteLength).toBeGreaterThanOrEqual(16);
+
+    // io-snapshot header: magic "AERO"
+    expect(Array.from(snap.slice(0, 4))).toEqual([0x41, 0x45, 0x52, 0x4f]);
+    // device id slot: "PCIB"
+    expect(Array.from(snap.slice(8, 12))).toEqual([0x50, 0x43, 0x49, 0x42]);
+  });
+
   it("replays PCI command register side effects (onPciCommandWrite) when restoring snapshots", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
