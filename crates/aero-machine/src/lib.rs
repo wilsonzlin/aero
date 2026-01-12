@@ -603,6 +603,21 @@ pub struct Machine {
     mem: SystemMemory,
     io: IoPortBus,
 
+    // ---------------------------------------------------------------------
+    // Host-managed storage overlay references (snapshot DISKS section)
+    // ---------------------------------------------------------------------
+    //
+    // Aero snapshots intentionally do not embed any disk contents; only references to the host's
+    // chosen base images + writable overlays are stored.
+    //
+    // Storage controller device models also drop attached backends during `load_state()`, so the
+    // host/coordinator is responsible for re-opening and re-attaching the correct overlays after
+    // restore. These fields exist to make that host contract explicit and deterministic.
+    ahci_port0_overlay: Option<snapshot::DiskOverlayRef>,
+    ide_secondary_master_atapi_overlay: Option<snapshot::DiskOverlayRef>,
+    ide_primary_master_overlay: Option<snapshot::DiskOverlayRef>,
+    restored_disk_overlays: Option<snapshot::DiskOverlayRefs>,
+
     // Optional PC platform devices. These are behind `Rc<RefCell<_>>` so their host wiring
     // survives snapshot restore (devices reset their internal state but preserve callbacks/irq
     // lines).
@@ -634,6 +649,28 @@ pub struct Machine {
 }
 
 impl Machine {
+    // ---------------------------------------------------------------------
+    // Stable snapshot disk ids (normative)
+    // ---------------------------------------------------------------------
+    //
+    // These IDs are the contract between:
+    // - the machine's canonical storage topology,
+    // - the snapshot format's `DISKS` section (`aero_snapshot::DiskOverlayRefs`), and
+    // - the host/coordinator that opens and re-attaches disk/ISO backends after restore.
+    //
+    // Canonical Windows 7 storage topology is documented in:
+    // - `docs/05-storage-topology-win7.md`
+    //
+    // Note: this crate does *not* inline any disk bytes into snapshots; these ids only identify
+    // which *external* overlays should be re-opened.
+
+    /// `disk_id=0`: Primary HDD (AHCI `SATA_AHCI_ICH9` port 0).
+    pub const DISK_ID_PRIMARY_HDD: u32 = 0;
+    /// `disk_id=1`: Install media / CD-ROM (IDE `IDE_PIIX3` secondary channel master ATAPI).
+    pub const DISK_ID_INSTALL_MEDIA: u32 = 1;
+    /// `disk_id=2`: Optional IDE primary master ATA disk (if exposed as a separately managed disk).
+    pub const DISK_ID_IDE_PRIMARY_MASTER: u32 = 2;
+
     pub fn new(cfg: MachineConfig) -> Result<Self, MachineError> {
         if cfg.cpu_count != 1 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
@@ -654,6 +691,10 @@ impl Machine {
             mmu: aero_mmu::Mmu::new(),
             mem,
             io: IoPortBus::new(),
+            ahci_port0_overlay: None,
+            ide_secondary_master_atapi_overlay: None,
+            ide_primary_master_overlay: None,
+            restored_disk_overlays: None,
             platform_clock: None,
             interrupts: None,
             pit: None,
@@ -734,6 +775,77 @@ impl Machine {
     pub fn set_disk_image(&mut self, bytes: Vec<u8>) -> Result<(), MachineError> {
         self.disk = VecBlockDevice::new(bytes)?;
         Ok(())
+    }
+
+    // ---------------------------------------------------------------------
+    // Snapshot disk overlay configuration (host-managed storage backends)
+    // ---------------------------------------------------------------------
+
+    /// Set the overlay reference for the canonical primary HDD (`disk_id=0`).
+    pub fn set_ahci_port0_disk_overlay_ref(
+        &mut self,
+        base_image: impl Into<String>,
+        overlay_image: impl Into<String>,
+    ) {
+        self.ahci_port0_overlay = Some(snapshot::DiskOverlayRef {
+            disk_id: Self::DISK_ID_PRIMARY_HDD,
+            base_image: base_image.into(),
+            overlay_image: overlay_image.into(),
+        });
+    }
+
+    /// Clear the overlay reference for the canonical primary HDD (`disk_id=0`).
+    pub fn clear_ahci_port0_disk_overlay_ref(&mut self) {
+        self.ahci_port0_overlay = None;
+    }
+
+    /// Set the overlay reference for the canonical install media / CD-ROM (`disk_id=1`).
+    pub fn set_ide_secondary_master_atapi_overlay_ref(
+        &mut self,
+        base_image: impl Into<String>,
+        overlay_image: impl Into<String>,
+    ) {
+        self.ide_secondary_master_atapi_overlay = Some(snapshot::DiskOverlayRef {
+            disk_id: Self::DISK_ID_INSTALL_MEDIA,
+            base_image: base_image.into(),
+            overlay_image: overlay_image.into(),
+        });
+    }
+
+    /// Clear the overlay reference for the canonical install media / CD-ROM (`disk_id=1`).
+    pub fn clear_ide_secondary_master_atapi_overlay_ref(&mut self) {
+        self.ide_secondary_master_atapi_overlay = None;
+    }
+
+    /// Set the overlay reference for an optional IDE primary master ATA disk (`disk_id=2`).
+    pub fn set_ide_primary_master_ata_overlay_ref(
+        &mut self,
+        base_image: impl Into<String>,
+        overlay_image: impl Into<String>,
+    ) {
+        self.ide_primary_master_overlay = Some(snapshot::DiskOverlayRef {
+            disk_id: Self::DISK_ID_IDE_PRIMARY_MASTER,
+            base_image: base_image.into(),
+            overlay_image: overlay_image.into(),
+        });
+    }
+
+    /// Clear the overlay reference for an optional IDE primary master ATA disk (`disk_id=2`).
+    pub fn clear_ide_primary_master_ata_overlay_ref(&mut self) {
+        self.ide_primary_master_overlay = None;
+    }
+
+    /// Return any disk overlay refs captured from the most recent snapshot restore.
+    ///
+    /// This is intended for host/coordinator code that needs to re-open and re-attach storage
+    /// backends after restore.
+    pub fn restored_disk_overlays(&self) -> Option<&snapshot::DiskOverlayRefs> {
+        self.restored_disk_overlays.as_ref()
+    }
+
+    /// Take and clear the disk overlay refs captured from the most recent snapshot restore.
+    pub fn take_restored_disk_overlays(&mut self) -> Option<snapshot::DiskOverlayRefs> {
+        self.restored_disk_overlays.take()
     }
 
     /// Install/replace the host-side network backend used by any emulated NICs.
@@ -1153,6 +1265,8 @@ impl Machine {
     }
 
     pub fn restore_snapshot_from<R: Read>(&mut self, r: &mut R) -> snapshot::Result<()> {
+        // Clear restore-only state before applying new sections.
+        self.restored_disk_overlays = None;
         snapshot::restore_snapshot(r, self)
     }
 
@@ -1169,6 +1283,8 @@ impl Machine {
         }
         self.serial_log.clear();
         self.reset_latch.clear();
+        // Clear restore-only state before applying new snapshot sections.
+        self.restored_disk_overlays = None;
 
         let expected_parent_snapshot_id = self.last_snapshot_id;
         snapshot::restore_snapshot_with_options(
@@ -1859,7 +1975,18 @@ impl snapshot::SnapshotSource for Machine {
     }
 
     fn disk_overlays(&self) -> snapshot::DiskOverlayRefs {
-        snapshot::DiskOverlayRefs::default()
+        let mut disks = Vec::new();
+        // Deterministic ordering (by stable disk_id); see `docs/16-snapshots.md`.
+        if let Some(disk) = self.ahci_port0_overlay.clone() {
+            disks.push(disk);
+        }
+        if let Some(disk) = self.ide_secondary_master_atapi_overlay.clone() {
+            disks.push(disk);
+        }
+        if let Some(disk) = self.ide_primary_master_overlay.clone() {
+            disks.push(disk);
+        }
+        snapshot::DiskOverlayRefs { disks }
     }
 
     fn ram_len(&self) -> usize {
@@ -2161,7 +2288,29 @@ impl snapshot::SnapshotTarget for Machine {
         }
     }
 
-    fn restore_disk_overlays(&mut self, _overlays: snapshot::DiskOverlayRefs) {}
+    fn restore_disk_overlays(&mut self, overlays: snapshot::DiskOverlayRefs) {
+        // Record the restored refs for the host/coordinator so it can re-open and re-attach the
+        // appropriate storage backends after restore.
+        self.restored_disk_overlays = Some(overlays.clone());
+
+        // Also update the machine's configured overlay refs so subsequent snapshots (and host-side
+        // queries) reflect the restored configuration.
+        self.ahci_port0_overlay = overlays
+            .disks
+            .iter()
+            .find(|d| d.disk_id == Self::DISK_ID_PRIMARY_HDD)
+            .cloned();
+        self.ide_secondary_master_atapi_overlay = overlays
+            .disks
+            .iter()
+            .find(|d| d.disk_id == Self::DISK_ID_INSTALL_MEDIA)
+            .cloned();
+        self.ide_primary_master_overlay = overlays
+            .disks
+            .iter()
+            .find(|d| d.disk_id == Self::DISK_ID_IDE_PRIMARY_MASTER)
+            .cloned();
+    }
 
     fn ram_len(&self) -> usize {
         usize::try_from(self.cfg.ram_size_bytes).unwrap_or(0)
