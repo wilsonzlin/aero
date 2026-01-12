@@ -1115,6 +1115,9 @@ Capture format notes:
 - Frames are recorded at the forwarder boundary (best-effort). In particular, the capture may
   include frames that were later dropped due to missing tunnel/backpressure, or because `NET_RX`
   was full.
+- Timestamps are stored in nanoseconds (PCAPNG resolution `10^-9`), but in the current web runtime
+  they are derived from `Date.now()` (millisecond wall-clock time), so do not expect
+  sub-millisecond precision.
 
 Relevant implementation files:
 
@@ -1161,6 +1164,19 @@ OPFS notes:
 - OPFS is origin-scoped browser storage (`navigator.storage.getDirectory()`); it is convenient for
   keeping large captures without triggering a download prompt.
 - OPFS may not be available in all browsers/contexts; the UI will error if unsupported.
+
+#### Viewing the capture (Wireshark)
+
+The downloaded/saved file is a standard **PCAPNG**. Open it in Wireshark and use normal display
+filters. Common ones when debugging guest bring-up:
+
+- `arp` (gateway discovery)
+- `bootp` (DHCP)
+- `dns` (DNS queries/responses)
+- `tcp` / `udp` / `icmp`
+
+Because the capture uses separate interfaces for `guest_rx` and `guest_tx`, Wireshark may show
+conversations split across interfaces; use “Follow Stream” and per-interface packet lists as needed.
 
 #### Automation API (`window.aero.netTrace`)
 
