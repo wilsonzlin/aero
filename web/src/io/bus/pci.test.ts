@@ -681,4 +681,39 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
     expect(mmioBus.read(newBase, 4)).toBe(0x1122_3344);
   });
+
+  it("remaps mmio64 BARs when the high dword is updated (mapping above 4GiB)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "mmio64_hi_remap_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio64", size: 0x4000 }, null, null, null, null, null],
+      mmioRead: () => 0x1122_3344,
+      mmioWrite: () => {},
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    // Enable memory decoding.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002);
+
+    const bar0Low = cfg.readU32(addr.device, addr.function, 0x10);
+    const bar0High = cfg.readU32(addr.device, addr.function, 0x14);
+    const base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
+    expect(mmioBus.read(base, 4)).toBe(0x1122_3344);
+
+    // Move the BAR to above 4GiB by updating only the high dword.
+    const newHigh = (bar0High + 1) >>> 0;
+    cfg.writeU32(addr.device, addr.function, 0x14, newHigh);
+    const newBase = (BigInt(newHigh) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
+
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+    expect(mmioBus.read(newBase, 4)).toBe(0x1122_3344);
+  });
 });
