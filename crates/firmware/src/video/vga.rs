@@ -81,7 +81,12 @@ impl VgaDevice {
             }
             0x08 => {
                 // backspace
-                col = col.saturating_sub(1);
+                if col > 0 {
+                    col = col.saturating_sub(1);
+                } else if row > 0 {
+                    row = row.saturating_sub(1);
+                    col = cols.saturating_sub(1);
+                }
             }
             ch => {
                 self.write_text_cell_at_base(

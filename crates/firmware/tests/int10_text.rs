@@ -50,6 +50,31 @@ fn int10_text_mode_teletype_updates_text_buffer_and_cursor() {
 }
 
 #[test]
+fn int10_teletype_backspace_wraps_to_previous_line_when_at_col0() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Cursor at (row=1, col=0).
+    cpu.set_ax(0x0200);
+    cpu.set_bx(0x0000);
+    cpu.set_dx((1u16 << 8) | 0u16);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (1, 0));
+
+    // AH=0Eh: backspace.
+    cpu.set_ax(0x0E08);
+    cpu.set_bx(0x0007);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 79));
+}
+
+#[test]
 fn int10_write_char_attr_repeats_without_moving_cursor() {
     let mut mem = VecMemory::new(2 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
