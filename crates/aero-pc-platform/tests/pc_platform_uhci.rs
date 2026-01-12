@@ -1438,6 +1438,104 @@ fn pc_platform_uhci_short_packet_sets_usbint_and_asserts_intx_when_spd_enabled()
 }
 
 #[test]
+fn pc_platform_uhci_usb_err_int_asserts_intx_on_crc_timeout() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
+
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe UHCI interrupts through the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(irq, false);
+    }
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBINTR,
+        2,
+        u32::from(USBINTR_TIMEOUT_CRC),
+    );
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // Issue an IN TD to a non-existent device address so the schedule reports a CRC/timeout error.
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 42, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    let td_st = pc.memory.read_u32(TD0 as u64 + 4);
+    assert_eq!(td_st & TD_STATUS_ACTIVE, 0);
+    assert_ne!(
+        td_st & TD_STATUS_CRC_TIMEOUT,
+        0,
+        "expected missing device to set CRC/timeout error on TD"
+    );
+
+    assert_ne!(
+        pc.io.read(bar4_base + REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
+        0,
+        "expected UHCI schedule error to set USBSTS.USBERRINT"
+    );
+
+    // Propagate INTx and observe the pending IRQ.
+    pc.poll_pci_intx_lines();
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("UHCI IRQ should be pending after USBERRINT");
+    let pending_irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(pending_irq, irq);
+
+    // Consume + EOI the interrupt.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+
+    // Clear USBERRINT (W1C) and ensure the line deasserts.
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_USBERRINT));
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
 fn pc_platform_uhci_interrupt_in_reads_hid_mouse_reports_via_dma() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
     let bdf = USB_UHCI_PIIX3.bdf;
