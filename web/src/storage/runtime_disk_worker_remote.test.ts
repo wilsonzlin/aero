@@ -376,4 +376,66 @@ describe("RuntimeDiskWorker (remote)", () => {
     expect(openOpfsSpy).toHaveBeenCalledTimes(1);
     expect(clearCache).toHaveBeenCalledWith(expectedLegacyCacheKey);
   });
+
+  it("best-effort deletes legacy range cache dir keyed as deliveryType='range' on open (remote spec)", async () => {
+    vi.resetModules();
+
+    const clearCache = vi.fn(async () => {});
+    const openMock = vi.fn(async (_url: string, _opts: any) => {
+      return {
+        sectorSize: 512,
+        capacityBytes: 512,
+        async readSectors() {},
+        async writeSectors() {
+          throw new Error("read-only");
+        },
+        async flush() {},
+      };
+    });
+
+    vi.doMock("./remote_range_disk", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./remote_range_disk")>();
+      return {
+        ...actual,
+        RemoteRangeDisk: { open: openMock },
+      };
+    });
+
+    const { RemoteCacheManager: FreshRemoteCacheManager } = await import("./remote_cache_manager");
+    const openOpfsSpy = vi.spyOn(FreshRemoteCacheManager, "openOpfs").mockResolvedValue({ clearCache } as any);
+    const expectedLegacyCacheKey = await FreshRemoteCacheManager.deriveCacheKey({
+      imageId: "test-image",
+      version: "v1",
+      deliveryType: "range",
+    });
+
+    const { RuntimeDiskWorker: MockedWorker } = await import("./runtime_disk_worker_impl");
+    const posted: any[] = [];
+    const worker = new MockedWorker((msg) => posted.push(msg));
+
+    const spec: DiskOpenSpec = {
+      kind: "remote",
+      remote: {
+        delivery: "range",
+        kind: "cd",
+        format: "iso",
+        url: "https://example.invalid/disk.iso",
+        cacheKey: "test.iso.v1",
+        imageId: "test-image",
+        version: "v1",
+        chunkSizeBytes: 1024,
+      },
+    };
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec },
+    } satisfies RuntimeDiskRequestMessage);
+
+    expect(openMock).toHaveBeenCalledTimes(1);
+    expect(openOpfsSpy).toHaveBeenCalledTimes(1);
+    expect(clearCache).toHaveBeenCalledWith(expectedLegacyCacheKey);
+  });
 });
