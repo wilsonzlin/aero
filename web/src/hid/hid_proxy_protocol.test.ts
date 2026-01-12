@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import {
   isHidAttachMessage,
   isHidErrorMessage,
@@ -78,7 +79,7 @@ describe("hid/hid_proxy_protocol", () => {
       productId: 0xabcd,
       productName: "Demo",
       guestPort: 0,
-      guestPath: [0, 3],
+      guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
       collections: sampleCollections(),
       hasInterruptOut: false,
     };

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import { WasmUhciHidGuestBridge, type UhciRuntimeHidApi } from "./wasm_uhci_hid_guest_bridge";
 import type { HidAttachMessage } from "./hid_proxy_protocol";
 
@@ -33,7 +34,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Demo",
-      guestPath: [0, 3],
+      guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
       collections: [{ some: "collection" }] as any,
       hasInterruptOut: false,
     };
