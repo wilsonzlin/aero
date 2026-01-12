@@ -1,8 +1,8 @@
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
-    OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Program, SrcKind, SrcOperand,
-    Swizzle, TextureRef, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignature, DxbcSignatureParameter,
+    FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderSignatures, ShaderStage,
+    Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -171,6 +171,45 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
 
 fn assert_wgsl_parses(wgsl: &str) {
     naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+}
+
+#[test]
+fn translates_signature_driven_vs_with_empty_input_signature_without_empty_struct() {
+    // WGSL forbids empty structs. DXBC vertex shaders can have an empty input signature (e.g. when
+    // generating positions procedurally), so ensure we emit `fn vs_main()` rather than
+    // `struct VsIn {}` + `fn vs_main(input: VsIn)`.
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, vec![0u8; 8])]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC should parse");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![Sm4Inst::Ret],
+    };
+    let signatures = ShaderSignatures {
+        isgn: Some(DxbcSignature {
+            parameters: Vec::new(),
+        }),
+        osgn: Some(DxbcSignature {
+            parameters: vec![sig_param("SV_Position", 0, 0, 0b1111)],
+        }),
+        psgn: None,
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+        .expect("translation should succeed");
+    assert!(
+        !translated.wgsl.contains("struct VsIn {"),
+        "expected VS translation to omit VsIn struct when it would be empty:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("fn vs_main() -> VsOut"),
+        "expected VS entry point to take no parameters:\n{}",
+        translated.wgsl
+    );
+    assert_wgsl_parses(&translated.wgsl);
 }
 
 #[test]

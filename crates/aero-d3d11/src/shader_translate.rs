@@ -201,7 +201,12 @@ fn translate_vs(
     io.emit_vs_structs(&mut w)?;
 
     w.line("@vertex");
-    w.line("fn vs_main(input: VsIn) -> VsOut {");
+    let vs_has_inputs = !io.inputs.is_empty();
+    if vs_has_inputs {
+        w.line("fn vs_main(input: VsIn) -> VsOut {");
+    } else {
+        w.line("fn vs_main() -> VsOut {");
+    }
     w.indent();
     w.line("var out: VsOut;");
     w.line("");
@@ -544,32 +549,40 @@ impl IoMaps {
     }
 
     fn emit_vs_structs(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
-        w.line("struct VsIn {");
-        w.indent();
+        let has_inputs = self.vs_vertex_id_register.is_some()
+            || self.vs_instance_id_register.is_some()
+            || self.inputs.values().any(|p| {
+                Some(p.param.register) != self.vs_vertex_id_register
+                    && Some(p.param.register) != self.vs_instance_id_register
+            });
+        if has_inputs {
+            w.line("struct VsIn {");
+            w.indent();
 
-        if self.vs_vertex_id_register.is_some() {
-            w.line("@builtin(vertex_index) vertex_id: u32,");
-        }
-        if self.vs_instance_id_register.is_some() {
-            w.line("@builtin(instance_index) instance_id: u32,");
-        }
-
-        for p in self.inputs.values() {
-            if Some(p.param.register) == self.vs_vertex_id_register
-                || Some(p.param.register) == self.vs_instance_id_register
-            {
-                continue;
+            if self.vs_vertex_id_register.is_some() {
+                w.line("@builtin(vertex_index) vertex_id: u32,");
             }
-            w.line(&format!(
-                "@location({}) {}: {},",
-                p.param.register,
-                p.field_name('v'),
-                p.wgsl_ty
-            ));
+            if self.vs_instance_id_register.is_some() {
+                w.line("@builtin(instance_index) instance_id: u32,");
+            }
+
+            for p in self.inputs.values() {
+                if Some(p.param.register) == self.vs_vertex_id_register
+                    || Some(p.param.register) == self.vs_instance_id_register
+                {
+                    continue;
+                }
+                w.line(&format!(
+                    "@location({}) {}: {},",
+                    p.param.register,
+                    p.field_name('v'),
+                    p.wgsl_ty
+                ));
+            }
+            w.dedent();
+            w.line("};");
+            w.line("");
         }
-        w.dedent();
-        w.line("};");
-        w.line("");
 
         let pos_reg = self
             .vs_position_register
