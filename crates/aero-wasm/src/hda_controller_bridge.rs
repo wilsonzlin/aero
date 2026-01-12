@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn linear_guest_memory_zero_fills_on_addr_len_overflow() {
+    fn hda_guest_memory_zero_fills_on_addr_len_overflow() {
         let mut guest = vec![0u8; 16];
         let guest_base = guest.as_mut_ptr() as u32;
 
