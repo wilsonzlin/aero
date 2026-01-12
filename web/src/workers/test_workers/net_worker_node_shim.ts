@@ -1,6 +1,10 @@
 import { parentPort } from "node:worker_threads";
 
 import { L2_TUNNEL_SUBPROTOCOL } from "../../net/l2Tunnel";
+import {
+  L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
+  L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+} from "../../shared/l2TunnelProtocol";
 
 type MessageListener = (event: { data: unknown }) => void;
 
@@ -217,7 +221,12 @@ function makeFakeResponse(args: { ok: boolean; status: number; bodyText: string;
 
   const body = {
     endpoints: { l2: "/l2" },
-    limits: { l2: { maxFramePayloadBytes: 2048, maxControlPayloadBytes: 256 } },
+    limits: {
+      l2: {
+        maxFramePayloadBytes: L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+        maxControlPayloadBytes: L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
+      },
+    },
   };
   return makeFakeResponse({ ok: true, status: 201, bodyText: JSON.stringify(body), bodyJson: body });
 };
