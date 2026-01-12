@@ -348,7 +348,8 @@ describe("io/bus/pci", () => {
       classCode: 0,
       bars: [null, null, null, null, null, { kind: "mmio64", size: 0x4000 }],
     };
-    expect(() => pciBus.registerDevice(devBar5, { device: 0, function: 0 })).toThrow(/BAR5|64-bit/i);
+    expect(() => pciBus.registerDevice(devBar5, { device: 0, function: 0 })).toThrow(/mmio64_bar5/i);
+    expect(() => pciBus.registerDevice(devBar5, { device: 0, function: 0 })).toThrow(/BAR5/i);
 
     const devMissingNull: PciDevice = {
       name: "mmio64_missing_null",
@@ -357,6 +358,7 @@ describe("io/bus/pci", () => {
       classCode: 0,
       bars: [{ kind: "mmio64", size: 0x4000 }, { kind: "io", size: 0x20 }, null, null, null, null],
     };
+    expect(() => pciBus.registerDevice(devMissingNull, { device: 1, function: 0 })).toThrow(/mmio64_missing_null/i);
     expect(() => pciBus.registerDevice(devMissingNull, { device: 1, function: 0 })).toThrow(/consumes|must be null/i);
   });
 
@@ -633,5 +635,50 @@ describe("io/bus/pci", () => {
     cfg.writeU32(0, 0, 0x04, 0xabcd_0404);
 
     expect(seen).toEqual([0x0004, 0x0404]);
+  });
+
+  it("does not map mmio64 BARs until Command.MEM is enabled, even if BAR base was programmed", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "mmio64_mem_enable_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio64", size: 0x4000 }, null, null, null, null, null],
+      mmioRead: () => 0x1122_3344,
+      mmioWrite: () => {},
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    const bar0Low = cfg.readU32(addr.device, addr.function, 0x10);
+    const bar0High = cfg.readU32(addr.device, addr.function, 0x14);
+    const base = (BigInt(bar0High) << 32n) | (BigInt(bar0Low) & 0xffff_fff0n);
+
+    // Memory decoding is disabled by default, so nothing is mapped.
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+
+    // Program a new base while MEM is disabled.
+    const newBase = base + 0x2_0000n; // keep aligned to 0x4000
+    const newLow = Number(newBase & 0xffff_ffffn) >>> 0;
+    const newHigh = Number((newBase >> 32n) & 0xffff_ffffn) >>> 0;
+    cfg.writeU32(addr.device, addr.function, 0x10, newLow);
+    cfg.writeU32(addr.device, addr.function, 0x14, newHigh);
+
+    // Still unmapped until the guest enables MEM.
+    expect(mmioBus.read(newBase, 4)).toBe(0xffff_ffff);
+
+    // BAR low dword should keep the 64-bit type bits (0x4).
+    expect(cfg.readU32(addr.device, addr.function, 0x10)).toBe(((newLow & 0xffff_fff0) | 0x4) >>> 0);
+    expect(cfg.readU32(addr.device, addr.function, 0x14)).toBe(newHigh >>> 0);
+
+    // Enable MEM decoding now; mapping should appear at the programmed base.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002);
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+    expect(mmioBus.read(newBase, 4)).toBe(0x1122_3344);
   });
 });
