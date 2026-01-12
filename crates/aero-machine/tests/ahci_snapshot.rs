@@ -3,10 +3,14 @@
 use std::rc::Rc;
 
 use aero_devices::pci::{profile, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
 use pretty_assertions::{assert_eq, assert_ne};
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 // AHCI ABAR register offsets (HBA + port 0).
 const HBA_GHC: u64 = 0x04;
@@ -147,7 +151,7 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         abar as u32,
     );
     // COMMAND: memory decoding + bus mastering.

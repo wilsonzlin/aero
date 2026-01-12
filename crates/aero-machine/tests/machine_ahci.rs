@@ -460,7 +460,7 @@ fn machine_gates_ahci_dma_on_pci_bus_master_enable() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 
