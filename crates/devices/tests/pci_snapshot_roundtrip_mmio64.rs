@@ -85,7 +85,7 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     // Program BAR0 above 4GiB.
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0x2345_6000);
     cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, 0x0000_0001);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0x2345_6004);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0x2345_4004);
     assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), 0x0000_0001);
 
     // Enable memory decoding and verify the BAR is mapped.
@@ -94,7 +94,7 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     assert_eq!(mapped.len(), 1);
     assert_eq!(mapped[0].bdf, bdf);
     assert_eq!(mapped[0].bar, 0);
-    assert_eq!(mapped[0].range.base, 0x1_2345_6000);
+    assert_eq!(mapped[0].range.base, 0x1_2345_4000);
     assert_eq!(mapped[0].range.size, 0x4000);
 
     // Snapshot and restore.
@@ -111,7 +111,7 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     restored.restore_into(&mut bus2).unwrap();
 
     // Verify BAR reads and mapping survived restore.
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0x2345_6004);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0x2345_4004);
     assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), 0x0000_0001);
     assert_eq!(bus.mapped_bars(), bus2.mapped_bars());
 }
@@ -147,11 +147,11 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_probe_state() {
     // And programming the BAR should clear probe state and behave normally after restore.
     cfg_write(&mut cfg2, &mut bus2, bdf, 0x10, 4, 0x2345_6000);
     cfg_write(&mut cfg2, &mut bus2, bdf, 0x14, 4, 0x0000_0001);
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0x2345_6004);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0x2345_4004);
     assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), 0x0000_0001);
 
     cfg_write(&mut cfg2, &mut bus2, bdf, 0x04, 2, 0x0002);
     let mapped = bus2.mapped_mmio_bars();
     assert_eq!(mapped.len(), 1);
-    assert_eq!(mapped[0].range.base, 0x1_2345_6000);
+    assert_eq!(mapped[0].range.base, 0x1_2345_4000);
 }
