@@ -105,7 +105,9 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     let hda_blob = SnapshotWriter::new(*b"HDA0", hda_version).finish();
     let net_e1000_version = SnapshotVersion::new(2, 5);
     let net_e1000_blob = build_net_e1000_blob(net_e1000_version);
-    let net_stack_version = SnapshotVersion::new(1, 0);
+    // Use a non-default minor so the test fails if we stop extracting `device_version` from the
+    // `aero-io-snapshot` header (format version is 1.0, and the legacy fallback would read 1.0 too).
+    let net_stack_version = SnapshotVersion::new(1, 2);
     let net_stack_blob = build_net_stack_blob(net_stack_version);
     let devices_js = build_devices_js(&[
         ("usb.uhci", &usb_blob),
