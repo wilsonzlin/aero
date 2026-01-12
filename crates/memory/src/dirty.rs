@@ -10,7 +10,9 @@ struct DirtyBitmap {
 
 impl DirtyBitmap {
     fn new(mem_len: u64, page_size: u32) -> Self {
-        let page_size_u64 = u64::from(page_size).max(1);
+        assert!(page_size != 0, "dirty tracking page_size must be non-zero");
+
+        let page_size_u64 = u64::from(page_size);
         let pages_u64 = mem_len
             .checked_add(page_size_u64.saturating_sub(1))
             .unwrap_or(mem_len)
@@ -76,14 +78,22 @@ impl DirtyBitmap {
 #[derive(Debug, Clone)]
 pub struct DirtyTracker {
     inner: Arc<Mutex<DirtyBitmap>>,
+    page_size: u32,
 }
 
 impl DirtyTracker {
     /// Create a new dirty tracker for `mem_len` bytes of RAM.
     pub fn new(mem_len: u64, page_size: u32) -> Self {
+        assert!(page_size != 0, "dirty tracking page_size must be non-zero");
         Self {
             inner: Arc::new(Mutex::new(DirtyBitmap::new(mem_len, page_size))),
+            page_size,
         }
+    }
+
+    /// Dirty page size in bytes.
+    pub fn page_size(&self) -> u32 {
+        self.page_size
     }
 
     /// Return and clear the set of dirty pages.
