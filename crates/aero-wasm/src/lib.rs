@@ -126,15 +126,6 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
-
-#[cfg(target_arch = "wasm32")]
-use std::rc::Rc;
-
-#[cfg(target_arch = "wasm32")]
-use aero_net_backend::{L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
-
-#[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
 
 #[cfg(target_arch = "wasm32")]
@@ -2363,29 +2354,6 @@ pub struct Machine {
     // emitting redundant button transition packets.
     mouse_buttons: u8,
     mouse_buttons_known: bool,
-    #[cfg(target_arch = "wasm32")]
-    net_ring_backend: Option<Rc<RefCell<L2TunnelRingBackend<SharedRingBuffer, SharedRingBuffer>>>>,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone)]
-struct SharedL2TunnelRingBackend {
-    inner: Rc<RefCell<L2TunnelRingBackend<SharedRingBuffer, SharedRingBuffer>>>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl NetworkBackend for SharedL2TunnelRingBackend {
-    fn transmit(&mut self, frame: Vec<u8>) {
-        self.inner.borrow_mut().transmit(frame);
-    }
-
-    fn poll_receive(&mut self) -> Option<Vec<u8>> {
-        self.inner.borrow_mut().poll_receive()
-    }
-
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        Some(self.inner.borrow().stats())
-    }
 }
 
 #[wasm_bindgen]
@@ -2407,8 +2375,6 @@ impl Machine {
             inner,
             mouse_buttons: 0,
             mouse_buttons_known: true,
-            #[cfg(target_arch = "wasm32")]
-            net_ring_backend: None,
         })
     }
 
@@ -2673,12 +2639,7 @@ impl Machine {
         tx: SharedRingBuffer,
         rx: SharedRingBuffer,
     ) -> Result<(), JsValue> {
-        let backend = Rc::new(RefCell::new(L2TunnelRingBackend::new(tx, rx)));
-        self.inner
-            .set_network_backend(Box::new(SharedL2TunnelRingBackend {
-                inner: backend.clone(),
-            }));
-        self.net_ring_backend = Some(backend);
+        self.inner.attach_l2_tunnel_rings(tx, rx);
         Ok(())
     }
 
@@ -2716,10 +2677,6 @@ impl Machine {
     /// are intentionally not captured in snapshots.
     pub fn detach_network(&mut self) {
         self.inner.detach_network();
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.net_ring_backend = None;
-        }
     }
 
     /// Legacy/compatibility alias for [`Machine::detach_network`].
@@ -2739,10 +2696,9 @@ impl Machine {
     /// Values are exposed as JS `BigInt` so callers do not lose precision for long-running VMs.
     #[cfg(target_arch = "wasm32")]
     pub fn net_stats(&self) -> JsValue {
-        let Some(backend) = &self.net_ring_backend else {
+        let Some(stats) = self.inner.network_backend_l2_ring_stats() else {
             return JsValue::NULL;
         };
-        let stats = backend.borrow().stats();
 
         let obj = Object::new();
         let _ = Reflect::set(
@@ -2905,13 +2861,6 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         // Restoring rewinds machine device state; we no longer know the current mouse buttons.
         self.mouse_buttons_known = false;
-        #[cfg(target_arch = "wasm32")]
-        {
-            // Snapshots intentionally do not include external state (such as live network backends).
-            // The canonical machine detaches the backend during restore; clear our WASM-side stats
-            // handle too so `net_stats()` does not report stale counters.
-            self.net_ring_backend = None;
-        }
         Ok(())
     }
 
@@ -2959,11 +2908,6 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         // Restoring rewinds machine device state; we no longer know the current mouse buttons.
         self.mouse_buttons_known = false;
-        #[cfg(target_arch = "wasm32")]
-        {
-            // See [`Machine::restore_snapshot`].
-            self.net_ring_backend = None;
-        }
         Ok(())
     }
 }
