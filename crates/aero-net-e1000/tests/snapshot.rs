@@ -3,7 +3,7 @@
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
 use aero_net_e1000::{
-    E1000Device, ICR_TXDW, MAX_L2_FRAME_LEN, MAX_TX_AGGREGATE_LEN, MIN_L2_FRAME_LEN,
+    E1000Device, E1000_MMIO_SIZE, ICR_TXDW, MAX_L2_FRAME_LEN, MAX_TX_AGGREGATE_LEN, MIN_L2_FRAME_LEN,
 };
 use memory::MemoryBus;
 use nt_packetlib::io::net::packet::checksum::ipv4_header_checksum;
@@ -816,6 +816,34 @@ fn snapshot_rejects_unaligned_other_regs_key() {
     assert_eq!(
         err,
         SnapshotError::InvalidFieldEncoding("e1000 other_regs key")
+    );
+}
+
+#[test]
+fn snapshot_restore_ignores_out_of_range_other_regs_keys() {
+    const TAG_OTHER_REGS: u16 = 90;
+
+    // `other_regs` keys are MMIO register offsets. They should always be within the MMIO BAR
+    // window; older/corrupted snapshots might contain out-of-range offsets, which the device model
+    // ignores during restore.
+    let other = Encoder::new()
+        .u32(1)
+        .u32(E1000_MMIO_SIZE) // out of range (valid: 0..E1000_MMIO_SIZE-1)
+        .u32(0xDEAD_BEEF)
+        .finish();
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_OTHER_REGS, other);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    dev.load_state(&bytes).unwrap();
+    assert!(
+        dev.snapshot_state().other_regs.is_empty(),
+        "out-of-range other_regs keys should be dropped during restore"
     );
 }
 
