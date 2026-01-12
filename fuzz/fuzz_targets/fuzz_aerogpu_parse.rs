@@ -833,10 +833,19 @@ fuzz_target!(|data: &[u8]| {
     // (e.g. retired share tokens, idempotent resource rebinds, fence monotonicity).
     let mut proc = AeroGpuCommandProcessor::new();
     let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 1);
-    // Replaying the same stream should hit "already exported"/"retired token" style paths.
-    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 2);
+    // Rebind mismatch: attempt to re-create the same buffer handle with a different size.
+    let mut cmd_proc_rebind = cmd_proc_synth.clone();
+    if let Some(pkt) = create_buffer_off {
+        if let Some(v) = cmd_proc_rebind.get_mut(pkt + 16..pkt + 24) {
+            v.copy_from_slice(&128u64.to_le_bytes());
+        }
+    }
+    let _ = proc.process_submission_with_allocations(&cmd_proc_rebind, Some(&allocs), 2);
+    // Replaying the original stream should hit "retired token" style paths (we retired the token
+    // in the first submission via RELEASE_SHARED_SURFACE).
+    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 3);
     // Also try the same stream without providing allocations to trigger missing-alloc-table paths.
-    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, None, 3);
+    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, None, 4);
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
