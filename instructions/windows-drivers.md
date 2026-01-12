@@ -98,6 +98,7 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Win7 driver build + packaging: [`.github/workflows/drivers-win7.yml`](../.github/workflows/drivers-win7.yml)
   - Runs contract drift checks (docs ↔ INFs ↔ emulator PCI profiles)
   - Runs host-side unit tests for virtio common, virtio-snd protocol engines, and AeroGPU command stream encoding
+- Repo-wide CI also runs some driver/Guest Tools guardrails (WDK macro guards, Guest Tools `devices.cmd` regeneration, D3D11 guest-memory import invariants): [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 - Windows virtio contract wiring (manifest ↔ INFs ↔ emulator ↔ guest-tools): [`.github/workflows/windows-virtio-contract.yml`](../.github/workflows/windows-virtio-contract.yml)
 - Device contract validator (JSON schema + invariants): [`.github/workflows/windows-device-contract.yml`](../.github/workflows/windows-device-contract.yml)
 - Virtio protocol crate tests: [`.github/workflows/virtio-protocol.yml`](../.github/workflows/virtio-protocol.yml)
