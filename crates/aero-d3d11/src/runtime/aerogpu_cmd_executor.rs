@@ -4035,10 +4035,22 @@ impl AerogpuD3d11Executor {
             .resolve_cmd_handle(handle, "RESOURCE_DIRTY_RANGE")?;
 
         if let Some(buf) = self.resources.buffers.get_mut(&handle) {
+            // RESOURCE_DIRTY_RANGE is only meaningful for guest-backed resources. For host-owned
+            // resources the guest should use UPLOAD_RESOURCE instead; ignore dirty-range signals so
+            // a misbehaving guest cannot force unnecessary uploads or invalidate host-side state.
+            if buf.backing.is_none() {
+                return Ok(());
+            }
             let end = offset.saturating_add(size).min(buf.size);
             let start = offset.min(end);
             buf.mark_dirty(start..end);
         } else if let Some(tex) = self.resources.textures.get_mut(&handle) {
+            // Same as buffers: ignore dirty-range signals for host-owned textures. In particular,
+            // host-owned textures may rely on `host_shadow` for partial UPLOAD_RESOURCE patches, so
+            // clearing it here would cause subsequent partial uploads to fail.
+            if tex.backing.is_none() {
+                return Ok(());
+            }
             tex.dirty = true;
             tex.host_shadow = None;
             tex.guest_backing_is_current = false;
@@ -9057,6 +9069,80 @@ mod tests {
                     .is_some_and(|tex| tex.host_shadow.is_none()),
                 "RESOURCE_DIRTY_RANGE must invalidate stale host_shadow"
             );
+        });
+    }
+
+    #[test]
+    fn resource_dirty_range_is_ignored_for_host_owned_textures() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const TEX: u32 = 1;
+            let width = 2u32;
+            let height = 2u32;
+            let tex_len = (width * height * 4) as usize;
+
+            let allocs = AllocTable::new(None).unwrap();
+
+            let mut create = Vec::new();
+            create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+            create.extend_from_slice(&56u32.to_le_bytes());
+            create.extend_from_slice(&TEX.to_le_bytes());
+            create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+            create.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+            create.extend_from_slice(&width.to_le_bytes());
+            create.extend_from_slice(&height.to_le_bytes());
+            create.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            create.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            create.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+            create.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id (host owned)
+            create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            assert_eq!(create.len(), 56);
+            exec.exec_create_texture2d(&create, &allocs)
+                .expect("CREATE_TEXTURE2D should succeed");
+
+            let full_data: Vec<u8> = (0u8..(tex_len as u8)).collect();
+            exec.upload_resource_payload(TEX, 0, full_data.len() as u64, &full_data)
+                .expect("full UPLOAD_RESOURCE should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_some()),
+                "UPLOAD_RESOURCE should populate host_shadow"
+            );
+
+            // Even though the protocol specifies RESOURCE_DIRTY_RANGE is only meaningful for
+            // guest-backed resources, treat it as a no-op for host-owned textures so a misbehaving
+            // guest cannot invalidate the CPU shadow required for partial UPLOAD_RESOURCE patches.
+            let mut dirty = Vec::new();
+            dirty.extend_from_slice(&(AerogpuCmdOpcode::ResourceDirtyRange as u32).to_le_bytes());
+            dirty.extend_from_slice(&32u32.to_le_bytes());
+            dirty.extend_from_slice(&TEX.to_le_bytes());
+            dirty.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            dirty.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+            dirty.extend_from_slice(&(tex_len as u64).to_le_bytes()); // size_bytes
+            assert_eq!(dirty.len(), 32);
+            exec.exec_resource_dirty_range(&dirty)
+                .expect("RESOURCE_DIRTY_RANGE should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| !tex.dirty && tex.host_shadow.is_some()),
+                "RESOURCE_DIRTY_RANGE must not affect host-owned textures"
+            );
+
+            // Verify that partial uploads still work after the dirty-range no-op.
+            exec.upload_resource_payload(TEX, 1, 1, &[0xAA])
+                .expect("partial UPLOAD_RESOURCE should succeed");
         });
     }
 }
