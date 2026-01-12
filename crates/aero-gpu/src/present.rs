@@ -1028,6 +1028,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_pointer_width = "64")]
     fn error_bytes_per_row_too_large_when_alignment_exceeds_u32_max() {
         // This test calls the internal helper directly to avoid allocating a multi-GB frame
         // buffer. The error is raised before any frame_data indexing occurs.
