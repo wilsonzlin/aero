@@ -84,6 +84,12 @@ impl Ps2Keyboard {
         if !self.scanning_enabled {
             return;
         }
+        // The browser input capture pipeline produces Set-2 scancode sequences. If the guest has
+        // configured the keyboard to use a different scancode set, we currently drop injected bytes
+        // rather than delivering the wrong set to the guest.
+        if self.scancode_set != 2 {
+            return;
+        }
         for &byte in bytes {
             self.push_out(byte);
         }
@@ -271,6 +277,22 @@ impl IoSnapshot for Ps2Keyboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inject_scancode_bytes_drops_when_scancode_set_is_not_2() {
+        let mut kb = Ps2Keyboard::new();
+
+        // Switch keyboard to scancode set 1 (PS/2 command 0xF0, data=0x01).
+        kb.receive_byte(0xF0);
+        assert_eq!(kb.pop_output(), Some(0xFA));
+        kb.receive_byte(0x01);
+        assert_eq!(kb.pop_output(), Some(0xFA));
+        assert_eq!(kb.scancode_set(), 1);
+
+        // Browser host injection emits Set-2 bytes; they should be dropped in this mode.
+        kb.inject_scancode_bytes(&[0x1c]);
+        assert_eq!(kb.pop_output(), None);
+    }
 
     #[test]
     fn output_queue_is_bounded_during_runtime() {
