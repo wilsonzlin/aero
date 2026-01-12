@@ -108,6 +108,7 @@ let sharedStrideBytes = 0;
 
 let tickTimer: number | null = null;
 let copyFrameCounter = 0;
+let lastExitDetail: string | null = null;
 
 // Avoid pathological allocations/copies if a buggy guest or WASM build reports absurd scanout modes.
 const MAX_VGA_FRAME_BYTES = 32 * 1024 * 1024;
@@ -145,6 +146,7 @@ function stop(): void {
   sharedHeight = 0;
   sharedStrideBytes = 0;
   copyFrameCounter = 0;
+  lastExitDetail = null;
 }
 
 function buildSerialBootSector(message: string): Uint8Array {
@@ -327,27 +329,42 @@ function tick(): void {
 
   const exit = m.run_slice(50_000);
   const detail = (exit as unknown as { detail?: string }).detail;
-  if (typeof detail === "string") {
+  if (typeof detail === "string" && detail !== lastExitDetail) {
+    lastExitDetail = detail;
     post({ type: "machineVga.status", detail });
   }
 
-  const serialBytes = m.serial_output();
-  if (serialBytes instanceof Uint8Array && serialBytes.byteLength > 0) {
-    // Prefer transferring the buffer for standalone ArrayBuffers, but avoid throwing if the
-    // underlying memory is non-transferable (e.g. a WebAssembly.Memory view).
-    const buf = serialBytes.buffer;
-    if (
-      buf instanceof ArrayBuffer &&
-      serialBytes.byteOffset === 0 &&
-      serialBytes.byteLength === buf.byteLength
-    ) {
-      try {
-        post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage, [buf]);
-      } catch {
+  // Avoid copying large serial buffers into JS when empty.
+  const lenFn = (m as unknown as { serial_output_len?: unknown }).serial_output_len;
+  const shouldReadSerial = (() => {
+    if (typeof lenFn !== "function") return true;
+    try {
+      const n = (lenFn as () => number).call(m);
+      return typeof n === "number" && Number.isFinite(n) && n > 0;
+    } catch {
+      return true;
+    }
+  })();
+
+  if (shouldReadSerial) {
+    const serialBytes = m.serial_output();
+    if (serialBytes instanceof Uint8Array && serialBytes.byteLength > 0) {
+      // Prefer transferring the buffer for standalone ArrayBuffers, but avoid throwing if the
+      // underlying memory is non-transferable (e.g. a WebAssembly.Memory view).
+      const buf = serialBytes.buffer;
+      if (
+        buf instanceof ArrayBuffer &&
+        serialBytes.byteOffset === 0 &&
+        serialBytes.byteLength === buf.byteLength
+      ) {
+        try {
+          post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage, [buf]);
+        } catch {
+          post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage);
+        }
+      } else {
         post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage);
       }
-    } else {
-      post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage);
     }
   }
 
