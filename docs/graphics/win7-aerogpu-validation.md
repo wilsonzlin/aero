@@ -319,7 +319,11 @@ For quick guest-side sanity checks:
   * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal; window hidden by default): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
   * D3D9Ex per-submit fence stress (validates monotonic submit fences + EVENT query completion + PresentEx throttling; on AGPU also validates ring descriptor `AEROGPU_SUBMIT_FLAG_PRESENT` + non-zero `alloc_table_gpa` for presents): `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress`
   * D3D9Ex DWM-critical device probes (must be non-blocking; checks `CheckDeviceState`, `PresentEx` throttling, `WaitForVBlank`, `GetPresentStats`, residency, GPU thread priority, etc.): `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity`
-  * Cross-process shared surface open (validates `DxgkDdiOpenAllocation` path): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface`
+  * Cross-process shared surface open (validates `DxgkDdiOpenAllocation` + ShareToken-backed shared-surface interop across runtimes):
+    * D3D9Ex: `drivers/aerogpu/tests/win7/d3d9ex_shared_surface`
+    * D3D10: `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc`
+    * D3D10.1: `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc`
+    * D3D11: `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc`
     * Validates cross-process pixel sharing via readback by default; pass `--no-validate-sharing` to focus on open + submit only (`--dump` always validates).
 
 ### 3.1 Recommended options (ranked by bring-up stability)
