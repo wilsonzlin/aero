@@ -160,6 +160,25 @@ test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { ski
 test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
+    // `agent-env.sh` now caps lld threads via *per-target* rustflags env vars
+    // (`CARGO_TARGET_<TRIPLE>_RUSTFLAGS`) instead of mutating `RUSTFLAGS`,
+    // because global `RUSTFLAGS` breaks wasm32 builds (`rust-lld -flavor wasm`
+    // does not understand `-Wl,...`).
+    let hostTarget = null;
+    if (process.platform === "linux") {
+      try {
+        const vv = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+        const m = vv.match(/^host:\s*(.+)\s*$/m);
+        hostTarget = m ? m[1] : null;
+      } catch {
+        hostTarget = null;
+      }
+    }
+    const hostTargetVar =
+      hostTarget === null
+        ? null
+        : `CARGO_TARGET_${hostTarget.toUpperCase().replace(/[-.]/g, "_")}_RUSTFLAGS`;
+
     const env = { ...process.env };
     delete env.RUSTFLAGS;
     delete env.CARGO_BUILD_JOBS;
@@ -170,6 +189,10 @@ test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", 
     env.AERO_CARGO_BUILD_JOBS = "2";
     delete env.AERO_RUST_CODEGEN_UNITS;
     delete env.AERO_CODEGEN_UNITS;
+    if (hostTargetVar) {
+      delete env[hostTargetVar];
+    }
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
 
     const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
       cwd: repoRoot,
@@ -179,9 +202,33 @@ test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", 
     });
 
     assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
-    // On Linux we still cap LLVM lld parallelism to match build jobs.
+    // On Linux we still cap LLVM lld parallelism to match build jobs, but do it via
+    // `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` so wasm builds in the same shell are not broken.
     if (process.platform === "linux") {
-      assert.match(stdout, /-C link-arg=-Wl,--threads=2\b/);
+      assert.ok(
+        !stdout.includes("--threads=") && !stdout.includes("-Wl,--threads="),
+        `expected agent-env.sh not to mutate global RUSTFLAGS with lld --threads, got: ${stdout}`,
+      );
+
+      if (hostTargetVar) {
+        const targetFlags = execFileSync(
+          "bash",
+          [
+            "-c",
+            'source scripts/agent-env.sh >/dev/null; printf "%s" "${!AERO_TARGET_RUSTFLAGS_VAR}"',
+          ],
+          {
+            cwd: repoRoot,
+            encoding: "utf8",
+            env: {
+              ...env,
+              AERO_TARGET_RUSTFLAGS_VAR: hostTargetVar,
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        assert.match(targetFlags, /-C link-arg=-Wl,--threads=2\b/);
+      }
     }
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -198,8 +245,9 @@ test("agent-env: uses --threads=<n> for wasm32 when CARGO_BUILD_TARGET is set", 
     env.CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
     delete env.AERO_RUST_CODEGEN_UNITS;
     delete env.AERO_CODEGEN_UNITS;
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
 
-    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS"'], {
       cwd: repoRoot,
       encoding: "utf8",
       env,
@@ -219,15 +267,19 @@ test("agent-env: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 target
   const repoRoot = setupTempRepo();
   try {
     const env = { ...process.env };
-    env.RUSTFLAGS = "-C link-arg=-Wl,--threads=7";
+    env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS = "-C link-arg=-Wl,--threads=7";
     env.CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
 
-    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+    const stdout = execFileSync(
+      "bash",
+      ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS"'],
+      {
       cwd: repoRoot,
       encoding: "utf8",
       env,
       stdio: ["ignore", "pipe", "pipe"],
-    });
+      },
+    );
 
     if (process.platform === "linux") {
       assert.match(stdout, /-C link-arg=--threads=7\b/);
