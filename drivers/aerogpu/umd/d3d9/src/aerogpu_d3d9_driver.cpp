@@ -10310,11 +10310,13 @@ HRESULT device_get_shader_const_f_impl(
   if (start >= 256) {
     return trace.ret(kD3DErrInvalidCall);
   }
+  if (count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   const float* src = (st == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
-  const uint32_t read_regs = std::min(count, 256u - start);
-  std::memcpy(pData, src + start * 4, static_cast<size_t>(read_regs) * 4 * sizeof(float));
+  std::memcpy(pData, src + start * 4, static_cast<size_t>(count) * 4 * sizeof(float));
   return trace.ret(S_OK);
 }
 
