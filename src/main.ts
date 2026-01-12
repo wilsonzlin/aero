@@ -1473,7 +1473,9 @@ function renderAudioPanel(): HTMLElement {
           sampleRate: sr,
           bufferMs: 250,
           freqHz: 440,
-          gain: 0.1,
+          // Use a louder tone than the CPU worker's fallback sine (0.1) so automation can
+          // distinguish true mic loopback from the fallback path.
+          gain: 0.2,
         });
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
@@ -1508,11 +1510,11 @@ function renderAudioPanel(): HTMLElement {
       try {
         workerCoordinator.start(workerConfig);
         workerCoordinator.getIoWorker()?.postMessage({ type: 'setBootDisks', mounts: {}, hdd: null, cd: null });
-        // This demo configures the *IO worker*'s HDA device to consume samples from the synthetic
-        // microphone ring and DMA-write captured PCM into guest RAM. Even though the coordinator is
-        // running in "demo mode" (no active disk image), we must explicitly route the mic ring to
-        // the IO worker so the HDA capture device is the sole consumer (SPSC).
-        workerCoordinator.setMicrophoneRingBufferOwner("io");
+        // This demo performs a CPU-worker mic loopback (consume synthetic mic samples and write
+        // them into the AudioWorklet output ring). Ensure the microphone ring is routed to the
+        // CPU worker so it becomes the sole SPSC consumer (and so we don't accidentally keep the
+        // mic attached to the IO worker from other harnesses like HDA capture).
+        workerCoordinator.setMicrophoneRingBufferOwner("cpu");
         workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
         workerCoordinator.setAudioOutputRingBuffer(
           output.ringBuffer.buffer,
