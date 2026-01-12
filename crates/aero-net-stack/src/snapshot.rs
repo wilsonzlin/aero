@@ -9,9 +9,9 @@ use core::net::Ipv4Addr;
 
 // Snapshots may be loaded from untrusted sources (downloaded files). Keep decoding bounded so
 // corrupted snapshots cannot force pathological allocations.
-const MAX_DNS_CACHE_ENTRIES: usize = 65_536;
-const MAX_DNS_NAME_BYTES: usize = 1024;
-const MAX_TCP_CONNECTIONS: usize = 65_536;
+pub(crate) const MAX_DNS_CACHE_ENTRIES: usize = 65_536;
+pub(crate) const MAX_DNS_NAME_BYTES: usize = 1024;
+pub(crate) const MAX_TCP_CONNECTIONS: usize = 65_536;
 
 /// Restore policy for active guest TCP connections.
 ///
@@ -135,9 +135,21 @@ impl IoSnapshot for NetworkStackSnapshotState {
         w.field_u16(TAG_IPV4_IDENT, self.ipv4_ident);
         w.field_u64(TAG_LAST_NOW_MS, self.last_now_ms);
 
-        // DNS cache: preserve FIFO order.
-        let mut dns = Encoder::new().u32(self.dns_cache.len() as u32);
-        for entry in &self.dns_cache {
+        // DNS cache: preserve FIFO order, but keep output bounded and always decodable by our own
+        // `load_state` implementation.
+        //
+        // Note that the in-memory cache is also bounded by `StackConfig.max_dns_cache_entries`, but
+        // we enforce an additional absolute cap here so snapshots cannot balloon if the host is
+        // misconfigured.
+        let dns_entries: Vec<&DnsCacheEntrySnapshot> = self
+            .dns_cache
+            .iter()
+            .filter(|e| e.name.len() <= MAX_DNS_NAME_BYTES)
+            .take(MAX_DNS_CACHE_ENTRIES)
+            .collect();
+
+        let mut dns = Encoder::new().u32(dns_entries.len() as u32);
+        for entry in dns_entries {
             dns = Self::encode_string(dns, &entry.name);
             dns = dns.bytes(&entry.addr.octets());
             dns = dns.u64(entry.expires_at_ms);
@@ -147,6 +159,9 @@ impl IoSnapshot for NetworkStackSnapshotState {
         // TCP connections: sort by id for deterministic encoding.
         let mut conns = self.tcp_connections.clone();
         conns.sort_by_key(|c| c.id);
+        if conns.len() > MAX_TCP_CONNECTIONS {
+            conns.truncate(MAX_TCP_CONNECTIONS);
+        }
 
         let mut tcp = Encoder::new().u32(conns.len() as u32);
         for conn in &conns {

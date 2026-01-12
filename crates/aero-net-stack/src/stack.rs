@@ -1685,13 +1685,16 @@ impl NetworkStack {
         // DNS cache: preserve FIFO order and keep output bounded even if internal bookkeeping is
         // somehow inconsistent.
         let now_ms = self.last_now_ms;
-        let max_dns = self.cfg.max_dns_cache_entries as usize;
+        let max_dns = (self.cfg.max_dns_cache_entries as usize).min(crate::snapshot::MAX_DNS_CACHE_ENTRIES);
         let mut dns_cache = Vec::new();
         if max_dns > 0 {
             let mut seen: HashSet<String> = HashSet::new();
             for name in &self.dns_cache_fifo {
                 if dns_cache.len() >= max_dns {
                     break;
+                }
+                if name.len() > crate::snapshot::MAX_DNS_NAME_BYTES {
+                    continue;
                 }
                 if !seen.insert(name.clone()) {
                     continue;
@@ -1722,6 +1725,9 @@ impl NetworkStack {
                 for name in missing {
                     if dns_cache.len() >= max_dns {
                         break;
+                    }
+                    if name.len() > crate::snapshot::MAX_DNS_NAME_BYTES {
+                        continue;
                     }
                     let Some(entry) = self.dns_cache.get(&name) else {
                         continue;
@@ -1756,6 +1762,9 @@ impl NetworkStack {
             })
             .collect();
         tcp_connections.sort_by_key(|c| c.id);
+        if tcp_connections.len() > crate::snapshot::MAX_TCP_CONNECTIONS {
+            tcp_connections.truncate(crate::snapshot::MAX_TCP_CONNECTIONS);
+        }
 
         NetworkStackSnapshotState {
             guest_mac: self.guest_mac,
@@ -1820,6 +1829,9 @@ impl NetworkStack {
                 if max_tcp == 0 {
                     return actions;
                 }
+                if !self.cfg.host_policy.enabled {
+                    return actions;
+                }
 
                 let mut conns = state.tcp_connections;
                 conns.sort_by_key(|c| c.id);
@@ -1828,6 +1840,11 @@ impl NetworkStack {
                         break;
                     }
                     if c.id == 0 {
+                        continue;
+                    }
+                    // Respect current host policy (which may differ from the policy at the time the
+                    // snapshot was taken).
+                    if !self.cfg.host_policy.allows_ip(c.remote_ip) {
                         continue;
                     }
                     let key = TcpKey {
