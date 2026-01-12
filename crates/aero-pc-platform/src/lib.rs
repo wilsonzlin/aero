@@ -1294,6 +1294,16 @@ impl PcPlatform {
             let bdf = profile.bdf;
 
             let ahci = Rc::new(RefCell::new(AhciPciDevice::new(1)));
+            // Attach a small in-memory disk by default so guests see a SATA device without any
+            // additional host-side wiring. Callers can override this by attaching their own disk
+            // via `PcPlatform::attach_ahci_disk_port0`.
+            {
+                let disk = RawDisk::create(MemBackend::new(), 1024u64 * SECTOR_SIZE as u64)
+                    .expect("failed to allocate in-memory AHCI disk");
+                let drive = AtaDrive::new(Box::new(disk))
+                    .expect("in-memory AHCI disk should be 512-byte aligned");
+                ahci.borrow_mut().attach_drive(0, drive);
+            }
 
             {
                 let ahci_for_intx = ahci.clone();
