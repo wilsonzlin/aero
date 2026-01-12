@@ -196,6 +196,10 @@ const DISK_ERROR_IO_FAILURE = 4;
 const DISK_ERROR_READ_ONLY = 5;
 const DISK_ERROR_DISK_OOB = 6;
 
+// Snapshot kind string for PCI core state (`aero_snapshot::DeviceId::PCI = 5`).
+// See `docs/16-snapshots.md`.
+const VM_SNAPSHOT_DEVICE_PCI_KIND = "device.5";
+
 let deviceManager: DeviceManager | null = null;
 
 type I8042Bridge = InstanceType<NonNullable<WasmApi["I8042Bridge"]>>;
@@ -773,6 +777,29 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     cachePending();
   }
 }
+
+function snapshotPciDeviceState(): { kind: string; bytes: Uint8Array } | null {
+  const mgr = deviceManager;
+  if (!mgr) return null;
+  try {
+    const bytes = mgr.pciBus.saveState();
+    if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_PCI_KIND, bytes };
+  } catch (err) {
+    console.warn("[io.worker] PCI saveState failed:", err);
+  }
+  return null;
+}
+
+function restorePciDeviceState(bytes: Uint8Array): void {
+  const mgr = deviceManager;
+  if (!mgr) return;
+  try {
+    mgr.pciBus.loadState(bytes);
+  } catch (err) {
+    console.warn("[io.worker] PCI loadState failed:", err);
+  }
+}
+
 type NetStackSnapshotBridgeLike = {
   save_state?: () => Uint8Array;
   snapshot_state?: () => Uint8Array;
@@ -2575,6 +2602,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     const usb = snapshotUsbDeviceState();
     const ps2 = snapshotI8042DeviceState();
     const hda = snapshotAudioHdaDeviceState();
+    const pci = snapshotPciDeviceState();
     const e1000 = snapshotE1000DeviceState();
     const netStack = snapshotNetStackDeviceState();
 
@@ -2584,6 +2612,7 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     if (usb) freshDevices.push(usb);
     if (ps2) freshDevices.push(ps2);
     if (hda) freshDevices.push(hda);
+    if (pci) freshDevices.push(pci);
     if (e1000) freshDevices.push(e1000);
     if (netStack) freshDevices.push(netStack);
 
@@ -2680,6 +2709,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
+      let pciBytes: Uint8Array | null = null;
       let e1000Bytes: Uint8Array | null = null;
       let netStackBytes: Uint8Array | null = null;
       for (const entry of devicesRaw) {
@@ -2695,6 +2725,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
+        if (kind === VM_SNAPSHOT_DEVICE_PCI_KIND) pciBytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
         if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) netStackBytes = e.bytes;
       }
@@ -2703,6 +2734,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       if (usbBytes) restoreUsbDeviceState(usbBytes);
       if (i8042Bytes) restoreI8042DeviceState(i8042Bytes);
       if (hdaBytes) restoreAudioHdaDeviceState(hdaBytes);
+      if (pciBytes) restorePciDeviceState(pciBytes);
       if (e1000Bytes) restoreE1000DeviceState(e1000Bytes);
       if (netStackBytes) restoreNetStackDeviceState(netStackBytes);
       snapshotRestoredDeviceBlobs = cachedDevices;
@@ -2729,6 +2761,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       let usbBytes: Uint8Array | null = null;
       let i8042Bytes: Uint8Array | null = null;
       let hdaBytes: Uint8Array | null = null;
+      let pciBytes: Uint8Array | null = null;
       let e1000Bytes: Uint8Array | null = null;
       let netStackBytes: Uint8Array | null = null;
       for (const entry of rec.devices) {
@@ -2761,6 +2794,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) {
           hdaBytes = e.data;
         }
+        if (kind === VM_SNAPSHOT_DEVICE_PCI_KIND) {
+          pciBytes = e.data;
+        }
         if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) {
           e1000Bytes = e.data;
         }
@@ -2779,6 +2815,9 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       }
       if (hdaBytes) {
         restoreAudioHdaDeviceState(hdaBytes);
+      }
+      if (pciBytes) {
+        restorePciDeviceState(pciBytes);
       }
       if (e1000Bytes) {
         restoreE1000DeviceState(e1000Bytes);

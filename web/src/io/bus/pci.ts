@@ -4,6 +4,146 @@ import type { PortIoBus } from "./portio.ts";
 import type { MmioBus, MmioHandle } from "./mmio.ts";
 import { PCI_MMIO_BASE as GUEST_PCI_MMIO_BASE } from "../../arch/guest_phys.ts";
 
+// -------------------------------------------------------------------------------------------------
+// Snapshot support (web runtime)
+// -------------------------------------------------------------------------------------------------
+//
+// The web runtime models PCI config mechanism #1 (0xCF8/0xCFC) and BAR decoding in JS.
+// To support VM snapshot/resume across page reloads we need to snapshot:
+// - the config-address register (0xCF8)
+// - per-function PCI config space image (including guest-programmed BARs + command bits)
+//
+// This uses the same 16-byte `aero-io-snapshot` header convention used by the JS i8042 model:
+// - magic: "AERO"
+// - format_version: u16 major, u16 minor
+// - device_id: [u8;4]
+// - device_version: u16 major, u16 minor
+//
+// The payload format after the header is JS-specific and currently not consumed by Rust tooling;
+// it is intended only for web snapshot restore.
+const IO_SNAPSHOT_FORMAT_VERSION_MAJOR = 1;
+const IO_SNAPSHOT_FORMAT_VERSION_MINOR = 0;
+// Inner device id: "PCIB" (PCI bus/config ports state).
+const IO_SNAPSHOT_DEVICE_ID = new Uint8Array([0x50, 0x43, 0x49, 0x42]);
+const IO_SNAPSHOT_DEVICE_VERSION_MAJOR = 1;
+const IO_SNAPSHOT_DEVICE_VERSION_MINOR = 0;
+
+const PCI_SNAPSHOT_MAX_BYTES = 256 * 1024;
+const PCI_SNAPSHOT_MAX_FUNCTIONS = 32 * 8;
+
+class ByteWriter {
+  #buf: Uint8Array;
+  #len = 0;
+
+  constructor(initialCapacity = 1024) {
+    this.#buf = new Uint8Array(initialCapacity);
+  }
+
+  bytes(): Uint8Array {
+    return this.#buf.slice(0, this.#len);
+  }
+
+  #ensure(additional: number): void {
+    const required = this.#len + additional;
+    if (required <= this.#buf.byteLength) return;
+    let cap = this.#buf.byteLength;
+    while (cap < required) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.#buf);
+    this.#buf = next;
+  }
+
+  u8(v: number): void {
+    this.#ensure(1);
+    this.#buf[this.#len++] = v & 0xff;
+  }
+
+  u16(v: number): void {
+    this.#ensure(2);
+    const x = v >>> 0;
+    this.#buf[this.#len++] = x & 0xff;
+    this.#buf[this.#len++] = (x >>> 8) & 0xff;
+  }
+
+  u32(v: number): void {
+    this.#ensure(4);
+    const x = v >>> 0;
+    this.#buf[this.#len++] = x & 0xff;
+    this.#buf[this.#len++] = (x >>> 8) & 0xff;
+    this.#buf[this.#len++] = (x >>> 16) & 0xff;
+    this.#buf[this.#len++] = (x >>> 24) & 0xff;
+  }
+
+  u64(v: bigint): void {
+    const x = v & 0xffff_ffff_ffff_ffffn;
+    this.u32(Number(x & 0xffff_ffffn));
+    this.u32(Number((x >> 32n) & 0xffff_ffffn));
+  }
+
+  bytesRaw(bytes: Uint8Array): void {
+    this.#ensure(bytes.byteLength);
+    this.#buf.set(bytes, this.#len);
+    this.#len += bytes.byteLength;
+  }
+}
+
+class ByteReader {
+  readonly #buf: Uint8Array;
+  #off = 0;
+
+  constructor(bytes: Uint8Array) {
+    this.#buf = bytes;
+  }
+
+  remaining(): number {
+    return this.#buf.byteLength - this.#off;
+  }
+
+  #need(n: number): void {
+    if (this.#off + n > this.#buf.byteLength) {
+      throw new Error(`PCI snapshot is truncated (need ${n} bytes, have ${this.remaining()}).`);
+    }
+  }
+
+  u8(): number {
+    this.#need(1);
+    return this.#buf[this.#off++]!;
+  }
+
+  u16(): number {
+    this.#need(2);
+    const a = this.#buf[this.#off++]!;
+    const b = this.#buf[this.#off++]!;
+    return (a | (b << 8)) >>> 0;
+  }
+
+  u32(): number {
+    this.#need(4);
+    const a = this.#buf[this.#off++]!;
+    const b = this.#buf[this.#off++]!;
+    const c = this.#buf[this.#off++]!;
+    const d = this.#buf[this.#off++]!;
+    return (a | (b << 8) | (c << 16) | (d << 24)) >>> 0;
+  }
+
+  u64(): bigint {
+    const lo = BigInt(this.u32());
+    const hi = BigInt(this.u32());
+    return (hi << 32n) | lo;
+  }
+
+  bytesRaw(len: number): Uint8Array {
+    const n = Math.floor(len);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error(`PCI snapshot requested an invalid byte length: ${String(len)}.`);
+    }
+    this.#need(n);
+    const out = this.#buf.subarray(this.#off, this.#off + n);
+    this.#off += n;
+    return out;
+  }
+}
+
 export type PciBar =
   | {
       kind: "mmio32";
@@ -610,7 +750,12 @@ export class PciBus implements PortIoHandler {
         else bar.sizingHigh = true;
         // Store all-ones as written; reads will return mask while sizing is true.
         writeU32LE(fn.config, alignedOff, value);
-        fn.device.pciConfigWrite?.(alignedOff, 4, value >>> 0);
+        try {
+          fn.device.pciConfigWrite?.(alignedOff, 4, value >>> 0);
+        } catch {
+          // Ignore device hook failures; PCI config space writes should remain resilient to device
+          // implementation bugs.
+        }
         return;
       }
 
@@ -634,15 +779,27 @@ export class PciBus implements PortIoHandler {
         const highVal = this.#encodeBarValueHigh(bar);
         writeU32LE(fn.config, lowOff, lowVal);
         writeU32LE(fn.config, highOff, highVal);
-        fn.device.pciConfigWrite?.(lowOff, 4, lowVal);
-        fn.device.pciConfigWrite?.(highOff, 4, highVal);
+        try {
+          fn.device.pciConfigWrite?.(lowOff, 4, lowVal);
+        } catch {
+          // ignore
+        }
+        try {
+          fn.device.pciConfigWrite?.(highOff, 4, highVal);
+        } catch {
+          // ignore
+        }
       } else {
         // 32-bit MMIO or IO BAR.
         if (bar.desc.kind === "mmio32") bar.base = BigInt((value & 0xffff_fff0) >>> 0);
         else bar.base = BigInt((value & 0xffff_fffc) >>> 0);
         const newValue = this.#encodeBarValueLow(bar);
         writeU32LE(fn.config, alignedOff, newValue);
-        fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
+        try {
+          fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
+        } catch {
+          // ignore
+        }
       }
 
       // Remap BAR.
@@ -655,13 +812,21 @@ export class PciBus implements PortIoHandler {
     if (mask === 0) return;
     if (mask === 0xffff_ffff) {
       writeU32LE(fn.config, alignedOff, value);
-      fn.device.pciConfigWrite?.(alignedOff, 4, value >>> 0);
+      try {
+        fn.device.pciConfigWrite?.(alignedOff, 4, value >>> 0);
+      } catch {
+        // ignore
+      }
       return;
     }
     const cur = readU32LE(fn.config, alignedOff);
     const newValue = ((cur & ~mask) | (value & mask)) >>> 0;
     writeU32LE(fn.config, alignedOff, newValue);
-    fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
+    try {
+      fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
+    } catch {
+      // ignore
+    }
   }
 
   #writableMaskForDword(alignedOff: number): number {
@@ -840,5 +1005,123 @@ export class PciBus implements PortIoHandler {
     const newStatus = (status | 0x0010) >>> 0;
     config[0x06] = newStatus & 0xff;
     config[0x07] = (newStatus >>> 8) & 0xff;
+  }
+
+  /**
+   * Snapshot PCI bus/config state (web runtime).
+   *
+   * This is used by the VM snapshot system to support suspend/resume across page reloads.
+   */
+  saveState(): Uint8Array {
+    const w = new ByteWriter();
+    // io-snapshot header (16 bytes).
+    w.bytesRaw(new Uint8Array([0x41, 0x45, 0x52, 0x4f])); // "AERO"
+    w.u16(IO_SNAPSHOT_FORMAT_VERSION_MAJOR);
+    w.u16(IO_SNAPSHOT_FORMAT_VERSION_MINOR);
+    w.bytesRaw(IO_SNAPSHOT_DEVICE_ID);
+    w.u16(IO_SNAPSHOT_DEVICE_VERSION_MAJOR);
+    w.u16(IO_SNAPSHOT_DEVICE_VERSION_MINOR);
+
+    w.u32(this.#addrReg >>> 0);
+    w.u64(this.#nextMmioBase);
+    w.u32(this.#nextIoBase >>> 0);
+
+    let count = 0;
+    for (let dev = 0; dev < 32; dev++) {
+      const fns = this.#functions[dev]!;
+      for (let fn = 0; fn < 8; fn++) {
+        if (fns[fn] !== null) count++;
+      }
+    }
+    w.u32(count >>> 0);
+
+    // Deterministic function ordering: (device, function) ascending.
+    for (let dev = 0; dev < 32; dev++) {
+      const fns = this.#functions[dev]!;
+      for (let fnNum = 0; fnNum < 8; fnNum++) {
+        const fn = fns[fnNum];
+        if (!fn) continue;
+        w.u8(dev);
+        w.u8(fnNum);
+        w.u16(0);
+        w.bytesRaw(fn.config);
+      }
+    }
+
+    return w.bytes();
+  }
+
+  /**
+   * Restore PCI bus/config state from {@link saveState}.
+   */
+  loadState(bytes: Uint8Array): void {
+    if (bytes.byteLength > PCI_SNAPSHOT_MAX_BYTES) {
+      throw new Error(`PCI snapshot too large: ${bytes.byteLength} bytes (max ${PCI_SNAPSHOT_MAX_BYTES}).`);
+    }
+
+    const r = new ByteReader(bytes);
+    const m0 = r.u8();
+    const m1 = r.u8();
+    const m2 = r.u8();
+    const m3 = r.u8();
+    if (m0 !== 0x41 || m1 !== 0x45 || m2 !== 0x52 || m3 !== 0x4f) {
+      throw new Error("PCI snapshot has invalid magic (expected AERO).");
+    }
+
+    const formatMajor = r.u16();
+    const formatMinor = r.u16();
+    if (formatMajor !== IO_SNAPSHOT_FORMAT_VERSION_MAJOR) {
+      throw new Error(`Unsupported PCI snapshot format version: ${formatMajor}.${formatMinor}.`);
+    }
+
+    const id = r.bytesRaw(4);
+    for (let i = 0; i < 4; i++) {
+      if (id[i] !== IO_SNAPSHOT_DEVICE_ID[i]) {
+        throw new Error("PCI snapshot has unexpected device id (expected PCIB).");
+      }
+    }
+
+    const deviceMajor = r.u16();
+    const deviceMinor = r.u16();
+    if (deviceMajor !== IO_SNAPSHOT_DEVICE_VERSION_MAJOR) {
+      throw new Error(`Unsupported PCI snapshot device version: ${deviceMajor}.${deviceMinor}.`);
+    }
+
+    const addrReg = r.u32();
+    const nextMmioBase = r.u64();
+    const nextIoBase = r.u32();
+    const count = r.u32();
+    if (count > PCI_SNAPSHOT_MAX_FUNCTIONS) {
+      throw new Error(`PCI snapshot contains too many functions: ${count} (max ${PCI_SNAPSHOT_MAX_FUNCTIONS}).`);
+    }
+
+    // Apply core bus state first (config-address register + allocators).
+    this.#addrReg = addrReg >>> 0;
+    this.#nextMmioBase = nextMmioBase;
+    this.#nextIoBase = nextIoBase & 0xffff;
+
+    for (let i = 0; i < count; i++) {
+      const dev = r.u8() & 0xff;
+      const fnNum = r.u8() & 0xff;
+      // reserved u16
+      r.u16();
+
+      const cfg = r.bytesRaw(256);
+      const fn = this.#functions[dev]?.[fnNum] ?? null;
+      if (!fn) {
+        // Unknown function in this runtime; ignore (forward compatibility).
+        continue;
+      }
+
+      // Apply config space image as a sequence of aligned dword writes so BAR mapping invariants
+      // and device hooks (`onPciCommandWrite`, `pciConfigWrite`) are respected.
+      for (let off = 0; off < 256; off += 4) {
+        const value = readU32LE(cfg, off);
+        // For the command/status dword (0x04), avoid treating the upper 16 bits as a guest write:
+        // Status is RO/RW1C on real hardware and should not be modified by snapshot restore.
+        const mask = off === 0x04 ? 0x0000_ffff : 0xffff_ffff;
+        this.#writeConfigDword(fn, off, value, mask);
+      }
+    }
   }
 }

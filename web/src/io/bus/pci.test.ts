@@ -879,4 +879,68 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
     expect(mmioBus.read(newBase, 4)).toBe(0x1122_3344);
   });
+
+  it("snapshots/restores PCI config space for suspend/resume (command + BAR + addrReg)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    let reads = 0;
+    const dev: PciDevice = {
+      name: "snap_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => {
+        reads++;
+        return 0xdead_beef;
+      },
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    // Enable BAR decoding (MEM enable bit).
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002);
+    // Program BAR0 to a deterministic address.
+    cfg.writeU32(addr.device, addr.function, 0x10, 0x8000_0000);
+
+    // Set addrReg to select BAR0.
+    portBus.write(0x0cf8, 4, cfgAddr(addr.device, addr.function, 0x10));
+
+    expect(mmioBus.read(0x8000_0000n, 4)).toBe(0xdead_beef);
+    expect(reads).toBe(1);
+
+    const snapshot = pciBus.saveState();
+
+    // Restore into a fresh bus with the same device registered.
+    const portBus2 = new PortIoBus();
+    const mmioBus2 = new MmioBus();
+    const pciBus2 = new PciBus(portBus2, mmioBus2);
+    pciBus2.registerToPortBus();
+
+    let reads2 = 0;
+    const dev2: PciDevice = {
+      name: "snap_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      mmioRead: () => {
+        reads2++;
+        return 0xcafe_babe;
+      },
+    };
+    pciBus2.registerDevice(dev2, { device: 0, function: 0 });
+
+    pciBus2.loadState(snapshot);
+
+    // AddrReg restore: a direct read from 0xCFC should observe BAR0.
+    expect(portBus2.read(0x0cfc, 4) >>> 0).toBe(0x8000_0000);
+
+    // BAR mapping + command restore.
+    expect(mmioBus2.read(0x8000_0000n, 4)).toBe(0xcafe_babe);
+    expect(reads2).toBe(1);
+  });
 });
