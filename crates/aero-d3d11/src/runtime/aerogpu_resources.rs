@@ -1176,6 +1176,21 @@ fn upload_texture_from_linear_bytes(
                 );
             } else {
                 // Direct upload (uncompressed or BC, depending on the texture format).
+                if is_bc_compressed_format(desc.format) {
+                    // WebGPU requires BC texture copy regions to be 4x4 block aligned unless the
+                    // copy reaches the edge of the mip. This upload path always writes full mips at
+                    // origin (0,0), but we still validate alignment so future refactors that add
+                    // partial updates don't accidentally violate the rule.
+                    validate_bc_region_alignment(
+                        0,
+                        0,
+                        linear.width,
+                        linear.height,
+                        linear.width,
+                        linear.height,
+                    )?;
+                }
+
                 let needs_repack = linear.rows > 1 && !linear.row_pitch_bytes.is_multiple_of(align);
 
                 let upload_bytes_per_row = if needs_repack {
@@ -1228,6 +1243,33 @@ fn upload_texture_from_linear_bytes(
 
             offset += subresource_len;
         }
+    }
+
+    Ok(())
+}
+
+fn validate_bc_region_alignment(
+    origin_x: u32,
+    origin_y: u32,
+    width: u32,
+    height: u32,
+    mip_width: u32,
+    mip_height: u32,
+) -> Result<()> {
+    // Origin must be block-aligned.
+    if !origin_x.is_multiple_of(4) || !origin_y.is_multiple_of(4) {
+        bail!(
+            "BC-compressed writes must be 4x4 block aligned (origin=({origin_x},{origin_y}))"
+        );
+    }
+
+    // Copy size must be block-aligned unless reaching the edge of the mip.
+    if (!width.is_multiple_of(4) && origin_x + width != mip_width)
+        || (!height.is_multiple_of(4) && origin_y + height != mip_height)
+    {
+        bail!(
+            "BC-compressed writes must be 4x4 block aligned unless reaching the mip edge (origin=({origin_x},{origin_y}) extent=({width},{height}) mip_size=({mip_width},{mip_height}))"
+        );
     }
 
     Ok(())
