@@ -1678,8 +1678,10 @@ function maybeInitHdaDevice(): void {
 
     // Apply any existing microphone ring-buffer attachment.
     if (micRingBuffer) {
-      dev.setMicRingBuffer(micRingBuffer);
+      // Prefer setting the sample rate before attaching so newer WASM builds can use
+      // `attach_mic_ring(ring, sampleRate)` internally (atomic attach+rate).
       if (micSampleRate > 0) dev.setCaptureSampleRateHz(micSampleRate);
+      dev.setMicRingBuffer(micRingBuffer);
     }
 
     // Apply any existing audio output ring-buffer attachment (producer-side).
@@ -2283,10 +2285,10 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
 
   const dev = hdaDevice;
   if (dev) {
-    dev.setMicRingBuffer(ringBuffer);
     if (ringBuffer && micSampleRate > 0) {
       dev.setCaptureSampleRateHz(micSampleRate);
     }
+    dev.setMicRingBuffer(ringBuffer);
   }
 }
 

@@ -11,6 +11,14 @@ export type HdaControllerBridgeLike = {
   set_mic_ring_buffer(sab?: SharedArrayBuffer): void;
   set_capture_sample_rate_hz(sampleRateHz: number): void;
   /**
+   * Optional microphone ring attachment helpers (newer WASM builds).
+   *
+   * Prefer these when available so the bridge can apply capture sample-rate
+   * and ring attachment atomically.
+   */
+  attach_mic_ring?: (ringSab: SharedArrayBuffer, sampleRateHz: number) => void;
+  detach_mic_ring?: () => void;
+  /**
    * Optional audio output ring attachment helpers (newer WASM builds).
    *
    * When attached, the WASM-side HDA controller writes interleaved stereo `f32`
@@ -85,6 +93,8 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   #intxDisabled = false;
   #irqLevel = false;
   #destroyed = false;
+  #micRingBuffer: SharedArrayBuffer | null = null;
+  #micSampleRateHz = 0;
 
   constructor(opts: { bridge: HdaControllerBridgeLike; irqSink: IrqSink }) {
     this.#bridge = opts.bridge;
@@ -178,23 +188,16 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
   setMicRingBuffer(sab: SharedArrayBuffer | null): void {
     if (this.#destroyed) return;
-    try {
-      if (sab) this.#bridge.set_mic_ring_buffer(sab);
-      else this.#bridge.set_mic_ring_buffer(undefined);
-    } catch {
-      // ignore
-    }
+    this.#micRingBuffer = sab;
+    this.#syncMic();
   }
 
   setCaptureSampleRateHz(sampleRateHz: number): void {
     if (this.#destroyed) return;
     const sr = sampleRateHz >>> 0;
     if (sr === 0) return;
-    try {
-      this.#bridge.set_capture_sample_rate_hz(sr);
-    } catch {
-      // ignore
-    }
+    this.#micSampleRateHz = sr;
+    this.#syncMic();
   }
 
   /**
@@ -303,5 +306,58 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     this.#irqLevel = asserted;
     if (asserted) this.#irqSink.raiseIrq(this.irqLine);
     else this.#irqSink.lowerIrq(this.irqLine);
+  }
+
+  #syncMic(): void {
+    if (this.#destroyed) return;
+
+    const ring = this.#micRingBuffer;
+    const sr = this.#micSampleRateHz >>> 0;
+
+    // Prefer the newer attach/detach helpers when available so capture sample-rate
+    // is applied alongside ring attachment.
+    if (ring) {
+      const attach = (this.#bridge as unknown as { attach_mic_ring?: unknown }).attach_mic_ring;
+      if (typeof attach === "function" && sr > 0) {
+        try {
+          (attach as (ring: SharedArrayBuffer, sr: number) => void).call(this.#bridge, ring, sr);
+          return;
+        } catch {
+          // fall through to legacy path
+        }
+      }
+
+      // Legacy: attach ring first, then apply sample rate if available.
+      try {
+        this.#bridge.set_mic_ring_buffer(ring);
+      } catch {
+        // ignore
+      }
+    } else {
+      // Detach.
+      const detach = (this.#bridge as unknown as { detach_mic_ring?: unknown }).detach_mic_ring;
+      if (typeof detach === "function") {
+        try {
+          (detach as () => void).call(this.#bridge);
+        } catch {
+          // fall through to legacy path
+        }
+      }
+
+      try {
+        this.#bridge.set_mic_ring_buffer(undefined);
+      } catch {
+        // ignore
+      }
+    }
+
+    // Keep the capture sample-rate in sync even if the ring is not yet attached.
+    if (sr > 0) {
+      try {
+        this.#bridge.set_capture_sample_rate_hz(sr);
+      } catch {
+        // ignore
+      }
+    }
   }
 }
