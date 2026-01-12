@@ -5,6 +5,13 @@ import { initJitWasmForContext, type JitWasmApi, type Tier1BlockCompilation } fr
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
+// Keep these values aligned with the Tier-1 compiler's expectations:
+// - x86 instruction decoder can read up to 15 bytes per instruction.
+// - `aero-jit-wasm` caps the maximum input code slice to 1MiB.
+const DEFAULT_MAX_BYTES = 1024;
+const DECODE_WINDOW_SLACK_BYTES = 15;
+const MAX_COMPILER_CODE_BYTES = 1024 * 1024;
+
 let sharedMemory: WebAssembly.Memory | null = null;
 let guestBase = 0;
 let guestSize = 0;
@@ -54,8 +61,8 @@ function sliceCodeWindow(entryRip: number, maxBytes: number): Uint8Array {
 
   const entry = clampU32(entryRip);
   const max = clampU32(maxBytes);
-  const effectiveMax = max === 0 ? 1024 : max;
-  const desiredLen = effectiveMax + 15; // decoder may read up to 15 bytes per instruction
+  const effectiveMax = max === 0 ? DEFAULT_MAX_BYTES : max;
+  const desiredLen = effectiveMax + DECODE_WINDOW_SLACK_BYTES;
 
   const availableGuest = Math.max(0, guestSize - entry);
   const lenGuest = Math.min(desiredLen, availableGuest);
@@ -139,7 +146,9 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
-  const maxBytes = req.max_bytes > 0 ? req.max_bytes : 1024;
+  const requestedMaxBytes = req.max_bytes > 0 ? req.max_bytes : DEFAULT_MAX_BYTES;
+  // Clamp to keep the decode window (maxBytes + slack) within the compiler's input cap.
+  const maxBytes = Math.min(requestedMaxBytes, MAX_COMPILER_CODE_BYTES - DECODE_WINDOW_SLACK_BYTES);
   const maxInsts = 64;
   const bitness = req.bitness ?? 0;
 
