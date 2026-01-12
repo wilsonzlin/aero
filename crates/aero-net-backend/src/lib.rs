@@ -35,14 +35,6 @@ pub trait NetworkBackend {
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         None
     }
-
-    /// Return best-effort stats for the [`L2TunnelRingBackend`] (if this backend is one).
-    ///
-    /// This is intentionally optional so alternative backends (e.g. NAT/stack-backed) do not need
-    /// to plumb statistics through this trait.
-    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        None
-    }
 }
 
 impl<T: NetworkBackend + ?Sized> NetworkBackend for Box<T> {
