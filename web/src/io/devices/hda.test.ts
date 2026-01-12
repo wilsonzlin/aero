@@ -250,3 +250,42 @@ describe("io/devices/HdaPciDevice audio ring attachment", () => {
     expect(totalFrames).toBe(44_100 * 600);
   });
 });
+
+describe("io/devices/HdaPciDevice microphone ring attachment", () => {
+  it("prefers attach_mic_ring/detach_mic_ring when the WASM bridge exports them", () => {
+    const attachMic = vi.fn();
+    const detachMic = vi.fn();
+    const setMicRing = vi.fn();
+    const setCaptureRate = vi.fn();
+
+    const bridge: HdaControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_level: vi.fn(() => false),
+      set_mic_ring_buffer: setMicRing,
+      set_capture_sample_rate_hz: setCaptureRate,
+      attach_mic_ring: attachMic,
+      detach_mic_ring: detachMic,
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new HdaPciDevice({ bridge, irqSink });
+
+    const ringBuffer =
+      typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
+
+    dev.setCaptureSampleRateHz(48_000);
+    dev.setMicRingBuffer(ringBuffer);
+
+    expect(attachMic).toHaveBeenCalledTimes(1);
+    expect(attachMic).toHaveBeenCalledWith(ringBuffer, 48_000);
+    // Ensure we did not attach via the legacy set_mic_ring_buffer(ring) path.
+    expect(setMicRing).not.toHaveBeenCalledWith(ringBuffer);
+    // Still plumb capture sample rate.
+    expect(setCaptureRate).toHaveBeenCalledWith(48_000);
+
+    dev.setMicRingBuffer(null);
+    expect(detachMic).toHaveBeenCalled();
+  });
+});
