@@ -384,6 +384,7 @@ struct TestShaderResourceView {
 };
 
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
+constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91; // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
 
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
 constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
@@ -479,11 +480,12 @@ bool CreateBufferWithInitialData(TestDevice* dev,
   return true;
 }
 
-bool CreateStagingTexture2D(TestDevice* dev,
-                            uint32_t width,
-                            uint32_t height,
-                            uint32_t cpu_access_flags,
-                            TestResource* out) {
+bool CreateStagingTexture2DWithFormat(TestDevice* dev,
+                                      uint32_t width,
+                                      uint32_t height,
+                                      uint32_t dxgi_format,
+                                      uint32_t cpu_access_flags,
+                                      TestResource* out) {
   if (!dev || !out) {
     return false;
   }
@@ -498,7 +500,7 @@ bool CreateStagingTexture2D(TestDevice* dev,
   desc.Height = height;
   desc.MipLevels = 1;
   desc.ArraySize = 1;
-  desc.Format = kDxgiFormatB8G8R8A8Unorm;
+  desc.Format = dxgi_format;
   desc.pInitialData = nullptr;
   desc.InitialDataCount = 0;
 
@@ -515,6 +517,14 @@ bool CreateStagingTexture2D(TestDevice* dev,
     return false;
   }
   return true;
+}
+
+bool CreateStagingTexture2D(TestDevice* dev,
+                            uint32_t width,
+                            uint32_t height,
+                            uint32_t cpu_access_flags,
+                            TestResource* out) {
+  return CreateStagingTexture2DWithFormat(dev, width, height, kDxgiFormatB8G8R8A8Unorm, cpu_access_flags, out);
 }
 
 bool CreateShaderResourceView(TestDevice* dev, TestResource* tex, TestShaderResourceView* out) {
@@ -790,6 +800,61 @@ bool TestHostOwnedTextureUnmapUploads() {
   }
 
   if (!Check(dev.harness.last_allocs.empty(), "host-owned tex2d submit alloc list should be empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestCreateTexture2dSrgbFormatEncodesSrgbAerogpuFormat() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(create tex2d sRGB)")) {
+    return false;
+  }
+
+  constexpr uint32_t width = 5;
+  constexpr uint32_t height = 7;
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                              width,
+                                              height,
+                                              kDxgiFormatB8G8R8A8UnormSrgb,
+                                              /*cpu_access_flags=*/0,
+                                              &tex),
+             "CreateStagingTexture2DWithFormat(sRGB)")) {
+    return false;
+  }
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(sRGB tex2d)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->width == width, "CREATE_TEXTURE2D width matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->height == height, "CREATE_TEXTURE2D height matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->format == AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB,
+             "CREATE_TEXTURE2D format is AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB")) {
     return false;
   }
 
@@ -3429,6 +3494,7 @@ int main() {
   bool ok = true;
   ok &= TestHostOwnedBufferUnmapUploads();
   ok &= TestHostOwnedTextureUnmapUploads();
+  ok &= TestCreateTexture2dSrgbFormatEncodesSrgbAerogpuFormat();
   ok &= TestGuestBackedBufferUnmapDirtyRange();
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
