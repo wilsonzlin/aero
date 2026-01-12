@@ -1620,11 +1620,17 @@ impl AerogpuD3d11Executor {
             match opcode {
                 OPCODE_DRAW
                 | OPCODE_DRAW_INDEXED
+                | OPCODE_CREATE_BUFFER
+                | OPCODE_CREATE_TEXTURE2D
                 | OPCODE_RESOURCE_DIRTY_RANGE
                 | OPCODE_CREATE_SAMPLER
                 | OPCODE_DESTROY_SAMPLER
+                | OPCODE_CREATE_SHADER_DXBC
+                | OPCODE_DESTROY_SHADER
                 | OPCODE_BIND_SHADERS
                 | OPCODE_SET_SHADER_CONSTANTS_F
+                | OPCODE_CREATE_INPUT_LAYOUT
+                | OPCODE_DESTROY_INPUT_LAYOUT
                 | OPCODE_SET_INPUT_LAYOUT
                 | OPCODE_SET_RENDER_TARGETS
                 | OPCODE_SET_BLEND_STATE
@@ -1689,6 +1695,19 @@ impl AerogpuD3d11Executor {
                         break;
                     }
                 } else {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_DESTROY_INPUT_LAYOUT {
+                // `DESTROY_INPUT_LAYOUT` clears the currently bound layout if it matches. That
+                // affects pipeline creation, so we can only execute it inside the pass if it
+                // doesn't touch the active layout.
+                if cmd_bytes.len() < 16 {
+                    break;
+                }
+                let handle = read_u32_le(cmd_bytes, 8)?;
+                if self.state.input_layout == Some(handle) {
                     break;
                 }
             }
@@ -2531,6 +2550,12 @@ impl AerogpuD3d11Executor {
                     }
                 }
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
+                OPCODE_CREATE_BUFFER => self.exec_create_buffer(cmd_bytes, allocs)?,
+                OPCODE_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, allocs)?,
+                OPCODE_CREATE_SHADER_DXBC => self.exec_create_shader_dxbc(cmd_bytes)?,
+                OPCODE_DESTROY_SHADER => self.exec_destroy_shader(cmd_bytes)?,
+                OPCODE_CREATE_INPUT_LAYOUT => self.exec_create_input_layout(cmd_bytes)?,
+                OPCODE_DESTROY_INPUT_LAYOUT => self.exec_destroy_input_layout(cmd_bytes)?,
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
                 OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes)?,
                 OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes)?,
