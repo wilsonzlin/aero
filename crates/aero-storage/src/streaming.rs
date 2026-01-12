@@ -636,6 +636,11 @@ impl StreamingDisk {
                 "max_retries must be greater than zero".to_string(),
             ));
         }
+        if config.options.max_concurrent_fetches == 0 {
+            return Err(StreamingDiskError::Protocol(
+                "max_concurrent_fetches must be greater than zero".to_string(),
+            ));
+        }
 
         fs::create_dir_all(&config.cache_dir)?;
 
