@@ -103,6 +103,57 @@ fn program_ioapic_entry(ints: &mut aero_platform::interrupts::PlatformInterrupts
 }
 
 #[test]
+fn machine_pit_irq0_wakes_cpu_from_hlt() {
+    // IRQ0 with PIC base 0x20 => vector 0x20.
+    let vector = 0x20u8;
+    let flag_addr = 0x0502u16;
+    let flag_value = 0xCCu8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut m = Machine::new(pc_machine_config()).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    // Halt first so the PIT interrupt must wake the CPU.
+    run_until_halt(&mut m);
+
+    // Reprogram the PIC via its legacy I/O ports.
+    // Standard 8259 remap sequence:
+    //   ICW1=0x11, ICW2=0x20/0x28, ICW3=0x04/0x02, ICW4=0x01.
+    m.io_write(0x20, 1, 0x11);
+    m.io_write(0xA0, 1, 0x11);
+    m.io_write(0x21, 1, 0x20);
+    m.io_write(0xA1, 1, 0x28);
+    m.io_write(0x21, 1, 0x04);
+    m.io_write(0xA1, 1, 0x02);
+    m.io_write(0x21, 1, 0x01);
+    m.io_write(0xA1, 1, 0x01);
+    // Unmask IRQ0 only.
+    m.io_write(0x21, 1, 0xFE);
+    m.io_write(0xA1, 1, 0xFF);
+
+    // Program PIT channel 0 for ~1kHz periodic interrupts (mode 2, lo/hi).
+    // PIT tick rate is 1.193182 MHz, so divisor 1193 ~= 1ms period.
+    m.io_write(0x43, 1, 0x34);
+    m.io_write(0x40, 1, 1193 & 0xFF);
+    m.io_write(0x40, 1, 1193 >> 8);
+
+    // The machine should advance platform time even while halted so PIT IRQ0 can wake it.
+    for _ in 0..200 {
+        let _ = m.run_slice(10_000);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "PIT IRQ0 handler did not run (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
 fn machine_run_slice_polls_platform_pic_and_delivers_interrupt() {
     let vector = 0x21u8; // IRQ1 with PIC base 0x20
     let flag_addr = 0x0500u16;

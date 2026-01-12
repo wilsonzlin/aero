@@ -61,6 +61,7 @@ pub use pci_firmware::{
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS: usize = 1024 * 1024;
+const NS_PER_SEC: u128 = 1_000_000_000;
 
 pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
@@ -377,6 +378,12 @@ pub struct Machine {
     // CPU_INTERNAL but `post_restore` resets `cpu.pending` to a baseline default before
     // applying this machine-defined state back on top.
     restored_cpu_internal: Option<snapshot::CpuInternalState>,
+
+    /// Remainder used when converting CPU cycles (TSC ticks) into nanoseconds for deterministic
+    /// platform device ticking.
+    ///
+    /// This is `total_cycles * 1e9 mod tsc_hz`, carried across batches to avoid long-run drift.
+    tsc_ns_remainder: u64,
 }
 
 impl Machine {
@@ -413,6 +420,7 @@ impl Machine {
             next_snapshot_id: 1,
             last_snapshot_id: None,
             restored_cpu_internal: None,
+            tsc_ns_remainder: 0,
         };
 
         machine.reset();
@@ -556,6 +564,10 @@ impl Machine {
             clock.advance_ns(delta_ns);
         }
 
+        if let Some(acpi_pm) = &self.acpi_pm {
+            acpi_pm.borrow_mut().advance_ns(delta_ns);
+        }
+
         if let Some(pit) = &self.pit {
             pit.borrow_mut().advance_ns(delta_ns);
         }
@@ -573,6 +585,59 @@ impl Machine {
             let mut interrupts = interrupts.borrow_mut();
             hpet.poll(&mut *interrupts);
         }
+    }
+
+    fn tick_platform_from_cycles(&mut self, cycles: u64) {
+        if self.platform_clock.is_none() {
+            return;
+        }
+
+        let tsc_hz = self.cpu.time.tsc_hz();
+        if tsc_hz == 0 || cycles == 0 {
+            return;
+        }
+
+        let acc = (cycles as u128) * NS_PER_SEC + (self.tsc_ns_remainder as u128);
+        let delta_ns_u128 = acc / (tsc_hz as u128);
+        self.tsc_ns_remainder = (acc % (tsc_hz as u128)) as u64;
+
+        let delta_ns = delta_ns_u128.min(u64::MAX as u128) as u64;
+        if delta_ns != 0 {
+            self.tick_platform(delta_ns);
+        }
+    }
+
+    fn idle_tick_platform_1ms(&mut self) {
+        if self.platform_clock.is_none() {
+            return;
+        }
+
+        // Only tick while halted when maskable interrupts are enabled; otherwise HLT is expected to
+        // be terminal (until NMI/SMI/reset, which we do not model yet).
+        if (self.cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) == 0 {
+            return;
+        }
+
+        let tsc_hz = self.cpu.time.tsc_hz();
+        if tsc_hz == 0 {
+            return;
+        }
+
+        // Advance 1ms worth of CPU cycles while halted so timer devices can wake the CPU.
+        let cycles = (tsc_hz / 1000).max(1);
+        self.cpu.time.advance_cycles(cycles);
+        self.cpu.state.msr.tsc = self.cpu.time.read_tsc();
+        self.tick_platform_from_cycles(cycles);
+    }
+
+    fn resync_tsc_ns_remainder_from_tsc(&mut self) {
+        let tsc_hz = self.cpu.time.tsc_hz();
+        if self.platform_clock.is_none() || tsc_hz == 0 {
+            self.tsc_ns_remainder = 0;
+            return;
+        }
+        let tsc = self.cpu.state.msr.tsc;
+        self.tsc_ns_remainder = ((tsc as u128) * NS_PER_SEC % (tsc_hz as u128)) as u64;
     }
 
     /// Take (drain) all serial output accumulated so far.
@@ -710,6 +775,7 @@ impl Machine {
     pub fn reset(&mut self) {
         self.reset_latch.clear();
         self.serial_log.clear();
+        self.tsc_ns_remainder = 0;
 
         // Reset chipset lines.
         self.chipset.a20().set_enabled(false);
@@ -882,6 +948,9 @@ impl Machine {
             );
             executed = executed.saturating_add(batch.executed);
 
+            // Deterministically advance platform time based on executed cycles.
+            self.tick_platform_from_cycles(batch.executed);
+
             match batch.exit {
                 BatchExit::Completed => {
                     self.flush_serial();
@@ -889,6 +958,8 @@ impl Machine {
                 }
                 BatchExit::Branch => continue,
                 BatchExit::Halted => {
+                    // When halted, advance platform time so timer interrupts can wake the CPU.
+                    self.idle_tick_platform_1ms();
                     self.flush_serial();
                     return RunExit::Halted { executed };
                 }
@@ -1351,6 +1422,7 @@ impl snapshot::SnapshotTarget for Machine {
         }
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
+        self.resync_tsc_ns_remainder_from_tsc();
         Ok(())
     }
 }
