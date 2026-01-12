@@ -141,6 +141,13 @@ export RUSTC_WORKER_THREADS="${RUSTC_WORKER_THREADS:-$CARGO_BUILD_JOBS}"
 # reliable under contention.
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 
+# Rust's built-in test harness (libtest) defaults to running tests with one thread per CPU core.
+# Under shared-host contention this can exceed per-user thread limits (EAGAIN) and cause tests to
+# fail before they even start.
+#
+# Keep it aligned with our overall Cargo parallelism for reliability.
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-$CARGO_BUILD_JOBS}"
+
 # Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
 # Do NOT force a default `-C codegen-units=...` here. In some constrained sandboxes,
@@ -237,6 +244,7 @@ echo "Aero agent environment configured:"
 echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
 echo "  RUSTC_WORKER_THREADS=$RUSTC_WORKER_THREADS"
 echo "  RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
+echo "  RUST_TEST_THREADS=$RUST_TEST_THREADS"
 echo "  RUSTFLAGS=${RUSTFLAGS:-}"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
 if [[ -n "${CARGO_HOME:-}" ]]; then
