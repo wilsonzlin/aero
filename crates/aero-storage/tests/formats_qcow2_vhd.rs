@@ -3,6 +3,7 @@ use aero_storage::{
 };
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
+const QCOW2_OFLAG_ZERO: u64 = 1 << 0;
 
 fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
     buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
@@ -52,6 +53,53 @@ fn make_qcow2_empty(virtual_size: u64) -> MemBackend {
     write_be_u64(&mut header, 88, 0); // autoclear_features
     write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
     write_be_u32(&mut header, 100, 104); // header_length
+    backend.write_at(0, &header).unwrap();
+
+    backend
+        .write_at(refcount_table_offset, &refcount_block_offset.to_be_bytes())
+        .unwrap();
+
+    let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
+    backend
+        .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+        .unwrap();
+
+    for cluster_index in 0u64..5 {
+        let off = refcount_block_offset + cluster_index * 2;
+        backend.write_at(off, &1u16.to_be_bytes()).unwrap();
+    }
+
+    backend
+}
+
+fn make_qcow2_v2_empty(virtual_size: u64) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+
+    // Keep fixtures small while still exercising the full metadata path.
+    let cluster_bits = 12u32; // 4 KiB clusters
+    let cluster_size = 1u64 << cluster_bits;
+
+    let refcount_table_offset = cluster_size;
+    let l1_table_offset = cluster_size * 2;
+    let refcount_block_offset = cluster_size * 3;
+    let l2_table_offset = cluster_size * 4;
+
+    let file_len = cluster_size * 5;
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+
+    // QCOW2 v2 header is 72 bytes (big-endian).
+    let mut header = [0u8; 72];
+    header[0..4].copy_from_slice(b"QFI\xfb");
+    write_be_u32(&mut header, 4, 2); // version
+    // backing file offset/size are zero
+    write_be_u32(&mut header, 20, cluster_bits);
+    write_be_u64(&mut header, 24, virtual_size);
+    // crypt_method is zero
+    write_be_u32(&mut header, 36, 1); // l1_size
+    write_be_u64(&mut header, 40, l1_table_offset);
+    write_be_u64(&mut header, 48, refcount_table_offset);
+    write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+    // nb_snapshots and snapshots_offset are zero
     backend.write_at(0, &header).unwrap();
 
     backend
@@ -291,6 +339,22 @@ fn qcow2_rejects_corrupt_magic() {
 }
 
 #[test]
+fn qcow2_v2_open_write_and_reopen_roundtrip() {
+    let backend = make_qcow2_v2_empty(64 * 1024);
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    let data = vec![0xA5u8; SECTOR_SIZE];
+    disk.write_sectors(2, &data).unwrap();
+    disk.flush().unwrap();
+
+    let backend = disk.into_backend();
+    let mut reopened = Qcow2Disk::open(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(2, &mut back).unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
 fn qcow2_rejects_absurd_l1_table_size() {
     // Ensure we fail fast without attempting to allocate a huge L1 table.
     let cluster_bits = 9u32; // 512-byte clusters (smallest allowed)
@@ -520,6 +584,45 @@ fn qcow2_write_at_spanning_clusters_roundtrip() {
 }
 
 #[test]
+fn qcow2_zero_cluster_flag_is_treated_as_unallocated_and_can_be_written() {
+    let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    // Mark guest cluster 0 as a v3 "zero cluster".
+    backend
+        .write_at(l2_table_offset, &QCOW2_OFLAG_ZERO.to_be_bytes())
+        .unwrap();
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    // Reads should still return zeros.
+    let mut sector = [0xAAu8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut sector).unwrap();
+    assert!(sector.iter().all(|b| *b == 0));
+
+    // Writes should allocate a real data cluster and clear the zero flag.
+    let data = vec![0xCCu8; SECTOR_SIZE];
+    disk.write_sectors(0, &data).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+    let expected_data_cluster_offset = cluster_size * 5;
+
+    let mut new_l2_entry_bytes = [0u8; 8];
+    backend
+        .read_at(l2_table_offset, &mut new_l2_entry_bytes)
+        .unwrap();
+    let new_l2_entry = u64::from_be_bytes(new_l2_entry_bytes);
+    assert_eq!(new_l2_entry, expected_data_cluster_offset | QCOW2_OFLAG_COPIED);
+
+    let mut reopened = Qcow2Disk::open(backend).unwrap();
+    let mut back = vec![0u8; SECTOR_SIZE];
+    reopened.read_sectors(0, &mut back).unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
 fn vhd_fixed_write_last_sector_persists_and_footer_remains_valid() {
     let virtual_size = 64 * 1024u64;
     let backend = make_vhd_fixed_with_pattern();
@@ -654,6 +757,13 @@ fn vhd_dynamic_nonzero_write_allocates_block_and_grows_file() {
         .read_at(old_footer_offset, &mut bitmap_first)
         .unwrap();
     assert_eq!(bitmap_first[0], 0x80);
+
+    // Reading another sector in the same allocated block that is not marked present must yield
+    // zeros (bitmap bit is still 0).
+    let mut disk = VhdDisk::open(backend).unwrap();
+    let mut sector1 = [0xAAu8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut sector1).unwrap();
+    assert!(sector1.iter().all(|b| *b == 0));
 }
 
 #[test]
