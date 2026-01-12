@@ -8,14 +8,33 @@ pub trait PortIoDevice {
     fn reset(&mut self) {}
 }
 
+struct RangeDevice {
+    start: u16,
+    len: u16,
+    dev: Box<dyn PortIoDevice>,
+}
+
+impl RangeDevice {
+    fn end_exclusive(&self) -> u32 {
+        u32::from(self.start) + u32::from(self.len)
+    }
+
+    fn contains(&self, port: u16) -> bool {
+        let p = u32::from(port);
+        p >= u32::from(self.start) && p < self.end_exclusive()
+    }
+}
+
 pub struct IoPortBus {
     devices: HashMap<u16, Box<dyn PortIoDevice>>,
+    ranges: Vec<RangeDevice>,
 }
 
 impl IoPortBus {
     pub fn new() -> Self {
         Self {
             devices: HashMap::new(),
+            ranges: Vec::new(),
         }
     }
 
@@ -59,21 +78,94 @@ impl IoPortBus {
         }
     }
 
+    /// Registers a single device over a contiguous I/O port range.
+    ///
+    /// Range devices are searched only if there is no exact port match. This preserves the
+    /// historical behavior for fixed legacy devices registered via [`Self::register`].
+    pub fn register_range(&mut self, start: u16, len: u16, dev: Box<dyn PortIoDevice>) {
+        assert!(len != 0, "I/O port range length must be non-zero");
+
+        let end_exclusive = u32::from(start) + u32::from(len);
+        assert!(
+            end_exclusive <= 0x1_0000,
+            "I/O port range wraps past 0xFFFF: start={start:#x} len={len:#x}"
+        );
+
+        let idx = self
+            .ranges
+            .partition_point(|r| u32::from(r.start) < u32::from(start));
+
+        // For deterministic dispatch and efficient lookups, disallow overlapping ranges.
+        if let Some(prev) = self.ranges.get(idx.wrapping_sub(1)) {
+            assert!(
+                u32::from(start) >= prev.end_exclusive(),
+                "overlapping I/O port ranges: new=[{start:#x}..{end_exclusive:#x}) prev=[{:#x}..{:#x})",
+                prev.start,
+                prev.end_exclusive()
+            );
+        }
+        if let Some(next) = self.ranges.get(idx) {
+            assert!(
+                end_exclusive <= u32::from(next.start),
+                "overlapping I/O port ranges: new=[{start:#x}..{end_exclusive:#x}) next=[{:#x}..{:#x})",
+                next.start,
+                next.end_exclusive()
+            );
+        }
+
+        self.ranges.insert(
+            idx,
+            RangeDevice {
+                start,
+                len,
+                dev,
+            },
+        );
+    }
+
+    fn find_range_index(&self, port: u16) -> Option<usize> {
+        let idx = self.ranges.partition_point(|r| r.start <= port);
+        if idx == 0 {
+            return None;
+        }
+        let cand = idx - 1;
+        self.ranges.get(cand).is_some_and(|r| r.contains(port)).then_some(cand)
+    }
+
     pub fn read(&mut self, port: u16, size: u8) -> u32 {
-        self.devices
-            .get_mut(&port)
-            .map(|d| d.read(port, size))
-            .unwrap_or_else(|| match size {
-                1 => 0xFF,
-                2 => 0xFFFF,
-                4 => 0xFFFF_FFFF,
-                _ => 0xFFFF_FFFF,
-            })
+        if let Some(dev) = self.devices.get_mut(&port) {
+            return dev.read(port, size);
+        }
+
+        if let Some(idx) = self.find_range_index(port) {
+            return self
+                .ranges
+                .get_mut(idx)
+                .expect("range index disappeared")
+                .dev
+                .read(port, size);
+        }
+
+        match size {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
     }
 
     pub fn write(&mut self, port: u16, size: u8, value: u32) {
         if let Some(device) = self.devices.get_mut(&port) {
             device.write(port, size, value);
+            return;
+        }
+
+        if let Some(idx) = self.find_range_index(port) {
+            self.ranges
+                .get_mut(idx)
+                .expect("range index disappeared")
+                .dev
+                .write(port, size, value);
         }
     }
 
@@ -88,6 +180,10 @@ impl IoPortBus {
     pub fn reset(&mut self) {
         for dev in self.devices.values_mut() {
             dev.reset();
+        }
+
+        for dev in self.ranges.iter_mut() {
+            dev.dev.reset();
         }
     }
 }
