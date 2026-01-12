@@ -5,6 +5,7 @@ import {
   READ_POS_INDEX,
   WRITE_POS_INDEX,
 } from "./mic_ring.js";
+import { AudioFrameClock, performanceNowNs } from "./audio_frame_clock";
 
 export type SyntheticMicSource = {
   ringBuffer: SharedArrayBuffer;
@@ -51,16 +52,13 @@ export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticM
   let phase = 0;
   const phaseStep = freqHz / sampleRate;
 
-  const startedAtMs = performance.now();
-  let producedSamples = 0;
+  const clock = new AudioFrameClock(sampleRate, performanceNowNs());
 
   // Keep allocations bounded by chunking the time-based generator output.
   const scratch = new Float32Array(Math.max(256, Math.floor(sampleRate / 100))); // ≥10ms at 48k
 
   const timer = globalThis.setInterval(() => {
-    const nowMs = performance.now();
-    const shouldHaveProduced = Math.floor(((nowMs - startedAtMs) * sampleRate) / 1000);
-    let remaining = shouldHaveProduced - producedSamples;
+    let remaining = clock.advanceTo(performanceNowNs());
     if (remaining <= 0) return;
 
     while (remaining > 0) {
@@ -71,7 +69,6 @@ export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticM
         if (phase >= 1) phase -= 1;
       }
       micRingBufferWrite(rb, scratch.subarray(0, n));
-      producedSamples += n;
       remaining -= n;
     }
   }, tickMs);
