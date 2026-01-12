@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  drivers/scripts/make-guest-tools-from-virtio-win.sh --virtio-win-iso <path> [options] [-- <extra pwsh args...>]
+  bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh --virtio-win-iso <path> [options] [-- <extra pwsh args...>]
 
 Builds `aero-guest-tools.iso` + `aero-guest-tools.zip` on Linux/macOS by:
   1) Extracting the virtio-win ISO with `tools/virtio-win/extract.py`

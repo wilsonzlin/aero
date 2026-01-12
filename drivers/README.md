@@ -106,9 +106,9 @@ Notes:
   - Or use the pure-Python backend: `python3 -m pip install pycdlib` and pass `--backend pycdlib`.
 - `make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
 - See `tools/virtio-win/README.md` for extractor details (outputs, provenance, backends).
-- Convenience: `drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command.
-- Convenience: `drivers/scripts/make-virtio-driver-iso.sh` builds `aero-virtio-win7-drivers.iso` from a virtio-win ISO on Linux/macOS.
-- Convenience: `drivers/scripts/make-guest-tools-from-virtio-win.sh` builds `aero-guest-tools.iso`/`.zip` from a virtio-win ISO on Linux/macOS.
+- Convenience: `bash ./drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command.
+- Convenience: `bash ./drivers/scripts/make-virtio-driver-iso.sh` builds `aero-virtio-win7-drivers.iso` from a virtio-win ISO on Linux/macOS.
+- Convenience: `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh` builds `aero-guest-tools.iso`/`.zip` from a virtio-win ISO on Linux/macOS.
 
 Output:
 
@@ -133,7 +133,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-is
 
 On non-Windows hosts you have three options:
 
-- Use the `.sh` wrapper: `drivers/scripts/make-virtio-driver-iso.sh`
+- Use the `.sh` wrapper: `bash ./drivers/scripts/make-virtio-driver-iso.sh`
 - Extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot`
 - Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable or fails)
 
@@ -156,7 +156,7 @@ By default, this wrapper builds media with `signing_policy=none` (for WHQL/produ
 
 On non-Windows hosts you have three options:
 
-- Use the `.sh` wrapper: `drivers/scripts/make-guest-tools-from-virtio-win.sh`
+- Use the `.sh` wrapper: `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh`
 - Extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot`
 - Run under `pwsh` and pass `-VirtioWinIso` directly (auto-extract fallback when `Mount-DiskImage` is unavailable or fails)
 

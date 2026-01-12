@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  drivers/scripts/make-virtio-driver-iso.sh --virtio-win-iso <path> [options] [-- <extra pwsh args...>]
+  bash ./drivers/scripts/make-virtio-driver-iso.sh --virtio-win-iso <path> [options] [-- <extra pwsh args...>]
 
 Builds `aero-virtio-win7-drivers.iso` on Linux/macOS by:
   1) Extracting the virtio-win ISO with `tools/virtio-win/extract.py`
@@ -110,4 +110,3 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File "$iso_ps1" \
   -VirtioWinRoot "$extract_root" \
   -OutIso "$out_iso" \
   "${passthru_args[@]}"
-

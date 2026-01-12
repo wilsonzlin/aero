@@ -339,7 +339,7 @@ python3 tools/virtio-win/extract.py --virtio-win-iso virtio-win.iso --out-root /
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 -VirtioWinRoot /tmp/virtio-win-root -OutDir ./dist/guest-tools
 ```
 
-Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
+Convenience wrapper (Linux/macOS): `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh`.
 
 Note: The virtio-win wrapper uses `docs/windows-device-contract-virtio-win.json` as the contract template and emits a
 temporary contract override (service names derived from the extracted driver INFs) when calling the CI packager wrapper,

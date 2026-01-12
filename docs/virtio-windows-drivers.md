@@ -357,8 +357,8 @@ Notes:
   If you don’t have `7z`, install `pycdlib` (`python3 -m pip install pycdlib`) and pass `--backend pycdlib`.
 - `drivers/scripts/make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
 - See `tools/virtio-win/README.md` for details (what is extracted, backends, provenance fields).
-- Convenience: `drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command on Linux/macOS.
-- Convenience: `drivers/scripts/make-virtio-driver-iso.sh` and `drivers/scripts/make-guest-tools-from-virtio-win.sh` provide one-shot wrappers for building the drivers ISO and Guest Tools media on Linux/macOS.
+- Convenience: `bash ./drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command on Linux/macOS.
+- Convenience: `bash ./drivers/scripts/make-virtio-driver-iso.sh` and `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh` provide one-shot wrappers for building the drivers ISO and Guest Tools media on Linux/macOS.
 
 `tools/virtio-win/extract.py` also writes a machine-readable provenance file to:
 
@@ -439,7 +439,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 ```
 
 On Linux/macOS, you can either extract first and pass `-VirtioWinRoot`, pass `-VirtioWinIso` directly under `pwsh`
-(auto-extract fallback when mounting is unavailable or fails), or use the `.sh` wrapper (`drivers/scripts/make-guest-tools-from-virtio-win.sh`):
+(auto-extract fallback when mounting is unavailable or fails), or use the `.sh` wrapper (`bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh`):
 
 ```bash
 python3 tools/virtio-win/extract.py \

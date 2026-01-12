@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  drivers/scripts/make-driver-pack.sh --virtio-win-iso <path> [options] [-- <extra pwsh args...>]
+  bash ./drivers/scripts/make-driver-pack.sh --virtio-win-iso <path> [options] [-- <extra pwsh args...>]
 
 Builds `drivers/out/aero-win7-driver-pack` on Linux/macOS by:
   1) Extracting the virtio-win ISO with `tools/virtio-win/extract.py`
@@ -25,10 +25,10 @@ The produced pack includes `manifest.json`, `THIRD_PARTY_NOTICES.md`, and (best-
 
 Examples:
   # Default (best-effort include audio/input):
-  drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
+  bash ./drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
 
   # Minimal pack, keep staging directory:
-  drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso -- --NoZip -Drivers viostor,netkvm
+  bash ./drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso -- --NoZip -Drivers viostor,netkvm
 EOF
 }
 

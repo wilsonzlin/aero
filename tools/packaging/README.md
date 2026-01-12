@@ -106,7 +106,7 @@ pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
   -BuildId local
 ```
 
-Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
+Convenience wrapper (Linux/macOS): `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh`.
 
 Profiles (defaults):
 

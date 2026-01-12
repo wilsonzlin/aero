@@ -35,14 +35,14 @@ pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso
 For convenience, you can also use the one-shot shell wrapper that runs the extractor for you:
 
 ```bash
-drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
+bash ./drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
 ```
 
 For convenience, Aero also provides one-shot wrappers that do the extraction + packaging in one command:
 
-- `drivers/scripts/make-driver-pack.sh` (driver pack zip/staging dir)
-- `drivers/scripts/make-virtio-driver-iso.sh` (mountable drivers ISO)
-- `drivers/scripts/make-guest-tools-from-virtio-win.sh` (Guest Tools ISO + zip)
+- `bash ./drivers/scripts/make-driver-pack.sh` (driver pack zip/staging dir)
+- `bash ./drivers/scripts/make-virtio-driver-iso.sh` (mountable drivers ISO)
+- `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh` (Guest Tools ISO + zip)
 
 ## What gets extracted
 
