@@ -4225,7 +4225,7 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   const prevBackend = mouseInputBackend;
   const nextBackend = chooseMouseInputBackend({
     current: mouseInputBackend,
-    buttonsHeld: (mouseButtonsMask & 0x07) !== 0,
+    buttonsHeld: (mouseButtonsMask & 0x1f) !== 0,
     virtioOk: opts.virtioMouseOk && !!virtioInputMouse,
     // Use PS/2 injection until the synthetic USB mouse is configured; once configured, route via
     // the USB HID bridge to avoid duplicate devices in the guest.
@@ -4235,7 +4235,7 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   // Optional extra robustness: when we *do* switch backends, send a "buttons=0" update to the
   // previous backend. This should be redundant because backend switching is gated on
   // `mouseButtonsMask===0`, but it provides a safety net in case a prior button-up was dropped.
-  if (nextBackend !== prevBackend && (mouseButtonsMask & 0x07) === 0) {
+  if (nextBackend !== prevBackend && (mouseButtonsMask & 0x1f) === 0) {
     if (prevBackend === "virtio") {
       virtioInputMouse?.injectMouseButtons(0);
     } else if (prevBackend === "usb") {
@@ -4461,19 +4461,20 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       }
       case InputEventType.MouseButtons: {
         const buttons = words[off + 2] & 0xff;
-        mouseButtonsMask = buttons & 0x07;
+        const buttonsClamped = buttons & 0x1f;
+        mouseButtonsMask = buttonsClamped;
         if (mouseInputBackend === "virtio") {
           if (virtioMouseOk && virtioMouse) {
-            virtioMouse.injectMouseButtons(buttons);
+            virtioMouse.injectMouseButtons(buttonsClamped);
           }
         } else if (mouseInputBackend === "ps2") {
           if (i8042Wasm) {
-            i8042Wasm.injectMouseButtons(buttons);
+            i8042Wasm.injectMouseButtons(buttonsClamped);
           } else if (i8042Ts) {
-            i8042Ts.injectMouseButtons(buttons);
+            i8042Ts.injectMouseButtons(buttonsClamped);
           }
         } else {
-          usbHid?.mouse_buttons(buttons);
+          usbHid?.mouse_buttons(buttonsClamped);
         }
         break;
       }

@@ -55,7 +55,7 @@ describe("InputCapture preventDefault policy", () => {
     });
   });
 
-  it("prevents default for non-guest mouse buttons while capture is active (e.g. browser back/forward buttons)", () => {
+  it("prevents default for extra mouse buttons while capture is active (e.g. browser back/forward buttons)", () => {
     withStubbedDocument(() => {
       const canvas = {
         tabIndex: 0,

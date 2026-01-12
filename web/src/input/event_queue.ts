@@ -27,12 +27,12 @@ export const InputEventType = {
     */
   MouseMove: 2,
   /**
-    * Mouse button state bitmask.
-    *
-    * Payload:
-    *   a = buttons (bit0=left, bit1=right, bit2=middle)
-    *   b = unused
-    */
+   * Mouse button state bitmask.
+   *
+   * Payload:
+    *   a = buttons (bit0=left, bit1=right, bit2=middle, bit3=back, bit4=forward)
+   *   b = unused
+   */
   MouseButtons: 3,
   /**
     * Mouse wheel movement.

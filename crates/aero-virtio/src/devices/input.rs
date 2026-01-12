@@ -35,6 +35,8 @@ pub const LED_SCROLLL: u16 = 0x02;
 pub const BTN_LEFT: u16 = 0x110;
 pub const BTN_RIGHT: u16 = 0x111;
 pub const BTN_MIDDLE: u16 = 0x112;
+pub const BTN_SIDE: u16 = 0x113;
+pub const BTN_EXTRA: u16 = 0x114;
 
 // Keyboard key codes (Linux input ABI).
 pub const KEY_ESC: u16 = 1;
@@ -344,7 +346,7 @@ impl VirtioInputBitmaps {
     fn for_mouse() -> Self {
         let mut bitmaps = Self::empty();
         bitmaps.ev = Self::with_bits(&[EV_SYN, EV_KEY, EV_REL]);
-        bitmaps.key = Self::with_bits(&[BTN_LEFT, BTN_RIGHT, BTN_MIDDLE]);
+        bitmaps.key = Self::with_bits(&[BTN_LEFT, BTN_RIGHT, BTN_MIDDLE, BTN_SIDE, BTN_EXTRA]);
         bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL]);
         bitmaps
     }

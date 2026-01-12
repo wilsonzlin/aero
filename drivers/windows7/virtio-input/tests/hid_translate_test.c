@@ -633,6 +633,18 @@ static void test_mouse_reports_le(void) {
 
   uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01};
   expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Side/back button down. */
+  send_key_le(&t, VIRTIO_INPUT_BTN_SIDE, 1);
+  send_syn_le(&t);
+  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x09, 0x00, 0x00, 0x00};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+
+  /* Extra/forward button down. */
+  send_key_le(&t, VIRTIO_INPUT_BTN_EXTRA, 1);
+  send_syn_le(&t);
+  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00};
+  expect_report(&cap, 3, expect4, sizeof(expect4));
 }
 
 static void test_keyboard_overflow_queue(void) {
@@ -720,6 +732,18 @@ static void test_mouse_reports(void) {
   uint8_t expect2[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x01};
   expect_report(&cap, 1, expect2, sizeof(expect2));
 
+  /* Side/back button down. */
+  send_key(&t, VIRTIO_INPUT_BTN_SIDE, 1);
+  send_syn(&t);
+  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x09, 0x00, 0x00, 0x00};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+
+  /* Extra/forward button down. */
+  send_key(&t, VIRTIO_INPUT_BTN_EXTRA, 1);
+  send_syn(&t);
+  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x19, 0x00, 0x00, 0x00};
+  expect_report(&cap, 3, expect4, sizeof(expect4));
+
   /* Large delta is split into multiple reports. */
   cap_clear(&cap);
   hid_translate_init(&t, capture_emit, &cap);
@@ -727,10 +751,10 @@ static void test_mouse_reports(void) {
   send_syn(&t);
 
   assert(cap.count == 2);
-  uint8_t expect3[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x7F, 0x00, 0x00};
-  uint8_t expect4[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x49, 0x00, 0x00};
-  expect_report(&cap, 0, expect3, sizeof(expect3));
-  expect_report(&cap, 1, expect4, sizeof(expect4));
+  uint8_t expect5[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x7F, 0x00, 0x00};
+  uint8_t expect6[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x49, 0x00, 0x00};
+  expect_report(&cap, 0, expect5, sizeof(expect5));
+  expect_report(&cap, 1, expect6, sizeof(expect6));
 }
 
 static void test_reset_emits_release_reports(void) {

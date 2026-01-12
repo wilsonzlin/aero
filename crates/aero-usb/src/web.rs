@@ -7,6 +7,8 @@
 pub const MOUSE_BUTTON_LEFT: u8 = 0x01;
 pub const MOUSE_BUTTON_RIGHT: u8 = 0x02;
 pub const MOUSE_BUTTON_MIDDLE: u8 = 0x04;
+pub const MOUSE_BUTTON_SIDE: u8 = 0x08;
+pub const MOUSE_BUTTON_EXTRA: u8 = 0x10;
 
 /// Map a JavaScript `KeyboardEvent.code` string to a USB HID keyboard usage (Usage Page 0x07).
 pub fn keyboard_code_to_hid_usage(code: &str) -> Option<u8> {

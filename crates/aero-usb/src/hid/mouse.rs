@@ -40,8 +40,15 @@ pub struct MouseReport {
 impl MouseReport {
     pub fn to_bytes(self, protocol: HidProtocol) -> Vec<u8> {
         match protocol {
-            HidProtocol::Boot => vec![self.buttons, self.x as u8, self.y as u8],
-            HidProtocol::Report => vec![self.buttons, self.x as u8, self.y as u8, self.wheel as u8],
+            // Boot mouse protocol is fixed-format and only defines 3 buttons.
+            HidProtocol::Boot => vec![self.buttons & 0x07, self.x as u8, self.y as u8],
+            // Report protocol uses our full report descriptor, which supports 5 buttons.
+            HidProtocol::Report => vec![
+                self.buttons & 0x1f,
+                self.x as u8,
+                self.y as u8,
+                self.wheel as u8,
+            ],
         }
     }
 }
@@ -288,15 +295,20 @@ impl UsbHidMouse {
 
     /// Sets or clears a mouse button bit.
     ///
-    /// Bit 0 = left, bit 1 = right, bit 2 = middle.
+    /// Bit 0 = left, bit 1 = right, bit 2 = middle, bit 3 = side/back, bit 4 = extra/forward.
     pub fn button_event(&mut self, button_bit: u8, pressed: bool) {
+        let bit = button_bit & 0x1f;
+        if bit == 0 {
+            return;
+        }
         self.flush_motion();
         let before = self.buttons;
         if pressed {
-            self.buttons |= button_bit;
+            self.buttons |= bit;
         } else {
-            self.buttons &= !button_bit;
+            self.buttons &= !bit;
         }
+        self.buttons &= 0x1f;
         if self.buttons != before {
             self.push_report(MouseReport {
                 buttons: self.buttons,
@@ -739,14 +751,14 @@ pub(super) static HID_REPORT_DESCRIPTOR: [u8; 52] = [
     0xa1, 0x00, // Collection (Physical)
     0x05, 0x09, // Usage Page (Buttons)
     0x19, 0x01, // Usage Minimum (Button 1)
-    0x29, 0x03, // Usage Maximum (Button 3)
+    0x29, 0x05, // Usage Maximum (Button 5)
     0x15, 0x00, // Logical Minimum (0)
     0x25, 0x01, // Logical Maximum (1)
-    0x95, 0x03, // Report Count (3)
+    0x95, 0x05, // Report Count (5)
     0x75, 0x01, // Report Size (1)
     0x81, 0x02, // Input (Data,Var,Abs) Button bits
     0x95, 0x01, // Report Count (1)
-    0x75, 0x05, // Report Size (5)
+    0x75, 0x03, // Report Size (3)
     0x81, 0x01, // Input (Const,Array,Abs) Padding
     0x05, 0x01, // Usage Page (Generic Desktop)
     0x09, 0x30, // Usage (X)
@@ -817,6 +829,27 @@ mod tests {
         let hid = &cfg[18..27];
         assert_eq!(hid[1], USB_DESCRIPTOR_TYPE_HID);
         assert_eq!(w_le(hid, 7) as usize, HID_REPORT_DESCRIPTOR.len());
+    }
+
+    #[test]
+    fn report_descriptor_supports_five_buttons_in_report_protocol() {
+        // The synthetic USB mouse models 5 buttons (left/right/middle/back/forward) in report
+        // protocol. Ensure the report descriptor declares Button UsageMax=5 and ReportCount=5 so
+        // those bits are not treated as padding by HID parsers.
+        assert!(
+            HID_REPORT_DESCRIPTOR
+                .windows(4)
+                .any(|w| w == [0x19, 0x01, 0x29, 0x05]),
+            "expected mouse descriptor to declare Button usage range 1..=5"
+        );
+        assert!(
+            HID_REPORT_DESCRIPTOR.windows(2).any(|w| w == [0x95, 0x05]),
+            "expected mouse descriptor to use ReportCount=5 for button bits"
+        );
+        assert!(
+            HID_REPORT_DESCRIPTOR.windows(2).any(|w| w == [0x75, 0x03]),
+            "expected mouse descriptor to use 3 bits of padding after the 5 button bits"
+        );
     }
 
     #[test]

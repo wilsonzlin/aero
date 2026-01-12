@@ -647,7 +647,7 @@ Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
 - `KeyScancode (1)`: `a=packedBytesLE`, `b=byteLen` (PS/2 Set 2 bytes including `0xE0`/`0xF0`). Long sequences are split across multiple `KeyScancode` events in-order (max 4 bytes per event).
 - `KeyHidUsage (6)`: `a=(usage & 0xFF) | ((pressed ? 1 : 0) << 8)`, `b=unused` (USB HID keyboard usage events on Usage Page 0x07). Emitted in addition to `KeyScancode` so the runtime can drive both PS/2 and USB HID paths from the same captured input.
 - `MouseMove (2)`: `a=dx`, `b=dy` (PS/2 coords: `dx` right, `dy` up)
-- `MouseButtons (3)`: `a=buttons` (bit0=left, bit1=right, bit2=middle)
+- `MouseButtons (3)`: `a=buttons` (bit0=left, bit1=right, bit2=middle, bit3=back, bit4=forward)
 - `MouseWheel (4)`: `a=dz` (positive=wheel up)
 - `GamepadReport (5)`: `a=packedBytes0to3LE`, `b=packedBytes4to7LE` (8-byte USB HID gamepad input report; see `web/src/input/gamepad.ts` for packing and `crates/aero-usb/src/hid/gamepad.rs::GamepadReport` for the canonical report layout)
 

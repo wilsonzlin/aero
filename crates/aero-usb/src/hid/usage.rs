@@ -124,20 +124,28 @@ pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
     }
 }
 
-/// Converts `MouseEvent.button` (0 = left, 1 = middle, 2 = right) to the HID button bit used by
-/// `UsbHidMouse::button_event`.
+/// Converts DOM `MouseEvent.button` indices to the HID button bit used by `UsbHidMouse::button_event`.
+///
+/// The mapping follows the DOM `MouseEvent.buttons` bitfield:
+/// - 0 => bit0 (`0x01`) left
+/// - 1 => bit2 (`0x04`) middle
+/// - 2 => bit1 (`0x02`) right
+/// - 3 => bit3 (`0x08`) back / side
+/// - 4 => bit4 (`0x10`) forward / extra
 pub fn mouse_button_index_to_bit(button: i16) -> Option<u8> {
     match button {
         0 => Some(0x01),
         2 => Some(0x02),
         1 => Some(0x04),
+        3 => Some(0x08),
+        4 => Some(0x10),
         _ => None,
     }
 }
 
 /// Converts `MouseEvent.buttons` bitfield to the HID button bitfield used by `MouseReport.buttons`.
 pub fn mouse_buttons_bitfield_to_bits(buttons: u16) -> u8 {
-    (buttons & 0x07) as u8
+    (buttons & 0x1f) as u8
 }
 
 /// Converts `WheelEvent.deltaY` into a conventional HID wheel step.
@@ -191,10 +199,12 @@ mod tests {
         assert_eq!(mouse_button_index_to_bit(0), Some(0x01));
         assert_eq!(mouse_button_index_to_bit(2), Some(0x02));
         assert_eq!(mouse_button_index_to_bit(1), Some(0x04));
-        assert_eq!(mouse_button_index_to_bit(3), None);
+        assert_eq!(mouse_button_index_to_bit(3), Some(0x08));
+        assert_eq!(mouse_button_index_to_bit(4), Some(0x10));
+        assert_eq!(mouse_button_index_to_bit(5), None);
 
-        assert_eq!(mouse_buttons_bitfield_to_bits(0b111), 0b111);
-        assert_eq!(mouse_buttons_bitfield_to_bits(0b1000), 0);
+        assert_eq!(mouse_buttons_bitfield_to_bits(0b1_1111), 0b1_1111);
+        assert_eq!(mouse_buttons_bitfield_to_bits(0b10_0000), 0);
 
         assert_eq!(wheel_delta_y_to_step(10.0), -1);
         assert_eq!(wheel_delta_y_to_step(-5.0), 1);

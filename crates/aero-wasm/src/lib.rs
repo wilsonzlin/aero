@@ -657,13 +657,18 @@ impl UsbHidBridge {
         self.mouse.movement(dx, dy);
     }
 
-    /// Set mouse button state as a bitmask (bit0=left, bit1=right, bit2=middle).
+    /// Set mouse button state as a bitmask matching the low bits of DOM `MouseEvent.buttons`:
+    /// - bit0 (`0x01`): left
+    /// - bit1 (`0x02`): right
+    /// - bit2 (`0x04`): middle
+    /// - bit3 (`0x08`): back / side
+    /// - bit4 (`0x10`): forward / extra
     pub fn mouse_buttons(&mut self, buttons: u8) {
-        let next = buttons & 0x07;
+        let next = buttons & 0x1f;
         let prev = self.mouse_buttons;
         let delta = prev ^ next;
 
-        for bit in [0x01, 0x02, 0x04] {
+        for bit in [0x01, 0x02, 0x04, 0x08, 0x10] {
             if (delta & bit) != 0 {
                 self.mouse.button_event(bit, (next & bit) != 0);
             }

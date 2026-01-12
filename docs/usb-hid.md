@@ -150,15 +150,18 @@ In browsers, `MouseEvent.buttons` is a bitfield:
 - `8` = back
 - `16` = forward
 
-The modeled mouse report supports 3 buttons (left/right/middle) and encodes them as:
+The modeled mouse report supports 5 buttons (left/right/middle/back/forward) and encodes them as:
 
-| HID button | Bit |
-| --- | --- |
-| Button 1 (left) | `1<<0` |
-| Button 2 (right) | `1<<1` |
-| Button 3 (middle) | `1<<2` |
+| HID button | Bit | Typical meaning |
+| --- | --- | --- |
+| Button 1 | `1<<0` | left |
+| Button 2 | `1<<1` | right |
+| Button 3 | `1<<2` | middle |
+| Button 4 | `1<<3` | back / side |
+| Button 5 | `1<<4` | forward / extra |
 
-(Back/forward can be added later by expanding the report descriptor and report format.)
+Note: in **HID boot protocol**, the standard boot mouse format only defines 3 buttons; Aero masks
+buttons 4/5 to zero when emitting boot-protocol reports.
 
 ### Movement (`PointerLock` + `MouseEvent.movementX/Y`)
 
@@ -191,7 +194,7 @@ hid_wheel_step = -WheelEvent.deltaY.signum()
 The modeled mouse uses a 4-byte report in **HID report protocol**:
 
 ```
-Byte 0: buttons (bits 0..2), remaining bits padding
+Byte 0: buttons (bits 0..4), remaining bits padding
 Byte 1: X delta (i8)
 Byte 2: Y delta (i8)
 Byte 3: wheel delta (i8)

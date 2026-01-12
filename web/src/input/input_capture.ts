@@ -630,7 +630,12 @@ function pushPackedBytes(queue: InputEventQueue, timestampUs: number, bytes: rea
 }
 
 function buttonToMask(button: number): number {
-  // PS/2 mouse exposes left/right/middle; ignore extra buttons for now.
+  // Track the DOM `MouseEvent.buttons` bitfield for the common 5 buttons:
+  // - left/right/middle (classic)
+  // - back/forward (aka side/extra buttons)
+  //
+  // Note: the PS/2 mouse backend only supports 3 buttons today and will ignore
+  // bits above 0x07, but virtio-input and USB HID backends can expose these.
   switch (button) {
     case 0:
       return 1;
@@ -638,6 +643,10 @@ function buttonToMask(button: number): number {
       return 2;
     case 1:
       return 4;
+    case 3:
+      return 8;
+    case 4:
+      return 16;
     default:
       return 0;
   }
