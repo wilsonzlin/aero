@@ -171,7 +171,11 @@ interface PciFunction {
 }
 
 function isPow2(n: number): boolean {
-  return n > 0 && (n & (n - 1)) === 0;
+  // Avoid JS bitwise ops here: they truncate to 32-bit and would mis-classify
+  // large BAR sizes (e.g. >4GiB) that we may use for 64-bit MMIO BARs.
+  if (!Number.isSafeInteger(n) || n <= 0) return false;
+  const b = BigInt(n);
+  return (b & (b - 1n)) === 0n;
 }
 
 function writeU32LE(buf: Uint8Array, off: number, value: number): void {

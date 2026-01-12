@@ -352,6 +352,22 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 0, 0x14)).toBe(0xffff_fffe);
   });
 
+  it("rejects non-power-of-two BAR sizes above 32-bit range (mmio64)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "mmio64_bad_size_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio64", size: 0x1_0000_0001 }, null, null, null, null, null],
+    };
+    expect(() => pciBus.registerDevice(dev, { device: 0, function: 0 })).toThrow(/power-of-two/i);
+  });
+
   it("rejects invalid mmio64 BAR layouts (BAR5 start / missing reserved slot)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
