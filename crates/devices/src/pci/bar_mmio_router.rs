@@ -76,6 +76,13 @@ pub struct PciBarMmioRouter {
     pci_cfg: SharedPciConfigPorts,
     /// Registered BAR handlers keyed by (BDF, BAR index).
     bars: BTreeMap<(PciBdf, u8), Box<dyn MmioHandler>>,
+    /// Fast-path cache of the most recently-hit BAR key.
+    ///
+    /// Many real workloads issue long runs of MMIO accesses to the same BAR (e.g. framebuffer
+    /// blits, NIC register polling). The router still consults live PCI config space each access
+    /// (so BAR reprogramming is always observed), but checking the last-hit BAR first avoids an
+    /// O(n) scan of all registered handlers on every access.
+    last_hit: Option<(PciBdf, u8)>,
 }
 
 impl PciBarMmioRouter {
@@ -84,6 +91,7 @@ impl PciBarMmioRouter {
             window_base,
             pci_cfg,
             bars: BTreeMap::new(),
+            last_hit: None,
         }
     }
 
@@ -131,44 +139,57 @@ impl PciBarMmioRouter {
         self.bars.remove(&(bdf, bar_index))
     }
 
-    fn find_handler(&self, paddr: u64, size: usize) -> Option<((PciBdf, u8), u64)> {
+    fn find_handler(&mut self, paddr: u64, size: usize) -> Option<((PciBdf, u8), u64)> {
         let size_u64 = u64::try_from(size).ok()?;
         let access_end = paddr.checked_add(size_u64)?;
 
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
 
-        for &(bdf, bar) in self.bars.keys() {
+        let check = |(bdf, bar): (PciBdf, u8)| -> Option<u64> {
             let Some(cfg) = bus.device_config(bdf) else {
-                continue;
+                return None;
             };
 
             let mem_enabled = (cfg.command() & 0x2) != 0;
             if !mem_enabled {
-                continue;
+                return None;
             }
 
             let Some(range) = cfg.bar_range(bar) else {
-                continue;
+                return None;
             };
             if range.base == 0 {
-                continue;
+                return None;
             }
             if !matches!(range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64) {
-                continue;
+                return None;
             }
 
-            let Some(bar_end) = range.base.checked_add(range.size) else {
-                // Treat overflowing BAR ranges as unmapped. Guests can program arbitrary BAR bases;
-                // avoid turning an invalid base+size combination into an effectively unbounded
-                // range via saturating arithmetic.
-                continue;
-            };
+            let bar_end = range.base.checked_add(range.size)?;
             if paddr < range.base || access_end > bar_end {
-                continue;
+                return None;
             }
 
-            return Some(((bdf, bar), paddr - range.base));
+            Some(paddr - range.base)
+        };
+
+        // Fast path: most MMIO streams repeatedly hit the same BAR.
+        if let Some(key) = self.last_hit {
+            if self.bars.contains_key(&key) {
+                if let Some(dev_offset) = check(key) {
+                    return Some((key, dev_offset));
+                }
+            } else {
+                self.last_hit = None;
+            }
+        }
+
+        for &key in self.bars.keys() {
+            if let Some(dev_offset) = check(key) {
+                self.last_hit = Some(key);
+                return Some((key, dev_offset));
+            }
         }
 
         None
