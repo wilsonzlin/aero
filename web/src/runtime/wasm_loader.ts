@@ -549,6 +549,9 @@ export interface WasmApi {
          * - `0`: left
          * - `1`: middle
          * - `2`: right
+         *
+         * Tip: when available, prefer `api.MouseButton.Left/Middle/Right` for a stable mapping
+         * reference.
          */
         inject_mouse_button?(button: number, pressed: boolean): void;
         /**
@@ -556,6 +559,8 @@ export interface WasmApi {
          * - bit0 (`0x01`): left
          * - bit1 (`0x02`): right
          * - bit2 (`0x04`): middle
+         *
+         * Tip: when available, prefer building masks by OR'ing `api.MouseButtons.Left/Right/Middle`.
          */
         inject_mouse_buttons_mask?(mask: number): void;
         inject_mouse_left?(pressed: boolean): void;
