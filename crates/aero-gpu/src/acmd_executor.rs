@@ -12,8 +12,8 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 pub enum AeroGpuAcmdExecutorError {
     #[error("failed to parse AeroGPU command stream: {0}")]
     Parse(#[from] AeroGpuCmdStreamParseError),
-    #[error("unsupported texture format {0}")]
-    UnsupportedTextureFormat(u32),
+    #[error("unsupported texture format {format}: {reason}")]
+    UnsupportedTextureFormat { format: u32, reason: String },
     #[error("unknown texture handle {0}")]
     UnknownTexture(u32),
     #[error("no render target bound")]
@@ -331,6 +331,19 @@ impl AeroGpuAcmdExecutor {
             .get(&tex_handle)
             .ok_or(AeroGpuAcmdExecutorError::UnknownTexture(tex_handle))?;
 
+        // `readback_rgba8` is test-facing and assumes 4 bytes/pixel. Guard against any future
+        // texture formats (e.g. BCn) that would otherwise panic inside wgpu's copy validation.
+        let is_bgra = match tex.format {
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
+            other => {
+                return Err(AeroGpuAcmdExecutorError::Backend(format!(
+                    "read_presented_scanout_rgba8 only supports RGBA/BGRA 8-bit textures (got {:?})",
+                    other
+                )))
+            }
+        };
+
         let mut rgba8 = readback_rgba8(
             &self.device,
             &self.queue,
@@ -343,19 +356,10 @@ impl AeroGpuAcmdExecutor {
         )
         .await;
 
-        match tex.format {
-            wgpu::TextureFormat::Rgba8Unorm => {}
-            wgpu::TextureFormat::Bgra8Unorm => {
-                // Convert BGRA -> RGBA.
-                for px in rgba8.chunks_exact_mut(4) {
-                    px.swap(0, 2);
-                }
-            }
-            _ => {
-                return Err(AeroGpuAcmdExecutorError::Backend(format!(
-                    "readback_rgba8 only supports RGBA/BGRA textures (got {:?})",
-                    tex.format
-                )))
+        if is_bgra {
+            // Convert BGRA -> RGBA.
+            for px in rgba8.chunks_exact_mut(4) {
+                px.swap(0, 2);
             }
         }
 
@@ -364,17 +368,80 @@ impl AeroGpuAcmdExecutor {
 }
 
 fn map_texture_format(format: u32) -> Result<wgpu::TextureFormat, AeroGpuAcmdExecutorError> {
-    Ok(match format {
-        x if x == AerogpuFormat::B8G8R8A8Unorm as u32
-            || x == AerogpuFormat::B8G8R8X8Unorm as u32 =>
-        {
-            wgpu::TextureFormat::Bgra8Unorm
+    match format {
+        x if x == AerogpuFormat::B8G8R8A8Unorm as u32 || x == AerogpuFormat::B8G8R8X8Unorm as u32 => {
+            Ok(wgpu::TextureFormat::Bgra8Unorm)
         }
-        x if x == AerogpuFormat::R8G8B8A8Unorm as u32
-            || x == AerogpuFormat::R8G8B8X8Unorm as u32 =>
-        {
-            wgpu::TextureFormat::Rgba8Unorm
+        x if x == AerogpuFormat::R8G8B8A8Unorm as u32 || x == AerogpuFormat::R8G8B8X8Unorm as u32 => {
+            Ok(wgpu::TextureFormat::Rgba8Unorm)
         }
-        other => return Err(AeroGpuAcmdExecutorError::UnsupportedTextureFormat(other)),
-    })
+        x if x == AerogpuFormat::B8G8R8A8UnormSrgb as u32
+            || x == AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
+        {
+            Ok(wgpu::TextureFormat::Bgra8UnormSrgb)
+        }
+        x if x == AerogpuFormat::R8G8B8A8UnormSrgb as u32
+            || x == AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
+        {
+            Ok(wgpu::TextureFormat::Rgba8UnormSrgb)
+        }
+
+        // BCn compressed formats require special handling and cannot be used as render targets in
+        // WebGPU, which this minimal executor relies on (CLEAR + PRESENT + readback).
+        x if is_bc_format(x) => Err(AeroGpuAcmdExecutorError::UnsupportedTextureFormat {
+            format: x,
+            reason: "BC compressed texture formats are not supported by the ACMD executor (only BGRA/RGBA 8-bit render targets are supported)".into(),
+        }),
+
+        other => Err(AeroGpuAcmdExecutorError::UnsupportedTextureFormat {
+            format: other,
+            reason: "only BGRA/RGBA 8-bit textures (and their sRGB variants) are supported by the ACMD executor".into(),
+        }),
+    }
+}
+
+fn is_bc_format(format: u32) -> bool {
+    format == AerogpuFormat::BC1RgbaUnorm as u32
+        || format == AerogpuFormat::BC1RgbaUnormSrgb as u32
+        || format == AerogpuFormat::BC2RgbaUnorm as u32
+        || format == AerogpuFormat::BC2RgbaUnormSrgb as u32
+        || format == AerogpuFormat::BC3RgbaUnorm as u32
+        || format == AerogpuFormat::BC3RgbaUnormSrgb as u32
+        || format == AerogpuFormat::BC7RgbaUnorm as u32
+        || format == AerogpuFormat::BC7RgbaUnormSrgb as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_texture_format_accepts_uncompressed_srgb_formats() {
+        assert_eq!(
+            map_texture_format(AerogpuFormat::B8G8R8A8UnormSrgb as u32).unwrap(),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        assert_eq!(
+            map_texture_format(AerogpuFormat::B8G8R8X8UnormSrgb as u32).unwrap(),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        assert_eq!(
+            map_texture_format(AerogpuFormat::R8G8B8A8UnormSrgb as u32).unwrap(),
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        );
+        assert_eq!(
+            map_texture_format(AerogpuFormat::R8G8B8X8UnormSrgb as u32).unwrap(),
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        );
+    }
+
+    #[test]
+    fn map_texture_format_rejects_bc_formats_with_actionable_error() {
+        let err = map_texture_format(AerogpuFormat::BC1RgbaUnorm as u32).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("BC"),
+            "expected error message to mention BC, got: {message}"
+        );
+    }
 }
