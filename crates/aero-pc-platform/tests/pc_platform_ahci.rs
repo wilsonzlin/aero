@@ -1,5 +1,5 @@
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
-use aero_devices_storage::ata::{AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
+use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_pc_platform::PcPlatform;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
@@ -192,7 +192,7 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
     disk.write_sectors(0, &sector0).unwrap();
 
     let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
-    pc.attach_ahci_drive_port0(AtaDrive::new(Box::new(disk)).unwrap());
+    pc.attach_ahci_disk_port0(Box::new(disk)).unwrap();
 
     let bdf = SATA_AHCI_ICH9.bdf;
 

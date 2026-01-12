@@ -25,6 +25,7 @@ use aero_platform::chipset::ChipsetState;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
+use aero_storage::VirtualDisk;
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -799,6 +800,15 @@ impl PcPlatform {
 
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
+    }
+
+    pub fn attach_ahci_disk(&mut self, port: usize, disk: Box<dyn VirtualDisk>) -> std::io::Result<()> {
+        self.attach_ahci_drive(port, AtaDrive::new(disk)?);
+        Ok(())
+    }
+
+    pub fn attach_ahci_disk_port0(&mut self, disk: Box<dyn VirtualDisk>) -> std::io::Result<()> {
+        self.attach_ahci_disk(0, disk)
     }
 
     pub fn process_hda(&mut self, output_frames: usize) {
