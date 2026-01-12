@@ -34,7 +34,7 @@ const MAX_PRDT_ENTRIES_PER_COMMAND: u16 = 32_768;
 // This must be reasonably small to avoid OOM, but large enough to keep disk I/O efficient.
 // It must remain a multiple of 512 so it is always compatible with 512/4096 sector sizes.
 const MAX_DMA_CHUNK_BYTES: usize = 256 * 1024;
-const _: () = assert!(MAX_DMA_CHUNK_BYTES % 512 == 0);
+const _: () = assert!(MAX_DMA_CHUNK_BYTES.is_multiple_of(512));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AhciError {

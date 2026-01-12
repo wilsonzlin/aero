@@ -8404,7 +8404,6 @@ struct TextureSubresource {
     mip_level: u32,
     array_layer: u32,
 }
-
 fn write_texture_subresource_linear(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,

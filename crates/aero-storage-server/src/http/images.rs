@@ -294,19 +294,21 @@ async fn serve_image(
         let meta = image.meta;
 
         let len = meta.size;
-        let cache_control = data_cache_control_value(&state, &req_headers, image_public);
+        let cache_headers = DataCacheHeaders {
+            cache_control: data_cache_control_value(&state, &req_headers, image_public),
+            etag: cache::etag_header_value_for_meta(&meta),
+        };
 
         // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
         // ETag we would send on success. Store-provided ETags may be missing or invalid; we
         // sanitize and fall back to a deterministic weak ETag so conditional logic matches the
         // value emitted in responses.
-        let etag = cache::etag_header_value_for_meta(&meta);
-        let current_etag = etag.to_str().ok();
+        let current_etag = cache_headers.etag.to_str().ok();
 
         // Conditional requests: if the client has a matching validator, we can return `304` and
         // avoid streaming bytes (RFC 9110).
         if cache::is_not_modified(&req_headers, current_etag, meta.last_modified) {
-            return not_modified_response(&state, &req_headers, &meta, cache_control, etag);
+            return not_modified_response(&state, &req_headers, &meta, cache_headers);
         }
 
         let range_only_mode = state.require_range && want_body;
@@ -390,10 +392,7 @@ async fn serve_image(
                     meta,
                     range,
                     want_body,
-                    DataCacheHeaders {
-                        cache_control,
-                        etag: etag.clone(),
-                    },
+                    cache_headers,
                 )
                 .await;
             }
@@ -406,8 +405,7 @@ async fn serve_image(
                     &image_id,
                     meta,
                     want_body,
-                    cache_control,
-                    etag.clone(),
+                    cache_headers,
                 )
                 .await;
             }
@@ -421,8 +419,7 @@ async fn serve_image(
                         &image_id,
                         meta,
                         want_body,
-                        cache_control,
-                        etag.clone(),
+                        cache_headers,
                     )
                     .await
                 }
@@ -474,10 +471,7 @@ async fn serve_image(
                 meta,
                 range,
                 want_body,
-                DataCacheHeaders {
-                    cache_control,
-                    etag: etag.clone(),
-                },
+                cache_headers,
             )
             .await;
         }
@@ -488,8 +482,7 @@ async fn serve_image(
             &image_id,
             meta,
             want_body,
-            cache_control,
-            etag,
+            cache_headers,
         )
         .await
     })
@@ -561,14 +554,19 @@ impl HttpBody for PermitBody {
     }
 }
 
+#[derive(Clone)]
+struct DataCacheHeaders {
+    cache_control: HeaderValue,
+    etag: HeaderValue,
+}
+
 async fn full_response(
     state: &ImagesState,
     req_headers: &HeaderMap,
     image_id: &str,
     meta: crate::store::ImageMeta,
     want_body: bool,
-    cache_control: HeaderValue,
-    etag: HeaderValue,
+    cache_headers: DataCacheHeaders,
 ) -> Response {
     if want_body {
         state
@@ -621,13 +619,8 @@ async fn full_response(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&meta.size.to_string()).unwrap(),
     );
-    insert_data_cache_headers(headers, &meta, cache_control, etag);
+    insert_data_cache_headers(headers, &meta, cache_headers);
     response
-}
-
-struct DataCacheHeaders {
-    cache_control: HeaderValue,
-    etag: HeaderValue,
 }
 
 async fn single_range_response(
@@ -637,7 +630,7 @@ async fn single_range_response(
     meta: crate::store::ImageMeta,
     range: ByteRange,
     want_body: bool,
-    cache: DataCacheHeaders,
+    cache_headers: DataCacheHeaders,
 ) -> Response {
     let range_len = range.len();
     if want_body {
@@ -699,7 +692,7 @@ async fn single_range_response(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&range_len.to_string()).unwrap(),
     );
-    insert_data_cache_headers(headers, &meta, cache.cache_control, cache.etag);
+    insert_data_cache_headers(headers, &meta, cache_headers);
     response
 }
 
@@ -801,12 +794,11 @@ pub(crate) fn insert_cors_preflight_headers(
 fn insert_data_cache_headers(
     headers: &mut HeaderMap,
     meta: &crate::store::ImageMeta,
-    cache_control: HeaderValue,
-    etag: HeaderValue,
+    cache_headers: DataCacheHeaders,
 ) {
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    headers.insert(header::CACHE_CONTROL, cache_control);
-    headers.insert(header::ETAG, etag);
+    headers.insert(header::CACHE_CONTROL, cache_headers.cache_control);
+    headers.insert(header::ETAG, cache_headers.etag);
     if let Some(last_modified) = cache::last_modified_header_value(meta.last_modified) {
         headers.insert(header::LAST_MODIFIED, last_modified);
     }
@@ -841,14 +833,13 @@ fn not_modified_response(
     state: &ImagesState,
     req_headers: &HeaderMap,
     meta: &crate::store::ImageMeta,
-    cache_control: HeaderValue,
-    etag: HeaderValue,
+    cache_headers: DataCacheHeaders,
 ) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NOT_MODIFIED;
     let headers = response.headers_mut();
     insert_cors_headers(headers, state, req_headers);
-    insert_data_cache_headers(headers, meta, cache_control, etag);
+    insert_data_cache_headers(headers, meta, cache_headers);
     response
 }
 
