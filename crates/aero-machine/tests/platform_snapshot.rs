@@ -2,6 +2,7 @@ use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
 
+use aero_devices::acpi_pm::DEFAULT_PM_TMR_BLK;
 use aero_devices::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice, PciInterruptPin};
 
 fn pc_machine_config() -> MachineConfig {
@@ -29,6 +30,30 @@ fn program_ioapic_entry(
     ints.ioapic_mmio_write(0x10, low);
     ints.ioapic_mmio_write(0x00, redtbl_high);
     ints.ioapic_mmio_write(0x10, high);
+}
+
+#[test]
+fn snapshot_restore_preserves_acpi_pm_timer_and_it_advances_with_manual_clock() {
+    let mut src = Machine::new(pc_machine_config()).unwrap();
+
+    // PM_TMR should start at 0 at power-on with the shared ManualClock at 0.
+    assert_eq!(src.io_read(DEFAULT_PM_TMR_BLK, 4), 0);
+
+    // Advance 1s: PM timer frequency is 3.579545 MHz.
+    src.tick_platform(1_000_000_000);
+    assert_eq!(src.io_read(DEFAULT_PM_TMR_BLK, 4), 3_579_545);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    // Restoring rewinds time, so the timer should pick up exactly where it was snapshotted.
+    assert_eq!(restored.io_read(DEFAULT_PM_TMR_BLK, 4), 3_579_545);
+
+    // Advancing another second should deterministically add another 3_579_545 ticks.
+    restored.tick_platform(1_000_000_000);
+    assert_eq!(restored.io_read(DEFAULT_PM_TMR_BLK, 4), 7_159_090);
 }
 
 #[test]
