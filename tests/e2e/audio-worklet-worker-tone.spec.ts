@@ -40,4 +40,32 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
   // so allowing 128 frames keeps the test stable while still catching sustained underruns.
   expect(result.underruns).toBeLessThanOrEqual(128);
   expect(result.overruns).toBe(0);
+
+  // Sanity check that the window.aero.netTrace backend is installed and can
+  // fetch a (possibly empty) PCAPNG once the worker runtime is running.
+  const netTrace = await page.evaluate(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const aero = (globalThis as any).aero;
+    const backend = aero?.netTrace;
+    if (!backend || typeof backend.downloadPcapng !== "function") {
+      return { ok: false, error: "missing backend" };
+    }
+    try {
+      const bytes = await backend.downloadPcapng();
+      return {
+        ok: true,
+        byteLength: bytes.byteLength,
+        head: Array.from(bytes.slice(0, 4)),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  expect(netTrace.ok).toBe(true);
+  if (netTrace.ok) {
+    expect(netTrace.byteLength).toBeGreaterThan(0);
+    // PCAPNG section header block magic.
+    expect(netTrace.head).toEqual([0x0a, 0x0d, 0x0d, 0x0a]);
+  }
 });
