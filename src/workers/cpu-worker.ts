@@ -629,7 +629,7 @@ async function runTieredVm(iterations: number, threshold: number) {
         }
         else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
       }
-    } else if (evicted && typeof evicted === 'object' && ArrayBuffer.isView(evicted)) {
+    } else if (ArrayBuffer.isView(evicted)) {
       // Older WASM builds may return a typed array (e.g. Uint32Array).
       // Some runtimes may also use BigInt typed arrays; handle both.
       const view = evicted as unknown as ArrayLike<unknown>;
@@ -647,7 +647,7 @@ async function runTieredVm(iterations: number, threshold: number) {
           else if (typeof v === 'number' && Number.isFinite(v)) releaseEvictedRip(v);
         }
       }
-    } else if (evicted && typeof evicted === 'object') {
+    } else if (evicted != null && typeof evicted === 'object') {
       // Best-effort: treat as iterable.
       try {
         for (const v of evicted as unknown as Iterable<unknown>) {
