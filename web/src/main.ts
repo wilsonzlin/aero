@@ -692,8 +692,12 @@ function renderMachinePanel(): HTMLElement {
 
       // Optional input capture: drive the machine's i8042 PS/2 keyboard/mouse devices directly.
       // This uses the same `InputCapture` batching/scancode translation as the I/O worker path.
-      let inputCapture: InputCapture | null = null;
-      {
+      const canUseInputCapture =
+        typeof machine.inject_key_scancode_bytes === "function" || typeof machine.inject_keyboard_bytes === "function";
+
+      let stopInputCapture: (() => void) | null = null;
+      if (canUseInputCapture) {
+        let inputCapture: InputCapture | null = null;
         const messageListeners: ((ev: MessageEvent<unknown>) => void)[] = [];
         const inputTarget: InputBatchTarget & {
           addEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
@@ -769,17 +773,137 @@ function renderMachinePanel(): HTMLElement {
         });
         capture.start();
         inputCapture = capture;
-      }
 
-      const stopInputCapture = (): void => {
-        if (!inputCapture) return;
-        try {
-          inputCapture.stop();
-        } catch {
-          // ignore
-        }
-        inputCapture = null;
-      };
+        stopInputCapture = () => {
+          const current = inputCapture;
+          if (!current) return;
+          try {
+            current.stop();
+          } catch {
+            // ignore
+          }
+          inputCapture = null;
+        };
+      } else {
+        // Older WASM builds may not expose scancode injection helpers; fall back to the
+        // simple `inject_browser_key` + mouse helpers (when available) so the demo remains usable.
+        let running = true;
+
+        const requestPointerLock = (): void => {
+          const fn = (canvas as unknown as { requestPointerLock?: unknown }).requestPointerLock;
+          if (typeof fn !== "function") return;
+          try {
+            fn.call(canvas);
+          } catch {
+            // ignore
+          }
+        };
+
+        const onClick = (): void => {
+          canvas.focus();
+          requestPointerLock();
+        };
+
+        const onKeyDown = (ev: KeyboardEvent): void => {
+          if (!running) return;
+          try {
+            machine.inject_browser_key(ev.code, true);
+            ev.preventDefault();
+          } catch {
+            // ignore
+          }
+        };
+
+        const onKeyUp = (ev: KeyboardEvent): void => {
+          if (!running) return;
+          try {
+            machine.inject_browser_key(ev.code, false);
+            ev.preventDefault();
+          } catch {
+            // ignore
+          }
+        };
+
+        const onMouseMove = (ev: MouseEvent): void => {
+          if (!running) return;
+          if (typeof machine.inject_mouse_motion !== "function") return;
+          const dx = ev.movementX | 0;
+          const dy = ev.movementY | 0;
+          if (dx === 0 && dy === 0) return;
+          try {
+            machine.inject_mouse_motion(dx, dy, 0);
+          } catch {
+            // ignore
+          }
+        };
+
+        const onWheel = (ev: WheelEvent): void => {
+          if (!running) return;
+          if (typeof machine.inject_mouse_motion !== "function") return;
+          const wheel = ev.deltaY === 0 ? 0 : ev.deltaY < 0 ? 1 : -1;
+          if (wheel === 0) return;
+          try {
+            machine.inject_mouse_motion(0, 0, wheel);
+            ev.preventDefault();
+          } catch {
+            // ignore
+          }
+        };
+
+        const onMouseDown = (ev: MouseEvent): void => {
+          if (!running) return;
+          if (typeof machine.inject_mouse_button !== "function") return;
+          try {
+            machine.inject_mouse_button(ev.button | 0, true);
+            ev.preventDefault();
+          } catch {
+            // ignore
+          }
+        };
+
+        const onMouseUp = (ev: MouseEvent): void => {
+          if (!running) return;
+          if (typeof machine.inject_mouse_button !== "function") return;
+          try {
+            machine.inject_mouse_button(ev.button | 0, false);
+            ev.preventDefault();
+          } catch {
+            // ignore
+          }
+        };
+
+        const onContextMenu = (ev: MouseEvent): void => {
+          ev.preventDefault();
+        };
+
+        canvas.addEventListener("click", onClick);
+        canvas.addEventListener("keydown", onKeyDown);
+        canvas.addEventListener("keyup", onKeyUp);
+        canvas.addEventListener("mousemove", onMouseMove);
+        canvas.addEventListener("wheel", onWheel, { passive: false });
+        canvas.addEventListener("mousedown", onMouseDown);
+        canvas.addEventListener("mouseup", onMouseUp);
+        canvas.addEventListener("contextmenu", onContextMenu);
+
+        stopInputCapture = () => {
+          running = false;
+          canvas.removeEventListener("click", onClick);
+          canvas.removeEventListener("keydown", onKeyDown);
+          canvas.removeEventListener("keyup", onKeyUp);
+          canvas.removeEventListener("mousemove", onMouseMove);
+          canvas.removeEventListener("wheel", onWheel);
+          canvas.removeEventListener("mousedown", onMouseDown);
+          canvas.removeEventListener("mouseup", onMouseUp);
+          canvas.removeEventListener("contextmenu", onContextMenu);
+          try {
+            if (typeof document !== "undefined" && document.pointerLockElement === canvas) {
+              document.exitPointerLock?.();
+            }
+          } catch {
+            // ignore
+          }
+        };
+      }
 
       const hasVgaPresent = typeof machine.vga_present === "function";
       const hasVgaSize = typeof machine.vga_width === "function" && typeof machine.vga_height === "function";
@@ -994,7 +1118,7 @@ function renderMachinePanel(): HTMLElement {
         // Keep ticking while halted so injected interrupts (keyboard/mouse) can wake the CPU.
         if (exitKind !== 0 && exitKind !== 1) {
           window.clearInterval(timer);
-          stopInputCapture();
+          stopInputCapture?.();
           try {
             (machine as unknown as { free?: () => void }).free?.();
           } catch {
