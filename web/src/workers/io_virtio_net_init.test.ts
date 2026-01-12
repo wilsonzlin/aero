@@ -136,4 +136,82 @@ describe("workers/io_virtio_net_init", () => {
 
     dev?.destroy();
   });
+
+  it("registers a virtio-net PCI device (transitional, BAR2 io size 0x100) and wires legacy io handlers", () => {
+    const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+    const mgr = new DeviceManager(irqSink);
+
+    // Canonical virtio-net BDF: 00:08.0.
+    const DEV = 8;
+    const cfgAddr = (off: number): number => (0x8000_0000 | (DEV << 11) | (off & 0xfc)) >>> 0;
+    const readCfg32 = (off: number): number => {
+      mgr.portWrite(0x0cf8, 4, cfgAddr(off));
+      return mgr.portRead(0x0cfc, 4) >>> 0;
+    };
+    const writeCfg32 = (off: number, value: number): void => {
+      mgr.portWrite(0x0cf8, 4, cfgAddr(off));
+      mgr.portWrite(0x0cfc, 4, value >>> 0);
+    };
+
+    let lastLegacyWrite: { offset: number; size: number; value: number } | null = null;
+
+    class FakeVirtioNetPciBridge {
+      constructor(_guestBase: number, _guestSize: number, _ioIpc: SharedArrayBuffer) {}
+
+      mmio_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      mmio_write(_offset: number, _size: number, _value: number): void {}
+
+      io_read(offset: number, size: number): number {
+        // Return a stable, non-default value for HOST_FEATURES (offset 0).
+        if (offset === 0 && size === 4) return 0x1234_5678;
+        return 0;
+      }
+      io_write(offset: number, size: number, value: number): void {
+        lastLegacyWrite = { offset, size, value };
+      }
+
+      poll(): void {}
+      irq_asserted(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    const dev = tryInitVirtioNetDevice({
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      mgr,
+      guestBase: 0x1000,
+      guestSize: 0x2000,
+      ioIpc: new SharedArrayBuffer(1024),
+      mode: "transitional",
+    });
+    expect(dev).not.toBeNull();
+
+    // Vendor ID (low 16) / Device ID (high 16).
+    const id = readCfg32(0x00);
+    expect(id & 0xffff).toBe(0x1af4);
+    expect((id >>> 16) & 0xffff).toBe(0x1000);
+
+    // BAR2 should be present and decode as I/O (bit0=1).
+    const bar2 = readCfg32(0x18);
+    expect(bar2 & 0x1).toBe(0x1);
+    const ioBase = bar2 & 0xffff_fffc;
+    expect(ioBase).toBeGreaterThan(0);
+
+    // Enable PCI I/O decoding (command bit0) so the BAR2 ports are mapped.
+    writeCfg32(0x04, 0x0000_0003);
+
+    // Verify legacy HOST_FEATURES is forwarded to the bridge.
+    const hostFeatures = mgr.portRead(ioBase + 0x00, 4) >>> 0;
+    expect(hostFeatures).toBe(0x1234_5678);
+
+    // Writes should be forwarded without throwing.
+    mgr.portWrite(ioBase + 0x04, 4, 0x9abc_def0);
+    expect(lastLegacyWrite).toEqual({ offset: 0x04, size: 4, value: 0x9abc_def0 });
+
+    dev?.destroy();
+  });
 });
+

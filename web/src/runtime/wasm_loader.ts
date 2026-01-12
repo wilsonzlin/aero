@@ -53,6 +53,13 @@ export type GuestCpuBenchHarnessHandle = {
 export type VirtioNetPciBridgeHandle = {
     mmio_read(offset: number, size: number): number;
     mmio_write(offset: number, size: number, value: number): void;
+    /**
+     * Optional legacy virtio-pci I/O port register block accessors.
+     *
+     * Present when the WASM bridge supports PCI transitional devices (legacy + modern).
+     */
+    io_read?(offset: number, size: number): number;
+    io_write?(offset: number, size: number, value: number): void;
     poll?(): void;
     tick?(nowMs?: number): void;
     irq_level?(): boolean;
@@ -266,7 +273,12 @@ export interface WasmApi {
      *
      * Optional until all deployed WASM builds include virtio networking support.
      */
-    VirtioNetPciBridge?: new (guestBase: number, guestSize: number, ioIpcSab: SharedArrayBuffer) => VirtioNetPciBridgeHandle;
+    VirtioNetPciBridge?: new (
+        guestBase: number,
+        guestSize: number,
+        ioIpcSab: SharedArrayBuffer,
+        transitional?: boolean,
+    ) => VirtioNetPciBridgeHandle;
 
     /**
      * Legacy i8042 (PS/2 keyboard + mouse) controller bridge.

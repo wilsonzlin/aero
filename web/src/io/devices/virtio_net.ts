@@ -6,6 +6,13 @@ export type VirtioNetPciBridgeLike = {
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
   /**
+   * Optional legacy virtio-pci I/O port register block accessors.
+   *
+   * Present when the WASM bridge supports PCI transitional devices (legacy + modern).
+   */
+  io_read?(offset: number, size: number): number;
+  io_write?(offset: number, size: number, value: number): void;
+  /**
    * Optional poll hook (some WASM builds expose `poll()` rather than `tick()`).
    */
   poll?: () => void;
@@ -18,14 +25,21 @@ export type VirtioNetPciBridgeLike = {
   free(): void;
 };
 
+export type VirtioNetPciMode = "modern" | "transitional";
+
 const VIRTIO_VENDOR_ID = 0x1af4;
-const VIRTIO_NET_DEVICE_ID = 0x1041;
+// Modern virtio-pci device ID space is 0x1040 + <virtio device type>.
+const VIRTIO_NET_MODERN_DEVICE_ID = 0x1041;
+// Transitional virtio-pci device IDs are 0x1000 + (type - 1). virtio-net type is 1.
+const VIRTIO_NET_TRANSITIONAL_DEVICE_ID = 0x1000;
 const VIRTIO_NET_SUBSYSTEM_DEVICE_ID = 0x0001;
 const VIRTIO_NET_CLASS_CODE = 0x02_00_00;
 const VIRTIO_CONTRACT_REVISION_ID = 0x01;
 
 // BAR0 size in the Aero Windows 7 virtio contract v1 (see docs/windows7-virtio-driver-contract.md).
 const VIRTIO_MMIO_BAR0_SIZE = 0x4000;
+// Keep in sync with `crates/aero-virtio/src/pci.rs` (`bar2_size` when legacy I/O is enabled).
+const VIRTIO_LEGACY_IO_BAR2_SIZE = 0x100;
 
 // Fixed virtio-pci capability layout within BAR0 (contract v1).
 const VIRTIO_MMIO_COMMON_OFFSET = 0x0000;
@@ -87,15 +101,16 @@ function writeVirtioPciCap(
 }
 
 /**
- * Virtio-net PCI function (modern virtio-pci transport) backed by the WASM `VirtioNetPciBridge`.
+ * Virtio-net PCI function (virtio-pci modern or transitional transport) backed by the WASM `VirtioNetPciBridge`.
  *
- * Exposes a single 64-bit MMIO BAR (BAR0) of size 0x4000 and implements the
- * vendor-specific virtio capability list required by the Aero Windows 7 contract v1.
+ * Exposes:
+ * - BAR0: 64-bit MMIO BAR, size 0x4000 (Aero Windows 7 virtio contract v1 modern layout).
+ * - BAR2 (transitional mode only): legacy I/O port register block, size 0x100.
  */
 export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly name = "virtio_net";
   readonly vendorId = VIRTIO_VENDOR_ID;
-  readonly deviceId = VIRTIO_NET_DEVICE_ID;
+  readonly deviceId: number;
   readonly subsystemVendorId = VIRTIO_VENDOR_ID;
   readonly subsystemId = VIRTIO_NET_SUBSYSTEM_DEVICE_ID;
   readonly classCode = VIRTIO_NET_CLASS_CODE;
@@ -103,17 +118,25 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly irqLine = VIRTIO_NET_IRQ_LINE;
   readonly bdf = { bus: 0, device: 8, function: 0 };
 
-  readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null];
+  readonly bars: ReadonlyArray<PciBar | null>;
 
   readonly #bridge: VirtioNetPciBridgeLike;
   readonly #irqSink: IrqSink;
+  readonly #mode: VirtioNetPciMode;
 
   #irqLevel = false;
   #destroyed = false;
 
-  constructor(opts: { bridge: VirtioNetPciBridgeLike; irqSink: IrqSink }) {
+  constructor(opts: { bridge: VirtioNetPciBridgeLike; irqSink: IrqSink; mode?: VirtioNetPciMode }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
+    this.#mode = opts.mode ?? "modern";
+
+    this.deviceId = this.#mode === "transitional" ? VIRTIO_NET_TRANSITIONAL_DEVICE_ID : VIRTIO_NET_MODERN_DEVICE_ID;
+    this.bars =
+      this.#mode === "transitional"
+        ? [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, { kind: "io", size: VIRTIO_LEGACY_IO_BAR2_SIZE }, null, null, null]
+        : [{ kind: "mmio64", size: VIRTIO_MMIO_BAR0_SIZE }, null, null, null, null, null];
   }
 
   initPciConfig(config: Uint8Array): void {
@@ -220,6 +243,50 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
       this.#bridge.mmio_write(off >>> 0, size, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest IO
+    }
+    this.#syncIrq();
+  }
+
+  ioRead(barIndex: number, offset: number, size: number): number {
+    if (this.#destroyed) return defaultReadValue(size);
+    if (barIndex !== 2) return defaultReadValue(size);
+    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
+    if (this.#mode !== "transitional") return defaultReadValue(size);
+
+    const off = offset >>> 0;
+    if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
+
+    const bridge = this.#bridge;
+    const fn = bridge.io_read;
+    if (typeof fn !== "function") return defaultReadValue(size);
+
+    let value: number;
+    try {
+      value = fn.call(bridge, off, size) >>> 0;
+    } catch {
+      value = defaultReadValue(size);
+    }
+    this.#syncIrq();
+    return maskToSize(value, size);
+  }
+
+  ioWrite(barIndex: number, offset: number, size: number, value: number): void {
+    if (this.#destroyed) return;
+    if (barIndex !== 2) return;
+    if (size !== 1 && size !== 2 && size !== 4) return;
+    if (this.#mode !== "transitional") return;
+
+    const off = offset >>> 0;
+    if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
+
+    const bridge = this.#bridge;
+    const fn = bridge.io_write;
+    if (typeof fn === "function") {
+      try {
+        fn.call(bridge, off, size, maskToSize(value >>> 0, size));
+      } catch {
+        // ignore device errors during guest IO
+      }
     }
     this.#syncIrq();
   }

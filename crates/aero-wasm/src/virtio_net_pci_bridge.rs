@@ -5,6 +5,11 @@
 //! in guest RAM inside the WASM linear memory; guest physical address 0 maps to `guest_base`
 //! (see `guest_ram_layout`).
 //!
+//! This bridge can optionally enable the virtio-pci *transitional* transport (legacy I/O register
+//! block + modern PCI capabilities). When enabled, the JS PCI wrapper exposes an additional I/O BAR
+//! (BAR2) and forwards legacy port reads/writes into [`VirtioNetPciBridge::io_read`] /
+//! [`VirtioNetPciBridge::io_write`].
+//!
 //! Host networking is bridged through the existing Aero IPC (AIPC) rings:
 //! - `NET_TX`: guest -> host (packets transmitted by the virtio-net device)
 //! - `NET_RX`: host -> guest (packets received by the virtio-net device)
@@ -149,6 +154,7 @@ pub struct VirtioNetPciBridge {
     mem: WasmGuestMemory,
     dev: VirtioPciDevice,
     irq_asserted: Rc<Cell<bool>>,
+    legacy_io_size: u32,
 }
 
 #[wasm_bindgen]
@@ -166,6 +172,7 @@ impl VirtioNetPciBridge {
         guest_base: u32,
         guest_size: u32,
         io_ipc_sab: SharedArrayBuffer,
+        transitional: Option<bool>,
     ) -> Result<Self, JsValue> {
         if guest_base == 0 {
             return Err(js_error("guest_base must be non-zero"));
@@ -200,13 +207,21 @@ impl VirtioNetPciBridge {
             asserted: asserted.clone(),
         };
 
+        let dev = if transitional.unwrap_or(false) {
+            VirtioPciDevice::new_transitional(Box::new(net), Box::new(irq))
+        } else {
+            VirtioPciDevice::new(Box::new(net), Box::new(irq))
+        };
+        let legacy_io_size = dev.legacy_io_size().min(u64::from(u32::MAX)) as u32;
+
         Ok(Self {
             mem: WasmGuestMemory {
                 guest_base,
                 guest_size: guest_size_u64,
             },
-            dev: VirtioPciDevice::new(Box::new(net), Box::new(irq)),
+            dev,
             irq_asserted: asserted,
+            legacy_io_size,
         })
     }
 
@@ -229,6 +244,39 @@ impl VirtioNetPciBridge {
 
         let bytes = value.to_le_bytes();
         self.dev.bar0_write(offset as u64, &bytes[..size]);
+    }
+
+    /// Read from the legacy virtio-pci I/O port register block (transitional devices only).
+    pub fn io_read(&mut self, offset: u32, size: u8) -> u32 {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return 0xffff_ffff,
+        };
+
+        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        if self.legacy_io_size == 0 || end > self.legacy_io_size {
+            return 0xffff_ffff;
+        }
+
+        let mut buf = [0u8; 4];
+        self.dev.legacy_io_read(offset as u64, &mut buf[..size]);
+        u32::from_le_bytes(buf)
+    }
+
+    /// Write to the legacy virtio-pci I/O port register block (transitional devices only).
+    pub fn io_write(&mut self, offset: u32, size: u8, value: u32) {
+        let size = match size {
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
+
+        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        if self.legacy_io_size == 0 || end > self.legacy_io_size {
+            return;
+        }
+
+        let bytes = value.to_le_bytes();
+        self.dev.legacy_io_write(offset as u64, &bytes[..size]);
     }
 
     /// Process any pending queue work and host-driven events (e.g. `NET_RX` packets).
