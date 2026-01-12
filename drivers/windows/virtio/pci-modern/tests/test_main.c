@@ -1150,6 +1150,48 @@ static void TestQueueMsixVectorMismatchFails(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestMsixConfigDisableMismatchFails(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbForceMsixConfigMismatch = TRUE;
+	dev.MbForcedMsixConfigMismatch = 0;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetConfigMsixVector(&t, VIRTIO_PCI_MSI_NO_VECTOR);
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestQueueMsixVectorDisableMismatchFails(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.MbForceQueueMsixVectorMismatch = TRUE;
+	dev.MbForcedQueueMsixVectorMismatch = 0;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, VIRTIO_PCI_MSI_NO_VECTOR);
+	assert(st == STATUS_IO_DEVICE_ERROR);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestNotifyHasPreBarrier(void)
 {
 	FAKE_DEV dev;
@@ -1617,6 +1659,8 @@ int main(void)
 	TestQueueMsixVectorRefusedFails();
 	TestMsixConfigVectorMismatchFails();
 	TestQueueMsixVectorMismatchFails();
+	TestMsixConfigDisableMismatchFails();
+	TestQueueMsixVectorDisableMismatchFails();
 	TestMsixVectorProgrammingSucceeds();
 	TestQueueMsixVectorRejectInvalidQueue();
 	TestCompatInitAcceptsRelocatedCaps();
