@@ -48,6 +48,7 @@ The trace buffer is only dumped when triggered:
   Dumps once on `DllMain(DLL_PROCESS_DETACH)`.
 
 For `dwm.exe`, prefer `AEROGPU_D3D9_TRACE_DUMP_PRESENT` so you get logs *while DWM is running*, rather than only at shutdown.
+For small repro apps that don't call `Present`/`PresentEx` (for example `d3d9_validate_device_sanity` and `d3d9ex_stateblock_sanity`), prefer `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1` so the trace dumps when the process exits.
 
 ---
 
@@ -67,6 +68,8 @@ Recommended workflow on Win7:
    - `drivers/aerogpu/tests/win7/d3d9ex_triangle`
    - `drivers/aerogpu/tests/win7/d3d9ex_stateblock_sanity`
    - or restart `dwm.exe` after setting env vars
+
+   Note: `d3d9_validate_device_sanity` and `d3d9ex_stateblock_sanity` don't call `Present`/`PresentEx`, so `AEROGPU_D3D9_TRACE_DUMP_PRESENT` won't trigger for them. Use `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1` instead.
 
 You should see lines starting with:
 
