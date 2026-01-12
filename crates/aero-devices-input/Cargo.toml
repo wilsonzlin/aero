@@ -8,4 +8,5 @@ license = "MIT OR Apache-2.0"
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"

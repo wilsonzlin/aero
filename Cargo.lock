@@ -179,6 +179,7 @@ name = "aero-devices-input"
 version = "0.1.0"
 dependencies = [
  "aero-io-snapshot",
+ "serde",
  "serde_json",
 ]
 
