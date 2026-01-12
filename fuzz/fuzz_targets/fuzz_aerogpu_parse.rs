@@ -3,7 +3,9 @@
 use aero_gpu::aerogpu_executor::AllocTable;
 use aero_gpu::protocol_d3d11 as d3d11;
 use aero_gpu::VecGuestMemory;
-use aero_gpu::{AeroGpuCommandProcessor, AeroGpuSubmissionAllocation};
+use aero_gpu::{
+    AeroGpuCommandProcessor, AeroGpuSubmissionAllocation, Presenter, Rect, TextureWriter,
+};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
@@ -17,6 +19,16 @@ const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// Non-zero guest physical address to place the candidate alloc-table bytes at.
 const ALLOC_TABLE_GPA: u64 = 0x1000;
+
+#[derive(Default)]
+struct NoopTextureWriter;
+
+impl TextureWriter for NoopTextureWriter {
+    fn write_texture(&mut self, rect: Rect, bytes_per_row: usize, data: &[u8]) {
+        // Touch parameters to keep the optimizer from discarding the call.
+        let _ = (rect, bytes_per_row, data.len());
+    }
+}
 
 fn write_pkt_hdr(buf: &mut [u8], off: &mut usize, opcode: u32, size: usize) -> Option<usize> {
     let start = *off;
@@ -318,6 +330,53 @@ fn fuzz_command_processor(
     );
 }
 
+fn fuzz_presenter(bytes: &[u8]) {
+    // CPU-only fuzzing for the framebuffer presenter logic (dirty-rect slicing, stride handling,
+    // and size calculations).
+    //
+    // Keep dimensions small and derive all layout decisions from a few bytes so the fuzzer can
+    // reach both success and error paths without triggering large allocations.
+    let mut u = Unstructured::new(bytes);
+    let width = (u.arbitrary::<u8>().unwrap_or(0) % 64) as u32 + 1;
+    let height = (u.arbitrary::<u8>().unwrap_or(0) % 64) as u32 + 1;
+
+    let bpp = match u.arbitrary::<u8>().unwrap_or(0) % 4 {
+        0 => 1usize,
+        1 => 2usize,
+        2 => 4usize,
+        _ => 8usize,
+    };
+
+    let full_row_bytes = width as usize * bpp;
+    let stride_mode = u.arbitrary::<u8>().unwrap_or(0) % 4;
+    let stride = match stride_mode {
+        0 => full_row_bytes,
+        1 => (full_row_bytes + 255) & !255,
+        2 => full_row_bytes.saturating_add(u.arbitrary::<u8>().unwrap_or(0) as usize),
+        _ => full_row_bytes.saturating_sub(u.arbitrary::<u8>().unwrap_or(0) as usize),
+    };
+
+    let rect_count = (u.arbitrary::<u8>().unwrap_or(0) % 8) as usize;
+    let mut rects = Vec::with_capacity(rect_count);
+    for _ in 0..rect_count {
+        let x = (u.arbitrary::<u8>().unwrap_or(0) as u32) % width;
+        let y = (u.arbitrary::<u8>().unwrap_or(0) as u32) % height;
+        let max_w = width.saturating_sub(x);
+        let max_h = height.saturating_sub(y);
+        let w = (u.arbitrary::<u8>().unwrap_or(0) as u32) % (max_w + 1);
+        let h = (u.arbitrary::<u8>().unwrap_or(0) as u32) % (max_h + 1);
+        rects.push(Rect::new(x, y, w, h));
+    }
+
+    let frame_data = u.take_rest();
+    let mut presenter = Presenter::new(width, height, bpp, NoopTextureWriter::default());
+    let _ = if rect_count == 0 {
+        presenter.present(frame_data, stride, None)
+    } else {
+        presenter.present(frame_data, stride, Some(&rects))
+    };
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_SIZE_BYTES {
         return;
@@ -342,6 +401,7 @@ fuzz_target!(|data: &[u8]| {
     fuzz_ring_layouts(ring_bytes);
     fuzz_d3d11_cmd_stream(ring_bytes);
     fuzz_bc_decompress(ring_bytes);
+    fuzz_presenter(ring_bytes);
 
     // Additionally, try patching the fixed headers to valid magic/version values (while keeping
     // the rest of the input intact) so the fuzzer can reach deeper parsing paths more often.
