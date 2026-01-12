@@ -2230,7 +2230,16 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         // Upcoming IO-worker devices (e.g. HDA audio) rely on DMA into shared guest RAM;
         // if the module is instantiated with a private memory, device models will silently
         // break. Fail fast with a clear error instead of running in a subtly corrupted mode.
-        assertWasmMemoryWiring({ api, memory: init.guestMemory, context: "io.worker" });
+        // Probe within guest RAM so we validate the exact region DMA-backed devices will access.
+        // Use a distinct offset from the CPU worker probe so concurrent init cannot race on the
+        // same 32-bit word and trigger false-negative wiring failures.
+        const memProbeGuestOffset = 0x104;
+        assertWasmMemoryWiring({
+          api,
+          memory: init.guestMemory,
+          linearOffset: guestU8.byteOffset + memProbeGuestOffset,
+          context: "io.worker",
+        });
         wasmApi = api;
         pendingWasmInit = { api, variant };
         usbHid = new api.UsbHidBridge();
