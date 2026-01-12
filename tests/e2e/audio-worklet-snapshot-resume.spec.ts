@@ -26,6 +26,10 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   // while still exercising the worker snapshot protocol.
   await page.goto(`${PREVIEW_ORIGIN}/web/?mem=256`, { waitUntil: "load" });
 
+  const workersPanel = page.getByRole("heading", { name: "Workers" }).locator("..");
+  const workersSnapshotLine = workersPanel.locator("div.mono").filter({ hasText: /^snapshot:/ });
+  const workersError = workersPanel.locator("pre").last();
+
   await page.click("#init-audio-output-worker");
 
   await page.waitForFunction(() => {
@@ -46,10 +50,7 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   try {
     await expect(snapshotSaveButton).toBeEnabled({ timeout: 60_000 });
   } catch (err) {
-    const snapshotStatus = await page.evaluate(() => {
-      const nodes = Array.from(document.querySelectorAll(".mono"));
-      return nodes.map((n) => n.textContent ?? "").find((t) => t.startsWith("snapshot:")) ?? null;
-    });
+    const snapshotStatus = await workersSnapshotLine.textContent();
     if (snapshotStatus?.includes("unavailable")) {
       test.skip(true, `VM snapshot unavailable in this build (${snapshotStatus}).`);
     }
@@ -79,7 +80,17 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   expect(beforeSave!.overrun).toBe(0);
 
   await snapshotSaveButton.click();
-  await page.waitForFunction(() => Array.from(document.querySelectorAll(".mono")).some((n) => (n.textContent ?? "").includes("snapshot: saved")));
+  await expect
+    .poll(async () => (await workersSnapshotLine.textContent()) ?? "", { timeout: 120_000 })
+    .toMatch(/snapshot: (saved|save failed)/);
+  const saveStatus = (await workersSnapshotLine.textContent()) ?? "";
+  if (saveStatus.includes("save failed")) {
+    const errorText = (await workersError.textContent()) ?? "";
+    if (errorText.toLowerCase().includes("unavailable")) {
+      test.skip(true, errorText);
+    }
+    throw new Error(`Snapshot save failed: ${errorText || saveStatus}`);
+  }
 
   // Simulate time passing between save and restore (e.g. user waiting, slow restore, etc.).
   // This only needs to be long enough to expose any post-resume "catch up" behaviour; keep it
@@ -109,11 +120,17 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
 
   await expect(snapshotLoadButton).toBeEnabled({ timeout: 60_000 });
   await snapshotLoadButton.click();
-  await page.waitForFunction(
-    () => Array.from(document.querySelectorAll(".mono")).some((n) => (n.textContent ?? "").includes("snapshot: restored")),
-    undefined,
-    { timeout: 120_000 },
-  );
+  await expect
+    .poll(async () => (await workersSnapshotLine.textContent()) ?? "", { timeout: 120_000 })
+    .toMatch(/snapshot: (restored|restore failed)/);
+  const restoreStatus = (await workersSnapshotLine.textContent()) ?? "";
+  if (restoreStatus.includes("restore failed")) {
+    const errorText = (await workersError.textContent()) ?? "";
+    if (errorText.toLowerCase().includes("unavailable")) {
+      test.skip(true, errorText);
+    }
+    throw new Error(`Snapshot restore failed: ${errorText || restoreStatus}`);
+  }
 
   // Give the CPU worker a moment to tick after resume.
   await page.waitForTimeout(250);
