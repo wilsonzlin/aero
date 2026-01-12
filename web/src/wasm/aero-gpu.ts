@@ -183,6 +183,14 @@ export function destroy_gpu(): void {
   mod.destroy_gpu();
 }
 
+/**
+ * Register a view of the guest RAM backing store for AeroGPU submissions.
+ *
+ * Note: on PC/Q35, guest physical RAM is non-contiguous once the configured guest RAM exceeds the
+ * PCIe ECAM base (0xB000_0000): the "high" portion is remapped above 4 GiB, leaving an ECAM/PCI
+ * hole below 4 GiB. AeroGPU uses guest physical addresses (GPAs), so the WASM module translates
+ * GPAs back into this flat backing store before indexing.
+ */
 export function set_guest_memory(guestU8: Uint8Array): void {
   const mod = requireLoaded();
   mod.set_guest_memory(guestU8);
@@ -198,6 +206,12 @@ export function has_guest_memory(): boolean {
   return !!mod.has_guest_memory?.();
 }
 
+/**
+ * Debug helper: read bytes from guest RAM at the given guest physical address.
+ *
+ * `gpa` is a guest physical address (subject to the same hole/high-RAM remap translation as
+ * allocations/submissions), not a direct offset into the backing `Uint8Array`.
+ */
 export function read_guest_memory(gpa: bigint, len: number): Uint8Array {
   const mod = requireLoaded();
   return mod.read_guest_memory(gpa, len) as Uint8Array;
