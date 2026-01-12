@@ -41,6 +41,25 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
   Records only entrypoints whose trace name contains any of the comma-separated tokens (case-insensitive substring match).
   Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
 
+### Common recipes
+
+#### Debug StateBlock / ValidateDevice (minimal repro apps)
+
+For `d3d9_validate_device_sanity` and `d3d9ex_stateblock_sanity`, a useful setup is:
+
+```cmd
+set AEROGPU_D3D9_TRACE=1
+set AEROGPU_D3D9_TRACE_MODE=all
+set AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice
+set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
+```
+
+If you suspect the app is failing early, you can also use:
+
+```cmd
+set AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1
+```
+
 ### Dump triggers (on-demand)
 
 The trace buffer is only dumped when triggered:
