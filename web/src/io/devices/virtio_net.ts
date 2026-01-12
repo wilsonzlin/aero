@@ -1,29 +1,62 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
-import type { PciBar, PciDevice } from "../bus/pci.ts";
+import type { PciBar, PciCapability, PciDevice } from "../bus/pci.ts";
 import type { IrqSink, TickableDevice } from "../device_manager.ts";
 
 export type VirtioNetPciBridgeLike = {
-  mmio_read?: (offset: number, size: number) => number;
-  mmio_write?: (offset: number, size: number, value: number) => void;
-  io_read?: (offset: number, size: number) => number;
-  io_write?: (offset: number, size: number, value: number) => void;
+  mmio_read(offset: number, size: number): number;
+  mmio_write(offset: number, size: number, value: number): void;
+  /**
+   * Advance device-side state (process virtqueues / ring backend).
+   *
+   * Newer WASM builds may expose `poll()` rather than `tick()`. The wrapper supports both.
+   */
+  poll?: () => void;
   tick?: (nowMs?: number) => void;
-  irq_level?: () => boolean;
-  irq_asserted?: () => boolean;
-  free: () => void;
+  irq_level?(): boolean;
+  irq_asserted?(): boolean;
+  free(): void;
 };
 
 const VIRTIO_PCI_VENDOR_ID = 0x1af4;
-// virtio-net device type is 1, so transitional device ID is 0x1000 + (1 - 1).
-const VIRTIO_NET_TRANSITIONAL_DEVICE_ID = 0x1000;
+// virtio-net device type is 1, so modern virtio-pci device ID is 0x1040 + 1.
+const VIRTIO_NET_DEVICE_ID = 0x1041;
+// Contract v1: PCI Revision ID matches contract major version.
+const VIRTIO_NET_REVISION_ID = 0x01;
 const VIRTIO_NET_CLASS_CODE = 0x02_00_00;
 
-// Keep in sync with `crates/aero-virtio/src/pci.rs` (`bar0_size`).
+// Keep in sync with `crates/aero-virtio/src/pci.rs` (`bar0_size`) and
+// `docs/windows7-virtio-driver-contract.md` (BAR0 layout contract).
 export const VIRTIO_PCI_BAR0_MMIO_SIZE = 0x4000;
-// Keep in sync with `crates/aero-virtio/src/pci.rs` (`bar2_size` when legacy IO is enabled).
-const VIRTIO_PCI_LEGACY_IO_SIZE = 0x100;
 
-const VIRTIO_NET_IRQ_LINE = 0x0b;
+// IRQ10 is traditionally used by PCI NICs on legacy x86 machines and is already
+// used by the E1000 fallback model. Sharing is supported by the IO worker's
+// refcounted IRQ sink.
+const VIRTIO_NET_IRQ_LINE = 0x0a;
+
+// PCI capability IDs/types for virtio-pci modern transport (contract v1).
+const PCI_CAP_ID_VENDOR_SPECIFIC = 0x09;
+const VIRTIO_PCI_CAP_COMMON_CFG = 1;
+const VIRTIO_PCI_CAP_NOTIFY_CFG = 2;
+const VIRTIO_PCI_CAP_ISR_CFG = 3;
+const VIRTIO_PCI_CAP_DEVICE_CFG = 4;
+
+// Fixed BAR0 layout.
+const VIRTIO_MMIO_COMMON_OFFSET = 0x0000;
+const VIRTIO_MMIO_NOTIFY_OFFSET = 0x1000;
+const VIRTIO_MMIO_ISR_OFFSET = 0x2000;
+const VIRTIO_MMIO_DEVICE_OFFSET = 0x3000;
+const VIRTIO_MMIO_COMMON_LEN = 0x0100;
+const VIRTIO_MMIO_NOTIFY_LEN = 0x0100;
+const VIRTIO_MMIO_ISR_LEN = 0x0020;
+const VIRTIO_MMIO_DEVICE_LEN = 0x0100;
+const VIRTIO_NOTIFY_OFF_MULTIPLIER = 4;
+
+function writeU32LE(buf: Uint8Array, off: number, value: number): void {
+  buf[off] = value & 0xff;
+  buf[off + 1] = (value >>> 8) & 0xff;
+  buf[off + 2] = (value >>> 16) & 0xff;
+  buf[off + 3] = (value >>> 24) & 0xff;
+}
 
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
@@ -31,28 +64,65 @@ function maskToSize(value: number, size: number): number {
   return value >>> 0;
 }
 
+function makeVirtioPciCap(opts: { cfgType: number; bar: number; offset: number; length: number }): PciCapability {
+  const bytes = new Uint8Array(16);
+  bytes[0] = PCI_CAP_ID_VENDOR_SPECIFIC;
+  bytes[1] = 0; // next (patched by PciBus)
+  bytes[2] = 0; // cap_len (patched by PciBus)
+  bytes[3] = opts.cfgType & 0xff;
+  bytes[4] = opts.bar & 0xff;
+  bytes[5] = 0; // id
+  bytes[6] = 0;
+  bytes[7] = 0;
+  writeU32LE(bytes, 8, opts.offset >>> 0);
+  writeU32LE(bytes, 12, opts.length >>> 0);
+  return { bytes };
+}
+
+function makeVirtioPciNotifyCap(opts: {
+  bar: number;
+  offset: number;
+  length: number;
+  notifyOffMultiplier: number;
+}): PciCapability {
+  const bytes = new Uint8Array(20);
+  bytes[0] = PCI_CAP_ID_VENDOR_SPECIFIC;
+  bytes[1] = 0; // next (patched by PciBus)
+  bytes[2] = 0; // cap_len (patched by PciBus)
+  bytes[3] = VIRTIO_PCI_CAP_NOTIFY_CFG;
+  bytes[4] = opts.bar & 0xff;
+  bytes[5] = 0; // id
+  bytes[6] = 0;
+  bytes[7] = 0;
+  writeU32LE(bytes, 8, opts.offset >>> 0);
+  writeU32LE(bytes, 12, opts.length >>> 0);
+  writeU32LE(bytes, 16, opts.notifyOffMultiplier >>> 0);
+  return { bytes };
+}
+
 /**
- * Minimal virtio-net PCI function backed by the WASM `VirtioNetPciBridge`.
+ * virtio-net PCI function backed by the WASM `VirtioNetPciBridge`.
  *
- * Exposes:
- * - BAR0: 0x4000 MMIO window containing virtio PCI capabilities (modern transport)
- * - BAR2: 0x100 I/O port window for the legacy virtio 0.9 transport (transitional device)
+ * Exposes a single virtio-pci modern BAR0 + virtio vendor-specific capabilities
+ * per `AERO-W7-VIRTIO` contract v1.
  */
 export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly name = "virtio-net";
   readonly vendorId = VIRTIO_PCI_VENDOR_ID;
-  readonly deviceId = VIRTIO_NET_TRANSITIONAL_DEVICE_ID;
+  readonly deviceId = VIRTIO_NET_DEVICE_ID;
+  readonly subsystemVendorId = VIRTIO_PCI_VENDOR_ID;
+  readonly subsystemId = 0x0001;
   readonly classCode = VIRTIO_NET_CLASS_CODE;
-  readonly revisionId = 0x00;
+  readonly revisionId = VIRTIO_NET_REVISION_ID;
   readonly irqLine = VIRTIO_NET_IRQ_LINE;
 
-  readonly bars: ReadonlyArray<PciBar | null> = [
-    { kind: "mmio32", size: VIRTIO_PCI_BAR0_MMIO_SIZE },
-    null,
-    { kind: "io", size: VIRTIO_PCI_LEGACY_IO_SIZE },
-    null,
-    null,
-    null,
+  readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio64", size: VIRTIO_PCI_BAR0_MMIO_SIZE }, null, null, null, null, null];
+
+  readonly capabilities: ReadonlyArray<PciCapability> = [
+    makeVirtioPciCap({ cfgType: VIRTIO_PCI_CAP_COMMON_CFG, bar: 0, offset: VIRTIO_MMIO_COMMON_OFFSET, length: VIRTIO_MMIO_COMMON_LEN }),
+    makeVirtioPciNotifyCap({ bar: 0, offset: VIRTIO_MMIO_NOTIFY_OFFSET, length: VIRTIO_MMIO_NOTIFY_LEN, notifyOffMultiplier: VIRTIO_NOTIFY_OFF_MULTIPLIER }),
+    makeVirtioPciCap({ cfgType: VIRTIO_PCI_CAP_ISR_CFG, bar: 0, offset: VIRTIO_MMIO_ISR_OFFSET, length: VIRTIO_MMIO_ISR_LEN }),
+    makeVirtioPciCap({ cfgType: VIRTIO_PCI_CAP_DEVICE_CFG, bar: 0, offset: VIRTIO_MMIO_DEVICE_OFFSET, length: VIRTIO_MMIO_DEVICE_LEN }),
   ];
 
   readonly #bridge: VirtioNetPciBridgeLike;
@@ -71,15 +141,22 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (barIndex !== 0) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
 
-    const bridge = this.#bridge;
-    const fn = bridge.mmio_read;
-    if (typeof fn !== "function") return defaultReadValue(size);
+    const off = Number(offset);
+    if (!Number.isFinite(off) || off < 0 || off + size > VIRTIO_PCI_BAR0_MMIO_SIZE) return defaultReadValue(size);
+
+    let value = 0;
     try {
-      const value = fn.call(bridge, Number(offset), size >>> 0) >>> 0;
-      return maskToSize(value, size);
+      value = this.#bridge.mmio_read(off >>> 0, size >>> 0) >>> 0;
     } catch {
-      return defaultReadValue(size);
+      value = 0;
     }
+
+    // Reads from the ISR register are read-to-ack and may deassert the IRQ.
+    if (off >= VIRTIO_MMIO_ISR_OFFSET && off < VIRTIO_MMIO_ISR_OFFSET + VIRTIO_MMIO_ISR_LEN) {
+      this.#syncIrq();
+    }
+
+    return maskToSize(value, size);
   }
 
   mmioWrite(barIndex: number, offset: bigint, size: number, value: number): void {
@@ -87,50 +164,14 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (barIndex !== 0) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
 
-    const bridge = this.#bridge;
-    const fn = bridge.mmio_write;
-    if (typeof fn === "function") {
-      try {
-        fn.call(bridge, Number(offset), size >>> 0, maskToSize(value >>> 0, size));
-      } catch {
-        // ignore device errors during guest IO
-      }
-    }
+    const off = Number(offset);
+    if (!Number.isFinite(off) || off < 0 || off + size > VIRTIO_PCI_BAR0_MMIO_SIZE) return;
 
-    this.#syncIrq();
-  }
-
-  ioRead(barIndex: number, offset: number, size: number): number {
-    if (this.#destroyed) return defaultReadValue(size);
-    if (barIndex !== 2) return defaultReadValue(size);
-    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
-
-    const bridge = this.#bridge;
-    const fn = bridge.io_read;
-    if (typeof fn !== "function") return defaultReadValue(size);
     try {
-      const value = fn.call(bridge, offset >>> 0, size >>> 0) >>> 0;
-      return maskToSize(value, size);
+      this.#bridge.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
-      return defaultReadValue(size);
+      // ignore device errors during guest MMIO
     }
-  }
-
-  ioWrite(barIndex: number, offset: number, size: number, value: number): void {
-    if (this.#destroyed) return;
-    if (barIndex !== 2) return;
-    if (size !== 1 && size !== 2 && size !== 4) return;
-
-    const bridge = this.#bridge;
-    const fn = bridge.io_write;
-    if (typeof fn === "function") {
-      try {
-        fn.call(bridge, offset >>> 0, size >>> 0, maskToSize(value >>> 0, size));
-      } catch {
-        // ignore device errors during guest IO
-      }
-    }
-
     this.#syncIrq();
   }
 
@@ -138,15 +179,17 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
 
     const bridge = this.#bridge;
-    const tick = (bridge as unknown as { tick?: unknown }).tick;
-    if (typeof tick === "function") {
+    if (typeof bridge.poll === "function") {
+      try {
+        bridge.poll();
+      } catch {
+        // ignore device errors during tick
+      }
+    } else if (typeof bridge.tick === "function") {
       try {
         // Some wasm-bindgen builds enforce method arity; pass `nowMs` only when accepted.
-        if (tick.length >= 1) {
-          (tick as (nowMs: number) => void).call(bridge, nowMs);
-        } else {
-          (tick as () => void).call(bridge);
-        }
+        if (bridge.tick.length >= 1) bridge.tick(nowMs);
+        else bridge.tick();
       } catch {
         // ignore device errors during tick
       }

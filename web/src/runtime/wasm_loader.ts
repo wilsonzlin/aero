@@ -358,10 +358,9 @@ export interface WasmApi {
     VirtioNetPciBridge?: new (guestBase: number, guestSize: number, ioIpcSab: SharedArrayBuffer) => {
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
-        io_read(offset: number, size: number): number;
-        io_write(offset: number, size: number, value: number): void;
-        tick(nowMs?: number): void;
-        irq_level(): boolean;
+        poll?(): void;
+        tick?(nowMs?: number): void;
+        irq_level?(): boolean;
         irq_asserted?(): boolean;
         free(): void;
     };
