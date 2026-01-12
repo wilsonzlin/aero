@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use aero_gpu::{decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8};
 use aero_gpu::guest_memory::GuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
@@ -38,8 +39,17 @@ pub struct Texture2dDesc {
     pub height: u32,
     pub mip_levels: u32,
     pub array_layers: u32,
+    /// Format of the texture data in the linear backing store (guest allocations and UPLOAD_RESOURCE
+    /// payloads).
     pub format: wgpu::TextureFormat,
+    /// Actual format of the host `wgpu::Texture`.
+    ///
+    /// This differs from [`Self::format`] when the guest requests a BC-compressed format but the
+    /// device does not have `TEXTURE_COMPRESSION_BC` enabled; in that case we fall back to an
+    /// RGBA8 texture and decompress BC blocks on upload.
+    pub texture_format: wgpu::TextureFormat,
     pub row_pitch_bytes: u32,
+    pub upload_transform: TextureUploadTransform,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +72,24 @@ pub struct Texture2dResource {
     pub usage_flags: u32,
     pub backing: Option<BackingInfo>,
     host_shadow: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextureUploadTransform {
+    Direct,
+    Bc1ToRgba8,
+    Bc2ToRgba8,
+    Bc3ToRgba8,
+    Bc7ToRgba8,
+}
+
+impl TextureUploadTransform {
+    fn uses_bc_decompression(self) -> bool {
+        matches!(
+            self,
+            Self::Bc1ToRgba8 | Self::Bc2ToRgba8 | Self::Bc3ToRgba8 | Self::Bc7ToRgba8
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -204,12 +232,16 @@ impl AerogpuResourceManager {
             bail!("CreateTexture2d: row_pitch_bytes is required for allocation-backed textures");
         }
 
-        let wgpu_format = map_aerogpu_format(format)?;
+        let linear_format = map_aerogpu_format(format)?;
+        let bc_enabled = self
+            .device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let (texture_format, upload_transform) =
+            select_texture_format_for_device(linear_format, bc_enabled)?;
+
         if row_pitch_bytes != 0 {
-            let bpp = bytes_per_texel(wgpu_format)?;
-            let min_row_pitch = width
-                .checked_mul(bpp)
-                .ok_or_else(|| anyhow!("CreateTexture2d: row_pitch overflow"))?;
+            let min_row_pitch = texture_unpadded_bytes_per_row(linear_format, width)?;
             if row_pitch_bytes < min_row_pitch {
                 bail!(
                     "CreateTexture2d: row_pitch_bytes {} is smaller than required {}",
@@ -228,7 +260,7 @@ impl AerogpuResourceManager {
             mip_level_count: mip_levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu_format,
+            format: texture_format,
             usage: map_texture_usage_flags(usage_flags),
             view_formats: &[],
         });
@@ -243,8 +275,10 @@ impl AerogpuResourceManager {
             height,
             mip_levels,
             array_layers,
-            format: wgpu_format,
+            format: linear_format,
+            texture_format,
             row_pitch_bytes,
+            upload_transform,
         };
 
         let host_shadow = if backing.is_some() {
@@ -720,6 +754,19 @@ pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
         x if x == AerogpuFormat::B8G8R8X8Unorm as u32 => wgpu::TextureFormat::Bgra8Unorm,
         x if x == AerogpuFormat::R8G8B8A8Unorm as u32 => wgpu::TextureFormat::Rgba8Unorm,
         x if x == AerogpuFormat::R8G8B8X8Unorm as u32 => wgpu::TextureFormat::Rgba8Unorm,
+        // sRGB formats (AeroGPU protocol extensions; values align with common DXGI_FORMAT
+        // discriminants for forward-compatibility).
+        29 => wgpu::TextureFormat::Rgba8UnormSrgb, // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+        91 | 93 => wgpu::TextureFormat::Bgra8UnormSrgb, // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB / B8G8R8X8_UNORM_SRGB
+        // BC formats (DXGI_FORMAT_BC* numeric values).
+        71 => wgpu::TextureFormat::Bc1RgbaUnorm,
+        72 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+        74 => wgpu::TextureFormat::Bc2RgbaUnorm,
+        75 => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
+        77 => wgpu::TextureFormat::Bc3RgbaUnorm,
+        78 => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+        98 => wgpu::TextureFormat::Bc7RgbaUnorm,
+        99 => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
         x if x == AerogpuFormat::D24UnormS8Uint as u32 => wgpu::TextureFormat::Depth24PlusStencil8,
         x if x == AerogpuFormat::D32Float as u32 => wgpu::TextureFormat::Depth32Float,
         _ => bail!("unsupported aerogpu_format {format}"),
@@ -777,56 +824,211 @@ pub fn validate_range_in_resource(range: DirtyRange, total_size_bytes: u64) -> R
     Ok(())
 }
 
-fn bytes_per_texel(format: wgpu::TextureFormat) -> Result<u32> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextureFormatLayout {
+    Uncompressed { bytes_per_texel: u32 },
+    BlockCompressed {
+        block_width: u32,
+        block_height: u32,
+        bytes_per_block: u32,
+    },
+}
+
+fn format_layout_info(format: wgpu::TextureFormat) -> Result<TextureFormatLayout> {
     Ok(match format {
         wgpu::TextureFormat::Bgra8Unorm
+        | wgpu::TextureFormat::Bgra8UnormSrgb
         | wgpu::TextureFormat::Rgba8Unorm
+        | wgpu::TextureFormat::Rgba8UnormSrgb
         | wgpu::TextureFormat::Depth24PlusStencil8
-        | wgpu::TextureFormat::Depth32Float => 4,
-        other => bail!("bytes_per_texel: unsupported format {other:?}"),
+        | wgpu::TextureFormat::Depth32Float => TextureFormatLayout::Uncompressed { bytes_per_texel: 4 },
+
+        wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
+            TextureFormatLayout::BlockCompressed {
+                block_width: 4,
+                block_height: 4,
+                bytes_per_block: 8,
+            }
+        }
+        wgpu::TextureFormat::Bc2RgbaUnorm
+        | wgpu::TextureFormat::Bc2RgbaUnormSrgb
+        | wgpu::TextureFormat::Bc3RgbaUnorm
+        | wgpu::TextureFormat::Bc3RgbaUnormSrgb
+        | wgpu::TextureFormat::Bc7RgbaUnorm
+        | wgpu::TextureFormat::Bc7RgbaUnormSrgb => TextureFormatLayout::BlockCompressed {
+            block_width: 4,
+            block_height: 4,
+            bytes_per_block: 16,
+        },
+
+        other => bail!("unsupported texture format {other:?}"),
     })
+}
+
+fn is_srgb_format(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Bgra8UnormSrgb
+            | wgpu::TextureFormat::Rgba8UnormSrgb
+            | wgpu::TextureFormat::Bc1RgbaUnormSrgb
+            | wgpu::TextureFormat::Bc2RgbaUnormSrgb
+            | wgpu::TextureFormat::Bc3RgbaUnormSrgb
+            | wgpu::TextureFormat::Bc7RgbaUnormSrgb
+    )
+}
+
+fn is_bc_compressed_format(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Bc1RgbaUnorm
+            | wgpu::TextureFormat::Bc1RgbaUnormSrgb
+            | wgpu::TextureFormat::Bc2RgbaUnorm
+            | wgpu::TextureFormat::Bc2RgbaUnormSrgb
+            | wgpu::TextureFormat::Bc3RgbaUnorm
+            | wgpu::TextureFormat::Bc3RgbaUnormSrgb
+            | wgpu::TextureFormat::Bc7RgbaUnorm
+            | wgpu::TextureFormat::Bc7RgbaUnormSrgb
+    )
+}
+
+fn select_texture_format_for_device(
+    requested: wgpu::TextureFormat,
+    bc_enabled: bool,
+) -> Result<(wgpu::TextureFormat, TextureUploadTransform)> {
+    if !is_bc_compressed_format(requested) {
+        return Ok((requested, TextureUploadTransform::Direct));
+    }
+
+    if bc_enabled {
+        return Ok((requested, TextureUploadTransform::Direct));
+    }
+
+    let fallback = if is_srgb_format(requested) {
+        wgpu::TextureFormat::Rgba8UnormSrgb
+    } else {
+        wgpu::TextureFormat::Rgba8Unorm
+    };
+
+    let transform = match requested {
+        wgpu::TextureFormat::Bc1RgbaUnorm | wgpu::TextureFormat::Bc1RgbaUnormSrgb => {
+            TextureUploadTransform::Bc1ToRgba8
+        }
+        wgpu::TextureFormat::Bc2RgbaUnorm | wgpu::TextureFormat::Bc2RgbaUnormSrgb => {
+            TextureUploadTransform::Bc2ToRgba8
+        }
+        wgpu::TextureFormat::Bc3RgbaUnorm | wgpu::TextureFormat::Bc3RgbaUnormSrgb => {
+            TextureUploadTransform::Bc3ToRgba8
+        }
+        wgpu::TextureFormat::Bc7RgbaUnorm | wgpu::TextureFormat::Bc7RgbaUnormSrgb => {
+            TextureUploadTransform::Bc7ToRgba8
+        }
+        _ => bail!("unsupported BC format {requested:?}"),
+    };
+
+    Ok((fallback, transform))
 }
 
 fn mip_extent(v: u32, level: u32) -> u32 {
     (v >> level).max(1)
 }
 
-fn texture_mip_row_pitch_bytes(desc: &Texture2dDesc, mip_level: u32) -> Result<u32> {
-    let bpp = bytes_per_texel(desc.format)?;
-    if mip_level == 0 {
-        let row_pitch = if desc.row_pitch_bytes != 0 {
-            desc.row_pitch_bytes
-        } else {
-            desc.width
-                .checked_mul(bpp)
-                .ok_or_else(|| anyhow!("row_pitch overflow"))?
-        };
-        let min_row_pitch = desc
-            .width
-            .checked_mul(bpp)
-            .ok_or_else(|| anyhow!("row_pitch overflow"))?;
-        if row_pitch < min_row_pitch {
-            bail!(
-                "row_pitch_bytes {} is smaller than required {}",
-                row_pitch,
-                min_row_pitch
-            );
+fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    bytes_per_row.div_ceil(align) * align
+}
+
+fn texture_unpadded_bytes_per_row(format: wgpu::TextureFormat, width_texels: u32) -> Result<u32> {
+    let info = format_layout_info(format)?;
+    Ok(match info {
+        TextureFormatLayout::Uncompressed { bytes_per_texel } => width_texels
+            .checked_mul(bytes_per_texel)
+            .ok_or_else(|| anyhow!("bytes_per_row overflow"))?,
+        TextureFormatLayout::BlockCompressed {
+            block_width,
+            bytes_per_block,
+            ..
+        } => {
+            let blocks_w = width_texels.div_ceil(block_width);
+            blocks_w
+                .checked_mul(bytes_per_block)
+                .ok_or_else(|| anyhow!("bytes_per_row overflow"))?
         }
-        return Ok(row_pitch);
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LinearMipLayout {
+    width: u32,
+    height: u32,
+    /// Minimum required bytes per row (no padding), expressed in bytes-per-row-of-texels for
+    /// uncompressed formats and bytes-per-row-of-blocks for BC formats.
+    unpadded_bytes_per_row: u32,
+    /// Row pitch in the linear backing store. For mip0 this comes from `row_pitch_bytes` when
+    /// provided; higher mips are always tightly packed.
+    row_pitch_bytes: u32,
+    /// Row count in the linear backing store. For uncompressed formats this is `height`; for BC
+    /// formats this is the number of block rows.
+    rows: u32,
+}
+
+impl LinearMipLayout {
+    fn subresource_size_bytes(self) -> Result<u64> {
+        (self.row_pitch_bytes as u64)
+            .checked_mul(self.rows as u64)
+            .ok_or_else(|| anyhow!("subresource size overflows u64"))
+    }
+}
+
+fn texture_mip_layout(desc: &Texture2dDesc, mip_level: u32) -> Result<LinearMipLayout> {
+    let width = mip_extent(desc.width, mip_level);
+    let height = mip_extent(desc.height, mip_level);
+    let info = format_layout_info(desc.format)?;
+
+    let (unpadded_bytes_per_row, rows) = match info {
+        TextureFormatLayout::Uncompressed { bytes_per_texel } => (
+            width
+                .checked_mul(bytes_per_texel)
+                .ok_or_else(|| anyhow!("bytes_per_row overflow"))?,
+            height,
+        ),
+        TextureFormatLayout::BlockCompressed {
+            block_width,
+            block_height,
+            bytes_per_block,
+        } => {
+            let blocks_w = width.div_ceil(block_width);
+            let blocks_h = height.div_ceil(block_height);
+            let bytes_per_row = blocks_w
+                .checked_mul(bytes_per_block)
+                .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
+            (bytes_per_row, blocks_h)
+        }
+    };
+
+    let row_pitch_bytes = if mip_level == 0 && desc.row_pitch_bytes != 0 {
+        desc.row_pitch_bytes
+    } else {
+        unpadded_bytes_per_row
+    };
+    if row_pitch_bytes < unpadded_bytes_per_row {
+        bail!(
+            "row_pitch_bytes {} is smaller than required {}",
+            row_pitch_bytes,
+            unpadded_bytes_per_row
+        );
     }
 
-    let width = mip_extent(desc.width, mip_level);
-    width
-        .checked_mul(bpp)
-        .ok_or_else(|| anyhow!("row_pitch overflow"))
+    Ok(LinearMipLayout {
+        width,
+        height,
+        unpadded_bytes_per_row,
+        row_pitch_bytes,
+        rows,
+    })
 }
 
 fn texture_subresource_size_bytes(desc: &Texture2dDesc, mip_level: u32) -> Result<u64> {
-    let row_pitch = texture_mip_row_pitch_bytes(desc, mip_level)? as u64;
-    let height = mip_extent(desc.height, mip_level) as u64;
-    row_pitch
-        .checked_mul(height)
-        .ok_or_else(|| anyhow!("subresource size overflows u64"))
+    texture_mip_layout(desc, mip_level)?.subresource_size_bytes()
 }
 
 pub fn texture_total_size_bytes(desc: &Texture2dDesc) -> Result<usize> {
@@ -856,66 +1058,173 @@ fn upload_texture_from_linear_bytes(
         );
     }
 
-    let bpp = bytes_per_texel(desc.format)?;
     let mut offset = 0usize;
     for layer in 0..desc.array_layers {
         for mip in 0..desc.mip_levels {
-            let width = mip_extent(desc.width, mip);
-            let height = mip_extent(desc.height, mip);
-            let row_pitch = texture_mip_row_pitch_bytes(desc, mip)?;
-            let subresource_len = texture_subresource_size_bytes(desc, mip)? as usize;
+            let linear = texture_mip_layout(desc, mip)?;
+            let subresource_len: usize = linear
+                .subresource_size_bytes()?
+                .try_into()
+                .context("subresource too large")?;
             let data = bytes
                 .get(offset..offset + subresource_len)
                 .ok_or_else(|| anyhow!("texture upload out of bounds"))?;
 
-            let unpadded_bytes_per_row = width
-                .checked_mul(bpp)
-                .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
-
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            let needs_repack = height > 1 && !row_pitch.is_multiple_of(align);
+            if desc.upload_transform.uses_bc_decompression() {
+                let bc_tight: std::borrow::Cow<'_, [u8]> =
+                    if linear.row_pitch_bytes == linear.unpadded_bytes_per_row {
+                        std::borrow::Cow::Borrowed(data)
+                    } else {
+                        let mut tmp = vec![0u8; subresource_len];
+                        // Repack to tight BC layout for the decompressor.
+                        let tight_len = (linear.unpadded_bytes_per_row as usize)
+                            .checked_mul(linear.rows as usize)
+                            .ok_or_else(|| anyhow!("repack size overflows usize"))?;
+                        tmp.resize(tight_len, 0);
+                        for y in 0..linear.rows as usize {
+                            let src_start = y * linear.row_pitch_bytes as usize;
+                            let dst_start = y * linear.unpadded_bytes_per_row as usize;
+                            tmp[dst_start..dst_start + linear.unpadded_bytes_per_row as usize]
+                                .copy_from_slice(
+                                    &data[src_start
+                                        ..src_start + linear.unpadded_bytes_per_row as usize],
+                                );
+                        }
+                        std::borrow::Cow::Owned(tmp)
+                    };
 
-            let mut repacked = None;
-            let upload_bytes_per_row = if needs_repack {
-                let padded = unpadded_bytes_per_row.div_ceil(align) * align;
-                let mut tmp = vec![0u8; padded as usize * height as usize];
-                for y in 0..height as usize {
-                    let src_start = y * row_pitch as usize;
-                    let dst_start = y * padded as usize;
-                    tmp[dst_start..dst_start + unpadded_bytes_per_row as usize].copy_from_slice(
-                        &data[src_start..src_start + unpadded_bytes_per_row as usize],
+                let rgba = match desc.upload_transform {
+                    TextureUploadTransform::Bc1ToRgba8 => {
+                        decompress_bc1_rgba8(linear.width, linear.height, &bc_tight)
+                    }
+                    TextureUploadTransform::Bc2ToRgba8 => {
+                        decompress_bc2_rgba8(linear.width, linear.height, &bc_tight)
+                    }
+                    TextureUploadTransform::Bc3ToRgba8 => {
+                        decompress_bc3_rgba8(linear.width, linear.height, &bc_tight)
+                    }
+                    TextureUploadTransform::Bc7ToRgba8 => {
+                        decompress_bc7_rgba8(linear.width, linear.height, &bc_tight)
+                    }
+                    TextureUploadTransform::Direct => unreachable!(),
+                };
+
+                if desc.texture_format != wgpu::TextureFormat::Rgba8Unorm
+                    && desc.texture_format != wgpu::TextureFormat::Rgba8UnormSrgb
+                {
+                    bail!(
+                        "BC decompression requires RGBA8 texture_format (got {:?})",
+                        desc.texture_format
                     );
                 }
-                repacked = Some(tmp);
-                padded
-            } else {
-                row_pitch
-            };
-            let upload_bytes = repacked.as_deref().unwrap_or(data);
 
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture,
-                    mip_level: mip,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer,
+                let unpadded_bytes_per_row = linear
+                    .width
+                    .checked_mul(4)
+                    .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
+                let padded_bytes_per_row = if linear.height > 1
+                    && !unpadded_bytes_per_row.is_multiple_of(align)
+                {
+                    align_copy_bytes_per_row(unpadded_bytes_per_row)
+                } else {
+                    unpadded_bytes_per_row
+                };
+
+                let upload_bytes: std::borrow::Cow<'_, [u8]> =
+                    if padded_bytes_per_row == unpadded_bytes_per_row {
+                        std::borrow::Cow::Owned(rgba)
+                    } else {
+                        let mut tmp = vec![
+                            0u8;
+                            padded_bytes_per_row as usize * linear.height as usize
+                        ];
+                        for y in 0..linear.height as usize {
+                            let src_start = y * unpadded_bytes_per_row as usize;
+                            let dst_start = y * padded_bytes_per_row as usize;
+                            tmp[dst_start..dst_start + unpadded_bytes_per_row as usize]
+                                .copy_from_slice(
+                                    &rgba[src_start
+                                        ..src_start + unpadded_bytes_per_row as usize],
+                                );
+                        }
+                        std::borrow::Cow::Owned(tmp)
+                    };
+
+                queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level: mip,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: layer,
+                        },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                upload_bytes,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(upload_bytes_per_row),
-                    rows_per_image: Some(height),
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
+                    &upload_bytes,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(linear.height),
+                    },
+                    wgpu::Extent3d {
+                        width: linear.width,
+                        height: linear.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            } else {
+                // Direct upload (uncompressed or BC, depending on the texture format).
+                let needs_repack = linear.rows > 1 && !linear.row_pitch_bytes.is_multiple_of(align);
+
+                let upload_bytes_per_row = if needs_repack {
+                    align_copy_bytes_per_row(linear.unpadded_bytes_per_row)
+                } else {
+                    linear.row_pitch_bytes
+                };
+
+                let upload_bytes: std::borrow::Cow<'_, [u8]> = if needs_repack {
+                    let mut tmp =
+                        vec![0u8; upload_bytes_per_row as usize * linear.rows as usize];
+                    for y in 0..linear.rows as usize {
+                        let src_start = y * linear.row_pitch_bytes as usize;
+                        let dst_start = y * upload_bytes_per_row as usize;
+                        tmp[dst_start..dst_start + linear.unpadded_bytes_per_row as usize]
+                            .copy_from_slice(
+                                &data[src_start
+                                    ..src_start + linear.unpadded_bytes_per_row as usize],
+                            );
+                    }
+                    std::borrow::Cow::Owned(tmp)
+                } else {
+                    std::borrow::Cow::Borrowed(data)
+                };
+
+                queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture,
+                        mip_level: mip,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: layer,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &upload_bytes,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(upload_bytes_per_row),
+                        rows_per_image: Some(linear.rows),
+                    },
+                    wgpu::Extent3d {
+                        width: linear.width,
+                        height: linear.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
 
             offset += subresource_len;
         }
@@ -954,6 +1263,22 @@ mod tests {
         assert_eq!(
             map_aerogpu_format(AerogpuFormat::R8G8B8A8Unorm as u32).unwrap(),
             wgpu::TextureFormat::Rgba8Unorm
+        );
+        assert_eq!(
+            map_aerogpu_format(29).unwrap(),
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        );
+        assert_eq!(
+            map_aerogpu_format(91).unwrap(),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        assert_eq!(
+            map_aerogpu_format(71).unwrap(),
+            wgpu::TextureFormat::Bc1RgbaUnorm
+        );
+        assert_eq!(
+            map_aerogpu_format(78).unwrap(),
+            wgpu::TextureFormat::Bc3RgbaUnormSrgb
         );
         assert!(map_aerogpu_format(AerogpuFormat::Invalid as u32).is_err());
     }
@@ -999,10 +1324,277 @@ mod tests {
             mip_levels: 2,
             array_layers: 1,
             format: wgpu::TextureFormat::Rgba8Unorm,
+            texture_format: wgpu::TextureFormat::Rgba8Unorm,
             row_pitch_bytes: 0,
+            upload_transform: TextureUploadTransform::Direct,
         };
         // mip0: 4*4*4 = 64, mip1: 2*2*4 = 16
         assert_eq!(texture_total_size_bytes(&desc).unwrap(), 80);
+    }
+
+    #[test]
+    fn computes_bc_texture_total_size() {
+        // BC1 has 8-byte blocks. 4x4 with a full mip chain:
+        // mip0: 1 block = 8
+        // mip1: 1 block = 8
+        // mip2: 1 block = 8
+        let bc1 = Texture2dDesc {
+            width: 4,
+            height: 4,
+            mip_levels: 3,
+            array_layers: 1,
+            format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            texture_format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            row_pitch_bytes: 0,
+            upload_transform: TextureUploadTransform::Direct,
+        };
+        assert_eq!(texture_total_size_bytes(&bc1).unwrap(), 24);
+
+        // BC3 has 16-byte blocks.
+        let bc3 = Texture2dDesc {
+            width: 4,
+            height: 4,
+            mip_levels: 3,
+            array_layers: 1,
+            format: wgpu::TextureFormat::Bc3RgbaUnorm,
+            texture_format: wgpu::TextureFormat::Bc3RgbaUnorm,
+            row_pitch_bytes: 0,
+            upload_transform: TextureUploadTransform::Direct,
+        };
+        assert_eq!(texture_total_size_bytes(&bc3).unwrap(), 48);
+    }
+
+    #[test]
+    fn bc_row_pitch_bytes_only_applies_to_mip0() {
+        // BC1 4x4 mip chain with an explicitly padded row_pitch for mip0:
+        // mip0: row_pitch=16, rows=1 -> 16
+        // mip1: tight 8
+        // mip2: tight 8
+        let desc = Texture2dDesc {
+            width: 4,
+            height: 4,
+            mip_levels: 3,
+            array_layers: 1,
+            format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            texture_format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            row_pitch_bytes: 16,
+            upload_transform: TextureUploadTransform::Direct,
+        };
+        assert_eq!(texture_total_size_bytes(&desc).unwrap(), 32);
+    }
+
+    async fn create_device_queue() -> Result<Option<(wgpu::Device, wgpu::Queue)>> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir =
+                    std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        };
+
+        let Some(adapter) = adapter else {
+            return Ok(None);
+        };
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-d3d11 aerogpu_resources test device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+            .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+        Ok(Some((device, queue)))
+    }
+
+    async fn read_texture_rgba8(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
+        let padded_bytes_per_row = align_copy_bytes_per_row(unpadded_bytes_per_row);
+        let buffer_size = padded_bytes_per_row as u64 * height as u64;
+
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_resources bc read_texture staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("aerogpu_resources bc read_texture encoder"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
+
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+
+        let mapped = slice.get_mapped_range();
+        let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+        for row in 0..height as usize {
+            let start = row * padded_bytes_per_row as usize;
+            out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
+        }
+        drop(mapped);
+        staging.unmap();
+        Ok(out)
+    }
+
+    #[test]
+    fn upload_bc1_texture_with_cpu_decompression() -> Result<()> {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue().await? else {
+                return Ok(());
+            };
+
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("aerogpu_resources bc1 test texture"),
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 8,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+
+            // A single BC1 block with a known output pattern (from aero_gpu::bc_decompress tests).
+            let bc1_block: [u8; 8] = [
+                0xff, 0xff, // color0 (white)
+                0x00, 0x00, // color1 (black)
+                0x00, 0x55, 0xaa, 0xff, // indices
+            ];
+
+            // 4x8 BC1 has 1x2 blocks. Use a padded row_pitch to exercise repacking:
+            //   row_pitch=12 = 8 bytes block + 4 bytes padding.
+            let bytes: Vec<u8> = [
+                bc1_block.as_slice(),
+                &[0u8; 4],
+                bc1_block.as_slice(),
+                &[0u8; 4],
+            ]
+            .concat();
+
+            let desc = Texture2dDesc {
+                width: 4,
+                height: 8,
+                mip_levels: 1,
+                array_layers: 1,
+                format: wgpu::TextureFormat::Bc1RgbaUnorm,
+                texture_format: wgpu::TextureFormat::Rgba8Unorm,
+                row_pitch_bytes: 12,
+                upload_transform: TextureUploadTransform::Bc1ToRgba8,
+            };
+
+            upload_texture_from_linear_bytes(&queue, &texture, &desc, &bytes)?;
+
+            let readback = read_texture_rgba8(&device, &queue, &texture, 4, 8).await?;
+
+            let row0 = [255u8, 255, 255, 255].repeat(4);
+            let row1 = [0u8, 0, 0, 255].repeat(4);
+            let row2 = [170u8, 170, 170, 255].repeat(4);
+            let row3 = [85u8, 85, 85, 255].repeat(4);
+            let mut expected = Vec::new();
+            for _ in 0..2 {
+                expected.extend_from_slice(&row0);
+                expected.extend_from_slice(&row1);
+                expected.extend_from_slice(&row2);
+                expected.extend_from_slice(&row3);
+            }
+
+            assert_eq!(readback, expected);
+            Ok(())
+        })
     }
 
     #[test]
