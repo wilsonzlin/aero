@@ -1,4 +1,6 @@
-use aero_d3d9::runtime::{ColorFormat, D3D9Runtime, RuntimeConfig, RuntimeError, TextureDesc, TextureFormat};
+use aero_d3d9::runtime::{
+    ColorFormat, D3D9Runtime, RuntimeConfig, RuntimeError, TextureDesc, TextureFormat,
+};
 
 fn require_webgpu() -> bool {
     std::env::var("AERO_REQUIRE_WEBGPU")
@@ -50,4 +52,3 @@ fn d3d9_runtime_write_texture_rejects_out_of_range_mip_level() {
         );
     });
 }
-

@@ -345,7 +345,10 @@ fn detect_format_recognizes_truncated_qcow2_magic() {
     assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Qcow2);
 
     let err = DiskImage::open_auto(backend).err().expect("expected error");
-    assert!(matches!(err, DiskError::CorruptImage("qcow2 header truncated")));
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 header truncated")
+    ));
 }
 
 #[test]

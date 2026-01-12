@@ -1,7 +1,9 @@
 mod common;
 
 use aero_d3d11::runtime::execute::D3D11Runtime;
-use aero_gpu::protocol_d3d11::{CmdWriter, DxgiFormat, Texture2dDesc, Texture2dUpdate, TextureUsage};
+use aero_gpu::protocol_d3d11::{
+    CmdWriter, DxgiFormat, Texture2dDesc, Texture2dUpdate, TextureUsage,
+};
 
 #[test]
 fn d3d11_runtime_update_texture2d_rejects_out_of_range_mip_level() {
@@ -88,13 +90,12 @@ fn d3d11_runtime_create_texture_view_rejects_out_of_range_base_mip() {
             1, // array_layer_count
         );
 
-        let err = rt
-            .execute(&w.finish())
-            .expect_err("expected CreateTextureView with out-of-range base_mip_level to be rejected");
+        let err = rt.execute(&w.finish()).expect_err(
+            "expected CreateTextureView with out-of-range base_mip_level to be rejected",
+        );
         assert!(
             err.to_string().contains("base_mip_level"),
             "unexpected error: {err}"
         );
     });
 }
-

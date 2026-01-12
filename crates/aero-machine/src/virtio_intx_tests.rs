@@ -1,5 +1,5 @@
-use aero_devices::pci::PciInterruptPin;
 use aero_cpu_core::state::RFLAGS_IF;
+use aero_devices::pci::PciInterruptPin;
 use aero_platform::interrupts::InterruptController as PlatformInterruptController;
 use aero_virtio::devices::net_offload::VirtioNetHdr;
 use aero_virtio::pci::{
@@ -263,10 +263,7 @@ fn pc_virtio_net_intx_is_synced_but_not_acknowledged_when_if0() {
     // mov byte ptr [0x2000], 0xAA
     // iret
     const HANDLER_IP: u16 = 0x1100;
-    m.write_physical(
-        u64::from(HANDLER_IP),
-        &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF],
-    );
+    m.write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
     let ivt_entry = u64::from(expected_vector) * 4;
     m.write_physical_u16(ivt_entry, HANDLER_IP);
     m.write_physical_u16(ivt_entry + 2, 0x0000);

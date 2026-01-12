@@ -569,7 +569,11 @@ impl D3D11Runtime {
                 texture_desc.array_layers
             );
         }
-        let mip_width = texture_desc.width.checked_shr(mip_level).unwrap_or(0).max(1);
+        let mip_width = texture_desc
+            .width
+            .checked_shr(mip_level)
+            .unwrap_or(0)
+            .max(1);
         let mip_height = texture_desc
             .height
             .checked_shr(mip_level)
@@ -715,7 +719,8 @@ impl D3D11Runtime {
                 texture.desc.mip_level_count
             );
         }
-        let resolved_mip_level_count = mip_level_count.unwrap_or(texture.desc.mip_level_count - base_mip_level);
+        let resolved_mip_level_count =
+            mip_level_count.unwrap_or(texture.desc.mip_level_count - base_mip_level);
         if base_mip_level
             .checked_add(resolved_mip_level_count)
             .ok_or_else(|| anyhow!("CreateTextureView mip level overflow"))?
