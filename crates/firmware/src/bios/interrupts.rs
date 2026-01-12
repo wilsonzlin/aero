@@ -588,6 +588,18 @@ fn handle_int13(
                 return;
             }
             let (cylinders, heads, spt) = geometry_for_drive(drive, disk.size_in_sectors());
+            let drive_type = if drive < 0x80 {
+                match disk.size_in_sectors() {
+                    5760 => 0x05, // 2.88 MiB
+                    2880 => 0x04, // 1.44 MiB
+                    2400 => 0x02, // 1.2 MiB
+                    1440 => 0x03, // 720 KiB
+                    720 => 0x01,  // 360 KiB
+                    _ => 0x00,
+                }
+            } else {
+                0x00
+            };
 
             let cyl_minus1 = cylinders - 1;
             let ch = (cyl_minus1 & 0xFF) as u8;
@@ -610,6 +622,8 @@ fn handle_int13(
             // Return a pointer to the appropriate parameter table (classic BIOS convention).
             set_real_mode_seg(&mut cpu.segments.es, BIOS_SEGMENT);
             cpu.gpr[gpr::RDI] = (cpu.gpr[gpr::RDI] & !0xFFFF) | (table_off as u64);
+            // For floppy drives, many BIOSes also report a drive type code in BL.
+            cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFF) | (drive_type as u64);
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
@@ -1530,6 +1544,7 @@ mod tests {
         assert_eq!(cpu.gpr[gpr::RDX] as u16, 0x0101);
         assert_eq!(cpu.segments.es.selector, super::super::BIOS_SEGMENT);
         assert_eq!(cpu.gpr[gpr::RDI] as u16, super::super::DISKETTE_PARAM_TABLE_OFFSET);
+        assert_eq!(cpu.gpr[gpr::RBX] as u8, 0x04);
     }
 
     #[test]
@@ -1554,6 +1569,7 @@ mod tests {
             cpu.gpr[gpr::RDI] as u16,
             super::super::FIXED_DISK_PARAM_TABLE_OFFSET
         );
+        assert_eq!(cpu.gpr[gpr::RBX] as u8, 0);
     }
 
     #[test]
