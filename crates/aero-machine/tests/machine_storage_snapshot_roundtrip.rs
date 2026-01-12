@@ -925,3 +925,80 @@ fn machine_restore_ignores_unknown_dskc_entries() {
     next4[2..4].copy_from_slice(&w3.to_le_bytes());
     assert_eq!(&next4, b"REST");
 }
+
+#[test]
+fn machine_restore_applies_only_present_controllers_from_dskc_wrapper() {
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+
+    // Source machine has both controllers enabled so the snapshot contains both entries in DSKC.
+    let src_cfg = MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        enable_ide: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    // Restored machine intentionally omits AHCI; it should still restore IDE state cleanly.
+    let dst_cfg = MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ahci: false,
+        enable_ide: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let ide_disk = SharedDisk::new(16);
+    let mut ide_seed = vec![0u8; SECTOR_SIZE];
+    ide_seed[0..8].copy_from_slice(b"BOOTREST");
+    ide_disk.clone().write_sectors(0, &ide_seed).unwrap();
+
+    let mut src = Machine::new(src_cfg).unwrap();
+    src.attach_ide_primary_master_drive(AtaDrive::new(Box::new(ide_disk.clone())).unwrap());
+
+    // Enable I/O decoding + bus mastering for IDE so the guest can use legacy ports.
+    {
+        let bdf = profile::IDE_PIIX3.bdf;
+        write_cfg_u16(&mut src, bdf.bus, bdf.device, bdf.function, 0x04, 0x0005);
+    }
+
+    // IDE: issue a PIO READ and leave the transfer mid-sector.
+    src.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    src.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20);
+
+    // Consume the first 4 bytes ("BOOT") but leave the transfer in progress.
+    let w0 = src.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w1 = src.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let mut first4 = [0u8; 4];
+    first4[0..2].copy_from_slice(&w0.to_le_bytes());
+    first4[2..4].copy_from_slice(&w1.to_le_bytes());
+    assert_eq!(&first4, b"BOOT");
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(dst_cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    // Host contract: reattach the backend after restore.
+    restored.attach_ide_primary_master_drive(AtaDrive::new(Box::new(ide_disk)).unwrap());
+
+    // Continue the in-flight PIO transfer; next 4 bytes should be "REST".
+    let w2 = restored.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let w3 = restored.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    let mut next4 = [0u8; 4];
+    next4[0..2].copy_from_slice(&w2.to_le_bytes());
+    next4[2..4].copy_from_slice(&w3.to_le_bytes());
+    assert_eq!(&next4, b"REST");
+}
