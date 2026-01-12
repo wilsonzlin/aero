@@ -273,47 +273,67 @@ mod tests {
     fn unregister_range_allows_clean_remap_without_stale_handlers() {
         let mut bus = IoPortBus::new();
 
-        // Map a tiny 4-port window at 0x1000.
+        const LEN: u16 = 4;
+        const BASE1: u16 = 0x1000;
+        const BASE2: u16 = 0x2000;
+
+        // Map a tiny 4-port window at BASE1.
         let state = Rc::new(RefCell::new(SharedState::default()));
-        bus.register_shared_range(0x1000, 4, {
+        bus.register_shared_range(BASE1, LEN, {
             let state = state.clone();
             move |port| {
                 Box::new(SharedStatePort {
                     state: state.clone(),
-                    base: 0x1000,
+                    base: BASE1,
                     port,
                 })
             }
         });
 
-        // Writes should be visible across ports (shared backing state).
-        bus.write(0x1000, 4, 0x1234_0000);
-        assert_eq!(bus.read(0x1003, 4), 0x1234_0003);
+        // Writes should be visible across ports (shared backing state). Touch every port in the
+        // window so stale handlers can't hide.
+        for off in 0..LEN {
+            let port = BASE1.wrapping_add(off);
+            bus.write(port, 4, 0x1234_0000);
+            assert_eq!(bus.read(port, 4), 0x1234_0000 + u32::from(off));
+        }
 
         // Unmap the old window.
-        bus.unregister_range(0x1000, 4);
-        assert_eq!(bus.read(0x1000, 4), 0xFFFF_FFFF);
-        assert_eq!(bus.read(0x1003, 4), 0xFFFF_FFFF);
+        bus.unregister_range(BASE1, LEN);
+        for off in 0..LEN {
+            let port = BASE1.wrapping_add(off);
+            assert_eq!(bus.read(port, 1), 0xFF);
+            assert_eq!(bus.read(port, 2), 0xFFFF);
+            assert_eq!(bus.read(port, 4), 0xFFFF_FFFF);
+            bus.write(port, 4, 0xFFFF_FFFF);
+        }
 
         // Remap to a new base and ensure the old ports remain unmapped.
         let state2 = Rc::new(RefCell::new(SharedState::default()));
-        bus.register_shared_range(0x2000, 4, {
+        bus.register_shared_range(BASE2, LEN, {
             let state2 = state2.clone();
             move |port| {
                 Box::new(SharedStatePort {
                     state: state2.clone(),
-                    base: 0x2000,
+                    base: BASE2,
                     port,
                 })
             }
         });
 
-        bus.write(0x2001, 4, 0xDEAD_BEEF);
-        assert_eq!(bus.read(0x2002, 4), 0xDEAD_BEEF + 2);
-        assert_eq!(bus.read(0x1000, 4), 0xFFFF_FFFF);
+        for off in 0..LEN {
+            let port = BASE2.wrapping_add(off);
+            bus.write(port, 4, 0xDEAD_BEEF);
+            assert_eq!(bus.read(port, 4), 0xDEAD_BEEF + u32::from(off));
+        }
+        for off in 0..LEN {
+            let port = BASE1.wrapping_add(off);
+            assert_eq!(bus.read(port, 4), 0xFFFF_FFFF);
+        }
 
         // Single-port unregister should return the removed device.
-        assert!(bus.unregister(0x2000).is_some());
-        assert_eq!(bus.read(0x2000, 4), 0xFFFF_FFFF);
+        assert!(bus.unregister(BASE2).is_some());
+        assert_eq!(bus.read(BASE2, 4), 0xFFFF_FFFF);
+        assert_eq!(bus.read(BASE2.wrapping_add(1), 4), 0xDEAD_BEEF + 1);
     }
 }
