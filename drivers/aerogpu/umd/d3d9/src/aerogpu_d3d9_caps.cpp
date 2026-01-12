@@ -1,6 +1,7 @@
 #include "aerogpu_d3d9_caps.h"
 
 #include <atomic>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -17,11 +18,19 @@
 namespace aerogpu {
 namespace {
 
-constexpr uint32_t kSupportedFormats[] = {
+constexpr uint32_t kBaseSupportedFormats[] = {
     22u, // D3DFMT_X8R8G8B8
     21u, // D3DFMT_A8R8G8B8
     32u, // D3DFMT_A8B8G8R8
     75u, // D3DFMT_D24S8
+};
+
+constexpr uint32_t kBcSupportedFormats[] = {
+    static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
+    static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
+    static_cast<uint32_t>(kD3dFmtDxt3), // D3DFMT_DXT3
+    static_cast<uint32_t>(kD3dFmtDxt4), // D3DFMT_DXT4
+    static_cast<uint32_t>(kD3dFmtDxt5), // D3DFMT_DXT5
 };
 
 struct GetFormatPayload {
@@ -107,15 +116,43 @@ uint32_t format_ops_for_d3d9_format(uint32_t format) {
   switch (format) {
     case 75u: // D3DFMT_D24S8
       return kD3DUsageDepthStencil;
+    case static_cast<uint32_t>(kD3dFmtDxt1):
+    case static_cast<uint32_t>(kD3dFmtDxt2):
+    case static_cast<uint32_t>(kD3dFmtDxt3):
+    case static_cast<uint32_t>(kD3dFmtDxt4):
+    case static_cast<uint32_t>(kD3dFmtDxt5):
+      // Compressed texture formats cannot be used as render targets or depth/stencil.
+      return 0u;
     default:
       return kD3DUsageRenderTarget;
   }
 }
 
-bool is_supported_format(uint32_t format) {
-  for (uint32_t f : kSupportedFormats) {
+bool supports_bc_formats(const Adapter* adapter) {
+#if defined(_WIN32)
+  if (!adapter || !adapter->umd_private_valid) {
+    return false;
+  }
+  const uint32_t major = adapter->umd_private.device_abi_version_u32 >> 16;
+  const uint32_t minor = adapter->umd_private.device_abi_version_u32 & 0xFFFFu;
+  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2u);
+#else
+  (void)adapter;
+  return true;
+#endif
+}
+
+bool is_supported_format(const Adapter* adapter, uint32_t format) {
+  for (uint32_t f : kBaseSupportedFormats) {
     if (f == format) {
       return true;
+    }
+  }
+  if (supports_bc_formats(adapter)) {
+    for (uint32_t f : kBcSupportedFormats) {
+      if (f == format) {
+        return true;
+      }
     }
   }
   return false;
@@ -267,12 +304,17 @@ void fill_adapter_identifier(D3DADAPTER_IDENTIFIER9* out) {
 
 } // namespace
 
-HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
+HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
   if (!pGetCaps) {
     return E_INVALIDARG;
   }
 
-  const uint32_t format_count = static_cast<uint32_t>(sizeof(kSupportedFormats) / sizeof(kSupportedFormats[0]));
+  const uint32_t base_format_count =
+      static_cast<uint32_t>(sizeof(kBaseSupportedFormats) / sizeof(kBaseSupportedFormats[0]));
+  const bool bc_supported = supports_bc_formats(adapter);
+  const uint32_t bc_format_count =
+      bc_supported ? static_cast<uint32_t>(sizeof(kBcSupportedFormats) / sizeof(kBcSupportedFormats[0])) : 0u;
+  const uint32_t format_count = base_format_count + bc_format_count;
 
   if (!pGetCaps->pData || pGetCaps->DataSize == 0) {
     return E_INVALIDARG;
@@ -329,7 +371,16 @@ HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
       if (payload->index >= format_count) {
         return E_INVALIDARG;
       }
-      const uint32_t format = kSupportedFormats[payload->index];
+      uint32_t format = 0;
+      if (payload->index < base_format_count) {
+        format = kBaseSupportedFormats[payload->index];
+      } else {
+        const uint32_t bc_index = payload->index - base_format_count;
+        if (!bc_supported || bc_index >= bc_format_count) {
+          return E_INVALIDARG;
+        }
+        format = kBcSupportedFormats[bc_index];
+      }
       payload->format = format;
 
       // Best-effort: if the payload has room for a third uint32_t field, fill it
@@ -344,13 +395,13 @@ HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
     case D3DDDICAPS_GETMULTISAMPLEQUALITYLEVELS: {
       if (pGetCaps->DataSize >= sizeof(GetMultisampleQualityLevelsPayload)) {
         auto* payload = reinterpret_cast<GetMultisampleQualityLevelsPayload*>(pGetCaps->pData);
-        const bool supported = is_supported_format(payload->format);
+        const bool supported = is_supported_format(adapter, payload->format) && (format_ops_for_d3d9_format(payload->format) != 0u);
         payload->quality_levels = (supported && payload->multisample_type == 0u) ? 1u : 0u;
         return S_OK;
       }
       if (pGetCaps->DataSize >= sizeof(GetMultisampleQualityLevelsPayloadV1)) {
         auto* payload = reinterpret_cast<GetMultisampleQualityLevelsPayloadV1*>(pGetCaps->pData);
-        const bool supported = is_supported_format(payload->format);
+        const bool supported = is_supported_format(adapter, payload->format) && (format_ops_for_d3d9_format(payload->format) != 0u);
         payload->quality_levels = (supported && payload->multisample_type == 0u) ? 1u : 0u;
         return S_OK;
       }

@@ -2340,9 +2340,46 @@ uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
     // D3DFMT_D24S8
     case 75u:
       return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
+    // D3DFMT_DXT1/DXT2/DXT3/DXT4/DXT5 (FOURCC codes; see d3d9_make_fourcc in aerogpu_d3d9_objects.h)
+    case static_cast<uint32_t>(kD3dFmtDxt1):
+      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
+    // DXT2 is the premultiplied-alpha variant of DXT3. AeroGPU does not encode
+    // alpha-premultiplication at the format level, so treat it as BC2.
+    case static_cast<uint32_t>(kD3dFmtDxt2):
+    case static_cast<uint32_t>(kD3dFmtDxt3):
+      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
+    // DXT4 is the premultiplied-alpha variant of DXT5. AeroGPU does not encode
+    // alpha-premultiplication at the format level, so treat it as BC3.
+    case static_cast<uint32_t>(kD3dFmtDxt4):
+    case static_cast<uint32_t>(kD3dFmtDxt5):
+      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
     default:
       return AEROGPU_FORMAT_INVALID;
   }
+}
+
+static bool SupportsBcFormats(const Device* dev) {
+  if (!dev || !dev->adapter) {
+    return false;
+  }
+
+#if defined(_WIN32)
+  // On Windows we can usually query the active device ABI version via the
+  // UMDRIVERPRIVATE blob. Be conservative: if we cannot query it, assume BC
+  // formats are unsupported so we don't emit commands the host cannot parse.
+  if (!dev->adapter->umd_private_valid) {
+    return false;
+  }
+  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
+  const uint32_t major = blob.device_abi_version_u32 >> 16;
+  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
+  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2u);
+#else
+  // Portable builds don't have a real device to query; assume the matching host
+  // supports the formats compiled into the protocol headers.
+  (void)dev;
+  return true;
+#endif
 }
 
 // D3DLOCK_* flags (numeric values from d3d9.h). Only the bits we care about are
@@ -5406,9 +5443,20 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
     return E_INVALIDARG;
   }
 
-  const uint32_t bpp = bytes_per_pixel(src->format);
-  const uint32_t row_bytes = src->width * bpp;
-  if (src->row_pitch < row_bytes || dst->row_pitch < row_bytes) {
+  const bool bc = is_block_compressed_format(src->format);
+  uint32_t row_copy_bytes = 0;
+  uint32_t rows = 0;
+  if (bc) {
+    // For BC formats the resource layout is in 4x4 blocks. `row_pitch` already
+    // represents the bytes-per-row of blocks; copy whole rows.
+    row_copy_bytes = src->row_pitch;
+    rows = std::max(1u, (src->height + 3u) / 4u);
+  } else {
+    const uint32_t bpp = bytes_per_pixel(src->format);
+    row_copy_bytes = src->width * bpp;
+    rows = src->height;
+  }
+  if (src->row_pitch < row_copy_bytes || dst->row_pitch < row_copy_bytes) {
     return E_FAIL;
   }
 
@@ -5422,7 +5470,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
   const uint8_t* src_base = nullptr;
   uint8_t* dst_base = nullptr;
 
-  const uint64_t bytes_needed = static_cast<uint64_t>(src->row_pitch) * src->height;
+  const uint64_t bytes_needed = static_cast<uint64_t>(src->row_pitch) * rows;
   if (bytes_needed == 0 || bytes_needed > src->size_bytes || bytes_needed > dst->size_bytes) {
     return E_FAIL;
   }
@@ -5502,10 +5550,10 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
       return E_FAIL;
     }
   }
-  for (uint32_t y = 0; y < src->height; y++) {
+  for (uint32_t y = 0; y < rows; y++) {
     std::memcpy(dst_base + static_cast<size_t>(y) * dst->row_pitch,
                 src_base + static_cast<size_t>(y) * src->row_pitch,
-                row_bytes);
+                row_copy_bytes);
   }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
@@ -6062,30 +6110,31 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     // Surface/Texture2D share the same storage layout for now.
     res->kind = (res->mip_levels > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
 
-    const uint32_t bpp = bytes_per_pixel(res->format);
-    uint32_t w = std::max(1u, res->width);
-    uint32_t h = std::max(1u, res->height);
-
-    res->row_pitch = w * bpp;
-    res->slice_pitch = res->row_pitch * h;
-
-    uint64_t total = 0;
-    for (uint32_t level = 0; level < res->mip_levels; level++) {
-      total += static_cast<uint64_t>(std::max(1u, w)) * static_cast<uint64_t>(std::max(1u, h)) * bpp;
-      w = std::max(1u, w / 2);
-      h = std::max(1u, h / 2);
-    }
-    total *= res->depth;
-    if (total > 0x7FFFFFFFu) {
+    Texture2dLayout layout{};
+    if (!calc_texture2d_layout(res->format, res->width, res->height, res->mip_levels, res->depth, &layout)) {
       return trace.ret(E_OUTOFMEMORY);
     }
-    res->size_bytes = static_cast<uint32_t>(total);
+    if (layout.total_size_bytes > 0x7FFFFFFFu) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    res->row_pitch = layout.row_pitch_bytes;
+    res->slice_pitch = layout.slice_pitch_bytes;
+    res->size_bytes = static_cast<uint32_t>(layout.total_size_bytes);
   } else {
     return trace.ret(E_INVALIDARG);
   }
 
   if (res->pool != kD3DPOOL_SYSTEMMEM && res->kind != ResourceKind::Buffer) {
-    if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
+    const uint32_t agpu_format = d3d9_format_to_aerogpu(res->format);
+    if (agpu_format == AEROGPU_FORMAT_INVALID) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+
+    // BC formats were introduced in the guest↔host ABI in minor version 2.
+    // Older emulators will treat these as invalid; gate them so the UMD can run
+    // against older hosts.
+    if (is_block_compressed_format(res->format) && !SupportsBcFormats(dev)) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
   }
@@ -6693,24 +6742,17 @@ static HRESULT device_open_resource_impl(
   } else if (res->width && res->height) {
     res->kind = (res->mip_levels > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
 
-    const uint32_t bpp = bytes_per_pixel(res->format);
-    uint32_t w = std::max(1u, res->width);
-    uint32_t h = std::max(1u, res->height);
-
-    res->row_pitch = w * bpp;
-    res->slice_pitch = res->row_pitch * h;
-
-    uint64_t total = 0;
-    for (uint32_t level = 0; level < res->mip_levels; level++) {
-      total += static_cast<uint64_t>(std::max(1u, w)) * static_cast<uint64_t>(std::max(1u, h)) * bpp;
-      w = std::max(1u, w / 2);
-      h = std::max(1u, h / 2);
-    }
-    total *= res->depth;
-    if (total > 0x7FFFFFFFu) {
+    Texture2dLayout layout{};
+    if (!calc_texture2d_layout(res->format, res->width, res->height, res->mip_levels, res->depth, &layout)) {
       return E_OUTOFMEMORY;
     }
-    res->size_bytes = static_cast<uint32_t>(total);
+    if (layout.total_size_bytes > 0x7FFFFFFFu) {
+      return E_OUTOFMEMORY;
+    }
+
+    res->row_pitch = layout.row_pitch_bytes;
+    res->slice_pitch = layout.slice_pitch_bytes;
+    res->size_bytes = static_cast<uint32_t>(layout.total_size_bytes);
   } else if (priv.size_bytes != 0 && priv.size_bytes <= 0x7FFFFFFFu) {
     res->kind = ResourceKind::Surface;
     res->size_bytes = static_cast<uint32_t>(priv.size_bytes);
@@ -6721,7 +6763,12 @@ static HRESULT device_open_resource_impl(
   }
 
   if (res->kind != ResourceKind::Buffer) {
-    if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
+    const uint32_t agpu_format = d3d9_format_to_aerogpu(res->format);
+    if (agpu_format == AEROGPU_FORMAT_INVALID) {
+      return E_INVALIDARG;
+    }
+
+    if (is_block_compressed_format(res->format) && !SupportsBcFormats(dev)) {
       return E_INVALIDARG;
     }
   }
@@ -7034,6 +7081,10 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
   if (src->format != dst->format) {
     return E_INVALIDARG;
   }
+  if (is_block_compressed_format(src->format)) {
+    // Rect-based copies operate in pixels and do not support BC formats.
+    return E_INVALIDARG;
+  }
 
   const uint32_t bpp = bytes_per_pixel(src->format);
 
@@ -7047,8 +7098,8 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
   const uint8_t* src_base = nullptr;
   uint8_t* dst_base = nullptr;
 
-  const uint64_t src_bytes = static_cast<uint64_t>(src->row_pitch) * src->height;
-  const uint64_t dst_bytes = static_cast<uint64_t>(dst->row_pitch) * dst->height;
+  const uint64_t src_bytes = src->slice_pitch;
+  const uint64_t dst_bytes = dst->slice_pitch;
   if (src_bytes == 0 || dst_bytes == 0 || src_bytes > src->size_bytes || dst_bytes > dst->size_bytes) {
     return E_FAIL;
   }

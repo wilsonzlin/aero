@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
@@ -43,6 +44,131 @@ inline uint32_t bytes_per_pixel(D3DDDIFORMAT d3d9_format) {
     default:
       return 4;
   }
+}
+
+// D3D9 compressed texture formats are defined as FOURCC codes (D3DFORMAT values).
+// Keep local definitions so portable builds don't require the Windows SDK/WDK.
+inline constexpr uint32_t d3d9_make_fourcc(char a, char b, char c, char d) {
+  return static_cast<uint32_t>(static_cast<uint8_t>(a)) |
+         (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 8) |
+         (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 16) |
+         (static_cast<uint32_t>(static_cast<uint8_t>(d)) << 24);
+}
+
+inline constexpr D3DDDIFORMAT kD3dFmtDxt1 = static_cast<D3DDDIFORMAT>(d3d9_make_fourcc('D', 'X', 'T', '1')); // D3DFMT_DXT1
+inline constexpr D3DDDIFORMAT kD3dFmtDxt2 = static_cast<D3DDDIFORMAT>(d3d9_make_fourcc('D', 'X', 'T', '2')); // D3DFMT_DXT2 (premul alpha)
+inline constexpr D3DDDIFORMAT kD3dFmtDxt3 = static_cast<D3DDDIFORMAT>(d3d9_make_fourcc('D', 'X', 'T', '3')); // D3DFMT_DXT3
+inline constexpr D3DDDIFORMAT kD3dFmtDxt4 = static_cast<D3DDDIFORMAT>(d3d9_make_fourcc('D', 'X', 'T', '4')); // D3DFMT_DXT4 (premul alpha)
+inline constexpr D3DDDIFORMAT kD3dFmtDxt5 = static_cast<D3DDDIFORMAT>(d3d9_make_fourcc('D', 'X', 'T', '5')); // D3DFMT_DXT5
+
+inline bool is_block_compressed_format(D3DDDIFORMAT d3d9_format) {
+  switch (static_cast<uint32_t>(d3d9_format)) {
+    case static_cast<uint32_t>(kD3dFmtDxt1):
+    case static_cast<uint32_t>(kD3dFmtDxt2):
+    case static_cast<uint32_t>(kD3dFmtDxt3):
+    case static_cast<uint32_t>(kD3dFmtDxt4):
+    case static_cast<uint32_t>(kD3dFmtDxt5):
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Returns the number of bytes per 4x4 block for BC/DXT formats, or 0 if the
+// format is not block-compressed.
+inline uint32_t block_bytes_per_4x4(D3DDDIFORMAT d3d9_format) {
+  switch (static_cast<uint32_t>(d3d9_format)) {
+    case static_cast<uint32_t>(kD3dFmtDxt1):
+      return 8; // BC1/DXT1
+    case static_cast<uint32_t>(kD3dFmtDxt2): // BC2/DXT3 family (premul alpha not represented in protocol format)
+    case static_cast<uint32_t>(kD3dFmtDxt3):
+    case static_cast<uint32_t>(kD3dFmtDxt4): // BC3/DXT5 family (premul alpha not represented in protocol format)
+    case static_cast<uint32_t>(kD3dFmtDxt5):
+      return 16; // BC2/BC3
+    default:
+      return 0;
+  }
+}
+
+struct Texture2dLayout {
+  uint32_t row_pitch_bytes = 0;
+  uint32_t slice_pitch_bytes = 0;
+  uint64_t total_size_bytes = 0;
+};
+
+// Computes the packed linear layout for a 2D texture mip chain (as used by the
+// AeroGPU protocol).
+//
+// - For uncompressed formats: row_pitch = width * bytes_per_pixel.
+// - For block-compressed formats: row_pitch is measured in 4x4 blocks.
+//
+// Returns false on overflow / invalid inputs.
+inline bool calc_texture2d_layout(
+    D3DDDIFORMAT format,
+    uint32_t width,
+    uint32_t height,
+    uint32_t mip_levels,
+    uint32_t depth,
+    Texture2dLayout* out) {
+  if (!out) {
+    return false;
+  }
+
+  width = std::max(1u, width);
+  height = std::max(1u, height);
+  mip_levels = std::max(1u, mip_levels);
+  depth = std::max(1u, depth);
+
+  uint32_t w = width;
+  uint32_t h = height;
+  uint64_t total = 0;
+  uint32_t row0 = 0;
+  uint32_t slice0 = 0;
+
+  for (uint32_t level = 0; level < mip_levels; ++level) {
+    uint64_t row_pitch = 0;
+    uint64_t slice_pitch = 0;
+
+    if (is_block_compressed_format(format)) {
+      const uint32_t block_bytes = block_bytes_per_4x4(format);
+      if (block_bytes == 0) {
+        return false;
+      }
+
+      const uint32_t blocks_w = std::max(1u, (w + 3u) / 4u);
+      const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
+
+      row_pitch = static_cast<uint64_t>(blocks_w) * block_bytes;
+      slice_pitch = row_pitch * blocks_h;
+    } else {
+      const uint32_t bpp = bytes_per_pixel(format);
+      row_pitch = static_cast<uint64_t>(w) * bpp;
+      slice_pitch = row_pitch * h;
+    }
+
+    if (row_pitch == 0 || slice_pitch == 0) {
+      return false;
+    }
+    if (row_pitch > 0xFFFFFFFFull || slice_pitch > 0xFFFFFFFFull) {
+      return false;
+    }
+
+    if (level == 0) {
+      row0 = static_cast<uint32_t>(row_pitch);
+      slice0 = static_cast<uint32_t>(slice_pitch);
+    }
+
+    total += slice_pitch;
+    w = std::max(1u, w / 2);
+    h = std::max(1u, h / 2);
+  }
+
+  total *= static_cast<uint64_t>(depth);
+
+  out->row_pitch_bytes = row0;
+  out->slice_pitch_bytes = slice0;
+  out->total_size_bytes = total;
+  return true;
 }
 
 struct Resource {

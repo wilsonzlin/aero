@@ -867,7 +867,7 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check(hr == S_OK, "GetCaps(GETFORMATCOUNT)")) {
     return false;
   }
-  if (!Check(format_count == 4, "format_count == 4")) {
+  if (!Check(format_count == 9, "format_count == 9")) {
     return false;
   }
 
@@ -879,11 +879,16 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
 
   constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
   constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
-  constexpr uint32_t kExpectedFormats[4] = {
+  constexpr uint32_t kExpectedFormats[9] = {
       22u, // D3DFMT_X8R8G8B8
       21u, // D3DFMT_A8R8G8B8
       32u, // D3DFMT_A8B8G8R8
       75u, // D3DFMT_D24S8
+      static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
+      static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
+      static_cast<uint32_t>(kD3dFmtDxt3), // D3DFMT_DXT3
+      static_cast<uint32_t>(kD3dFmtDxt4), // D3DFMT_DXT4
+      static_cast<uint32_t>(kD3dFmtDxt5), // D3DFMT_DXT5
   };
 
   for (uint32_t i = 0; i < format_count; ++i) {
@@ -904,7 +909,14 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       return false;
     }
 
-    const uint32_t expected_ops = (payload.format == 75u) ? kD3DUsageDepthStencil : kD3DUsageRenderTarget;
+    uint32_t expected_ops = (payload.format == 75u) ? kD3DUsageDepthStencil : kD3DUsageRenderTarget;
+    if (payload.format == static_cast<uint32_t>(kD3dFmtDxt1) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt2) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt3) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt4) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt5)) {
+      expected_ops = 0;
+    }
     if (!Check(payload.ops == expected_ops, "format ops mask matches expected usage")) {
       return false;
     }
@@ -1199,6 +1211,133 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
     return false;
   }
   return Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle");
+}
+
+bool TestCreateResourceComputesBcTexturePitchAndSize() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1 (BC1)
+  create_res.width = 7;
+  create_res.height = 5;
+  create_res.depth = 1;
+  create_res.mip_levels = 3;
+  create_res.usage = 0;
+  create_res.pool = 0; // default pool (GPU resource)
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(DXT1)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+
+  // DXT1/BC1: 4x4 blocks, 8 bytes per block.
+  // width=7,height=5 => blocks_w=2, blocks_h=2 => row_pitch=16, slice_pitch=32.
+  // mip chain:
+  //  - 7x5 => 32 bytes
+  //  - 3x2 =>  8 bytes
+  //  - 1x1 =>  8 bytes
+  // total = 48 bytes.
+  if (!Check(res->row_pitch == 16u, "DXT1 row_pitch bytes")) {
+    return false;
+  }
+  if (!Check(res->slice_pitch == 32u, "DXT1 slice_pitch bytes")) {
+    return false;
+  }
+  if (!Check(res->size_bytes == 48u, "DXT1 mip chain size_bytes")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+
+  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+  if (!Check(cmd->format == AEROGPU_FORMAT_BC1_RGBA_UNORM, "CREATE_TEXTURE2D format==BC1")) {
+    return false;
+  }
+  if (!Check(cmd->row_pitch_bytes == 16u, "CREATE_TEXTURE2D row_pitch_bytes")) {
+    return false;
+  }
+  return Check(cmd->mip_levels == 3u, "CREATE_TEXTURE2D mip_levels");
 }
 
 bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
@@ -7342,6 +7481,7 @@ int main() {
   failures += !aerogpu::TestAdapterMultisampleQualityLevels();
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
+  failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked();
   failures += !aerogpu::TestAllocBackedUnlockEmitsDirtyRange();
