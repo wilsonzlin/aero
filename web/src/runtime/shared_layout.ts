@@ -219,6 +219,12 @@ export const CPU_WORKER_DEMO_GUEST_COUNTER_INDEX = CPU_WORKER_DEMO_GUEST_COUNTER
 //
 // This is expressed as a guest-physical offset; to convert to a wasm linear
 // address, add `guest_base` from [`GuestRamLayout`].
+//
+// IMPORTANT: The CPU worker continuously publishes demo frames into this region
+// when the shared framebuffer is embedded in guest RAM. Any test harness or
+// device-model scratch buffers that use fixed guest-physical offsets must keep
+// their ranges disjoint from this region or they will be corrupted in the
+// background (causing flaky failures).
 export const CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES = 0x20_0000; // 2 MiB (64-byte aligned)
 export const CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH = 640;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT = 480;

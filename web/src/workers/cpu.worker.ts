@@ -945,6 +945,9 @@ let perfDeviceIoWriteBytes = 0;
 // render path by asking WASM to fill pixels here and then bulk-copying them into the VGA SAB.
 // NOTE: Keep this disjoint from the shared framebuffer demo region starting at
 // `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES`.
+//
+// IMPORTANT: This region is written continuously by the CPU worker render loop.
+// Fixed-offset harness DMA buffers (audio, etc.) must not overlap it.
 const DEMO_FB_OFFSET = 0x500000;
 const DEMO_FB_MAX_BYTES = 1024 * 768 * 4;
 
