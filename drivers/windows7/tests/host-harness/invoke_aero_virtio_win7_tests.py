@@ -953,6 +953,10 @@ def main() -> int:
             f"Starting HTTP server on 127.0.0.1:{args.http_port}{args.http_path} "
             f"(large payload at 127.0.0.1:{args.http_port}{large_path}, 1 MiB deterministic bytes)"
         )
+        print(
+            f"  Guest URLs: http://10.0.2.2:{args.http_port}{args.http_path} "
+            f"and http://10.0.2.2:{args.http_port}{large_path}"
+        )
 
         wav_path: Optional[Path] = None
         if args.virtio_transitional:
