@@ -158,6 +158,15 @@ When using the structured binary form, `code` is a stable `u16` error code.
 | 8 | `quota_connections` | Connection/session concurrency quota exceeded. |
 | 9 | `backpressure` | Proxy cannot enqueue outbound messages (client not reading / internal buffer full). |
 
+Implementation references:
+
+- Rust (canonical protocol crate): `crates/aero-l2-protocol/src/lib.rs`
+  - Error code constants: `L2_TUNNEL_ERROR_CODE_*`
+  - Structured payload codec: `encode_structured_error_payload` / `decode_structured_error_payload`
+- TypeScript (browser/client codec): `web/src/shared/l2TunnelProtocol.ts`
+  - Error code constants: `L2_TUNNEL_ERROR_CODE_*`
+  - Structured payload codec: `encodeStructuredErrorPayload` / `decodeStructuredErrorPayload`
+
 ---
 
 ## Size limits
