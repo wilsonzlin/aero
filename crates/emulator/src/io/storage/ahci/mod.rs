@@ -468,10 +468,9 @@ impl AhciController {
             .map_err(|_| DiskError::QuotaExceeded)?;
         scratch.resize(scratch_len, 0);
 
-        let prdbc: u32 =
-            byte_len
-                .try_into()
-                .map_err(|_| DiskError::Unsupported("transfer too large"))?;
+        let prdbc: u32 = byte_len
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("transfer too large"))?;
 
         let mut cursor = PrdtCursor::new();
         let mut remaining = byte_len;
@@ -482,7 +481,9 @@ impl AhciController {
             cursor.write_to_guest(mem, &prdt, &scratch[..chunk_len])?;
 
             let chunk_sectors = (chunk_len / sector_size) as u64;
-            lba = lba.checked_add(chunk_sectors).ok_or(AhciError::InvalidPrdt)?;
+            lba = lba
+                .checked_add(chunk_sectors)
+                .ok_or(AhciError::InvalidPrdt)?;
             remaining -= chunk_len;
         }
 
@@ -531,10 +532,9 @@ impl AhciController {
             .map_err(|_| DiskError::QuotaExceeded)?;
         scratch.resize(scratch_len, 0);
 
-        let prdbc: u32 =
-            byte_len
-                .try_into()
-                .map_err(|_| DiskError::Unsupported("transfer too large"))?;
+        let prdbc: u32 = byte_len
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("transfer too large"))?;
 
         let mut cursor = PrdtCursor::new();
         let mut remaining = byte_len;
@@ -545,7 +545,9 @@ impl AhciController {
             self.disk.write_sectors(lba, &scratch[..chunk_len])?;
 
             let chunk_sectors = (chunk_len / sector_size) as u64;
-            lba = lba.checked_add(chunk_sectors).ok_or(AhciError::InvalidPrdt)?;
+            lba = lba
+                .checked_add(chunk_sectors)
+                .ok_or(AhciError::InvalidPrdt)?;
             remaining -= chunk_len;
         }
 

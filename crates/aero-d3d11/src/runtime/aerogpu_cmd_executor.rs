@@ -7335,9 +7335,9 @@ impl AerogpuD3d11Executor {
                                 mip_level: level,
                                 array_layer: layer,
                             },
-                            level_width
-                                .checked_mul(4)
-                                .ok_or_else(|| anyhow!("texture upload: decompressed bytes_per_row overflow"))?,
+                            level_width.checked_mul(4).ok_or_else(|| {
+                                anyhow!("texture upload: decompressed bytes_per_row overflow")
+                            })?,
                             &rgba,
                             false,
                         )?;

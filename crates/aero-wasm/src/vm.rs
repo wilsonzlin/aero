@@ -794,7 +794,11 @@ export function installAeroMmioTestShims() {
         assert_eq!(value, 0x12_11_10_AA);
 
         let calls = mmio_calls();
-        assert_eq!(calls.length(), 3, "expected 3 byte MMIO reads for a straddle");
+        assert_eq!(
+            calls.length(),
+            3,
+            "expected 3 byte MMIO reads for a straddle"
+        );
 
         for (idx, addr) in [(0, 0x10), (1, 0x11), (2, 0x12)] {
             let call = calls.get(idx);
@@ -817,7 +821,11 @@ export function installAeroMmioTestShims() {
         assert_eq!(guest[0x0F], 0x11);
 
         let calls = mmio_calls();
-        assert_eq!(calls.length(), 3, "expected 3 byte MMIO writes for a straddle");
+        assert_eq!(
+            calls.length(),
+            3,
+            "expected 3 byte MMIO writes for a straddle"
+        );
 
         for (idx, addr, byte) in [(0, 0x10, 0x22), (1, 0x11, 0x33), (2, 0x12, 0x44)] {
             let call = calls.get(idx);

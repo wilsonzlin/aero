@@ -767,15 +767,7 @@ mod tests {
         let used = 0x3000;
         let buf_addr = 0x4000;
 
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            buf_addr,
-            64,
-            VIRTQ_DESC_F_WRITE,
-            0,
-        );
+        write_desc(&mut mem, desc_table, 0, buf_addr, 64, VIRTQ_DESC_F_WRITE, 0);
 
         write_u16_le(&mut mem, avail, 0).unwrap();
         write_u16_le(&mut mem, avail + 2, 1).unwrap();
@@ -816,10 +808,7 @@ mod tests {
         assert_eq!(used_idx, 1);
         let len_bytes = mem.get_slice(used + 8, 4).unwrap();
         let used_len = u32::from_le_bytes(len_bytes.try_into().unwrap());
-        assert_eq!(
-            used_len,
-            (VirtioNetHdr::BASE_LEN + frame.len()) as u32
-        );
+        assert_eq!(used_len, (VirtioNetHdr::BASE_LEN + frame.len()) as u32);
 
         let hdr = mem.get_slice(buf_addr, VirtioNetHdr::BASE_LEN).unwrap();
         assert_eq!(hdr, vec![0u8; VirtioNetHdr::BASE_LEN]);

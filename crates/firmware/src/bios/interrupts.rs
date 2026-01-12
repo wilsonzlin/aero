@@ -93,8 +93,7 @@ fn handle_int14(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     };
 
     let present = com_base != 0;
-    let mut line_status: u8 =
-        if present { 0x60 } else { 0x80 }; // THR empty + TSR empty, or timeout
+    let mut line_status: u8 = if present { 0x60 } else { 0x80 }; // THR empty + TSR empty, or timeout
     let mut al_out: u8 = 0;
 
     match ah {
@@ -1582,7 +1581,7 @@ mod tests {
 
         let mut cpu = CpuState::new(CpuMode::Real);
         cpu.gpr[gpr::RAX] = 0x0C00; // AH=0Ch seek
-        // Cylinder 80 (out of range for 1.44MiB floppy: cylinders are 0..=79).
+                                    // Cylinder 80 (out of range for 1.44MiB floppy: cylinders are 0..=79).
         cpu.gpr[gpr::RCX] = 0x5000; // CH=0x50, CL=0
         cpu.gpr[gpr::RDX] = 0x0000; // DH=0, DL=floppy 0
 

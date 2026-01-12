@@ -171,12 +171,14 @@ fn build_texture2d_subresource_layouts(
 
     let subresource_count = mip_levels_usize
         .checked_mul(array_layers_usize)
-        .ok_or_else(|| ExecutorError::Validation("CREATE_TEXTURE2D subresource count overflow".into()))?;
+        .ok_or_else(|| {
+            ExecutorError::Validation("CREATE_TEXTURE2D subresource count overflow".into())
+        })?;
 
     let mut layouts = Vec::new();
-    layouts
-        .try_reserve_exact(subresource_count)
-        .map_err(|_| ExecutorError::Validation("CREATE_TEXTURE2D subresource layout allocation failed".into()))?;
+    layouts.try_reserve_exact(subresource_count).map_err(|_| {
+        ExecutorError::Validation("CREATE_TEXTURE2D subresource layout allocation failed".into())
+    })?;
 
     let mut offset_bytes = 0u64;
     for array_layer in 0..array_layers {
@@ -204,7 +206,9 @@ fn build_texture2d_subresource_layouts(
 
             let size_bytes = u64::from(row_pitch_bytes)
                 .checked_mul(u64::from(layout.rows_in_layout))
-                .ok_or_else(|| ExecutorError::Validation("CREATE_TEXTURE2D subresource size overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("CREATE_TEXTURE2D subresource size overflow".into())
+                })?;
 
             layouts.push(TextureSubresourceLayout {
                 mip_level,
@@ -2800,8 +2804,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )));
             }
 
-            let src_extent = (mip_dim(src.width, src_mip_level), mip_dim(src.height, src_mip_level));
-            let dst_extent = (mip_dim(dst.width, dst_mip_level), mip_dim(dst.height, dst_mip_level));
+            let src_extent = (
+                mip_dim(src.width, src_mip_level),
+                mip_dim(src.height, src_mip_level),
+            );
+            let dst_extent = (
+                mip_dim(dst.width, dst_mip_level),
+                mip_dim(dst.height, dst_mip_level),
+            );
 
             let dst_backing = if writeback {
                 Some(dst.backing.ok_or_else(|| {
@@ -2991,7 +3001,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                     .alloc_offset_bytes
                     .checked_add(dst_sub.offset_bytes)
                     .ok_or_else(|| {
-                        ExecutorError::Validation("COPY_TEXTURE2D: subresource offset overflow".into())
+                        ExecutorError::Validation(
+                            "COPY_TEXTURE2D: subresource offset overflow".into(),
+                        )
                     })?
                     .checked_add(u64::from(dst_y_blocks).checked_mul(row_pitch).ok_or_else(
                         || ExecutorError::Validation("COPY_TEXTURE2D: dst_y overflow".into()),
@@ -3003,7 +3015,9 @@ fn fs_main() -> @location(0) vec4<f32> {
 
             let row_end = dst_x_bytes
                 .checked_add(u64::from(region_layout.unpadded_bytes_per_row))
-                .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: row end overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: row end overflow".into())
+                })?;
             if row_end > row_pitch {
                 return Err(ExecutorError::Validation(
                     "COPY_TEXTURE2D: writeback row range exceeds dst row_pitch_bytes".into(),
@@ -3764,20 +3778,19 @@ fn fs_main() -> @location(0) vec4<f32> {
                             "RESOURCE_DIRTY_RANGE: bytes_per_row out of range".into(),
                         )
                     })?;
-                    let row_bytes_usize: usize = layout.unpadded_bytes_per_row.try_into().map_err(|_| {
-                        ExecutorError::Validation(
-                            "RESOURCE_DIRTY_RANGE: row size out of range".into(),
-                        )
-                    })?;
+                    let row_bytes_usize: usize =
+                        layout.unpadded_bytes_per_row.try_into().map_err(|_| {
+                            ExecutorError::Validation(
+                                "RESOURCE_DIRTY_RANGE: row size out of range".into(),
+                            )
+                        })?;
 
                     for row in 0..rows {
-                        let row_off = u64::from(row)
-                            .checked_mul(row_pitch)
-                            .ok_or_else(|| {
-                                ExecutorError::Validation(
-                                    "RESOURCE_DIRTY_RANGE: row offset overflow".into(),
-                                )
-                            })?;
+                        let row_off = u64::from(row).checked_mul(row_pitch).ok_or_else(|| {
+                            ExecutorError::Validation(
+                                "RESOURCE_DIRTY_RANGE: row offset overflow".into(),
+                            )
+                        })?;
                         let alloc_offset = backing
                             .alloc_offset_bytes
                             .checked_add(sub.offset_bytes)
@@ -3787,13 +3800,19 @@ fn fs_main() -> @location(0) vec4<f32> {
                                     "RESOURCE_DIRTY_RANGE: alloc offset overflow".into(),
                                 )
                             })?;
-                        let src_gpa = table.resolve_gpa(backing.alloc_id, alloc_offset, row_bytes)?;
+                        let src_gpa =
+                            table.resolve_gpa(backing.alloc_id, alloc_offset, row_bytes)?;
 
                         let dst_off = row as usize * upload_bpr_usize;
                         let dst_end = dst_off + row_bytes_usize;
-                        guest_memory.read(src_gpa, staging.get_mut(dst_off..dst_end).ok_or_else(|| {
-                            ExecutorError::Validation("RESOURCE_DIRTY_RANGE: staging OOB".into())
-                        })?)?;
+                        guest_memory.read(
+                            src_gpa,
+                            staging.get_mut(dst_off..dst_end).ok_or_else(|| {
+                                ExecutorError::Validation(
+                                    "RESOURCE_DIRTY_RANGE: staging OOB".into(),
+                                )
+                            })?,
+                        )?;
                         if is_x8 {
                             force_opaque_alpha_rgba8(
                                 staging.get_mut(dst_off..dst_end).ok_or_else(|| {
@@ -3843,7 +3862,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                             "subresource rows_in_layout mismatch".into(),
                         ));
                     }
-                    if u64::from(sub.row_pitch_bytes) < u64::from(b5_layout.unpadded_bytes_per_row) {
+                    if u64::from(sub.row_pitch_bytes) < u64::from(b5_layout.unpadded_bytes_per_row)
+                    {
                         return Err(ExecutorError::Validation(format!(
                             "subresource row_pitch_bytes={} smaller than minimum row size {}",
                             sub.row_pitch_bytes, b5_layout.unpadded_bytes_per_row
@@ -3898,13 +3918,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                     let mut row_buf = vec![0u8; src_row_bytes_usize];
 
                     for row in 0..rows {
-                        let row_off = u64::from(row)
-                            .checked_mul(row_pitch)
-                            .ok_or_else(|| {
-                                ExecutorError::Validation(
-                                    "RESOURCE_DIRTY_RANGE: row offset overflow".into(),
-                                )
-                            })?;
+                        let row_off = u64::from(row).checked_mul(row_pitch).ok_or_else(|| {
+                            ExecutorError::Validation(
+                                "RESOURCE_DIRTY_RANGE: row offset overflow".into(),
+                            )
+                        })?;
                         let alloc_offset = backing
                             .alloc_offset_bytes
                             .checked_add(sub.offset_bytes)
@@ -3914,7 +3932,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                                     "RESOURCE_DIRTY_RANGE: alloc offset overflow".into(),
                                 )
                             })?;
-                        let src_gpa = table.resolve_gpa(backing.alloc_id, alloc_offset, src_row_bytes)?;
+                        let src_gpa =
+                            table.resolve_gpa(backing.alloc_id, alloc_offset, src_row_bytes)?;
                         guest_memory.read(src_gpa, &mut row_buf)?;
 
                         let dst_off = row as usize * upload_bpr_usize;
@@ -3926,25 +3945,21 @@ fn fs_main() -> @location(0) vec4<f32> {
                         match tex.upload_transform {
                             TextureUploadTransform::B5G6R5ToRgba8 => {
                                 expand_b5g6r5_unorm_to_rgba8(
-                                    row_buf
-                                        .get(..src_row_bytes_usize)
-                                        .ok_or_else(|| {
-                                            ExecutorError::Validation(
-                                                "RESOURCE_DIRTY_RANGE: staging OOB".into(),
-                                            )
-                                        })?,
+                                    row_buf.get(..src_row_bytes_usize).ok_or_else(|| {
+                                        ExecutorError::Validation(
+                                            "RESOURCE_DIRTY_RANGE: staging OOB".into(),
+                                        )
+                                    })?,
                                     dst_slice,
                                 );
                             }
                             TextureUploadTransform::B5G5R5A1ToRgba8 => {
                                 expand_b5g5r5a1_unorm_to_rgba8(
-                                    row_buf
-                                        .get(..src_row_bytes_usize)
-                                        .ok_or_else(|| {
-                                            ExecutorError::Validation(
-                                                "RESOURCE_DIRTY_RANGE: staging OOB".into(),
-                                            )
-                                        })?,
+                                    row_buf.get(..src_row_bytes_usize).ok_or_else(|| {
+                                        ExecutorError::Validation(
+                                            "RESOURCE_DIRTY_RANGE: staging OOB".into(),
+                                        )
+                                    })?,
                                     dst_slice,
                                 );
                             }
@@ -3990,29 +4005,28 @@ fn fs_main() -> @location(0) vec4<f32> {
                     let rows = bc_layout.rows_in_layout;
                     let row_bytes = bc_layout.unpadded_bytes_per_row as u64;
 
-                    let packed_len = row_bytes
-                        .checked_mul(u64::from(rows))
-                        .ok_or_else(|| {
-                            ExecutorError::Validation("RESOURCE_DIRTY_RANGE: BC size overflow".into())
-                        })?;
+                    let packed_len = row_bytes.checked_mul(u64::from(rows)).ok_or_else(|| {
+                        ExecutorError::Validation("RESOURCE_DIRTY_RANGE: BC size overflow".into())
+                    })?;
                     let packed_len_usize: usize = packed_len.try_into().map_err(|_| {
-                        ExecutorError::Validation("RESOURCE_DIRTY_RANGE: BC size out of range".into())
+                        ExecutorError::Validation(
+                            "RESOURCE_DIRTY_RANGE: BC size out of range".into(),
+                        )
                     })?;
                     let mut packed_bc = vec![0u8; packed_len_usize];
 
-                    let row_bytes_usize: usize = bc_layout.unpadded_bytes_per_row.try_into().map_err(|_| {
-                        ExecutorError::Validation(
-                            "RESOURCE_DIRTY_RANGE: BC row size out of range".into(),
-                        )
-                    })?;
+                    let row_bytes_usize: usize =
+                        bc_layout.unpadded_bytes_per_row.try_into().map_err(|_| {
+                            ExecutorError::Validation(
+                                "RESOURCE_DIRTY_RANGE: BC row size out of range".into(),
+                            )
+                        })?;
                     for row in 0..rows {
-                        let row_off = u64::from(row)
-                            .checked_mul(row_pitch)
-                            .ok_or_else(|| {
-                                ExecutorError::Validation(
-                                    "RESOURCE_DIRTY_RANGE: row offset overflow".into(),
-                                )
-                            })?;
+                        let row_off = u64::from(row).checked_mul(row_pitch).ok_or_else(|| {
+                            ExecutorError::Validation(
+                                "RESOURCE_DIRTY_RANGE: row offset overflow".into(),
+                            )
+                        })?;
                         let alloc_offset = backing
                             .alloc_offset_bytes
                             .checked_add(sub.offset_bytes)
@@ -4022,13 +4036,19 @@ fn fs_main() -> @location(0) vec4<f32> {
                                     "RESOURCE_DIRTY_RANGE: alloc offset overflow".into(),
                                 )
                             })?;
-                        let src_gpa = table.resolve_gpa(backing.alloc_id, alloc_offset, row_bytes)?;
+                        let src_gpa =
+                            table.resolve_gpa(backing.alloc_id, alloc_offset, row_bytes)?;
 
                         let dst_off = row as usize * row_bytes_usize;
                         let dst_end = dst_off + row_bytes_usize;
-                        guest_memory.read(src_gpa, packed_bc.get_mut(dst_off..dst_end).ok_or_else(|| {
-                            ExecutorError::Validation("RESOURCE_DIRTY_RANGE: BC staging OOB".into())
-                        })?)?;
+                        guest_memory.read(
+                            src_gpa,
+                            packed_bc.get_mut(dst_off..dst_end).ok_or_else(|| {
+                                ExecutorError::Validation(
+                                    "RESOURCE_DIRTY_RANGE: BC staging OOB".into(),
+                                )
+                            })?,
+                        )?;
                     }
 
                     let decompressed = match tex.upload_transform {
@@ -4059,11 +4079,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                             "RESOURCE_DIRTY_RANGE: RGBA bytes_per_row out of range".into(),
                         )
                     })?;
-                    let row_bytes_usize: usize = rgba_layout.unpadded_bytes_per_row.try_into().map_err(|_| {
-                        ExecutorError::Validation(
-                            "RESOURCE_DIRTY_RANGE: RGBA row size out of range".into(),
-                        )
-                    })?;
+                    let row_bytes_usize: usize =
+                        rgba_layout.unpadded_bytes_per_row.try_into().map_err(|_| {
+                            ExecutorError::Validation(
+                                "RESOURCE_DIRTY_RANGE: RGBA row size out of range".into(),
+                            )
+                        })?;
 
                     let staging_size = (upload_bpr as u64)
                         .checked_mul(u64::from(sub.height))
@@ -4090,13 +4111,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                                     "RESOURCE_DIRTY_RANGE: RGBA staging OOB".into(),
                                 )
                             })?
-                            .copy_from_slice(
-                                decompressed.get(src_start..src_end).ok_or_else(|| {
+                            .copy_from_slice(decompressed.get(src_start..src_end).ok_or_else(
+                                || {
                                     ExecutorError::Validation(
                                         "RESOURCE_DIRTY_RANGE: RGBA source OOB".into(),
                                     )
-                                })?,
-                            );
+                                },
+                            )?);
                     }
 
                     self.queue.write_texture(

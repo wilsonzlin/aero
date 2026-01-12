@@ -189,8 +189,7 @@ impl<C: Clock> IoSnapshot for Hpet<C> {
         // fails due to snapshot corruption, the device remains unchanged and the clock is not
         // sampled (important for deterministic test clocks that advance on each `now_ns()` call).
         let general_config =
-            r.u64(TAG_GENERAL_CONFIG)?
-                .unwrap_or(0) & (GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE);
+            r.u64(TAG_GENERAL_CONFIG)?.unwrap_or(0) & (GEN_CONF_ENABLE | GEN_CONF_LEGACY_ROUTE);
         let general_int_status = r.u64(TAG_GENERAL_INT_STATUS)?.unwrap_or(0);
         let main_counter = r.u64(TAG_MAIN_COUNTER)?.unwrap_or(0);
         let remainder_fs = r.u64(TAG_REMAINDER_FS)?.unwrap_or(0);

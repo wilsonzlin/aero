@@ -764,7 +764,10 @@ fn virtio_pci_snapshot_preserves_pending_intx_while_intx_disable_set() {
 
     // Disable INTx delivery but *do not* read ISR (so the internal pending latch remains set).
     dev.config_write(0x04, &0x0404u16.to_le_bytes()); // BME + INTX_DISABLE
-    assert!(!irq0.legacy_level(), "INTx line should be deasserted when disabled");
+    assert!(
+        !irq0.legacy_level(),
+        "INTx line should be deasserted when disabled"
+    );
     assert!(!dev.irq_level());
 
     // Snapshot while INTX_DISABLE is set.

@@ -89,4 +89,3 @@ fn reset_clears_registers_and_irq_but_preserves_attached_disk_backend() {
         "dropping the NVMe device should drop the disk backend"
     );
 }
-

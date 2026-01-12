@@ -1,6 +1,6 @@
 mod common;
 
-use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable, AeroGpuExecutor};
+use aero_gpu::aerogpu_executor::{AeroGpuExecutor, AllocEntry, AllocTable};
 use aero_gpu::{GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -179,7 +179,8 @@ fn executor_copy_texture2d_writeback_supports_mips_and_array_layers() {
         );
         // Everything else stays zero.
         for (i, b) in out.into_iter().enumerate() {
-            let in_expected = (dst_expected_off as usize..dst_expected_off as usize + 4).contains(&i);
+            let in_expected =
+                (dst_expected_off as usize..dst_expected_off as usize + 4).contains(&i);
             if in_expected {
                 continue;
             }

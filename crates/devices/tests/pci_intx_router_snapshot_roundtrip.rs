@@ -54,22 +54,13 @@ fn intx_router_snapshot_roundtrip_preserves_assert_counts() {
         }
         expected_sync.push((gsi, gsi == gsi_dev0));
     }
-    assert_eq!(
-        sink2.events,
-        expected_sync
-    );
+    assert_eq!(sink2.events, expected_sync);
 
     router2.assert_intx(dev0, PciInterruptPin::IntA, &mut sink2);
-    assert_eq!(
-        sink2.events,
-        expected_sync
-    );
+    assert_eq!(sink2.events, expected_sync);
 
     // Asserting another source that shares the same GSI should *not* toggle the line because the
     // restored assert count is already non-zero.
     router2.assert_intx(dev4, PciInterruptPin::IntA, &mut sink2);
-    assert_eq!(
-        sink2.events,
-        expected_sync
-    );
+    assert_eq!(sink2.events, expected_sync);
 }

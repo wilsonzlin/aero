@@ -30,7 +30,7 @@ fn rx_interrupt_reports_in_iir_and_irq_level_is_gated_by_out2() {
     assert!(uart.irq_level());
 
     // Reading the receive buffer drains the FIFO and clears the pending condition.
-    assert_eq!(uart.read_u8(COM1 + 0), 0x41);
+    assert_eq!(uart.read_u8(COM1), 0x41);
     assert_eq!(uart.read_u8(COM1 + 2) & 0x0F, 0x01);
     assert!(!uart.irq_level());
 }
@@ -46,6 +46,5 @@ fn fifo_enable_sets_iir_fifo_status_bits_and_clear_rx_works() {
     // Populate RX, then clear it via FCR bit1.
     uart.push_rx(0xAA);
     uart.write_u8(COM1 + 2, 0x03); // FIFO enable + clear RX
-    assert_eq!(uart.read_u8(COM1 + 0), 0x00);
+    assert_eq!(uart.read_u8(COM1), 0x00);
 }
-

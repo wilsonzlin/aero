@@ -1,7 +1,7 @@
-use aero_machine::{Machine, MachineConfig, RunExit};
-use pretty_assertions::assert_eq;
 use aero_devices::pic8259::{MASTER_CMD, MASTER_DATA, SLAVE_CMD, SLAVE_DATA};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
+use aero_machine::{Machine, MachineConfig, RunExit};
+use pretty_assertions::assert_eq;
 
 const COUNTER_ADDR: u64 = 0x2000;
 const TARGET_TICKS: u16 = 5;
@@ -36,21 +36,21 @@ fn build_pit_irq0_counter_boot_sector() -> [u8; 512] {
     code.extend_from_slice(&[0xB0, 0x11]); // mov al,0x11
     code.extend_from_slice(&[0xE6, MASTER_CMD as u8]); // out 0x20,al
     code.extend_from_slice(&[0xE6, SLAVE_CMD as u8]); // out 0xA0,al
-                                            // ICW2: vector offsets
+                                                      // ICW2: vector offsets
     code.extend_from_slice(&[0xB0, 0x08]); // mov al,0x08
     code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0x70]); // mov al,0x70
     code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
-                                            // ICW3: master has a slave on IRQ2; slave identity is 2.
+                                                       // ICW3: master has a slave on IRQ2; slave identity is 2.
     code.extend_from_slice(&[0xB0, 0x04]); // mov al,0x04
     code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0x02]); // mov al,0x02
     code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
-                                            // ICW4: 8086 mode
+                                                       // ICW4: 8086 mode
     code.extend_from_slice(&[0xB0, 0x01]); // mov al,0x01
     code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
-                                            // Unmask only IRQ0 (timer) on the master PIC; mask all on the slave.
+                                                       // Unmask only IRQ0 (timer) on the master PIC; mask all on the slave.
     code.extend_from_slice(&[0xB0, 0xFE]); // mov al,0xFE
     code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0xFF]); // mov al,0xFF

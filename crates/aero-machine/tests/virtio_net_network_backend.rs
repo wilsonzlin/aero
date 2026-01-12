@@ -517,13 +517,24 @@ fn virtio_net_l2_tunnel_rings_tx_rx_stats_smoke() {
             Err(err) => panic!("unexpected NET_TX fill error: {err:?}"),
         }
     }
-    assert!(filled > 0, "expected NET_TX ring to accept at least one record");
+    assert!(
+        filled > 0,
+        "expected NET_TX ring to accept at least one record"
+    );
 
     // Reuse the existing TX descriptor chain but update the payload and avail.idx.
     let payload2_addr = 0x206200;
     let payload2 = b"\x02\x02\x02\x02\x02\x02\x03\x03\x03\x03\x03\x03\x08\x00";
     m.write_physical(payload2_addr, payload2);
-    write_desc(&mut m, tx_desc, 1, payload2_addr, payload2.len() as u32, 0, 0);
+    write_desc(
+        &mut m,
+        tx_desc,
+        1,
+        payload2_addr,
+        payload2.len() as u32,
+        0,
+        0,
+    );
 
     // Publish a second avail entry (idx=2, ring[1]=0) and notify queue 1.
     m.write_physical_u16(tx_avail + 2, 2);

@@ -199,8 +199,7 @@ fn control_no_data(pc: &mut PcPlatform, devaddr: u8, setup: [u8; 8]) {
     );
     run_one_frame(pc, TD0);
 
-    const ERR_MASK: u32 =
-        TD_STATUS_STALLED | TD_STATUS_DATA_BUFFER_ERROR | TD_STATUS_CRC_TIMEOUT;
+    const ERR_MASK: u32 = TD_STATUS_STALLED | TD_STATUS_DATA_BUFFER_ERROR | TD_STATUS_CRC_TIMEOUT;
 
     let st0 = pc.memory.read_u32(TD0 as u64 + 4);
     let st1 = pc.memory.read_u32(TD1 as u64 + 4);
@@ -1487,7 +1486,8 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
         let hub = dev.controller_mut().hub_mut();
         hub.attach_at_path(&[0, 1], Box::new(keyboard.clone()))
             .unwrap();
-        hub.attach_at_path(&[0, 2], Box::new(mouse.clone())).unwrap();
+        hub.attach_at_path(&[0, 2], Box::new(mouse.clone()))
+            .unwrap();
         hub.attach_at_path(&[0, 3], Box::new(gamepad.clone()))
             .unwrap();
     }
@@ -1507,8 +1507,7 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
@@ -1642,8 +1641,7 @@ fn pc_platform_uhci_remote_wakeup_sets_resume_detect_and_triggers_intx() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
@@ -1664,11 +1662,7 @@ fn pc_platform_uhci_remote_wakeup_sets_resume_detect_and_triggers_intx() {
     );
 
     // Enable remote wakeup on the device (standard SET_FEATURE DEVICE_REMOTE_WAKEUP).
-    control_no_data(
-        &mut pc,
-        5,
-        [0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
-    );
+    control_no_data(&mut pc, 5, [0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
     // Enable resume-detect interrupts.
     pc.io
@@ -1677,12 +1671,7 @@ fn pc_platform_uhci_remote_wakeup_sets_resume_detect_and_triggers_intx() {
     // Suspend the root hub port, then inject a key event. The HID device should request remote
     // wakeup, which the root hub exposes via the PORTSC "resume detect" bit and the controller
     // latches into USBSTS.RESUMEDETECT (triggering an interrupt when USBINTR.RESUME is enabled).
-    write_portsc(
-        &mut pc,
-        bar4_base,
-        REG_PORTSC1,
-        PORTSC_PED | PORTSC_SUSP,
-    );
+    write_portsc(&mut pc, bar4_base, REG_PORTSC1, PORTSC_PED | PORTSC_SUSP);
     keyboard.key_event(0x04, true);
     pc.tick(1_000_000);
 
@@ -1774,8 +1763,7 @@ fn pc_platform_uhci_external_hub_remote_wakeup_triggers_resume_detect_and_intx()
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,
@@ -1821,23 +1809,14 @@ fn pc_platform_uhci_external_hub_remote_wakeup_triggers_resume_detect_and_intx()
     );
 
     // Enable remote wakeup on the device (standard SET_FEATURE DEVICE_REMOTE_WAKEUP).
-    control_no_data(
-        &mut pc,
-        5,
-        [0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
-    );
+    control_no_data(&mut pc, 5, [0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
     // Enable resume-detect interrupts.
     pc.io
         .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_RESUME));
 
     // Suspend the root hub port (suspends the hub + downstream devices), then inject a key event.
-    write_portsc(
-        &mut pc,
-        bar4_base,
-        REG_PORTSC1,
-        PORTSC_PED | PORTSC_SUSP,
-    );
+    write_portsc(&mut pc, bar4_base, REG_PORTSC1, PORTSC_PED | PORTSC_SUSP);
     keyboard.key_event(0x04, true);
     pc.tick(1_000_000);
 
@@ -1897,8 +1876,7 @@ fn pc_platform_uhci_interrupt_in_reads_composite_hid_reports_via_dma() {
     init_frame_list(&mut pc);
     reset_port(&mut pc, bar4_base, REG_PORTSC1);
 
-    pc.io
-        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
     pc.io.write(
         bar4_base + REG_USBCMD,

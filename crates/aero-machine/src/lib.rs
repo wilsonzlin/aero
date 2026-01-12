@@ -54,10 +54,10 @@ use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 use aero_devices::usb::uhci::UhciPciDevice;
 pub use aero_devices_input::Ps2MouseButton;
+use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
-use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
@@ -4357,7 +4357,8 @@ impl Machine {
                     // This avoids clobbering guest-programmed text registers (like the CRTC start
                     // address used for paging) on unrelated INT 10h text services (cursor moves,
                     // teletype output, etc.).
-                    let is_set_mode_03h = (ax_before & 0xFF00) == 0x0000 && (ax_before & 0x007F) == 0x03;
+                    let is_set_mode_03h =
+                        (ax_before & 0xFF00) == 0x0000 && (ax_before & 0x007F) == 0x03;
                     if vbe_mode_before.is_some() || is_set_mode_03h {
                         vga.borrow_mut().set_text_mode_80x25();
                     }
@@ -5145,16 +5146,17 @@ impl snapshot::SnapshotTarget for Machine {
                             // back to the legacy `DeviceId::PCI` payload if the new entry fails to
                             // apply (e.g. because it is from an unsupported future version).
                             let mut pci_intx = pci_intx.borrow_mut();
-                            let restored = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                                &intx_state,
-                                &mut *pci_intx,
-                            )
-                            .is_ok()
-                                || snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                                    &state,
+                            let restored =
+                                snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                    &intx_state,
                                     &mut *pci_intx,
                                 )
-                                .is_ok();
+                                .is_ok()
+                                    || snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                                        &state,
+                                        &mut *pci_intx,
+                                    )
+                                    .is_ok();
                             if restored {
                                 restored_pci_intx = true;
                             }
