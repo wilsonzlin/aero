@@ -1,11 +1,24 @@
 import { openFileHandle } from "../platform/opfs.ts";
 
+export interface NetTraceStats {
+  enabled: boolean;
+  records: number;
+  bytes: number;
+  droppedRecords?: number;
+  droppedBytes?: number;
+}
+
 export interface NetTraceBackend {
   isEnabled(): boolean;
   enable(): void;
   disable(): void;
-  clearCapture?(): void;
   downloadPcapng(): Promise<Uint8Array>;
+
+  clear?(): void | Promise<void>;
+  getStats?(): NetTraceStats | Promise<NetTraceStats>;
+
+  // Legacy clear implementation used by earlier backends / UIs.
+  clearCapture?(): void;
 }
 
 export function installNetTraceUI(container: HTMLElement, backend: NetTraceBackend): void {
@@ -25,9 +38,15 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
   const enableLabel = document.createElement("label");
   const enableCheckbox = document.createElement("input");
   enableCheckbox.type = "checkbox";
-  enableCheckbox.checked = backend.isEnabled();
+  try {
+    enableCheckbox.checked = backend.isEnabled();
+  } catch (err) {
+    status.textContent = err instanceof Error ? err.message : String(err);
+    enableCheckbox.checked = false;
+  }
   enableCheckbox.addEventListener("change", () => {
     status.textContent = "";
+    const previousChecked = !enableCheckbox.checked;
     try {
       if (enableCheckbox.checked) {
         backend.enable();
@@ -35,13 +54,24 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         backend.disable();
       }
     } catch (err) {
-      enableCheckbox.checked = backend.isEnabled();
+      try {
+        enableCheckbox.checked = backend.isEnabled();
+      } catch {
+        enableCheckbox.checked = previousChecked;
+      }
       status.textContent = err instanceof Error ? err.message : String(err);
     }
   });
   enableLabel.appendChild(enableCheckbox);
   enableLabel.appendChild(document.createTextNode(" Enable network tracing"));
   wrapper.appendChild(enableLabel);
+
+  const statsLine = backend.getStats ? document.createElement("pre") : null;
+  if (statsLine) {
+    statsLine.className = "mono";
+    statsLine.textContent = "";
+    wrapper.appendChild(statsLine);
+  }
 
   const downloadButton = document.createElement("button");
   downloadButton.textContent = "Download capture (PCAPNG)";
@@ -53,7 +83,9 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       // generic over `ArrayBufferLike` and may be backed by `SharedArrayBuffer`.
       // Copy when needed so TypeScript (and spec compliance) are happy.
       const bytesForIo: Uint8Array<ArrayBuffer> =
-        bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+        bytes.buffer instanceof ArrayBuffer
+          ? (bytes as Uint8Array<ArrayBuffer>)
+          : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
       const blob = new Blob([bytesForIo], { type: "application/vnd.tcpdump.pcap" });
       const url = URL.createObjectURL(blob);
       try {
@@ -69,22 +101,30 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
     }
   });
 
-  const clearButton = document.createElement("button");
-  clearButton.textContent = "Clear capture";
-  clearButton.disabled = typeof backend.clearCapture !== "function";
-  clearButton.addEventListener("click", () => {
-    status.textContent = "";
-    try {
-      backend.clearCapture?.();
-      status.textContent = "Capture cleared.";
-    } catch (err) {
-      status.textContent = err instanceof Error ? err.message : String(err);
-    }
-  });
-
   const opfsPath = document.createElement("input");
   opfsPath.type = "text";
   opfsPath.value = "captures/aero-net-trace.pcapng";
+
+  let refreshStats: (() => Promise<void>) | undefined;
+
+  const clearButton = backend.clear || backend.clearCapture ? document.createElement("button") : null;
+  if (clearButton) {
+    clearButton.textContent = "Clear capture";
+    clearButton.addEventListener("click", async () => {
+      status.textContent = "";
+      try {
+        if (backend.clear) {
+          await backend.clear();
+        } else {
+          backend.clearCapture?.();
+        }
+        await refreshStats?.();
+        status.textContent = "Capture cleared.";
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    });
+  }
 
   const saveButton = document.createElement("button");
   saveButton.textContent = "Save capture to OPFS";
@@ -98,7 +138,9 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
 
       const bytes = await backend.downloadPcapng();
       const bytesForIo: Uint8Array<ArrayBuffer> =
-        bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+        bytes.buffer instanceof ArrayBuffer
+          ? (bytes as Uint8Array<ArrayBuffer>)
+          : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
       const handle = await openFileHandle(path, { create: true });
       const writable = await handle.createWritable();
       await writable.write(bytesForIo);
@@ -111,7 +153,9 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
 
   const buttonRow = document.createElement("div");
   buttonRow.className = "row";
-  buttonRow.appendChild(clearButton);
+  if (clearButton) {
+    buttonRow.appendChild(clearButton);
+  }
   buttonRow.appendChild(downloadButton);
   buttonRow.appendChild(saveButton);
   wrapper.appendChild(buttonRow);
@@ -125,4 +169,82 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
   wrapper.appendChild(status);
 
   container.appendChild(wrapper);
+
+  if (backend.getStats && statsLine) {
+    const lifetime = new AbortController();
+    const { signal } = lifetime;
+    const getStats = backend.getStats.bind(backend);
+
+    const formatStats = (stats: NetTraceStats): string => {
+      let line =
+        `enabled=${stats.enabled ? "yes" : "no"} ` +
+        `records=${stats.records.toLocaleString()} ` +
+        `bytes=${stats.bytes.toLocaleString()}`;
+      if (stats.droppedRecords !== undefined) {
+        line += ` droppedRecords=${stats.droppedRecords.toLocaleString()}`;
+      }
+      if (stats.droppedBytes !== undefined) {
+        line += ` droppedBytes=${stats.droppedBytes.toLocaleString()}`;
+      }
+      return line;
+    };
+
+    let statsRequestInFlight = false;
+    let everConnected = false;
+    const pollStats = async (): Promise<void> => {
+      if (signal.aborted) return;
+
+      if (wrapper.isConnected) {
+        everConnected = true;
+      } else if (everConnected) {
+        lifetime.abort();
+        return;
+      } else {
+        return;
+      }
+
+      if (statsRequestInFlight) return;
+      statsRequestInFlight = true;
+      try {
+        const stats = await getStats();
+        if (signal.aborted) return;
+        statsLine.textContent = formatStats(stats);
+      } catch (err) {
+        if (signal.aborted) return;
+        status.textContent = err instanceof Error ? err.message : String(err);
+      } finally {
+        statsRequestInFlight = false;
+      }
+    };
+
+    refreshStats = pollStats;
+
+    const timerId = window.setInterval(() => {
+      void pollStats();
+    }, 500);
+
+    signal.addEventListener(
+      "abort",
+      () => {
+        window.clearInterval(timerId);
+      },
+      { once: true },
+    );
+    window.addEventListener(
+      "pagehide",
+      () => {
+        lifetime.abort();
+      },
+      { signal },
+    );
+    window.addEventListener(
+      "beforeunload",
+      () => {
+        lifetime.abort();
+      },
+      { signal },
+    );
+
+    void pollStats();
+  }
 }

@@ -506,7 +506,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const p2 = disk.readSectors(0, buf2);
 
     // Release all pending chunk responses (there should only be one request).
-    releaseChunkResponsesResolve?.();
+    (releaseChunkResponsesResolve as (() => void) | null)?.();
     await Promise.all([p1, p2]);
 
     expect(buf1).toEqual(img.slice(0, 512));

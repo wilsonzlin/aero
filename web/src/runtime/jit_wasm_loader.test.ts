@@ -29,7 +29,11 @@ describe("runtime/jit_wasm_loader", () => {
 
     const { api } = await initJitWasm({ module });
     const bytes = api.compile_tier1_block();
-    expect(WebAssembly.validate(bytes)).toBe(true);
+    // `WebAssembly.validate` expects an ArrayBuffer-backed view; `Uint8Array` is
+    // generic over `ArrayBufferLike` and may be backed by `SharedArrayBuffer`.
+    // Copy when needed so TypeScript (and spec compliance) are happy.
+    const bytesForWasm: Uint8Array<ArrayBuffer> =
+      bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+    expect(WebAssembly.validate(bytesForWasm)).toBe(true);
   });
 });
-

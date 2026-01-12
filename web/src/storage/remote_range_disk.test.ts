@@ -1210,7 +1210,7 @@ describe("RemoteRangeDisk", () => {
     process.on("unhandledRejection", onUnhandled);
     try {
       const closePromise = disk.close();
-      releaseBlockedFetch?.();
+      (releaseBlockedFetch as (() => void) | null)?.();
       await closePromise;
 
       // Give any remaining microtasks a chance to run.
