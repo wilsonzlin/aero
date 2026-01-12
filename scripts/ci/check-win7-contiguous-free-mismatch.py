@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Guardrail: ensure Windows 7 driver sources don't mix contiguous-memory alloc/free APIs.
+Guardrail: ensure Win7-era driver sources don't mix contiguous-memory alloc/free APIs.
 
 `MmAllocateContiguousMemorySpecifyCache` MUST be freed with
 `MmFreeContiguousMemorySpecifyCache` (with the same cache type + size).
@@ -32,14 +32,22 @@ def _has_plain_free(text: str) -> bool:
 
 
 def main() -> int:
-    root = Path("drivers/windows7")
-    if not root.exists():
-        print(f"skip: {root} not found")
-        return 0
+    roots = [
+        Path("drivers/windows7"),
+        # Win7 AeroGPU KMD sources (built/shipped).
+        Path("drivers/aerogpu/kmd/src"),
+    ]
 
-    c_files = sorted(root.rglob("*.c"))
+    c_files: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            print(f"skip: {root} not found")
+            continue
+        c_files.extend(sorted(root.rglob("*.c")))
+
     if not c_files:
-        print(f"skip: no .c files under {root}")
+        joined = ", ".join(str(r) for r in roots)
+        print(f"skip: no .c files under any of: {joined}")
         return 0
 
     offenders: list[Path] = []
@@ -73,4 +81,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

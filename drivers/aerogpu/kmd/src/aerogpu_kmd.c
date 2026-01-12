@@ -223,6 +223,7 @@ typedef struct _AEROGPU_PENDING_INTERNAL_SUBMISSION {
     ULONG RingTailAfter;
     ULONGLONG ShareToken;
     PVOID CmdVa;
+    SIZE_T CmdSizeBytes;
 } AEROGPU_PENDING_INTERNAL_SUBMISSION;
 
 static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
@@ -373,11 +374,18 @@ static PVOID AeroGpuAllocContiguous(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa
     return va;
 }
 
-static VOID AeroGpuFreeContiguous(_In_opt_ PVOID Va)
+static VOID AeroGpuFreeContiguousNonCached(_In_opt_ PVOID Va, _In_ SIZE_T Size)
 {
-    if (Va) {
-        MmFreeContiguousMemory(Va);
+    if (!Va) {
+        return;
     }
+
+    ASSERT(Size != 0);
+    if (Size == 0) {
+        return;
+    }
+
+    MmFreeContiguousMemorySpecifyCache(Va, Size, MmNonCached);
 }
 
 static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta)
@@ -386,7 +394,7 @@ static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta)
         return;
     }
 
-    AeroGpuFreeContiguous(Meta->AllocTableVa);
+    AeroGpuFreeContiguousNonCached(Meta->AllocTableVa, (SIZE_T)Meta->AllocTableSizeBytes);
     ExFreePoolWithTag(Meta, AEROGPU_POOL_TAG);
 }
 
@@ -801,7 +809,7 @@ static NTSTATUS AeroGpuV1FencePageInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 
 static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
-    AeroGpuFreeContiguous(Adapter->RingVa);
+    AeroGpuFreeContiguousNonCached(Adapter->RingVa, (SIZE_T)Adapter->RingSizeBytes);
     Adapter->RingVa = NULL;
     Adapter->RingPa.QuadPart = 0;
     Adapter->RingSizeBytes = 0;
@@ -809,7 +817,7 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
     Adapter->RingTail = 0;
     Adapter->RingHeader = NULL;
 
-    AeroGpuFreeContiguous(Adapter->FencePageVa);
+    AeroGpuFreeContiguousNonCached(Adapter->FencePageVa, PAGE_SIZE);
     Adapter->FencePageVa = NULL;
     Adapter->FencePagePa.QuadPart = 0;
 }
@@ -922,7 +930,7 @@ static VOID AeroGpuFreeAllInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
-        AeroGpuFreeContiguous(sub->CmdVa);
+        AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
 }
@@ -954,7 +962,7 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
-        AeroGpuFreeContiguous(sub->CmdVa);
+        AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
 }
@@ -970,9 +978,9 @@ static VOID AeroGpuFreeAllPendingSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 
         KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
 
-        AeroGpuFreeContiguous(sub->AllocTableVa);
-        AeroGpuFreeContiguous(sub->DmaCopyVa);
-        AeroGpuFreeContiguous(sub->DescVa);
+        AeroGpuFreeContiguousNonCached(sub->AllocTableVa, (SIZE_T)sub->AllocTableSizeBytes);
+        AeroGpuFreeContiguousNonCached(sub->DmaCopyVa, sub->DmaCopySize);
+        AeroGpuFreeContiguousNonCached(sub->DescVa, sub->DescSize);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
 
         KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
@@ -1002,9 +1010,9 @@ static VOID AeroGpuRetireSubmissionsUpToFence(_Inout_ AEROGPU_ADAPTER* Adapter, 
             break;
         }
 
-        AeroGpuFreeContiguous(sub->AllocTableVa);
-        AeroGpuFreeContiguous(sub->DmaCopyVa);
-        AeroGpuFreeContiguous(sub->DescVa);
+        AeroGpuFreeContiguousNonCached(sub->AllocTableVa, (SIZE_T)sub->AllocTableSizeBytes);
+        AeroGpuFreeContiguousNonCached(sub->DmaCopyVa, sub->DmaCopySize);
+        AeroGpuFreeContiguousNonCached(sub->DescVa, sub->DescSize);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
 }
@@ -1225,7 +1233,7 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
     }
     if (!NT_SUCCESS(st)) {
-        AeroGpuFreeContiguous(cmdVa);
+        AeroGpuFreeContiguousNonCached(cmdVa, cmdSizeBytes);
         return;
     }
 
@@ -1241,6 +1249,7 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
     internal->RingTailAfter = ringTailAfter;
     internal->ShareToken = ShareToken;
     internal->CmdVa = cmdVa;
+    internal->CmdSizeBytes = cmdSizeBytes;
 
     {
         KIRQL pendingIrql;
@@ -3748,7 +3757,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         if (cmdNeedsAllocTable && !listHasAllocIds) {
             AEROGPU_LOG("SubmitCommand: command stream requires alloc table but alloc table is missing (fence=%I64u)",
                         fence);
-            AeroGpuFreeContiguous(dmaVa);
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
             AeroGpuFreeSubmissionMeta(meta);
             return STATUS_INVALID_PARAMETER;
         }
@@ -3773,7 +3782,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
             (aerogpu_legacy_submission_desc_header*)AeroGpuAllocContiguous(descSize, &descPa);
         descVa = desc;
         if (!desc) {
-            AeroGpuFreeContiguous(dmaVa);
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
             AeroGpuFreeSubmissionMeta(meta);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
@@ -3795,8 +3804,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     AEROGPU_SUBMISSION* sub =
         (AEROGPU_SUBMISSION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*sub), AEROGPU_POOL_TAG);
     if (!sub) {
-        AeroGpuFreeContiguous(descVa);
-        AeroGpuFreeContiguous(dmaVa);
+        AeroGpuFreeContiguousNonCached(descVa, descSize);
+        AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
         AeroGpuFreeSubmissionMeta(meta);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -3854,8 +3863,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
 
     if (!NT_SUCCESS(ringSt)) {
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
-        AeroGpuFreeContiguous(descVa);
-        AeroGpuFreeContiguous(dmaVa);
+        AeroGpuFreeContiguousNonCached(descVa, descSize);
+        AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
         AeroGpuFreeSubmissionMeta(meta);
         return ringSt;
     }
@@ -4417,16 +4426,16 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
     while (!IsListEmpty(&pendingToFree)) {
         PLIST_ENTRY entry = RemoveHeadList(&pendingToFree);
         AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
-        AeroGpuFreeContiguous(sub->AllocTableVa);
-        AeroGpuFreeContiguous(sub->DmaCopyVa);
-        AeroGpuFreeContiguous(sub->DescVa);
+        AeroGpuFreeContiguousNonCached(sub->AllocTableVa, (SIZE_T)sub->AllocTableSizeBytes);
+        AeroGpuFreeContiguousNonCached(sub->DmaCopyVa, sub->DmaCopySize);
+        AeroGpuFreeContiguousNonCached(sub->DescVa, sub->DescSize);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
     while (!IsListEmpty(&internalToFree)) {
         PLIST_ENTRY entry = RemoveHeadList(&internalToFree);
         AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
             CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
-        AeroGpuFreeContiguous(sub->CmdVa);
+        AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
     return STATUS_SUCCESS;
@@ -4897,7 +4906,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 (aerogpu_legacy_submission_desc_header*)AeroGpuAllocContiguous(sizeof(*desc), &descPa);
             descVa = desc;
             if (!desc) {
-                AeroGpuFreeContiguous(dmaVa);
+                AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
                 return STATUS_SUCCESS;
             }
@@ -4997,8 +5006,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         if (!NT_SUCCESS(pushStatus)) {
-            AeroGpuFreeContiguous(descVa);
-            AeroGpuFreeContiguous(dmaVa);
+            AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
             io->error_code = (pushStatus == STATUS_DEVICE_BUSY)
                                  ? AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY
                                  : AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
@@ -5024,8 +5033,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         if (NT_SUCCESS(testStatus)) {
-            AeroGpuFreeContiguous(descVa);
-            AeroGpuFreeContiguous(dmaVa);
+            AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
             io->passed = 1;
             io->error_code = AEROGPU_DBGCTL_SELFTEST_OK;
         } else {
