@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { vi } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
-import { saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
+import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
 import { VM_SNAPSHOT_DEVICE_ID_E1000, VM_SNAPSHOT_DEVICE_ID_NET_STACK, VM_SNAPSHOT_DEVICE_ID_USB } from "./vm_snapshot_wasm";
 
 describe("workers/io_worker_vm_snapshot", () => {
@@ -53,5 +54,83 @@ describe("workers/io_worker_vm_snapshot", () => {
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
     ]);
+  });
+
+  it("normalizes device.<id> kinds on restore and applies net.stack TCP restore policy=drop", async () => {
+    const usbState = new Uint8Array([0x01, 0x02]);
+    const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
+    const stackState = new Uint8Array([0x06]);
+
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      devices: [
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
+      ],
+    }));
+
+    const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
+
+    const usbLoad = vi.fn();
+    const e1000Load = vi.fn();
+    const stackLoad = vi.fn();
+    const stackPolicy = vi.fn();
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: { load_state: usbLoad },
+        usbUhciControllerBridge: null,
+        netE1000: { load_state: e1000Load },
+        netStack: { load_state: stackLoad, apply_tcp_restore_policy: stackPolicy },
+      },
+    });
+
+    expect(restore).toHaveBeenCalledWith("state/test.snap");
+    expect(usbLoad).toHaveBeenCalledWith(usbState);
+    expect(e1000Load).toHaveBeenCalledWith(e1000State);
+    expect(stackLoad).toHaveBeenCalledWith(stackState);
+    expect(stackPolicy).toHaveBeenCalledWith("drop");
+
+    // Returned blob kinds should be canonical (not device.<id>).
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb.uhci", "net.e1000", "net.stack"]);
+  });
+
+  it("warns + ignores net.stack restore blobs when net.stack runtime is unavailable", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const stackState = new Uint8Array([0x06]);
+      const api = {
+        vm_snapshot_restore_from_opfs: () => ({
+          cpu: new Uint8Array([0xaa]),
+          mmu: new Uint8Array([0xbb]),
+          devices: [{ kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState }],
+        }),
+      } as unknown as WasmApi;
+
+      await expect(
+        restoreIoWorkerVmSnapshotFromOpfs({
+          api,
+          path: "state/test.snap",
+          guestBase: 0,
+          guestSize: 0x1000,
+          runtimes: {
+            usbUhciRuntime: null,
+            usbUhciControllerBridge: null,
+            netE1000: null,
+            netStack: null,
+          },
+        }),
+      ).resolves.toMatchObject({ cpu: expect.any(ArrayBuffer), mmu: expect.any(ArrayBuffer) });
+
+      expect(warn.mock.calls.some((args) => String(args[0]).includes("net.stack"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
