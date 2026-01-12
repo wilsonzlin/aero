@@ -21,17 +21,28 @@ impl E1000PciDevice {
         Self { nic }
     }
 
+    fn bus_master_enabled(&self) -> bool {
+        // Gate DMA on PCI COMMAND.BME (bit 2) to avoid touching guest memory before the guest
+        // explicitly enables bus mastering during enumeration.
+        (self.nic.pci_config_read(0x04, 2) & (1 << 2)) != 0
+    }
+
     pub fn irq_level(&self) -> bool {
         self.nic.irq_level()
     }
 
     pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
+        if !self.bus_master_enabled() {
+            return;
+        }
         self.nic.poll(mem);
     }
 
     pub fn receive_frame(&mut self, mem: &mut dyn MemoryBus, frame: &[u8]) {
-        // `E1000Device::receive_frame` already flushes pending RX into the guest ring via `poll`.
-        self.nic.receive_frame(mem, frame);
+        // Always accept host RX frames, but only flush them into guest memory once the guest has
+        // enabled PCI bus mastering.
+        self.nic.enqueue_rx_frame(frame.to_vec());
+        self.poll(mem);
     }
 
     pub fn pop_tx_frame(&mut self) -> Option<Vec<u8>> {
@@ -59,7 +70,7 @@ impl MmioDevice for E1000PciDevice {
         // usable behind `memory::MmioHandler`-based buses that do not. Perform a register-only
         // write here and explicitly poll to keep the old "writes kick DMA soon" behavior.
         self.nic.mmio_write(offset, size, value);
-        self.nic.poll(mem);
+        self.poll(mem);
     }
 }
 
