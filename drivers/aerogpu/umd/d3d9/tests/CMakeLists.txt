@@ -79,3 +79,37 @@ set_target_properties(aerogpu_wddm_submit_buffer_utils_tests PROPERTIES
 )
 
 add_test(NAME aerogpu_wddm_submit_buffer_utils_tests COMMAND aerogpu_wddm_submit_buffer_utils_tests)
+
+add_executable(aerogpu_d3d9_trace_filter_tests
+    trace_filter_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+)
+
+target_include_directories(aerogpu_d3d9_trace_filter_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+)
+
+set_target_properties(aerogpu_d3d9_trace_filter_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d9_trace_filter_tests COMMAND aerogpu_d3d9_trace_filter_tests)
+
+add_executable(aerogpu_d3d9_trace_dump_on_fail_tests
+    trace_dump_on_fail_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+)
+
+target_include_directories(aerogpu_d3d9_trace_dump_on_fail_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+)
+
+set_target_properties(aerogpu_d3d9_trace_dump_on_fail_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d9_trace_dump_on_fail_tests COMMAND aerogpu_d3d9_trace_dump_on_fail_tests)
