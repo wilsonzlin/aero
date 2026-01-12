@@ -1,18 +1,25 @@
 #![forbid(unsafe_code)]
 // Note: The threaded WASM build must compile on stable Rust; avoid unstable features here.
 
+#[allow(dead_code)]
+mod drain_queue;
+
 // The full implementation is only meaningful on wasm32.
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use std::cell::RefCell;
     use std::collections::HashSet;
+    use std::sync::OnceLock;
 
+    use crate::drain_queue::DrainQueue;
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
         AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, AerogpuD3d9Executor,
         FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory, GuestMemoryError,
     };
+    use aero_gpu::GpuErrorEvent;
+    use aero_gpu::stats::GpuStats;
     use aero_protocol::aerogpu::aerogpu_cmd as cmd;
     use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
@@ -44,9 +51,90 @@ mod wasm {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Diagnostics exports (optional; polled by `web/src/workers/gpu-worker.ts`)
+    // -------------------------------------------------------------------------
+
+    /// Returns a JSON string of the current GPU telemetry counters.
+    ///
+    /// This is intentionally non-panicking and returns a valid JSON object even
+    /// if the GPU has not been initialized.
+    #[wasm_bindgen]
+    pub fn get_gpu_stats() -> String {
+        gpu_stats().get_gpu_stats()
+    }
+
+    /// CamelCase alias for callers that probe `getGpuStats`.
+    #[wasm_bindgen(js_name = getGpuStats)]
+    pub fn get_gpu_stats_alias() -> String {
+        get_gpu_stats()
+    }
+
+    /// Drain-and-clear any queued GPU runtime error events.
+    ///
+    /// Returns a JSON array string of events compatible with
+    /// `GpuRuntimeErrorEvent` normalization in the browser GPU worker.
+    #[wasm_bindgen]
+    pub fn drain_gpu_events() -> String {
+        let events = gpu_event_queue().drain();
+        events_to_json(&events)
+    }
+
+    // Additional aliases probed by the worker.
+    #[wasm_bindgen]
+    pub fn drain_gpu_error_events() -> String {
+        drain_gpu_events()
+    }
+
+    #[wasm_bindgen]
+    pub fn take_gpu_events() -> String {
+        drain_gpu_events()
+    }
+
+    #[wasm_bindgen]
+    pub fn take_gpu_error_events() -> String {
+        drain_gpu_events()
+    }
+
+    #[wasm_bindgen(js_name = drainGpuEvents)]
+    pub fn drain_gpu_events_alias() -> String {
+        drain_gpu_events()
+    }
+
     thread_local! {
         static PROCESSOR: RefCell<AeroGpuCommandProcessor> =
             RefCell::new(AeroGpuCommandProcessor::new());
+    }
+
+    static GPU_STATS: OnceLock<GpuStats> = OnceLock::new();
+    static GPU_EVENT_QUEUE: OnceLock<DrainQueue<GpuErrorEvent>> = OnceLock::new();
+
+    fn gpu_stats() -> &'static GpuStats {
+        GPU_STATS.get_or_init(GpuStats::new)
+    }
+
+    fn gpu_event_queue() -> &'static DrainQueue<GpuErrorEvent> {
+        GPU_EVENT_QUEUE.get_or_init(DrainQueue::new)
+    }
+
+    fn push_gpu_event(event: GpuErrorEvent) {
+        gpu_event_queue().push(event);
+    }
+
+    fn events_to_json(events: &[GpuErrorEvent]) -> String {
+        if events.is_empty() {
+            return "[]".to_string();
+        }
+        let mut json = String::new();
+        json.push('[');
+        for (i, ev) in events.iter().enumerate() {
+            if i > 0 {
+                json.push(',');
+            }
+            json.push_str(&ev.to_json());
+        }
+        json.push(']');
+        json
     }
 
     #[derive(Clone)]
@@ -705,6 +793,8 @@ mod wasm {
                 .await
                 .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
 
+            aero_gpu::register_wgpu_uncaptured_error_handler(&device, backend_kind, push_gpu_event);
+
             let info = adapter.get_info();
             let adapter_info = AdapterInfo {
                 // WebGPU doesn't expose stable vendor strings; surface best-effort info.
@@ -734,6 +824,7 @@ mod wasm {
                 view_formats: vec![],
             };
             surface.configure(&device, &config);
+            gpu_stats().inc_surface_reconfigures();
 
             let bind_group_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -951,6 +1042,7 @@ mod wasm {
                 self.config.width = w;
                 self.config.height = h;
                 self.surface.configure(&self.device, &self.config);
+                gpu_stats().inc_surface_reconfigures();
             }
         }
 
@@ -976,6 +1068,7 @@ mod wasm {
             self.config.width = out_width_px;
             self.config.height = out_height_px;
             self.surface.configure(&self.device, &self.config);
+            gpu_stats().inc_surface_reconfigures();
 
             if self.src_size != (src_width, src_height) {
                 let (tex, view) = create_framebuffer_texture(&self.device, src_width, src_height);
@@ -1100,6 +1193,7 @@ mod wasm {
         }
 
         fn present(&mut self) -> Result<(), JsValue> {
+            gpu_stats().inc_presents_attempted();
             self.profiler.begin_frame(None, None);
             self.ensure_surface_matches_canvas();
 
@@ -1137,6 +1231,7 @@ mod wasm {
             let command_buffer = encoder.finish();
             self.profiler.submit(&self.queue, command_buffer);
             frame.present();
+            gpu_stats().inc_presents_succeeded();
             Ok(())
         }
 
@@ -1391,6 +1486,8 @@ mod wasm {
                 .await
                 .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
 
+            aero_gpu::register_wgpu_uncaptured_error_handler(&device, backend_kind, push_gpu_event);
+
             let info = adapter.get_info();
             let adapter_info = AdapterInfo {
                 vendor: Some(format!("0x{:04x}", info.vendor)),
@@ -1418,6 +1515,7 @@ mod wasm {
                 view_formats: vec![],
             };
             surface.configure(&device, &config);
+            gpu_stats().inc_surface_reconfigures();
 
             let bind_group_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1584,6 +1682,7 @@ mod wasm {
                 self.config.width = w;
                 self.config.height = h;
                 self.surface.configure(device, &self.config);
+                gpu_stats().inc_surface_reconfigures();
             }
         }
 
@@ -1592,6 +1691,7 @@ mod wasm {
             device: &wgpu::Device,
             queue: &wgpu::Queue,
         ) -> Result<(), JsValue> {
+            gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas(device);
             let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
             let view = frame
@@ -1621,6 +1721,7 @@ mod wasm {
 
             queue.submit([encoder.finish()]);
             frame.present();
+            gpu_stats().inc_presents_succeeded();
             Ok(())
         }
 
@@ -1632,6 +1733,7 @@ mod wasm {
             src_width: u32,
             src_height: u32,
         ) -> Result<(), JsValue> {
+            gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas(device);
 
             let out_width_px = self.config.width.max(1);
@@ -1706,6 +1808,7 @@ mod wasm {
 
             queue.submit([encoder.finish()]);
             frame.present();
+            gpu_stats().inc_presents_succeeded();
             Ok(())
         }
     }
@@ -1880,12 +1983,18 @@ mod wasm {
             Ok(frame) => Ok(frame),
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 // Reconfigure and retry once (docs/04-graphics-subsystem.md).
+                gpu_stats().inc_recoveries_attempted();
                 surface.configure(device, config);
-                surface.get_current_texture().map_err(|err| {
-                    JsValue::from_str(&format!(
+                gpu_stats().inc_surface_reconfigures();
+                match surface.get_current_texture() {
+                    Ok(frame) => {
+                        gpu_stats().inc_recoveries_succeeded();
+                        Ok(frame)
+                    }
+                    Err(err) => Err(JsValue::from_str(&format!(
                         "Surface acquire failed after reconfigure: {err:?}"
-                    ))
-                })
+                    ))),
+                }
             }
             Err(wgpu::SurfaceError::Timeout) => Err(JsValue::from_str("Surface acquire timeout")),
             Err(wgpu::SurfaceError::OutOfMemory) => Err(JsValue::from_str("Surface out of memory")),
@@ -2371,6 +2480,8 @@ mod wasm {
                 .await
                 .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
 
+            aero_gpu::register_wgpu_uncaptured_error_handler(&device, GpuBackendKind::WebGpu, push_gpu_event);
+
             let info = adapter.get_info();
             let downlevel_flags = adapter.get_downlevel_capabilities().flags;
             let adapter_info = AdapterInfo {
@@ -2678,6 +2789,8 @@ mod wasm {
         D3D9_STATE.with(|slot| {
             *slot.borrow_mut() = None;
         });
+        // Clear any queued diagnostics events so callers don't see stale errors after a reset.
+        let _ = gpu_event_queue().drain();
         // `submit_aerogpu`/`submit_aerogpu_d3d9` are backed by a lightweight command processor
         // that caches resource descriptors, shared-surface mappings, and monotonic counters.
         //

@@ -226,3 +226,35 @@ export async function request_screenshot_info(): Promise<ScreenshotInfo> {
   const mod = requireLoaded();
   return (await mod.request_screenshot_info()) as ScreenshotInfo;
 }
+
+// -----------------------------------------------------------------------------
+// Optional diagnostics exports (best-effort; may be missing on older bundles)
+// -----------------------------------------------------------------------------
+
+export function get_gpu_stats(): unknown | undefined {
+  const mod = requireLoaded();
+  const fn = (mod.get_gpu_stats ?? mod.getGpuStats) as (() => unknown) | undefined;
+  if (typeof fn !== "function") return undefined;
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}
+
+export function drain_gpu_events(): unknown | undefined {
+  const mod = requireLoaded();
+  const fn = (
+    mod.drain_gpu_events ??
+    mod.drain_gpu_error_events ??
+    mod.take_gpu_events ??
+    mod.take_gpu_error_events ??
+    mod.drainGpuEvents
+  ) as (() => unknown) | undefined;
+  if (typeof fn !== "function") return undefined;
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}
