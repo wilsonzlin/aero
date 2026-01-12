@@ -47,7 +47,7 @@ fn snapshot_roundtrip_preserves_dhcp_and_dns_cache() {
     // `aero-io-snapshot` header + our device id.
     assert!(bytes.len() >= 16);
     assert_eq!(&bytes[0..4], b"AERO");
-    assert_eq!(&bytes[8..12], b"NSTK");
+    assert_eq!(&bytes[8..12], b"NETS");
 
     let mut decoded = NetworkStackSnapshotState::default();
     decoded.load_state(&bytes).expect("decode snapshot");

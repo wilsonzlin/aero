@@ -111,7 +111,7 @@ impl NetworkStackSnapshotState {
 }
 
 impl IoSnapshot for NetworkStackSnapshotState {
-    const DEVICE_ID: [u8; 4] = *b"NSTK";
+    const DEVICE_ID: [u8; 4] = *b"NETS";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
     fn save_state(&self) -> Vec<u8> {

@@ -1905,7 +1905,7 @@ impl NetworkStack {
     }
 }
 
-// Snapshot: `aero-io-snapshot` TLV blob (DEVICE_ID = "NSTK", version 1.0).
+// Snapshot: `aero-io-snapshot` TLV blob (DEVICE_ID = "NETS", version 1.0).
 //
 // `NetworkStackSnapshotState` is the serializable dynamic state. We also implement `IoSnapshot` for
 // `NetworkStack` as a convenience wrapper that defaults to `TcpRestorePolicy::Drop` (deterministic,
