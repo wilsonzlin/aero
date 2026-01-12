@@ -461,13 +461,22 @@ fn scan_prefixes(bytes: &[u8], mode: DecodeMode) -> Result<(Prefixes, usize), De
 
         if let Some(seg) = opcode_tables::segment_override(b) {
             // In 64-bit mode, only FS/GS segment overrides have architectural effect; CS/DS/ES/SS
-            // are accepted but ignored. Since our downstream users use `prefixes.segment` to choose
-            // the effective segment for memory operands, treat ignored prefixes as "no override".
-            prefixes.segment = match (mode, seg) {
-                (DecodeMode::Bits64, SegmentReg::FS | SegmentReg::GS) => Some(seg),
-                (DecodeMode::Bits64, _) => None,
-                _ => Some(seg),
-            };
+            // are accepted but ignored.
+            //
+            // Importantly, ignored segment prefixes **must not clear** an earlier FS/GS override.
+            // Real hardware (and iced-x86) treats CS/DS/ES/SS overrides in long mode as true no-ops.
+            // i.e. `FS; DS; <mem-op>` still uses FS, not "no override".
+            match (mode, seg) {
+                (DecodeMode::Bits64, SegmentReg::FS | SegmentReg::GS) => {
+                    prefixes.segment = Some(seg);
+                }
+                (DecodeMode::Bits64, _) => {
+                    // Ignored in long mode; do not update `prefixes.segment`.
+                }
+                _ => {
+                    prefixes.segment = Some(seg);
+                }
+            }
             idx += 1;
             continue;
         }
