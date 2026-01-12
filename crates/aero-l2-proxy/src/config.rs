@@ -438,17 +438,16 @@ impl ProxyConfig {
             .map(Duration::from_millis)
             .unwrap_or_else(|| Duration::from_millis(3000));
 
-        let l2_max_frame_payload = std::env::var("AERO_L2_MAX_FRAME_PAYLOAD")
-            .or_else(|_| std::env::var("AERO_L2_MAX_FRAME_SIZE"))
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
+        // These env vars are often passed through with empty placeholder values (e.g. docker
+        // compose `${VAR:-}`), so treat empty strings as "unset" and fall back to the protocol
+        // defaults (or legacy aliases).
+        //
+        // Values must be positive integers; `0` is treated as unset.
+        let l2_max_frame_payload = read_env_usize_nonzero("AERO_L2_MAX_FRAME_PAYLOAD")
+            .or_else(|| read_env_usize_nonzero("AERO_L2_MAX_FRAME_SIZE"))
             .unwrap_or(aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD);
 
-        let l2_max_control_payload = std::env::var("AERO_L2_MAX_CONTROL_PAYLOAD")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
+        let l2_max_control_payload = read_env_usize_nonzero("AERO_L2_MAX_CONTROL_PAYLOAD")
             .unwrap_or(aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD);
 
         let ping_interval = std::env::var("AERO_L2_PING_INTERVAL_MS")
@@ -587,4 +586,13 @@ fn read_env_u64_clamped(key: &str, default: u64, min: u64, max: u64) -> u64 {
         .and_then(|v| v.parse::<u64>().ok())
         .map(|v| v.clamp(min, max))
         .unwrap_or(default)
+}
+
+fn read_env_usize_nonzero(key: &str) -> Option<usize> {
+    let raw = std::env::var(key).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<usize>().ok().filter(|v| *v > 0)
 }

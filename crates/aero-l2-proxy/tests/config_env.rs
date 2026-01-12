@@ -245,6 +245,23 @@ fn proxy_config_ignores_zero_l2_payload_limits() {
 }
 
 #[test]
+fn proxy_config_uses_legacy_frame_size_when_payload_unset() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
+
+    // If the canonical env var is present but empty/zero (common when passing through `${VAR:-}`),
+    // fall back to the legacy alias.
+    let _max_frame_payload = EnvVarGuard::set("AERO_L2_MAX_FRAME_PAYLOAD", "0");
+    let _max_frame_size = EnvVarGuard::set("AERO_L2_MAX_FRAME_SIZE", "9000");
+
+    let cfg = ProxyConfig::from_env().expect("expected config to fall back to legacy alias");
+    assert_eq!(cfg.l2_max_frame_payload, 9000);
+}
+
+#[test]
 fn proxy_config_accepts_custom_l2_payload_limits() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _guards = reset_common_env();
