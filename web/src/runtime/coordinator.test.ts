@@ -76,6 +76,38 @@ describe("runtime/coordinator", () => {
     expect(() => coordinator.restartWorker("net")).not.toThrow();
   });
 
+  it("restarts the VM when virtioNetMode changes (PCI contract change)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+      virtioNetMode: "modern",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    coordinator.updateConfig({
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+      virtioNetMode: "legacy",
+    });
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects VM start when activeDiskImage is set but OPFS SyncAccessHandle is unavailable", () => {
     const coordinator = new WorkerCoordinator();
 
