@@ -447,6 +447,154 @@ fn d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable() {
 }
 
 #[test]
+fn d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable_bgra8() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable_bgra8"
+                ),
+                "wgpu adapter not found",
+            );
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    if !exec.supports_view_formats() {
+        common::skip_or_panic(
+            concat!(
+                module_path!(),
+                "::d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable_bgra8"
+            ),
+            "DownlevelFlags::VIEW_FORMATS not supported",
+        );
+        return;
+    }
+
+    const RT_HANDLE: u32 = 1;
+
+    let width = 16u32;
+    let height = 16u32;
+
+    let scissor_x = 4i32;
+    let scissor_y = 4i32;
+    let scissor_w = 8i32;
+    let scissor_h = 8i32;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AerogpuFormat::B8G8R8A8Unorm as u32);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetViewport as u32, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+
+        // Full target clear to black using the fast-path load-op clear.
+        emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetRenderState as u32, |out| {
+            push_u32(out, D3DRS_SCISSORTESTENABLE);
+            push_u32(out, 1);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetScissor as u32, |out| {
+            push_i32(out, scissor_x);
+            push_i32(out, scissor_y);
+            push_i32(out, scissor_w);
+            push_i32(out, scissor_h);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetRenderState as u32, |out| {
+            push_u32(out, D3DRS_SRGBWRITEENABLE);
+            push_u32(out, 1);
+        });
+
+        // Scissored clear to 0.5 gray. With sRGB write enabled, 0.5 (linear) becomes ~188 (sRGB).
+        emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.5);
+            push_f32(out, 0.5);
+            push_f32(out, 0.5);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+
+    let inside = pixel_at(&rgba, width, (scissor_x + 1) as u32, (scissor_y + 1) as u32);
+    assert!(
+        (185..=190).contains(&inside[0]) && inside[0] == inside[1] && inside[1] == inside[2],
+        "expected srgb-encoded ~188 gray, got {inside:?}"
+    );
+    assert_eq!(inside[3], 255);
+
+    // Outside scissor should remain black.
+    assert_eq!(pixel_at(&rgba, width, 0, 0), [0, 0, 0, 255]);
+    assert_eq!(
+        pixel_at(&rgba, width, width - 1, height - 1),
+        [0, 0, 0, 255]
+    );
+    assert_eq!(
+        pixel_at(&rgba, width, (scissor_x - 1) as u32, scissor_y as u32),
+        [0, 0, 0, 255]
+    );
+    assert_eq!(
+        pixel_at(
+            &rgba,
+            width,
+            (scissor_x + scissor_w) as u32,
+            scissor_y as u32
+        ),
+        [0, 0, 0, 255]
+    );
+}
+
+#[test]
 fn d3d9_cmd_stream_clear_respects_scissor_rect_with_negative_origin() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
