@@ -61,6 +61,14 @@ fn disk_backend_state_rejects_excessive_string_length() {
 }
 
 #[test]
+fn disk_backend_state_rejects_invalid_backend_kind() {
+    // backend kind is a single byte; only 0 (local) and 1 (remote) are valid.
+    let bytes = vec![2];
+    let err = DiskBackendState::decode(&bytes).expect_err("should reject invalid backend kind");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("backend kind"));
+}
+
+#[test]
 fn disk_backend_state_rejects_invalid_utf8_string() {
     // local backend, opfs kind, key length=1, key byte is invalid utf-8.
     let mut bytes = Vec::new();
@@ -71,6 +79,118 @@ fn disk_backend_state_rejects_invalid_utf8_string() {
 
     let err = DiskBackendState::decode(&bytes).expect_err("should reject invalid utf8");
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("string utf8"));
+}
+
+#[test]
+fn disk_backend_state_rejects_overlay_disk_size_zero() {
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+
+    // key = "k"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"k");
+
+    // overlay present
+    bytes.push(1);
+
+    // overlay.file_name = "o"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"o");
+    // overlay.disk_size_bytes = 0 (invalid)
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    // overlay.block_size_bytes (valid, but should not be reached)
+    bytes.extend_from_slice(&512u32.to_le_bytes());
+
+    let err = DiskBackendState::decode(&bytes).expect_err("should reject overlay disk_size=0");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("overlay disk_size"));
+}
+
+#[test]
+fn disk_backend_state_rejects_overlay_disk_size_unaligned() {
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+
+    // key = "k"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"k");
+
+    // overlay present
+    bytes.push(1);
+
+    // overlay.file_name = "o"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"o");
+    // overlay.disk_size_bytes = 513 (invalid; not multiple of 512)
+    bytes.extend_from_slice(&513u64.to_le_bytes());
+    // overlay.block_size_bytes
+    bytes.extend_from_slice(&512u32.to_le_bytes());
+
+    let err =
+        DiskBackendState::decode(&bytes).expect_err("should reject unaligned overlay disk_size");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay disk_size not multiple of 512")
+    );
+}
+
+#[test]
+fn disk_backend_state_rejects_overlay_block_size_not_multiple_of_512() {
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+
+    // key = "k"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"k");
+
+    // overlay present
+    bytes.push(1);
+
+    // overlay.file_name = "o"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"o");
+    // overlay.disk_size_bytes = 4096
+    bytes.extend_from_slice(&4096u64.to_le_bytes());
+    // overlay.block_size_bytes = 513 (invalid; not multiple of 512)
+    bytes.extend_from_slice(&513u32.to_le_bytes());
+
+    let err = DiskBackendState::decode(&bytes)
+        .expect_err("should reject overlay block_size not multiple of 512");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay block_size not multiple of 512")
+    );
+}
+
+#[test]
+fn disk_backend_state_rejects_overlay_block_size_not_power_of_two() {
+    let mut bytes = Vec::new();
+    bytes.push(0); // kind = local
+    bytes.push(0); // backend_kind = opfs
+
+    // key = "k"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"k");
+
+    // overlay present
+    bytes.push(1);
+
+    // overlay.file_name = "o"
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"o");
+    // overlay.disk_size_bytes = 4096
+    bytes.extend_from_slice(&4096u64.to_le_bytes());
+    // overlay.block_size_bytes = 1536 (multiple of 512, but not power-of-two)
+    bytes.extend_from_slice(&1536u32.to_le_bytes());
+
+    let err =
+        DiskBackendState::decode(&bytes).expect_err("should reject overlay block_size power_of_two");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("overlay block_size power_of_two")
+    );
 }
 
 #[test]
