@@ -6185,117 +6185,127 @@ impl AerogpuD3d9Executor {
                 instance_count,
                 first_instance,
             } => {
-                let index_binding = index_binding.ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
-                let underlying = self.resolve_resource_handle(index_binding.buffer)?;
-                let res = self
-                    .resources
-                    .get(&underlying)
-                    .ok_or(AerogpuD3d9Error::UnknownResource(index_binding.buffer))?;
-                let Resource::Buffer { shadow, size, .. } = res else {
-                    return Err(AerogpuD3d9Error::UnknownResource(index_binding.buffer));
-                };
-                let bytes_per_index = match index_binding.format {
-                    wgpu::IndexFormat::Uint16 => 2u64,
-                    wgpu::IndexFormat::Uint32 => 4u64,
-                };
-                let start_byte = (index_binding.offset_bytes as u64)
-                    .checked_add((first_index as u64).saturating_mul(bytes_per_index))
-                    .ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("index buffer range overflow".into())
-                    })?;
-                let byte_len = (index_count as u64)
-                    .checked_mul(bytes_per_index)
-                    .ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("index buffer range overflow".into())
-                    })?;
-                let end_byte = start_byte.checked_add(byte_len).ok_or_else(|| {
-                    AerogpuD3d9Error::Validation("index buffer range overflow".into())
-                })?;
-                if end_byte > *size {
-                    return Err(AerogpuD3d9Error::Validation(format!(
-                        "indexed draw out of bounds for index buffer (handle={} start=0x{start_byte:x} end=0x{end_byte:x} size=0x{size:x})",
-                        index_binding.buffer
-                    )));
-                }
-                let start_usize = usize::try_from(start_byte).map_err(|_| {
-                    AerogpuD3d9Error::Validation("index buffer offset overflow".into())
-                })?;
-                let end_usize = usize::try_from(end_byte).map_err(|_| {
-                    AerogpuD3d9Error::Validation("index buffer size overflow".into())
-                })?;
-                if end_usize > shadow.len() {
-                    return Err(AerogpuD3d9Error::Validation(format!(
-                        "index buffer shadow too small (handle={} end=0x{end_byte:x} shadow_size=0x{:x})",
-                        index_binding.buffer,
-                        shadow.len()
-                    )));
-                }
-                let indices_bytes = &shadow[start_usize..end_usize];
-
-                let mut min_index: u32 = u32::MAX;
-                let mut max_index: u32 = 0;
-                if index_binding.format == wgpu::IndexFormat::Uint16 {
-                    for chunk in indices_bytes.chunks_exact(2) {
-                        let idx = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
-                        min_index = min_index.min(idx);
-                        max_index = max_index.max(idx);
-                    }
-                } else {
-                    for chunk in indices_bytes.chunks_exact(4) {
-                        let idx = u32::from_le_bytes(chunk.try_into().unwrap());
-                        min_index = min_index.min(idx);
-                        max_index = max_index.max(idx);
-                    }
-                }
-
-                if min_index == u32::MAX {
-                    // No indices.
+                if base_vertex >= 0 && d3dcolor_offsets_by_stream.is_empty() {
+                    // Fast path: no D3DCOLOR conversion and non-negative base_vertex means all vertex
+                    // indices are >= 0 and within the bound vertex buffer slice, so no per-draw index
+                    // scanning is needed.
                     (draw, 0, 0, 0)
                 } else {
-                    let base = base_vertex as i64;
-                    let min_v_i64 = base.saturating_add(min_index as i64);
-                    let max_v_excl_i64 = base
-                        .saturating_add(max_index as i64)
-                        .saturating_add(1);
-
-                    // Bias vertex indices so the minimum becomes >= 0.
-                    let bias_i64 = if min_v_i64 < 0 {
-                        min_v_i64.saturating_abs()
-                    } else {
-                        0
+                    let index_binding =
+                        index_binding.ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
+                    let underlying = self.resolve_resource_handle(index_binding.buffer)?;
+                    let res = self
+                        .resources
+                        .get(&underlying)
+                        .ok_or(AerogpuD3d9Error::UnknownResource(index_binding.buffer))?;
+                    let Resource::Buffer { shadow, size, .. } = res else {
+                        return Err(AerogpuD3d9Error::UnknownResource(index_binding.buffer));
                     };
-
-                    let effective_base_vertex_i64 = base.saturating_add(bias_i64);
-                    let effective_base_vertex: i32 = effective_base_vertex_i64.try_into().map_err(|_| {
-                        AerogpuD3d9Error::Validation(
-                            "indexed draw base_vertex out of range after bias".into(),
-                        )
+                    let bytes_per_index = match index_binding.format {
+                        wgpu::IndexFormat::Uint16 => 2u64,
+                        wgpu::IndexFormat::Uint32 => 4u64,
+                    };
+                    let start_byte = (index_binding.offset_bytes as u64)
+                        .checked_add((first_index as u64).saturating_mul(bytes_per_index))
+                        .ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("index buffer range overflow".into())
+                        })?;
+                    let byte_len = (index_count as u64)
+                        .checked_mul(bytes_per_index)
+                        .ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("index buffer range overflow".into())
+                        })?;
+                    let end_byte = start_byte.checked_add(byte_len).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("index buffer range overflow".into())
                     })?;
+                    if end_byte > *size {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "indexed draw out of bounds for index buffer (handle={} start=0x{start_byte:x} end=0x{end_byte:x} size=0x{size:x})",
+                            index_binding.buffer
+                        )));
+                    }
+                    let start_usize = usize::try_from(start_byte).map_err(|_| {
+                        AerogpuD3d9Error::Validation("index buffer offset overflow".into())
+                    })?;
+                    let end_usize = usize::try_from(end_byte).map_err(|_| {
+                        AerogpuD3d9Error::Validation("index buffer size overflow".into())
+                    })?;
+                    if end_usize > shadow.len() {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "index buffer shadow too small (handle={} end=0x{end_byte:x} shadow_size=0x{:x})",
+                            index_binding.buffer,
+                            shadow.len()
+                        )));
+                    }
+                    let indices_bytes = &shadow[start_usize..end_usize];
 
-                    let clamp_u32 = |v: i64| -> u32 {
-                        if v <= 0 {
-                            0
-                        } else if v >= u32::MAX as i64 {
-                            u32::MAX
-                        } else {
-                            v as u32
+                    let mut min_index: u32 = u32::MAX;
+                    let mut max_index: u32 = 0;
+                    if index_binding.format == wgpu::IndexFormat::Uint16 {
+                        for chunk in indices_bytes.chunks_exact(2) {
+                            let idx = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
+                            min_index = min_index.min(idx);
+                            max_index = max_index.max(idx);
                         }
-                    };
-                    let swizzle_start = clamp_u32(min_v_i64.saturating_add(bias_i64));
-                    let swizzle_end = clamp_u32(max_v_excl_i64.saturating_add(bias_i64));
+                    } else {
+                        for chunk in indices_bytes.chunks_exact(4) {
+                            let idx = u32::from_le_bytes(chunk.try_into().unwrap());
+                            min_index = min_index.min(idx);
+                            max_index = max_index.max(idx);
+                        }
+                    }
 
-                    (
-                        DrawParams::Indexed {
-                            index_count,
-                            instance_count,
-                            first_index,
-                            base_vertex: effective_base_vertex,
-                            first_instance,
-                        },
-                        swizzle_start,
-                        swizzle_end,
-                        bias_i64,
-                    )
+                    if min_index == u32::MAX {
+                        // No indices.
+                        (draw, 0, 0, 0)
+                    } else {
+                        let base = base_vertex as i64;
+                        let min_v_i64 = base.saturating_add(min_index as i64);
+                        let max_v_excl_i64 = base
+                            .saturating_add(max_index as i64)
+                            .saturating_add(1);
+
+                        // Bias vertex indices so the minimum becomes >= 0.
+                        let bias_i64 = if min_v_i64 < 0 {
+                            min_v_i64.saturating_abs()
+                        } else {
+                            0
+                        };
+
+                        let effective_base_vertex_i64 = base.saturating_add(bias_i64);
+                        let effective_base_vertex: i32 = effective_base_vertex_i64
+                            .try_into()
+                            .map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "indexed draw base_vertex out of range after bias".into(),
+                                )
+                            })?;
+
+                        let clamp_u32 = |v: i64| -> u32 {
+                            if v <= 0 {
+                                0
+                            } else if v >= u32::MAX as i64 {
+                                u32::MAX
+                            } else {
+                                v as u32
+                            }
+                        };
+                        let swizzle_start = clamp_u32(min_v_i64.saturating_add(bias_i64));
+                        let swizzle_end = clamp_u32(max_v_excl_i64.saturating_add(bias_i64));
+
+                        (
+                            DrawParams::Indexed {
+                                index_count,
+                                instance_count,
+                                first_index,
+                                base_vertex: effective_base_vertex,
+                                first_instance,
+                            },
+                            swizzle_start,
+                            swizzle_end,
+                            bias_i64,
+                        )
+                    }
                 }
             }
         };
