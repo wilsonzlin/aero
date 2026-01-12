@@ -97,6 +97,95 @@ fn pci_config_header_fields_and_bar5_size_probe() {
 }
 
 #[test]
+fn reset_clears_registers_and_irq_but_preserves_attached_drive() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    sector0[510] = 0x55;
+    sector0[511] = 0xAA;
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut dev = AhciPciDevice::new(1);
+    dev.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+
+    // Enable MMIO + bus mastering so DMA and interrupts are permitted.
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    let mut mem = Bus::new(0x20_000);
+
+    // Basic port programming.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let read_buf = 0x4000u64;
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CLB, 4, clb);
+    dev.mmio_write(PORT_BASE + PORT_REG_CLBU, 4, clb >> 32);
+    dev.mmio_write(PORT_BASE + PORT_REG_FB, 4, fb);
+    dev.mmio_write(PORT_BASE + PORT_REG_FBU, 4, fb >> 32);
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_IE | GHC_AE));
+    dev.mmio_write(PORT_BASE + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
+    dev.mmio_write(
+        PORT_BASE + PORT_REG_CMD,
+        4,
+        u64::from(PORT_CMD_ST | PORT_CMD_FRE),
+    );
+
+    // READ DMA EXT for LBA 0, 1 sector. This should assert INTx.
+    write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+    write_cfis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 0, 1);
+    write_prdt(&mut mem, ctba, 0, read_buf, SECTOR_SIZE as u32);
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+    assert!(dev.intx_level());
+
+    // Reset the device model in-place. This should clear IRQ + guest-visible registers but keep
+    // the attached drive.
+    dev.reset();
+    assert!(!dev.intx_level(), "reset should deassert legacy INTx");
+
+    // Re-enable MMIO + DMA after reset so we can observe register state and issue commands again.
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    // HBA/port registers should be reset to baseline.
+    let ghc = dev.mmio_read(HBA_GHC, 4) as u32;
+    assert_ne!(ghc & GHC_AE, 0, "AHCI should remain enabled after reset");
+    assert_eq!(ghc & GHC_IE, 0, "global interrupt enable should be cleared");
+
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_CLB, 4), 0);
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_FB, 4), 0);
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_IS, 4), 0);
+
+    // Re-program the port and confirm the drive is still usable after reset.
+    let read_buf2 = 0x5000u64;
+    dev.mmio_write(PORT_BASE + PORT_REG_CLB, 4, clb);
+    dev.mmio_write(PORT_BASE + PORT_REG_CLBU, 4, clb >> 32);
+    dev.mmio_write(PORT_BASE + PORT_REG_FB, 4, fb);
+    dev.mmio_write(PORT_BASE + PORT_REG_FBU, 4, fb >> 32);
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_IE | GHC_AE));
+    dev.mmio_write(PORT_BASE + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
+    dev.mmio_write(
+        PORT_BASE + PORT_REG_CMD,
+        4,
+        u64::from(PORT_CMD_ST | PORT_CMD_FRE),
+    );
+
+    write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+    write_cfis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 0, 1);
+    write_prdt(&mut mem, ctba, 0, read_buf2, SECTOR_SIZE as u32);
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+
+    let mut out = [0u8; SECTOR_SIZE];
+    mem.read_physical(read_buf2, &mut out);
+    assert_eq!(&out[0..4], b"BOOT");
+    assert_eq!(&out[510..512], &[0x55, 0xAA]);
+}
+
+#[test]
 fn mmio_requires_pci_memory_space_enable() {
     let mut dev = AhciPciDevice::new(1);
 

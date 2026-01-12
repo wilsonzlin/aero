@@ -1179,7 +1179,10 @@ impl Piix3IdePciDevice {
     /// Reset device state back to its power-on baseline while preserving attached drives/media.
     pub fn reset(&mut self) {
         // Mirror PCI reset semantics: clear command register state (BAR programming is preserved).
-        <Self as PciDevice>::reset(self);
+        //
+        // Note: We implement `PciDevice::reset` for this type by calling this method, so avoid
+        // calling the trait method here (it would recurse).
+        self.config.set_command(0);
         self.controller.reset();
     }
 
@@ -1528,11 +1531,7 @@ impl PciDevice for Piix3IdePciDevice {
     }
 
     fn reset(&mut self) {
-        // Preserve BAR programming but disable decoding.
-        self.config.set_command(0);
-
-        // Reset the IDE controller state machine while preserving attached backends.
-        self.controller.reset();
+        Piix3IdePciDevice::reset(self);
     }
 }
 

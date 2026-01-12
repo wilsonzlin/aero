@@ -315,6 +315,118 @@ fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
 }
 
 #[test]
+fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
+    // ATA disk with a recognizable boot sector.
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    sector0[510] = 0x55;
+    sector0[511] = 0xAA;
+    disk.write_sectors(0, &sector0).unwrap();
+
+    // ATAPI ISO with recognizable data at LBA 1.
+    let mut iso = MemIso::new(2);
+    iso.data[2048..2053].copy_from_slice(b"WORLD");
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    {
+        let mut dev = ide.borrow_mut();
+        dev.controller
+            .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+        dev.controller
+            .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(Some(
+                Box::new(iso),
+            )));
+        dev.config_mut().set_command(0x0005); // IO decode + Bus Master
+    }
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Mutate primary channel state by starting a PIO read and consuming only part of the data.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1); // count
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0); // lba0
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0); // lba1
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0); // lba2
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base, 2); // consume 1 word only
+
+    // Mutate bus master registers to non-zero values.
+    let bm_base = ide.borrow().bus_master_base();
+    ioports.write(bm_base + 4, 4, 0x1234_5678);
+    ioports.write(bm_base + 0, 1, 0x01); // start
+    assert_ne!(ioports.read(bm_base + 4, 4), 0);
+
+    // Reset in-place (should preserve attached devices/backends).
+    ide.borrow_mut().reset();
+
+    // Re-enable I/O decode so we can observe device state post-reset.
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    // Channel state should be idle (DRDY, no BSY/DRQ) and no IRQ latched.
+    assert!(!ide.borrow().controller.primary_irq_pending());
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+    let st = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear after reset");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear after reset");
+    assert_ne!(st & 0x40, 0, "DRDY should be set after reset");
+
+    // Bus Master IDE runtime registers should be reset (active/error/irq cleared, PRD cleared).
+    let bm_cmd = ioports.read(bm_base + 0, 1) as u8;
+    assert_eq!(bm_cmd & 0x09, 0, "bus master start/direction bits should be clear");
+    assert_eq!(ioports.read(bm_base + 4, 4), 0, "PRD pointer should reset to 0");
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0, "bus master status bits should reset");
+
+    // ATA device should still be present and readable after reset.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0); // master + LBA
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1); // count
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS
+    let mut ata_out = [0u8; SECTOR_SIZE];
+    for i in 0..(SECTOR_SIZE / 2) {
+        let w = ioports.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+        ata_out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(&ata_out[0..4], b"BOOT");
+    assert_eq!(&ata_out[510..512], &[0x55, 0xAA]);
+
+    // ATAPI backend should still be present and readable after reset.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0); // select master on secondary
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    // READ(10) for LBA=1, blocks=1 (should start with "WORLD").
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&1u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &read10, 2048);
+
+    let mut atapi_out = vec![0u8; 2048];
+    for i in 0..(2048 / 2) {
+        let w = ioports.read(SECONDARY_PORTS.cmd_base, 2) as u16;
+        atapi_out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(&atapi_out[0..5], b"WORLD");
+}
+
+#[test]
 fn ata_pio_write_sector_via_byte_data_port_writes_roundtrip() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();

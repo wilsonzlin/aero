@@ -553,7 +553,6 @@ impl PciDevice for E1000PciConfigDevice {
         &mut self.cfg
     }
 }
-
 struct Piix3IsaPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -575,7 +574,6 @@ impl PciDevice for Piix3IsaPciConfigDevice {
         &mut self.cfg
     }
 }
-
 struct IdePciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -652,7 +650,6 @@ impl MmioHandler for VgaMmio {
         }
     }
 }
-
 // -----------------------------------------------------------------------------
 // VGA / SVGA integration (legacy VGA + Bochs VBE_DISPI)
 // -----------------------------------------------------------------------------
@@ -1697,40 +1694,6 @@ impl Machine {
             .attach_secondary_master_atapi_backend_for_restore(backend);
     }
 
-    /// Poll the PIIX3 IDE controller once (process Bus Master DMA).
-    ///
-    /// This is safe to call even when IDE is disabled; it will no-op.
-    pub fn process_ide(&mut self) {
-        let Some(ide) = self.ide.as_ref() else {
-            return;
-        };
-
-        let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
-        let (command, bar4_base) = self
-            .pci_cfg
-            .as_ref()
-            .map(|pci_cfg| {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                let cfg = pci_cfg.bus_mut().device_config(bdf);
-                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                let bar4_base = cfg
-                    .and_then(|cfg| cfg.bar_range(4))
-                    .map(|range| range.base)
-                    .unwrap_or(0);
-                (command, bar4_base)
-            })
-            .unwrap_or((0, 0));
-
-        {
-            let mut ide = ide.borrow_mut();
-            ide.config_mut().set_command(command);
-            if bar4_base != 0 {
-                ide.config_mut().set_bar_base(4, bar4_base);
-            }
-            ide.tick(&mut self.mem);
-        }
-    }
-
     /// Poll all known PCI INTx sources (and legacy ISA IRQ sources like IDE) and drive their
     /// current levels into the platform interrupt controller.
     ///
@@ -1738,7 +1701,6 @@ impl Machine {
     pub fn poll_pci_intx_lines(&mut self) {
         self.sync_pci_intx_sources_to_interrupts();
     }
-
     /// Advance deterministic machine/platform time and poll any timer devices.
     ///
     /// This is used by [`Machine::run_slice`] to keep PIT/RTC/HPET/LAPIC timers progressing
@@ -2676,6 +2638,9 @@ impl Machine {
             self.acpi_pm = None;
             self.hpet = None;
             self.e1000 = None;
+            if !self.cfg.enable_vga {
+                self.vga = None;
+            }
             self.ahci = None;
             self.ide = None;
         }
@@ -2744,13 +2709,75 @@ impl Machine {
             self.bios
                 .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
         } else {
-            self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
+        self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         if self.bios.video.vbe.current_mode.is_none() {
             self.sync_text_mode_cursor_bda_to_vga_crtc();
         }
         self.mem.clear_dirty();
+    }
+
+    /// Allow the AHCI controller (if present) to make forward progress (DMA).
+    ///
+    /// This mirrors the behaviour of [`aero_pc_platform::PcPlatform::process_ahci`].
+    pub fn process_ahci(&mut self) {
+        let (Some(ahci), Some(pci_cfg)) = (&self.ahci, &self.pci_cfg) else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+        let (command, bar5_base) = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar5_base = cfg
+                .and_then(|cfg| cfg.bar_range(5))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar5_base)
+        };
+
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+
+        let mut dev = ahci.borrow_mut();
+        dev.config_mut().set_command(command);
+        if bar5_base != 0 {
+            dev.config_mut().set_bar_base(5, bar5_base);
+        }
+
+        if bus_master_enabled {
+            dev.process(&mut self.mem);
+        }
+    }
+
+    /// Allow the IDE controller (if present) to make forward progress (Bus Master DMA).
+    ///
+    /// This mirrors the behaviour of [`aero_pc_platform::PcPlatform::process_ide`].
+    pub fn process_ide(&mut self) {
+        let (Some(ide), Some(pci_cfg)) = (&self.ide, &self.pci_cfg) else {
+            return;
+        };
+
+        let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+        let (command, bar4_base) = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar4_base = cfg
+                .and_then(|cfg| cfg.bar_range(4))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar4_base)
+        };
+
+        let mut dev = ide.borrow_mut();
+        dev.config_mut().set_command(command);
+        if bar4_base != 0 {
+            dev.config_mut().set_bar_base(4, bar4_base);
+        }
+
+        dev.tick(&mut self.mem);
     }
 
     /// Poll the E1000 + network backend bridge once.
@@ -2794,41 +2821,6 @@ impl Machine {
             MAX_FRAMES_PER_POLL,
             MAX_FRAMES_PER_POLL,
         );
-    }
-
-    /// Process AHCI (DMA progress) once.
-    ///
-    /// This is safe to call even when AHCI is disabled; it will no-op.
-    pub fn process_ahci(&mut self) {
-        let Some(ahci) = self.ahci.as_ref() else {
-            return;
-        };
-
-        let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-        let command = self
-            .pci_cfg
-            .as_ref()
-            .and_then(|pci_cfg| {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                pci_cfg.bus_mut().device_config(bdf).map(|cfg| cfg.command())
-            })
-            .unwrap_or(0);
-
-        // Keep the device's internal view of the PCI command register in sync so it can apply Bus
-        // Master and INTx disable gating when used standalone.
-        {
-            let mut ahci = ahci.borrow_mut();
-            ahci.config_mut().set_command(command);
-        }
-
-        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
-        let bus_master_enabled = (command & (1 << 2)) != 0;
-        if !bus_master_enabled {
-            return;
-        }
-
-        let mut ahci = ahci.borrow_mut();
-        ahci.process(&mut self.mem);
     }
 
     /// Run the CPU for at most `max_insts` guest instructions.
