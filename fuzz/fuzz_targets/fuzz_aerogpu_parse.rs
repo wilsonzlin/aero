@@ -15,7 +15,32 @@ const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 /// Non-zero guest physical address to place the candidate alloc-table bytes at.
 const ALLOC_TABLE_GPA: u64 = 0x1000;
 
+fn write_pkt_hdr(buf: &mut [u8], off: &mut usize, opcode: u32, size: usize) -> Option<usize> {
+    let start = *off;
+    let end = start.checked_add(size)?;
+    let hdr_end = start.checked_add(cmd::AerogpuCmdHdr::SIZE_BYTES)?;
+    if end > buf.len() || hdr_end > buf.len() {
+        return None;
+    }
+
+    buf[start..start + 4].copy_from_slice(&opcode.to_le_bytes());
+    buf[start + 4..start + 8].copy_from_slice(&(size as u32).to_le_bytes());
+    *off = end;
+    Some(start)
+}
+
 fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
+    fn packet_bytes<'a>(cmd_bytes: &'a [u8], pkt: &cmd::AerogpuCmdPacket<'a>) -> Option<&'a [u8]> {
+        let base = cmd_bytes.as_ptr() as usize;
+        let payload = pkt.payload.as_ptr() as usize;
+        let hdr_off = payload
+            .checked_sub(base)
+            .and_then(|o| o.checked_sub(cmd::AerogpuCmdHdr::SIZE_BYTES))?;
+        let packet_len = pkt.hdr.size_bytes as usize;
+        let packet_end = hdr_off.checked_add(packet_len)?;
+        cmd_bytes.get(hdr_off..packet_end)
+    }
+
     // Treat the slice as a candidate command stream. All errors are acceptable.
     let _ = aero_gpu::parse_cmd_stream(cmd_bytes);
 
@@ -37,25 +62,22 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     let _ = pkt.decode_create_input_layout_payload_le();
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderConstantsF) => {
-                    // The shader constants decoder lives as a free function that expects the whole
-                    // packet bytes. Reconstruct the packet slice without allocating by finding the
-                    // payload's offset into the original stream.
-                    let base = cmd_bytes.as_ptr() as usize;
-                    let payload = pkt.payload.as_ptr() as usize;
-                    let Some(hdr_off) = payload
-                        .checked_sub(base)
-                        .and_then(|o| o.checked_sub(cmd::AerogpuCmdHdr::SIZE_BYTES))
-                    else {
-                        continue;
-                    };
-                    let packet_len = pkt.hdr.size_bytes as usize;
-                    let Some(packet_end) = hdr_off.checked_add(packet_len) else {
-                        continue;
-                    };
-                    let Some(packet_bytes) = cmd_bytes.get(hdr_off..packet_end) else {
+                    let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
                         continue;
                     };
                     let _ = cmd::decode_cmd_set_shader_constants_f_payload_le(packet_bytes);
+                }
+                Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
+                    let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
+                        continue;
+                    };
+                    let _ = cmd::decode_cmd_copy_buffer_le(packet_bytes);
+                }
+                Some(cmd::AerogpuCmdOpcode::CopyTexture2d) => {
+                    let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
+                        continue;
+                    };
+                    let _ = cmd::decode_cmd_copy_texture2d_le(packet_bytes);
                 }
                 Some(cmd::AerogpuCmdOpcode::SetVertexBuffers) => {
                     let _ = pkt.decode_set_vertex_buffers_payload_le();
@@ -173,6 +195,139 @@ fuzz_target!(|data: &[u8]| {
     cmd_patched[cmd_hdr_off + 4..cmd_hdr_off + 8]
         .copy_from_slice(&(cmd::AerogpuCmdHdr::SIZE_BYTES as u32).to_le_bytes());
     fuzz_cmd_stream(&cmd_patched);
+
+    // Synthetic command stream: a fixed sequence of minimal valid packets using the fuzzer input
+    // as filler. This ensures we consistently exercise a broad set of typed decoders.
+    let cmd_synth_len = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
+        + cmd::AerogpuCmdHdr::SIZE_BYTES // NOP
+        + cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES
+        + cmd::AerogpuCmdUploadResource::SIZE_BYTES
+        + cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES
+        + cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES
+        + cmd::AerogpuCmdSetVertexBuffers::SIZE_BYTES
+        + cmd::AerogpuCmdSetSamplers::SIZE_BYTES
+        + cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES
+        + cmd::AerogpuCmdCopyBuffer::SIZE_BYTES
+        + cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES;
+    let mut cmd_synth = vec![0u8; cmd_synth_len];
+    let cmd_synth_copy_len = cmd_synth.len().min(data.len());
+    cmd_synth[..cmd_synth_copy_len].copy_from_slice(&data[..cmd_synth_copy_len]);
+    cmd_synth[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_synth[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    let cmd_synth_size_bytes = cmd_synth.len() as u32;
+    cmd_synth[8..12].copy_from_slice(&cmd_synth_size_bytes.to_le_bytes());
+
+    let mut off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // NOP
+    let _ = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::Nop as u32,
+        cmd::AerogpuCmdHdr::SIZE_BYTES,
+    );
+
+    // CREATE_SHADER_DXBC (dxbc_size_bytes=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::CreateShaderDxbc as u32,
+        cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES,
+    ) {
+        if let Some(dxbc_size_bytes) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            dxbc_size_bytes.fill(0);
+        }
+    }
+
+    // UPLOAD_RESOURCE (size_bytes=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::UploadResource as u32,
+        cmd::AerogpuCmdUploadResource::SIZE_BYTES,
+    ) {
+        if let Some(size_bytes) = cmd_synth.get_mut(pkt + 24..pkt + 32) {
+            size_bytes.fill(0);
+        }
+    }
+
+    // CREATE_INPUT_LAYOUT (blob_size_bytes=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::CreateInputLayout as u32,
+        cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES,
+    ) {
+        if let Some(blob_size_bytes) = cmd_synth.get_mut(pkt + 12..pkt + 16) {
+            blob_size_bytes.fill(0);
+        }
+    }
+
+    // SET_SHADER_CONSTANTS_F (vec4_count=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetShaderConstantsF as u32,
+        cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES,
+    ) {
+        if let Some(vec4_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            vec4_count.fill(0);
+        }
+    }
+
+    // SET_VERTEX_BUFFERS (buffer_count=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetVertexBuffers as u32,
+        cmd::AerogpuCmdSetVertexBuffers::SIZE_BYTES,
+    ) {
+        if let Some(buffer_count) = cmd_synth.get_mut(pkt + 12..pkt + 16) {
+            buffer_count.fill(0);
+        }
+    }
+
+    // SET_SAMPLERS (sampler_count=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetSamplers as u32,
+        cmd::AerogpuCmdSetSamplers::SIZE_BYTES,
+    ) {
+        if let Some(sampler_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            sampler_count.fill(0);
+        }
+    }
+
+    // SET_CONSTANT_BUFFERS (buffer_count=0)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetConstantBuffers as u32,
+        cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES,
+    ) {
+        if let Some(buffer_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            buffer_count.fill(0);
+        }
+    }
+
+    // COPY_BUFFER (fixed-size)
+    let _ = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::CopyBuffer as u32,
+        cmd::AerogpuCmdCopyBuffer::SIZE_BYTES,
+    );
+
+    // COPY_TEXTURE2D (fixed-size)
+    let _ = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::CopyTexture2d as u32,
+        cmd::AerogpuCmdCopyTexture2d::SIZE_BYTES,
+    );
+
+    fuzz_cmd_stream(&cmd_synth);
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
