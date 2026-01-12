@@ -1,0 +1,188 @@
+const PCAPNG_BLOCK_TYPE_SECTION_HEADER = 0x0a0d0d0a;
+const PCAPNG_BLOCK_TYPE_INTERFACE_DESCRIPTION = 0x0000_0001;
+const PCAPNG_BLOCK_TYPE_ENHANCED_PACKET = 0x0000_0006;
+
+const PCAPNG_BYTE_ORDER_MAGIC = 0x1a2b3c4d;
+
+// https://www.ietf.org/archive/id/draft-tuexen-opsawg-pcapng-02.html
+// (PCAPNG registry): LINKTYPE_ETHERNET
+export const PCAPNG_LINKTYPE_ETHERNET = 1;
+
+const PCAPNG_IF_OPTION_NAME = 2;
+const PCAPNG_IF_OPTION_TSRESOL = 9;
+
+function pad4(len: number): number {
+  return (4 - (len & 3)) & 3;
+}
+
+class ByteWriter {
+  readonly out: Uint8Array<ArrayBuffer>;
+  private readonly view: DataView;
+  private off = 0;
+
+  constructor(size: number) {
+    this.out = new Uint8Array(size);
+    this.view = new DataView(this.out.buffer);
+  }
+
+  writeU8(v: number): void {
+    this.out[this.off++] = v & 0xff;
+  }
+
+  writeU16(v: number): void {
+    this.view.setUint16(this.off, v & 0xffff, true);
+    this.off += 2;
+  }
+
+  writeU32(v: number): void {
+    this.view.setUint32(this.off, v >>> 0, true);
+    this.off += 4;
+  }
+
+  writeBytes(bytes: Uint8Array): void {
+    this.out.set(bytes, this.off);
+    this.off += bytes.byteLength;
+  }
+
+  writeZeros(len: number): void {
+    this.out.fill(0, this.off, this.off + len);
+    this.off += len;
+  }
+
+  finish(): Uint8Array<ArrayBuffer> {
+    if (this.off !== this.out.byteLength) {
+      throw new Error(`pcapng writer size mismatch: wrote ${this.off} bytes, expected ${this.out.byteLength}`);
+    }
+    return this.out;
+  }
+}
+
+export interface PcapngInterfaceDescription {
+  // 16-bit LINKTYPE_* value (e.g. `PCAPNG_LINKTYPE_ETHERNET`).
+  linkType: number;
+  // Maximum captured packet length for this interface.
+  snapLen: number;
+  // Optional interface name (Wireshark will show this in the interface list).
+  name?: string;
+  // Timestamp resolution exponent `N` in units of `10^-N` seconds.
+  // For nanoseconds, use 9 (this is what `NetTracer` uses).
+  tsResolPower10?: number;
+}
+
+export interface PcapngEnhancedPacket {
+  interfaceId: number;
+  // Timestamp units must match the interface's `if_tsresol` (typically ns).
+  timestamp: bigint;
+  packet: Uint8Array;
+}
+
+export interface PcapngCapture {
+  interfaces: readonly PcapngInterfaceDescription[];
+  packets: readonly PcapngEnhancedPacket[];
+}
+
+function computeInterfaceOptionsLength(desc: PcapngInterfaceDescription): number {
+  let len = 0;
+  if (desc.name !== undefined) {
+    const bytes = new TextEncoder().encode(desc.name);
+    len += 4 + bytes.byteLength + pad4(bytes.byteLength);
+  }
+  if (desc.tsResolPower10 !== undefined) {
+    // 1 byte value + padding.
+    len += 4 + 1 + pad4(1);
+  }
+  if (len === 0) return 0;
+  // End of options.
+  return len + 4;
+}
+
+function writeInterfaceOptions(w: ByteWriter, desc: PcapngInterfaceDescription): void {
+  if (desc.name !== undefined) {
+    const bytes = new TextEncoder().encode(desc.name);
+    w.writeU16(PCAPNG_IF_OPTION_NAME);
+    w.writeU16(bytes.byteLength);
+    w.writeBytes(bytes);
+    w.writeZeros(pad4(bytes.byteLength));
+  }
+  if (desc.tsResolPower10 !== undefined) {
+    w.writeU16(PCAPNG_IF_OPTION_TSRESOL);
+    w.writeU16(1);
+    w.writeU8(desc.tsResolPower10 & 0xff);
+    w.writeZeros(pad4(1));
+  }
+
+  // End of options (even if empty, only written when caller decided options exist).
+  w.writeU16(0);
+  w.writeU16(0);
+}
+
+export function writePcapng(capture: PcapngCapture): Uint8Array<ArrayBuffer> {
+  // Section Header Block: no options, fixed size.
+  const shbLen = 28;
+
+  let totalLen = shbLen;
+
+  const idbOptionLens = capture.interfaces.map(computeInterfaceOptionsLength);
+  for (const [idx, iface] of capture.interfaces.entries()) {
+    const optLen = idbOptionLens[idx];
+    totalLen += 20 + optLen;
+  }
+
+  for (const pkt of capture.packets) {
+    const dataLen = pkt.packet.byteLength;
+    totalLen += 32 + dataLen + pad4(dataLen);
+  }
+
+  const w = new ByteWriter(totalLen);
+
+  // SHB
+  w.writeU32(PCAPNG_BLOCK_TYPE_SECTION_HEADER);
+  w.writeU32(shbLen);
+  w.writeU32(PCAPNG_BYTE_ORDER_MAGIC);
+  w.writeU16(1); // major
+  w.writeU16(0); // minor
+  w.writeU32(0xffff_ffff); // section length low (unknown)
+  w.writeU32(0xffff_ffff); // section length high (unknown)
+  w.writeU32(shbLen);
+
+  // IDBs
+  for (const [idx, iface] of capture.interfaces.entries()) {
+    const optLen = idbOptionLens[idx];
+    const idbLen = 20 + optLen;
+
+    w.writeU32(PCAPNG_BLOCK_TYPE_INTERFACE_DESCRIPTION);
+    w.writeU32(idbLen);
+    w.writeU16(iface.linkType);
+    w.writeU16(0); // reserved
+    w.writeU32(iface.snapLen >>> 0);
+    if (optLen !== 0) {
+      writeInterfaceOptions(w, iface);
+    }
+    w.writeU32(idbLen);
+  }
+
+  // EPBs
+  for (const pkt of capture.packets) {
+    const dataLen = pkt.packet.byteLength;
+    const paddedDataLen = dataLen + pad4(dataLen);
+    const epbLen = 32 + paddedDataLen;
+
+    const ts = pkt.timestamp;
+    const tsLo = Number(ts & 0xffff_ffffn);
+    const tsHi = Number((ts >> 32n) & 0xffff_ffffn);
+
+    w.writeU32(PCAPNG_BLOCK_TYPE_ENHANCED_PACKET);
+    w.writeU32(epbLen);
+    w.writeU32(pkt.interfaceId >>> 0);
+    w.writeU32(tsHi);
+    w.writeU32(tsLo);
+    w.writeU32(dataLen >>> 0);
+    w.writeU32(dataLen >>> 0);
+    w.writeBytes(pkt.packet);
+    w.writeZeros(pad4(dataLen));
+    w.writeU32(epbLen);
+  }
+
+  return w.finish();
+}
+
