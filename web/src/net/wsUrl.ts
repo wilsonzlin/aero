@@ -3,7 +3,7 @@
  *
  * `proxyUrl` in Aero config can be:
  * - absolute ws(s)://... or http(s)://... URLs
- * - same-origin "/path" URLs (resolved via `globalThis.location.href` when available)
+ * - same-origin "/path" URLs (resolved via `location.href` when available)
  *
  * This helper:
  * - resolves same-origin paths against `location.href` when present
