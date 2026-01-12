@@ -1024,6 +1024,13 @@ function renderMachinePanel(): HTMLElement {
             const ptr = machine.vga_framebuffer_ptr?.() ?? 0;
             const lenBytes = machine.vga_framebuffer_len_bytes?.() ?? 0;
             if (!Number.isSafeInteger(ptr) || !Number.isSafeInteger(lenBytes) || ptr < 0 || lenBytes < 0) return;
+            // Some builds may report a stride but still expose a tightly-packed framebuffer length.
+            // If the length matches `width*height*4`, treat it as tightly packed to avoid rejecting
+            // the scanout entirely.
+            if (lenBytes < requiredSrcBytes && lenBytes === requiredDstBytes) {
+              strideBytes = width * 4;
+              requiredSrcBytes = requiredDstBytes;
+            }
             if (lenBytes < requiredSrcBytes) return;
             const buf = wasmMemory.buffer;
             if (ptr > buf.byteLength || lenBytes > buf.byteLength - ptr) return;
