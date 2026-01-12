@@ -293,6 +293,10 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
       return KEY_RIGHTBRACE;
     case 0x31:
       return KEY_BACKSLASH;
+    // `IntlHash` is a layout-specific variant of the same physical key position as `Backslash`.
+    // Windows keyboard layouts commonly map both to the same scan code, so treat this as an alias.
+    case 0x32:
+      return KEY_BACKSLASH;
     case 0x33:
       return KEY_SEMICOLON;
     case 0x34:

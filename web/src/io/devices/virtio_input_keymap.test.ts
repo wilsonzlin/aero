@@ -29,6 +29,7 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       { usage: 0x2f, linuxKey: 26 }, // BracketLeft -> KEY_LEFTBRACE
       { usage: 0x30, linuxKey: 27 }, // BracketRight -> KEY_RIGHTBRACE
       { usage: 0x31, linuxKey: 43 }, // Backslash -> KEY_BACKSLASH
+      { usage: 0x32, linuxKey: 43 }, // IntlHash -> KEY_BACKSLASH (alias)
       { usage: 0x33, linuxKey: 39 }, // Semicolon -> KEY_SEMICOLON
       { usage: 0x34, linuxKey: 40 }, // Quote -> KEY_APOSTROPHE
       { usage: 0x35, linuxKey: 41 }, // Backquote -> KEY_GRAVE
@@ -97,6 +98,7 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       { code: "NumpadDivide", linuxKey: 98 }, // KEY_KPSLASH
       { code: "NumpadEnter", linuxKey: 96 }, // KEY_KPENTER
       { code: "NumpadDecimal", linuxKey: 83 }, // KEY_KPDOT
+      { code: "IntlHash", linuxKey: 43 }, // KEY_BACKSLASH (alias)
       { code: "IntlBackslash", linuxKey: 86 }, // KEY_102ND
       { code: "ContextMenu", linuxKey: 139 }, // KEY_MENU
     ];
