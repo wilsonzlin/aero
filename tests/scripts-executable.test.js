@@ -685,3 +685,22 @@ test(
     }
   },
 );
+
+test("safe-run.sh prints a hint when a command times out (Linux)", { skip: process.platform !== "linux" }, () => {
+  const res = spawnSync(path.join(repoRoot, "scripts/safe-run.sh"), ["bash", "-c", "sleep 3"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AERO_TIMEOUT: "1",
+    },
+  });
+
+  // `timeout` uses exit code 124 when it terminates the child after exceeding the timeout.
+  assert.equal(res.status, 124);
+  assert.match(res.stderr, /\[safe-run\] error: command exceeded timeout of 1s/);
+  assert.match(res.stderr, /\[safe-run\] Tip: retry with a larger timeout/);
+  // Next timeout is doubled (1 -> 2) and the original command is echoed (shell-escaped).
+  assert.match(res.stderr, /\[safe-run\]\s+AERO_TIMEOUT=2 bash \.\/scripts\/safe-run\.sh/);
+  assert.match(res.stderr, /\bsleep\\ 3\b/);
+});
