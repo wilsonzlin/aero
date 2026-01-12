@@ -34,6 +34,7 @@ import {
   remoteRangeDeliveryType,
   validateRemoteCacheMetaV1,
 } from "./remote_cache_manager";
+import { readJsonResponseWithLimit } from "./response_json";
 import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
@@ -51,6 +52,11 @@ export type DiskEntry = {
   readOnly: boolean;
   backendSnapshot: DiskBackendSnapshot | null;
 };
+
+// Defensive bound for remote JSON manifests (sha256 lists). These can come from untrusted servers,
+// so avoid reading/parsing arbitrarily large JSON blobs.
+const MAX_SHA256_MANIFEST_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
+const MAX_SHA256_MANIFEST_ENTRIES = 1_000_000;
 
 export type OpenDiskFn = (spec: DiskOpenSpec, mode: OpenMode, overlayBlockSizeBytes?: number) => Promise<DiskEntry>;
 
@@ -686,21 +692,41 @@ async function loadSha256Manifest(
   fetchFn: typeof fetch,
 ): Promise<string[] | undefined> {
   if (!integrity) return undefined;
-  if (integrity.kind === "sha256") return integrity.sha256;
+  if (integrity.kind === "sha256") {
+    if (integrity.sha256.length > MAX_SHA256_MANIFEST_ENTRIES) {
+      throw new Error(`sha256 manifest too large: max=${MAX_SHA256_MANIFEST_ENTRIES} got=${integrity.sha256.length}`);
+    }
+    const out: string[] = [];
+    for (const entry of integrity.sha256) {
+      const normalized = String(entry).trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(normalized)) {
+        throw new Error("sha256 manifest entries must be 64-char hex digests");
+      }
+      out.push(normalized);
+    }
+    return out;
+  }
 
   const resp = await fetchFn(integrity.manifestUrl, { method: "GET" });
   if (!resp.ok) throw new Error(`failed to fetch sha256 manifest: ${resp.status}`);
 
-  const json = (await resp.json()) as unknown;
+  const json = await readJsonResponseWithLimit(resp, { maxBytes: MAX_SHA256_MANIFEST_JSON_BYTES, label: "sha256 manifest" });
   if (!Array.isArray(json)) {
     throw new Error("sha256 manifest must be a JSON array of hex digests");
+  }
+  if (json.length > MAX_SHA256_MANIFEST_ENTRIES) {
+    throw new Error(`sha256 manifest too large: max=${MAX_SHA256_MANIFEST_ENTRIES} got=${json.length}`);
   }
   const out: string[] = [];
   for (const entry of json) {
     if (typeof entry !== "string") {
       throw new Error("sha256 manifest must be a JSON array of hex digests");
     }
-    out.push(entry);
+    const normalized = entry.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(normalized)) {
+      throw new Error("sha256 manifest entries must be 64-char hex digests");
+    }
+    out.push(normalized);
   }
   return out;
 }

@@ -22,6 +22,8 @@ const MAX_REMOTE_READ_AHEAD_BYTES = 512 * 1024 * 1024; // 512 MiB
 const MAX_REMOTE_MAX_RETRIES = 32;
 const MAX_REMOTE_MAX_CONCURRENT_FETCHES = 128;
 const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
+const MAX_REMOTE_SHA256_MANIFEST_ENTRIES = 1_000_000;
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 
 export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
   // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
@@ -788,6 +790,31 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.remoteEtag = remote.etag;
     this.remoteLastModified = remote.lastModified;
 
+    if (this.sha256Manifest) {
+      if (this.sha256Manifest.length > MAX_REMOTE_SHA256_MANIFEST_ENTRIES) {
+        throw new Error(
+          `sha256Manifest too large: max=${MAX_REMOTE_SHA256_MANIFEST_ENTRIES} got=${this.sha256Manifest.length}`,
+        );
+      }
+      const expectedChunks = divFloor(remote.sizeBytes - 1, this.opts.chunkSize) + 1;
+      if (this.sha256Manifest.length !== expectedChunks) {
+        throw new Error(
+          `sha256Manifest length mismatch: expected=${expectedChunks} actual=${this.sha256Manifest.length}`,
+        );
+      }
+      for (let i = 0; i < this.sha256Manifest.length; i++) {
+        const entry = this.sha256Manifest[i];
+        if (typeof entry !== "string") {
+          throw new Error("sha256Manifest entries must be 64-char hex digests");
+        }
+        const normalized = entry.trim().toLowerCase();
+        if (!SHA256_HEX_RE.test(normalized)) {
+          throw new Error("sha256Manifest entries must be 64-char hex digests");
+        }
+        this.sha256Manifest[i] = normalized;
+      }
+    }
+
     const existingMeta = await this.metadataStore.read(this.cacheId);
     const compatible = existingMeta ? this.isMetaCompatible(existingMeta, remote) : false;
 
@@ -1319,11 +1346,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     if (this.sha256Manifest) {
       const expected = this.sha256Manifest[chunkIndex];
-      if (expected) {
-        const actual = await sha256Hex(body);
-        if (actual !== expected) {
-          throw new Error(`sha256 mismatch for chunk ${chunkIndex}`);
-        }
+      if (!expected) {
+        throw new Error(`sha256Manifest missing entry for chunk ${chunkIndex}`);
+      }
+      const actual = await sha256Hex(body);
+      if (actual !== expected) {
+        throw new Error(`sha256 mismatch for chunk ${chunkIndex}`);
       }
     }
 

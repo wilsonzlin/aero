@@ -8,6 +8,8 @@
  *
  * See `docs/20-storage-trait-consolidation.md`.
  */
+
+import { readJsonResponseWithLimit } from "./response_json";
 export interface DiskAccessLease {
   /**
    * Ephemeral URL to fetch bytes from. For signed-URL auth, this includes the signature
@@ -35,6 +37,9 @@ export interface DiskAccessLease {
 
 export const DEFAULT_LEASE_REFRESH_MARGIN_MS = 60_000;
 const LEASE_REFRESH_FAILURE_RETRY_MS = 10_000;
+// Defensive bound for lease API responses. These should be tiny, but keep a cap to avoid
+// pathological allocations if the endpoint is misconfigured or attacker-controlled.
+export const MAX_STREAM_LEASE_JSON_BYTES = 1024 * 1024; // 1 MiB
 // In both browsers and Node, `setTimeout()` has an effective maximum delay of
 // ~2^31-1 ms (~24.8 days). Passing a larger value can overflow/clamp and cause the
 // callback to run immediately (or very soon), potentially hammering the lease
@@ -284,7 +289,8 @@ async function fetchStreamLease(endpoint: string, fetchFn: typeof fetch): Promis
   if (!resp.ok) {
     throw new Error(`failed to fetch stream lease: ${resp.status}`);
   }
-  return parseStreamLeaseResponse((await resp.json()) as unknown);
+  const json = await readJsonResponseWithLimit(resp, { maxBytes: MAX_STREAM_LEASE_JSON_BYTES, label: "stream lease response" });
+  return parseStreamLeaseResponse(json);
 }
 
 /**

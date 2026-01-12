@@ -4,6 +4,7 @@ import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk }
 import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
 import { RemoteCacheManager, remoteChunkedDeliveryType, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
+import { readJsonResponseWithLimit } from "./response_json";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
   DiskAccessLeaseRefresher,
@@ -26,6 +27,10 @@ export const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
  * unbounded allocations on malicious inputs.
  */
 export const MAX_REMOTE_CHUNK_COUNT = 500_000;
+// Defensive bound: avoid reading/parsing arbitrarily large manifest JSON blobs. This must be large
+// enough to support realistic chunk counts while still preventing runaway allocations from
+// malicious servers.
+export const MAX_REMOTE_MANIFEST_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
 // Defensive bounds for user-provided tuning knobs. These values can come from untrusted snapshot
 // metadata or external configuration, so keep them bounded to avoid pathological background work
 // (e.g. thousands of background chunk prefetches or hundreds of concurrent 64MiB downloads).
@@ -1117,7 +1122,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
     const resp = await fetchWithDiskAccessLease(params.lease, { method: "GET" }, { retryAuthOnce: true });
     if (!resp.ok) throw new Error(`failed to fetch manifest: ${resp.status}`);
-    const json = (await resp.json()) as unknown;
+    const json = await readJsonResponseWithLimit(resp, { maxBytes: MAX_REMOTE_MANIFEST_JSON_BYTES, label: "manifest.json" });
     const manifest = parseManifest(json);
 
     // Keep sequential prefetch and in-flight concurrency bounded. Compute using BigInt to avoid

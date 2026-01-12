@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { MAX_REMOTE_CHUNK_COUNT, RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
+import { MAX_REMOTE_CHUNK_COUNT, MAX_REMOTE_MANIFEST_JSON_BYTES, RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
 import { remoteChunkedDeliveryType, RemoteCacheManager } from "./remote_cache_manager";
 
@@ -232,6 +232,30 @@ describe("RemoteChunkedDisk", () => {
         store: new TestMemoryStore(),
       }),
     ).rejects.toThrow(/chunkSize.*max/i);
+  });
+
+  it("rejects manifests with Content-Length larger than MAX_REMOTE_MANIFEST_JSON_BYTES", async () => {
+    const fetchFn = vi
+      .fn<[RequestInfo | URL, RequestInit?], Promise<Response>>()
+      .mockResolvedValue(
+        new Response("{}", {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(MAX_REMOTE_MANIFEST_JSON_BYTES + 1),
+          },
+        }),
+      );
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = fetchFn as unknown as typeof fetch;
+    try {
+      await expect(
+        RemoteChunkedDisk.open("https://example.invalid/manifest.json", { store: new TestMemoryStore() }),
+      ).rejects.toThrow(/manifest\.json.*too large/i);
+    } finally {
+      (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = originalFetch;
+    }
   });
 
   it("rejects excessive prefetchSequentialChunks", async () => {

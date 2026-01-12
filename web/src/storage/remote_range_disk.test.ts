@@ -470,6 +470,27 @@ describe("RemoteRangeDisk", () => {
     ).rejects.toThrow(/inflight bytes too large/i);
   });
 
+  it("rejects sha256Manifest length mismatch", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    await expect(
+      RemoteRangeDisk.open(server.url, {
+        cacheKeyParts: { imageId: "sha256-mismatch", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        sha256Manifest: ["0".repeat(64)], // should be 2 chunks
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+      }),
+    ).rejects.toThrow(/sha256Manifest length mismatch/i);
+  });
+
   it("single read triggers exactly one Range fetch", async () => {
     const chunkSize = 1024 * 1024;
     const data = makeTestData(2 * chunkSize);

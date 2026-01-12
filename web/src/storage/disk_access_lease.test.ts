@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DiskAccessLeaseRefresher,
+  MAX_STREAM_LEASE_JSON_BYTES,
   MAX_TIMEOUT_MS,
+  createDiskAccessLeaseFromLeaseEndpoint,
   fetchWithDiskAccessLease,
   fetchWithDiskAccessLeaseForUrl,
   type DiskAccessLease,
@@ -153,5 +155,22 @@ describe("fetchWithDiskAccessLeaseForUrl", () => {
     expect(fetchFn.mock.calls[0]?.[0]).toBe("https://cdn.example.test/base?sig=1&chunk=1");
     expect(fetchFn.mock.calls[1]?.[0]).toBe("https://cdn.example.test/base?sig=2&chunk=1");
     expect(resp.status).toBe(200);
+  });
+});
+
+describe("createDiskAccessLeaseFromLeaseEndpoint", () => {
+  it("rejects oversized lease responses before JSON parsing", async () => {
+    const fetchFn = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>().mockResolvedValue(
+      new Response("{}", {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(MAX_STREAM_LEASE_JSON_BYTES + 1),
+        },
+      }),
+    );
+
+    const lease = createDiskAccessLeaseFromLeaseEndpoint("/lease", { delivery: "range", fetchFn });
+    await expect(lease.refresh()).rejects.toThrow(/too large/i);
   });
 });
