@@ -123,6 +123,10 @@ fn cb0_load_vec4_f32(reg: u32) -> vec4<f32> {
 
 This mirrors how SM4/5 actually addresses constants and removes the need to precisely reproduce HLSL packing rules in WGSL structs.
 
+Note: the `@group(N)` index is **stage-scoped** in Aero (VS=0, PS=1, CS=2). The example above shows
+the vertex shader group; a pixel shader cbuffer declaration would use `@group(1)` instead (see
+“Resource binding mapping”).
+
 ### Dynamic updates and renaming
 
 `MAP_WRITE_DISCARD` is naturally implemented as **buffer renaming**:
@@ -288,20 +292,65 @@ SM4/5 binds resources using:
 - SRV textures/buffers: `t#`
 - UAVs: `u#` (SM5)
 
-Translate to bind groups using a deterministic scheme, e.g.:
+In Aero, the **implemented** SM4/SM5 → WGSL binding model is stage-scoped and deterministic. It is
+shared by the shader translator and the command-stream executor (see
+`crates/aero-d3d11/src/binding_model.rs` and its use in `crates/aero-d3d11/src/shader_translate.rs`).
 
-- `group(0)`: constant buffers
-- `group(1)`: samplers + SRV textures
-- `group(2)`: UAV buffers/textures (only when required)
+#### Bind groups are stage-scoped
 
-Binding numbers should be stable and derived from the D3D register indices, so the runtime can bind without per-shader bespoke logic:
+Bind groups map 1:1 to D3D11 shader stages:
 
-- `cb0 → (group0, binding0)`
-- `cb1 → (group0, binding1)`
-- `t0  → (group1, binding0)`
-- `s0  → (group1, bindingN + 0)` (after textures)
+- `@group(0)`: vertex shader (VS) resources
+- `@group(1)`: pixel/fragment shader (PS) resources
+- `@group(2)`: compute shader (CS) resources (reserved for future SM5 CS support)
 
-The exact packing must respect WebGPU binding limits; if limits are exceeded, the translator can pack “rare” resources into arrays (e.g., texture arrays of a single dimension) or split into additional groups.
+Why stage-scoped?
+
+- D3D11 resource bindings are tracked per-stage, and stages can be rebound independently.
+- Using stage-scoped bind groups lets the runtime keep simple shadow-state and caches per stage:
+  rebinding VS resources only invalidates/rebuilds `group(0)`, PS only touches `group(1)`, etc.
+- It also keeps pipeline layout assembly straightforward: render pipelines use the VS + PS group
+  layouts (0 and 1), compute pipelines use the CS layout (2).
+
+#### Binding numbers use disjoint offset ranges
+
+Within each stage’s bind group, D3D register spaces are mapped into disjoint `@binding` ranges so
+`cb#/b#`, `t#`, and `s#` can coexist without collisions. Binding numbers are computed as:
+
+`binding = BINDING_BASE_* + d3d_slot_index`
+
+The base offsets are defined in `crates/aero-d3d11/src/binding_model.rs`:
+
+- `BINDING_BASE_CBUFFER = 0` for constant buffers (`cb#` / `b#`)
+- `BINDING_BASE_TEXTURE = 32` for SRV textures (`t#`)
+- `BINDING_BASE_SAMPLER = 160` for samplers (`s#`)
+
+Examples:
+
+- VS `cb0` → `@group(0) @binding(0)`
+- PS `cb0` → `@group(1) @binding(0)` (same slot/binding, different stage group)
+- PS `t0`  → `@group(1) @binding(32)`
+- PS `s0`  → `@group(1) @binding(160)`
+
+This keeps bindings stable (derived directly from D3D slot indices) without requiring per-shader
+rebinding logic.
+
+#### Only resources used by the shader are emitted/bound
+
+D3D11 exposes many binding slots (e.g. 128 SRVs per stage), but typical shaders use only a small
+subset. The translator **scans the decoded instruction stream** to determine which resources are
+actually referenced, and emits WGSL declarations (and reflection binding metadata) only for those
+resources.
+
+The runtime then builds bind group layouts / bind groups from the reflected set of used bindings,
+which keeps the implementation within WebGPU’s per-stage binding limits even if the application
+binds many unused D3D resources.
+
+#### Future work: UAVs and additional resource types
+
+SM5 UAVs (`u#`), SRV buffers, structured buffers, storage textures, and additional texture
+dimensions will need additional WGSL types and likely another disjoint `@binding` range per stage.
+This is planned for P2 (compute/UAV-heavy workloads) but is not part of the current implementation.
 
 ---
 
