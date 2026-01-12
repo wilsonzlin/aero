@@ -433,6 +433,33 @@ fn pc_platform_virtio_blk_uses_injected_disk_for_reads_and_writes() {
 
     assert_eq!(pc.memory.read_u8(status), 1, "OOB read should return IOERR");
     assert_eq!(pc.memory.read_u16(USED_RING + 2), 4);
+
+    // --- Request 4: WRITE beyond the injected disk capacity should return IOERR. ---
+    let _ = pc.memory.read_u8(bar0_base + ISR);
+    pc.memory.write_u32(header, VIRTIO_BLK_T_OUT);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, DISK_SECTORS); // OOB: valid sectors are 0..DISK_SECTORS-1
+    pc.memory.write_u8(status, 0xff);
+
+    write_desc(&mut pc, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut pc,
+        DESC_TABLE,
+        1,
+        data,
+        VIRTIO_BLK_SECTOR_SIZE as u32,
+        VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(&mut pc, DESC_TABLE, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING + 12, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 5);
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+    pc.process_virtio_blk();
+
+    assert_eq!(pc.memory.read_u8(status), 1, "OOB write should return IOERR");
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 5);
 }
 
 #[test]

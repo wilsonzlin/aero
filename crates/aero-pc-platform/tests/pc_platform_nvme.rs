@@ -972,6 +972,26 @@ fn pc_platform_new_with_nvme_disk_uses_backend_for_read_and_write_io() {
         0,
         "OOB read should return a non-success NVMe status"
     );
+
+    // WRITE beyond the injected disk capacity should return an error status.
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 0x24);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_buf);
+    set_cdw10(&mut cmd, DISK_SECTORS as u32); // OOB: valid LBAs are 0..DISK_SECTORS-1
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    pc.memory.write_physical(io_sq + 256, &cmd);
+    pc.memory.write_u32(bar0_base + 0x1008, 5); // SQ1 tail = 5
+    pc.process_nvme();
+
+    let cqe = read_cqe(&mut pc, io_cq + 64);
+    assert_eq!(cqe.cid, 0x24);
+    assert_ne!(
+        cqe.status & !0x1,
+        0,
+        "OOB write should return a non-success NVMe status"
+    );
 }
 
 #[test]
