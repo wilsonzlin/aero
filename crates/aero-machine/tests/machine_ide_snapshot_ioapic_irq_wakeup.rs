@@ -588,3 +588,119 @@ fn machine_snapshot_roundtrip_preserves_inflight_ide_dma_write_and_wakes_hlt_via
         restored.read_physical_u8(u64::from(flag_addr))
     );
 }
+
+#[test]
+fn machine_snapshot_roundtrip_preserves_pending_irq14_when_nien_is_set_until_cleared_in_apic_mode()
+{
+    const RAM_SIZE: u64 = 2 * 1024 * 1024;
+    const VECTOR: u8 = 0x63;
+
+    let cfg = MachineConfig {
+        ram_size_bytes: RAM_SIZE,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on IDE IRQ latch semantics + snapshot/restore + IOAPIC delivery.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    // Attach a small disk so ATA IDENTIFY has a target.
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    src.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
+    // Route IOAPIC vector into a real-mode handler that writes a flag byte.
+    let handler_addr = 0x8000u64;
+    let code_base = 0x9000u64;
+    let flag_addr = 0x0503u16;
+    let flag_value = 0xC7_u8;
+
+    src.write_physical_u8(u64::from(flag_addr), 0);
+
+    install_real_mode_handler(&mut src, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut src, code_base);
+    write_ivt_entry(&mut src, VECTOR, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut src, code_base);
+
+    // Halt the CPU first so any interrupt must wake it.
+    assert!(matches!(src.run_slice(16), RunExit::Halted { .. }));
+
+    // Switch to APIC mode and program IOAPIC redirection entry for GSI14 -> VECTOR.
+    {
+        let interrupts = src
+            .platform_interrupts()
+            .expect("pc platform should provide interrupts");
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_redirection_entry(&mut ints, 14, u32::from(VECTOR), 0);
+    }
+
+    // Enable PCI I/O decode for the IDE function (PIO access).
+    let bdf = IDE_PIIX3.bdf;
+    write_cfg_u16(&mut src, bdf, 0x04, 0x0001);
+
+    // Set nIEN (Device Control bit1) to mask interrupt output.
+    src.io_write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // Issue ATA IDENTIFY DEVICE (0xEC) via legacy ports.
+    src.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+    src.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+
+    // Verify that IDENTIFY data is reachable via the data port (0x1F0).
+    let word0 = src.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
+    assert_eq!(word0, 0x0040);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    assert!(
+        restored.cpu().halted,
+        "CPU should remain halted after snapshot restore"
+    );
+    assert_eq!(
+        restored.platform_interrupts().unwrap().borrow().mode(),
+        PlatformInterruptMode::Apic,
+        "platform interrupt mode should survive snapshot restore"
+    );
+
+    // Host contract: controller restore drops attached disks; reattach after restoring state.
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    restored
+        .attach_ide_primary_master_disk(Box::new(disk))
+        .unwrap();
+
+    // While nIEN is still set, the interrupt must not be delivered.
+    for _ in 0..5 {
+        let _ = restored.run_slice(256);
+        assert_ne!(
+            restored.read_physical_u8(u64::from(flag_addr)),
+            flag_value,
+            "IRQ14 should be masked while nIEN=1 after snapshot restore"
+        );
+    }
+
+    // Clear nIEN; the pending IRQ should now be delivered and wake the CPU.
+    restored.io_write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+
+    for _ in 0..50 {
+        let _ = restored.run_slice(256);
+        if restored.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "pending IRQ14 was not delivered after clearing nIEN post-restore (flag=0x{:02x})",
+        restored.read_physical_u8(u64::from(flag_addr))
+    );
+}
