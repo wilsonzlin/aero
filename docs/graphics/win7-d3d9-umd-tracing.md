@@ -175,6 +175,12 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a2 = pack_u32_u32(sync_interval, d3d9_present_flags)`
   - `a3 = hSrc.pDrvPrivate`
 
+- `Device::Present`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = hSwapChain.pDrvPrivate`
+  - `a2 = hSrc.pDrvPrivate`
+  - `a3 = pack_u32_u32(sync_interval, d3d9_present_flags)`
+
 - `Device::GetQueryData`
   - `a0 = hDevice.pDrvPrivate`
   - `a1 = hQuery.pDrvPrivate`
@@ -247,6 +253,17 @@ This trace is meant to be lightweight, so most values are logged as raw integers
     - `a1 = arg1` (runtime-specific)
     - `a2 = arg2` (runtime-specific)
     - `a3 = gamma ramp pointer`
+
+- Resource priority + autogen filter type (cached-only):
+  - `Device::SetPriority` / `Device::GetPriority`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = hResource.pDrvPrivate`
+    - `a2 = new priority` (Set) or `pPriority` pointer (Get)
+    - `a3 = pOldPriority` pointer (Set, when present)
+  - `Device::SetAutoGenFilterType` / `Device::GetAutoGenFilterType`
+    - `a0 = hDevice.pDrvPrivate`
+    - `a1 = hResource.pDrvPrivate`
+    - `a2 = new filter type` (Set) or `pFilterType` pointer (Get)
 
 The exact packing per entrypoint is defined where the DDI is instrumented:
 `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp` (search for `D3d9TraceCall`).
