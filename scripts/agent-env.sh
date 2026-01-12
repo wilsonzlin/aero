@@ -176,7 +176,9 @@ if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
   # If we already have the native-style `-Wl,--threads=...` in the environment but are building
   # wasm32 (via CARGO_BUILD_TARGET), rewrite it to the wasm-compatible form.
   if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+    # Handle both `-C link-arg=...` and `-Clink-arg=...` spellings.
     export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+    export RUSTFLAGS="${RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
     export RUSTFLAGS="${RUSTFLAGS# }"
   fi
 

@@ -240,7 +240,9 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
         # is wasm32. Otherwise, `rust-lld -flavor wasm` fails with:
         #   rust-lld: error: unknown argument: -Wl,--threads=...
         if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+            # Handle both `-C link-arg=...` and `-Clink-arg=...` spellings.
             export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+            export RUSTFLAGS="${RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
             export RUSTFLAGS="${RUSTFLAGS# }"
         fi
 

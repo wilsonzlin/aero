@@ -215,6 +215,29 @@ test("agent-env: uses --threads=<n> for wasm32 when CARGO_BUILD_TARGET is set", 
   }
 });
 
+test("agent-env: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 targets", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    env.RUSTFLAGS = "-C link-arg=-Wl,--threads=7";
+    env.CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    if (process.platform === "linux") {
+      assert.match(stdout, /-C link-arg=--threads=7\b/);
+      assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm32 RUSTFLAGS to avoid -Wl,--threads, got: ${stdout}`);
+    }
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
