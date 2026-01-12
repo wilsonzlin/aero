@@ -9,7 +9,7 @@ mod drain_queue;
 mod wasm {
     use std::cell::RefCell;
     use std::collections::HashSet;
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
 
     use crate::drain_queue::DrainQueue;
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
@@ -106,11 +106,11 @@ mod wasm {
             RefCell::new(AeroGpuCommandProcessor::new());
     }
 
-    static GPU_STATS: OnceLock<GpuStats> = OnceLock::new();
+    static GPU_STATS: OnceLock<Arc<GpuStats>> = OnceLock::new();
     static GPU_EVENT_QUEUE: OnceLock<DrainQueue<GpuErrorEvent>> = OnceLock::new();
 
-    fn gpu_stats() -> &'static GpuStats {
-        GPU_STATS.get_or_init(GpuStats::new)
+    fn gpu_stats() -> &'static Arc<GpuStats> {
+        GPU_STATS.get_or_init(|| Arc::new(GpuStats::new()))
     }
 
     fn gpu_event_queue() -> &'static DrainQueue<GpuErrorEvent> {
@@ -2423,7 +2423,12 @@ mod wasm {
                 .await
                 {
                     Ok((presenter, device, queue, adapter_info, downlevel_flags)) => {
-                        let executor = AerogpuD3d9Executor::new(device, queue, downlevel_flags);
+                        let executor = AerogpuD3d9Executor::new(
+                            device,
+                            queue,
+                            downlevel_flags,
+                            gpu_stats().clone(),
+                        );
 
                         D3D9_STATE.with(|slot| {
                             *slot.borrow_mut() = Some(AerogpuD3d9State {
@@ -2494,7 +2499,8 @@ mod wasm {
                 },
             };
 
-            let executor = AerogpuD3d9Executor::new(device, queue, downlevel_flags);
+            let executor =
+                AerogpuD3d9Executor::new(device, queue, downlevel_flags, gpu_stats().clone());
             D3D9_STATE.with(|slot| {
                 *slot.borrow_mut() = Some(AerogpuD3d9State {
                     backend_kind: GpuBackendKind::WebGpu,

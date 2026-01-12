@@ -23,6 +23,7 @@ use crate::bc_decompress::{
 };
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
+use crate::stats::GpuStats;
 use crate::texture_manager::TextureRegion;
 use crate::{readback_depth32f, readback_rgba8, readback_stencil8};
 
@@ -34,6 +35,7 @@ use crate::{readback_depth32f, readback_rgba8, readback_stencil8};
 pub struct AerogpuD3d9Executor {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    stats: Arc<GpuStats>,
 
     shader_cache: shader::ShaderCache,
 
@@ -870,13 +872,19 @@ impl AerogpuD3d9Executor {
             .await
             .map_err(|e| AerogpuD3d9Error::RequestDevice(e.to_string()))?;
 
-        Ok(Self::new(device, queue, downlevel_flags))
+        Ok(Self::new(
+            device,
+            queue,
+            downlevel_flags,
+            Arc::new(GpuStats::new()),
+        ))
     }
 
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
         downlevel_flags: wgpu::DownlevelFlags,
+        stats: Arc<GpuStats>,
     ) -> Self {
         // The D3D9 token-stream translator packs vertex + pixel constant registers into a single
         // uniform buffer:
@@ -977,6 +985,7 @@ impl AerogpuD3d9Executor {
         Self {
             device,
             queue,
+            stats,
             shader_cache: shader::ShaderCache::default(),
             resources: HashMap::new(),
             resource_handles: HashMap::new(),
@@ -3767,6 +3776,14 @@ impl AerogpuD3d9Executor {
                     .shader_cache
                     .get_or_translate(dxbc_bytes)
                     .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
+                match cached.source {
+                    shader::ShaderCacheLookupSource::Memory => {
+                        self.stats.inc_d3d9_shader_cache_memory_hits();
+                    }
+                    shader::ShaderCacheLookupSource::Translated => {
+                        self.stats.inc_d3d9_shader_translate_calls();
+                    }
+                }
                 let bytecode_stage = cached.ir.version.stage;
                 if expected_stage != bytecode_stage {
                     return Err(AerogpuD3d9Error::ShaderStageMismatch {

@@ -1475,24 +1475,52 @@ pub struct CachedShader {
     pub wgsl: WgslOutput,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShaderCacheLookupSource {
+    /// The shader was already present in the in-memory cache.
+    Memory,
+    /// The translator ran and the output was inserted into the in-memory cache.
+    Translated,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ShaderCacheLookup<'a> {
+    pub source: ShaderCacheLookupSource,
+    shader: &'a CachedShader,
+}
+
+impl std::ops::Deref for ShaderCacheLookup<'_> {
+    type Target = CachedShader;
+
+    fn deref(&self) -> &Self::Target {
+        self.shader
+    }
+}
+
 #[derive(Default)]
 pub struct ShaderCache {
     map: HashMap<Hash, CachedShader>,
 }
 
 impl ShaderCache {
-    pub fn get_or_translate(&mut self, bytes: &[u8]) -> Result<&CachedShader, ShaderError> {
+    pub fn get_or_translate(&mut self, bytes: &[u8]) -> Result<ShaderCacheLookup<'_>, ShaderError> {
         use std::collections::hash_map::Entry;
 
         let hash = blake3::hash(bytes);
         match self.map.entry(hash) {
-            Entry::Occupied(e) => Ok(e.into_mut()),
+            Entry::Occupied(e) => Ok(ShaderCacheLookup {
+                source: ShaderCacheLookupSource::Memory,
+                shader: e.into_mut(),
+            }),
             Entry::Vacant(e) => {
                 let program = parse(bytes)?;
                 let ir = to_ir(&program);
                 let wgsl = generate_wgsl(&ir);
                 let hash = *e.key();
-                Ok(e.insert(CachedShader { hash, ir, wgsl }))
+                Ok(ShaderCacheLookup {
+                    source: ShaderCacheLookupSource::Translated,
+                    shader: e.insert(CachedShader { hash, ir, wgsl }),
+                })
             }
         }
     }

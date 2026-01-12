@@ -30,11 +30,30 @@ pub struct GpuStats {
     recoveries_attempted: AtomicU64,
     recoveries_succeeded: AtomicU64,
     surface_reconfigures: AtomicU64,
+
+    // ---------------------------------------------------------------------
+    // D3D9 shader translation + cache counters (WG-010(D))
+    // ---------------------------------------------------------------------
+    d3d9_shader_translate_calls: AtomicU64,
+    d3d9_shader_cache_persistent_hits: AtomicU64,
+    d3d9_shader_cache_persistent_misses: AtomicU64,
+    d3d9_shader_cache_memory_hits: AtomicU64,
+    /// 0/1 flag: whether the persistent shader cache is disabled/unavailable.
+    d3d9_shader_cache_disabled: AtomicU64,
 }
 
 impl GpuStats {
     pub fn new() -> Self {
-        Self::default()
+        let stats = Self::default();
+        // Persistent caching is only supported in the browser/WASM build; native builds always
+        // report `disabled=1`.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            stats
+                .d3d9_shader_cache_disabled
+                .store(1, Ordering::Relaxed);
+        }
+        stats
     }
 
     pub fn inc_presents_attempted(&self) {
@@ -57,6 +76,31 @@ impl GpuStats {
         self.surface_reconfigures.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn inc_d3d9_shader_translate_calls(&self) {
+        self.d3d9_shader_translate_calls
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_d3d9_shader_cache_persistent_hits(&self) {
+        self.d3d9_shader_cache_persistent_hits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_d3d9_shader_cache_persistent_misses(&self) {
+        self.d3d9_shader_cache_persistent_misses
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_d3d9_shader_cache_memory_hits(&self) {
+        self.d3d9_shader_cache_memory_hits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn set_d3d9_shader_cache_disabled(&self, disabled: bool) {
+        self.d3d9_shader_cache_disabled
+            .store(disabled as u64, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> GpuStatsSnapshot {
         GpuStatsSnapshot {
             presents_attempted: self.presents_attempted.load(Ordering::Relaxed),
@@ -64,6 +108,17 @@ impl GpuStats {
             recoveries_attempted: self.recoveries_attempted.load(Ordering::Relaxed),
             recoveries_succeeded: self.recoveries_succeeded.load(Ordering::Relaxed),
             surface_reconfigures: self.surface_reconfigures.load(Ordering::Relaxed),
+            d3d9_shader_translate_calls: self.d3d9_shader_translate_calls.load(Ordering::Relaxed),
+            d3d9_shader_cache_persistent_hits: self
+                .d3d9_shader_cache_persistent_hits
+                .load(Ordering::Relaxed),
+            d3d9_shader_cache_persistent_misses: self
+                .d3d9_shader_cache_persistent_misses
+                .load(Ordering::Relaxed),
+            d3d9_shader_cache_memory_hits: self
+                .d3d9_shader_cache_memory_hits
+                .load(Ordering::Relaxed),
+            d3d9_shader_cache_disabled: self.d3d9_shader_cache_disabled.load(Ordering::Relaxed),
         }
     }
 
@@ -85,17 +140,28 @@ pub struct GpuStatsSnapshot {
     pub recoveries_attempted: u64,
     pub recoveries_succeeded: u64,
     pub surface_reconfigures: u64,
+
+    pub d3d9_shader_translate_calls: u64,
+    pub d3d9_shader_cache_persistent_hits: u64,
+    pub d3d9_shader_cache_persistent_misses: u64,
+    pub d3d9_shader_cache_memory_hits: u64,
+    pub d3d9_shader_cache_disabled: u64,
 }
 
 impl GpuStatsSnapshot {
     pub fn to_json(self) -> String {
         format!(
-            "{{\"presents_attempted\":{},\"presents_succeeded\":{},\"recoveries_attempted\":{},\"recoveries_succeeded\":{},\"surface_reconfigures\":{}}}",
+            "{{\"presents_attempted\":{},\"presents_succeeded\":{},\"recoveries_attempted\":{},\"recoveries_succeeded\":{},\"surface_reconfigures\":{},\"d3d9_shader_translate_calls\":{},\"d3d9_shader_cache_persistent_hits\":{},\"d3d9_shader_cache_persistent_misses\":{},\"d3d9_shader_cache_memory_hits\":{},\"d3d9_shader_cache_disabled\":{}}}",
             self.presents_attempted,
             self.presents_succeeded,
             self.recoveries_attempted,
             self.recoveries_succeeded,
-            self.surface_reconfigures
+            self.surface_reconfigures,
+            self.d3d9_shader_translate_calls,
+            self.d3d9_shader_cache_persistent_hits,
+            self.d3d9_shader_cache_persistent_misses,
+            self.d3d9_shader_cache_memory_hits,
+            self.d3d9_shader_cache_disabled
         )
     }
 }
@@ -109,8 +175,12 @@ mod tests {
         let stats = GpuStats::new();
         stats.inc_presents_attempted();
         stats.inc_surface_reconfigures();
+        stats.inc_d3d9_shader_translate_calls();
+        stats.inc_d3d9_shader_cache_memory_hits();
         let json = stats.to_json();
         assert!(json.contains("\"presents_attempted\":1"));
         assert!(json.contains("\"surface_reconfigures\":1"));
+        assert!(json.contains("\"d3d9_shader_translate_calls\":1"));
+        assert!(json.contains("\"d3d9_shader_cache_memory_hits\":1"));
     }
 }
