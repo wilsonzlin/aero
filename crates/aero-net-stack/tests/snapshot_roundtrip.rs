@@ -165,6 +165,34 @@ fn snapshot_rejects_excessive_dns_cache_entry_count() {
     assert_eq!(err, SnapshotError::InvalidFieldEncoding("too many dns cache entries"));
 }
 
+#[test]
+fn snapshot_loads_legacy_device_id_header() {
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
+    let mut stack = NetworkStack::new(cfg.clone());
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    dhcp_handshake(&mut stack, guest_mac);
+
+    let bytes = stack.save_state();
+    assert_eq!(&bytes[8..12], b"NETS");
+
+    // Older snapshots used an accidental device id for the network stack blob. Ensure we can still
+    // decode them.
+    let mut legacy = bytes.clone();
+    legacy[8..12].copy_from_slice(&[b'N', b'S', b'T', b'K']);
+
+    let mut restored = NetworkStack::new(cfg);
+    restored
+        .load_state(&legacy)
+        .expect("legacy snapshot should decode");
+    assert!(restored.is_ip_assigned());
+
+    // Re-saving always uses the canonical device id.
+    let resaved = restored.save_state();
+    assert_eq!(&resaved[8..12], b"NETS");
+}
+
 fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
     let xid = 0x1020_3040;
     let discover = build_dhcp_discover(xid, guest_mac);
