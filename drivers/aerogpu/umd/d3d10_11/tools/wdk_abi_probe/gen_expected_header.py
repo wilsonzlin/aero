@@ -129,6 +129,14 @@ def _emit_header(x86: ProbeData, x64: ProbeData, *, allow_na: bool, emit_all: bo
         out: list[str] = []
 
         if emit_all:
+            if data.offsetof_na and not allow_na:
+                examples = ", ".join(f"{t}.{m}" for (t, m) in sorted(data.offsetof_na)[:5])
+                suffix = "" if len(data.offsetof_na) <= 5 else f" (and {len(data.offsetof_na) - 5} more)"
+                raise SystemExit(
+                    "Probe output contained one or more 'offsetof(...)=<n/a>' entries "
+                    f"({examples}{suffix}); pass --allow-na to omit those macros"
+                )
+
             if include_exports:
                 out.extend(
                     [
