@@ -586,6 +586,39 @@ test("agent-env: strips lld --threads link-args from global RUSTFLAGS (nested wa
   }
 });
 
+test("agent-env: strips lld --threads from CARGO_ENCODED_RUSTFLAGS (nested wasm safety)", { skip: process.platform !== "linux" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const sep = String.fromCharCode(0x1f);
+    const encoded = ["-C", "link-arg=-Wl,--threads=99", "-Clink-arg=--threads=100", "-C", "opt-level=2"].join(sep);
+
+    const stdout = execFileSync(
+      "bash",
+      [
+        "-c",
+        'source scripts/agent-env.sh >/dev/null; printf "%s\\n%s" "${CARGO_ENCODED_RUSTFLAGS:-}" "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}"',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AERO_CARGO_BUILD_JOBS: "2",
+          CARGO_ENCODED_RUSTFLAGS: encoded,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const [gotEncoded, wasmFlags] = stdout.split("\n");
+    assert.equal(gotEncoded, ["-C", "opt-level=2"].join(sep));
+    assert.match(wasmFlags, /-C link-arg=--threads=2\b/);
+    assert.ok(!wasmFlags.includes("-Wl,--threads="), `expected wasm rustflags to avoid -Wl,--threads, got: ${wasmFlags}`);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {

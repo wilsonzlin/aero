@@ -557,6 +557,47 @@ if [[ "${is_retryable_cmd}" == "true" ]] && [[ "$(uname 2>/dev/null || true)" ==
         unset aero_rustflags new_rustflags tok next i 2>/dev/null || true
     fi
 
+    # Cargo also supports `CARGO_ENCODED_RUSTFLAGS` (Unit Separator-delimited) which applies to all
+    # targets. If it contains `-Wl,--threads=...`, it can break nested wasm builds in the same way
+    # as global `RUSTFLAGS`.
+    if [[ "${CARGO_ENCODED_RUSTFLAGS:-}" == *"--threads="* || "${CARGO_ENCODED_RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+        aero_sep=$'\x1f'
+        aero_enc_rustflags=()
+        # Split on the Unit Separator (0x1f).
+        IFS="${aero_sep}" read -r -a aero_enc_rustflags <<< "${CARGO_ENCODED_RUSTFLAGS}"
+        new_enc_rustflags=()
+        i=0
+        while [[ $i -lt ${#aero_enc_rustflags[@]} ]]; do
+            tok="${aero_enc_rustflags[$i]}"
+            next=""
+            if [[ $((i + 1)) -lt ${#aero_enc_rustflags[@]} ]]; then
+                next="${aero_enc_rustflags[$((i + 1))]}"
+            fi
+
+            if [[ "${tok}" == "-C" ]] && ([[ "${next}" == link-arg=-Wl,--threads=* ]] || [[ "${next}" == link-arg=--threads=* ]]); then
+                i=$((i + 2))
+                continue
+            fi
+            if [[ "${tok}" == -Clink-arg=-Wl,--threads=* ]] || [[ "${tok}" == -Clink-arg=--threads=* ]]; then
+                i=$((i + 1))
+                continue
+            fi
+
+            new_enc_rustflags+=("${tok}")
+            i=$((i + 1))
+        done
+
+        enc_joined=""
+        for tok in "${new_enc_rustflags[@]}"; do
+            if [[ -n "${enc_joined}" ]]; then
+                enc_joined+="${aero_sep}"
+            fi
+            enc_joined+="${tok}"
+        done
+        export CARGO_ENCODED_RUSTFLAGS="${enc_joined}"
+        unset aero_sep aero_enc_rustflags new_enc_rustflags enc_joined tok next i 2>/dev/null || true
+    fi
+
     unset aero_host_target 2>/dev/null || true
     unset -f _aero_add_lld_threads_rustflags_retryable 2>/dev/null || true
 fi
@@ -714,6 +755,46 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
             export RUSTFLAGS="${new_rustflags[*]}"
             export RUSTFLAGS="${RUSTFLAGS# }"
             unset aero_rustflags new_rustflags tok next i 2>/dev/null || true
+        fi
+
+        # Like `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS` applies to *all* targets (but is delimited by
+        # the Unit Separator 0x1f). Strip lld thread flags from it too so they don't leak into wasm32
+        # link steps.
+        if [[ "${CARGO_ENCODED_RUSTFLAGS:-}" == *"--threads="* || "${CARGO_ENCODED_RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+            aero_sep=$'\x1f'
+            aero_enc_rustflags=()
+            IFS="${aero_sep}" read -r -a aero_enc_rustflags <<< "${CARGO_ENCODED_RUSTFLAGS}"
+            new_enc_rustflags=()
+            i=0
+            while [[ $i -lt ${#aero_enc_rustflags[@]} ]]; do
+                tok="${aero_enc_rustflags[$i]}"
+                next=""
+                if [[ $((i + 1)) -lt ${#aero_enc_rustflags[@]} ]]; then
+                    next="${aero_enc_rustflags[$((i + 1))]}"
+                fi
+
+                if [[ "${tok}" == "-C" ]] && ([[ "${next}" == link-arg=-Wl,--threads=* ]] || [[ "${next}" == link-arg=--threads=* ]]); then
+                    i=$((i + 2))
+                    continue
+                fi
+                if [[ "${tok}" == -Clink-arg=-Wl,--threads=* ]] || [[ "${tok}" == -Clink-arg=--threads=* ]]; then
+                    i=$((i + 1))
+                    continue
+                fi
+
+                new_enc_rustflags+=("${tok}")
+                i=$((i + 1))
+            done
+
+            enc_joined=""
+            for tok in "${new_enc_rustflags[@]}"; do
+                if [[ -n "${enc_joined}" ]]; then
+                    enc_joined+="${aero_sep}"
+                fi
+                enc_joined+="${tok}"
+            done
+            export CARGO_ENCODED_RUSTFLAGS="${enc_joined}"
+            unset aero_sep aero_enc_rustflags new_enc_rustflags enc_joined tok next i 2>/dev/null || true
         fi
 
         if [[ -n "${aero_host_target}" ]]; then

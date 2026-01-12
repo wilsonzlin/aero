@@ -291,6 +291,45 @@ if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
     unset aero_rustflags new_rustflags tok next i 2>/dev/null || true
   fi
 
+  # Cargo also supports `CARGO_ENCODED_RUSTFLAGS` (Unit Separator-delimited). Treat it as equivalent
+  # to global `RUSTFLAGS` for sanitization purposes.
+  if [[ "${CARGO_ENCODED_RUSTFLAGS:-}" == *"--threads="* || "${CARGO_ENCODED_RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+    aero_sep=$'\x1f'
+    aero_enc_rustflags=()
+    IFS="${aero_sep}" read -r -a aero_enc_rustflags <<< "${CARGO_ENCODED_RUSTFLAGS}"
+    new_enc_rustflags=()
+    i=0
+    while [[ $i -lt ${#aero_enc_rustflags[@]} ]]; do
+      tok="${aero_enc_rustflags[$i]}"
+      next=""
+      if [[ $((i + 1)) -lt ${#aero_enc_rustflags[@]} ]]; then
+        next="${aero_enc_rustflags[$((i + 1))]}"
+      fi
+
+      if [[ "${tok}" == "-C" ]] && ([[ "${next}" == link-arg=-Wl,--threads=* ]] || [[ "${next}" == link-arg=--threads=* ]]); then
+        i=$((i + 2))
+        continue
+      fi
+      if [[ "${tok}" == -Clink-arg=-Wl,--threads=* ]] || [[ "${tok}" == -Clink-arg=--threads=* ]]; then
+        i=$((i + 1))
+        continue
+      fi
+
+      new_enc_rustflags+=("${tok}")
+      i=$((i + 1))
+    done
+
+    enc_joined=""
+    for tok in "${new_enc_rustflags[@]}"; do
+      if [[ -n "${enc_joined}" ]]; then
+        enc_joined+="${aero_sep}"
+      fi
+      enc_joined+="${tok}"
+    done
+    export CARGO_ENCODED_RUSTFLAGS="${enc_joined}"
+    unset aero_sep aero_enc_rustflags new_enc_rustflags enc_joined tok next i 2>/dev/null || true
+  fi
+
   # If we already have the native-style `-Wl,--threads=...` in the environment and the default
   # Cargo target is wasm32 (via CARGO_BUILD_TARGET), rewrite it to the wasm-compatible form.
   #
