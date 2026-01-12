@@ -87,15 +87,17 @@ pub struct MachineConfig {
     ///
     /// This is currently opt-in to keep the default machine minimal and deterministic.
     pub enable_pc_platform: bool,
-    /// Whether to attach an Intel ICH9 AHCI SATA controller at the canonical Win7 BDF
-    /// (`00:02.0`).
+    /// Whether to attach an Intel ICH9 AHCI SATA controller at the canonical Windows 7 BDF
+    /// (`aero_devices::pci::profile::SATA_AHCI_ICH9.bdf`, `00:02.0`).
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ahci: bool,
-    /// Whether to attach an Intel PIIX3 IDE controller at the canonical Win7 BDF (`00:01.1`).
+    /// Whether to attach an Intel PIIX3 IDE controller at the canonical Windows 7 BDF
+    /// (`aero_devices::pci::profile::IDE_PIIX3.bdf`, `00:01.1`).
     ///
-    /// Note: When enabled, the PIIX3 ISA bridge function (`00:01.0`) is also exposed with the
-    /// multi-function bit set so OSes enumerate function 1 reliably.
+    /// Note: When enabled, the PIIX3 ISA bridge function (`aero_devices::pci::profile::ISA_PIIX3`
+    /// at `00:01.0`) is also exposed with the multi-function bit set so OSes enumerate function 1
+    /// reliably.
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ide: bool,
@@ -129,6 +131,33 @@ impl Default for MachineConfig {
             enable_reset_ctrl: true,
             enable_e1000: false,
             e1000_mac_addr: None,
+        }
+    }
+}
+
+impl MachineConfig {
+    /// Configuration preset for the canonical Windows 7 storage topology.
+    ///
+    /// This enables the controller set described in `docs/05-storage-topology-win7.md`:
+    ///
+    /// - AHCI (ICH9) at `00:02.0`
+    /// - IDE (PIIX3) at `00:01.1` (with the accompanying PIIX3 ISA function at `00:01.0` so OSes
+    ///   enumerate the multi-function device correctly)
+    ///
+    /// Other devices follow [`MachineConfig::default`] for now:
+    ///
+    /// - serial (`COM1`) enabled (useful for deterministic debug logs)
+    /// - i8042 enabled (keyboard/mouse)
+    /// - fast A20 gate enabled (port `0x92`)
+    /// - reset control enabled (port `0xCF9`)
+    #[must_use]
+    pub fn win7_storage(ram_size_bytes: u64) -> Self {
+        Self {
+            ram_size_bytes,
+            enable_pc_platform: true,
+            enable_ahci: true,
+            enable_ide: true,
+            ..Default::default()
         }
     }
 }
@@ -483,28 +512,6 @@ impl PciDevice for AhciPciConfigDevice {
     }
 }
 
-struct IdePciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl IdePciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::IDE_PIIX3.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for IdePciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 struct Piix3IsaPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -527,6 +534,35 @@ impl PciDevice for Piix3IsaPciConfigDevice {
     }
 }
 
+struct IdePciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl IdePciConfigDevice {
+    fn new() -> Self {
+        // Preserve legacy compatibility port assignments (0x1F0/0x170, etc.) so software that
+        // expects a "PC-like" IDE controller sees deterministic defaults.
+        //
+        // See `docs/05-storage-topology-win7.md`.
+        let mut cfg = aero_devices::pci::profile::IDE_PIIX3.build_config_space();
+        cfg.set_bar_base(0, 0x1F0);
+        cfg.set_bar_base(1, 0x3F4); // alt-status/dev-ctl at +2 => 0x3F6
+        cfg.set_bar_base(2, 0x170);
+        cfg.set_bar_base(3, 0x374); // alt-status/dev-ctl at +2 => 0x376
+        cfg.set_bar_base(4, 0xC000);
+        Self { cfg }
+    }
+}
+
+impl PciDevice for IdePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
 // -----------------------------------------------------------------------------
 // PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
 // -----------------------------------------------------------------------------
@@ -812,6 +848,15 @@ impl Machine {
 
         machine.reset();
         Ok(machine)
+    }
+
+    /// Convenience constructor for the canonical Windows 7 storage topology.
+    ///
+    /// This is equivalent to `Machine::new(MachineConfig::win7_storage(ram_size_bytes))`.
+    ///
+    /// See `docs/05-storage-topology-win7.md` for the normative BDFs and media attachment mapping.
+    pub fn new_with_win7_storage(ram_size_bytes: u64) -> Result<Self, MachineError> {
+        Self::new(MachineConfig::win7_storage(ram_size_bytes))
     }
 
     fn map_pc_platform_mmio_regions(&mut self) {
@@ -1586,9 +1631,9 @@ impl Machine {
                 );
             }
 
+            // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
+            // multi-function bit set so OSes enumerate the IDE function at 00:01.1 reliably.
             if self.cfg.enable_ide {
-                // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
-                // multi-function bit set so OSes enumerate the IDE function at 00:01.1 reliably.
                 pci_cfg.borrow_mut().bus_mut().add_device(
                     aero_devices::pci::profile::ISA_PIIX3.bdf,
                     Box::new(Piix3IsaPciConfigDevice::new()),
@@ -1598,7 +1643,6 @@ impl Machine {
                     Box::new(IdePciConfigDevice::new()),
                 );
             }
-
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
