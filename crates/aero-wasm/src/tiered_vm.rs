@@ -937,6 +937,18 @@ impl WasmTieredVm {
         self.dispatcher = ExecDispatcher::new(interp, jit);
     }
 
+    /// Return the linear-memory pointer to the `CpuState.a20_enabled` flag.
+    ///
+    /// The browser runtime updates the A20 gate state in response to i8042/system-control events.
+    /// As with [`crate::WasmVm::a20_enabled_ptr`], those events can arrive while the VM is executing
+    /// (e.g. during a port I/O exit), so the host should avoid re-entering WASM to mutate
+    /// `WasmTieredVm` and instead write `0`/`1` directly to the returned address.
+    pub fn a20_enabled_ptr(&self) -> u32 {
+        // Safety: the pointer is into this module's linear memory (wasm32); JS can treat it as an
+        // absolute byte offset into `WebAssembly.Memory.buffer`.
+        core::ptr::addr_of!(self.vcpu.cpu.state.a20_enabled) as u32
+    }
+
     /// Notify the JIT runtime that guest code bytes were modified in-place (e.g. via DMA or host
     /// I/O worker writes).
     ///

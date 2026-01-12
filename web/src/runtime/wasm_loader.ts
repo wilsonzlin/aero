@@ -1022,6 +1022,13 @@ export interface WasmApi {
     */
     WasmTieredVm?: new (guestBase: number, guestSize: number) => {
         reset_real_mode(entryIp: number): void;
+        /**
+         * Return the linear-memory pointer to the `CpuState.a20_enabled` flag.
+         *
+         * Newer builds expose this so the JS host can update the A20 gate state without
+         * re-entering WASM while the VM is executing (re-entrant `&mut self` would be UB).
+         */
+        a20_enabled_ptr?(): number;
 
         /**
          * Execute up to N basic blocks. Each block is executed either via Tier-0 or a cached Tier-1 entry.
