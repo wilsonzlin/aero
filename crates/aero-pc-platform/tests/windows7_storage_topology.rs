@@ -10,6 +10,9 @@ use aero_pc_platform::{PcPlatform, Windows7StorageTopologyConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
+
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -71,8 +74,7 @@ impl IsoBackend for MemIso {
 
 fn ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET);
     u64::from(bar5 & 0xffff_fff0)
 }
 

@@ -83,10 +83,12 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
+
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET);
     u64::from(bar5 & 0xffff_fff0)
 }
 
@@ -228,7 +230,7 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         (bar5_base_before + 0x10_0000) as u32,
     );
 

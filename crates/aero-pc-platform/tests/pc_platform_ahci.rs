@@ -44,10 +44,12 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
 }
 
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
+
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
     let bdf = SATA_AHCI_ICH9.bdf;
-    let off = 0x10u8 + AHCI_ABAR_BAR_INDEX * 4;
-    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, off);
+    let bar5 = read_cfg_u32(pc, bdf.bus, bdf.device, bdf.function, AHCI_ABAR_CFG_OFFSET);
     u64::from(bar5 & 0xffff_fff0)
 }
 
@@ -332,7 +334,7 @@ fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 
@@ -442,7 +444,7 @@ fn pc_platform_routes_ahci_mmio_after_bar5_reprogramming() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         new_base as u32,
     );
 
@@ -489,7 +491,7 @@ fn pc_platform_ahci_dma_and_intx_routing_work() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 
@@ -738,7 +740,7 @@ fn pc_platform_ahci_dma_writes_mark_dirty_pages_when_enabled() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 
@@ -824,7 +826,7 @@ fn pc_platform_routes_ahci_intx_via_ioapic_in_apic_mode() {
         bdf.bus,
         bdf.device,
         bdf.function,
-        0x24,
+        AHCI_ABAR_CFG_OFFSET,
         bar5_base as u32,
     );
 

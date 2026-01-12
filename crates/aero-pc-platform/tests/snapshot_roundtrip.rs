@@ -7,6 +7,7 @@ use aero_devices::pci::{profile, PciBdf, PciCoreSnapshot, PciInterruptPin, PCI_C
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -796,7 +797,7 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         let mut cfg_ports = pc.pci_cfg.borrow_mut();
         cfg_ports
             .bus_mut()
-            .mapped_bar_range(profile::SATA_AHCI_ICH9.bdf, 5)
+            .mapped_bar_range(profile::SATA_AHCI_ICH9.bdf, AHCI_ABAR_BAR_INDEX)
             .expect("AHCI BAR5 should be mapped after enabling MEM decode")
             .base
     };
@@ -922,7 +923,7 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         let mut cfg_ports = pc2.pci_cfg.borrow_mut();
         cfg_ports
             .bus_mut()
-            .mapped_bar_range(profile::SATA_AHCI_ICH9.bdf, 5)
+            .mapped_bar_range(profile::SATA_AHCI_ICH9.bdf, AHCI_ABAR_BAR_INDEX)
             .expect("AHCI BAR5 should still be mapped after restore")
             .base
     };

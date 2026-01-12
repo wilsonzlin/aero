@@ -2,10 +2,14 @@ use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_devices::pci::profile::{SATA_AHCI_ICH9, USB_UHCI_PIIX3};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
+use aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX;
 use aero_pc_platform::{PcPlatform, ResetEvent};
 use aero_platform::interrupts::{
     InterruptController, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
 };
+
+// PCI config space offset of the AHCI ABAR register (BAR5 on Intel ICH9).
+const AHCI_ABAR_CFG_OFFSET: u8 = 0x10 + 4 * AHCI_ABAR_BAR_INDEX;
 
 const CMOS_INDEX_PORT: u16 = 0x70;
 const CMOS_DATA_PORT: u16 = 0x71;
@@ -157,7 +161,7 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
     // Disable memory decoding.
     pci_write_u16(&mut plat, ahci_bdf, 0x04, 0x0000);
     // Stomp BAR5 (MMIO).
-    pci_write_u32(&mut plat, ahci_bdf, 0x24, 0xDEAD_0000);
+    pci_write_u32(&mut plat, ahci_bdf, AHCI_ABAR_CFG_OFFSET, 0xDEAD_0000);
     // Leave a non-zero CF8 latch value behind.
     plat.io.write(PCI_CFG_ADDR_PORT, 4, 0x8000_0000);
 
@@ -281,8 +285,8 @@ fn reset_is_deterministic_and_preserves_ram_allocation() {
         pci_read_u16(&mut fresh, ahci_bdf, 0x04)
     );
     assert_eq!(
-        pci_read_u32(&mut plat, ahci_bdf, 0x24),
-        pci_read_u32(&mut fresh, ahci_bdf, 0x24)
+        pci_read_u32(&mut plat, ahci_bdf, AHCI_ABAR_CFG_OFFSET),
+        pci_read_u32(&mut fresh, ahci_bdf, AHCI_ABAR_CFG_OFFSET)
     );
 
     // Verify A20 gating behavior is restored (1MiB wrap when disabled).
