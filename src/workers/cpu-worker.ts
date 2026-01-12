@@ -24,6 +24,7 @@ type CpuWorkerToMainMessage =
       jit_return_is_sentinel: boolean;
       stale_install_rejected: boolean;
       stale_recompile_requested: boolean;
+      stale_existing_slot_preserved: boolean;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
@@ -35,6 +36,7 @@ type CpuWorkerStartMessage = {
 
 const ENTRY_RIP = 0x1000;
 const STALE_RIP = 0x2000;
+const STALE_RACE_RIP = 0x3000;
 const DEFAULT_MAX_BYTES = 1024;
 // Debug-only sync word used by the JIT smoke test to coordinate a deterministic
 // stale-code scenario.
@@ -451,7 +453,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   vm.reset_real_mode(ENTRY_RIP);
 
   const jitWorker = new Worker(new URL('./jit-worker.ts', import.meta.url), { type: 'module' });
-  jitWorker.addEventListener('message', (ev: MessageEvent<JitToCpuMessage>) => {
+  const handleJitMessage = (ev: MessageEvent<JitToCpuMessage>) => {
     const msg = ev.data;
     switch (msg.type) {
       case 'CompileBlockResponse': {
@@ -471,12 +473,13 @@ async function runTieredVm(iterations: number, threshold: number) {
       default:
         break;
     }
-  });
+  };
+  jitWorker.addEventListener('message', handleJitMessage);
 
   const initMsg: CpuToJitMessage = { type: 'JitWorkerInit', memory, guest_base, guest_size };
   jitWorker.postMessage(initMsg);
 
-  function startCompile(entry_rip: number, opts: { max_bytes: number; debug_sync?: boolean }) {
+  function startCompileOn(worker: Worker, entry_rip: number, opts: { max_bytes: number; debug_sync?: boolean }) {
     const id = nextCompileId++;
     const maxBytes = opts.max_bytes > 0 ? opts.max_bytes : DEFAULT_MAX_BYTES;
     const snapshotLen = maxBytes + 15;
@@ -494,7 +497,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       ...(opts.debug_sync ? { debug_sync: true } : {}),
     };
 
-    jitWorker.postMessage(req);
+    worker.postMessage(req);
 
     const response = new Promise<CompileBlockResponse>((resolve, reject) => {
       pendingCompiles.set(id, {
@@ -505,6 +508,10 @@ async function runTieredVm(iterations: number, threshold: number) {
     });
 
     return { id, pre_meta, response };
+  }
+
+  function startCompile(entry_rip: number, opts: { max_bytes: number; debug_sync?: boolean }) {
+    return startCompileOn(jitWorker, entry_rip, opts);
   }
 
   const dv = new DataView(memory.buffer);
@@ -1186,6 +1193,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   // ---------------------------------------------------------------------------
   let stale_install_rejected = false;
   let stale_recompile_requested = false;
+  let stale_existing_slot_preserved = false;
   try {
     // Ensure no pending requests pollute the stale test.
     vm.drain_compile_requests();
@@ -1236,6 +1244,80 @@ async function runTieredVm(iterations: number, threshold: number) {
     console.warn(`[cpu-worker] stale compile scenario failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // ---------------------------------------------------------------------------
+  // Race scenario: a stale compilation result arriving after a newer valid block
+  // must not clobber the JS call-table slot for the valid block.
+  // ---------------------------------------------------------------------------
+  let jitWorker2: Worker | null = null;
+  try {
+    // Ensure no pending requests pollute the race test.
+    vm.drain_compile_requests();
+
+    // Prepare a second JIT worker so we can keep one blocked on debug_sync while
+    // the other compiles in parallel.
+    jitWorker2 = new Worker(new URL('./jit-worker.ts', import.meta.url), { type: 'module' });
+    jitWorker2.addEventListener('message', handleJitMessage);
+    jitWorker2.postMessage(initMsg);
+
+    // Seed guest code bytes at 0x3000.
+    new Uint8Array(memory.buffer).set(code, guest_base + STALE_RACE_RIP);
+
+    if (!onGuestWrite) {
+      throw new Error('on_guest_write is unavailable; cannot run stale race test');
+    }
+
+    if (guest_base < DEBUG_SYNC_TAIL_GUARD_BYTES) {
+      throw new Error(
+        `debug_sync unavailable: guest_base (${guest_base}) < tail guard bytes (${DEBUG_SYNC_TAIL_GUARD_BYTES})`,
+      );
+    }
+    const debugSyncOffset = guest_base - DEBUG_SYNC_TAIL_GUARD_BYTES;
+    if ((debugSyncOffset & 3) !== 0 || debugSyncOffset + 4 > memory.buffer.byteLength) {
+      throw new Error(`debug_sync offset out of bounds: offset=${debugSyncOffset} guest_base=${guest_base}`);
+    }
+    const sync = new Int32Array(memory.buffer, debugSyncOffset, 1);
+    Atomics.store(sync, 0, 0);
+
+    // Compile job A on worker 1 and block it at the debug_sync barrier.
+    const jobA = startCompileOn(jitWorker, STALE_RACE_RIP, { max_bytes: DEFAULT_MAX_BYTES, debug_sync: true });
+    Atomics.wait(sync, 0, 0, 5_000);
+    const seen = Atomics.load(sync, 0);
+    if (seen !== jobA.id) {
+      throw new Error(`debug_sync barrier not reached for jobA (expected ${jobA.id}, got ${seen})`);
+    }
+
+    // Mutate guest bytes and bump page versions so jobA is stale.
+    const u8 = new Uint8Array(memory.buffer);
+    u8[guest_base + STALE_RACE_RIP] ^= 0x01;
+    onGuestWrite(BigInt(STALE_RACE_RIP), 1);
+
+    // Compile job B on worker 2 with a fresh meta snapshot.
+    const jobB = startCompileOn(jitWorker2, STALE_RACE_RIP, { max_bytes: DEFAULT_MAX_BYTES });
+    const respB = await jobB.response;
+    await installTier1(respB, jobB.pre_meta);
+
+    const idx = installedByRip.get(STALE_RACE_RIP);
+    if (idx === undefined) {
+      throw new Error('race test: expected STALE_RACE_RIP to be installed');
+    }
+    const fnBefore = jitFns[idx];
+
+    // Release jobA so it can respond with a stale compilation result.
+    Atomics.store(sync, 0, -jobA.id);
+    Atomics.notify(sync, 0);
+
+    const respA = await jobA.response;
+    await installTier1(respA, jobA.pre_meta);
+
+    const fnAfter = jitFns[idx];
+    stale_existing_slot_preserved = typeof fnBefore === 'function' && fnBefore === fnAfter;
+
+  } catch (err) {
+    console.warn(`[cpu-worker] stale race scenario failed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    jitWorker2?.terminate();
+  }
+
   const runtimeInstalledTableIndex = installedIndex;
   const runtimeInstalledEntryRip = installedIndex !== null ? ENTRY_RIP : null;
   postToMain({
@@ -1254,6 +1336,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     jit_return_is_sentinel: lastJitReturnIsSentinel,
     stale_install_rejected,
     stale_recompile_requested,
+    stale_existing_slot_preserved,
   });
 
   jitWorker.terminate();

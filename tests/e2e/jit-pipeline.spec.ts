@@ -414,4 +414,18 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
     throw new Error(`Missing stale recompile flag in result: ${JSON.stringify(result)}`);
   }
   expect(staleRecompileRequested).toBe(true);
+
+  // Race scenario: if a stale compilation result arrives after a newer valid block is already
+  // installed for the same RIP, the runtime will ignore the stale result. The JS call-table slot
+  // for the valid block must not be clobbered by the stale function.
+  const staleExistingSlotPreserved = firstBooleanAtPaths(result, [
+    'stale_existing_slot_preserved',
+    'staleExistingSlotPreserved',
+    'stale.existing_slot_preserved',
+    'stale.existingSlotPreserved',
+  ]);
+  if (staleExistingSlotPreserved === undefined) {
+    throw new Error(`Missing stale existing-slot flag in result: ${JSON.stringify(result)}`);
+  }
+  expect(staleExistingSlotPreserved).toBe(true);
 });
