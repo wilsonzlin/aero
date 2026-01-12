@@ -75,6 +75,50 @@ fn int10_teletype_backspace_wraps_to_previous_line_when_at_col0() {
 }
 
 #[test]
+fn int10_teletype_bell_is_noop() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Cursor at (0,0) and cell should be blank.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 0));
+    assert_eq!(mem.read_u8(0xB8000), b' ');
+
+    cpu.set_ax(0x0E07); // bell
+    cpu.set_bx(0x0007);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Cursor and contents unchanged.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 0));
+    assert_eq!(mem.read_u8(0xB8000), b' ');
+}
+
+#[test]
+fn int10_teletype_tab_advances_to_next_tab_stop() {
+    let mut mem = VecMemory::new(2 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Set mode 03h.
+    cpu.set_ax(0x0003);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Cursor at (0,0).
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 0));
+
+    cpu.set_ax(0x0E09); // tab
+    cpu.set_bx(0x0007);
+    bios.handle_int10(&mut cpu, &mut mem);
+
+    // Next 8-column tab stop.
+    assert_eq!(BiosDataArea::read_cursor_pos_page0(&mut mem), (0, 8));
+}
+
+#[test]
 fn int10_set_cursor_position_clamps_to_screen_bounds() {
     let mut mem = VecMemory::new(2 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));

@@ -77,6 +77,25 @@ impl VgaDevice {
         let base = self.text_base_for_page(mem, page);
 
         match ch {
+            0x07 => {
+                // Bell.
+                //
+                // Real hardware triggers the PC speaker; we don't emulate that here. Treat it as a
+                // no-op so software using '\a' doesn't scribble a control glyph into the text
+                // buffer.
+            }
+            0x09 => {
+                // Tab.
+                //
+                // Advance to the next 8-column tab stop (common BIOS convention).
+                let next = (col / 8).saturating_add(1).saturating_mul(8);
+                if next >= cols {
+                    col = 0;
+                    row = row.saturating_add(1);
+                } else {
+                    col = next;
+                }
+            }
             b'\r' => {
                 col = 0;
             }
