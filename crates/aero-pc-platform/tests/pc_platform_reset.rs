@@ -8,7 +8,7 @@ use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
-use aero_pc_platform::{PcPlatform, ResetEvent};
+use aero_pc_platform::{PcPlatform, PcPlatformConfig, ResetEvent};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -304,6 +304,46 @@ fn pc_platform_reset_resets_nvme_controller_state() {
         pc.memory.read_u32(bar0_base_after + 0x000c),
         0,
         "reset should clear NVMe interrupt mask register"
+    );
+}
+
+#[test]
+fn pc_platform_reset_preserves_nvme_disk_backend() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let capacity = 16 * SECTOR_SIZE as u64;
+    let disk = DropDetectDisk {
+        inner: RawDisk::create(MemBackend::new(), capacity).unwrap(),
+        dropped: dropped.clone(),
+    };
+
+    // Keep this test focused: enable only the NVMe controller.
+    let mut pc = PcPlatform::new_with_config_and_nvme_disk(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_hda: false,
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_ide: false,
+            enable_e1000: false,
+            mac_addr: None,
+            enable_uhci: false,
+            enable_virtio_blk: false,
+        },
+        Box::new(disk),
+    );
+
+    pc.reset();
+
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "platform reset dropped the NVMe disk backend"
+    );
+
+    // Dropping the platform should drop the disk backend (sanity check).
+    drop(pc);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "dropping the platform should drop the NVMe disk backend"
     );
 }
 
