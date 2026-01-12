@@ -953,7 +953,13 @@ pub fn attach_worklet_bridge(
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn attach_mic_bridge(sab: SharedArrayBuffer) -> Result<MicBridge, JsValue> {
-    MicBridge::from_shared_buffer(sab)
+    let mut bridge = MicBridge::from_shared_buffer(sab)?;
+    // The mic ring buffer is written continuously by the AudioWorklet. If the consumer attaches
+    // after the producer has already started, discard any buffered samples so callers observe low
+    // latency rather than replaying stale audio.
+    bridge.discard_buffered_samples();
+    bridge.reset_dropped_samples_baseline();
+    Ok(bridge)
 }
 
 /// WASM export for the WebUSB passthrough device model.

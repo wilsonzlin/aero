@@ -5,7 +5,7 @@ use aero_platform::audio::worklet_bridge::{
     UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX,
 };
 use aero_platform::audio::mic_bridge as mic_ring;
-use aero_wasm::HdaControllerBridge;
+use aero_wasm::{attach_mic_bridge, HdaControllerBridge, VirtioSndPciBridge};
 use js_sys::{Float32Array, SharedArrayBuffer, Uint32Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -338,6 +338,60 @@ fn hda_controller_load_state_discards_mic_ring_buffered_samples() {
     // Snapshot restore should discard any buffered mic samples so capture resumes without stale
     // latency.
     hda.load_state(&snap).unwrap();
+    assert_eq!(
+        atomics_load_u32(&header, mic_ring::READ_POS_INDEX as u32),
+        atomics_load_u32(&header, mic_ring::WRITE_POS_INDEX as u32)
+    );
+
+    drop(guest);
+}
+
+#[wasm_bindgen_test]
+fn attach_mic_bridge_discards_buffered_samples() {
+    let capacity_samples = 16u32;
+    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
+        as u32;
+    let sab = SharedArrayBuffer::new(byte_len);
+    let header =
+        Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
+
+    // Seed with a non-empty ring state.
+    atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
+    atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
+    atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
+    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+
+    let bridge = attach_mic_bridge(sab.clone()).unwrap();
+
+    assert_eq!(
+        atomics_load_u32(&header, mic_ring::READ_POS_INDEX as u32),
+        atomics_load_u32(&header, mic_ring::WRITE_POS_INDEX as u32)
+    );
+    assert_eq!(bridge.buffered_samples(), 0);
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_attach_mic_ring_discards_buffered_samples() {
+    let capacity_samples = 16u32;
+    let byte_len = (mic_ring::HEADER_BYTES + capacity_samples as usize * core::mem::size_of::<f32>())
+        as u32;
+    let sab = SharedArrayBuffer::new(byte_len);
+    let header =
+        Uint32Array::new_with_byte_offset_and_length(&sab, 0, mic_ring::HEADER_U32_LEN as u32);
+
+    // Seed with a non-empty ring state.
+    atomics_store_u32(&header, mic_ring::WRITE_POS_INDEX as u32, 10);
+    atomics_store_u32(&header, mic_ring::READ_POS_INDEX as u32, 4);
+    atomics_store_u32(&header, mic_ring::DROPPED_SAMPLES_INDEX as u32, 0);
+    atomics_store_u32(&header, mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+
+    let mut guest = vec![0u8; 0x4000];
+    let guest_base = guest.as_mut_ptr() as u32;
+    let guest_size = guest.len() as u32;
+    let mut snd = VirtioSndPciBridge::new(guest_base, guest_size).unwrap();
+
+    snd.set_mic_ring_buffer(Some(sab.clone())).unwrap();
+
     assert_eq!(
         atomics_load_u32(&header, mic_ring::READ_POS_INDEX as u32),
         atomics_load_u32(&header, mic_ring::WRITE_POS_INDEX as u32)

@@ -191,7 +191,12 @@ struct OptionalMicCaptureSource {
 
 impl OptionalMicCaptureSource {
     fn attach(&mut self, ring: SharedArrayBuffer) -> Result<(), JsValue> {
-        let bridge = MicBridge::from_shared_buffer(ring)?;
+        let mut bridge = MicBridge::from_shared_buffer(ring)?;
+        // Microphone capture is latency-sensitive; if the AudioWorklet producer ran before the
+        // guest attached the ring, discard any buffered samples so capture starts from the most
+        // recent audio.
+        bridge.discard_buffered_samples();
+        bridge.reset_dropped_samples_baseline();
         self.ring = Some(bridge);
         Ok(())
     }
