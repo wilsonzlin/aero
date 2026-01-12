@@ -376,3 +376,100 @@ fn snapshot_restore_accepts_legacy_nvmp_1_0_pci_payload() {
         "legacy NVMP 1.0 PCI payload should restore into PciConfigSpaceState deterministically"
     );
 }
+
+#[test]
+fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
+    // PCI command bit 10 disables legacy INTx signalling. Ensure the NVMe wrapper:
+    // - gates `irq_level()` when the bit is set, and
+    // - preserves the bit across snapshot/restore.
+    let disk = SharedDisk::new(1024);
+    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+    let write_buf = 0x60000;
+
+    dev.mmio_write(0x0024, 4, 0x000f_000f, &mut mem);
+    dev.mmio_write(0x0028, 8, asq, &mut mem);
+    dev.mmio_write(0x0030, 8, acq, &mut mem);
+    dev.mmio_write(0x0014, 4, 1, &mut mem);
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    mem.write_physical(asq, &cmd);
+    dev.mmio_write(0x1000, 4, 1, &mut mem);
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    mem.write_physical(asq + 64, &cmd);
+    dev.mmio_write(0x1000, 4, 2, &mut mem);
+
+    // Consume admin CQ completions.
+    dev.mmio_write(0x1004, 4, 2, &mut mem);
+
+    // Post a write to generate a pending IO completion (asserts controller INTx).
+    let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    mem.write_physical(write_buf, &payload);
+
+    let mut cmd = build_command(0x01);
+    set_cid(&mut cmd, 0x10);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, write_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    dev.mmio_write(0x1008, 4, 1, &mut mem);
+
+    assert!(dev.controller.intx_level, "controller should have a pending interrupt");
+    assert!(
+        dev.irq_level(),
+        "with PCI Interrupt Disable clear, wrapper should expose INTx"
+    );
+
+    // Set PCI command bit 10 (Interrupt Disable) and ensure the wrapper masks the IRQ.
+    let mut cmd_reg = dev.config().command();
+    cmd_reg |= 1 << 10;
+    dev.config_mut().write(0x04, 2, cmd_reg.into());
+    assert!(
+        !dev.irq_level(),
+        "PCI command Interrupt Disable bit should mask legacy INTx level"
+    );
+
+    let snap = dev.save_state();
+
+    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
+        disk.clone(),
+    ))));
+    restored.load_state(&snap).unwrap();
+
+    assert!(
+        restored.controller.intx_level,
+        "restored controller should still have a pending interrupt"
+    );
+    assert!(
+        !restored.irq_level(),
+        "restored wrapper must keep PCI Interrupt Disable masking"
+    );
+
+    // Clear the bit and verify the pending completion becomes visible again.
+    let cleared = restored.config().command() & !(1 << 10);
+    restored.config_mut().write(0x04, 2, cleared.into());
+    assert!(
+        restored.irq_level(),
+        "clearing PCI Interrupt Disable should re-expose the pending INTx level"
+    );
+}
