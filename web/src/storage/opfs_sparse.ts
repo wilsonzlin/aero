@@ -255,7 +255,20 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
     // Ensure header + table exist in the file (filled with zeros).
     sync.truncate(dataOffset);
     sync.write(encodeHeader(header), { at: 0 });
-    sync.write(new Uint8Array(tableBytes), { at: HEADER_SIZE });
+    // Zero the on-disk table region in chunks to reduce peak memory usage for large but still-valid
+    // sparse images (e.g. multi-GB disks with small block sizes).
+    const zeroChunk = new Uint8Array(Math.min(64 * 1024, tableBytes));
+    let remaining = tableBytes;
+    let off = HEADER_SIZE;
+    while (remaining > 0) {
+      const len = Math.min(remaining, zeroChunk.byteLength);
+      const written = sync.write(zeroChunk.subarray(0, len), { at: off });
+      if (written !== len) {
+        throw new Error(`short table write at=${off}: expected=${len} actual=${written}`);
+      }
+      off += len;
+      remaining -= len;
+    }
 
     return new OpfsAeroSparseDisk(
       sync,
