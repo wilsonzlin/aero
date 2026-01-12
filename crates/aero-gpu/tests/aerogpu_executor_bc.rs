@@ -4,7 +4,7 @@ use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
-        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuShaderStage,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
         AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
         AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -209,7 +209,7 @@ async fn run_bc_cpu_fallback_sample_test(
 
         // SET_TEXTURE (ps slot 0) = texture 2.
         emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
-            push_u32(out, 1); // shader_stage: PIXEL
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
             push_u32(out, 0); // slot
             push_u32(out, 2); // texture handle
             push_u32(out, 0); // reserved0
@@ -380,7 +380,7 @@ fn executor_upload_bc1_srgb_cpu_fallback_decodes_on_sample() {
 
             // SET_TEXTURE (ps slot 0) = texture 2.
             emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
-                push_u32(out, 1); // shader_stage: PIXEL
+                push_u32(out, AerogpuShaderStage::Pixel as u32);
                 push_u32(out, 0); // slot
                 push_u32(out, 2); // texture handle
                 push_u32(out, 0); // reserved0
