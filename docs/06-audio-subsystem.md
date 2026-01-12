@@ -4,6 +4,15 @@
 
 Windows 7 uses HD Audio (High Definition Audio, Intel HDA) as the primary audio interface. We must emulate this and translate to the Web Audio API.
 
+## Manual Windows 7 smoke test (in-box HDA driver)
+
+Once the HDA controller is wired into the real worker runtime, use the manual checklist at:
+
+- [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md)
+
+It covers Win7 boot, Device Manager enumeration (“High Definition Audio Controller” + “High Definition Audio Device”),
+playback/recording validation, and the host-side metrics to capture (AudioWorklet ring buffer level + underrun/overrun counters).
+
 Canonical implementation pointers (to avoid duplicated stacks):
 
 - `crates/aero-audio/src/hda.rs` — canonical HDA device model (playback + capture) + PCM helpers.
