@@ -983,7 +983,10 @@ impl snapshot::SnapshotSource for Machine {
             data: self.serial_log.clone(),
         });
 
-        // Optional PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI/HPET).
+        // Optional PC platform devices.
+        //
+        // Note: We snapshot the combined PIC + IOAPIC + LAPIC router state via
+        // `PlatformInterrupts` under the historical `DeviceId::APIC` ID.
         if let Some(interrupts) = &self.interrupts {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::APIC,
@@ -1004,7 +1007,12 @@ impl snapshot::SnapshotSource for Machine {
         }
         if let Some(pci_cfg) = &self.pci_cfg {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
-                snapshot::DeviceId::PCI_CFG,
+                // Use the stable `DeviceId::PCI` outer ID for PCI config-space state.
+                //
+                // NOTE: `PciConfigPorts` snapshots cover both the config mechanism #1 address
+                // latch and the per-device config space/BAR state, so this one entry is
+                // sufficient to restore guest-programmed BARs and command bits.
+                snapshot::DeviceId::PCI,
                 &*pci_cfg.borrow(),
             ));
         }
@@ -1168,9 +1176,10 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         // 2) Restore PCI devices (config ports + INTx router).
-        if let (Some(pci_cfg), Some(state)) =
-            (&self.pci_cfg, by_id.remove(&snapshot::DeviceId::PCI_CFG))
-        {
+        let pci_cfg_state = by_id
+            .remove(&snapshot::DeviceId::PCI)
+            .or_else(|| by_id.remove(&snapshot::DeviceId::PCI_CFG));
+        if let (Some(pci_cfg), Some(state)) = (&self.pci_cfg, pci_cfg_state) {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let _ =
                 snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *pci_cfg);

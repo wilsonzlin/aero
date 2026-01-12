@@ -32,6 +32,24 @@ fn program_ioapic_entry(
     ints.ioapic_mmio_write(0x10, high);
 }
 
+fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
+    0x8000_0000
+        | (u32::from(bdf.bus) << 16)
+        | (u32::from(bdf.device) << 11)
+        | (u32::from(bdf.function) << 8)
+        | (u32::from(offset) & 0xFC)
+}
+
+fn cfg_write(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8, value: u32) {
+    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
+    m.io_write(0xCFC + (offset & 3), size, value);
+}
+
+fn cfg_read(m: &mut Machine, bdf: PciBdf, offset: u16, size: u8) -> u32 {
+    m.io_write(0xCF8, 4, cfg_addr(bdf, offset));
+    m.io_read(0xCFC + (offset & 3), size)
+}
+
 #[test]
 fn snapshot_restore_preserves_acpi_pm_timer_and_it_advances_with_manual_clock() {
     let mut src = Machine::new(pc_machine_config()).unwrap();
@@ -118,6 +136,86 @@ fn snapshot_restore_pci_config_bar_programming_survives() {
 
     restored.io_write(0xCF8, 4, bar0_addr);
     assert_eq!(restored.io_read(0xCFC, 4), 0x8000_0000);
+}
+
+#[test]
+fn snapshot_restore_preserves_pci_command_bits_and_pic_pending_interrupt() {
+    let mut vm = Machine::new(pc_machine_config()).unwrap();
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let interrupts = vm.platform_interrupts().expect("pc platform enabled");
+
+    struct TestDev {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for TestDev {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    // Install a simple endpoint at 00:01.0 with one MMIO BAR so we can validate both:
+    // - guest-programmed BAR base
+    // - PCI command register bits (IO/MEM/BME/INTX_DISABLE).
+    let bdf = PciBdf::new(0, 1, 0);
+    let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+    cfg.set_bar_definition(
+        0,
+        PciBarDefinition::Mmio32 {
+            size: 0x1000,
+            prefetchable: false,
+        },
+    );
+    pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestDev { cfg }));
+
+    // Program BAR0 base and enable decode + bus mastering + INTx disable.
+    cfg_write(&mut vm, bdf, 0x10, 4, 0x8000_0000);
+    let command: u16 = 0x0007 | (1 << 10); // IO + MEM + BME + INTX_DISABLE
+    cfg_write(&mut vm, bdf, 0x04, 2, u32::from(command));
+
+    assert_eq!(cfg_read(&mut vm, bdf, 0x10, 4), 0x8000_0000);
+    assert_eq!(cfg_read(&mut vm, bdf, 0x04, 2) as u16, command);
+
+    // Raise a PIC interrupt (IRQ1 => vector 0x21 after setting offsets).
+    let vector = 0x21u8;
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(1, false);
+        ints.raise_irq(InterruptInput::IsaIrq(1));
+        assert_eq!(ints.get_pending(), Some(vector));
+    }
+
+    let snap = vm.take_snapshot_full().unwrap();
+
+    // Mutate the PCI config and clear the interrupt so restore is an observable rewind.
+    cfg_write(&mut vm, bdf, 0x10, 4, 0x9000_0000);
+    cfg_write(&mut vm, bdf, 0x04, 2, 0);
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.acknowledge(vector);
+        ints.lower_irq(InterruptInput::IsaIrq(1));
+        ints.eoi(vector);
+        assert_eq!(ints.get_pending(), None);
+    }
+    assert_eq!(cfg_read(&mut vm, bdf, 0x10, 4), 0x9000_0000);
+    assert_eq!(cfg_read(&mut vm, bdf, 0x04, 2), 0);
+
+    vm.restore_snapshot_bytes(&snap).unwrap();
+
+    // PCI config restored.
+    assert_eq!(cfg_read(&mut vm, bdf, 0x10, 4), 0x8000_0000);
+    assert_eq!(cfg_read(&mut vm, bdf, 0x04, 2) as u16, command);
+
+    // Interrupt restored.
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector));
 }
 
 #[test]
