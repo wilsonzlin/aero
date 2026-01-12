@@ -1,7 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_platform::audio::worklet_bridge::{
-    HEADER_BYTES, HEADER_U32_LEN, READ_FRAME_INDEX, WRITE_FRAME_INDEX, WorkletBridge,
+    WorkletBridge, HEADER_BYTES, HEADER_U32_LEN, OVERRUN_COUNT_INDEX, READ_FRAME_INDEX,
+    UNDERRUN_COUNT_INDEX, WRITE_FRAME_INDEX,
 };
 use aero_wasm::HdaControllerBridge;
 use js_sys::{Float32Array, Uint32Array};
@@ -58,6 +59,54 @@ fn worklet_bridge_snapshot_restore_restores_indices_and_clears_samples() {
         snap.write_pos
     );
 
+    for i in 0..samples.length() {
+        assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
+    }
+}
+
+#[wasm_bindgen_test]
+fn worklet_bridge_restore_does_not_modify_underrun_overrun_counters() {
+    let capacity_frames = 8;
+    let channel_count = 2;
+    let bridge = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+
+    let sab = bridge.shared_buffer();
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+    let samples = Float32Array::new_with_byte_offset_and_length(
+        &sab,
+        HEADER_BYTES as u32,
+        capacity_frames * channel_count,
+    );
+
+    // Seed indices + counters.
+    let input: Vec<f32> = (0..(4 * channel_count)).map(|v| (v + 1) as f32).collect();
+    assert_eq!(bridge.write_f32_interleaved(&input), 4);
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 1);
+    atomics_store_u32(&header, UNDERRUN_COUNT_INDEX as u32, 123);
+    atomics_store_u32(&header, OVERRUN_COUNT_INDEX as u32, 456);
+
+    let snap = bridge.snapshot_state();
+
+    // Corrupt indices, counters, and samples.
+    atomics_store_u32(&header, READ_FRAME_INDEX as u32, 111);
+    atomics_store_u32(&header, WRITE_FRAME_INDEX as u32, 222);
+    atomics_store_u32(&header, UNDERRUN_COUNT_INDEX as u32, 777);
+    atomics_store_u32(&header, OVERRUN_COUNT_INDEX as u32, 888);
+    let _ = samples.fill(123.0, 0, samples.length());
+
+    // Restore indices + samples; counters should remain untouched.
+    bridge.restore_state(&snap);
+
+    assert_eq!(
+        atomics_load_u32(&header, READ_FRAME_INDEX as u32),
+        snap.read_pos
+    );
+    assert_eq!(
+        atomics_load_u32(&header, WRITE_FRAME_INDEX as u32),
+        snap.write_pos
+    );
+    assert_eq!(atomics_load_u32(&header, UNDERRUN_COUNT_INDEX as u32), 777);
+    assert_eq!(atomics_load_u32(&header, OVERRUN_COUNT_INDEX as u32), 888);
     for i in 0..samples.length() {
         assert_eq!(samples.get_index(i), 0.0, "sample[{i}] not cleared");
     }
