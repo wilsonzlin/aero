@@ -146,13 +146,13 @@ parentPort?.on("message", (msg) => {
 // Fake fetch for worker_threads tests (gateway session bootstrap).
 // ---------------------------------------------------------------------------
 
-type FetchMode = "ok" | "404" | "throw";
+type FetchMode = "ok" | "404" | "throw" | "bad_json";
 let fetchMode: FetchMode = "ok";
 
 parentPort?.on("message", (msg) => {
   const data = msg as { type?: unknown; mode?: unknown };
   if (data?.type !== "fetch.mode") return;
-  if (data.mode === "ok" || data.mode === "404" || data.mode === "throw") {
+  if (data.mode === "ok" || data.mode === "404" || data.mode === "throw" || data.mode === "bad_json") {
     fetchMode = data.mode;
   }
 });
@@ -209,6 +209,10 @@ function makeFakeResponse(args: { ok: boolean; status: number; bodyText: string;
 
   if (fetchMode === "404") {
     return makeFakeResponse({ ok: false, status: 404, bodyText: "not found" });
+  }
+
+  if (fetchMode === "bad_json") {
+    return makeFakeResponse({ ok: true, status: 201, bodyText: "not-json" });
   }
 
   const body = {

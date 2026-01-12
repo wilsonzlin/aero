@@ -574,6 +574,50 @@ describe("workers/net.worker (worker_threads)", () => {
     }
   }, 20000);
 
+  it("falls back to connecting directly when POST /session returns invalid JSON", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      // Force the node shim `fetch()` to return a 2xx response body that is not
+      // valid JSON so the worker takes the fallback path.
+      worker.postMessage({ type: "fetch.mode", mode: "bad_json" });
+
+      const fetchCalled = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown }).type === "fetch.called" &&
+          (msg as { url?: unknown }).url === "https://gateway.example.com/base/session",
+        10000,
+      ) as Promise<{ url?: string; init?: unknown }>;
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000) as Promise<{
+        url?: string;
+      }>;
+
+      // Use an explicit legacy `/eth` endpoint so the fallback URL is
+      // distinguishable from the session-derived `/l2` endpoint.
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("/base/eth") });
+      worker.postMessage(makeInit(segments));
+
+      const first = await Promise.race([
+        fetchCalled.then((msg) => ({ kind: "fetch" as const, msg })),
+        wsCreated.then((msg) => ({ kind: "ws" as const, msg })),
+      ]);
+      expect(first.kind).toBe("fetch");
+
+      const createdMsg = await wsCreated;
+      expect(createdMsg.url).toBe("wss://gateway.example.com/base/eth");
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
   it("captures guest_tx + guest_rx frames into a PCAPNG when tracing is enabled", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
 
