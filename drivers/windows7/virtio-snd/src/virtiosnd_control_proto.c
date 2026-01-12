@@ -3,6 +3,7 @@
 #include <ntddk.h>
 
 #include "virtiosnd_control_proto.h"
+#include "virtiosnd_limits.h"
 
 static __forceinline BOOLEAN VirtioSndCtrlIsValidStreamId(_In_ ULONG StreamId)
 {
@@ -133,6 +134,25 @@ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
         return STATUS_INVALID_PARAMETER;
     }
 
+    /*
+     * Contract v1 allows the device to reject a single PCM transfer larger than
+     * 4 MiB with VIRTIO_SND_S_BAD_MSG. Reject these up-front so callers don't
+     * accidentally break streaming by triggering fatal BAD_MSG handling in the
+     * TX/RX engines.
+     */
+    if (PeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    /*
+     * The driver allocates a cyclic DMA buffer of BufferBytes (WaveRT ring
+     * buffer). Cap it to a reasonable maximum to avoid unbounded nonpaged
+     * contiguous allocations via user-mode latency/buffering requests.
+     */
+    if (BufferBytes > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
     RtlZeroMemory(Req, sizeof(*Req));
     Req->code = VIRTIO_SND_R_PCM_SET_PARAMS;
     Req->stream_id = StreamId;
@@ -171,4 +191,3 @@ NTSTATUS VirtioSndCtrlBuildPcmSimpleReq(VIRTIO_SND_PCM_SIMPLE_REQ* Req, ULONG St
     Req->stream_id = StreamId;
     return STATUS_SUCCESS;
 }
-

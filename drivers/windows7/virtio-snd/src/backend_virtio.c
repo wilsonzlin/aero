@@ -5,6 +5,7 @@
 #include "backend.h"
 #include "trace.h"
 #include "virtiosnd.h"
+#include "virtiosnd_limits.h"
 
 typedef struct _VIRTIOSND_BACKEND_VIRTIO {
     VIRTIOSND_BACKEND Backend;
@@ -59,6 +60,12 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
     PeriodBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
     if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (PeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (BufferBytes > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
     }
     if ((BufferBytes % PeriodBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
@@ -529,6 +536,12 @@ VirtIoSndBackendVirtio_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferByt
     PeriodBytes &= ~(VIRTIOSND_CAPTURE_BLOCK_ALIGN - 1u);
     if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (PeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (BufferBytes > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
     }
     if ((BufferBytes % PeriodBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;

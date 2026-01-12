@@ -5,6 +5,7 @@
 #include "virtio_snd_proto.h"
 #include "virtiosnd_host_queue.h"
 #include "virtiosnd_rx.h"
+#include "virtiosnd_limits.h"
 
 typedef struct _RX_COMPLETION_CAPTURE {
     int Called;
@@ -145,6 +146,27 @@ static void test_rx_submit_sg_rejects_payload_overflow(void)
 
     status = VirtIoSndRxSubmitSg(&rx, segs, 2, NULL);
     TEST_ASSERT(status == STATUS_INTEGER_OVERFLOW);
+
+    VirtIoSndRxUninit(&rx);
+}
+
+static void test_rx_submit_sg_rejects_payload_over_contract_limit(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT seg;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    seg.addr = 0x1000;
+    seg.len = VIRTIOSND_MAX_PCM_PAYLOAD_BYTES + 2u; /* mono S16 frame size */
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, NULL);
+    TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
 
     VirtIoSndRxUninit(&rx);
 }
@@ -520,6 +542,7 @@ int main(void)
     test_rx_init_default_and_clamped_request_count();
     test_rx_submit_sg_validates_segments();
     test_rx_submit_sg_rejects_payload_overflow();
+    test_rx_submit_sg_rejects_payload_over_contract_limit();
     test_rx_submit_sg_builds_descriptor_chain();
     test_rx_on_used_uses_registered_callback();
     test_rx_ok_with_no_payload_is_success_and_payload_zero();

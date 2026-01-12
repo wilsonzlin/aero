@@ -5,6 +5,7 @@
 #include "virtio_snd_proto.h"
 #include "virtiosnd_tx.h"
 #include "virtiosnd_host_queue.h"
+#include "virtiosnd_limits.h"
 
 static void test_tx_init_sets_fixed_stream_id_and_can_suppress_interrupts(void)
 {
@@ -70,6 +71,20 @@ static void test_tx_init_rejects_unaligned_max_period_bytes(void)
 
     status = VirtioSndTxInit(&tx, &dma, &q.Queue, 6u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+}
+
+static void test_tx_init_rejects_max_period_bytes_over_contract_limit(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, VIRTIOSND_MAX_PCM_PAYLOAD_BYTES + 4u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
 }
 
 static void test_tx_submit_period_wrap_copies_both_segments_and_builds_sg(void)
@@ -414,6 +429,7 @@ int main(void)
     test_tx_init_sets_fixed_stream_id_and_can_suppress_interrupts();
     test_tx_init_default_and_clamped_buffer_count();
     test_tx_init_rejects_unaligned_max_period_bytes();
+    test_tx_init_rejects_max_period_bytes_over_contract_limit();
     test_tx_submit_period_wrap_copies_both_segments_and_builds_sg();
     test_tx_no_free_buffers_drops_period();
     test_tx_queue_full_returns_buffer_to_pool();

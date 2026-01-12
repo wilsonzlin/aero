@@ -10,6 +10,7 @@
 #include "portcls_compat.h"
 #include "trace.h"
 #include "virtiosnd_dma.h"
+#include "virtiosnd_limits.h"
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
 #include "virtiosnd_sg.h"
 #endif
@@ -2590,20 +2591,91 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     }
 
     size = RequestedBufferSize;
+
+    /*
+     * Ensure the buffer is large enough for at least 1ms per notification.
+     * bytesPerMs is fixed-format and small, but keep the arithmetic defensive.
+     */
+    if (bytesPerMs > MAXULONG / notifications) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
     if (size < bytesPerMs * notifications) {
         size = bytesPerMs * notifications;
     }
 
-    periodBytes = (size + notifications - 1) / notifications;
-    periodBytes = (periodBytes + (bytesPerMs - 1)) / bytesPerMs;
-    periodBytes *= bytesPerMs;
-    if (periodBytes < bytesPerMs) {
-        periodBytes = bytesPerMs;
+    /*
+     * Cap the cyclic DMA buffer allocation so user-controlled buffering requests
+     * cannot trigger arbitrarily large nonpaged common-buffer allocations.
+     */
+    if (size > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+        size = VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES;
+    }
+
+    /*
+     * Compute a period size aligned to milliseconds (bytesPerMs). Ensure the
+     * period payload never exceeds the contract maximum (4 MiB) by increasing
+     * the notification count (up to the existing 256 cap).
+     */
+    for (;;) {
+        periodBytes = (size + notifications - 1) / notifications;
+        periodBytes = (periodBytes + (bytesPerMs - 1)) / bytesPerMs;
+        periodBytes *= bytesPerMs;
+        if (periodBytes < bytesPerMs) {
+            periodBytes = bytesPerMs;
+        }
+
+        if (periodBytes <= VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+            break;
+        }
+
+        if (notifications >= 256) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+        notifications++;
+
+        /*
+         * If the caller requested an extremely small buffer but we increased
+         * notifications, keep the minimum sizing invariant.
+         */
+        if (bytesPerMs > MAXULONG / notifications) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+        if (size < bytesPerMs * notifications) {
+            size = bytesPerMs * notifications;
+        }
+        if (size > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+            size = VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES;
+        }
     }
 
     size = periodBytes * notifications;
     if ((size / notifications) != periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    if (size > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+        ULONG quantum;
+        ULONG maxSize;
+
+        maxSize = VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES;
+
+        if (bytesPerMs > MAXULONG / notifications) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+        quantum = bytesPerMs * notifications;
+        if (quantum == 0 || maxSize < quantum) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+
+        /*
+         * Round down to a representable (periodBytes * notifications) size that
+         * fits within the allocation cap.
+         */
+        size = (maxSize / quantum) * quantum;
+        if (size < quantum) {
+            size = quantum;
+        }
+        periodBytes = size / notifications;
     }
 
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)

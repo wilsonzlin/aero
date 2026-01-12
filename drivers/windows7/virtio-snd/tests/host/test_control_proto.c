@@ -4,6 +4,7 @@
 
 #include "virtio_snd_proto.h"
 #include "virtiosnd_control_proto.h"
+#include "virtiosnd_limits.h"
 
 static void test_pcm_info_req_packing(void)
 {
@@ -89,6 +90,14 @@ static void test_pcm_set_params_req_packing_and_validation(void)
 
     status = VirtioSndCtrlBuildPcmSetParamsReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, 4u, 6u);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* Contract v1: a single PCM payload > 4 MiB may be rejected with BAD_MSG. */
+    status = VirtioSndCtrlBuildPcmSetParamsReq(
+        &req,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        VIRTIOSND_MAX_PCM_PAYLOAD_BYTES + 4u,
+        VIRTIOSND_MAX_PCM_PAYLOAD_BYTES + 4u);
+    TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
 }
 
 static void test_pcm_simple_req_packing(void)

@@ -4,6 +4,7 @@
 
 #include "trace.h"
 #include "virtiosnd_rx.h"
+#include "virtiosnd_limits.h"
 
 #ifndef VIRTIOSND_POOL_TAG
 #if defined(_MSC_VER)
@@ -214,6 +215,10 @@ VirtIoSndRxSubmitSg(VIRTIOSND_RX_ENGINE* Rx, const VIRTIOSND_RX_SEGMENT* Segment
             return STATUS_INTEGER_OVERFLOW;
         }
         payloadBytes += len;
+    }
+
+    if (payloadBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
     }
 
     if ((payloadBytes % VirtioSndRxFrameSizeBytes()) != 0) {

@@ -4,6 +4,7 @@
 
 #include "trace.h"
 #include "virtiosnd_tx.h"
+#include "virtiosnd_limits.h"
 
 #ifndef VIRTIOSND_POOL_TAG
 #if defined(_MSC_VER)
@@ -66,6 +67,9 @@ VirtioSndTxInit(
     }
     if ((MaxPeriodBytes % VirtioSndTxFrameSizeBytes()) != 0) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (MaxPeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
     }
 
     count = BufferCount;
