@@ -29,21 +29,34 @@ fuzz_target!(|data: &[u8]| {
     // Header decode/validation (canonical helpers).
     let declared_size_bytes = ring::AerogpuAllocTableHeader::decode_from_le_bytes(data)
         .ok()
-        .and_then(|header| {
-            let _ = header.validate_prefix();
-            Some(header.size_bytes)
-        })
+        .and_then(|header| header.validate_prefix().ok().map(|_| header.size_bytes))
         .unwrap_or(0);
 
     // Whole-table decode (canonical helpers).
     let _ = ring::decode_alloc_table_le(data);
+
+    // Ring + submission layouts are adjacent to alloc-table parsing in the protocol crate; decode
+    // them too to harden their bounds checks.
+    if let Ok(hdr) = ring::AerogpuRingHeader::decode_from_le_bytes(data) {
+        let _ = hdr.validate_prefix();
+    }
+    if let Ok(desc) = ring::AerogpuSubmitDesc::decode_from_le_bytes(data) {
+        let _ = desc.validate_prefix();
+    }
+    if let Ok(page) = ring::AerogpuFencePage::decode_from_le_bytes(data) {
+        let _ = page.validate_prefix();
+    }
 
     // Executor decode (GuestMemory-backed). Use the header's declared size when it is both
     // well-formed and within our input cap; otherwise, fall back to the provided buffer length.
     let table_size_bytes = match u32::try_from(data.len()) {
         Ok(len) => match declared_size_bytes {
             0 => len,
-            declared if declared as usize <= data.len() && declared as usize <= MAX_INPUT_SIZE_BYTES => declared,
+            declared
+                if declared as usize <= data.len() && declared as usize <= MAX_INPUT_SIZE_BYTES =>
+            {
+                declared
+            }
             _ => len,
         },
         Err(_) => return,
@@ -58,4 +71,3 @@ fuzz_target!(|data: &[u8]| {
     let _ = guest.write(ALLOC_TABLE_GPA, &data[..table_size_bytes as usize]);
     let _ = AllocTable::decode_from_guest_memory(&mut guest, ALLOC_TABLE_GPA, table_size_bytes);
 });
-
