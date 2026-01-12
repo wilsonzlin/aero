@@ -63,6 +63,21 @@ from threading import Thread
 from typing import Optional
 
 
+def _append_suffix_before_query_fragment(path: str, suffix: str) -> str:
+    q = path.find("?")
+    h = path.find("#")
+    idx = -1
+    if q != -1 and h != -1:
+        idx = min(q, h)
+    elif q != -1:
+        idx = q
+    elif h != -1:
+        idx = h
+    if idx == -1:
+        return path + suffix
+    return path[:idx] + suffix + path[idx:]
+
+
 class _QuietHandler(http.server.BaseHTTPRequestHandler):
     expected_path: str = "/aero-virtio-selftest"
     http_log_path: Optional[Path] = None
@@ -73,7 +88,10 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
             body = b"OK\n"
             content_type = "text/plain"
             self.send_response(200)
-        elif self.path == self.expected_path + "-large":
+        elif self.path in (
+            self.expected_path + "-large",
+            _append_suffix_before_query_fragment(self.expected_path, "-large"),
+        ):
             # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
             body = self.large_body
             content_type = "application/octet-stream"

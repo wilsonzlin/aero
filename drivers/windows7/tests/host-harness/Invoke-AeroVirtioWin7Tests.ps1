@@ -151,6 +151,31 @@ function Get-AeroSelftestLargePayload {
   return $payload
 }
 
+function Get-AeroSelftestLargePath {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Path
+  )
+
+  # Compute "<path>-large" but insert before any query/fragment delimiter so a
+  # configured HttpPath like "/foo?x=y" becomes "/foo-large?x=y".
+  #
+  # For backwards compatibility, the request handler also accepts "$Path-large"
+  # verbatim (even when it would technically place "-large" after the query).
+  $q = $Path.IndexOf("?")
+  $h = $Path.IndexOf("#")
+  $insertPos = -1
+  if ($q -ge 0 -and $h -ge 0) {
+    $insertPos = [Math]::Min($q, $h)
+  } elseif ($q -ge 0) {
+    $insertPos = $q
+  } elseif ($h -ge 0) {
+    $insertPos = $h
+  }
+
+  if ($insertPos -lt 0) { return "$Path-large" }
+  return $Path.Insert($insertPos, "-large")
+}
+
 function Try-HandleAeroHttpRequest {
   param(
     [Parameter(Mandatory = $true)] $Listener,
@@ -177,7 +202,10 @@ function Try-HandleAeroHttpRequest {
     if ($requestLine -match "^GET\s+(\S+)\s+HTTP/") {
       $reqPath = $Matches[1]
       if ($reqPath -eq $Path) { $ok = $true }
-      elseif ($reqPath -eq "$Path-large") { $ok = $true; $large = $true }
+      elseif ($reqPath -eq "$Path-large" -or $reqPath -eq (Get-AeroSelftestLargePath -Path $Path)) {
+        $ok = $true
+        $large = $true
+      }
     }
 
     $statusLine = if ($ok) { "HTTP/1.1 200 OK" } else { "HTTP/1.1 404 Not Found" }

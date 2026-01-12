@@ -99,7 +99,41 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 httpd.shutdown()
                 thread.join(timeout=2)
 
+    def test_large_endpoint_with_query_string(self) -> None:
+        # If the harness is configured with an HttpPath that includes a query string,
+        # the large endpoint should insert "-large" before the query.
+        httpd, thread, port = self._start_server("/aero-virtio-selftest?foo=bar")
+        with httpd:
+            try:
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("GET", "/aero-virtio-selftest?foo=bar")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(body, b"OK\n")
+
+                # Preferred form (matches guest selftest URL suffix insertion).
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("GET", "/aero-virtio-selftest-large?foo=bar")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(len(body), 1048576)
+
+                # Backcompat: also accept naive string concatenation.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("GET", "/aero-virtio-selftest?foo=bar-large")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(len(body), 1048576)
+            finally:
+                httpd.shutdown()
+                thread.join(timeout=2)
+
 
 if __name__ == "__main__":
     unittest.main()
-
