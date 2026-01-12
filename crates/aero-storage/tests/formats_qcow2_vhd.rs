@@ -289,6 +289,47 @@ impl StorageBackend for WriteTraceBackend {
     }
 }
 
+struct FailOnWriteBackend {
+    inner: MemBackend,
+    fail_offset: u64,
+    fail_len: usize,
+}
+
+impl FailOnWriteBackend {
+    fn new(inner: MemBackend, fail_offset: u64, fail_len: usize) -> Self {
+        Self {
+            inner,
+            fail_offset,
+            fail_len,
+        }
+    }
+}
+
+impl StorageBackend for FailOnWriteBackend {
+    fn len(&mut self) -> aero_storage::Result<u64> {
+        self.inner.len()
+    }
+
+    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
+        self.inner.set_len(len)
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+        if offset == self.fail_offset && buf.len() == self.fail_len {
+            return Err(DiskError::Io("injected write failure".to_string()));
+        }
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> aero_storage::Result<()> {
+        self.inner.flush()
+    }
+}
+
 fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE] {
     let mut footer = [0u8; SECTOR_SIZE];
     footer[0..8].copy_from_slice(b"conectix");
@@ -1143,6 +1184,32 @@ fn vhd_dynamic_write_updates_single_bitmap_byte() {
             .any(|(off, len)| *off == block_start && *len == SECTOR_SIZE),
         "bitmap should not be rewritten fully; writes={writes:?}"
     );
+}
+
+#[test]
+fn vhd_dynamic_failed_bitmap_write_rolls_back_cached_bit() {
+    let backend = make_vhd_dynamic_with_pattern();
+
+    // Fixture layout (see `make_vhd_dynamic_with_pattern`):
+    // - dynamic header at 512
+    // - BAT at 1536 (padded to 512 bytes)
+    // - first allocated block placed at the old footer offset: 2048
+    // - bitmap size is 512 bytes, so data starts at 2560.
+    let block_start = 512u64 + 1024u64 + 512u64;
+
+    // Fail specifically the 1-byte bitmap write at the start of the bitmap.
+    let backend = FailOnWriteBackend::new(backend, block_start, 1);
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    let data = vec![0x55u8; SECTOR_SIZE];
+    let err = disk.write_sectors(1, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // Even though the data write may have succeeded, the bitmap bit was not persisted and should
+    // also have been rolled back in the in-memory cache, so reads must still return zeros.
+    let mut back = vec![0xAAu8; SECTOR_SIZE];
+    disk.read_sectors(1, &mut back).unwrap();
+    assert!(back.iter().all(|b| *b == 0));
 }
 
 #[test]
