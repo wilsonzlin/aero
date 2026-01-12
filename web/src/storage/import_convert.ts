@@ -583,13 +583,30 @@ async function convertQcow2ToSparse(
     }
 
     buf.fill(0);
-    for (let i = startCluster; i < endCluster; i++) {
+    // Merge contiguous clusters into larger reads to reduce IO calls (especially important for
+    // remote URL imports where each readAt may translate to a separate HTTP Range request).
+    let i = startCluster;
+    while (i < endCluster) {
+      if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const phys = qcow.clusterOffsets[i];
-      if (phys === 0) continue;
+      if (phys === 0) {
+        i++;
+        continue;
+      }
+
+      let runClusters = 1;
+      while (i + runClusters < endCluster) {
+        const nextPhys = qcow.clusterOffsets[i + runClusters];
+        if (nextPhys === 0) break;
+        if (nextPhys !== phys + runClusters * qcow.clusterSize) break;
+        runClusters++;
+      }
+
       const guestOff = i * qcow.clusterSize;
-      const len = Math.min(qcow.clusterSize, qcow.logicalSize - guestOff);
-      const chunk = await src.readAt(phys, len);
+      const runBytes = Math.min(runClusters * qcow.clusterSize, qcow.logicalSize - guestOff);
+      const chunk = await src.readAt(phys, runBytes);
       buf.set(chunk, (i - startCluster) * qcow.clusterSize);
+      i += runClusters;
     }
 
     writer.writeBlock(blockIndex, buf);
