@@ -338,6 +338,10 @@ static BOOLEAN virtio_modern_mmio_write(volatile VOID* Register, size_t Width, U
 
             off = (size_t)((uintptr_t)reg_u8 - (uintptr_t)base);
 
+            if (g_sim->common_cfg_write_count < VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_WRITES) {
+                g_sim->common_cfg_write_offsets[g_sim->common_cfg_write_count++] = (uint16_t)off;
+            }
+
             switch (off) {
                 case 0x00: /* device_feature_select */
                     if (Width == 4) {

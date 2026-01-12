@@ -747,6 +747,46 @@ static void test_setup_queue_programs_addresses_and_enables(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_setup_queue_write_order(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetupQueue(&dev, 0, 0x1111222233334444ull, 0x5555666677778888ull, 0x9999aaaabbbbccccull);
+    assert(st == STATUS_SUCCESS);
+
+    assert(sim.common_cfg_write_count == 8);
+    assert(sim.common_cfg_write_offsets[0] == 0x16); /* queue_select */
+    assert(sim.common_cfg_write_offsets[1] == 0x20); /* queue_desc_lo */
+    assert(sim.common_cfg_write_offsets[2] == 0x24); /* queue_desc_hi */
+    assert(sim.common_cfg_write_offsets[3] == 0x28); /* queue_avail_lo */
+    assert(sim.common_cfg_write_offsets[4] == 0x2c); /* queue_avail_hi */
+    assert(sim.common_cfg_write_offsets[5] == 0x30); /* queue_used_lo */
+    assert(sim.common_cfg_write_offsets[6] == 0x34); /* queue_used_hi */
+    assert(sim.common_cfg_write_offsets[7] == 0x1c); /* queue_enable (must be last) */
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_setup_queue_is_per_queue(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1937,6 +1977,7 @@ int main(void)
     test_negotiate_features_success_and_status_sequence();
     test_negotiate_features_device_rejects_features_ok();
     test_setup_queue_programs_addresses_and_enables();
+    test_setup_queue_write_order();
     test_setup_queue_is_per_queue();
     test_setup_queue_enable_readback_failure();
     test_setup_queue_invalid_device_state();
