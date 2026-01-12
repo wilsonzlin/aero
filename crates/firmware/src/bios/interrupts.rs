@@ -1417,7 +1417,7 @@ mod tests {
     fn int12_reports_conventional_memory_kb() {
         let mut cpu = CpuState::new(CpuMode::Real);
         let mut mem = TestMemory::new(2 * 1024 * 1024);
-        ivt::init_bda(&mut mem);
+        ivt::init_bda(&mut mem, 0x80);
 
         handle_int12(&mut cpu, &mut mem);
 

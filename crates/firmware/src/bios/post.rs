@@ -53,7 +53,7 @@ impl Bios {
         cpu.set_rip(super::RESET_VECTOR_OFFSET); // conventional reset vector within F000 segment
 
         // 2) BDA/EBDA: reserve a 4KiB EBDA page below 1MiB and advertise base memory size.
-        ivt::init_bda(bus);
+        ivt::init_bda(bus, self.config.boot_drive);
         self.init(bus);
         // Initialize VGA text mode state (mode 03h) so software querying BDA/INT 10h gets sane
         // defaults without needing to explicitly set a mode first.

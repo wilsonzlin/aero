@@ -38,7 +38,7 @@ fn handler_offset(vector: u8) -> u16 {
     }
 }
 
-pub fn init_bda(bus: &mut dyn BiosBus) {
+pub fn init_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
     // Base I/O addresses for standard devices.
     //
     // These are consumed by some guests directly (rather than using BIOS INT 14h/17h). Populate a
@@ -64,13 +64,21 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     // - x87 FPU present (the CPU core implements x87)
     // - one serial port (COM1)
     //
-    // We intentionally do not advertise floppy drives or game/parallel ports.
+    // We advertise floppy drives only when the configured boot drive is a floppy (`DL < 0x80`),
+    // since DOS-era software commonly probes INT 11h to decide whether to create A:/B:.
     //
     // Bit layout reference (IBM PC/AT convention):
+    // - bit 0: diskette drive(s) installed
     // - bit 1: math coprocessor
     // - bits 4-5: initial video mode (2 = 80x25 color)
+    // - bits 6-7: number of diskette drives - 1
     // - bits 9-11: number of serial ports
-    let equipment: u16 = (1 << 1) | (2 << 4) | (1 << 9);
+    let mut equipment: u16 = (1 << 1) | (2 << 4) | (1 << 9);
+    if boot_drive < 0x80 {
+        let drives = boot_drive.saturating_add(1).clamp(1, 4);
+        equipment |= 1 << 0;
+        equipment |= ((u16::from(drives.saturating_sub(1))) & 0x3) << 6;
+    }
     bus.write_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET, equipment);
 
     // Keyboard flags + buffer state.
@@ -97,7 +105,15 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     );
 
     // Number of hard disks installed (used by some bootloaders/DOS utilities).
-    bus.write_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET, 1);
+    //
+    // We always advertise at least one hard disk, but if the configured boot drive is 0x81 or
+    // higher, ensure the count includes it.
+    let hard_disk_count = if boot_drive >= 0x80 {
+        boot_drive.wrapping_sub(0x80).saturating_add(1)
+    } else {
+        1
+    };
+    bus.write_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET, hard_disk_count);
 
     // Conventional memory size in KiB (up to EBDA).
     let base_mem_kb = (EBDA_BASE / 1024) as u16;
@@ -117,7 +133,7 @@ mod tests {
     #[test]
     fn init_bda_initializes_core_fields() {
         let mut mem = TestMemory::new(2 * 1024 * 1024);
-        init_bda(&mut mem);
+        init_bda(&mut mem, 0x80);
 
         assert_eq!(mem.read_u16(BDA_BASE + BDA_COM_PORTS_OFFSET), 0x03F8);
         assert_eq!(mem.read_u16(BDA_BASE + BDA_COM_PORTS_OFFSET + 2), 0);
@@ -147,6 +163,17 @@ mod tests {
             mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET),
             BDA_KEYBOARD_BUF_END
         );
+        assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 1);
+    }
+
+    #[test]
+    fn init_bda_advertises_floppy_in_equipment_word_when_booting_from_floppy() {
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        init_bda(&mut mem, 0x00);
+
+        // 0x0223 = 0x0222 + diskette-present bit.
+        assert_eq!(mem.read_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET), 0x0223);
+        // Hard disk count remains advertised as 1 by default.
         assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 1);
     }
 }
