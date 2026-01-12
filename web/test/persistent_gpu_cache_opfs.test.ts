@@ -28,6 +28,8 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
     const padLine = "// padding ................................................................................\n";
     const wgsl = padLine.repeat(4000) + "@compute @workgroup_size(1) fn main() {}";
     const reflection = { bindings: [] };
+    let expectedWgsl = wgsl;
+    let expectedReflection = reflection;
 
     // Sanity: ensure payload is well above the 256KiB OPFS threshold.
     assert.ok(new TextEncoder().encode(wgsl).byteLength > 300 * 1024);
@@ -87,6 +89,9 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
 
       const gotUpdated = await cache1.getShader(key);
       assert.deepEqual(gotUpdated, { wgsl: wgsl2, reflection: reflection2 });
+
+      expectedWgsl = wgsl2;
+      expectedReflection = reflection2;
     } finally {
       await cache1.close();
     }
@@ -102,7 +107,7 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
       assert.equal(statsAfter.opfs, true);
 
       const got2 = await cache2.getShader(key);
-      assert.deepEqual(got2, { wgsl, reflection });
+      assert.deepEqual(got2, { wgsl: expectedWgsl, reflection: expectedReflection });
     } finally {
       await cache2.close();
     }
