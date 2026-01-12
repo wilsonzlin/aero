@@ -11,7 +11,6 @@ const OUT_TS_PATHS = [
   path.join(REPO_ROOT, 'web/src/input/scancodes.ts'),
 ];
 const OUT_RS_PATHS = [
-  path.join(REPO_ROOT, 'crates/emulator/src/io/input/scancodes.rs'),
   path.join(REPO_ROOT, 'crates/aero-devices-input/src/scancodes_generated.rs'),
 ];
 
@@ -183,8 +182,14 @@ async function main() {
 
   rs += `#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n`;
   rs += `pub enum Ps2Set2Scancode {\n`;
-  rs += `    Simple { make: u8, extended: bool },\n`;
-  rs += `    Sequence { make: &'static [u8], break_seq: &'static [u8] },\n`;
+  rs += `    Simple {\n`;
+  rs += `        make: u8,\n`;
+  rs += `        extended: bool,\n`;
+  rs += `    },\n`;
+  rs += `    Sequence {\n`;
+  rs += `        make: &'static [u8],\n`;
+  rs += `        break_seq: &'static [u8],\n`;
+  rs += `    },\n`;
   rs += `}\n\n`;
 
   rs += `impl Ps2Set2Scancode {\n`;
@@ -192,7 +197,11 @@ async function main() {
   rs += `        match *self {\n`;
   rs += `            Ps2Set2Scancode::Simple { make, extended } => {\n`;
   rs += `                if pressed {\n`;
-  rs += `                    if extended { vec![0xE0, make] } else { vec![make] }\n`;
+  rs += `                    if extended {\n`;
+  rs += `                        vec![0xE0, make]\n`;
+  rs += `                    } else {\n`;
+  rs += `                        vec![make]\n`;
+  rs += `                    }\n`;
   rs += `                } else if extended {\n`;
   rs += `                    vec![0xE0, 0xF0, make]\n`;
   rs += `                } else {\n`;
@@ -200,7 +209,11 @@ async function main() {
   rs += `                }\n`;
   rs += `            }\n`;
   rs += `            Ps2Set2Scancode::Sequence { make, break_seq } => {\n`;
-  rs += `                if pressed { make.to_vec() } else { break_seq.to_vec() }\n`;
+  rs += `                if pressed {\n`;
+  rs += `                    make.to_vec()\n`;
+  rs += `                } else {\n`;
+  rs += `                    break_seq.to_vec()\n`;
+  rs += `                }\n`;
   rs += `            }\n`;
   rs += `        }\n`;
   rs += `    }\n`;
@@ -225,12 +238,16 @@ async function main() {
     const entry = entries[code];
     const c = classify(entry.make);
     if (c.kind === 'simple') {
-      rs += `        ${JSON.stringify(code)} => Some(Ps2Set2Scancode::Simple { make: ${fmtHex(
-        c.make,
-      )}, extended: ${c.extended ? 'true' : 'false'} }),\n`;
+      rs += `        ${JSON.stringify(code)} => Some(Ps2Set2Scancode::Simple {\n`;
+      rs += `            make: ${fmtHex(c.make)},\n`;
+      rs += `            extended: ${c.extended ? 'true' : 'false'},\n`;
+      rs += `        }),\n`;
     } else {
       const name = rustConstName(code);
-      rs += `        ${JSON.stringify(code)} => Some(Ps2Set2Scancode::Sequence { make: &${name}_MAKE, break_seq: &${name}_BREAK }),\n`;
+      rs += `        ${JSON.stringify(code)} => Some(Ps2Set2Scancode::Sequence {\n`;
+      rs += `            make: &${name}_MAKE,\n`;
+      rs += `            break_seq: &${name}_BREAK,\n`;
+      rs += `        }),\n`;
     }
   }
   rs += `        _ => None,\n`;

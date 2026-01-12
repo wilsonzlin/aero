@@ -14,7 +14,10 @@ Running the generator updates:
 - `src/input/scancodes.ts`
 - `web/src/input/scancodes.ts`
 - `crates/aero-devices-input/src/scancodes_generated.rs`
-- `crates/emulator/src/io/input/scancodes.rs` (legacy harness, if present)
+
+The Rust `crates/emulator/` harness consumes the mapping via the shared
+`aero-devices-input` crate (there is no longer a separate generated copy under
+`crates/emulator/`).
 
 ## Regenerating
 
@@ -31,13 +34,13 @@ node tools/gen_scancodes/gen_scancodes.mjs
 CI/unit tests validate that `scancodes.json` and the generated outputs do not
 silently diverge:
 
+- `node tools/gen_scancodes/check_generated.mjs` runs the generator and fails if
+  `git diff` shows the checked-in generated files are out of date.
 - `web/src/input/scancodes_drift.test.ts` compares `scancodes.json` against the
   generated TypeScript mapping and checks that the `src/` and `web/` TS outputs
   are identical.
 - `crates/aero-devices-input/tests/scancodes_json_parity.rs` compares
-  `scancodes.json` against the generated Rust lookup and ensures the legacy
-  emulator copy (if present) matches `aero-devices-input`.
+  `scancodes.json` against the generated Rust lookup.
 
 If any of these tests fail, regenerate using the command above and commit the
 updated generated files.
-

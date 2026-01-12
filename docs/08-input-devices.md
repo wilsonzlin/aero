@@ -705,15 +705,14 @@ impl InputCapture {
 // Outputs:
 //   - src/input/scancodes.ts
 //   - web/src/input/scancodes.ts
-//   - crates/emulator/src/io/input/scancodes.rs (legacy native emulator harness)
 //   - crates/aero-devices-input/src/scancodes_generated.rs
 //
 // This keeps the JS capture side and Rust/WASM side in sync, including extended
 // keys (0xE0 prefix) and special multi-byte sequences like PrintScreen/Pause.
-use crate::io::input::scancodes::ps2_set2_scancode_for_code;
+ use aero_devices_input::scancode::browser_code_to_set2_bytes;
 
 pub fn key_event_bytes(code: &str, pressed: bool) -> Option<Vec<u8>> {
-    ps2_set2_scancode_for_code(code).map(|sc| sc.bytes(pressed))
+    browser_code_to_set2_bytes(code, pressed)
 }
 ```
 
