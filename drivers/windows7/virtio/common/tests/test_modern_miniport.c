@@ -254,6 +254,76 @@ static void test_init_invalid_notify_len_too_small_fails(void)
     assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
 }
 
+static void test_init_invalid_missing_device_cfg_cap_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* Make the "device cfg" capability an unknown cfg_type so the parser ignores it. */
+    pci_cfg[0x78 + 3] = 0;
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_unaligned_cap_ptr_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /* Capability pointer must be dword-aligned. */
+    pci_cfg[0x34] = 0x41;
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_common_cfg_len_too_small_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    cfg_write_le32(pci_cfg, 0x40 + 12, (uint32_t)sizeof(virtio_pci_common_cfg) - 1u);
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
+static void test_init_invalid_64bit_bar_in_last_slot_fails(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    NTSTATUS st;
+
+    build_test_pci_config(pci_cfg);
+    memset(bar0, 0, sizeof(bar0));
+
+    /*
+     * BAR5 marked as 64-bit memory BAR (memType==0x2) without a following upper
+     * dword slot. VirtioPciParseBarsFromConfig should reject this.
+     */
+    cfg_write_le32(pci_cfg, 0x10 + (5u * 4u), 0x5004u);
+
+    st = VirtioPciModernMiniportInit(&dev, (PUCHAR)bar0, sizeof(bar0), pci_cfg, 256);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+}
+
 static void test_read_device_features(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -852,6 +922,39 @@ static void test_notify_queue_populates_and_uses_cache(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_notify_queue_does_not_write_when_queue_missing(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile uint16_t* addr;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 0;
+    sim.queues[0].queue_notify_off = 0;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    addr = (volatile uint16_t*)dev.NotifyBase;
+    *addr = 0x1234u;
+    VirtioPciNotifyQueue(&dev, 0);
+    assert(*addr == 0x1234u);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 int main(void)
 {
     test_init_ok();
@@ -861,6 +964,10 @@ int main(void)
     test_init_invalid_common_cfg_not_in_bar0_fails();
     test_init_invalid_cap_out_of_range_fails();
     test_init_invalid_notify_len_too_small_fails();
+    test_init_invalid_missing_device_cfg_cap_fails();
+    test_init_invalid_unaligned_cap_ptr_fails();
+    test_init_invalid_common_cfg_len_too_small_fails();
+    test_init_invalid_64bit_bar_in_last_slot_fails();
     test_read_device_features();
     test_negotiate_features_missing_required_fails();
     test_negotiate_features_success_and_status_sequence();
@@ -876,6 +983,7 @@ int main(void)
     test_get_queue_notify_address_errors();
     test_read_isr_read_to_clear();
     test_notify_queue_populates_and_uses_cache();
+    test_notify_queue_does_not_write_when_queue_missing();
 
     printf("virtio_pci_modern_miniport_tests: PASS\n");
     return 0;
