@@ -8,6 +8,12 @@ const JOURNAL_SIZE: u64 = 4096;
 const JOURNAL_MAGIC: [u8; 4] = *b"JNL1";
 // DoS guard: avoid allocating absurdly large in-memory allocation tables for untrusted images.
 const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
+// DoS guard: keep allocation blocks bounded. Extremely large block sizes can cause pathological
+// behavior (e.g. allocating a single block can require zero-filling gigabytes).
+//
+// This cap intentionally matches the one used by the canonical `AEROSPAR` format in
+// `crates/aero-storage` so legacy images cannot request more work per block than current ones.
+const MAX_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SparseHeader {
@@ -96,6 +102,9 @@ impl SparseHeader {
             return Err(DiskError::CorruptImage(
                 "block size must be multiple of sector size",
             ));
+        }
+        if block_size > MAX_BLOCK_SIZE_BYTES {
+            return Err(DiskError::Unsupported("block size too large"));
         }
         if total_sectors == 0 {
             return Err(DiskError::CorruptImage("total sectors is zero"));
@@ -235,6 +244,9 @@ impl<S: ByteStorage> SparseDisk<S> {
             return Err(DiskError::Unsupported(
                 "block size must be a multiple of sector size",
             ));
+        }
+        if block_size > MAX_BLOCK_SIZE_BYTES {
+            return Err(DiskError::Unsupported("block size too large"));
         }
 
         let total_bytes = total_sectors
@@ -765,6 +777,22 @@ mod tests {
             err,
             DiskError::Unsupported("allocation table too large")
         ));
+    }
+
+    #[test]
+    fn decode_rejects_block_size_too_large() {
+        let header = SparseHeader {
+            sector_size: 512,
+            block_size: MAX_BLOCK_SIZE_BYTES + 512,
+            total_sectors: 1024,
+            table_offset: 8192,
+            table_entries: 1,
+            journal_offset: 4096,
+            data_offset: (MAX_BLOCK_SIZE_BYTES as u64) + 512,
+        };
+        let enc = header.encode();
+        let err = SparseHeader::decode(&enc).unwrap_err();
+        assert!(matches!(err, DiskError::Unsupported("block size too large")));
     }
 
     #[test]
