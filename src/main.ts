@@ -930,17 +930,13 @@ function renderAudioPanel(): HTMLElement {
       window.clearInterval(hdaPciDeviceTimer);
       hdaPciDeviceTimer = null;
     }
-    // Detach the AudioWorklet ring from the IO worker HDA device (if the worker is running).
+    // Detach the AudioWorklet ring from the worker runtime and restore the default
+    // demo-mode routing (CPU worker owns audio output).
     try {
-      workerCoordinator.getIoWorker()?.postMessage({
-        type: "setAudioRingBuffer",
-        ringBuffer: null,
-        capacityFrames: 0,
-        channelCount: 0,
-        dstSampleRate: 0,
-      });
+      workerCoordinator.setAudioRingBuffer(null, 0, 0, 0);
+      workerCoordinator.setAudioRingBufferOwner("cpu");
     } catch {
-      // ignore best-effort detach
+      // ignore best-effort detach/reset
     }
     (globalThis as typeof globalThis & { __aeroAudioOutputHdaPciDevice?: unknown }).__aeroAudioOutputHdaPciDevice = undefined;
   }
@@ -1339,14 +1335,16 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
 
-      // Attach the AudioWorklet ring buffer to the IO worker HDA device.
-      workerCoordinator.getIoWorker()?.postMessage({
-        type: "setAudioRingBuffer",
-        ringBuffer: output.ringBuffer.buffer,
-        capacityFrames: output.ringBuffer.capacityFrames,
-        channelCount: output.ringBuffer.channelCount,
-        dstSampleRate: output.context.sampleRate,
-      });
+      // Attach the AudioWorklet ring buffer to the IO worker. Use the coordinator's
+      // explicit ring-owner policy so we don't accidentally detach the ring when
+      // workers report READY (the coordinator re-sends attachments on READY).
+      workerCoordinator.setAudioRingBufferOwner("io");
+      workerCoordinator.setAudioRingBuffer(
+        output.ringBuffer.buffer,
+        output.ringBuffer.capacityFrames,
+        output.ringBuffer.channelCount,
+        output.context.sampleRate,
+      );
 
       // Ask the CPU worker to program the HDA PCI device over the real port/mmio path.
       const cpu = workerCoordinator.getWorker("cpu");
