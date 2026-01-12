@@ -1,0 +1,101 @@
+use aero_gpu_vga::DisplayOutput;
+use aero_machine::{Machine, MachineConfig, RunExit};
+use pretty_assertions::assert_eq;
+
+fn run_until_halt(m: &mut Machine) {
+    for _ in 0..100 {
+        match m.run_slice(10_000) {
+            RunExit::Halted { .. } => return,
+            RunExit::Completed { .. } => continue,
+            other => panic!("unexpected exit: {other:?}"),
+        }
+    }
+    panic!("guest never reached HLT");
+}
+
+fn build_cursor_boot_sector(row: u8, col: u8, start: u8, end: u8) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ah, 0x02  ; INT 10h AH=02h Set Cursor Position
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x02]);
+    i += 2;
+    // mov bh, 0x00  ; page 0
+    sector[i..i + 2].copy_from_slice(&[0xB7, 0x00]);
+    i += 2;
+    // mov dh, row
+    sector[i..i + 2].copy_from_slice(&[0xB6, row]);
+    i += 2;
+    // mov dl, col
+    sector[i..i + 2].copy_from_slice(&[0xB2, col]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // mov ah, 0x01  ; INT 10h AH=01h Set Cursor Shape
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x01]);
+    i += 2;
+    // mov ch, start
+    sector[i..i + 2].copy_from_slice(&[0xB5, start]);
+    i += 2;
+    // mov cl, end
+    sector[i..i + 2].copy_from_slice(&[0xB1, end]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+#[test]
+fn text_mode_cursor_overlay_renders_from_crtc_regs() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: false,
+        enable_vga: true,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    };
+
+    // Cursor at (0,0) with a 1-scanline cursor at scanline 0.
+    let boot = build_cursor_boot_sector(0, 0, 0x00, 0x00);
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Write a space with white-on-blue attributes to the first text cell.
+    // Space glyph is all background pixels, so the cursor inversion is easy to detect.
+    m.write_physical_u8(0xB8000, b' ');
+    m.write_physical_u8(0xB8001, 0x1F);
+
+    let vga = m.vga().expect("VGA enabled");
+    let (width, px0, px1) = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        let (w, _h) = vga.get_resolution();
+        let fb = vga.get_framebuffer();
+        (w, fb[0], fb[w as usize])
+    };
+
+    // Text mode uses fixed 80x25 cells of 9x16 pixels.
+    assert_eq!(width, 80 * 9);
+
+    // First scanline of cell (0,0) should be cursor-inverted to the foreground color (white).
+    assert_eq!(px0, 0xFFFF_FFFF);
+    // Second scanline should remain the background color (EGA blue).
+    assert_eq!(px1, 0xFFAA_0000);
+}
+
