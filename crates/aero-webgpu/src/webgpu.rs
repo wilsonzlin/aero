@@ -63,19 +63,60 @@ impl WebGpuContext {
 
     /// Acquire a device/queue without creating a presentation surface.
     pub async fn request_headless(options: WebGpuInitOptions) -> Result<Self, WebGpuInitError> {
-        let backends = if cfg!(target_arch = "wasm32") {
-            wgpu::Backends::BROWSER_WEBGPU
+        if cfg!(target_arch = "wasm32") {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::BROWSER_WEBGPU,
+                ..Default::default()
+            });
+            return Self::request_internal(instance, BackendKind::WebGpu, options, None).await;
+        }
+
+        #[cfg(all(unix, not(target_arch = "wasm32")))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            // Some wgpu backends (notably GL/WAYLAND) are noisy if `XDG_RUNTIME_DIR` is unset or
+            // invalid. Use a per-process temp dir to keep headless/test contexts quiet.
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-webgpu-xdg-runtime-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters (lavapipe/llvmpipe).
+        // If no GL adapter is available, fall back to the native backends.
+        if cfg!(target_os = "linux") {
+            let gl_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::GL,
+                ..Default::default()
+            });
+            match Self::request_internal(gl_instance, BackendKind::WebGpu, options.clone(), None).await {
+                Ok(ctx) => Ok(ctx),
+                Err(WebGpuInitError::NoAdapter) => {
+                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                        backends: wgpu::Backends::PRIMARY,
+                        ..Default::default()
+                    });
+                    Self::request_internal(instance, BackendKind::WebGpu, options, None).await
+                }
+                Err(err) => Err(err),
+            }
         } else {
-            // Avoid initializing the GL backend in headless CI environments; it
-            // can emit noisy display-system errors (Wayland/X11) even when Vulkan
-            // is available.
-            wgpu::Backends::PRIMARY
-        };
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
-        Self::request_internal(instance, BackendKind::WebGpu, options, None).await
+            // Avoid initializing the GL backend in headless environments; it can emit noisy
+            // display-system errors (Wayland/X11) even when a native backend is available.
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::PRIMARY,
+                ..Default::default()
+            });
+            Self::request_internal(instance, BackendKind::WebGpu, options, None).await
+        }
     }
 
     pub(crate) async fn request_with_surface<'a>(

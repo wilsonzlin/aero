@@ -32,20 +32,52 @@ impl WgpuBackend {
     ///
     /// This is primarily intended for tests and offscreen rendering.
     pub async fn new_headless(kind: BackendKind) -> Result<Self, GpuError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            // Prefer "native" backends; this avoids noisy platform warnings from
-            // initializing GL/WAYLAND stacks in headless CI environments.
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or_else(|| GpuError::Backend("no suitable wgpu adapter found".into()))?;
+        // On Linux CI we prefer the GL backend first to avoid crashes seen with some Vulkan
+        // software adapters (lavapipe/llvmpipe). If no GL adapter is available, fall back to
+        // the native backends.
+        let adapter = if cfg!(target_os = "linux") {
+            let gl_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::GL,
+                ..Default::default()
+            });
+            let adapter = gl_instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await;
+            if adapter.is_some() {
+                adapter
+            } else {
+                let primary_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::PRIMARY,
+                    ..Default::default()
+                });
+                primary_instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
+        } else {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                // Prefer "native" backends; this avoids initializing GL stacks on platforms where
+                // they're more likely to require a windowing system.
+                backends: wgpu::Backends::PRIMARY,
+                ..Default::default()
+            });
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+        .ok_or_else(|| GpuError::Backend("no suitable wgpu adapter found".into()))?;
 
         let downlevel = adapter.get_downlevel_capabilities();
         let supports_compute = downlevel
