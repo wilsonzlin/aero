@@ -300,6 +300,58 @@ fn disk_layer_snapshot_rejects_unaligned_disk_size() {
 }
 
 #[test]
+fn disk_layer_snapshot_rejects_excessive_legacy_backend_key_length() {
+    const TAG_BACKEND_KEY: u16 = 1;
+    const TAG_SECTOR_SIZE: u16 = 2;
+    const TAG_SIZE_BYTES: u16 = 3;
+
+    // Keep in sync with `MAX_DISK_STRING_BYTES` (64 KiB).
+    const MAX_LEN: usize = 64 * 1024;
+
+    let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
+    w.field_bytes(TAG_BACKEND_KEY, vec![0u8; MAX_LEN + 1]);
+    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u64(TAG_SIZE_BYTES, 4096);
+
+    let backend = DiskBackendState::Local(LocalDiskBackendState {
+        kind: LocalDiskBackendKind::Other,
+        key: "ignored".to_string(),
+        overlay: None,
+    });
+    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject oversized legacy backend key");
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("backend_key too long")
+    );
+}
+
+#[test]
+fn disk_layer_snapshot_rejects_legacy_backend_key_invalid_utf8() {
+    const TAG_BACKEND_KEY: u16 = 1;
+    const TAG_SECTOR_SIZE: u16 = 2;
+    const TAG_SIZE_BYTES: u16 = 3;
+
+    let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
+    w.field_bytes(TAG_BACKEND_KEY, vec![0xff]);
+    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u64(TAG_SIZE_BYTES, 4096);
+
+    let backend = DiskBackendState::Local(LocalDiskBackendState {
+        kind: LocalDiskBackendKind::Other,
+        key: "ignored".to_string(),
+        overlay: None,
+    });
+    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let err = state
+        .load_state(&w.finish())
+        .expect_err("snapshot should reject non-utf8 legacy backend key");
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("backend_key utf8"));
+}
+
+#[test]
 fn disk_layer_snapshot_rejects_zero_disk_size() {
     const TAG_SECTOR_SIZE: u16 = 2;
     const TAG_SIZE_BYTES: u16 = 3;
