@@ -154,6 +154,40 @@ timer tick/poll) once to re-drive any asserted **level-triggered** GSIs implied 
 `general_int_status`. The per-timer `irq_asserted` field is runtime/sink-handshake state and is intentionally
 not snapshotted, so a post-restore poll is required to make the sink observe restored asserted levels.
 
+#### Snapshot device IDs (`DeviceId`) and web runtime `kind` strings
+
+The snapshot file stores device entries under an **outer numeric** `DeviceId` (the `u32` written into each `DeviceState` header).
+
+In the worker-based web runtime, device blobs are exchanged as `{ kind: string, bytes: Uint8Array }` (see `web/src/runtime/snapshot_protocol.ts`). The `kind` field is a **stable string** that maps to a numeric `DeviceId`.
+
+For forward compatibility, the runtime also supports a fallback spelling for unknown device IDs:
+
+- `device.<id>` (e.g. `device.1234`) → `DeviceId(<id>)`
+
+| DeviceId enum | Numeric id | Web runtime `kind` | Notes |
+|---|---:|---|---|
+| `PIC` | `1` | `device.1` | Legacy PIC (guest-visible state) |
+| `APIC` | `2` | `device.2` | Local APIC (guest-visible state) |
+| `PIT` | `3` | `device.3` | PIT timer |
+| `RTC` | `4` | `device.4` | RTC/CMOS |
+| `PCI` | `5` | `device.5` | PCI config mechanism + bus state |
+| `DISK_CONTROLLER` | `6` | `device.6` | Disk controller(s) + DMA state |
+| `VGA` | `7` | `device.7` | VGA/VESA device model |
+| `SERIAL` | `8` | `device.8` | UART 16550 |
+| `CPU_INTERNAL` | `9` | `device.9` | Non-architectural CPU bookkeeping (pending IRQs, etc.) |
+| `BIOS` | `10` | `device.10` | Firmware/BIOS runtime state |
+| `MEMORY` | `11` | `device.11` | Memory-bus glue state (A20, ROM windows, etc.) |
+| `USB` | `12` | `usb.uhci` | Browser USB stack (UHCI controller + runtime/bridge state) |
+| `I8042` | `13` | `device.13` | Legacy i8042 PS/2 controller state |
+| `PCI_CFG` | `14` | `device.14` | Legacy split PCI config ports + bus state (prefer `DeviceId::PCI`) |
+| `PCI_INTX` | `15` | `device.15` | Legacy split PCI INTx routing state (prefer `DeviceId::PCI`) |
+| `ACPI_PM` | `16` | `device.16` | ACPI fixed-feature power management state |
+| `HPET` | `17` | `device.17` | High Precision Event Timer state |
+| `HDA` | `18` | `device.18` | HD Audio controller/runtime state |
+| `E1000` | `19` | `net.e1000` | Intel E1000 NIC device model state |
+| `NET_STACK` | `20` | `net.stack` | User-space network stack/backend state (DHCP/NAT/proxy bookkeeping) |
+| `PLATFORM_INTERRUPTS` | `21` | `device.21` | Platform interrupt controller/routing state |
+
 #### USB (`DeviceId::USB`)
 
 For the browser USB stack (guest-visible UHCI controller + runtime/bridge state), store a single device entry:
@@ -434,6 +468,23 @@ These helpers are implemented for:
 - `crates/aero-wasm::DemoVm` (legacy stub/demo VM used by snapshot panels)
 
 If sync access handles are unavailable (e.g. the code runs on the main thread instead of a DedicatedWorkerGlobalScope), these helpers return a clear error.
+
+---
+
+## Snapshot ordering requirements (multi-worker web runtime)
+
+The worker-based web runtime splits responsibilities across workers (CPU, I/O, net). To produce a coherent snapshot and avoid replaying stale network traffic after restore, snapshot orchestration must follow a strict ordering:
+
+1. **Pause CPU + I/O workers** so:
+   - guest execution stops, and
+   - device emulation stops mutating device/RAM state while it is being serialized.
+2. **Drain/reset the net worker** *after* CPU+I/O are paused:
+   - host tunnel connections (WebSocket/WebRTC) are **not bit-restorable**, so they must be treated as reset on restore.
+   - clear the shared `NET_TX` / `NET_RX` rings so any in-flight frames are dropped rather than replayed into a restored guest.
+3. Save/restore the snapshot payload (CPU/MMU + device blobs + guest RAM).
+4. Resume workers; the net worker reconnects best-effort.
+
+Networking-specific restore semantics (what is and is not bit-restorable) are documented in `docs/07-networking.md`.
 
 ---
 

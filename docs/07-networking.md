@@ -296,42 +296,56 @@ See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
 
 ## Snapshot/Restore (Save States)
 
-Network snapshots are split into two layers, each stored as its own `DEVICES` entry in the VM snapshot:
+Networking state spans multiple layers, and **not all of it is bit-restorable**:
 
-1. **NIC device model** (e.g. E1000): registers + DMA rings.
-2. **Network backend/stack**: DHCP/NAT state and host-proxy connection bookkeeping.
+1. **Guest-visible NIC device model** (e.g. E1000 / virtio-net): registers + DMA rings.
+2. **Host-side networking backend/stack**:
+   - Phase 0 / fallback: in-browser `aero-net-stack` (DHCP/DNS/NAT + TCP/UDP proxy bookkeeping).
+   - Production: L2 tunnel forwarder (pure frame pipe to a proxy that runs the TCP/IP stack).
+3. **Host transports** (WebSocket/WebRTC objects) and **proxy-side sockets**.
 
-Concrete mapping (canonical identifiers):
+In the VM snapshot file, networking is represented as two `DEVICES` entries:
 
 | Layer | Outer `DeviceId` | Web/WASM `kind` string | What it covers |
 |---|---|---|---|
 | NIC (E1000) | `DeviceId::E1000` (`19`) | `net.e1000` | Guest-visible NIC state: registers, descriptor rings, pending RX/TX bookkeeping. |
 | Net stack/backend | `DeviceId::NET_STACK` (`20`) | `net.stack` | User-space stack / NAT / DHCP state + proxy bookkeeping. |
 
-### What must be captured
+Device snapshot IDs and the stable `kind` strings used by the web runtime are listed in [`docs/16-snapshots.md`](./16-snapshots.md) (e.g. `net.e1000`, `net.stack`, and the forward-compatible `device.<id>` form).
 
-- **NIC state**
-  - RX/TX ring base addresses + head/tail indices
-  - MAC address and relevant control/status registers
-  - pending interrupts / interrupt mask state
-- **Network stack state**
-  - DHCP lease (assigned IP, gateway, DNS, lease timers)
-  - NAT mappings (stable ordering in serialization)
-  - proxy connection IDs and endpoints (remote IP/port)
+### Restore behavior (expected/required)
 
-### Limitation: active TCP connections
+#### E1000 NIC (`net.e1000`)
 
-Browser-hosted networking relies on WebSocket/WebRTC transports and a proxy server. **Active TCP connections are not bit-restorable** across a snapshot because:
+- **Restored:** guest-visible device state (registers, ring base addresses, head/tail indices, interrupt mask/cause, MAC, etc.).
+- **Not bit-restorable:** host-facing in-flight frame queues (anything buffered between the device model and the host network) are **best-effort and may be dropped**.
+  - Expect occasional packet loss immediately after restore; higher layers (TCP, application retries) must cope.
 
-- browser WebSocket objects cannot be serialized
-- server-side TCP sockets are independent of client snapshot state
+#### Net stack (`net.stack`, Phase 0 / fallback)
 
-**Policy on restore (expected behavior):**
+The in-browser `aero-net-stack` can snapshot/restore its internal bookkeeping (DHCP lease, DNS cache, NAT mappings, etc.), but it cannot bit-restore host-side proxy transports.
 
-- **Drop**: immediately close all active proxy connections and let the guest reconnect.
-- **Reconnect**: preserve connection IDs/endpoints and attempt a best-effort reconnect; if reconnection fails, drop.
+**Policy on restore:** **Drop.** On restore, all host-side proxy transports are treated as reset/closed.
 
-For deterministic testing, prefer **Drop** (removes timing-dependent reconnection behavior).
+- **Active TCP proxy connections are not bit-restorable.** Browser WebSocket objects cannot be serialized, and the proxy’s upstream sockets have independent state.
+- Guest TCP connections that were mid-flight will break (RST/timeout) and must be re-established by the guest/application.
+- UDP is connectionless; any in-flight datagrams may be dropped, but subsequent sends work once the stack is running again.
+
+#### L2 tunnel (production Option C)
+
+The L2 tunnel is a host transport (WebSocket/WebRTC DataChannel) carrying raw Ethernet frames; the connection itself is **not bit-restorable**.
+
+- On resume, the tunnel reconnects **best-effort** (normal reconnect/backoff policy).
+- The shared `NET_TX` / `NET_RX` rings are **cleared** on resume/restore to avoid replaying stale frames into a restored guest.
+
+### Snapshot ordering requirements (web runtime)
+
+To avoid capturing partially-processed network traffic (and to ensure restored device state does not see stale ring contents):
+
+1. **Pause CPU + I/O** (stop guest execution + device emulation).
+2. **Then** drain/reset networking (net worker) and clear `NET_TX`/`NET_RX`.
+3. Save/restore snapshot bytes.
+4. Resume CPU + I/O; the net worker reconnects best-effort.
 
 ### L2 tunnel forwarder (Option C) pause/drain policy
 
