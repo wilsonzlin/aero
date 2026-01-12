@@ -1,7 +1,7 @@
 pub use crate::io::storage::error::{DiskError, DiskResult};
 
-use aero_storage::DiskError as StorageDiskError;
 use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
+use crate::io::storage::adapters::aero_storage_disk_error_to_emulator_with_sector_context;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
@@ -126,7 +126,9 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
 
         self.disk_mut()
             .read_sectors(lba, buf)
-            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
+            .map_err(|err| {
+                aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity)
+            })
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
@@ -154,52 +156,28 @@ impl DiskBackend for AeroVirtualDiskAsNvmeBackend {
 
         self.disk_mut()
             .write_sectors(lba, buf)
-            .map_err(|err| map_storage_disk_error(err, lba, sectors, capacity))
+            .map_err(|err| {
+                aero_storage_disk_error_to_emulator_with_sector_context(err, lba, sectors, capacity)
+            })
     }
 
     fn flush(&mut self) -> DiskResult<()> {
         self.disk_mut()
             .flush()
-            .map_err(|err| map_storage_disk_error(err, 0, 0, self.total_sectors()))
+            .map_err(|err| {
+                aero_storage_disk_error_to_emulator_with_sector_context(
+                    err,
+                    0,
+                    0,
+                    self.total_sectors(),
+                )
+            })
     }
 }
 
 /// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an emulator [`DiskBackend`].
 pub fn from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Box<dyn DiskBackend> {
     Box::new(AeroVirtualDiskAsNvmeBackend::new(disk))
-}
-
-fn map_storage_disk_error(
-    err: StorageDiskError,
-    lba: u64,
-    sectors: u64,
-    capacity_sectors: u64,
-) -> DiskError {
-    match err {
-        StorageDiskError::OutOfBounds { .. } => DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors,
-        },
-        StorageDiskError::UnalignedLength { len, alignment } => DiskError::UnalignedBuffer {
-            len,
-            sector_size: alignment
-                .try_into()
-                .unwrap_or(AeroVirtualDiskAsNvmeBackend::SECTOR_SIZE),
-        },
-        StorageDiskError::OffsetOverflow => DiskError::Unsupported("offset overflow"),
-        StorageDiskError::CorruptImage(msg) => DiskError::CorruptImage(msg),
-        StorageDiskError::Unsupported(msg) => DiskError::Unsupported(msg),
-        StorageDiskError::InvalidSparseHeader(msg) => DiskError::CorruptImage(msg),
-        StorageDiskError::InvalidConfig(msg) => DiskError::Unsupported(msg),
-        StorageDiskError::CorruptSparseImage(msg) => DiskError::CorruptImage(msg),
-        StorageDiskError::NotSupported(msg) => DiskError::NotSupported(msg),
-        StorageDiskError::QuotaExceeded => DiskError::QuotaExceeded,
-        StorageDiskError::InUse => DiskError::InUse,
-        StorageDiskError::InvalidState(msg) => DiskError::InvalidState(msg),
-        StorageDiskError::BackendUnavailable => DiskError::BackendUnavailable,
-        StorageDiskError::Io(msg) => DiskError::Io(msg),
-    }
 }
 
 pub struct VirtualDrive {

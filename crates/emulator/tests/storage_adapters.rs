@@ -1,8 +1,10 @@
-use aero_storage::{MemBackend, RawDisk, VirtualDisk as _};
+use aero_storage::{MemBackend, RawDisk, StorageBackend as _, VirtualDisk as _};
 
-use emulator::io::storage::adapters::{EmuDiskBackendFromVirtualDisk, StorageBackendFromByteStorage};
-use emulator::io::storage::disk::ByteStorage;
-use emulator::io::storage::{DiskBackend as _, DiskError};
+use emulator::io::storage::adapters::{
+    aero_storage_disk_error_to_emulator, emulator_disk_error_to_aero_storage,
+    ByteStorageFromStorageBackend, EmuDiskBackendFromVirtualDisk, StorageBackendFromByteStorage,
+};
+use emulator::io::storage::{ByteStorage, DiskBackend as _, DiskError, DiskResult};
 
 #[derive(Default, Clone)]
 struct MemByteStorage {
@@ -10,7 +12,7 @@ struct MemByteStorage {
 }
 
 impl ByteStorage for MemByteStorage {
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> emulator::io::storage::DiskResult<()> {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()> {
         let offset: usize = offset.try_into().map_err(|_| DiskError::OutOfBounds)?;
         let end = offset
             .checked_add(buf.len())
@@ -22,7 +24,7 @@ impl ByteStorage for MemByteStorage {
         Ok(())
     }
 
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> emulator::io::storage::DiskResult<()> {
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()> {
         let offset: usize = offset.try_into().map_err(|_| DiskError::OutOfBounds)?;
         let end = offset
             .checked_add(buf.len())
@@ -34,15 +36,15 @@ impl ByteStorage for MemByteStorage {
         Ok(())
     }
 
-    fn flush(&mut self) -> emulator::io::storage::DiskResult<()> {
+    fn flush(&mut self) -> DiskResult<()> {
         Ok(())
     }
 
-    fn len(&mut self) -> emulator::io::storage::DiskResult<u64> {
+    fn len(&mut self) -> DiskResult<u64> {
         Ok(self.data.len() as u64)
     }
 
-    fn set_len(&mut self, len: u64) -> emulator::io::storage::DiskResult<()> {
+    fn set_len(&mut self, len: u64) -> DiskResult<()> {
         let len: usize = len.try_into().map_err(|_| DiskError::OutOfBounds)?;
         self.data.resize(len, 0);
         Ok(())
@@ -55,7 +57,7 @@ fn aero_raw_disk_wrapped_as_emulator_disk_backend() {
     let backend = MemBackend::new();
     let raw = RawDisk::create(backend, sectors * 512).unwrap();
 
-    let mut emu = EmuDiskBackendFromVirtualDisk(raw);
+    let mut emu = EmuDiskBackendFromVirtualDisk::new(raw);
     assert_eq!(emu.sector_size(), 512);
     assert_eq!(emu.total_sectors(), sectors);
 
@@ -84,7 +86,7 @@ fn aero_raw_disk_wrapped_as_emulator_disk_backend() {
 
 #[test]
 fn emulator_byte_storage_wrapped_as_aero_storage_backend() {
-    let backend = StorageBackendFromByteStorage(MemByteStorage::default());
+    let backend = StorageBackendFromByteStorage::new(MemByteStorage::default());
     let mut disk = RawDisk::create(backend, 16 * 512).unwrap();
 
     let write_buf = vec![0xA5u8; 512];
@@ -96,5 +98,58 @@ fn emulator_byte_storage_wrapped_as_aero_storage_backend() {
     let mut read_buf = vec![0u8; 512];
     reopened.read_sectors(3, &mut read_buf).unwrap();
     assert_eq!(read_buf, write_buf);
+}
+
+#[test]
+fn emulator_byte_storage_wrapped_as_aero_storage_backend_maps_out_of_bounds_with_context() {
+    let mut storage = MemByteStorage::default();
+    storage.set_len(4).unwrap();
+    let mut backend = StorageBackendFromByteStorage::new(storage);
+
+    let mut buf = [0u8; 1];
+    let err = backend.read_at(4, &mut buf).unwrap_err();
+    match err {
+        aero_storage::DiskError::OutOfBounds {
+            offset,
+            len,
+            capacity,
+        } => {
+            assert_eq!(offset, 4);
+            assert_eq!(len, 1);
+            assert_eq!(capacity, 4);
+        }
+        other => panic!("expected OutOfBounds, got {other}"),
+    }
+}
+
+#[test]
+fn aero_storage_backend_wrapped_as_emulator_byte_storage_roundtrips() {
+    let backend = MemBackend::with_len(16).unwrap();
+    let mut storage = ByteStorageFromStorageBackend::new(backend);
+
+    storage.write_at(3, b"abc").unwrap();
+    let mut buf = [0u8; 3];
+    storage.read_at(3, &mut buf).unwrap();
+    assert_eq!(&buf, b"abc");
+}
+
+#[test]
+fn aero_storage_backend_wrapped_as_emulator_byte_storage_maps_out_of_bounds() {
+    let backend = MemBackend::with_len(4).unwrap();
+    let mut storage = ByteStorageFromStorageBackend::new(backend);
+
+    let mut buf = [0u8; 1];
+    let err = storage.read_at(4, &mut buf).unwrap_err();
+    assert_eq!(err, DiskError::OutOfBounds);
+}
+
+#[test]
+fn error_mapping_preserves_offset_overflow_roundtrip() {
+    let err = aero_storage::DiskError::OffsetOverflow;
+    let emu = aero_storage_disk_error_to_emulator(err);
+    assert_eq!(emu, DiskError::Unsupported("offset overflow"));
+
+    let back = emulator_disk_error_to_aero_storage(emu, None, None, None);
+    assert!(matches!(back, aero_storage::DiskError::OffsetOverflow));
 }
 
