@@ -856,6 +856,11 @@ function renderMachinePanel(): HTMLElement {
         // `RunExitKind::Completed` is 0. Stop once the guest halts/requests reset/needs assist.
         if (exitKind !== 0) {
           window.clearInterval(timer);
+          try {
+            (machine as unknown as { free?: () => void }).free?.();
+          } catch {
+            // ignore
+          }
         }
       }, 50);
       (timer as unknown as { unref?: () => void }).unref?.();
