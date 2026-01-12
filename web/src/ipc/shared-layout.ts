@@ -190,7 +190,14 @@ function alignUp(value: number, align: number): number {
 }
 
 function divCeil(value: number, divisor: number): number {
-  return Math.floor((value + divisor - 1) / divisor);
+  if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(divisor) || divisor <= 0) {
+    throw new Error("divCeil: arguments must be safe non-negative integers and divisor must be > 0");
+  }
+  const out = Number((BigInt(value) + BigInt(divisor) - 1n) / BigInt(divisor));
+  if (!Number.isSafeInteger(out)) {
+    throw new Error("divCeil overflow");
+  }
+  return out;
 }
 
 function dirtyWordsCoverAllTiles(tileCount: number, dirtyWords: Uint32Array): boolean {

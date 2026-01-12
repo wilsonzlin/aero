@@ -478,6 +478,32 @@ function asSafeInt(value: unknown, label: string): number {
   return value;
 }
 
+function toSafeNumber(value: bigint, label: string): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) {
+    throw new Error(`${label} is not a safe JS integer (${value})`);
+  }
+  return n;
+}
+
+function divCeil(n: number, d: number): number {
+  if (!Number.isSafeInteger(n) || n < 0 || !Number.isSafeInteger(d) || d <= 0) {
+    throw new Error("divCeil: arguments must be safe non-negative integers and divisor must be > 0");
+  }
+  const out = Number((BigInt(n) + BigInt(d) - 1n) / BigInt(d));
+  if (!Number.isSafeInteger(out)) throw new Error("divCeil overflow");
+  return out;
+}
+
+function divFloor(n: number, d: number): number {
+  if (!Number.isSafeInteger(n) || n < 0 || !Number.isSafeInteger(d) || d <= 0) {
+    throw new Error("divFloor: arguments must be safe non-negative integers and divisor must be > 0");
+  }
+  const out = Number(BigInt(n) / BigInt(d));
+  if (!Number.isSafeInteger(out)) throw new Error("divFloor overflow");
+  return out;
+}
+
 function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
   if (!raw || typeof raw !== "object") {
     throw new Error("manifest.json must be a JSON object");
@@ -517,7 +543,7 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
   }
   if (chunkIndexWidth <= 0) throw new Error("chunkIndexWidth must be > 0");
 
-  const expectedChunkCount = Math.ceil(totalSize / chunkSize);
+  const expectedChunkCount = divCeil(totalSize, chunkSize);
   if (chunkCount !== expectedChunkCount) {
     throw new Error(`chunkCount mismatch: expected=${expectedChunkCount} manifest=${chunkCount}`);
   }
@@ -527,7 +553,10 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
     throw new Error(`chunkIndexWidth too small: need>=${minWidth} got=${chunkIndexWidth}`);
   }
 
-  const lastChunkSize = totalSize - chunkSize * (chunkCount - 1);
+  const lastChunkSize = toSafeNumber(
+    BigInt(totalSize) - BigInt(chunkSize) * BigInt(chunkCount - 1),
+    "lastChunkSize",
+  );
   if (!Number.isSafeInteger(lastChunkSize) || lastChunkSize <= 0 || lastChunkSize > chunkSize) {
     throw new Error("invalid derived final chunk size");
   }
@@ -715,8 +744,8 @@ class RemoteChunkCache implements ChunkCache {
     const chunkSize = this.manifest.chunkSize;
     for (const r of this.rangeSet.getRanges()) {
       if (r.start >= r.end) continue;
-      const startChunk = Math.floor(r.start / chunkSize);
-      const endChunk = Math.floor((r.end - 1) / chunkSize);
+      const startChunk = divFloor(r.start, chunkSize);
+      const endChunk = divFloor(r.end - 1, chunkSize);
       for (let idx = startChunk; idx <= endChunk; idx += 1) {
         if (!Number.isSafeInteger(idx) || idx < 0 || idx >= this.manifest.chunkSizes.length) continue;
         out.add(idx);
@@ -1197,8 +1226,8 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       return;
     }
 
-    const startChunk = Math.floor(offset / this.manifest.chunkSize);
-    const endChunk = Math.floor((offset + buffer.byteLength - 1) / this.manifest.chunkSize);
+    const startChunk = divFloor(offset, this.manifest.chunkSize);
+    const endChunk = divFloor(offset + buffer.byteLength - 1, this.manifest.chunkSize);
 
     // Batch-load cached chunks when using IndexedDB. This reduces IDB roundtrips when a read spans
     // multiple chunks (e.g. large sequential reads).
@@ -1445,7 +1474,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     this.lastReadEnd = offset + length;
     if (!sequential) return;
 
-    const nextChunk = Math.floor((offset + length) / this.manifest.chunkSize);
+    const nextChunk = divFloor(offset + length, this.manifest.chunkSize);
     for (let i = 0; i < this.prefetchSequentialChunks; i += 1) {
       const chunk = nextChunk + i;
       if (chunk >= this.manifest.chunkCount) break;

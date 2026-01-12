@@ -721,6 +721,28 @@ async fn reject_zero_max_concurrent_fetches() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn reject_zero_max_retries() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) =
+        start_range_server_with_options(image, RangeServerOptions::new("etag-retries")).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 0;
+
+    let err = StreamingDisk::open(config)
+        .await
+        .err()
+        .expect("expected error");
+    assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn missing_required_header_fails_open_with_http_error() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) = start_range_server_with_options(

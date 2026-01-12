@@ -286,6 +286,17 @@ function toSafeNumber(value: bigint, label: string): number {
   return n;
 }
 
+function divFloor(n: number, d: number): number {
+  if (!Number.isSafeInteger(n) || !Number.isSafeInteger(d) || d <= 0 || n < 0) {
+    throw new Error("divFloor: arguments must be safe non-negative integers and divisor must be > 0");
+  }
+  const out = Number(BigInt(n) / BigInt(d));
+  if (!Number.isSafeInteger(out)) {
+    throw new Error("divFloor overflow");
+  }
+  return out;
+}
+
 function isWeakEtag(etag: string): boolean {
   const trimmed = etag.trimStart();
   return trimmed.startsWith("W/") || trimmed.startsWith("w/");
@@ -627,7 +638,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     let cachedBytes = cache ? cache.getAllocatedBytes() : 0;
     const remainder = totalSize % blockSize;
     if (cache && remainder !== 0 && totalSize > 0) {
-      const lastBlockIndex = Math.floor((totalSize - 1) / blockSize);
+      const lastBlockIndex = divFloor(totalSize - 1, blockSize);
       if (cache.isBlockAllocated(lastBlockIndex)) {
         cachedBytes -= blockSize - remainder;
       }
@@ -852,8 +863,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       return;
     }
 
-    const startChunk = Math.floor(offset / this.opts.chunkSize);
-    const endChunk = Math.floor((offset + buffer.byteLength - 1) / this.opts.chunkSize);
+    const startChunk = divFloor(offset, this.opts.chunkSize);
+    const endChunk = divFloor(offset + buffer.byteLength - 1, this.opts.chunkSize);
 
     const pending: Array<Promise<void>> = [];
     for (let chunk = startChunk; chunk <= endChunk; chunk++) {

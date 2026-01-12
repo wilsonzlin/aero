@@ -27,6 +27,15 @@ function mergeRanges(a: ByteRange, b: ByteRange): ByteRange {
   return { start: Math.min(a.start, b.start), end: Math.max(a.end, b.end) };
 }
 
+function divFloor(n: number, d: number): number {
+  if (!Number.isSafeInteger(n) || !Number.isSafeInteger(d) || d <= 0 || n < 0) {
+    throw new Error("divFloor: arguments must be safe non-negative integers and divisor must be > 0");
+  }
+  const out = Number(BigInt(n) / BigInt(d));
+  if (!Number.isSafeInteger(out)) throw new Error("divFloor overflow");
+  return out;
+}
+
 export class RangeSet {
   private ranges: ByteRange[] = [];
 
@@ -651,8 +660,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     let invalidations = 0;
     while (true) {
       const generation = this.cacheGeneration;
-      const startBlock = Math.floor(offset / this.blockSize);
-      const endBlock = Math.floor((offset + length - 1) / this.blockSize);
+      const startBlock = divFloor(offset, this.blockSize);
+      const endBlock = divFloor(offset + length - 1, this.blockSize);
 
       try {
         // Batch-load cached blocks when using IndexedDB. This reduces IDB roundtrips when a read spans
@@ -767,7 +776,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (!sequential) return;
 
     const nextOffset = offset + length;
-    const nextBlock = Math.floor(nextOffset / this.blockSize);
+    const nextBlock = divFloor(nextOffset, this.blockSize);
     for (let i = 0; i < this.prefetchSequentialBlocks; i++) {
       const block = nextBlock + i;
       if (block * this.blockSize >= this.totalSize) break;
