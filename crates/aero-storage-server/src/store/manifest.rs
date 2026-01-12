@@ -90,10 +90,14 @@ impl Manifest {
         for image in &mut images {
             validate_id(&image.id)?;
             validate_file_path(&image.id, &image.file)?;
-            if let Some(etag) = &image.etag {
+            if let Some(etag) = image.etag.as_mut() {
+                // Normalize so callers don't accidentally include leading/trailing whitespace that
+                // would later break strict validator comparisons (e.g. `If-Range`).
+                *etag = etag.trim().to_string();
                 validate_etag(&image.id, etag)?;
             }
-            if let Some(last_modified) = &image.last_modified {
+            if let Some(last_modified) = image.last_modified.as_mut() {
+                *last_modified = last_modified.trim().to_string();
                 let parsed = parse_last_modified_rfc3339(&image.id, last_modified)?;
                 image.last_modified_time = Some(parsed);
             }
@@ -340,6 +344,20 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
+    fn trims_etag_whitespace() {
+        let manifest = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "disk", "file": "disk.img", "name": "Disk", "etag": "   \"v1\"  ", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.images[0].etag.as_deref(), Some("\"v1\""));
     }
 
     #[test]
