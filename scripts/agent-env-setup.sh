@@ -293,7 +293,11 @@ fi
 
 echo "Next steps:"
 echo "  1. Activate environment:  source $SCRIPT_DIR/agent-env.sh"
-echo "  2. Run builds safely:     bash ./scripts/safe-run.sh cargo build --locked"
+if [[ ${#NONEXEC_SCRIPTS[@]} -gt 0 ]]; then
+  echo "  2. Run builds safely:     bash ./scripts/safe-run.sh cargo build --locked"
+else
+  echo "  2. Run builds safely:     ./scripts/safe-run.sh cargo build --locked"
+fi
 echo ""
 echo "Windows 7 test ISO available at: /state/win7.iso"
 echo ""
