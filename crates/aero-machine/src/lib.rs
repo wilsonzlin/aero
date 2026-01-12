@@ -1769,6 +1769,17 @@ pub struct Machine {
     /// cleared so subsequent [`Machine::reset`] calls and [`Machine::set_disk_image`] calls do not
     /// clobber the host-provided backend.
     ahci_port0_auto_attach_shared_disk: bool,
+    /// Whether the machine should automatically keep its canonical [`SharedDisk`] attached to the
+    /// canonical virtio-blk device (if enabled).
+    ///
+    /// By default, [`Machine`] uses `SharedDisk` as the virtio-blk backend so BIOS INT13, AHCI,
+    /// and virtio-blk can observe consistent disk bytes.
+    ///
+    /// When a host/test explicitly attaches a different disk backend to virtio-blk via
+    /// [`Machine::attach_virtio_blk_disk`], this flag is cleared so subsequent
+    /// [`Machine::set_disk_backend`] / [`Machine::set_disk_image`] calls do not clobber the
+    /// host-provided backend.
+    virtio_blk_auto_attach_shared_disk: bool,
     network_backend: Option<Box<dyn NetworkBackend>>,
 
     serial: Option<SharedSerial16550>,
@@ -1878,6 +1889,7 @@ impl Machine {
             bios: Bios::new(BiosConfig::default()),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
             ahci_port0_auto_attach_shared_disk: true,
+            virtio_blk_auto_attach_shared_disk: true,
             network_backend: None,
             serial: None,
             i8042: None,
@@ -2011,33 +2023,35 @@ impl Machine {
 
         // Canonical virtio-blk device.
         if let Some(virtio_blk) = self.virtio_blk.as_ref() {
-            // virtio-blk capacity is derived from the backend size at device creation time, so when
-            // the shared disk backend is replaced we rebuild the device to keep the reported
-            // `VirtioBlkConfig::capacity` coherent.
-            *virtio_blk.borrow_mut() = VirtioPciDevice::new(
-                Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
-                Box::new(NoopVirtioInterruptSink),
-            );
+            if self.virtio_blk_auto_attach_shared_disk {
+                // virtio-blk capacity is derived from the backend size at device creation time, so
+                // when the shared disk backend is replaced we rebuild the device to keep the
+                // reported `VirtioBlkConfig::capacity` coherent.
+                *virtio_blk.borrow_mut() = VirtioPciDevice::new(
+                    Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
+                    Box::new(NoopVirtioInterruptSink),
+                );
 
-            // Mirror PCI config state into the transport model so snapshots taken immediately
-            // after swapping the disk backend see a coherent PCI config image.
-            if let Some(pci_cfg) = &self.pci_cfg {
-                let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-                let (command, bar0_base) = {
-                    let mut pci_cfg = pci_cfg.borrow_mut();
-                    let cfg = pci_cfg.bus_mut().device_config(bdf);
-                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
-                    (command, bar0_base)
-                };
+                // Mirror PCI config state into the transport model so snapshots taken immediately
+                // after swapping the disk backend see a coherent PCI config image.
+                if let Some(pci_cfg) = &self.pci_cfg {
+                    let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+                    let (command, bar0_base) = {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar0_base = cfg
+                            .and_then(|cfg| cfg.bar_range(0))
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        (command, bar0_base)
+                    };
 
-                let mut virtio_blk = virtio_blk.borrow_mut();
-                virtio_blk.set_pci_command(command);
-                if bar0_base != 0 {
-                    virtio_blk.config_mut().set_bar_base(0, bar0_base);
+                    let mut virtio_blk = virtio_blk.borrow_mut();
+                    virtio_blk.set_pci_command(command);
+                    if bar0_base != 0 {
+                        virtio_blk.config_mut().set_bar_base(0, bar0_base);
+                    }
                 }
             }
         }
@@ -2384,6 +2398,10 @@ impl Machine {
             ));
         }
 
+        // The host is explicitly attaching a disk backend. Do not auto-attach/overwrite this slot
+        // with the machine's `SharedDisk` on future `set_disk_backend()` / `set_disk_image()` calls.
+        self.virtio_blk_auto_attach_shared_disk = false;
+
         let (command, bar0_base) = if let Some(pci_cfg) = &self.pci_cfg {
             let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
             let mut pci_cfg = pci_cfg.borrow_mut();
@@ -2549,6 +2567,52 @@ impl Machine {
         ahci.borrow_mut().attach_drive(0, drive);
         self.ahci_port0_auto_attach_shared_disk = true;
         Ok(())
+    }
+
+    /// Attach the machine's canonical [`SharedDisk`] to virtio-blk (if enabled).
+    ///
+    /// This makes BIOS INT13 disk reads and virtio-blk DMA observe the same underlying bytes.
+    ///
+    /// If the virtio-blk controller is not present, this is a no-op.
+    ///
+    /// This method is idempotent: once the shared disk is attached/configured for virtio-blk,
+    /// further calls will not replace the existing backend.
+    pub fn attach_shared_disk_to_virtio_blk(&mut self) {
+        let Some(virtio_blk) = &self.virtio_blk else {
+            return;
+        };
+        if self.virtio_blk_auto_attach_shared_disk {
+            return;
+        }
+
+        *virtio_blk.borrow_mut() = VirtioPciDevice::new(
+            Box::new(VirtioBlk::new(Box::new(self.disk.clone()))),
+            Box::new(NoopVirtioInterruptSink),
+        );
+        self.virtio_blk_auto_attach_shared_disk = true;
+
+        // Keep the device model's internal PCI config state coherent with the canonical PCI config
+        // space so snapshots taken immediately after swapping the backend see a consistent config
+        // image.
+        if let Some(pci_cfg) = &self.pci_cfg {
+            let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
+            let (command, bar0_base) = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let bar0_base = cfg
+                    .and_then(|cfg| cfg.bar_range(0))
+                    .map(|range| range.base)
+                    .unwrap_or(0);
+                (command, bar0_base)
+            };
+
+            let mut dev = virtio_blk.borrow_mut();
+            dev.set_pci_command(command);
+            if bar0_base != 0 {
+                dev.config_mut().set_bar_base(0, bar0_base);
+            }
+        }
     }
 
     /// Detach any drive currently attached to the canonical AHCI port 0.
