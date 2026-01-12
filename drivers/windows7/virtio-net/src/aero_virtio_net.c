@@ -299,8 +299,9 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
     return NDIS_STATUS_RESOURCES;
   }
 
-  // Prefer matching the assigned CmResourceTypeMemory range against BAR0 from
-  // PCI config space (BAR0 is required by the AERO-W7-VIRTIO contract).
+  // Prefer matching the assigned memory range (CmResourceTypeMemory or
+  // CmResourceTypeMemoryLarge) against BAR0 from PCI config space (BAR0 is
+  // required by the AERO-W7-VIRTIO contract).
   RtlZeroMemory(Adapter->PciCfgSpace, sizeof(Adapter->PciCfgSpace));
   BytesRead = NdisMGetBusData(Adapter->MiniportAdapterHandle, PCI_WHICHSPACE_CONFIG, Adapter->PciCfgSpace, 0, sizeof(Adapter->PciCfgSpace));
   if (BytesRead != sizeof(Adapter->PciCfgSpace)) {
