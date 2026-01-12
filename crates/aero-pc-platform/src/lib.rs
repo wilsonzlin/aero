@@ -591,6 +591,48 @@ impl aero_audio::mem::MemoryAccess for HdaDmaMemory<'_> {
     }
 }
 
+/// AHCI ABAR (BAR5) handler registered via [`PciBarMmioRouter`].
+///
+/// The AHCI device model (`AhciPciDevice`) maintains its own PCI config space and gates MMIO
+/// accesses on `COMMAND.MEMORY_SPACE_ENABLE` (bit 1). In the canonical PC platform we store PCI
+/// config space separately in `PciConfigPorts`, so we must mirror the live command register into
+/// the AHCI model before dispatching MMIO accesses.
+struct PcAhciMmioBar {
+    pci_cfg: SharedPciConfigPorts,
+    ahci: Rc<RefCell<AhciPciDevice>>,
+    bdf: PciBdf,
+}
+
+impl PcAhciMmioBar {
+    fn sync_command(&self) -> u16 {
+        let command = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(self.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
+        };
+
+        // Keep the AHCI model's internal command register in sync so its own MEM_ENABLE gating
+        // matches the platform PCI bus.
+        self.ahci.borrow_mut().config_mut().set_command(command);
+        command
+    }
+}
+
+impl PciBarMmioHandler for PcAhciMmioBar {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_command();
+        self.ahci.borrow_mut().mmio_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.sync_command();
+        self.ahci.borrow_mut().mmio_write(offset, size, value);
+    }
+}
+
 #[derive(Default)]
 struct NoopVirtioInterruptSink;
 
