@@ -263,7 +263,10 @@ impl AhciController {
         self.irq.set_level(any_enabled_pending);
     }
 
-    fn reset(&mut self) {
+    /// Reset controller state back to the power-on baseline while preserving attached drives.
+    ///
+    /// This intentionally does **not** drop any [`AtaDrive`] backends currently attached to ports.
+    pub fn reset(&mut self) {
         self.hba.reset();
         for port in &mut self.ports {
             port.regs = PortRegs::new(port.present);

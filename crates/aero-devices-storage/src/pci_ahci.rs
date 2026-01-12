@@ -77,6 +77,16 @@ impl AhciPciDevice {
         self.controller.detach_drive(port);
     }
 
+    /// Reset the device back to its power-on state while preserving attached drives.
+    ///
+    /// This is intended for machine/platform reset flows where host-provided disk backends should
+    /// remain attached across reboots.
+    pub fn reset(&mut self) {
+        // Mirror PCI reset semantics: clear command register state (BAR programming is preserved).
+        <Self as PciDevice>::reset(self);
+        self.controller.reset();
+    }
+
     /// Returns the current level of the device's legacy INTx line.
     ///
     /// This is already gated by the PCI Command register's Interrupt Disable bit (bit 10).

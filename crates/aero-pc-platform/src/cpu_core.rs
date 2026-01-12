@@ -116,6 +116,16 @@ impl PcCpuBus {
         }
     }
 
+    /// Reset CPU-bus-side state back to the initial power-on baseline.
+    ///
+    /// This is intended for machine reset flows that keep the underlying [`PcPlatform`] instance
+    /// (and its device backends) intact, but need to flush paging/MMU caches and privilege state.
+    pub fn reset(&mut self) {
+        self.mmu = Mmu::new();
+        self.cpl = 0;
+        self.write_chunks.clear();
+    }
+
     pub fn interrupt_controller(&self) -> PcInterruptController {
         PcInterruptController::new(self.platform.interrupts.clone())
     }

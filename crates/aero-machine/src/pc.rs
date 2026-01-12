@@ -51,7 +51,7 @@ impl Default for PcMachineConfig {
 
 struct PlatformBiosBus<'a> {
     platform: &'a mut PcPlatform,
-    mapped_roms: HashMap<u64, usize>,
+    mapped_roms: &'a mut HashMap<u64, usize>,
 }
 
 impl PlatformBiosBus<'_> {
@@ -62,10 +62,8 @@ impl PlatformBiosBus<'_> {
             Err(MapError::Overlap) => {
                 // BIOS resets may re-map the same ROM windows. Treat identical overlaps as
                 // idempotent, but reject unexpected overlaps to avoid silently corrupting the bus.
-                if let Some(prev_len) = self.mapped_roms.get(&base).copied() {
-                    if prev_len != len {
-                        panic!("unexpected ROM mapping overlap at 0x{base:016x}");
-                    }
+                if self.mapped_roms.get(&base).copied() != Some(len) {
+                    panic!("unexpected ROM mapping overlap at 0x{base:016x}");
                 }
             }
             Err(MapError::AddressOverflow) => {
@@ -113,6 +111,7 @@ pub struct PcMachine {
     pub bus: PcCpuBus,
     bios: Bios,
     disk: VecBlockDevice,
+    mapped_roms: HashMap<u64, usize>,
 
     network_backend: Option<PcNetworkBackend>,
     e1000_mac_addr: Option<[u8; 6]>,
@@ -206,6 +205,7 @@ impl PcMachine {
             bus: PcCpuBus::new(platform),
             bios: Bios::new(BiosConfig::default()),
             disk: VecBlockDevice::new(Vec::new()).expect("empty disk is valid"),
+            mapped_roms: HashMap::new(),
             network_backend: None,
             e1000_mac_addr,
         };
@@ -286,19 +286,11 @@ impl PcMachine {
 
     /// Reset the machine and transfer control to firmware POST (boot sector).
     pub fn reset(&mut self) {
-        let ram_size = usize::try_from(self.cfg.ram_size_bytes)
-            .expect("ram_size_bytes already validated in PcMachine::new");
-
-        // Rebuild the full platform for deterministic power-on state.
-        self.bus = PcCpuBus::new(PcPlatform::new_with_config(
-            ram_size,
-            PcPlatformConfig {
-                enable_hda: self.cfg.enable_hda,
-                enable_e1000: self.cfg.enable_e1000,
-                mac_addr: self.e1000_mac_addr,
-                ..Default::default()
-            },
-        ));
+        // Reset the platform in-place so host-provided device backends (e.g. disks/ISOs) remain
+        // attached across reboots.
+        self.bus.platform.reset();
+        // Flush CPU-bus state (MMU caches, CPL tracking, etc).
+        self.bus.reset();
 
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
@@ -312,10 +304,10 @@ impl PcMachine {
 
         let mut pci_adapter =
             SharedPciConfigPortsBiosAdapter::new(self.bus.platform.pci_cfg.clone());
-        let mut bus = PlatformBiosBus {
-            platform: &mut self.bus.platform,
-            mapped_roms: HashMap::new(),
-        };
+
+        let platform = &mut self.bus.platform;
+        let mapped_roms = &mut self.mapped_roms;
+        let mut bus = PlatformBiosBus { platform, mapped_roms };
         let bios_bus: &mut dyn BiosBus = &mut bus;
         self.bios.post_with_pci(
             &mut self.cpu.state,
@@ -558,10 +550,9 @@ impl PcMachine {
     fn handle_bios_interrupt(&mut self, vector: u8) {
         self.cpu.state.a20_enabled = self.bus.platform.chipset.a20().enabled();
 
-        let mut bus = PlatformBiosBus {
-            platform: &mut self.bus.platform,
-            mapped_roms: HashMap::new(),
-        };
+        let platform = &mut self.bus.platform;
+        let mapped_roms = &mut self.mapped_roms;
+        let mut bus = PlatformBiosBus { platform, mapped_roms };
         let bios_bus: &mut dyn BiosBus = &mut bus;
         self.bios
             .dispatch_interrupt(vector, &mut self.cpu.state, bios_bus, &mut self.disk);

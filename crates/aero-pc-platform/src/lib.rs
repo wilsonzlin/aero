@@ -2119,6 +2119,17 @@ impl PcPlatform {
             *e1000.borrow_mut() = E1000Device::new(mac);
         }
 
+        // Reset storage controllers while preserving host-attached backends (disks/ISOs).
+        //
+        // These devices maintain internal DMA/command state that must be cleared on reset, but the
+        // host-provided media backends should not be silently dropped.
+        if let Some(ahci) = self.ahci.as_ref() {
+            ahci.borrow_mut().reset();
+        }
+        if let Some(ide) = self.ide.as_ref() {
+            ide.borrow_mut().reset();
+        }
+
         // Reset host-side tick accumulators.
         self.uhci_ns_remainder = 0;
 
