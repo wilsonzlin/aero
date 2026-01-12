@@ -33,9 +33,7 @@ use aero_platform::interrupts::msi::MsiMessage;
 
 use aero_virtio::devices::snd::{VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{
-    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice,
-};
+use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
 use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
 

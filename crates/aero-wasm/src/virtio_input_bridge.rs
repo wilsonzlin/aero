@@ -9,9 +9,7 @@
 use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::memory::GuestMemory;
-use aero_virtio::pci::{
-    InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice,
-};
+use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 use std::cell::Cell;
 use std::rc::Rc;
 
