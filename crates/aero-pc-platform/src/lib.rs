@@ -1140,7 +1140,7 @@ impl PcPlatform {
     ) -> Self {
         config.enable_nvme = true;
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
-        Self::new_with_config_and_ram_inner(Box::new(ram), config, None, Some(disk))
+        Self::new_with_config_and_ram_inner(Box::new(ram), config, None, Some(disk), None)
     }
 
     pub fn new_with_ahci(ram_size: usize) -> Self {
@@ -1261,6 +1261,27 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_virtio_blk_disk(ram_size: usize, disk: Box<dyn VirtualDisk + Send>) -> Self {
+        Self::new_with_config_and_virtio_blk_disk(
+            ram_size,
+            PcPlatformConfig {
+                enable_virtio_blk: true,
+                ..Default::default()
+            },
+            disk,
+        )
+    }
+
+    pub fn new_with_config_and_virtio_blk_disk(
+        ram_size: usize,
+        mut config: PcPlatformConfig,
+        disk: Box<dyn VirtualDisk + Send>,
+    ) -> Self {
+        config.enable_virtio_blk = true;
+        let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
+        Self::new_with_config_and_ram_inner(Box::new(ram), config, None, None, Some(disk))
+    }
+
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
         let ram = DenseMemory::new(ram_size as u64).expect("failed to allocate guest RAM");
         Self::new_with_config_and_ram(Box::new(ram), config)
@@ -1276,7 +1297,7 @@ impl PcPlatform {
     }
 
     pub fn new_with_config_and_ram(ram: Box<dyn GuestMemory>, config: PcPlatformConfig) -> Self {
-        Self::new_with_config_and_ram_inner(ram, config, None, None)
+        Self::new_with_config_and_ram_inner(ram, config, None, None, None)
     }
 
     pub fn new_with_config_and_ram_dirty_tracking(
@@ -1284,7 +1305,7 @@ impl PcPlatform {
         config: PcPlatformConfig,
         page_size: u32,
     ) -> Self {
-        Self::new_with_config_and_ram_inner(ram, config, Some(page_size), None)
+        Self::new_with_config_and_ram_inner(ram, config, Some(page_size), None, None)
     }
 
     fn new_with_config_and_ram_inner(
@@ -1292,6 +1313,7 @@ impl PcPlatform {
         config: PcPlatformConfig,
         dirty_page_size: Option<u32>,
         nvme_disk_override: Option<Box<dyn VirtualDisk + Send>>,
+        virtio_blk_disk_override: Option<Box<dyn VirtualDisk + Send>>,
     ) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
@@ -1627,9 +1649,13 @@ impl PcPlatform {
 
             // Use an `aero-storage` disk image so callers can reuse the same disk abstraction across
             // different controllers without bespoke glue.
-            let disk = RawDisk::create(MemBackend::new(), (16 * 1024 * 1024) as u64)
-                .expect("failed to allocate in-memory virtio-blk disk");
-            let backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
+            let backend: Box<dyn VirtualDisk + Send> =
+                virtio_blk_disk_override.unwrap_or_else(|| {
+                    Box::new(
+                        RawDisk::create(MemBackend::new(), (16 * 1024 * 1024) as u64)
+                            .expect("failed to allocate in-memory virtio-blk disk"),
+                    )
+                });
             let virtio_blk = Rc::new(RefCell::new(VirtioPciDevice::new(
                 Box::new(VirtioBlk::new(backend)),
                 Box::new(NoopVirtioInterruptSink),

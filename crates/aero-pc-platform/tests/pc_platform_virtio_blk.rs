@@ -5,7 +5,7 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
-use aero_storage::VirtualDisk;
+use aero_storage::{MemBackend, RawDisk, VirtualDisk};
 use aero_virtio::devices::VirtioDevice;
 use aero_virtio::devices::blk::{BlockBackend, VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
 use memory::MemoryBus as _;
@@ -219,6 +219,27 @@ fn pc_platform_virtio_blk_device_cfg_reports_capacity_and_block_size() {
     assert_eq!(size_max, expected.1);
     assert_eq!(seg_max, expected.2);
     assert_eq!(blk_size, expected.3);
+}
+
+#[test]
+fn pc_platform_new_with_virtio_blk_disk_reflects_backend_capacity_in_device_cfg() {
+    const DISK_SECTORS: u64 = 2048;
+    let disk = RawDisk::create(MemBackend::new(), DISK_SECTORS * VIRTIO_BLK_SECTOR_SIZE)
+        .expect("failed to allocate in-memory virtio-blk disk");
+    let mut pc = PcPlatform::new_with_virtio_blk_disk(2 * 1024 * 1024, Box::new(disk));
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Ensure memory decoding is enabled for BAR0.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    const DEVICE_CFG: u64 = 0x3000;
+    let capacity = pc.memory.read_u64(bar0_base + DEVICE_CFG);
+    let blk_size = pc.memory.read_u32(bar0_base + DEVICE_CFG + 20);
+    assert_eq!(capacity, DISK_SECTORS);
+    assert_eq!(blk_size, VIRTIO_BLK_SECTOR_SIZE as u32);
 }
 
 #[test]
