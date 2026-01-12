@@ -882,13 +882,14 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     // attached; it plumbs the current host sample rate and keeps the wrapper's tick
     // clock consistent.
     const dev = hdaDevice;
-    if (dev && bridge === hdaControllerBridge) {
+    const ctrl = hdaControllerBridge as unknown as { output_sample_rate_hz?: unknown } | null;
+    if (dev && ctrl) {
       // If a host AudioContext is active, it owns the output sample rate.
       // Otherwise (no ring attached), use the restored WASM-side output rate so the wrapper's
       // tick clock stays consistent with the device model.
       let desiredDstSampleRateHz = audioOutDstSampleRate >>> 0;
       if (desiredDstSampleRateHz === 0) {
-        const restoredRate = (bridge as unknown as { output_sample_rate_hz?: unknown }).output_sample_rate_hz;
+        const restoredRate = ctrl.output_sample_rate_hz;
         if (typeof restoredRate === "number" && Number.isFinite(restoredRate) && restoredRate > 0) {
           desiredDstSampleRateHz = restoredRate >>> 0;
         }
