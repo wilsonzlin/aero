@@ -646,8 +646,14 @@ function renderMachinePanel(): HTMLElement {
       off += 1;
     }
 
-    // hlt
-    sector[off] = 0xf4;
+    // sti (ensure IRQs can wake the CPU)
+    sector[off++] = 0xfb;
+    // hlt; jmp hlt (wait-for-interrupt loop)
+    const hltOff = off;
+    sector[off++] = 0xf4;
+    const jmpOff = off;
+    sector[off++] = 0xeb;
+    sector[off++] = (hltOff - (jmpOff + 2)) & 0xff;
 
     // Boot signature.
     sector[510] = 0x55;
@@ -672,6 +678,85 @@ function renderMachinePanel(): HTMLElement {
       // TS does not narrow captured variables inside nested functions (even for `const`),
       // so stash the non-null canvas context for the VGA present closure.
       const ctx2 = ctx;
+
+      // Optional input capture: drive the machine's i8042 PS/2 keyboard/mouse devices directly.
+      // This uses the same `InputCapture` batching/scancode translation as the I/O worker path.
+      {
+        const messageListeners: ((ev: MessageEvent<unknown>) => void)[] = [];
+        const inputTarget: InputBatchTarget & {
+          addEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
+          removeEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
+        } = {
+          postMessage: (msg, _transfer) => {
+            const words = new Int32Array(msg.buffer);
+            const count = words[0] >>> 0;
+            const base = 2;
+            for (let i = 0; i < count; i += 1) {
+              const off = base + i * 4;
+              const type = words[off] >>> 0;
+              if (type === InputEventType.KeyScancode) {
+                const packed = words[off + 2] >>> 0;
+                const len = Math.min(words[off + 3] >>> 0, 4);
+                if (len === 0) continue;
+                if (typeof machine.inject_key_scancode_bytes === "function") {
+                  machine.inject_key_scancode_bytes(packed, len);
+                } else if (typeof machine.inject_keyboard_bytes === "function") {
+                  const bytes = new Uint8Array(len);
+                  for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
+                  machine.inject_keyboard_bytes(bytes);
+                }
+              } else if (type === InputEventType.MouseMove) {
+                const dx = words[off + 2] | 0;
+                const dyPs2 = words[off + 3] | 0;
+                if (typeof machine.inject_ps2_mouse_motion === "function") {
+                  machine.inject_ps2_mouse_motion(dx, dyPs2, 0);
+                } else if (typeof machine.inject_mouse_motion === "function") {
+                  // Machine expects browser-style coordinates (+Y down).
+                  machine.inject_mouse_motion(dx, -dyPs2, 0);
+                }
+              } else if (type === InputEventType.MouseWheel) {
+                const dz = words[off + 2] | 0;
+                if (typeof machine.inject_ps2_mouse_motion === "function") {
+                  machine.inject_ps2_mouse_motion(0, 0, dz);
+                } else if (typeof machine.inject_mouse_motion === "function") {
+                  machine.inject_mouse_motion(0, 0, dz);
+                }
+              } else if (type === InputEventType.MouseButtons) {
+                // PS/2 supports the core 3 buttons.
+                const buttons = words[off + 2] & 0xff;
+                const mask = buttons & 0x07;
+                if (typeof machine.inject_mouse_buttons_mask === "function") {
+                  machine.inject_mouse_buttons_mask(mask);
+                } else if (typeof machine.inject_ps2_mouse_buttons === "function") {
+                  machine.inject_ps2_mouse_buttons(mask);
+                }
+              }
+            }
+
+            if (msg.recycle) {
+              const ev = new MessageEvent("message", {
+                data: { type: "in:input-batch-recycle", buffer: msg.buffer },
+              });
+              for (const listener of messageListeners.slice()) listener(ev);
+            }
+          },
+          addEventListener: (type, listener) => {
+            if (type !== "message") return;
+            messageListeners.push(listener);
+          },
+          removeEventListener: (type, listener) => {
+            if (type !== "message") return;
+            const idx = messageListeners.indexOf(listener);
+            if (idx >= 0) messageListeners.splice(idx, 1);
+          },
+        };
+
+        const inputCapture = new InputCapture(canvas, inputTarget, {
+          enableGamepad: false,
+          recycleBuffers: true,
+        });
+        inputCapture.start();
+      }
 
       const hasVgaPresent = typeof machine.vga_present === "function";
       const hasVgaSize = typeof machine.vga_width === "function" && typeof machine.vga_height === "function";
@@ -893,8 +978,9 @@ function renderMachinePanel(): HTMLElement {
         status.textContent = `run_slice: kind=${exitKind} executed=${exitExecuted} detail=${exitDetail}`;
         exit.free();
 
-        // `RunExitKind::Completed` is 0. Stop once the guest halts/requests reset/needs assist.
-        if (exitKind !== 0) {
+        // `RunExitKind::Completed` is 0 and `RunExitKind::Halted` is 1.
+        // Keep ticking while halted so injected interrupts (keyboard/mouse) can wake the CPU.
+        if (exitKind !== 0 && exitKind !== 1) {
           window.clearInterval(timer);
           running = false;
           detachInput();
