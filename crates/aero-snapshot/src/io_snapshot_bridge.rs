@@ -32,7 +32,15 @@ fn parse_io_snapshot_header(
     }
 
     let device_id = [bytes[8], bytes[9], bytes[10], bytes[11]];
-    if device_id != expected_device_id {
+    // Backward compatibility: a few early device snapshot encodings accidentally used a different
+    // 4CC in the `aero-io-snapshot` header. We continue accepting those legacy ids when applying a
+    // snapshot blob to the correct device type.
+    //
+    // Note: keep this mapping minimal; `DEVICE_ID` is part of the stable on-disk contract.
+    const LEGACY_NET_STACK_DEVICE_ID: [u8; 4] = [0x4e, 0x53, 0x54, 0x4b];
+    let ok = device_id == expected_device_id
+        || (expected_device_id == *b"NETS" && device_id == LEGACY_NET_STACK_DEVICE_ID);
+    if !ok {
         return Err(SnapshotError::DeviceIdMismatch {
             expected: expected_device_id,
             found: device_id,
