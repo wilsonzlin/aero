@@ -112,6 +112,27 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a2 = pack_u32_u32(data_size, flags)`
   - `a3 = pData`
 
+- `Device::CreateStateBlock`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = state block type` (typically `D3DSBT_ALL`, `D3DSBT_PIXELSTATE`, or `D3DSBT_VERTEXSTATE`)
+  - `a2 = out stateblock handle pointer` (either `phStateBlock` or the CreateStateBlock args struct pointer)
+  - `a3 = (unused)`
+
+- `Device::BeginStateBlock`
+  - `a0 = hDevice.pDrvPrivate`
+
+- `Device::EndStateBlock`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = out stateblock handle pointer` (`phStateBlock`)
+
+- `Device::ApplyStateBlock` / `Device::CaptureStateBlock` / `Device::DeleteStateBlock`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = hStateBlock.pDrvPrivate`
+
+- `Device::ValidateDevice`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = out pass count pointer` (either `pNumPasses` or the ValidateDevice args struct pointer)
+
 The exact packing per entrypoint is defined where the DDI is instrumented:
 `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp` (search for `D3d9TraceCall`).
 
