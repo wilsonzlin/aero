@@ -177,7 +177,7 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
         let hpet = pc2.hpet();
         let mut hpet = hpet.borrow_mut();
         let mut ints = pc2.interrupts.borrow_mut();
-        hpet.poll(&mut *ints);
+        hpet.sync_levels_to_sink(&mut *ints);
     }
 
     // --- Assertions after restore.
@@ -250,8 +250,8 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 #[test]
 fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restore() {
     // This test focuses on the post-restore "re-drive" steps:
-    // - HPET: `irq_asserted` is intentionally not serialized, so the first `poll()` after restore
-    //   must reassert any level-triggered interrupts whose status bits are pending.
+    // - HPET: `irq_asserted` is intentionally not serialized, so restore must explicitly re-drive
+    //   any pending level-triggered interrupts into the interrupt sink.
     // - PCI INTx: the router snapshot can't touch the platform sink; `sync_levels_to_sink()` must
     //   re-drive asserted GSIs.
 
@@ -326,8 +326,8 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
     );
 
     // Create a snapshot scenario where the HPET interrupt status bit remains set but the GSI line
-    // is deasserted in the interrupt controller snapshot (to ensure `poll()` is required after
-    // restore to re-drive the level).
+    // is deasserted in the interrupt controller snapshot (to ensure explicit re-drive is required
+    // after restore).
     {
         let mut ints = pc.interrupts.borrow_mut();
         ints.acknowledge(HPET_VECTOR);
@@ -388,20 +388,20 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
         core.load_state(&pci_core_state).unwrap();
     }
 
-    // Re-drive PCI first (via router), then HPET (via `poll()`).
+    // Re-drive PCI first (via router), then HPET (via `sync_levels_to_sink()`).
     pc2.sync_pci_intx_levels_to_interrupts();
     {
         let hpet = pc2.hpet();
         let mut hpet = hpet.borrow_mut();
         let mut ints = pc2.interrupts.borrow_mut();
-        hpet.poll(&mut *ints);
+        hpet.sync_levels_to_sink(&mut *ints);
     }
 
     // Both vectors should now be pending; HPET has the higher priority class.
     assert_eq!(
         pc2.interrupts.borrow().get_pending(),
         Some(HPET_VECTOR),
-        "HPET poll should re-drive pending level interrupt after restore"
+        "HPET IRQ sync should re-drive pending level interrupt after restore"
     );
 
     // Service HPET: clear status bit (deassert line) then EOI.
