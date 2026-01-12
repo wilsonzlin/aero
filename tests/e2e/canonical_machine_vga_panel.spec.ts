@@ -124,10 +124,10 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
       return header[index];
     };
 
-    const width = load(2);
-    const height = load(3);
-    const strideBytes = load(4);
-    const frame = load(6);
+    const width = load(2) >>> 0;
+    const height = load(3) >>> 0;
+    const strideBytes = load(4) >>> 0;
+    const frame = load(6) >>> 0;
 
     const pixelsLen = Math.min(Math.max(0, sab.byteLength - HEADER_BYTES), Math.max(0, strideBytes) * Math.max(0, height));
     const pixels = new Uint8Array(sab, HEADER_BYTES, pixelsLen);
@@ -135,17 +135,19 @@ test("canonical Machine panel: renders VGA scanout to a canvas", async ({ page }
     // Scan the shared framebuffer for any non-black pixel. Avoid only sampling the top-left:
     // some VGA modes may keep early pixels black (e.g. borders/padding).
     let nonBlack = false;
-    const rowBytes = Math.max(0, width) * 4;
-    for (let y = 0; y < height && !nonBlack; y++) {
-      const rowOff = y * strideBytes;
-      if (rowOff + rowBytes > pixels.length) break;
-      for (let x = 0; x < width && !nonBlack; x++) {
-        const off = rowOff + x * 4;
-        const r = pixels[off] ?? 0;
-        const g = pixels[off + 1] ?? 0;
-        const b = pixels[off + 2] ?? 0;
-        if (r !== 0 || g !== 0 || b !== 0) {
-          nonBlack = true;
+    if (width > 0 && height > 0 && strideBytes >= width * 4) {
+      const rowBytes = width * 4;
+      for (let y = 0; y < height && !nonBlack; y++) {
+        const rowOff = y * strideBytes;
+        if (rowOff + rowBytes > pixels.length) break;
+        for (let x = 0; x < width && !nonBlack; x++) {
+          const off = rowOff + x * 4;
+          const r = pixels[off] ?? 0;
+          const g = pixels[off + 1] ?? 0;
+          const b = pixels[off + 2] ?? 0;
+          if (r !== 0 || g !== 0 || b !== 0) {
+            nonBlack = true;
+          }
         }
       }
     }
