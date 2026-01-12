@@ -538,13 +538,13 @@ function Wait-AeroSelftestResult {
         if ($RequirePerTestMarkers) {
           # Require per-test markers so older selftest binaries cannot accidentally pass the host harness.
           if ($sawVirtioBlkFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_BLK_FAILED"; Tail = $tail }
           }
           if (-not $sawVirtioBlkPass) {
             return @{ Result = "MISSING_VIRTIO_BLK"; Tail = $tail }
           }
           if ($sawVirtioInputFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_INPUT_FAILED"; Tail = $tail }
           }
           if (-not $sawVirtioInputPass) {
             return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
@@ -553,7 +553,7 @@ function Wait-AeroSelftestResult {
           # Also ensure the virtio-snd markers are present (playback + capture), so older selftest binaries
           # that predate virtio-snd testing cannot accidentally pass.
           if ($sawVirtioSndFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_SND_FAILED"; Tail = $tail }
           }
           if (-not ($sawVirtioSndPass -or $sawVirtioSndSkip)) {
             return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
@@ -563,7 +563,7 @@ function Wait-AeroSelftestResult {
           }
 
           if ($sawVirtioSndCaptureFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_SND_CAPTURE_FAILED"; Tail = $tail }
           }
           if (-not ($sawVirtioSndCapturePass -or $sawVirtioSndCaptureSkip)) {
             return @{ Result = "MISSING_VIRTIO_SND_CAPTURE"; Tail = $tail }
@@ -573,7 +573,7 @@ function Wait-AeroSelftestResult {
           }
 
           if ($sawVirtioSndDuplexFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_SND_DUPLEX_FAILED"; Tail = $tail }
           }
           if (-not ($sawVirtioSndDuplexPass -or $sawVirtioSndDuplexSkip)) {
             return @{ Result = "MISSING_VIRTIO_SND_DUPLEX"; Tail = $tail }
@@ -583,7 +583,7 @@ function Wait-AeroSelftestResult {
           }
 
           if ($sawVirtioNetFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_NET_FAILED"; Tail = $tail }
           }
           if (-not $sawVirtioNetPass) {
             return @{ Result = "MISSING_VIRTIO_NET"; Tail = $tail }
@@ -606,12 +606,11 @@ function Wait-AeroSelftestResult {
 
         if ($RequireVirtioSndPass) {
           if ($sawVirtioSndFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
+            return @{ Result = "VIRTIO_SND_FAILED"; Tail = $tail }
           }
           if ($sawVirtioSndPass) {
-            if ($sawVirtioSndCaptureFail -or $sawVirtioSndDuplexFail) {
-              return @{ Result = "FAIL"; Tail = $tail }
-            }
+            if ($sawVirtioSndCaptureFail) { return @{ Result = "VIRTIO_SND_CAPTURE_FAILED"; Tail = $tail } }
+            if ($sawVirtioSndDuplexFail) { return @{ Result = "VIRTIO_SND_DUPLEX_FAILED"; Tail = $tail } }
             if ($sawVirtioSndCapturePass) {
               if ($sawVirtioSndDuplexPass) {
                 if ($RequireVirtioInputEventsPass) {
@@ -1515,7 +1514,7 @@ try {
       $scriptExitCode = 0
     }
     "FAIL" {
-      Write-Host "FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL"
+      Write-Host "FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1549,8 +1548,24 @@ try {
       }
       $scriptExitCode = 1
     }
+    "VIRTIO_BLK_FAILED" {
+      Write-Host "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "MISSING_VIRTIO_INPUT" {
       Write-Host "FAIL: MISSING_VIRTIO_INPUT: selftest RESULT=PASS but did not emit virtio-input test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_FAILED" {
+      Write-Host "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -1589,6 +1604,30 @@ try {
       }
       $scriptExitCode = 1
     }
+    "VIRTIO_SND_FAILED" {
+      Write-Host "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_SND_CAPTURE_FAILED" {
+      Write-Host "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_SND_DUPLEX_FAILED" {
+      Write-Host "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "MISSING_VIRTIO_SND" {
       Write-Host "FAIL: MISSING_VIRTIO_SND: selftest RESULT=PASS but did not emit virtio-snd test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -1615,6 +1654,14 @@ try {
     }
     "MISSING_VIRTIO_NET" {
       Write-Host "FAIL: MISSING_VIRTIO_NET: selftest RESULT=PASS but did not emit virtio-net test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_FAILED" {
+      Write-Host "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
