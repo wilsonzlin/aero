@@ -56,6 +56,10 @@ impl IoPortBus {
     ///
     /// Ports are computed using wrapping arithmetic (`start + offset`), matching
     /// x86 I/O port semantics.
+    ///
+    /// This only removes exact-port handlers registered via [`Self::register`] /
+    /// [`Self::register_shared_range`]. It does *not* remove range devices registered via
+    /// [`Self::register_range`]; use [`Self::unregister_range_device`] for that.
     pub fn unregister_range(&mut self, start: u16, len: u16) {
         for offset in 0..len {
             let port = start.wrapping_add(offset);
