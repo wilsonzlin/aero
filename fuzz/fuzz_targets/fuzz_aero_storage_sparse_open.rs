@@ -1,6 +1,6 @@
 #![no_main]
 
-use aero_storage::{AeroSparseDisk, MemBackend, StorageBackend, VirtualDisk};
+use aero_storage::{AeroSparseDisk, DiskError, MemBackend, Result, StorageBackend, VirtualDisk};
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
@@ -9,6 +9,46 @@ const MAX_IO_BYTES: usize = 4096; // 4 KiB
 const MAX_OPS: usize = 32;
 // Keep backend growth limited even if the parsed image claims a large virtual capacity.
 const MAX_TOUCHED_CAP_BYTES: u64 = 4 * 1024 * 1024; // 4 MiB
+// Hard cap to avoid pathological allocations (e.g. corrupt images claiming gigantic block_size/data_offset).
+const MAX_BACKEND_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
+
+/// Wrapper around `MemBackend` that refuses to grow beyond `MAX_BACKEND_BYTES`.
+///
+/// This keeps the fuzz target lightweight even when the parsed image header implies huge
+/// allocations on write (e.g. via extreme `block_size_bytes`).
+struct CappedBackend {
+    inner: MemBackend,
+}
+
+impl StorageBackend for CappedBackend {
+    fn len(&mut self) -> Result<u64> {
+        self.inner.len()
+    }
+
+    fn set_len(&mut self, len: u64) -> Result<()> {
+        if len > MAX_BACKEND_BYTES {
+            return Err(DiskError::QuotaExceeded);
+        }
+        self.inner.set_len(len)
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+        let len_u64 = u64::try_from(buf.len()).map_err(|_| DiskError::OffsetOverflow)?;
+        let end = offset.checked_add(len_u64).ok_or(DiskError::OffsetOverflow)?;
+        if end > MAX_BACKEND_BYTES {
+            return Err(DiskError::QuotaExceeded);
+        }
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.inner.flush()
+    }
+}
 
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_BYTES {
@@ -22,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = backend.set_len(64);
     let _ = backend.write_at(0, data);
 
-    let mut disk = match AeroSparseDisk::open(backend) {
+    let mut disk = match AeroSparseDisk::open(CappedBackend { inner: backend }) {
         Ok(disk) => disk,
         Err(_) => return,
     };
