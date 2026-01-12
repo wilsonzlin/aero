@@ -133,12 +133,15 @@ func main() {
 			if msgType != websocket.BinaryMessage {
 				continue
 			}
-			if len(payload) < l2tunnel.HeaderLen || payload[0] != l2tunnel.Magic || payload[1] != l2tunnel.Version || payload[2] != l2tunnel.TypePing {
+			msg, err := l2tunnel.DecodeMessage(payload)
+			if err != nil || msg.Type != l2tunnel.TypePing {
 				continue
 			}
-			// Echo PING payload (including header flags) but swap type.
-			out := append([]byte(nil), payload...)
-			out[2] = l2tunnel.TypePong
+			// Echo the PING payload (and flags) back as a PONG.
+			out, err := l2tunnel.EncodeWithLimits(l2tunnel.TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			if err != nil {
+				continue
+			}
 			_ = conn.WriteMessage(websocket.BinaryMessage, out)
 		}
 	})

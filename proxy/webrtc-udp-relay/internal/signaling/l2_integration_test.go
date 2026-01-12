@@ -80,12 +80,14 @@ func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgr
 			if msgType != websocket.BinaryMessage {
 				continue
 			}
-			// Minimal subset of docs/l2-tunnel-protocol.md: PING (0xA2 0x03 0x01 0x00) -> PONG.
-			if len(payload) < l2tunnel.HeaderLen || payload[0] != l2tunnel.Magic || payload[1] != l2tunnel.Version || payload[2] != l2tunnel.TypePing {
+			msg, err := l2tunnel.DecodeMessage(payload)
+			if err != nil || msg.Type != l2tunnel.TypePing {
 				continue
 			}
-			out := append([]byte(nil), payload...)
-			out[2] = l2tunnel.TypePong
+			out, err := l2tunnel.EncodeWithLimits(l2tunnel.TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			if err != nil {
+				continue
+			}
 			_ = conn.WriteMessage(websocket.BinaryMessage, out)
 		}
 	})
@@ -165,12 +167,14 @@ func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL
 			if msgType != websocket.BinaryMessage {
 				continue
 			}
-			// Minimal subset of docs/l2-tunnel-protocol.md: PING (0xA2 0x03 0x01 0x00) -> PONG.
-			if len(payload) < l2tunnel.HeaderLen || payload[0] != l2tunnel.Magic || payload[1] != l2tunnel.Version || payload[2] != l2tunnel.TypePing {
+			msg, err := l2tunnel.DecodeMessage(payload)
+			if err != nil || msg.Type != l2tunnel.TypePing {
 				continue
 			}
-			out := append([]byte(nil), payload...)
-			out[2] = l2tunnel.TypePong
+			out, err := l2tunnel.EncodeWithLimits(l2tunnel.TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			if err != nil {
+				continue
+			}
 			_ = conn.WriteMessage(websocket.BinaryMessage, out)
 		}
 	})
