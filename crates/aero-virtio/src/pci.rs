@@ -438,12 +438,17 @@ impl VirtioPciDevice {
         }
     }
 
-    /// Process any virtqueues that were notified since the last call.
+    /// Process any virtqueues that have pending work.
     ///
-    /// This is intended for platform integrations that cannot perform guest-memory
-    /// DMA from inside MMIO handlers. In such setups, BAR0 notify writes should
-    /// only record that the queue needs servicing, and the platform should call
-    /// this method during its main processing loop with access to guest RAM.
+    /// This is intended for platform integrations that cannot perform guest-memory DMA from inside
+    /// MMIO handlers. In such setups, BAR0 notify writes should only record that the queue needs
+    /// servicing, and the platform should call this method during its main processing loop with
+    /// access to guest RAM.
+    ///
+    /// In addition to explicit notify writes, this method also treats a queue as pending when it
+    /// has unconsumed available entries (`avail.idx != next_avail`). This makes snapshot/restore
+    /// robust if a snapshot is taken after the guest posts buffers (and possibly kicks the queue)
+    /// but before the platform gets a chance to service the notify.
     pub fn process_notified_queues(&mut self, mem: &mut dyn GuestMemory) {
         let queue_count = self.queues.len();
         for queue_index in 0..queue_count {
