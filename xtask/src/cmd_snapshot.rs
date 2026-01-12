@@ -265,6 +265,41 @@ fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
         ));
     }
 
+    if let Some(ram) = &index.ram {
+        if ram.mode == RamMode::Dirty {
+            let meta_offset = index
+                .sections
+                .iter()
+                .find(|s| s.id == SectionId::META)
+                .map(|s| s.offset);
+            let ram_offset = index
+                .sections
+                .iter()
+                .find(|s| s.id == SectionId::RAM)
+                .map(|s| s.offset);
+
+            // For non-seekable restore paths, dirty snapshots must provide META before RAM so the
+            // parent snapshot id can be validated before applying diffs.
+            if meta_offset.is_none()
+                || ram_offset.is_none()
+                || meta_offset.unwrap() > ram_offset.unwrap()
+            {
+                return Err(XtaskError::Message(
+                    "dirty snapshot requires META section before RAM".to_string(),
+                ));
+            }
+
+            let meta = index.meta.as_ref().ok_or_else(|| {
+                XtaskError::Message("dirty snapshot requires META section before RAM".to_string())
+            })?;
+            if meta.parent_snapshot_id.is_none() {
+                return Err(XtaskError::Message(
+                    "dirty snapshot missing parent_snapshot_id".to_string(),
+                ));
+            }
+        }
+    }
+
     let mut file =
         fs::File::open(path).map_err(|e| XtaskError::Message(format!("open {path:?}: {e}")))?;
 

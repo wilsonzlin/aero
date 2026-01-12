@@ -220,6 +220,68 @@ impl SnapshotSource for DirtyRamSource {
     }
 }
 
+struct DirtyNoParentSource {
+    ram: Vec<u8>,
+    dirty_pages: Option<Vec<u64>>,
+}
+
+impl DirtyNoParentSource {
+    fn new(ram_len: usize, dirty_pages: Vec<u64>) -> Self {
+        let mut ram = Vec::with_capacity(ram_len);
+        ram.extend((0..ram_len).map(|i| (i as u8).wrapping_mul(29)));
+        Self {
+            ram,
+            dirty_pages: Some(dirty_pages),
+        }
+    }
+}
+
+impl SnapshotSource for DirtyNoParentSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 4,
+            parent_snapshot_id: None,
+            created_unix_ms: 0,
+            label: Some("xtask-dirty-no-parent".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(aero_snapshot::SnapshotError::Corrupt("ram read overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..end]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        self.dirty_pages.take()
+    }
+}
+
 struct TwoDeviceSource {
     ram: Vec<u8>,
 }
@@ -382,6 +444,45 @@ fn append_duplicate_section(snapshot: &mut Vec<u8>, id: SectionId) {
     snapshot.extend_from_slice(&section_bytes);
 }
 
+fn move_meta_after_ram(snapshot: &[u8]) -> Vec<u8> {
+    const FILE_HEADER_LEN: usize = 16;
+
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(snapshot)).unwrap();
+    let mut meta_section: Option<Vec<u8>> = None;
+    let mut ram_section: Option<Vec<u8>> = None;
+    let mut other_sections = Vec::new();
+
+    for section in &index.sections {
+        let header_start = section
+            .offset
+            .checked_sub(16)
+            .expect("section offset underflow") as usize;
+        let payload_len: usize = section.len.try_into().expect("section len fits usize");
+        let end = header_start + 16 + payload_len;
+        assert!(end <= snapshot.len());
+        let bytes = snapshot[header_start..end].to_vec();
+
+        match section.id {
+            id if id == SectionId::META => meta_section = Some(bytes),
+            id if id == SectionId::RAM => ram_section = Some(bytes),
+            _ => other_sections.push(bytes),
+        }
+    }
+
+    let meta_section = meta_section.expect("META section missing");
+    let ram_section = ram_section.expect("RAM section missing");
+    assert!(FILE_HEADER_LEN <= snapshot.len());
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&snapshot[..FILE_HEADER_LEN]);
+    out.extend_from_slice(&ram_section);
+    for section in other_sections {
+        out.extend_from_slice(&section);
+    }
+    out.extend_from_slice(&meta_section);
+    out
+}
+
 fn corrupt_second_device_entry_to_duplicate_first(snapshot: &mut [u8]) {
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
     let devices = index
@@ -409,6 +510,11 @@ fn corrupt_second_device_entry_to_duplicate_first(snapshot: &mut [u8]) {
 
 fn corrupt_devices_section_len_to_two_and_insert_ram(snapshot: &mut Vec<u8>) {
     let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let meta = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::META)
+        .expect("META section missing");
     let devices = index
         .sections
         .iter()
@@ -427,6 +533,19 @@ fn corrupt_devices_section_len_to_two_and_insert_ram(snapshot: &mut Vec<u8>) {
 
     // DEVICES payload is now only 2 bytes (intentionally too short for the u32 device count).
     snapshot[payload_start..payload_start + 2].fill(0);
+
+    // Ensure the snapshot still satisfies the dirty-snapshot META contract. This helper injects a
+    // `RAM` section in dirty mode (because it's the smallest framing), which requires
+    // `parent_snapshot_id` to be present even if the dirty page list is empty.
+    //
+    // Encode a shorter META payload in-place (leave trailing bytes untouched).
+    let meta_off = meta.offset as usize;
+    assert!(meta_off + 26 <= snapshot.len());
+    snapshot[meta_off..meta_off + 8].copy_from_slice(&1u64.to_le_bytes()); // snapshot_id
+    snapshot[meta_off + 8] = 1; // parent_present
+    snapshot[meta_off + 9..meta_off + 17].copy_from_slice(&0u64.to_le_bytes()); // parent_snapshot_id
+    snapshot[meta_off + 17..meta_off + 25].copy_from_slice(&0u64.to_le_bytes()); // created_unix_ms
+    snapshot[meta_off + 25] = 0; // label_present
 
     // Insert an unknown 0-length section header immediately after the truncated payload so that
     // `inspect_snapshot` still sees a structurally valid file.
@@ -760,6 +879,65 @@ fn snapshot_validate_rejects_dirty_ram_page_list_not_strictly_increasing() {
         .failure()
         .stderr(predicate::str::contains(
             "dirty page list not strictly increasing",
+        ));
+}
+
+#[test]
+fn snapshot_validate_rejects_dirty_snapshot_missing_parent_snapshot_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dirty_no_parent.aerosnap");
+
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            mode: RamMode::Dirty,
+            compression: Compression::None,
+            page_size: 4096,
+            chunk_size: 1024 * 1024,
+        },
+    };
+
+    let mut source = DirtyNoParentSource::new(4096, vec![0]);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, options).unwrap();
+    fs::write(&snap, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "dirty snapshot missing parent_snapshot_id",
+        ));
+}
+
+#[test]
+fn snapshot_validate_rejects_dirty_snapshot_meta_after_ram() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("dirty_meta_after_ram.aerosnap");
+
+    let options = SaveOptions {
+        ram: RamWriteOptions {
+            mode: RamMode::Dirty,
+            compression: Compression::None,
+            page_size: 4096,
+            chunk_size: 1024 * 1024,
+        },
+    };
+
+    let mut source = DirtyRamSource::new(4096, vec![0]);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, options).unwrap();
+    let bytes = cursor.into_inner();
+
+    let corrupt = move_meta_after_ram(&bytes);
+    fs::write(&snap, corrupt).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "dirty snapshot requires META section before RAM",
         ));
 }
 
