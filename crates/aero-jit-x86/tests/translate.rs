@@ -202,19 +202,25 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                         (res, Some(compute_logic_flags(*width, res)))
                     }
                     AluOp::Shl => {
-                        let shift_mask = width.bits() - 1;
+                        // x86 masks shift counts to 5 bits for 8/16/32-bit shifts and 6 bits for
+                        // 64-bit shifts.
+                        let shift_mask: u32 = if *width == Width::W64 { 63 } else { 31 };
                         let amt = (r as u32) & shift_mask;
                         let res = width.truncate(l << amt);
                         (res, None)
                     }
                     AluOp::Shr => {
-                        let shift_mask = width.bits() - 1;
+                        // x86 masks shift counts to 5 bits for 8/16/32-bit shifts and 6 bits for
+                        // 64-bit shifts.
+                        let shift_mask: u32 = if *width == Width::W64 { 63 } else { 31 };
                         let amt = (r as u32) & shift_mask;
                         let res = width.truncate(l >> amt);
                         (res, None)
                     }
                     AluOp::Sar => {
-                        let shift_mask = width.bits() - 1;
+                        // x86 masks shift counts to 5 bits for 8/16/32-bit shifts and 6 bits for
+                        // 64-bit shifts.
+                        let shift_mask: u32 = if *width == Width::W64 { 63 } else { 31 };
                         let amt = (r as u32) & shift_mask;
                         let signed = width.sign_extend(width.truncate(l)) as i64;
                         let res = width.truncate((signed >> amt) as u64);
@@ -234,8 +240,9 @@ fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &
                 width,
             } => {
                 let l = read_op(inst, cpu, bus, dst, *width);
-                // The Tier-1 IR interpreter currently masks shift amounts by `(bits - 1)`.
-                let shift_mask = width.bits() - 1;
+                // x86 masks shift counts to 5 bits for 8/16/32-bit shifts and 6 bits for 64-bit
+                // shifts (matching the Tier-1 IR interpreter semantics).
+                let shift_mask: u32 = if *width == Width::W64 { 63 } else { 31 };
                 let amt = (*count as u32) & shift_mask;
                 let res = match op {
                     ShiftOp::Shl => width.truncate(l << amt),
