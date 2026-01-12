@@ -190,15 +190,9 @@ impl PciBus {
         bar_ranges: &[Option<PciBarRange>; 6],
     ) {
         // Drop all existing mappings for this device, then re-add those that are enabled.
-        let keys = self
-            .mapped_bars
-            .keys()
-            .filter(|(mapped_addr, _)| *mapped_addr == bdf)
-            .copied()
-            .collect::<Vec<_>>();
-        for key in keys {
-            self.mapped_bars.remove(&key);
-        }
+        //
+        // `retain` avoids allocating a temporary Vec of keys.
+        self.mapped_bars.retain(|(mapped_addr, _), _| *mapped_addr != bdf);
 
         let io_enabled = (command & 0x1) != 0;
         let mem_enabled = (command & 0x2) != 0;
