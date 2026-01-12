@@ -764,3 +764,71 @@ fn d3d9_bc_copy_region_reaching_mip_edge_is_allowed() {
     assert_eq!(px(&dst_rgba, 0, 0), [255, 0, 0, 255]);
     assert_eq!(px(&dst_rgba, 4, 4), [255, 255, 255, 255]);
 }
+
+#[test]
+fn d3d9_bc_copy_region_not_reaching_mip_edge_is_rejected() {
+    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
+        Some(exec) => exec,
+        None => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
+
+    const WIDTH: u32 = 5;
+    const HEIGHT: u32 = 5;
+
+    let stream = build_stream(|out| {
+        for handle in [SRC_TEX, DST_TEX] {
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, handle);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+                push_u32(out, WIDTH);
+                push_u32(out, HEIGHT);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 16); // row_pitch_bytes (2 BC1 blocks per row)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        }
+
+        // Copy a 1x1 region from the top-left corner. For BC formats the extent is not
+        // block-aligned *and* does not reach the mip edge, so it must be rejected.
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, 1); // width (invalid for BC when not reaching edge)
+            push_u32(out, 1); // height
+            push_u32(out, 0); // flags
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    let err = exec
+        .execute_cmd_stream(&stream)
+        .expect_err("misaligned BC copy extent should fail");
+    match err {
+        AerogpuD3d9Error::Validation(msg) => assert!(
+            msg.contains("BC copy width") || msg.contains("BC copy height"),
+            "unexpected validation message: {msg}"
+        ),
+        other => panic!("expected Validation error, got {other:?}"),
+    }
+}
