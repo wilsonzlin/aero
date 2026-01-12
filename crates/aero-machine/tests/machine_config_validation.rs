@@ -29,20 +29,6 @@ fn enable_ahci_requires_enable_pc_platform() {
 }
 
 #[test]
-fn enable_ide_requires_enable_pc_platform() {
-    let cfg = MachineConfig {
-        enable_pc_platform: false,
-        enable_ide: true,
-        ..Default::default()
-    };
-
-    assert!(matches!(
-        Machine::new(cfg),
-        Err(MachineError::IdeRequiresPcPlatform)
-    ));
-}
-
-#[test]
 fn enable_nvme_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
@@ -53,6 +39,20 @@ fn enable_nvme_requires_enable_pc_platform() {
     assert!(matches!(
         Machine::new(cfg),
         Err(MachineError::NvmeRequiresPcPlatform)
+    ));
+}
+
+#[test]
+fn enable_ide_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_ide: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::IdeRequiresPcPlatform)
     ));
 }
 
