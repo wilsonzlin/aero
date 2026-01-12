@@ -10,9 +10,9 @@ set -euo pipefail
 # including containers and CI.
 #
 # Examples:
-#   bash scripts/run_limited.sh --as 12G -- cargo build --release --locked
-#   LIMIT_AS=12G bash scripts/run_limited.sh -- cargo build --release --locked
-#   bash scripts/run_limited.sh --as 64G -- ./target/release/mybin
+#   bash ./scripts/run_limited.sh --as 12G -- cargo build --release --locked
+#   LIMIT_AS=12G bash ./scripts/run_limited.sh -- cargo build --release --locked
+#   bash ./scripts/run_limited.sh --as 64G -- ./target/release/mybin
 
 usage() {
   cat <<'EOF'

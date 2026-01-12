@@ -440,7 +440,7 @@ You might be over-constrained. `scripts/agent-env.sh` defaults to `-j1` for reli
 
 ```bash
 export AERO_CARGO_BUILD_JOBS=2  # or 4, etc
-source scripts/agent-env.sh
+source ./scripts/agent-env.sh
 echo $CARGO_BUILD_JOBS
 ```
 
