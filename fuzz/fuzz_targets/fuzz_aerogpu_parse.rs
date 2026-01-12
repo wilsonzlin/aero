@@ -159,13 +159,19 @@ fuzz_target!(|data: &[u8]| {
 
     // Patched command stream: force valid magic/version and size_bytes.
     let mut cmd_patched = cmd_bytes.to_vec();
-    if cmd_patched.len() < cmd::AerogpuCmdStreamHeader::SIZE_BYTES {
-        cmd_patched.resize(cmd::AerogpuCmdStreamHeader::SIZE_BYTES, 0);
+    let cmd_min_len = cmd::AerogpuCmdStreamHeader::SIZE_BYTES + cmd::AerogpuCmdHdr::SIZE_BYTES;
+    if cmd_patched.len() < cmd_min_len {
+        cmd_patched.resize(cmd_min_len, 0);
     }
     cmd_patched[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
     cmd_patched[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
     let cmd_size_bytes = cmd_patched.len() as u32;
     cmd_patched[8..12].copy_from_slice(&cmd_size_bytes.to_le_bytes());
+    // Force a well-formed first packet (NOP) so the iterator can reach later packets more often.
+    let cmd_hdr_off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    cmd_patched[cmd_hdr_off..cmd_hdr_off + 4].copy_from_slice(&0u32.to_le_bytes());
+    cmd_patched[cmd_hdr_off + 4..cmd_hdr_off + 8]
+        .copy_from_slice(&(cmd::AerogpuCmdHdr::SIZE_BYTES as u32).to_le_bytes());
     fuzz_cmd_stream(&cmd_patched);
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
@@ -183,6 +189,26 @@ fuzz_target!(|data: &[u8]| {
     alloc_patched[12..16].copy_from_slice(&entry_count.to_le_bytes());
     alloc_patched[16..20].copy_from_slice(&(stride as u32).to_le_bytes());
     fuzz_alloc_table(&alloc_patched);
+
+    // Patched alloc table (minimal): force a single well-formed entry so the executor alloc-table
+    // validation path can succeed more often.
+    let mut alloc_one = vec![0u8; header_size + stride];
+    let alloc_one_copy_len = alloc_one.len().min(alloc_bytes.len());
+    alloc_one[..alloc_one_copy_len].copy_from_slice(&alloc_bytes[..alloc_one_copy_len]);
+    alloc_one[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+    alloc_one[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+    let alloc_one_size_bytes = alloc_one.len() as u32;
+    alloc_one[8..12].copy_from_slice(&alloc_one_size_bytes.to_le_bytes());
+    alloc_one[12..16].copy_from_slice(&1u32.to_le_bytes());
+    alloc_one[16..20].copy_from_slice(&(stride as u32).to_le_bytes());
+    alloc_one[20..24].fill(0);
+    let entry_off = header_size;
+    alloc_one[entry_off..entry_off + 4].copy_from_slice(&1u32.to_le_bytes()); // alloc_id
+    alloc_one[entry_off + 4..entry_off + 8].fill(0); // flags
+    alloc_one[entry_off + 8..entry_off + 16].copy_from_slice(&0x2000u64.to_le_bytes()); // gpa
+    alloc_one[entry_off + 16..entry_off + 24].copy_from_slice(&0x1000u64.to_le_bytes()); // size_bytes
+    alloc_one[entry_off + 24..entry_off + 32].fill(0); // reserved0
+    fuzz_alloc_table(&alloc_one);
 
     // Patched ring layouts: create fixed-size prefix buffers so we can set magic/version and hit
     // deeper validation checks without copying the entire (potentially large) ring slice.
