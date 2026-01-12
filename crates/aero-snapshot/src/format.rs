@@ -47,6 +47,8 @@ impl DeviceId {
     pub const BIOS: DeviceId = DeviceId(10);
     /// Memory bus/host glue state (A20 gate, ROM ranges, etc.).
     pub const MEMORY: DeviceId = DeviceId(11);
+    /// Guest-visible USB controller/runtime state.
+    pub const USB: DeviceId = DeviceId(12);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -61,6 +63,7 @@ impl DeviceId {
             DeviceId::CPU_INTERNAL => Some("CPU_INTERNAL"),
             DeviceId::BIOS => Some("BIOS"),
             DeviceId::MEMORY => Some("MEMORY"),
+            DeviceId::USB => Some("USB"),
             _ => None,
         }
     }
