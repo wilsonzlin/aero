@@ -776,7 +776,9 @@ class RemoteChunkCache implements ChunkCache {
     const cached = this.cachedChunkIndices();
     const lastAccess = this.meta.chunkLastAccess ?? {};
 
-    for (const [chunkStr, counterRaw] of Object.entries(lastAccess)) {
+    for (const chunkStr in lastAccess) {
+      if (!Object.prototype.hasOwnProperty.call(lastAccess, chunkStr)) continue;
+      const counterRaw = lastAccess[chunkStr];
       const idx = Number(chunkStr);
       if (!Number.isSafeInteger(idx) || idx < 0 || !cached.has(idx)) {
         delete lastAccess[chunkStr];
@@ -800,7 +802,9 @@ class RemoteChunkCache implements ChunkCache {
 
     // Ensure `accessCounter` monotonically increases beyond all last-access values.
     let maxCounter = this.meta.accessCounter ?? 0;
-    for (const counter of Object.values(lastAccess)) {
+    for (const chunkStr in lastAccess) {
+      if (!Object.prototype.hasOwnProperty.call(lastAccess, chunkStr)) continue;
+      const counter = lastAccess[chunkStr];
       if (typeof counter === "number" && Number.isFinite(counter) && counter > maxCounter) {
         maxCounter = counter;
       }
@@ -972,9 +976,13 @@ class RemoteChunkCache implements ChunkCache {
     while (this.cachedBytes > this.cacheLimitBytes) {
       let lruChunk: number | null = null;
       let lruCounter = Number.POSITIVE_INFINITY;
-      for (const [chunkStr, counter] of Object.entries(this.meta.chunkLastAccess ?? {})) {
+      const lastAccess = this.meta.chunkLastAccess ?? {};
+      for (const chunkStr in lastAccess) {
+        if (!Object.prototype.hasOwnProperty.call(lastAccess, chunkStr)) continue;
+        const counterRaw = lastAccess[chunkStr];
         const idx = Number(chunkStr);
-        if (!Number.isFinite(idx) || idx === protectedChunk) continue;
+        if (!Number.isSafeInteger(idx) || idx < 0 || idx === protectedChunk) continue;
+        const counter = typeof counterRaw === "number" && Number.isFinite(counterRaw) ? counterRaw : 0;
         if (counter < lruCounter) {
           lruCounter = counter;
           lruChunk = idx;

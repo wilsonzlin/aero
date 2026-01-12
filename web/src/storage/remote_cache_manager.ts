@@ -216,8 +216,19 @@ export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | 
   if (obj.accessCounter !== undefined) {
     if (!Number.isSafeInteger(obj.accessCounter) || obj.accessCounter < 0) return null;
   }
-  if (obj.chunkLastAccess !== undefined && (typeof obj.chunkLastAccess !== "object" || obj.chunkLastAccess === null)) {
-    return null;
+  if (obj.chunkLastAccess !== undefined) {
+    if (typeof obj.chunkLastAccess !== "object" || obj.chunkLastAccess === null) return null;
+    if (Array.isArray(obj.chunkLastAccess)) return null;
+    const lastAccess = obj.chunkLastAccess as Record<string, unknown>;
+    let entries = 0;
+    for (const key in lastAccess) {
+      if (!Object.prototype.hasOwnProperty.call(lastAccess, key)) continue;
+      entries += 1;
+      // Defensive cap to avoid O(n) work on corrupt metadata.
+      if (entries > 1_000_000) return null;
+      const value = lastAccess[key];
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+    }
   }
   if (!Array.isArray(obj.cachedRanges)) return null;
   if (obj.cachedRanges.length > 1_000_000) return null;

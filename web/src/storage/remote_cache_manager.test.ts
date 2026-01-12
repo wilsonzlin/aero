@@ -6,6 +6,7 @@ import {
   type RemoteCacheFileHandle,
   type RemoteCacheWritableFileStream,
   RemoteCacheManager,
+  validateRemoteCacheMetaV1,
   remoteRangeDeliveryType,
 } from "./remote_cache_manager";
 
@@ -229,5 +230,22 @@ describe("RemoteCacheManager", () => {
 
     const meta = await mgr.readMeta(cacheKey);
     expect(meta).toBeNull();
+  });
+
+  it("rejects meta.json files with invalid chunkLastAccess entries", () => {
+    const parsed = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      accessCounter: 0,
+      chunkLastAccess: { "0": -1 },
+      cachedRanges: [],
+    };
+    expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
   });
 });
