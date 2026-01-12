@@ -1524,15 +1524,15 @@ function renderNetTracePanel(): HTMLElement {
   installNetTraceUI(panel, {
     isEnabled: () => workerCoordinator.isNetTraceEnabled(),
     enable: () => {
-      requireNetWorkerReady();
       workerCoordinator.setNetTraceEnabled(true);
     },
     disable: () => {
-      requireNetWorkerReady();
       workerCoordinator.setNetTraceEnabled(false);
     },
     clear: () => {
-      requireNetWorkerReady();
+      // Best-effort: allow clearing even if the net worker isn't running yet.
+      // A newly started worker has an empty capture, and if it's already running
+      // we forward the clear command immediately.
       workerCoordinator.clearNetTrace();
     },
     getStats: async () => {
