@@ -636,7 +636,21 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     } catch {
       bridge = new AnyCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab);
     }
-    if (typeof (bridge as any).io_read !== "function" || typeof (bridge as any).io_write !== "function") {
+    const bridgeAny = bridge as any;
+    const legacyRead =
+      typeof bridgeAny.legacy_io_read === "function"
+        ? bridgeAny.legacy_io_read
+        : typeof bridgeAny.io_read === "function"
+          ? bridgeAny.io_read
+          : null;
+    const legacyWrite =
+      typeof bridgeAny.legacy_io_write === "function"
+        ? bridgeAny.legacy_io_write
+        : typeof bridgeAny.io_write === "function"
+          ? bridgeAny.io_write
+          : null;
+
+    if (!legacyRead || !legacyWrite) {
       try {
         bridge.free();
       } catch {
@@ -646,7 +660,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     }
     // Probe HOST_FEATURES: legacy-disabled bridges return all-ones.
     try {
-      const probe = (bridge as any).io_read(0, 4) >>> 0;
+      const probe = (legacyRead.call(bridge, 0, 4) as number) >>> 0;
       if (probe === 0xffff_ffff) {
         bridge.free();
         return;
