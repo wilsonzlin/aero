@@ -42,5 +42,8 @@ jobs:
       - name: fuzz_aerosparse_open (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerosparse_open -- -max_total_time=10
 
+      - name: fuzz_aero_storage_sparse_open (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aero_storage_sparse_open -- -max_total_time=10
+
       - name: Ensure fuzz lockfile was not modified
         run: git diff --exit-code -- fuzz/Cargo.lock
