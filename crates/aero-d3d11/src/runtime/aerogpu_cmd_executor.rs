@@ -6505,14 +6505,14 @@ const AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB: u32 = 8;
 const AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB: u32 = 9;
 const AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB: u32 = 10;
 
-const AEROGPU_FORMAT_BC1_UNORM: u32 = 11;
-const AEROGPU_FORMAT_BC1_SRGB: u32 = 12;
-const AEROGPU_FORMAT_BC2_UNORM: u32 = 13;
-const AEROGPU_FORMAT_BC2_SRGB: u32 = 14;
-const AEROGPU_FORMAT_BC3_UNORM: u32 = 15;
-const AEROGPU_FORMAT_BC3_SRGB: u32 = 16;
-const AEROGPU_FORMAT_BC7_UNORM: u32 = 17;
-const AEROGPU_FORMAT_BC7_SRGB: u32 = 18;
+const AEROGPU_FORMAT_BC1_RGBA_UNORM: u32 = 64;
+const AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB: u32 = 65;
+const AEROGPU_FORMAT_BC2_RGBA_UNORM: u32 = 66;
+const AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB: u32 = 67;
+const AEROGPU_FORMAT_BC3_RGBA_UNORM: u32 = 68;
+const AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB: u32 = 69;
+const AEROGPU_FORMAT_BC7_RGBA_UNORM: u32 = 70;
+const AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB: u32 = 71;
 
 fn map_aerogpu_texture_format(format_u32: u32) -> Result<wgpu::TextureFormat> {
     // NOTE: This executor currently always uses an RGBA8 fallback for BC formats (even when the
@@ -6533,14 +6533,14 @@ fn map_aerogpu_texture_format(format_u32: u32) -> Result<wgpu::TextureFormat> {
         }
 
         // BC formats (always decompressed to RGBA8 on upload for now).
-        AEROGPU_FORMAT_BC1_UNORM
-        | AEROGPU_FORMAT_BC2_UNORM
-        | AEROGPU_FORMAT_BC3_UNORM
-        | AEROGPU_FORMAT_BC7_UNORM => wgpu::TextureFormat::Rgba8Unorm,
-        AEROGPU_FORMAT_BC1_SRGB
-        | AEROGPU_FORMAT_BC2_SRGB
-        | AEROGPU_FORMAT_BC3_SRGB
-        | AEROGPU_FORMAT_BC7_SRGB => wgpu::TextureFormat::Rgba8UnormSrgb,
+        AEROGPU_FORMAT_BC1_RGBA_UNORM
+        | AEROGPU_FORMAT_BC2_RGBA_UNORM
+        | AEROGPU_FORMAT_BC3_RGBA_UNORM
+        | AEROGPU_FORMAT_BC7_RGBA_UNORM => wgpu::TextureFormat::Rgba8Unorm,
+        AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB
+        | AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB
+        | AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB
+        | AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB => wgpu::TextureFormat::Rgba8UnormSrgb,
 
         AEROGPU_FORMAT_D24_UNORM_S8_UINT => wgpu::TextureFormat::Depth24PlusStencil8,
         AEROGPU_FORMAT_D32_FLOAT => wgpu::TextureFormat::Depth32Float,
@@ -6618,25 +6618,25 @@ fn aerogpu_texture_format_layout(format_u32: u32) -> Result<AerogpuTextureFormat
             bytes_per_texel: 4,
         },
 
-        AEROGPU_FORMAT_BC1_UNORM | AEROGPU_FORMAT_BC1_SRGB => {
+        AEROGPU_FORMAT_BC1_RGBA_UNORM | AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB => {
             AerogpuTextureFormatLayout::BlockCompressed {
                 bc: AerogpuBcFormat::Bc1,
                 block_bytes: 8,
             }
         }
-        AEROGPU_FORMAT_BC2_UNORM | AEROGPU_FORMAT_BC2_SRGB => {
+        AEROGPU_FORMAT_BC2_RGBA_UNORM | AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB => {
             AerogpuTextureFormatLayout::BlockCompressed {
                 bc: AerogpuBcFormat::Bc2,
                 block_bytes: 16,
             }
         }
-        AEROGPU_FORMAT_BC3_UNORM | AEROGPU_FORMAT_BC3_SRGB => {
+        AEROGPU_FORMAT_BC3_RGBA_UNORM | AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB => {
             AerogpuTextureFormatLayout::BlockCompressed {
                 bc: AerogpuBcFormat::Bc3,
                 block_bytes: 16,
             }
         }
-        AEROGPU_FORMAT_BC7_UNORM | AEROGPU_FORMAT_BC7_SRGB => {
+        AEROGPU_FORMAT_BC7_RGBA_UNORM | AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB => {
             AerogpuTextureFormatLayout::BlockCompressed {
                 bc: AerogpuBcFormat::Bc7,
                 block_bytes: 16,
