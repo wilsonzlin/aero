@@ -1482,21 +1482,9 @@ struct ScsiPassThroughDirectWithSense {
   UCHAR sense[32]{};
 };
 
-static bool VirtioBlkReportLuns(Logger& log, DWORD disk_number) {
-  wchar_t phys_path[64]{};
-  swprintf_s(phys_path, L"\\\\.\\PhysicalDrive%lu", static_cast<unsigned long>(disk_number));
-
-  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
-  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ, 0};
-
-  HANDLE h = INVALID_HANDLE_VALUE;
-  for (const DWORD access : desired_accesses) {
-    h = CreateFileW(phys_path, access, share, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (h != INVALID_HANDLE_VALUE) break;
-  }
-  if (h == INVALID_HANDLE_VALUE) {
-    log.Logf("virtio-blk: REPORT_LUNS FAIL unable to open %s err=%lu", WideToUtf8(phys_path).c_str(),
-             GetLastError());
+static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
+  if (hPhysicalDrive == INVALID_HANDLE_VALUE) {
+    log.LogLine("virtio-blk: REPORT_LUNS FAIL invalid PhysicalDrive handle");
     return false;
   }
 
@@ -1504,7 +1492,8 @@ static bool VirtioBlkReportLuns(Logger& log, DWORD disk_number) {
   // Some stacks require these fields to be populated for pass-through IOCTLs.
   SCSI_ADDRESS addr{};
   DWORD addr_bytes = 0;
-  if (DeviceIoControl(h, IOCTL_SCSI_GET_ADDRESS, nullptr, 0, &addr, sizeof(addr), &addr_bytes, nullptr)) {
+  if (DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_GET_ADDRESS, nullptr, 0, &addr, sizeof(addr), &addr_bytes,
+                      nullptr)) {
     log.Logf("virtio-blk: REPORT_LUNS scsi_address port=%u path=%u target=%u lun=%u",
              static_cast<unsigned>(addr.PortNumber), static_cast<unsigned>(addr.PathId),
              static_cast<unsigned>(addr.TargetId), static_cast<unsigned>(addr.Lun));
@@ -1544,10 +1533,9 @@ static bool VirtioBlkReportLuns(Logger& log, DWORD disk_number) {
   memcpy(pkt.sptd.Cdb, cdb, sizeof(cdb));
 
   DWORD returned = 0;
-  const BOOL ok = DeviceIoControl(h, IOCTL_SCSI_PASS_THROUGH_DIRECT, &pkt, sizeof(pkt), &pkt, sizeof(pkt),
-                                  &returned, nullptr);
+  const BOOL ok = DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_PASS_THROUGH_DIRECT, &pkt, sizeof(pkt), &pkt,
+                                  sizeof(pkt), &returned, nullptr);
   const DWORD err = ok ? ERROR_SUCCESS : GetLastError();
-  CloseHandle(h);
 
   if (!ok) {
     log.Logf("virtio-blk: REPORT_LUNS FAIL DeviceIoControl(IOCTL_SCSI_PASS_THROUGH_DIRECT) err=%lu",
@@ -1668,12 +1656,13 @@ static bool VirtioBlkTest(Logger& log, const Options& opt) {
       log.Logf("virtio-blk: IOCTL_DISK_FLUSH_CACHE failed err=%lu", GetLastError());
     }
 
+    const bool report_luns_ok = VirtioBlkReportLuns(log, pd);
+
     CloseHandle(pd);
 
     if (!query_ok) return false;
+    if (!report_luns_ok) return false;
   }
-
-  if (!VirtioBlkReportLuns(log, *base_disk)) return false;
 
   const std::wstring test_file = JoinPath(base_dir, L"virtio-blk-test.bin");
   log.Logf("virtio-blk: test_file=%s size_mib=%lu chunk_kib=%lu", WideToUtf8(test_file).c_str(),
