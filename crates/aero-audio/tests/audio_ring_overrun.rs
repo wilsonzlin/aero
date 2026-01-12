@@ -63,3 +63,29 @@ fn audio_ring_clamps_excessive_capacity_to_avoid_oom() {
     let ring = AudioRingBuffer::new_stereo(usize::MAX);
     assert_eq!(ring.capacity_frames(), MAX_CAPACITY_FRAMES);
 }
+
+#[test]
+fn audio_ring_clamps_zero_capacity_to_avoid_panics() {
+    let ring = AudioRingBuffer::new_stereo(0);
+    assert_eq!(ring.capacity_frames(), 1);
+}
+
+#[test]
+fn audio_ring_push_ignores_trailing_partial_frame() {
+    let mut ring = AudioRingBuffer::new_stereo(4);
+    // Odd number of samples: should ignore the trailing value instead of panicking.
+    ring.push_interleaved_stereo(&[1.0, 2.0, 3.0]);
+    assert_eq!(ring.available_frames(), 1);
+    assert_eq!(ring.pop_interleaved_stereo(1), vec![1.0, 2.0]);
+}
+
+#[test]
+fn audio_ring_pop_clamps_absurd_frames_to_avoid_oom() {
+    // Keep this in sync with the internal cap in `aero_audio::ring`.
+    const MAX_CAPACITY_FRAMES: usize = 1_048_576;
+
+    let mut ring = AudioRingBuffer::new_stereo(4);
+    let out = ring.pop_interleaved_stereo(usize::MAX);
+    assert_eq!(out.len(), MAX_CAPACITY_FRAMES * 2);
+    assert_eq!(ring.telemetry().underrun_frames, MAX_CAPACITY_FRAMES as u64);
+}

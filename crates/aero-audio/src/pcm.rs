@@ -64,7 +64,7 @@ impl StreamFormat {
             8 => 1,
             16 => 2,
             20 | 24 | 32 => 4,
-            other => panic!("unsupported bits per sample: {other}"),
+            _ => 0,
         }
     }
 
@@ -72,6 +72,12 @@ impl StreamFormat {
         self.bytes_per_sample() * self.channels as usize
     }
 }
+
+/// Maximum number of PCM frames converted in a single encode/decode call.
+///
+/// These helpers are used by both device models (guest-driven DMA) and JS/WASM-callable APIs.
+/// Bounding per-call allocations prevents accidental multi-gigabyte allocations on hostile inputs.
+const MAX_PCM_FRAMES_PER_CALL: usize = 1_048_576;
 
 /// Decode interleaved PCM data from the guest into interleaved stereo `f32`.
 ///
@@ -93,8 +99,13 @@ pub fn decode_pcm_to_stereo_f32_into(input: &[u8], fmt: StreamFormat, out: &mut 
     if bytes_per_frame == 0 {
         return;
     }
-    let frames = input.len() / bytes_per_frame;
-    out.reserve(frames);
+    let frames = (input.len() / bytes_per_frame).min(MAX_PCM_FRAMES_PER_CALL);
+    if frames == 0 {
+        return;
+    }
+    if out.try_reserve_exact(frames).is_err() {
+        return;
+    }
 
     for frame in 0..frames {
         let frame_off = frame * bytes_per_frame;
@@ -141,11 +152,18 @@ pub fn encode_mono_f32_to_pcm_into(input: &[f32], fmt: StreamFormat, out: &mut V
         return;
     }
 
-    out.resize(input.len() * bytes_per_frame, 0);
+    let frames = input.len().min(MAX_PCM_FRAMES_PER_CALL);
+    let Some(out_len) = frames.checked_mul(bytes_per_frame) else {
+        return;
+    };
+    if out.try_reserve_exact(out_len).is_err() {
+        return;
+    }
+    out.resize(out_len, 0);
     let bps = fmt.bytes_per_sample();
     let channels = fmt.channels as usize;
 
-    for (frame_idx, &mono) in input.iter().enumerate() {
+    for (frame_idx, &mono) in input.iter().take(frames).enumerate() {
         let frame_off = frame_idx * bytes_per_frame;
         for ch in 0..channels {
             let sample = if ch <= 1 { mono } else { 0.0 };
@@ -597,14 +615,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unsupported bits per sample")]
-    fn bytes_per_sample_panics_for_unsupported_bits() {
+    fn bytes_per_sample_returns_zero_for_unsupported_bits() {
         let fmt = StreamFormat {
             sample_rate_hz: 48_000,
             bits_per_sample: 12,
             channels: 2,
         };
-        let _ = fmt.bytes_per_sample();
+        assert_eq!(fmt.bytes_per_sample(), 0);
     }
 
     #[test]
@@ -1504,6 +1521,25 @@ mod tests {
 
         // Encode should produce no bytes (bytes_per_frame=0).
         let mut encoded = vec![0xAA, 0xBB];
+        encode_mono_f32_to_pcm_into(&[0.0, 1.0], fmt, &mut encoded);
+        assert!(encoded.is_empty());
+    }
+
+    #[test]
+    fn decode_and_encode_handle_unsupported_bits_per_sample_without_panicking() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 12,
+            channels: 2,
+        };
+        assert_eq!(fmt.bytes_per_sample(), 0);
+        assert_eq!(fmt.bytes_per_frame(), 0);
+
+        let mut decoded = vec![[1.0, 2.0]];
+        decode_pcm_to_stereo_f32_into(&[0xAA, 0xBB, 0xCC, 0xDD], fmt, &mut decoded);
+        assert!(decoded.is_empty());
+
+        let mut encoded = vec![0xAA, 0xBB, 0xCC];
         encode_mono_f32_to_pcm_into(&[0.0, 1.0], fmt, &mut encoded);
         assert!(encoded.is_empty());
     }

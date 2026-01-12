@@ -95,10 +95,10 @@ pub struct InterleavedRingBuffer {
 
 impl InterleavedRingBuffer {
     pub fn new(capacity_frames: u32, channel_count: u32) -> Self {
-        assert!(capacity_frames > 0, "capacity_frames must be non-zero");
-        assert!(channel_count > 0, "channel_count must be non-zero");
-        let capacity_frames = capacity_frames.min(MAX_RING_CAPACITY_FRAMES);
-        let channel_count = channel_count.min(MAX_RING_CHANNEL_COUNT);
+        // Treat capacity/channel_count as untrusted (e.g. UI/config/snapshot inputs); clamp to avoid
+        // panics and multi-gigabyte allocations.
+        let capacity_frames = capacity_frames.clamp(1, MAX_RING_CAPACITY_FRAMES);
+        let channel_count = channel_count.clamp(1, MAX_RING_CHANNEL_COUNT);
         Self {
             capacity_frames,
             channel_count,
@@ -332,6 +332,22 @@ mod tests {
             rb.storage.len(),
             rb.capacity_frames as usize * rb.channel_count as usize
         );
+    }
+
+    #[test]
+    fn test_new_clamps_zero_capacity_to_avoid_panics() {
+        let rb = InterleavedRingBuffer::new(0, 2);
+        assert_eq!(rb.capacity_frames, 1);
+        assert_eq!(rb.channel_count, 2);
+        assert_eq!(rb.storage.len(), 1 * 2);
+    }
+
+    #[test]
+    fn test_new_clamps_zero_channel_count_to_avoid_panics() {
+        let rb = InterleavedRingBuffer::new(8, 0);
+        assert_eq!(rb.capacity_frames, 8);
+        assert_eq!(rb.channel_count, 1);
+        assert_eq!(rb.storage.len(), 8);
     }
 
     #[test]

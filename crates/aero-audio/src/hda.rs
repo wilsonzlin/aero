@@ -857,8 +857,13 @@ impl HdaController {
     }
 
     pub fn new_with_output_rate(output_rate_hz: u32) -> Self {
-        assert!(output_rate_hz > 0, "output_rate_hz must be non-zero");
-        let output_rate_hz = output_rate_hz.min(crate::MAX_HOST_SAMPLE_RATE_HZ);
+        // Treat host-provided rates as untrusted; pick a sane default for 0 and clamp to a
+        // defensible range to avoid pathological allocations/work.
+        let output_rate_hz = match output_rate_hz {
+            0 => 48_000,
+            other => other,
+        }
+        .min(crate::MAX_HOST_SAMPLE_RATE_HZ);
         let num_output_streams: usize = 1;
         let num_input_streams: usize = 1;
         let num_bidir_streams: usize = 0;
@@ -934,7 +939,9 @@ impl HdaController {
     /// The controller will resample guest PCM streams to this rate before pushing into the
     /// output sink.
     pub fn set_output_rate_hz(&mut self, output_rate_hz: u32) {
-        assert!(output_rate_hz > 0, "output_rate_hz must be non-zero");
+        if output_rate_hz == 0 {
+            return;
+        }
         let output_rate_hz = output_rate_hz.min(crate::MAX_HOST_SAMPLE_RATE_HZ);
         if self.output_rate_hz == output_rate_hz {
             return;
@@ -982,10 +989,9 @@ impl HdaController {
     ///
     /// This does not affect the output sample rate/time base used by [`Self::process`] and friends.
     pub fn set_capture_sample_rate_hz(&mut self, capture_sample_rate_hz: u32) {
-        assert!(
-            capture_sample_rate_hz > 0,
-            "capture_sample_rate_hz must be non-zero"
-        );
+        if capture_sample_rate_hz == 0 {
+            return;
+        }
         let capture_sample_rate_hz = capture_sample_rate_hz.min(crate::MAX_HOST_SAMPLE_RATE_HZ);
         if self.capture_sample_rate_hz == capture_sample_rate_hz {
             return;

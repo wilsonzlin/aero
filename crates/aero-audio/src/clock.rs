@@ -32,7 +32,9 @@ impl AudioFrameClock {
     const NS_PER_SEC: u64 = 1_000_000_000;
 
     pub fn new(sample_rate_hz: u32, start_time_ns: u64) -> Self {
-        assert!(sample_rate_hz != 0, "sample_rate_hz must be non-zero");
+        // Treat the sample rate as untrusted (e.g. host config / snapshot restore). Clamp to a
+        // reasonable range to avoid division-by-zero and accidental multi-billion frame deltas.
+        let sample_rate_hz = sample_rate_hz.clamp(1, crate::MAX_HOST_SAMPLE_RATE_HZ);
         Self {
             sample_rate_hz,
             last_time_ns: start_time_ns,

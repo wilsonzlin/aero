@@ -46,8 +46,9 @@ pub struct RingBufferTelemetry {
 
 impl AudioRingBuffer {
     pub fn new_stereo(capacity_frames: usize) -> Self {
-        assert!(capacity_frames > 0);
-        let capacity_frames = capacity_frames.min(MAX_CAPACITY_FRAMES);
+        // Treat capacity as untrusted (e.g. from host config); clamp to avoid panics and
+        // multi-gigabyte allocations.
+        let capacity_frames = capacity_frames.clamp(1, MAX_CAPACITY_FRAMES);
         let channels = 2;
         Self {
             channels,
@@ -89,17 +90,18 @@ impl AudioRingBuffer {
 
     /// Push interleaved stereo samples.
     pub fn push_interleaved_stereo(&mut self, samples: &[f32]) {
-        assert!(samples.len().is_multiple_of(self.channels));
-        let frames = samples.len() / self.channels;
+        // Treat inputs as untrusted; ignore any trailing partial frame.
+        let sample_len = samples.len() - (samples.len() % self.channels);
+        let frames = sample_len / self.channels;
         if frames == 0 {
             return;
         }
 
-        let free_frames = self.capacity_frames - self.len_frames;
+        let free_frames = self.capacity_frames.saturating_sub(self.len_frames);
         let frames_to_write = frames.min(free_frames);
         let dropped = frames - frames_to_write;
         if dropped > 0 {
-            self.overrun_frames += dropped as u64;
+            self.overrun_frames = self.overrun_frames.saturating_add(dropped as u64);
         }
 
         for frame_idx in 0..frames_to_write {
@@ -109,7 +111,10 @@ impl AudioRingBuffer {
             self.data[dst..dst + self.channels].copy_from_slice(&samples[src..src + self.channels]);
             self.write_frame = (self.write_frame + 1) % self.capacity_frames;
         }
-        self.len_frames += frames_to_write;
+        self.len_frames = self
+            .len_frames
+            .saturating_add(frames_to_write)
+            .min(self.capacity_frames);
     }
 
     /// Pop `frames` frames as interleaved stereo.
@@ -117,7 +122,18 @@ impl AudioRingBuffer {
     /// If the buffer does not contain enough audio, the remaining frames will be
     /// filled with silence.
     pub fn pop_interleaved_stereo(&mut self, frames: usize) -> Vec<f32> {
-        let mut out = vec![0.0f32; frames * self.channels];
+        // Bound output allocation/work: callers may treat `frames` as untrusted.
+        let frames = frames.min(MAX_CAPACITY_FRAMES);
+        if frames == 0 {
+            return Vec::new();
+        }
+
+        let out_len = frames.saturating_mul(self.channels);
+        let mut out = Vec::new();
+        if out.try_reserve_exact(out_len).is_err() {
+            return Vec::new();
+        }
+        out.resize(out_len, 0.0f32);
 
         let available = self.len_frames.min(frames);
         for frame_idx in 0..available {
@@ -128,9 +144,11 @@ impl AudioRingBuffer {
             self.read_frame = (self.read_frame + 1) % self.capacity_frames;
         }
 
-        self.len_frames -= available;
+        self.len_frames = self.len_frames.saturating_sub(available);
         if available < frames {
-            self.underrun_frames += (frames - available) as u64;
+            self.underrun_frames = self
+                .underrun_frames
+                .saturating_add((frames - available) as u64);
         }
 
         out

@@ -62,8 +62,9 @@ pub struct MonoRingBuffer {
 
 impl MonoRingBuffer {
     pub fn new(capacity_samples: u32) -> Self {
-        assert!(capacity_samples > 0, "capacity_samples must be non-zero");
-        let capacity_samples = capacity_samples.min(MAX_RING_CAPACITY_SAMPLES);
+        // Treat capacity as untrusted (e.g. UI/config/snapshot inputs); clamp to avoid panics and
+        // multi-gigabyte allocations.
+        let capacity_samples = capacity_samples.clamp(1, MAX_RING_CAPACITY_SAMPLES);
         Self {
             capacity_samples,
             read_pos: 0,
@@ -188,6 +189,13 @@ mod tests {
         let rb = MonoRingBuffer::new(u32::MAX);
         assert_eq!(rb.capacity_samples, MAX_RING_CAPACITY_SAMPLES);
         assert_eq!(rb.storage.len(), MAX_RING_CAPACITY_SAMPLES as usize);
+    }
+
+    #[test]
+    fn test_new_clamps_zero_capacity_to_avoid_panics() {
+        let rb = MonoRingBuffer::new(0);
+        assert_eq!(rb.capacity_samples, 1);
+        assert_eq!(rb.storage.len(), 1);
     }
 
     #[test]
