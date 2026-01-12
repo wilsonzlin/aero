@@ -1606,6 +1606,8 @@ function maybeInitVirtioInput(): void {
 
   const base = guestBase >>> 0;
   const size = guestSize >>> 0;
+  const mode = currentConfig?.virtioInputMode ?? "modern";
+  const transportArg: unknown = mode === "transitional" ? true : mode === "legacy" ? "legacy" : undefined;
 
   // wasm-bindgen's JS glue can enforce constructor arity; try a few common layouts.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1613,17 +1615,29 @@ function maybeInitVirtioInput(): void {
   let keyboardDev: VirtioInputPciDevice | null = null;
   let mouseDev: VirtioInputPciDevice | null = null;
   try {
-    try {
-      keyboardDev = new AnyCtor(base, size, "keyboard");
-    } catch {
-      keyboardDev = new AnyCtor("keyboard", base, size);
-    }
+    const construct = (kind: "keyboard" | "mouse"): VirtioInputPciDevice => {
+      // Prefer the modern signature with an optional `transport_mode` selector, but fall back to
+      // older constructor orderings for compatibility with older wasm-bindgen outputs.
+      try {
+        return new AnyCtor(base, size, kind, transportArg);
+      } catch {
+        // ignore and retry
+      }
+      try {
+        return new AnyCtor(base, size, kind);
+      } catch {
+        // ignore and retry
+      }
+      try {
+        return new AnyCtor(kind, base, size, transportArg);
+      } catch {
+        // ignore and retry
+      }
+      return new AnyCtor(kind, base, size);
+    };
 
-    try {
-      mouseDev = new AnyCtor(base, size, "mouse");
-    } catch {
-      mouseDev = new AnyCtor("mouse", base, size);
-    }
+    keyboardDev = construct("keyboard");
+    mouseDev = construct("mouse");
   } catch (err) {
     console.warn("[io.worker] Failed to initialize virtio-input devices", err);
     try {
@@ -1639,12 +1653,82 @@ function maybeInitVirtioInput(): void {
     return;
   }
 
+  if (mode !== "modern") {
+    const probeLegacyIo = (dev: VirtioInputPciDeviceLike): boolean => {
+      const devAny = dev as any;
+      const read =
+        typeof devAny.legacy_io_read === "function"
+          ? devAny.legacy_io_read
+          : typeof devAny.io_read === "function"
+            ? devAny.io_read
+            : null;
+      const write =
+        typeof devAny.legacy_io_write === "function"
+          ? devAny.legacy_io_write
+          : typeof devAny.io_write === "function"
+            ? devAny.io_write
+            : null;
+      if (!read || !write) return false;
+
+      // virtio-pci legacy IO is gated by PCI command bit0 (I/O enable). For the probe we
+      // temporarily enable I/O decoding inside the bridge so the read is meaningful.
+      const setCmd = typeof devAny.set_pci_command === "function" ? devAny.set_pci_command : null;
+      try {
+        if (setCmd) {
+          try {
+            setCmd.call(dev, 0x0001);
+          } catch {
+            // ignore
+          }
+        }
+        const probe = (read.call(dev, 0, 4) as number) >>> 0;
+        return probe !== 0xffff_ffff;
+      } catch {
+        return false;
+      } finally {
+        if (setCmd) {
+          try {
+            setCmd.call(dev, 0x0000);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    };
+
+    const ok = !!keyboardDev && probeLegacyIo(keyboardDev) && !!mouseDev && probeLegacyIo(mouseDev);
+    if (!ok) {
+      console.warn(`[io.worker] virtio-input requested mode=${mode}, but legacy I/O is unavailable in this WASM build`);
+      try {
+        (keyboardDev as unknown as { free?: () => void } | null)?.free?.();
+      } catch {
+        // ignore
+      }
+      try {
+        (mouseDev as unknown as { free?: () => void } | null)?.free?.();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+  }
+
   let keyboardFn: VirtioInputPciFunction | null = null;
   let mouseFn: VirtioInputPciFunction | null = null;
   let keyboardRegistered = false;
   try {
-    keyboardFn = new VirtioInputPciFunction({ kind: "keyboard", device: keyboardDev as unknown as any, irqSink: mgr.irqSink });
-    mouseFn = new VirtioInputPciFunction({ kind: "mouse", device: mouseDev as unknown as any, irqSink: mgr.irqSink });
+    keyboardFn = new VirtioInputPciFunction({
+      kind: "keyboard",
+      device: keyboardDev as unknown as any,
+      irqSink: mgr.irqSink,
+      mode,
+    });
+    mouseFn = new VirtioInputPciFunction({
+      kind: "mouse",
+      device: mouseDev as unknown as any,
+      irqSink: mgr.irqSink,
+      mode,
+    });
 
     // Register as a single multi-function PCI device:
     // - function 0: keyboard
@@ -2135,6 +2219,7 @@ function maybeInitVirtioSndDevice(): void {
     mgr: deviceManager,
     guestBase,
     guestSize,
+    mode: currentConfig?.virtioSndMode,
   });
   if (!dev) return;
   virtioSndDevice = dev;

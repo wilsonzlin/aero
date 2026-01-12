@@ -1,5 +1,7 @@
 import { PCI_MMIO_BASE_MIB } from "../arch/guest_phys.ts";
+import type { VirtioInputPciMode } from "../io/devices/virtio_input.ts";
 import type { VirtioNetPciMode } from "../io/devices/virtio_net.ts";
+import type { VirtioSndPciMode } from "../io/devices/virtio_snd.ts";
 
 export const AERO_LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 export type AeroLogLevel = (typeof AERO_LOG_LEVELS)[number];
@@ -21,6 +23,24 @@ export interface AeroConfig {
    * Defaults to "modern".
    */
   virtioNetMode?: VirtioNetPciMode;
+  /**
+   * Selects which virtio-pci transport to expose for virtio-input:
+   * - "modern": modern-only (Aero contract v1, status quo)
+   * - "transitional": modern virtio-pci + legacy I/O port BAR (virtio-win compatibility)
+   * - "legacy": legacy-only virtio-pci (forces legacy driver path)
+   *
+   * Defaults to "modern".
+   */
+  virtioInputMode?: VirtioInputPciMode;
+  /**
+   * Selects which virtio-pci transport to expose for virtio-snd:
+   * - "modern": modern-only (Aero contract v1, status quo)
+   * - "transitional": modern virtio-pci + legacy I/O port BAR (virtio-win compatibility)
+   * - "legacy": legacy-only virtio-pci (forces legacy driver path)
+   *
+   * Defaults to "modern".
+   */
+  virtioSndMode?: VirtioSndPciMode;
 }
 
 export type AeroConfigKey = keyof AeroConfig;
@@ -118,7 +138,7 @@ function parseLogLevel(value: unknown): AeroLogLevel | undefined {
   return undefined;
 }
 
-function parseVirtioNetMode(value: unknown): VirtioNetPciMode | undefined {
+function parseVirtioPciMode(value: unknown): "modern" | "transitional" | "legacy" | undefined {
   if (typeof value === "string") {
     const v = value.trim().toLowerCase();
     if (v === "modern") return "modern";
@@ -184,6 +204,8 @@ export function getDefaultAeroConfig(
     activeDiskImage: null,
     logLevel: "info",
     virtioNetMode: "modern",
+    virtioInputMode: "modern",
+    virtioSndMode: "modern",
   };
 }
 
@@ -297,11 +319,32 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
   }
 
   if (hasOwn(input, "virtioNetMode")) {
-    const parsed = parseVirtioNetMode(input.virtioNetMode);
+    const parsed = parseVirtioPciMode(input.virtioNetMode);
     if (parsed !== undefined) {
       overrides.virtioNetMode = parsed;
     } else {
       issues.push({ key: "virtioNetMode", message: 'virtioNetMode must be "modern", "transitional", or "legacy".' });
+    }
+  }
+
+  if (hasOwn(input, "virtioInputMode")) {
+    const parsed = parseVirtioPciMode(input.virtioInputMode);
+    if (parsed !== undefined) {
+      overrides.virtioInputMode = parsed;
+    } else {
+      issues.push({
+        key: "virtioInputMode",
+        message: 'virtioInputMode must be "modern", "transitional", or "legacy".',
+      });
+    }
+  }
+
+  if (hasOwn(input, "virtioSndMode")) {
+    const parsed = parseVirtioPciMode(input.virtioSndMode);
+    if (parsed !== undefined) {
+      overrides.virtioSndMode = parsed;
+    } else {
+      issues.push({ key: "virtioSndMode", message: 'virtioSndMode must be "modern", "transitional", or "legacy".' });
     }
   }
 
@@ -385,12 +428,37 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
 
   const virtioNetMode = params.get("virtioNetMode");
   if (virtioNetMode !== null) {
-    const parsed = parseVirtioNetMode(virtioNetMode);
+    const parsed = parseVirtioPciMode(virtioNetMode);
     if (parsed !== undefined) {
       overrides.virtioNetMode = parsed;
       lockedKeys.add("virtioNetMode");
     } else {
       issues.push({ key: "virtioNetMode", message: 'virtioNetMode must be "modern", "transitional", or "legacy".' });
+    }
+  }
+
+  const virtioInputMode = params.get("virtioInputMode");
+  if (virtioInputMode !== null) {
+    const parsed = parseVirtioPciMode(virtioInputMode);
+    if (parsed !== undefined) {
+      overrides.virtioInputMode = parsed;
+      lockedKeys.add("virtioInputMode");
+    } else {
+      issues.push({
+        key: "virtioInputMode",
+        message: 'virtioInputMode must be "modern", "transitional", or "legacy".',
+      });
+    }
+  }
+
+  const virtioSndMode = params.get("virtioSndMode");
+  if (virtioSndMode !== null) {
+    const parsed = parseVirtioPciMode(virtioSndMode);
+    if (parsed !== undefined) {
+      overrides.virtioSndMode = parsed;
+      lockedKeys.add("virtioSndMode");
+    } else {
+      issues.push({ key: "virtioSndMode", message: 'virtioSndMode must be "modern", "transitional", or "legacy".' });
     }
   }
 

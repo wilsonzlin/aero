@@ -20,6 +20,12 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   const virtioNetModeHelpText =
     "Virtio-net PCI transport mode. Modern is the default Aero contract; transitional/legacy are for virtio-win compatibility. " +
     "Changing this requires a restart to apply.";
+  const virtioInputModeHelpText =
+    "Virtio-input PCI transport mode. Modern is the default Aero contract; transitional/legacy are for virtio-win compatibility. " +
+    "Changing this requires a restart to apply.";
+  const virtioSndModeHelpText =
+    "Virtio-snd PCI transport mode. Modern is the default Aero contract; transitional/legacy are for virtio-win compatibility. " +
+    "Changing this requires a restart to apply.";
 
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
@@ -80,6 +86,34 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   const virtioNetModeHint = document.createElement("div");
   virtioNetModeHint.className = "hint";
 
+  const virtioInputModeSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["modern", "modern (default)"],
+    ["transitional", "transitional (modern + legacy I/O BAR)"],
+    ["legacy", "legacy-only (forces legacy driver)"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    virtioInputModeSelect.appendChild(option);
+  }
+  const virtioInputModeHint = document.createElement("div");
+  virtioInputModeHint.className = "hint";
+
+  const virtioSndModeSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["modern", "modern (default)"],
+    ["transitional", "transitional (modern + legacy I/O BAR)"],
+    ["legacy", "legacy-only (forces legacy driver)"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    virtioSndModeSelect.appendChild(option);
+  }
+  const virtioSndModeHint = document.createElement("div");
+  virtioSndModeHint.className = "hint";
+
   const resetButton = document.createElement("button");
   resetButton.type = "button";
   resetButton.textContent = "Reset to defaults";
@@ -88,6 +122,8 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   fieldset.appendChild(makeRow("Enable workers", workersCheckbox, workersHint));
   fieldset.appendChild(makeRow("Enable WebGPU", webgpuCheckbox, webgpuHint));
   fieldset.appendChild(makeRow("Virtio-net mode", virtioNetModeSelect, virtioNetModeHint));
+  fieldset.appendChild(makeRow("Virtio-input mode", virtioInputModeSelect, virtioInputModeHint));
+  fieldset.appendChild(makeRow("Virtio-snd mode", virtioSndModeSelect, virtioSndModeHint));
   fieldset.appendChild(makeRow("Proxy URL", proxyInput, proxyHint, proxyError));
   fieldset.appendChild(makeRow("Log level", logSelect, logHint));
   fieldset.appendChild(resetButton);
@@ -108,6 +144,12 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   });
   virtioNetModeSelect.addEventListener("change", () => {
     manager.updateStoredConfig({ virtioNetMode: virtioNetModeSelect.value as AeroConfig["virtioNetMode"] });
+  });
+  virtioInputModeSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({ virtioInputMode: virtioInputModeSelect.value as AeroConfig["virtioInputMode"] });
+  });
+  virtioSndModeSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({ virtioSndMode: virtioSndModeSelect.value as AeroConfig["virtioSndMode"] });
   });
 
   function commitProxy(): void {
@@ -142,12 +184,20 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     setLocked(memorySelect, memoryHint, state, "guestMemoryMiB");
     setLocked(logSelect, logHint, state, "logLevel");
     setLocked(virtioNetModeSelect, virtioNetModeHint, state, "virtioNetMode");
+    setLocked(virtioInputModeSelect, virtioInputModeHint, state, "virtioInputMode");
+    setLocked(virtioSndModeSelect, virtioSndModeHint, state, "virtioSndMode");
     setLocked(proxyInput, proxyHint, state, "proxyUrl");
     if (!state.lockedKeys.has("proxyUrl")) {
       proxyHint.textContent = proxyHelpText;
     }
     if (!state.lockedKeys.has("virtioNetMode")) {
       virtioNetModeHint.textContent = virtioNetModeHelpText;
+    }
+    if (!state.lockedKeys.has("virtioInputMode")) {
+      virtioInputModeHint.textContent = virtioInputModeHelpText;
+    }
+    if (!state.lockedKeys.has("virtioSndMode")) {
+      virtioSndModeHint.textContent = virtioSndModeHelpText;
     }
 
     const desiredMem = String(state.effective.guestMemoryMiB);
@@ -165,6 +215,8 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     memorySelect.value = desiredMem;
     logSelect.value = state.effective.logLevel;
     virtioNetModeSelect.value = state.effective.virtioNetMode ?? "modern";
+    virtioInputModeSelect.value = state.effective.virtioInputMode ?? "modern";
+    virtioSndModeSelect.value = state.effective.virtioSndMode ?? "modern";
 
     if (document.activeElement !== proxyInput) {
       proxyInput.value = state.effective.proxyUrl ?? "";
