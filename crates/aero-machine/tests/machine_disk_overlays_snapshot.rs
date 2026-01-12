@@ -50,6 +50,8 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
+        enable_ahci: true,
+        enable_ide: true,
         // Keep the test focused on snapshot disk overlay plumbing.
         enable_serial: false,
         enable_i8042: false,
@@ -108,4 +110,3 @@ fn machine_snapshot_writes_and_restores_disk_overlay_refs_with_stable_disk_ids()
     // Disk overlay config should also be reflected in subsequent snapshots.
     assert_eq!(restored.disk_overlays(), expected);
 }
-
