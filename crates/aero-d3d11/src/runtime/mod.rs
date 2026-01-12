@@ -12,7 +12,19 @@ pub mod state;
 fn wgpu_texture_compression_disabled() -> bool {
     // CI sometimes uses flaky/buggy software adapters. Allow forcing compression features off so
     // tests remain stable.
-    std::env::var_os("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION").is_some()
+    env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION")
+}
+
+fn env_var_truthy(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+
+    let v = raw.trim();
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
 }
 
 /// Select optional wgpu features that should be enabled when available.
