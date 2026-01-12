@@ -1028,6 +1028,39 @@ mod tests {
     }
 
     #[test]
+    fn decode_pcm_to_stereo_f32_mono_duplicates_for_24bit_and_32bit() {
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 24,
+            channels: 1,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&4_194_304i32.to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-4_194_304i32).to_le_bytes()); // -0.5
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 2);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], 0.5, 1e-6);
+        assert_f32_approx_eq(out[1][0], -0.5, 1e-6);
+        assert_f32_approx_eq(out[1][1], -0.5, 1e-6);
+
+        let fmt = StreamFormat {
+            sample_rate_hz: 48_000,
+            bits_per_sample: 32,
+            channels: 1,
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&(1i32 << 30).to_le_bytes()); // 0.5
+        input.extend_from_slice(&(-(1i32 << 30)).to_le_bytes()); // -0.5
+        let out = decode_pcm_to_stereo_f32(&input, fmt);
+        assert_eq!(out.len(), 2);
+        assert_f32_approx_eq(out[0][0], 0.5, 1e-6);
+        assert_f32_approx_eq(out[0][1], 0.5, 1e-6);
+        assert_f32_approx_eq(out[1][0], -0.5, 1e-6);
+        assert_f32_approx_eq(out[1][1], -0.5, 1e-6);
+    }
+
+    #[test]
     fn encode_mono_f32_to_pcm_into_channel_mapping() {
         // channels==1 encodes mono frames.
         let fmt_mono = StreamFormat {
