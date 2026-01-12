@@ -3421,6 +3421,17 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         }
         case "vm.snapshot.resume": {
           snapshotPaused = false;
+          // The host-side microphone producer can continue writing into the mic ring buffer while
+          // the VM is snapshot-paused (the IO worker stops consuming). Re-attach the ring on
+          // resume so the WASM consumer discards any buffered/stale samples and capture starts
+          // from the most recent audio.
+          if (micRingBuffer) {
+            try {
+              attachMicRingBuffer(micRingBuffer, micSampleRate);
+            } catch (err) {
+              console.warn("[io.worker] Failed to refresh microphone ring buffer after snapshot resume", err);
+            }
+          }
           flushQueuedInputBatches();
           flushQueuedSnapshotPausedMessages();
           setUsbProxyCompletionRingDispatchPaused(false);
