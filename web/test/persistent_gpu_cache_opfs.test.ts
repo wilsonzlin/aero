@@ -108,8 +108,41 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
 
       const got2 = await cache2.getShader(key);
       assert.deepEqual(got2, { wgsl: expectedWgsl, reflection: expectedReflection });
+
+      // Rewrite to a small payload. This should store directly in IDB and delete
+      // the OPFS blob for the key.
+      const wgsl3 = "@compute @workgroup_size(1) fn main() {}";
+      const reflection3 = { bindings: [], version: 3 };
+      await cache2.putShader(key, { wgsl: wgsl3, reflection: reflection3 });
+
+      const cacheDir = await root.getDirectoryHandle("aero-gpu-cache");
+      const shadersDir = await cacheDir.getDirectoryHandle("shaders");
+      let fileExists = true;
+      try {
+        await shadersDir.getFileHandle(`${key}.json`);
+      } catch {
+        fileExists = false;
+      }
+      assert.equal(fileExists, false);
+
+      const got3 = await cache2.getShader(key);
+      assert.deepEqual(got3, { wgsl: wgsl3, reflection: reflection3 });
+
+      expectedWgsl = wgsl3;
+      expectedReflection = reflection3;
     } finally {
       await cache2.close();
+    }
+
+    const cache3 = await PersistentGpuCache.open({
+      shaderLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
+      pipelineLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
+    });
+    try {
+      const got4 = await cache3.getShader(key);
+      assert.deepEqual(got4, { wgsl: expectedWgsl, reflection: expectedReflection });
+    } finally {
+      await cache3.close();
     }
 
     try {

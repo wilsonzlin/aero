@@ -720,6 +720,7 @@ export class PersistentGpuCache {
     const store = tx.objectStore(STORE_SHADERS);
     const existing = await reqToPromise(store.get(key));
     if (existing) this._shaderBytes -= existing.size ?? 0;
+    const existingOpfsFile = existing?.storage === "opfs" ? existing.opfsFile : null;
 
     /** @type {any} */
     const record = {
@@ -735,6 +736,18 @@ export class PersistentGpuCache {
 
     store.put(record);
     await txDone(tx);
+
+    // If the entry used to be OPFS-backed but is now stored in IDB (e.g. the
+    // payload shrank below the spill threshold, or OPFS write failed), clean up
+    // the orphaned OPFS blob.
+    if (existingOpfsFile && storage !== "opfs" && this._opfsCacheDir) {
+      try {
+        const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
+        await deleteOpfsFile(shadersDir, existingOpfsFile);
+      } catch {
+        // Ignore.
+      }
+    }
 
     this._shaderBytes += size;
     this._telemetry.shader.bytesWritten += size;
@@ -826,6 +839,7 @@ export class PersistentGpuCache {
     const store = tx.objectStore(STORE_PIPELINES);
     const existing = await reqToPromise(store.get(key));
     if (existing) this._pipelineBytes -= existing.size ?? 0;
+    const existingOpfsFile = existing?.storage === "opfs" ? existing.opfsFile : null;
 
     /** @type {any} */
     const record = {
@@ -840,6 +854,15 @@ export class PersistentGpuCache {
 
     store.put(record);
     await txDone(tx);
+
+    if (existingOpfsFile && storage !== "opfs" && this._opfsCacheDir) {
+      try {
+        const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
+        await deleteOpfsFile(dir, existingOpfsFile);
+      } catch {
+        // Ignore.
+      }
+    }
 
     this._pipelineBytes += size;
     this._telemetry.pipeline.bytesWritten += size;
