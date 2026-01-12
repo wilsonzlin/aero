@@ -828,6 +828,8 @@ static void test_setup_queue_invalid_device_state(void)
     NTSTATUS st;
 
     memset(&dev, 0, sizeof(dev));
+    st = VirtioPciSetupQueue(NULL, 0, 0x1000, 0x2000, 0x3000);
+    assert(st == STATUS_INVALID_DEVICE_STATE);
     st = VirtioPciSetupQueue(&dev, 0, 0x1000, 0x2000, 0x3000);
     assert(st == STATUS_INVALID_DEVICE_STATE);
 }
@@ -1805,6 +1807,39 @@ static void test_notify_queue_does_not_write_when_invalid_device_state(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_misc_null_safe_behaviour(void)
+{
+    VIRTIO_PCI_DEVICE dev;
+    volatile uint16_t* notify_addr;
+
+    memset(&dev, 0, sizeof(dev));
+
+    /* Functions that should return safe defaults when uninitialized. */
+    assert(VirtioPciGetNumQueues(NULL) == 0);
+    assert(VirtioPciGetNumQueues(&dev) == 0);
+
+    assert(VirtioPciGetQueueSize(NULL, 0) == 0);
+    assert(VirtioPciGetQueueSize(&dev, 0) == 0);
+
+    assert(VirtioPciReadDeviceFeatures(NULL) == 0);
+    assert(VirtioPciReadDeviceFeatures(&dev) == 0);
+
+    assert(VirtioPciReadIsr(NULL) == 0);
+
+    notify_addr = (volatile uint16_t*)0x1;
+    assert(VirtioPciGetQueueNotifyAddress(NULL, 0, &notify_addr) == STATUS_INVALID_DEVICE_STATE);
+    assert(notify_addr == NULL);
+
+    /* Void functions should not crash when given NULL/uninitialized device. */
+    VirtioPciResetDevice(NULL);
+    VirtioPciAddStatus(NULL, 0x1);
+    VirtioPciSetStatus(NULL, 0x1);
+    VirtioPciFailDevice(NULL);
+    VirtioPciWriteDriverFeatures(NULL, 0x1234);
+    VirtioPciDisableQueue(NULL, 0);
+    VirtioPciNotifyQueue(NULL, 0);
+}
+
 int main(void)
 {
     test_init_ok();
@@ -1837,6 +1872,7 @@ int main(void)
     test_get_num_queues_and_queue_size();
     test_setup_queue_not_found_when_size_zero();
     test_disable_queue_clears_enable();
+    test_misc_null_safe_behaviour();
     test_read_device_config_success();
     test_read_device_config_generation_retry_succeeds();
     test_read_device_config_invalid_range();
