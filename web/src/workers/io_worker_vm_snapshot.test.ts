@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
 import { saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
-import { VM_SNAPSHOT_DEVICE_E1000_KIND, VM_SNAPSHOT_DEVICE_NET_STACK_KIND, VM_SNAPSHOT_DEVICE_USB_KIND } from "./vm_snapshot_wasm";
+import { VM_SNAPSHOT_DEVICE_ID_E1000, VM_SNAPSHOT_DEVICE_ID_NET_STACK, VM_SNAPSHOT_DEVICE_ID_USB } from "./vm_snapshot_wasm";
 
 describe("workers/io_worker_vm_snapshot", () => {
   it("forwards net.e1000 and net.stack blobs to vm_snapshot_save_to_opfs when save_state hooks exist", async () => {
@@ -46,10 +46,12 @@ describe("workers/io_worker_vm_snapshot", () => {
     expect(calls[0]!.mmu).toBeInstanceOf(Uint8Array);
 
     // The IO worker should forward device blobs as an array of `{ kind, bytes: Uint8Array }`.
+    // Note: for free-function wasm exports we use a `device.<id>` kind spelling so newer device
+    // blobs can still roundtrip through older bindings.
     expect(calls[0]!.devices).toEqual([
-      { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: usbState },
-      { kind: VM_SNAPSHOT_DEVICE_E1000_KIND, bytes: e1000State },
-      { kind: VM_SNAPSHOT_DEVICE_NET_STACK_KIND, bytes: stackState },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
     ]);
   });
 });

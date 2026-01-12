@@ -20,6 +20,25 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
   netStack: unknown | null;
 }>;
 
+const VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID = "device.";
+
+function snapshotDeviceKindForWasm(kind: string): string {
+  // WASM snapshot free-function exports historically understood `device.<id>` blobs (and may lag
+  // behind the canonical string kinds). Prefer numeric IDs when possible so new device kinds can
+  // roundtrip across older wasm builds.
+  const id = vmSnapshotDeviceKindToId(kind);
+  if (id === null) return kind;
+  return `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}${id >>> 0}`;
+}
+
+function normalizeRestoredDeviceKind(kind: string): string {
+  if (kind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)) {
+    const id = vmSnapshotDeviceKindToId(kind);
+    if (id !== null) return vmSnapshotDeviceIdToKind(id);
+  }
+  return kind;
+}
+
 function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
@@ -203,7 +222,7 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
 
   if (saveExport.kind === "free-function") {
     // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
-    const devicePayload = devices.map((d) => ({ kind: d.kind, bytes: d.bytes }));
+    const devicePayload = devices.map((d) => ({ kind: snapshotDeviceKindForWasm(d.kind), bytes: d.bytes }));
 
     // Always pass fresh Uint8Array views for the CPU state so callers can transfer the ArrayBuffer.
     const cpuBytes = new Uint8Array(opts.cpu);
@@ -261,41 +280,27 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
     const devices: VmSnapshotDeviceBlob[] = [];
+    let usbBytes: Uint8Array | null = null;
+    let e1000Bytes: Uint8Array | null = null;
+    let stackBytes: Uint8Array | null = null;
     for (const entry of devicesRaw) {
       if (!entry || typeof entry !== "object") continue;
       const e = entry as { kind?: unknown; bytes?: unknown };
       if (typeof e.kind !== "string") continue;
       if (!(e.bytes instanceof Uint8Array)) continue;
-      devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+
+      const kind = normalizeRestoredDeviceKind(e.kind);
+      devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
+
+      if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) e1000Bytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) stackBytes = e.bytes;
     }
 
     // Apply device state locally (IO worker owns USB + networking).
-    const usbBlob = devicesRaw.find(
-      (entry): entry is { kind: string; bytes: Uint8Array } =>
-        !!entry &&
-        typeof (entry as { kind?: unknown }).kind === "string" &&
-        (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_USB_KIND &&
-        (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-    );
-    if (usbBlob) restoreUsbDeviceState(opts.runtimes, usbBlob.bytes);
-
-    const e1000Blob = devicesRaw.find(
-      (entry): entry is { kind: string; bytes: Uint8Array } =>
-        !!entry &&
-        typeof (entry as { kind?: unknown }).kind === "string" &&
-        (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_E1000_KIND &&
-        (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-    );
-    if (e1000Blob) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Blob.bytes);
-
-    const stackBlob = devicesRaw.find(
-      (entry): entry is { kind: string; bytes: Uint8Array } =>
-        !!entry &&
-        typeof (entry as { kind?: unknown }).kind === "string" &&
-        (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND &&
-        (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
-    );
-    if (stackBlob) restoreNetStackDeviceState(opts.runtimes.netStack, stackBlob.bytes, { tcpRestorePolicy: "drop" });
+    if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
+    if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
+    if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
 
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
