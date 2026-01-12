@@ -1,5 +1,5 @@
 use aero_machine::{Machine, MachineConfig};
-use aero_platform::interrupts::InterruptInput;
+use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use firmware::bios::PCIE_ECAM_BASE;
 use pretty_assertions::assert_eq;
@@ -171,6 +171,51 @@ fn imcr_port_switch_to_apic_mode_delivers_ioapic_interrupt_programmed_via_mmio()
         "IOAPIC interrupt was not delivered after IMCR switch (flag=0x{:02x})",
         m.read_physical_u8(u64::from(flag_addr))
     );
+}
+
+#[test]
+fn ioapic_mmio_supports_partial_and_unaligned_accesses() {
+    let vector = 0x63u8;
+    let gsi = 10u32;
+
+    let mut m = Machine::new(mmio_machine_config()).unwrap();
+    enable_a20(&mut m);
+
+    // Enable APIC mode delivery so IOAPIC routes into the LAPIC.
+    m.platform_interrupts()
+        .unwrap()
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+
+    // Route GSI10 -> vector with typical active-low polarity. Keep it edge-triggered.
+    let low = u32::from(vector) | (1 << 13);
+    let high = 0u32;
+
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+
+    // Program IOREGSEL with a 1-byte write.
+    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_low as u8);
+    // Program IOWIN using two 16-bit writes (partial word updates).
+    m.write_physical_u16(IOAPIC_MMIO_BASE + 0x10, low as u16);
+    m.write_physical_u16(IOAPIC_MMIO_BASE + 0x12, (low >> 16) as u16);
+
+    // Read back the low dword via the aligned 32-bit register window.
+    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_low as u8);
+    assert_eq!(m.read_physical_u32(IOAPIC_MMIO_BASE + 0x10), low);
+
+    // Program the high dword similarly.
+    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_high as u8);
+    m.write_physical_u16(IOAPIC_MMIO_BASE + 0x10, high as u16);
+    m.write_physical_u16(IOAPIC_MMIO_BASE + 0x12, (high >> 16) as u16);
+    m.write_physical_u8(IOAPIC_MMIO_BASE + 0x00, redtbl_high as u8);
+    assert_eq!(m.read_physical_u32(IOAPIC_MMIO_BASE + 0x10), high);
+
+    // Now assert the input line and ensure the vector becomes pending.
+    let interrupts = m.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), None);
+    interrupts.borrow_mut().raise_irq(InterruptInput::Gsi(gsi));
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector));
 }
 
 #[test]
