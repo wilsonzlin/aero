@@ -343,23 +343,24 @@ export class InputCapture {
     if (!this.isCapturingMouse()) {
       return;
     }
+    const onCanvas = event.target === this.canvas;
     const bit = buttonToMask(event.button);
-    if (bit === 0) {
-      return;
-    }
 
     // When pointer lock is not active, ignore mouseup events that did not originate from the canvas
     // *unless* we are currently tracking that button as pressed (e.g. the user clicked in the VM,
     // dragged out of the canvas, and released elsewhere). This avoids "stuck buttons" in the guest
     // without interfering with unrelated page UI interactions.
-    if (!this.pointerLock.isLocked && event.target !== this.canvas) {
-      if ((this.mouseButtons & bit) === 0) {
+    if (!this.pointerLock.isLocked && !onCanvas) {
+      if (bit === 0 || (this.mouseButtons & bit) === 0) {
         return;
       }
     }
 
     event.preventDefault();
     event.stopPropagation();
+    if (bit === 0) {
+      return;
+    }
     this.setMouseButtons(this.mouseButtons & ~bit, event.timeStamp);
   };
 

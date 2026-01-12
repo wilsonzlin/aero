@@ -192,4 +192,50 @@ describe("InputCapture preventDefault policy", () => {
       expect((capture as any).queue.size).toBe(0);
     });
   });
+
+  it("prevents default for unmapped mouse buttons on the canvas to avoid host side effects", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      (capture as any).hasFocus = true;
+
+      const downPreventDefault = vi.fn();
+      const downStopPropagation = vi.fn();
+      (capture as any).handleMouseDown({
+        // Not in our supported 0..4 range.
+        button: 5,
+        preventDefault: downPreventDefault,
+        stopPropagation: downStopPropagation,
+        timeStamp: 0,
+        target: canvas,
+      } as unknown as MouseEvent);
+
+      expect(downPreventDefault).toHaveBeenCalledTimes(1);
+      expect(downStopPropagation).toHaveBeenCalledTimes(1);
+      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as any).queue.size).toBe(0);
+
+      const upPreventDefault = vi.fn();
+      const upStopPropagation = vi.fn();
+      (capture as any).handleMouseUp({
+        button: 5,
+        preventDefault: upPreventDefault,
+        stopPropagation: upStopPropagation,
+        timeStamp: 1,
+        target: canvas,
+      } as unknown as MouseEvent);
+
+      expect(upPreventDefault).toHaveBeenCalledTimes(1);
+      expect(upStopPropagation).toHaveBeenCalledTimes(1);
+      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as any).queue.size).toBe(0);
+    });
+  });
 });
