@@ -1345,7 +1345,7 @@ def main() -> int:
                             # accidentally pass the host harness.
                             if saw_virtio_blk_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-blk test reported FAIL",
+                                    "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1361,7 +1361,7 @@ def main() -> int:
                                 break
                             if saw_virtio_input_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                    "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1403,7 +1403,7 @@ def main() -> int:
                                     break
                             if saw_virtio_snd_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                    "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1423,7 +1423,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_capture_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1439,7 +1439,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_duplex_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1470,7 +1470,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_capture_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1488,7 +1488,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_duplex_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1504,7 +1504,7 @@ def main() -> int:
                                     break
                             if saw_virtio_net_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-net test reported FAIL",
+                                    "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1524,7 +1524,7 @@ def main() -> int:
                             # false positives.
                             if saw_virtio_snd_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                    "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1540,7 +1540,7 @@ def main() -> int:
                                 break
                             if saw_virtio_snd_capture_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                    "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1556,7 +1556,7 @@ def main() -> int:
                                 break
                             if saw_virtio_snd_duplex_fail:
                                 print(
-                                    "FAIL: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                    "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -1743,7 +1743,7 @@ def main() -> int:
                             if require_per_test_markers:
                                 if saw_virtio_blk_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-blk test reported FAIL",
+                                        "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1759,7 +1759,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_input_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                        "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1775,7 +1775,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                        "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1793,7 +1793,7 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_capture_fail:
                                         print(
-                                            "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                            "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -1811,7 +1811,7 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_duplex_fail:
                                         print(
-                                            "FAIL: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                            "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -1840,7 +1840,7 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_capture_fail:
                                         print(
-                                            "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                            "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -1856,7 +1856,7 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_duplex_fail:
                                         print(
-                                            "FAIL: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                            "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -1872,7 +1872,7 @@ def main() -> int:
                                         break
                                 if saw_virtio_net_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-net test reported FAIL",
+                                        "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1889,7 +1889,7 @@ def main() -> int:
                             elif args.enable_virtio_snd:
                                 if saw_virtio_snd_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                        "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1906,7 +1906,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_capture_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -1922,7 +1922,7 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_duplex_fail:
                                     print(
-                                        "FAIL: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
