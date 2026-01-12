@@ -10,5 +10,5 @@ pub use execute::{
 mod shader_cache;
 #[cfg(target_arch = "wasm32")]
 pub use shader_cache::{
-    PersistedShaderArtifact, ShaderCache, ShaderCacheKey, ShaderTranslationFlags,
+    PersistedShaderArtifact, ShaderCache, ShaderCacheKey, ShaderCacheSource, ShaderTranslationFlags,
 };
