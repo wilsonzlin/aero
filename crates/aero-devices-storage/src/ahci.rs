@@ -705,6 +705,18 @@ impl PrdtEntry {
     }
 }
 
+fn try_alloc_zeroed(len: usize) -> io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::OutOfMemory,
+            "failed to allocate AHCI DMA buffer",
+        )
+    })?;
+    buf.resize(len, 0);
+    Ok(buf)
+}
+
 fn dma_read_sectors_into_guest(
     mem: &mut dyn MemoryBus,
     header: &CommandHeader,
@@ -734,7 +746,7 @@ fn dma_read_sectors_into_guest(
             ));
         }
 
-        let mut buf = vec![0u8; chunk_len];
+        let mut buf = try_alloc_zeroed(chunk_len)?;
         drive.read_sectors(lba, &mut buf)?;
         mem.write_physical(prd.dba, &buf);
 
@@ -781,7 +793,7 @@ fn dma_write_sectors_from_guest(
             ));
         }
 
-        let mut buf = vec![0u8; chunk_len];
+        let mut buf = try_alloc_zeroed(chunk_len)?;
         mem.read_physical(prd.dba, &mut buf);
         drive.write_sectors(lba, &buf)?;
 
