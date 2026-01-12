@@ -69,6 +69,18 @@ VirtioPciModernMiniportInit(_Out_ VIRTIO_PCI_DEVICE *Dev,
 /*
  * Virtio 1.0 status/reset helpers.
  */
+/*
+ * Reset the device by writing device_status=0 and waiting for the device to
+ * report 0 on read-back (Virtio 1.0 spec).
+ *
+ * This helper is IRQL-aware:
+ * - PASSIVE_LEVEL: sleeps/yields up to 1s total.
+ * - > PASSIVE_LEVEL: busy-waits only briefly (to avoid long high-IRQL stalls)
+ *   and returns even if the device does not reset.
+ *
+ * Callers that require a guaranteed reset must follow up with appropriate
+ * failure/abort handling (e.g. VirtioPciFailDevice + teardown).
+ */
 VOID VirtioPciResetDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev);
 VOID VirtioPciAddStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Bits);
 UCHAR VirtioPciGetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev);

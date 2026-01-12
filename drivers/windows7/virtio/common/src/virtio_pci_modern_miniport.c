@@ -6,6 +6,8 @@
 
 #define VIRTIO_PCI_RESET_TIMEOUT_US        1000000u
 #define VIRTIO_PCI_RESET_POLL_DELAY_US     1000u
+#define VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US 100u
+#define VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US 10000u
 #define VIRTIO_PCI_CONFIG_MAX_READ_RETRIES 10u
 
 static __forceinline ULONG
@@ -213,7 +215,9 @@ VirtioPciWriteDeviceStatus(_In_ const VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Status)
 VOID
 VirtioPciResetDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 {
+    KIRQL irql;
     ULONG waitedUs;
+    UCHAR status;
 
     if (Dev == NULL || Dev->CommonCfg == NULL) {
         return;
@@ -223,14 +227,83 @@ VirtioPciResetDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
     VirtioPciWriteDeviceStatus(Dev, 0);
     KeMemoryBarrier();
 
-    for (waitedUs = 0; waitedUs < VIRTIO_PCI_RESET_TIMEOUT_US; waitedUs += VIRTIO_PCI_RESET_POLL_DELAY_US) {
-        if (VirtioPciReadDeviceStatus(Dev) == 0) {
+    /*
+     * Immediate read-back to both flush the MMIO write and fast-path the common
+     * case where the device resets synchronously.
+     */
+    status = VirtioPciReadDeviceStatus(Dev);
+    if (status == 0) {
+        KeMemoryBarrier();
+        return;
+    }
+
+    /*
+     * Some callers (e.g. StorPort reset paths) may invoke reset at DISPATCH/DIRQL.
+     * A 1-second busy-wait at elevated IRQL is unacceptable: it can severely
+     * impact system responsiveness. Be IRQL-aware:
+     *
+     * - PASSIVE_LEVEL: sleep/yield in small increments up to 1s total.
+     * - > PASSIVE_LEVEL: only busy-wait for a small budget (<=10ms), then give up.
+     */
+    irql = KeGetCurrentIrql();
+
+    if (irql == PASSIVE_LEVEL) {
+        const ULONGLONG timeout100ns = (ULONGLONG)VIRTIO_PCI_RESET_TIMEOUT_US * 10ull;
+        const ULONGLONG pollDelay100ns = (ULONGLONG)VIRTIO_PCI_RESET_POLL_DELAY_US * 10ull;
+        const ULONGLONG start100ns = KeQueryInterruptTime();
+        const ULONGLONG deadline100ns = start100ns + timeout100ns;
+
+        for (;;) {
+            ULONGLONG now100ns;
+            ULONGLONG remaining100ns;
+            LARGE_INTEGER delay;
+
+            status = VirtioPciReadDeviceStatus(Dev);
+            if (status == 0) {
+                KeMemoryBarrier();
+                return;
+            }
+
+            now100ns = KeQueryInterruptTime();
+            if (now100ns >= deadline100ns) {
+                break;
+            }
+
+            remaining100ns = deadline100ns - now100ns;
+            if (remaining100ns > pollDelay100ns) {
+                remaining100ns = pollDelay100ns;
+            }
+
+            delay.QuadPart = -((LONGLONG)remaining100ns);
+            (void)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+                   DPFLTR_ERROR_LEVEL,
+                   "[aero-virtio] VirtioPciResetDevice: device_status did not clear within %lu us (IRQL=%lu), last=%lu\n",
+                   (ULONG)VIRTIO_PCI_RESET_TIMEOUT_US,
+                   (ULONG)irql,
+                   (ULONG)status);
+        return;
+    }
+
+    for (waitedUs = 0; waitedUs < VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US;
+         waitedUs += VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US) {
+        KeStallExecutionProcessor(VIRTIO_PCI_RESET_HIGH_IRQL_POLL_DELAY_US);
+
+        status = VirtioPciReadDeviceStatus(Dev);
+        if (status == 0) {
             KeMemoryBarrier();
             return;
         }
-
-        KeStallExecutionProcessor(VIRTIO_PCI_RESET_POLL_DELAY_US);
     }
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+               DPFLTR_ERROR_LEVEL,
+               "[aero-virtio] VirtioPciResetDevice: device_status did not clear within %lu us at IRQL=%lu, last=%lu\n",
+               (ULONG)VIRTIO_PCI_RESET_HIGH_IRQL_TIMEOUT_US,
+               (ULONG)irql,
+               (ULONG)status);
 }
 
 VOID
