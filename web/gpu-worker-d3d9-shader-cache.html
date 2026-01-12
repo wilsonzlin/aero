@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero D3D9 shader cache persistence</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+      canvas {
+        image-rendering: pixelated;
+        border: 1px solid #999;
+      }
+      #status {
+        margin-top: 8px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+          monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="frame"></canvas>
+    <div id="status"></div>
+    <script type="module" src="./gpu-worker-d3d9-shader-cache.ts"></script>
+  </body>
+</html>
+
