@@ -240,6 +240,13 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       // Bits 2:1 = 0b10 indicates a 64-bit memory BAR.
       expect(bar0LowInitial & 0x6).toBe(0x4);
 
+      // BAR sizing probe (guest writes all-ones then reads back size mask).
+      // For BAR0 size=0x4000, mask is 0xFFFF_FFFF_FFFF_C000 (low dword includes type bits 0x4).
+      cfgWriteU32(pciAddr, 0x10, 0xffff_ffff);
+      cfgWriteU32(pciAddr, 0x14, 0xffff_ffff);
+      expect(cfgReadU32(pciAddr, 0x10)).toBe(0xffff_c004);
+      expect(cfgReadU32(pciAddr, 0x14)).toBe(0xffff_ffff);
+
       // Force BAR0 above 4GiB so we exercise the high dword plumbing.
       const newBarBase = 0x1_0000_0000n; // 4GiB
       const barAttrBits = bar0LowInitial & 0x0f;
