@@ -247,6 +247,33 @@ export class PciBus implements PortIoHandler {
     this.#mmioBus = mmioBus;
   }
 
+  /**
+   * Returns true if the given *device number* (0..31) has no registered functions (0..7).
+   *
+   * This is useful for higher-level device initialization code that needs to place a multi-function
+   * device at a fixed BDF when available, but fall back to a dynamically allocated device number
+   * when the canonical slot is already occupied.
+   */
+  isDeviceNumberFree(devNum: number): boolean {
+    if (!Number.isInteger(devNum)) throw new RangeError(`PCI device out of range: ${devNum}`);
+    if (devNum < 0 || devNum > 31) throw new RangeError(`PCI device out of range: ${devNum}`);
+    const fns = this.#functions[devNum]!;
+    for (let fn = 0; fn < 8; fn++) {
+      if (fns[fn] !== null) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Allocate and return the lowest-numbered free PCI device number (0..31) on bus 0.
+   *
+   * Equivalent to the allocator used by {@link registerDevice} when no explicit device number is
+   * provided (and the {@link PciDevice} does not request a {@link PciDevice.bdf}).
+   */
+  allocDeviceNumber(): number {
+    return this.#allocDeviceNumber();
+  }
+
   registerToPortBus(): void {
     // PCI config mechanism #1 uses 0xCF8 (address) and 0xCFC..0xCFF (data).
     // Avoid stealing 0xCF9, which is commonly used by a chipset reset-control port.
