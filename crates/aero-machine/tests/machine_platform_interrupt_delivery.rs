@@ -1,5 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
-use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode};
+use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
 
 fn pc_machine_config() -> MachineConfig {
@@ -237,4 +237,56 @@ fn boot_sector_builder_patches_handler_address_correctly() {
     let flag_value = 0xABu8;
     let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
     assert_eq!(&boot[510..], &[0x55, 0xAA]);
+}
+
+#[test]
+fn machine_i8042_keyboard_input_raises_irq1_and_wakes_hlt_cpu() {
+    let vector = 0x21u8; // IRQ1 with PIC base 0x20
+    let flag_addr = 0x0502u16;
+    let flag_value = 0xCCu8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut cfg = pc_machine_config();
+    cfg.enable_i8042 = true;
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    // Configure PIC offsets and unmask IRQ1 so i8042 keyboard IRQs can be delivered.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.pic_mut().set_offsets(0x20, 0x28);
+        ints.pic_mut().set_masked(1, false);
+    }
+
+    // Inject a key press. The i8042 model should place a scancode in the output buffer and pulse
+    // IRQ1, waking the halted CPU and delivering vector 0x21.
+    m.inject_browser_key("KeyA", true);
+
+    // Sanity-check that the platform interrupt controller sees the IRQ pending before we run the
+    // CPU again.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        assert_eq!(
+            interrupts.borrow().get_pending(),
+            Some(vector),
+            "i8042 input did not latch IRQ1 into the PIC"
+        );
+    }
+
+    for _ in 0..10 {
+        let _ = m.run_slice(256);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "i8042 IRQ1 interrupt handler did not run (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
 }
