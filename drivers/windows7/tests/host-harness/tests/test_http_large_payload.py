@@ -68,6 +68,8 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(body, b"OK\n")
                 self.assertEqual(r.getheader("Content-Type"), "text/plain")
                 self.assertEqual(r.getheader("Content-Length"), str(len(body)))
+                self.assertEqual(r.getheader("Cache-Control"), "no-store")
+                self.assertIsNone(r.getheader("ETag"))
 
                 # HEAD should return headers only.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
@@ -79,6 +81,8 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(body, b"")
                 self.assertEqual(r.getheader("Content-Type"), "text/plain")
                 self.assertEqual(r.getheader("Content-Length"), "3")
+                self.assertEqual(r.getheader("Cache-Control"), "no-store")
+                self.assertIsNone(r.getheader("ETag"))
 
                 # Large deterministic payload endpoint.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
@@ -90,6 +94,7 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(r.getheader("Content-Type"), "application/octet-stream")
                 self.assertEqual(r.getheader("Content-Length"), "1048576")
                 self.assertEqual(r.getheader("ETag"), '"8505ae4435522325"')
+                self.assertEqual(r.getheader("Cache-Control"), "no-store")
                 self.assertEqual(len(body), 1048576)
 
                 # Payload is 0..255 repeating.
@@ -112,6 +117,7 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(r.getheader("Content-Type"), "application/octet-stream")
                 self.assertEqual(r.getheader("Content-Length"), "1048576")
                 self.assertEqual(r.getheader("ETag"), '"8505ae4435522325"')
+                self.assertEqual(r.getheader("Cache-Control"), "no-store")
 
                 # Unknown path should 404.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
@@ -147,6 +153,7 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(r.status, 200)
                 self.assertEqual(len(body), 1048576)
                 self.assertEqual(r.getheader("ETag"), '"8505ae4435522325"')
+                self.assertEqual(r.getheader("Cache-Control"), "no-store")
 
                 # Backcompat: also accept naive string concatenation.
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
