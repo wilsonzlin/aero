@@ -53,6 +53,27 @@ fuzz_target!(|data: &[u8]| {
                 Some(cmd::AerogpuCmdOpcode::CreateInputLayout) => {
                     let _ = pkt.decode_create_input_layout_payload_le();
                 }
+                Some(cmd::AerogpuCmdOpcode::SetShaderConstantsF) => {
+                    // The shader constants decoder lives as a free function that expects the whole
+                    // packet bytes. Reconstruct the packet slice without allocating by finding the
+                    // payload's offset into the original stream.
+                    let base = cmd_bytes.as_ptr() as usize;
+                    let payload = pkt.payload.as_ptr() as usize;
+                    let Some(hdr_off) = payload
+                        .checked_sub(base)
+                        .and_then(|o| o.checked_sub(cmd::AerogpuCmdHdr::SIZE_BYTES))
+                    else {
+                        continue;
+                    };
+                    let packet_len = pkt.hdr.size_bytes as usize;
+                    let Some(packet_end) = hdr_off.checked_add(packet_len) else {
+                        continue;
+                    };
+                    let Some(packet_bytes) = cmd_bytes.get(hdr_off..packet_end) else {
+                        continue;
+                    };
+                    let _ = cmd::decode_cmd_set_shader_constants_f_payload_le(packet_bytes);
+                }
                 Some(cmd::AerogpuCmdOpcode::SetVertexBuffers) => {
                     let _ = pkt.decode_set_vertex_buffers_payload_le();
                 }
