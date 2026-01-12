@@ -142,6 +142,8 @@ mod tests {
     use firmware::bios::{A20Gate, Bios, BiosConfig, BlockDevice, FirmwareMemory, InMemoryDisk};
     use memory::{DenseMemory, MapError, PhysicalMemoryBus};
     use pretty_assertions::assert_eq;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::Arc;
 
     struct StubPciDev {
@@ -339,6 +341,54 @@ mod tests {
         let line = pci_bus.device_config_mut(bdf).unwrap().interrupt_line();
         assert_eq!(line, expected);
         let pin = pci_bus.device_config_mut(bdf).unwrap().interrupt_pin();
+        assert_eq!(pin, PciInterruptPin::IntA.to_config_u8());
+    }
+
+    #[test]
+    fn firmware_bios_pci_enumeration_programs_interrupt_line_via_shared_cfg_ports() {
+        let mut pci_bus = PciBus::new();
+
+        let bdf = PciBdf::new(0, 1, 0);
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_interrupt_pin(PciInterruptPin::IntA.to_config_u8());
+        pci_bus.add_device(bdf, Box::new(StubPciDev { cfg }));
+
+        let pci_ports: SharedPciConfigPorts =
+            Rc::new(RefCell::new(PciConfigPorts::with_bus(pci_bus)));
+        let mut adapter = SharedPciConfigPortsBiosAdapter::new(pci_ports.clone());
+
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
+        let mut cpu = aero_cpu_core::state::CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut disk: Box<dyn BlockDevice> =
+            Box::new(InMemoryDisk::from_boot_sector(boot_sector()));
+
+        let bios_cfg = BiosConfig {
+            enable_acpi: false,
+            pirq_to_gsi: [40, 41, 42, 43],
+            ..BiosConfig::default()
+        };
+        let expected = expected_irq_line(
+            bios_cfg.pirq_to_gsi,
+            bdf.device,
+            PciInterruptPin::IntA.to_config_u8(),
+        );
+        let mut bios = Bios::new(bios_cfg);
+
+        bios.post_with_pci(&mut cpu, &mut mem, &mut *disk, Some(&mut adapter));
+
+        let line = pci_ports
+            .borrow_mut()
+            .bus_mut()
+            .device_config_mut(bdf)
+            .unwrap()
+            .interrupt_line();
+        assert_eq!(line, expected);
+        let pin = pci_ports
+            .borrow_mut()
+            .bus_mut()
+            .device_config_mut(bdf)
+            .unwrap()
+            .interrupt_pin();
         assert_eq!(pin, PciInterruptPin::IntA.to_config_u8());
     }
 }
