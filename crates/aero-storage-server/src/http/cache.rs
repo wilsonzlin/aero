@@ -51,9 +51,23 @@ where
     if let Some(etag) = etag {
         let trimmed = etag.trim();
         if looks_like_etag(trimmed) {
-            if let Ok(v) = HeaderValue::from_str(trimmed) {
-                return v;
+            match HeaderValue::from_str(trimmed) {
+                Ok(v) => return v,
+                Err(err) => {
+                    let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+                    tracing::warn!(
+                        etag = ?etag_for_log.as_ref(),
+                        error = %err,
+                        "invalid store-provided ETag header value; using fallback"
+                    );
+                }
             }
+        } else if !trimmed.is_empty() {
+            let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+            tracing::warn!(
+                etag = ?etag_for_log.as_ref(),
+                "store-provided ETag is not a valid HTTP entity-tag; using fallback"
+            );
         }
     }
 
