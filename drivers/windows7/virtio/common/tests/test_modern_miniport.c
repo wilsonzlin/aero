@@ -1972,9 +1972,14 @@ static void test_misc_null_safe_behaviour(void)
     assert(VirtioPciGetStatus(&dev) == 0);
 
     assert(VirtioPciReadIsr(NULL) == 0);
+    assert(VirtioPciReadIsr(&dev) == 0);
 
     notify_addr = (volatile uint16_t*)0x1;
     assert(VirtioPciGetQueueNotifyAddress(NULL, 0, &notify_addr) == STATUS_INVALID_DEVICE_STATE);
+    assert(notify_addr == NULL);
+
+    notify_addr = (volatile uint16_t*)0x1;
+    assert(VirtioPciGetQueueNotifyAddress(&dev, 0, &notify_addr) == STATUS_INVALID_DEVICE_STATE);
     assert(notify_addr == NULL);
 
     /* Void functions should not crash when given NULL/uninitialized device. */
