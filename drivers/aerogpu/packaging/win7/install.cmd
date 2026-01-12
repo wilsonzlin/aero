@@ -22,14 +22,22 @@ pushd "%SCRIPT_DIR%" >nul
 
 set "INF_FILE=%~1"
 if "%INF_FILE%"=="" (
-  rem Prefer the DX11-capable package when available.
+  rem Prefer the DX11-capable package when available at the package root (CI layout),
+  rem falling back to the D3D9-only INF.
   rem
-  rem CI-staged packages place the INF(s) at the package root (two levels above this script).
-  rem If the DX11-capable INF is not staged at the package root, fall back to the D3D9-only INF.
-  rem (Repo/manual packaging keeps the INFs next to this script.)
+  rem For repo/manual packaging (INFs next to this script), prefer aerogpu_dx11.inf only if
+  rem the optional D3D10/11 UMD(s) are also present to avoid install failures.
   set "INF_FILE=aerogpu.inf"
   if exist "%SCRIPT_DIR%..\..\aerogpu_dx11.inf" (
     set "INF_FILE=aerogpu_dx11.inf"
+  ) else if exist "aerogpu_dx11.inf" (
+    if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+      if exist "aerogpu_d3d10.dll" if exist "aerogpu_d3d10_x64.dll" set "INF_FILE=aerogpu_dx11.inf"
+    ) else if defined PROCESSOR_ARCHITEW6432 (
+      if exist "aerogpu_d3d10.dll" if exist "aerogpu_d3d10_x64.dll" set "INF_FILE=aerogpu_dx11.inf"
+    ) else (
+      if exist "aerogpu_d3d10.dll" set "INF_FILE=aerogpu_dx11.inf"
+    )
   )
 )
 
