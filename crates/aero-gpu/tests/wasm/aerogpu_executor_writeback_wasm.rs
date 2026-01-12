@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use crate::common;
-use aero_gpu::aerogpu_executor::AeroGpuExecutor;
+use aero_gpu::aerogpu_executor::{AeroGpuExecutor, ExecutorEvent};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -85,5 +85,63 @@ async fn aerogpu_executor_sync_rejects_writeback_before_executing_any_cmds_on_wa
     assert!(
         exec.texture(TEX).is_none(),
         "expected sync rejection to happen before CREATE_TEXTURE2D executes"
+    );
+}
+
+#[wasm_bindgen_test(async)]
+async fn aerogpu_executor_process_cmd_stream_rejects_writeback_before_executing_on_wasm() {
+    let (device, queue) = match create_device_queue().await {
+        Some(v) => v,
+        None => {
+            common::skip_or_panic(module_path!(), "wgpu adapter/device unavailable");
+            return;
+        }
+    };
+
+    let mut exec = AeroGpuExecutor::new(device, queue).expect("create AeroGpuExecutor");
+    let mut guest_mem = VecGuestMemory::new(0x1000);
+
+    const TEX: u32 = 1;
+    const BUF_SRC: u32 = 2;
+    const BUF_DST: u32 = 3;
+
+    let stream = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_texture2d(
+            TEX,
+            AEROGPU_RESOURCE_USAGE_TEXTURE,
+            AerogpuFormat::R8G8B8A8Unorm as u32,
+            1,
+            1,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        writer.create_buffer(BUF_SRC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 4, 0, 0);
+        writer.create_buffer(BUF_DST, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 4, 0, 0);
+        writer.copy_buffer_writeback_dst(BUF_DST, BUF_SRC, 0, 0, 4);
+        writer.finish()
+    };
+
+    let report = exec.process_cmd_stream(&stream, &mut guest_mem, None);
+    assert!(
+        !report.is_ok(),
+        "expected writeback pre-scan error, got: {report:?}"
+    );
+    assert_eq!(report.packets_processed, 0);
+    assert!(
+        report.events.iter().any(|e| matches!(
+            e,
+            ExecutorEvent::Error { message, .. }
+                if message.contains("WRITEBACK_DST requires async execution on wasm")
+        )),
+        "expected WRITEBACK_DST wasm validation error, got: {:#?}",
+        report.events
+    );
+    assert!(
+        exec.texture(TEX).is_none(),
+        "expected writeback pre-scan to reject before CREATE_TEXTURE2D executes"
     );
 }
