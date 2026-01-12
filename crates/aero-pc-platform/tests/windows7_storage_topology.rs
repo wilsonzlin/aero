@@ -6,6 +6,7 @@ use aero_devices::pci::profile::{
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
+use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_pc_platform::{PcPlatform, Windows7StorageTopologyConfig};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
 use memory::MemoryBus as _;
@@ -137,10 +138,10 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         let bar1 = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
         let bar2 = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x18);
         let bar3 = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x1c);
-        assert_eq!(bar0 & 0xffff_fffc, 0x0000_01f0);
-        assert_eq!(bar1 & 0xffff_fffc, 0x0000_03f4);
-        assert_eq!(bar2 & 0xffff_fffc, 0x0000_0170);
-        assert_eq!(bar3 & 0xffff_fffc, 0x0000_0374);
+        assert_eq!(bar0 & 0xffff_fffc, u32::from(PRIMARY_PORTS.cmd_base));
+        assert_eq!(bar1 & 0xffff_fffc, u32::from(PRIMARY_PORTS.ctrl_base - 2));
+        assert_eq!(bar2 & 0xffff_fffc, u32::from(SECONDARY_PORTS.cmd_base));
+        assert_eq!(bar3 & 0xffff_fffc, u32::from(SECONDARY_PORTS.ctrl_base - 2));
     }
 
     {
@@ -242,7 +243,7 @@ fn win7_storage_topology_is_canonical_and_reads_hdd_and_cdrom() {
         // The ATAPI model surfaces "unit attention / medium changed" once after media insertion.
         // Clear it via TEST UNIT READY + REQUEST SENSE, then issue the READ(10).
 
-        const IDE_BASE: u16 = 0x170;
+        const IDE_BASE: u16 = SECONDARY_PORTS.cmd_base;
         const IDE_DEVICE: u16 = IDE_BASE + 6;
         const IDE_COMMAND: u16 = IDE_BASE + 7;
         const IDE_LBA1: u16 = IDE_BASE + 4;

@@ -1,7 +1,7 @@
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3};
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
-use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
+use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{
@@ -107,23 +107,23 @@ fn pc_platform_enumerates_ide_and_preserves_legacy_bar_bases() {
     // IDE PCI config space should expose legacy compatible BAR assignments.
     assert_eq!(
         read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 0),
-        0x1F0
+        PRIMARY_PORTS.cmd_base
     );
     assert_eq!(
         read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 1),
-        0x3F4
+        PRIMARY_PORTS.ctrl_base - 2
     );
     assert_eq!(
         read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 2),
-        0x170
+        SECONDARY_PORTS.cmd_base
     );
     assert_eq!(
         read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 3),
-        0x374
+        SECONDARY_PORTS.ctrl_base - 2
     );
     assert_eq!(
         read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4),
-        0xC000
+        Piix3IdePciDevice::DEFAULT_BUS_MASTER_BASE
     );
 }
 
