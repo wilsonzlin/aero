@@ -2,7 +2,7 @@ use aero_devices::pci::profile::{VIRTIO_BLK, VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVIC
 use aero_devices::pci::PciResourceAllocatorConfig;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
-use aero_pc_platform::PcPlatform;
+use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode};
 use memory::MemoryBus as _;
 
@@ -135,6 +135,114 @@ fn pc_platform_routes_virtio_blk_mmio_after_bar0_reprogramming() {
 
     // New base should decode and preserve state.
     assert_eq!(pc.memory.read_u8(new_base + COMMON + 0x14), 1);
+}
+
+#[test]
+fn pc_platform_virtio_blk_dma_writes_mark_dirty_pages_when_enabled() {
+    let mut pc = PcPlatform::new_with_config_dirty_tracking(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_virtio_blk: true,
+            ..Default::default()
+        },
+        4096,
+    );
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Enable memory decoding + Bus Mastering so the device can DMA during processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+
+    // BAR0 layout for Aero's virtio-pci contract:
+    // - common cfg @ 0x0000
+    // - notify @ 0x1000, notify_off_multiplier = 4, queue0 notify_off = 0
+    const COMMON: u64 = 0x0000;
+    const NOTIFY: u64 = 0x1000;
+
+    // Basic feature negotiation (accept whatever the device offers).
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
+
+    // device_feature_select=0 -> read device_feature (low)
+    pc.memory.write_u32(bar0_base + COMMON + 0x00, 0);
+    let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 0); // driver_feature_select=0
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
+
+    // device_feature_select=1 -> read high
+    pc.memory.write_u32(bar0_base + COMMON + 0x00, 1);
+    let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
+
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8); // + FEATURES_OK
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8 | 4); // + DRIVER_OK
+
+    // Configure queue 0.
+    const DESC_TABLE: u64 = 0x4000;
+    const AVAIL_RING: u64 = 0x5000;
+    const USED_RING: u64 = 0x6000;
+    pc.memory.write_u16(bar0_base + COMMON + 0x16, 0); // queue_select
+    let qsz = pc.memory.read_u16(bar0_base + COMMON + 0x18);
+    assert!(qsz >= 8);
+    pc.memory.write_u64(bar0_base + COMMON + 0x20, DESC_TABLE);
+    pc.memory.write_u64(bar0_base + COMMON + 0x28, AVAIL_RING);
+    pc.memory.write_u64(bar0_base + COMMON + 0x30, USED_RING);
+    pc.memory.write_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    // Build a minimal FLUSH request.
+    const VIRTIO_BLK_T_FLUSH: u32 = 4;
+    const VIRTQ_DESC_F_NEXT: u16 = 0x0001;
+    const VIRTQ_DESC_F_WRITE: u16 = 0x0002;
+
+    let header = 0x7000;
+    let status = 0x9000;
+    pc.memory.write_u32(header, VIRTIO_BLK_T_FLUSH);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, 0);
+    pc.memory.write_u8(status, 0xff);
+
+    // Descriptor 0: header (read-only, NEXT=1).
+    write_desc(&mut pc, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    // Descriptor 1: status (write-only).
+    write_desc(&mut pc, DESC_TABLE, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 1);
+    pc.memory.write_u16(AVAIL_RING + 4, 0);
+    pc.memory.write_u16(USED_RING, 0);
+    pc.memory.write_u16(USED_RING + 2, 0);
+
+    // Doorbell via notify BAR offset.
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+
+    // Clear dirty tracking for CPU-initiated setup writes. We want to observe only the DMA writes
+    // performed by the device model (used ring + status byte update).
+    pc.memory.clear_dirty();
+
+    pc.process_virtio_blk();
+
+    assert_eq!(pc.memory.read_u8(status), 0);
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 1);
+
+    let page_size = u64::from(pc.memory.dirty_page_size());
+    let expected_used_page = USED_RING / page_size;
+    let expected_status_page = status / page_size;
+
+    let dirty = pc
+        .memory
+        .take_dirty_pages()
+        .expect("dirty tracking enabled");
+    assert!(
+        dirty.contains(&expected_used_page),
+        "dirty pages should include used ring page (got {dirty:?})"
+    );
+    assert!(
+        dirty.contains(&expected_status_page),
+        "dirty pages should include status byte page (got {dirty:?})"
+    );
 }
 
 #[test]
