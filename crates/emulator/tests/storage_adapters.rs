@@ -255,3 +255,19 @@ fn virtual_disk_from_emu_disk_backend_reports_offset_overflow() {
     let err = disk.write_at(u64::MAX, &[0u8; 1]).unwrap_err();
     assert!(matches!(err, aero_storage::DiskError::OffsetOverflow));
 }
+
+#[test]
+fn virtual_disk_from_emu_disk_backend_rejects_non_512_sector_size() {
+    let backend = EmuMemDisk::new_with_sector_size(1, 4096);
+    let mut disk = VirtualDiskFromEmuDiskBackend(backend);
+
+    let mut buf = [0u8; 1];
+    let err = disk.read_at(0, &mut buf).unwrap_err();
+    assert!(matches!(err, aero_storage::DiskError::InvalidConfig(_)));
+
+    let err = disk.write_at(0, &[0u8; 1]).unwrap_err();
+    assert!(matches!(err, aero_storage::DiskError::InvalidConfig(_)));
+
+    let err = disk.flush().unwrap_err();
+    assert!(matches!(err, aero_storage::DiskError::InvalidConfig(_)));
+}
