@@ -24,7 +24,8 @@ pub fn apply_cpu_internal_state_to_cpu_core(
     // cleared here to avoid resuming with stale bookkeeping.
     core.pending = Default::default();
 
-    core.pending.set_interrupt_inhibit(state.interrupt_inhibit);
+    core.pending
+        .set_interrupt_inhibit_for_restore(state.interrupt_inhibit);
     core.pending
         .external_interrupts
         .extend(state.pending_external_interrupts.iter().copied());

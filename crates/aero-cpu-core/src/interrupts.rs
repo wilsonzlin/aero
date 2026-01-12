@@ -312,6 +312,14 @@ impl PendingEventState {
         self.interrupt_inhibit = v;
     }
 
+    /// Restore the interrupt-inhibit ("interrupt shadow") counter from snapshot/restore.
+    ///
+    /// This is an explicit alias for [`Self::set_interrupt_inhibit`] to make snapshot/restore
+    /// callsites self-documenting.
+    pub fn set_interrupt_inhibit_for_restore(&mut self, v: u8) {
+        self.set_interrupt_inhibit(v);
+    }
+
     /// Call after each successfully executed instruction to update the interrupt
     /// shadow state.
     pub fn retire_instruction(&mut self) {
