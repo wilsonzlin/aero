@@ -95,6 +95,26 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
     // Keep it deterministic and safe for use as a key.
     let compute_fn = Closure::<dyn FnMut(js_sys::Uint8Array, JsValue) -> JsValue>::wrap(Box::new(
         move |dxbc: js_sys::Uint8Array, flags: JsValue| -> JsValue {
+            // Ensure our shader cache key derivation is sensitive to translator semantic changes.
+            let version = Reflect::get(&flags, &JsValue::from_str("d3d9TranslatorVersion"))
+                .ok()
+                .and_then(|v| v.as_f64())
+                .map(|v| v as u32);
+            assert_eq!(
+                version,
+                Some(aero_d3d9::runtime::D3D9_TRANSLATOR_CACHE_VERSION),
+                "expected d3d9TranslatorVersion flag to be present for cache invalidation"
+            );
+
+            // Ensure capsHash is passed through so the persistent cache can key by device fingerprint.
+            let caps_hash = Reflect::get(&flags, &JsValue::from_str("capsHash"))
+                .ok()
+                .and_then(|v| v.as_string());
+            assert!(
+                caps_hash.is_some(),
+                "expected capsHash to be present in shader translation flags"
+            );
+
             // Encode bytes as hex to keep key stable and easy to debug.
             let mut bytes = vec![0u8; dxbc.length() as usize];
             dxbc.copy_to(&mut bytes);
