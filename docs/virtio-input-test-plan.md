@@ -1,0 +1,299 @@
+# Virtio-input end-to-end test plan (device model + Win7 driver + web runtime)
+
+This is the single “do these steps” plan for validating **virtio-input** (keyboard + mouse) end-to-end:
+
+1. Rust/device-model conformance (host-side)
+2. Windows 7 driver unit tests (host-side, portable)
+3. Windows 7 driver bring-up under QEMU (manual)
+4. Windows 7 automated host harness (QEMU + guest selftest)
+5. Web runtime validation (browser → input routing → virtio-input)
+
+Authoritative interoperability contract (device model ↔ Win7 drivers):
+
+- **[`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md)** (`AERO-W7-VIRTIO` v1)
+
+If a test fails, treat the contract as the source of truth; fix code or bump the contract version.
+
+---
+
+## 1) Rust / device-model tests (host-side)
+
+### 1.1 Run the virtio-input-focused tests (recommended)
+
+From the repo root:
+
+```bash
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+```
+
+If your checkout does not mark `scripts/*.sh` as executable, run via `bash`:
+
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+```
+
+Equivalent (name-filter based; useful when you don’t remember the test binary name):
+
+```bash
+# Required by this test plan (or equivalent)
+./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
+
+# Practical equivalent in this repo
+./scripts/safe-run.sh cargo test -p aero-virtio --locked -- virtio_input
+```
+
+Primary coverage lives in:
+
+- `crates/aero-virtio/tests/virtio_input.rs`
+
+### 1.2 Run contract-level virtio PCI checks that virtio-input depends on
+
+These are not “virtio-input only”, but they lock down the **shared** virtio-pci contract that the Win7 driver stack depends on.
+
+```bash
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
+./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
+```
+
+### 1.3 What to expect (key invariants)
+
+These expectations should match **exactly** what is specified in:
+[`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md).
+
+**PCI / virtio-pci modern layout**
+
+- **BAR0 size** is **`0x4000`** bytes and is 64-bit MMIO (contract §1.2).
+- PCI config space exposes a valid capability list (status bit 4 + cap ptr at `0x34`), containing the required virtio vendor caps:
+  - `COMMON_CFG`, `NOTIFY_CFG`, `ISR_CFG`, `DEVICE_CFG` (contract §1.3).
+- Aero contract v1 uses a fixed BAR0 capability layout (contract §1.4):
+  - `COMMON_CFG` @ `0x0000`
+  - `NOTIFY_CFG` @ `0x1000` (`notify_off_multiplier == 4`)
+  - `ISR_CFG` @ `0x2000`
+  - `DEVICE_CFG` @ `0x3000`
+
+**virtio-input specifics**
+
+- Device is exposed as a **single multi-function PCI device** (keyboard fn0 + mouse fn1) (contract §3.3):
+  - Vendor/Device: `1AF4:1052` (`VIRTIO_ID_INPUT`)
+  - Revision ID: `0x01` (`REV_01`)
+  - Keyboard:
+    - function **0**
+    - subsystem id `0x0010`
+    - `header_type = 0x80` (multifunction bit set)
+  - Mouse:
+    - function **1**
+    - subsystem id `0x0011`
+- Each function exposes exactly **2 split virtqueues** (contract §3.3.2):
+  - `eventq` (queue 0): **64**
+  - `statusq` (queue 1): **64**
+- `eventq` buffers complete with **`used.len = 8`** and contain exactly one `virtio_input_event` (contract §3.3.5).
+- `statusq` buffers are always consumed/completed (contents may be ignored) (contract §3.3.5, statusq behavior).
+- Device config selector behavior matches virtio-input spec + Aero requirements (contract §3.3.4):
+  - `ID_NAME` returns:
+    - `"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`
+  - `ID_DEVIDS` returns BUS_VIRTUAL + virtio vendor + product id
+  - `EV_BITS` bitmaps include required types/codes (keyboard vs mouse differ).
+
+---
+
+## 2) Windows 7 driver unit tests (portable host-side)
+
+The Win7 virtio-input driver contains a portable translator (`virtio_input_event` → HID reports) that can be tested on any host without the WDK.
+
+Source and test:
+
+- Translator: `drivers/windows7/virtio-input/src/hid_translate.c`
+- Test: `drivers/windows7/virtio-input/tests/hid_translate_test.c`
+
+### 2.1 Build + run (gcc / clang)
+
+From the repo root:
+
+```bash
+cd drivers/windows7/virtio-input/tests
+
+# gcc
+gcc -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/hid_translate_test \
+  hid_translate_test.c ../src/hid_translate.c && /tmp/hid_translate_test
+
+# clang (equivalent)
+clang -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/hid_translate_test \
+  hid_translate_test.c ../src/hid_translate.c && /tmp/hid_translate_test
+```
+
+Expected output:
+
+```text
+hid_translate_test: ok
+```
+
+### 2.2 Explicit mapping check: F1..F12
+
+The translator **must** map Linux `KEY_F1..KEY_F12` (virtio-input EV_KEY codes) to the correct HID keyboard usages (`0x3A..0x45`).
+
+This is required by the contract (virtio-input keyboard “minimum required supported key codes” includes **F1..F12**; contract §3.3.5).
+
+The host-side unit test asserts these mappings. If this fails, fix the mapping in:
+
+- `drivers/windows7/virtio-input/src/hid_translate.c`
+
+---
+
+## 3) Windows 7 driver QEMU manual test (shortest path)
+
+Full reference:
+
+- `drivers/windows7/virtio-input/tests/qemu/README.md`
+
+### 3.1 Boot QEMU with virtio-input devices
+
+Example (x64), keeping PS/2 enabled during installation so you don’t lose input:
+
+```bash
+qemu-system-x86_64 \
+  -machine pc,accel=kvm \
+  -m 4096 \
+  -cpu qemu64 \
+  -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
+  -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
+  -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01 \
+  -net nic,model=e1000 -net user
+```
+
+Notes:
+
+- `x-pci-revision=0x01` is required for the **Aero Win7 contract v1** (`REV_01`) drivers to bind.
+
+### 3.2 Install the test certificate + driver in the Win7 guest
+
+Inside the guest:
+
+1. Enable test signing (Admin CMD), then reboot:
+   ```bat
+   bcdedit /set testsigning on
+   ```
+2. Install the driver signing certificate used by your build into:
+   - **Trusted Root Certification Authorities**
+   - **Trusted Publishers**
+3. Install the driver via **Device Manager**:
+   - Find the virtio-input PCI device(s) (often show as unknown before binding)
+   - Update Driver → Have Disk… → point at the directory containing:
+     - `aero_virtio_input.inf`
+     - `aero_virtio_input.sys`
+     - `aero_virtio_input.cat`
+
+### 3.3 Verify HID keyboard + mouse enumeration
+
+In Device Manager after install/reboot:
+
+- **Keyboards** contains a **HID Keyboard Device** (driver stack includes `kbdhid.sys`, `hidclass.sys`).
+- **Mice and other pointing devices** contains a **HID-compliant mouse** (driver stack includes `mouhid.sys`, `hidclass.sys`).
+
+(Optional but recommended) Run `hidtest.exe` as described in the QEMU README to validate raw input reports.
+
+---
+
+## 4) Windows 7 automated host harness (QEMU + guest selftest)
+
+Full reference:
+
+- `drivers/windows7/tests/host-harness/README.md`
+
+### 4.1 Basic invocation (PowerShell)
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -SerialLogPath ./win7-serial.log `
+  -Snapshot `
+  -TimeoutSeconds 600
+```
+
+### 4.2 Basic invocation (Python, Linux-friendly)
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --serial-log ./win7-serial.log \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
+Success looks like:
+
+- Harness exit code `0`
+- Serial log contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
+
+---
+
+## 5) Web runtime validation (browser → virtio-input routing)
+
+Goal: validate that browser keyboard/mouse events are routed through the correct virtual device:
+
+- **before** the Win7 virtio-input driver sets `DRIVER_OK`: PS/2 or USB fallback
+- **after** `DRIVER_OK`: virtio-input
+
+### 5.1 Bring up the web runtime
+
+From the repo root:
+
+```bash
+cargo xtask web dev
+```
+
+Open the printed URL with a verbose log level (example):
+
+```text
+http://localhost:5173/?log=debug
+```
+
+### 5.2 Boot a Win7 image with the virtio-input driver installed
+
+1. Boot a Windows 7 image that already has the Aero virtio-input driver installed and working (see §3).
+2. In the Windows guest, confirm the virtio-input devices enumerate (Device Manager):
+   - HID keyboard and HID mouse present (or at least the virtio-input PCI functions are present and the driver service is started).
+
+### 5.3 Verify routing switch happens at `DRIVER_OK`
+
+The intended auto-routing policy is implemented by the input capture pipeline:
+
+- `crates/emulator/src/in_capture.rs` (`InputRoutingPolicy::Auto`)
+- It prefers virtio-input only when `virtio.keyboard.driver_ok()` / `virtio.mouse.driver_ok()` becomes true.
+
+Validation steps:
+
+1. While the guest is still booting (or before the virtio-input driver is installed), verify keyboard/mouse still work via the fallback path (PS/2 or USB).
+2. After the driver is installed and the guest is fully booted, verify:
+   - the driver reaches `DRIVER_OK` (virtio status bit 2)
+   - keyboard/mouse input continues working
+3. Confirm that new input is being sent via virtio-input (not the fallback path).
+
+### 5.4 Recommended debug signal (when validating routing)
+
+When debugging routing issues, add a one-line log/trace when the virtio-input driver becomes ready:
+
+- log when `VirtioInputDevice::driver_ok()` transitions from false → true
+  - see `crates/emulator/src/io/virtio/devices/input.rs` (`driver_ok()`)
+
+And/or log which backend is selected in `InputRoutingPolicy::Auto`:
+
+- see the selection points in `crates/emulator/src/in_capture.rs` (keyboard/mouse Auto branches).
+
+This makes it trivial to confirm “we switched to virtio-input only after DRIVER_OK”.
+
+---
+
+## Success criteria (summary)
+
+You should be able to validate virtio-input without reading implementation details:
+
+- Rust tests pass (virtio-input + contract-level virtio-pci invariants).
+- Win7 driver translator unit test passes, including explicit **F1..F12** mapping.
+- Win7 driver binds and enumerates HID keyboard + mouse under QEMU.
+- Win7 host harness reports `virtio-input|PASS`.
+- Web runtime routes input to virtio-input only after `DRIVER_OK`, with a clear debug signal when it flips.

@@ -161,7 +161,7 @@ enum virtio_input_key_code {
   VIRTIO_INPUT_KEY_SPACE = 57,
   VIRTIO_INPUT_KEY_CAPSLOCK = 58,
 
-  /* Function keys. */
+  /* Function keys + lock keys. */
   VIRTIO_INPUT_KEY_F1 = 59,
   VIRTIO_INPUT_KEY_F2 = 60,
   VIRTIO_INPUT_KEY_F3 = 61,

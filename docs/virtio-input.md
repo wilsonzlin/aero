@@ -8,6 +8,7 @@ See also:
 
 - [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide for Windows 7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
+- [`virtio-input-test-plan.md`](./virtio-input-test-plan.md) — end-to-end validation plan (Rust device-model tests, Win7 driver tests, web runtime routing).
 
 This repo implements virtio-input as a **single multi-function PCI device** (AERO-W7-VIRTIO contract v1):
 
