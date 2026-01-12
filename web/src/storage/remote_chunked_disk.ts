@@ -573,6 +573,11 @@ class RemoteChunkCache implements ChunkCache {
   private meta: RemoteChunkedDiskCacheMeta;
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
+  private metaDirty = false;
+  private metaRevision = 0;
+  private metaEpoch = 0;
+  private metaFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private metaFlushInFlight: Promise<void> | null = null;
   private cachedBytes = 0;
   private initOnce: Promise<void> | null = null;
 
@@ -615,6 +620,31 @@ class RemoteChunkCache implements ChunkCache {
     this.meta.accessCounter = (this.meta.accessCounter ?? 0) + 1;
     (this.meta.chunkLastAccess ??= {})[String(chunkIndex)] = this.meta.accessCounter;
     this.meta.lastAccessedAtMs = Date.now();
+  }
+
+  private markMetaDirty(): void {
+    this.metaDirty = true;
+    this.metaRevision += 1;
+    this.scheduleMetaFlush();
+  }
+
+  private scheduleMetaFlush(): void {
+    // Debounce meta writes so repeated cache hits don't cause OPFS write amplification.
+    const DEBOUNCE_MS = 100;
+    if (this.metaFlushTimer !== null) {
+      clearTimeout(this.metaFlushTimer);
+      this.metaFlushTimer = null;
+    }
+    const epoch = this.metaEpoch;
+    const timer = setTimeout(() => {
+      this.metaFlushTimer = null;
+      if (this.metaEpoch !== epoch) return;
+      void this.flushMeta(false).catch(() => {
+        // best-effort
+      });
+    }, DEBOUNCE_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.metaFlushTimer = timer;
   }
 
   private cachedChunkIndices(): Set<number> {
@@ -689,7 +719,7 @@ class RemoteChunkCache implements ChunkCache {
     if (!this.initOnce) {
       this.initOnce = (async () => {
         const dirty = this.reconcileLruMeta();
-        if (dirty) await this.persistMeta();
+        if (dirty) this.markMetaDirty();
         // Enforce cache size limit on open so we don't keep exceeding quota until the next download.
         await this.enforceCacheLimit(-1);
       })();
@@ -711,12 +741,12 @@ class RemoteChunkCache implements ChunkCache {
       delete (this.meta.chunkLastAccess ?? {})[String(chunkIndex)];
       this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
-      await this.persistMeta();
+      this.markMetaDirty();
       return null;
     }
 
     this.noteAccess(chunkIndex);
-    await this.persistMeta();
+    this.markMetaDirty();
     return bytes;
   }
 
@@ -741,15 +771,22 @@ class RemoteChunkCache implements ChunkCache {
     this.cachedBytes = this.rangeSet.totalLen();
     this.noteAccess(chunkIndex);
     this.meta.cachedRanges = this.rangeSet.getRanges();
-    await this.persistMeta();
+    this.markMetaDirty();
     await this.enforceCacheLimit(chunkIndex);
   }
 
   async flush(): Promise<void> {
-    await this.persistMeta();
+    await this.flushMeta(true);
   }
 
   async clear(): Promise<void> {
+    if (this.metaFlushTimer !== null) {
+      clearTimeout(this.metaFlushTimer);
+      this.metaFlushTimer = null;
+    }
+    this.metaDirty = false;
+    this.metaRevision = 0;
+    this.metaEpoch += 1;
     await this.manager.clearCache(this.cacheKey);
     const reopened = await this.manager.openCache(this.cacheKeyParts, {
       chunkSizeBytes: this.manifest.chunkSize,
@@ -764,17 +801,65 @@ class RemoteChunkCache implements ChunkCache {
     this.metaWriteChain = Promise.resolve();
   }
 
-  private async persistMeta(): Promise<void> {
-    // Multiple chunk fetches can complete concurrently; serialize meta writes so that
-    // older snapshots don't race and overwrite newer metadata.
-    this.metaWriteChain = this.metaWriteChain
-      .catch(() => {
-        // Keep the chain alive even if a previous write failed.
-      })
-      .then(async () => {
-        await this.manager.writeMeta(this.cacheKey, this.meta);
-      });
-    await this.metaWriteChain;
+  private async flushMeta(force: boolean): Promise<void> {
+    if (force && this.metaFlushTimer !== null) {
+      clearTimeout(this.metaFlushTimer);
+      this.metaFlushTimer = null;
+    }
+
+    // If there's already a flush running, wait for it (and re-check `metaDirty`
+    // if we're doing a forced flush).
+    if (this.metaFlushInFlight) {
+      await this.metaFlushInFlight;
+      if (!force || !this.metaDirty) {
+        await this.metaWriteChain;
+        return;
+      }
+    }
+
+    if (!this.metaDirty) {
+      await this.metaWriteChain;
+      return;
+    }
+
+    const epoch = this.metaEpoch;
+    const run = (async () => {
+      // Multiple chunk fetches can complete concurrently; serialize meta writes so that
+      // older snapshots don't race and overwrite newer metadata.
+      while (this.metaDirty && this.metaEpoch === epoch) {
+        let writtenRevision = -1;
+        this.metaWriteChain = this.metaWriteChain
+          .catch(() => {
+            // Keep the chain alive even if a previous write failed.
+          })
+          .then(async () => {
+            if (this.metaEpoch !== epoch) return;
+            writtenRevision = this.metaRevision;
+            await this.manager.writeMeta(this.cacheKey, this.meta);
+          });
+        await this.metaWriteChain;
+        if (this.metaEpoch !== epoch) return;
+        if (this.metaRevision === writtenRevision) {
+          this.metaDirty = false;
+          return;
+        }
+        if (!force) {
+          // More meta changes arrived while writing; debounce another flush.
+          this.scheduleMetaFlush();
+          return;
+        }
+        // Forced flush: keep going until the metadata is stable.
+      }
+    })();
+
+    this.metaFlushInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (this.metaFlushInFlight === run) {
+        this.metaFlushInFlight = null;
+      }
+    }
   }
 
   private async enforceCacheLimit(protectedChunk: number): Promise<void> {
@@ -798,7 +883,7 @@ class RemoteChunkCache implements ChunkCache {
       delete (this.meta.chunkLastAccess ?? {})[String(lruChunk)];
       this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
-      await this.persistMeta();
+      this.markMetaDirty();
     }
   }
 }
