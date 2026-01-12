@@ -118,7 +118,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Check scancode generated files are up-to-date
-        run: node tools/gen_scancodes/check_generated.mjs
+        run: npm run check:scancodes
 
       - name: Check security header templates
         run: node scripts/ci/check-security-headers.mjs
