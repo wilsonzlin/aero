@@ -411,6 +411,55 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_bindings_info_includes_empty_groups_for_group2() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let empty: Vec<crate::Binding> = Vec::new();
+            let cs = vec![crate::Binding {
+                group: 2,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [empty.as_slice(), cs.as_slice()],
+            )
+            .unwrap();
+
+            assert_eq!(info.group_bindings.len(), 3);
+            assert!(info.group_bindings[0].is_empty());
+            assert!(info.group_bindings[1].is_empty());
+            assert_eq!(info.group_bindings[2].len(), 1);
+            assert_eq!(info.group_bindings[2][0].group, 2);
+
+            assert_eq!(info.group_layouts.len(), 3);
+            assert!(
+                Arc::ptr_eq(&info.group_layouts[0].layout, &info.group_layouts[1].layout),
+                "expected group0/group1 empty layouts to be reused"
+            );
+            assert_eq!(info.group_layouts[0].hash, info.group_layouts[1].hash);
+
+            assert_eq!(info.layout_key.bind_group_layout_hashes.len(), 3);
+            assert_eq!(info.layout_key.bind_group_layout_hashes[0], info.group_layouts[0].hash);
+            assert_eq!(info.layout_key.bind_group_layout_hashes[1], info.group_layouts[1].hash);
+            assert_eq!(info.layout_key.bind_group_layout_hashes[2], info.group_layouts[2].hash);
+        });
+    }
+
+    #[test]
     fn pipeline_bindings_info_rejects_kind_mismatch_across_shaders() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
