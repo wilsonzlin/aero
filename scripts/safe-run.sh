@@ -205,27 +205,37 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
         if [[ "${RUSTFLAGS:-}" != *"--threads="* ]]; then
             aero_lld_threads="${CARGO_BUILD_JOBS:-1}"
 
-            aero_target="${CARGO_BUILD_TARGET:-}"
-            if [[ -z "${aero_target}" ]]; then
-                # Parse `cargo --target <triple>` / `cargo --target=<triple>` (best-effort).
+            # Determine the Cargo build target so we can pick an appropriate `rust-lld` threads flag.
+            #
+            # Precedence matches Cargo itself:
+            # - `cargo --target <triple>` / `--target=<triple>` overrides everything.
+            # - Otherwise, fall back to `CARGO_BUILD_TARGET` (often set by agent shells or configs).
+            aero_target=""
+            prev=""
+            for arg in "${@:2}"; do
+                # Stop parsing at `--` because subsequent args are passed to the invoked binary
+                # (e.g. test harness flags) and should not affect our Cargo target detection.
+                if [[ "${arg}" == "--" ]]; then
+                    break
+                fi
+                if [[ "${prev}" == "--target" ]]; then
+                    aero_target="${arg}"
+                    break
+                fi
                 prev=""
-                for arg in "${@:2}"; do
-                    if [[ "${prev}" == "--target" ]]; then
-                        aero_target="${arg}"
+                case "${arg}" in
+                    --target)
+                        prev="--target"
+                        continue
+                        ;;
+                    --target=*)
+                        aero_target="${arg#--target=}"
                         break
-                    fi
-                    prev=""
-                    case "${arg}" in
-                        --target)
-                            prev="--target"
-                            continue
-                            ;;
-                        --target=*)
-                            aero_target="${arg#--target=}"
-                            break
-                            ;;
-                    esac
-                done
+                        ;;
+                esac
+            done
+            if [[ -z "${aero_target}" ]]; then
+                aero_target="${CARGO_BUILD_TARGET:-}"
             fi
 
             if [[ "${aero_target}" == wasm32-* ]]; then
