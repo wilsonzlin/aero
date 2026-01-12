@@ -111,7 +111,11 @@ fn metadata_cache_headers(state: &AppState, req_headers: &HeaderMap) -> HeaderMa
     headers
 }
 
-fn insert_metadata_preflight_headers(headers: &mut HeaderMap, state: &AppState, req_headers: &HeaderMap) {
+fn insert_metadata_preflight_headers(
+    headers: &mut HeaderMap,
+    state: &AppState,
+    req_headers: &HeaderMap,
+) {
     state.cors.insert_cors_preflight_headers(
         headers,
         req_headers,

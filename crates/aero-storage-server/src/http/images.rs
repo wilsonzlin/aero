@@ -565,7 +565,11 @@ fn response_with_status(status: StatusCode, state: &ImagesState, req_headers: &H
     response
 }
 
-pub(crate) fn insert_cors_headers(headers: &mut HeaderMap, state: &ImagesState, req_headers: &HeaderMap) {
+pub(crate) fn insert_cors_headers(
+    headers: &mut HeaderMap,
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+) {
     state.cors.insert_cors_headers(
         headers,
         req_headers,

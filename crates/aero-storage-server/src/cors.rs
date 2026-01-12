@@ -6,6 +6,8 @@ use axum::http::{
 };
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
+use crate::headers::append_vary;
+
 const DEFAULT_PREFLIGHT_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24); // 24 hours
 
 #[derive(Debug, Clone)]
@@ -129,9 +131,11 @@ impl CorsConfig {
             }
         }
 
-        // Always vary on Origin to avoid surprising cache poisoning if deployments change between
-        // `*` and an allowlist.
-        resp_headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+        // Only vary on Origin when the response is origin-dependent. In public `*` mode, varying
+        // on Origin fragments CDN caches without providing any correctness benefit.
+        if matches!(self.allowlist, CorsAllowlist::Origins(_)) {
+            append_vary(resp_headers, &["Origin"]);
+        }
     }
 
     pub fn insert_cors_preflight_headers(
@@ -167,16 +171,17 @@ impl CorsConfig {
             );
         }
 
-        resp_headers.insert(
-            header::VARY,
-            HeaderValue::from_static(
-                "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
-            ),
-        );
+        // Preflight responses are cacheable and must vary on the incoming preflight request
+        // headers. Only vary on `Origin` when the `Access-Control-Allow-Origin` value is
+        // origin-dependent (allowlist mode).
+        let mut tokens = vec!["Access-Control-Request-Method", "Access-Control-Request-Headers"];
+        if matches!(self.allowlist, CorsAllowlist::Origins(_)) {
+            tokens.insert(0, "Origin");
+        }
+        append_vary(resp_headers, &tokens);
     }
 }
 
 fn normalize_origin(origin: &str) -> String {
     origin.trim().trim_end_matches('/').to_ascii_lowercase()
 }
-
