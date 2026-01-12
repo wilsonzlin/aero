@@ -654,6 +654,45 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(base, 4)).toBe(0xdead_beef);
   });
 
+  it("prevents initPciConfig() from changing the header type (BAR writes must still remap)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "init_header_type_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+      initPciConfig: (config) => {
+        // Attempt to change the header type away from type-0 (endpoint).
+        config[0x0e] = 0x01;
+      },
+      mmioRead: () => 0x1122_3344,
+      mmioWrite: () => {},
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    // Header type should remain type 0.
+    expect(cfg.readU8(addr.device, addr.function, 0x0e) & 0x7f).toBe(0x00);
+
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    const base = BigInt(bar0) & 0xffff_fff0n;
+
+    // Enable decoding; BAR0 should map.
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002);
+    expect(mmioBus.read(base, 4)).toBe(0x1122_3344);
+
+    // BAR writes must still remap (requires header type to be correct).
+    const newBase = base + 0x2000n;
+    cfg.writeU32(addr.device, addr.function, 0x10, Number(newBase & 0xffff_ffffn));
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+    expect(mmioBus.read(newBase, 4)).toBe(0x1122_3344);
+  });
+
   it("remaps mmio64 BARs on low/high writes while respecting Command.MEM enable", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();

@@ -298,7 +298,12 @@ export class PciBus implements PortIoHandler {
     config[0x0b] = (classCode >>> 16) & 0xff; // base class
 
     // Header type (type 0 by default).
-    config[0x0e] = (device.headerType ?? 0x00) & 0xff;
+    //
+    // Keep the initial value so config-init hooks cannot accidentally (or
+    // intentionally) change the header layout in a way that would break BAR
+    // decoding/mapping invariants.
+    const headerType = (device.headerType ?? 0x00) & 0xff;
+    config[0x0e] = headerType;
 
     // Subsystem IDs (type 0 header).
     // Default to the device's own vendor/device IDs (improves guest driver matching).
@@ -379,6 +384,9 @@ export class PciBus implements PortIoHandler {
 
     // Ensure devices cannot violate BAR decoding/mapping invariants via config
     // init hooks. (Status bits are intentionally left untouched.)
+    //
+    // Header type defines the BAR layout and must be stable.
+    config[0x0e] = headerType;
     //
     // Keep PCI command bits clear until the guest enables them.
     config[0x04] = 0x00;
