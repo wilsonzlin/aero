@@ -282,10 +282,13 @@ impl E1000Bridge {
     }
 
     /// Serialize the current E1000 device model state into a deterministic `aero-io-snapshot` blob.
+    ///
+    /// This includes only emulator-local device state (registers, descriptor ring pointers, queued
+    /// frames not yet delivered to/from the guest), and does **not** attempt to capture external
+    /// host network resources (WebSocket tunnels, TCP connections, etc).
     pub fn save_state(&self) -> Vec<u8> {
         self.dev.save_state()
     }
-
 
     /// Restore E1000 state from bytes produced by [`save_state`].
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
