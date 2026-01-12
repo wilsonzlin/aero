@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { initWasm } from "./wasm_loader";
+import { assertWasmMemoryWiring } from "./wasm_memory_probe";
 import { computeGuestRamLayout, guestToLinear } from "./shared_layout";
 
 function sharedMemorySupported(): boolean {
@@ -39,15 +40,8 @@ describe("runtime/wasm_loader (memory injection)", () => {
 
       try {
         const { api } = await initWasm({ variant: "threaded", memory });
-
-        const view = new DataView(memory.buffer);
         const offset = guestToLinear(layout, 0x100);
-
-        view.setUint32(offset, 0x11223344, true);
-        expect(api.mem_load_u32(offset)).toBe(0x11223344);
-
-        api.mem_store_u32(offset, 0x55667788);
-        expect(view.getUint32(offset, true)).toBe(0x55667788);
+        assertWasmMemoryWiring({ api, memory, linearOffset: offset, context: "wasm_loader_memory.test" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         // The wasm-pack output is generated and may be absent in some test
