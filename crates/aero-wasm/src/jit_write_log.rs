@@ -134,6 +134,40 @@ mod tests {
 
     use super::GuestWriteLog;
 
+    #[test]
+    fn write_log_coalesces_out_of_order_overlaps() {
+        let mut log = GuestWriteLog::new();
+
+        // Record disjoint ranges, then an overlapping range that intersects an earlier (non-last)
+        // entry. The log should coalesce the overlap rather than leaving overlapping entries.
+        log.record(100, 10); // [100,110)
+        log.record(0, 10); // [0,10)
+        log.record(105, 10); // [105,115) overlaps first entry.
+
+        let mut drained: Vec<(u64, usize)> = Vec::new();
+        log.drain_to(1_000, |paddr, len| drained.push((paddr, len)));
+        drained.sort_by_key(|(paddr, _)| *paddr);
+
+        assert_eq!(drained, vec![(0, 10), (100, 15)]);
+    }
+
+    #[test]
+    fn write_log_coalesces_bridge_ranges() {
+        let mut log = GuestWriteLog::new();
+
+        // Two disjoint ranges with a gap, plus a third range that bridges them (adjacent to both).
+        // The final log should contain one merged range.
+        log.record(0, 10); // [0,10)
+        log.record(20, 10); // [20,30)
+        log.record(10, 10); // [10,20) bridges/adjacent to both.
+
+        let mut drained: Vec<(u64, usize)> = Vec::new();
+        log.drain_to(1_000, |paddr, len| drained.push((paddr, len)));
+        drained.sort_by_key(|(paddr, _)| *paddr);
+
+        assert_eq!(drained, vec![(0, 30)]);
+    }
+
     #[derive(Default)]
     struct NeverExecBackend;
 
