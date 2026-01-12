@@ -102,6 +102,12 @@ fn pc_platform_ide_io_decode_bit_gates_legacy_ports_and_bus_master_bar4() {
     let mut pc = PcPlatform::new_with_ide(2 * 1024 * 1024);
     let bdf = IDE_PIIX3.bdf;
 
+    // Attach a disk so reads from the legacy command block ports do not float high due to an
+    // absent device (0xFF). This lets the test distinguish "I/O decode disabled" from "no drive
+    // present".
+    let disk = RawDisk::create(MemBackend::new(), 8 * SECTOR_SIZE as u64).unwrap();
+    pc.attach_ide_primary_master_disk(Box::new(disk)).unwrap();
+
     let bm_base = read_io_bar_base(&mut pc, bdf.bus, bdf.device, bdf.function, 4);
     assert_ne!(bm_base, 0);
 
