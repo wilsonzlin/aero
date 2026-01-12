@@ -81,6 +81,7 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  const bool strict_checks = require_umd || (!allow_microsoft && !allow_non_aerogpu);
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -374,7 +375,10 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
     ZeroMemory(&got_ramp, sizeof(got_ramp));
     dev->GetGammaRamp(0, &got_ramp);
     if (memcmp(&got_ramp, &ramp, sizeof(ramp)) != 0) {
-      return reporter.Fail("GetGammaRamp mismatch after SetGammaRamp");
+      if (strict_checks) {
+        return reporter.Fail("GetGammaRamp mismatch after SetGammaRamp");
+      }
+      aerogpu_test::PrintfStdout("INFO: %s: skipping gamma ramp check (GetGammaRamp mismatch)", kTestName);
     }
   }
 
@@ -386,20 +390,34 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
     clip.ClipIntersection = 0x00000022u;
     hr = dev->SetClipStatus(&clip);
     if (FAILED(hr)) {
-      return reporter.FailHresult("SetClipStatus", hr);
+      if (strict_checks) {
+        return reporter.FailHresult("SetClipStatus", hr);
+      }
+      aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (SetClipStatus hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
     }
     D3DCLIPSTATUS9 got_clip;
     ZeroMemory(&got_clip, sizeof(got_clip));
-    hr = dev->GetClipStatus(&got_clip);
-    if (FAILED(hr)) {
-      return reporter.FailHresult("GetClipStatus", hr);
-    }
-    if (got_clip.ClipUnion != clip.ClipUnion || got_clip.ClipIntersection != clip.ClipIntersection) {
-      return reporter.Fail("GetClipStatus mismatch: got {union=0x%08lX inter=0x%08lX} expected {union=0x%08lX inter=0x%08lX}",
-                           (unsigned long)got_clip.ClipUnion,
-                           (unsigned long)got_clip.ClipIntersection,
-                           (unsigned long)clip.ClipUnion,
-                           (unsigned long)clip.ClipIntersection);
+    if (SUCCEEDED(hr)) {
+      hr = dev->GetClipStatus(&got_clip);
+      if (FAILED(hr)) {
+        if (strict_checks) {
+          return reporter.FailHresult("GetClipStatus", hr);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (GetClipStatus hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+      } else if (got_clip.ClipUnion != clip.ClipUnion || got_clip.ClipIntersection != clip.ClipIntersection) {
+        if (strict_checks) {
+          return reporter.Fail("GetClipStatus mismatch: got {union=0x%08lX inter=0x%08lX} expected {union=0x%08lX inter=0x%08lX}",
+                               (unsigned long)got_clip.ClipUnion,
+                               (unsigned long)got_clip.ClipIntersection,
+                               (unsigned long)clip.ClipUnion,
+                               (unsigned long)clip.ClipIntersection);
+        }
+        aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetClipStatus (GetClipStatus mismatch)", kTestName);
+      }
     }
   }
 
@@ -432,23 +450,44 @@ static int RunD3D9ExGettersSanity(int argc, char** argv) {
         ZeroMemory(got_pal, sizeof(got_pal));
         hr = dev->GetPaletteEntries(0, got_pal);
         if (FAILED(hr)) {
-          return reporter.FailHresult("GetPaletteEntries", hr);
+          if (strict_checks) {
+            return reporter.FailHresult("GetPaletteEntries", hr);
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: skipping palette APIs (GetPaletteEntries hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          goto palette_done;
         }
         if (memcmp(got_pal, pal, sizeof(pal)) != 0) {
-          return reporter.Fail("GetPaletteEntries mismatch");
+          if (strict_checks) {
+            return reporter.Fail("GetPaletteEntries mismatch");
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: skipping palette APIs (GetPaletteEntries mismatch)", kTestName);
+          goto palette_done;
         }
         UINT got_cur = 0xFFFFFFFFu;
         hr = dev->GetCurrentTexturePalette(&got_cur);
         if (FAILED(hr)) {
-          return reporter.FailHresult("GetCurrentTexturePalette", hr);
+          if (strict_checks) {
+            return reporter.FailHresult("GetCurrentTexturePalette", hr);
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: skipping palette APIs (GetCurrentTexturePalette hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          goto palette_done;
         }
         if (got_cur != 0) {
-          return reporter.Fail("GetCurrentTexturePalette mismatch: got=%u expected=0",
-                               (unsigned)got_cur);
+          if (strict_checks) {
+            return reporter.Fail("GetCurrentTexturePalette mismatch: got=%u expected=0",
+                                 (unsigned)got_cur);
+          }
+          aerogpu_test::PrintfStdout("INFO: %s: skipping palette APIs (GetCurrentTexturePalette mismatch)", kTestName);
+          goto palette_done;
         }
       }
     }
   }
+palette_done:
 
   hr = dev->SetTexture(0, tex.get());
   if (FAILED(hr)) {
