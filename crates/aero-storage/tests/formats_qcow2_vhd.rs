@@ -1395,7 +1395,8 @@ fn vhd_dynamic_failed_bitmap_write_rolls_back_cached_bit() {
 #[test]
 fn vhd_dynamic_failed_bat_write_does_not_leave_cached_bat_entry() {
     let block_size = 16 * 1024u32;
-    let backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+    let mut backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+    let initial_len = backend.len().unwrap();
 
     // Fixture layout (see `make_vhd_dynamic_empty`):
     // - dynamic header at 512
@@ -1421,11 +1422,45 @@ fn vhd_dynamic_failed_bat_write_does_not_leave_cached_bat_entry() {
 
     // The failed allocation must not corrupt the VHD footer at EOF: the image should remain
     // openable even after the error.
-    let backend = disk.into_backend();
+    let mut backend = disk.into_backend();
+    // Failed allocation should also not permanently grow the image: we can roll back because the
+    // BAT entry update never committed.
+    assert_eq!(backend.len().unwrap(), initial_len);
     let mut reopened = VhdDisk::open(backend).unwrap();
     let mut back2 = vec![0xAAu8; SECTOR_SIZE];
     reopened.read_sectors(0, &mut back2).unwrap();
     assert!(back2.iter().all(|b| *b == 0));
+}
+
+#[test]
+fn vhd_dynamic_failed_bitmap_init_rolls_back_allocation() {
+    // Use a large block_size so bitmap_size > 512 and we can inject a failure that doesn't also
+    // trip the footer-restore write (which is exactly 512 bytes).
+    let block_size = 4 * 1024 * 1024u32; // 4 MiB => bitmap_size=1024 bytes
+
+    let mut backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+    let initial_len = backend.len().unwrap();
+    let old_footer_offset = initial_len - (SECTOR_SIZE as u64);
+    let sectors_per_block = (block_size as u64) / SECTOR_SIZE as u64;
+    let bitmap_bytes = sectors_per_block.div_ceil(8);
+    let bitmap_size = bitmap_bytes.div_ceil(SECTOR_SIZE as u64) * SECTOR_SIZE as u64;
+    let bitmap_size: usize = bitmap_size.try_into().unwrap();
+
+    // Fail the bitmap initialization write.
+    let backend = FailOnWriteBackend::new(backend, old_footer_offset, bitmap_size);
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    let data = vec![0x11u8; SECTOR_SIZE];
+    let err = disk.write_sectors(0, &data).unwrap_err();
+    assert!(matches!(err, DiskError::Io(_)));
+
+    let mut backend = disk.into_backend();
+    assert_eq!(backend.len().unwrap(), initial_len);
+
+    let mut reopened = VhdDisk::open(backend).unwrap();
+    let mut back = vec![0xAAu8; SECTOR_SIZE];
+    reopened.read_sectors(0, &mut back).unwrap();
+    assert!(back.iter().all(|b| *b == 0));
 }
 
 #[test]

@@ -643,7 +643,15 @@ impl<B: StorageBackend> VhdDisk<B> {
 
         // Initialize the per-block bitmap. The data area can remain uninitialized because reads
         // for sectors with bitmap=0 must return zeros.
-        write_zeroes(&mut self.backend, old_footer_offset, bitmap_size)?;
+        if let Err(e) = write_zeroes(&mut self.backend, old_footer_offset, bitmap_size) {
+            // Best-effort rollback: restore the old footer at its original location and shrink
+            // back to the original length. Only shrink if the footer restore succeeds; otherwise
+            // keep the file extended with the new EOF footer so the image remains openable.
+            if self.backend.write_at(old_footer_offset, &self.footer.raw).is_ok() {
+                let _ = self.backend.set_len(file_len);
+            }
+            return Err(e);
+        }
 
         // Update the BAT entry last: this is what makes the new block reachable.
         let block_sector: u32 = (old_footer_offset / SECTOR_SIZE as u64)
@@ -653,8 +661,17 @@ impl<B: StorageBackend> VhdDisk<B> {
             .table_offset
             .checked_add((block_index as u64) * 4)
             .ok_or(DiskError::OffsetOverflow)?;
-        self.backend
-            .write_at(bat_entry_offset, &block_sector.to_be_bytes())?;
+        if let Err(e) = self
+            .backend
+            .write_at(bat_entry_offset, &block_sector.to_be_bytes())
+        {
+            // Best-effort rollback: restore the old footer and shrink. This keeps failed
+            // allocations from permanently growing the image or leaving wasted block space.
+            if self.backend.write_at(old_footer_offset, &self.footer.raw).is_ok() {
+                let _ = self.backend.set_len(file_len);
+            }
+            return Err(e);
+        }
         self.bat[block_index] = block_sector;
 
         let bitmap_size_usize: usize = bitmap_size
