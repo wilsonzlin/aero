@@ -51,12 +51,18 @@ inline std::string slurp_file(const std::string& path) {
 
 // Helper for tests that redirect `stderr` to a file via `freopen`.
 //
-// This closes `stderr` before reopening the file for reading, which improves
-// portability on platforms that restrict opening/deleting an actively written
-// file.
+// This detaches `stderr` from the capture file before reopening the file for
+// reading, which improves portability on platforms that restrict opening/deleting
+// an actively written file (notably Windows).
 inline std::string slurp_file_after_closing_stderr(const std::string& path) {
   std::fflush(stderr);
-  std::fclose(stderr);
+#if defined(_WIN32)
+  // Detach stderr from the capture file without leaving fd 2 closed (to avoid
+  // surprising the C runtime during process teardown).
+  std::freopen("NUL", "w", stderr);
+#else
+  std::freopen("/dev/null", "w", stderr);
+#endif
   return slurp_file(path);
 }
 
