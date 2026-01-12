@@ -1809,14 +1809,14 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       // The tiered VM calls out to JS so the CPU worker can execute JIT blocks that were
       // compiled/instantiated out-of-band. Until the worker installs a real dispatch table, keep a
       // safe default that forces an interpreter fallback.
-      (globalThis as any).__aero_jit_call = (_tableIndex: number, _cpuPtr: number, jitCtxPtr: number) => {
+      (globalThis as any).__aero_jit_call = (_tableIndex: number, cpuPtr: number, _jitCtxPtr: number) => {
         // Ensure the tiered runtime treats this as a non-committed execution (the stub did not run
         // any guest instructions).
         //
         // This mirrors `crates/aero-wasm/src/tiered_vm.rs` where the wasm backend expects the JS
         // host to clear a commit flag slot when it rolls back (or otherwise does not commit) a JIT
         // block.
-        const commitFlagOffsetFromJitCtx = (() => {
+        const commitFlagOffset = (() => {
           try {
             const api = wasmApi;
             if (!api) return undefined;
@@ -1826,13 +1826,9 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
             const jitAbiFn = api.jit_abi_constants;
             if (typeof jitAbiFn === "function") {
               const jitAbi = jitAbiFn();
-              const cpuStateSize = readDemoNumber(jitAbi, "cpu_state_size");
               const commitFlagOffset = readDemoNumber(jitAbi, "commit_flag_offset");
-              if (typeof cpuStateSize === "number" && typeof commitFlagOffset === "number") {
-                if (Number.isFinite(cpuStateSize) && Number.isFinite(commitFlagOffset)) {
-                  const rel = commitFlagOffset - cpuStateSize;
-                  if (rel >= 0) return rel;
-                }
+              if (typeof commitFlagOffset === "number" && Number.isFinite(commitFlagOffset) && commitFlagOffset >= 0) {
+                return commitFlagOffset;
               }
             }
 
@@ -1840,23 +1836,22 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
             const layoutFn = api.tiered_vm_jit_abi_layout;
             if (typeof layoutFn !== "function") return undefined;
             const layout = layoutFn();
-            const commitFlagOffset = readDemoNumber(layout, "commit_flag_offset");
-            const jitCtxPtrOffset = readDemoNumber(layout, "jit_ctx_ptr_offset");
-            if (typeof commitFlagOffset !== "number" || typeof jitCtxPtrOffset !== "number") return undefined;
-            if (!Number.isFinite(commitFlagOffset) || !Number.isFinite(jitCtxPtrOffset)) return undefined;
-            const rel = commitFlagOffset - jitCtxPtrOffset;
-            return rel >= 0 ? rel : undefined;
+            const fallbackCommitFlagOffset = readDemoNumber(layout, "commit_flag_offset");
+            if (
+              typeof fallbackCommitFlagOffset === "number" &&
+              Number.isFinite(fallbackCommitFlagOffset) &&
+              fallbackCommitFlagOffset >= 0
+            ) {
+              return fallbackCommitFlagOffset;
+            }
+            return undefined;
           } catch {
             return undefined;
           }
         })();
         try {
-          if (
-            typeof commitFlagOffsetFromJitCtx === "number" &&
-            Number.isFinite(commitFlagOffsetFromJitCtx) &&
-            commitFlagOffsetFromJitCtx >= 0
-          ) {
-            const commitFlagAddr = (jitCtxPtr + commitFlagOffsetFromJitCtx) >>> 0;
+          if (typeof commitFlagOffset === "number" && Number.isFinite(commitFlagOffset) && commitFlagOffset >= 0) {
+            const commitFlagAddr = (cpuPtr + commitFlagOffset) >>> 0;
             new DataView(segments.guestMemory.buffer).setUint32(commitFlagAddr, 0, true);
           }
         } catch {
