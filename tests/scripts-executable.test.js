@@ -175,6 +175,25 @@ test("safe-run.sh respects AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platf
   assert.equal(stdout, "2|2");
 });
 
+test("safe-run.sh: AERO_CARGO_BUILD_JOBS overrides CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  env.CARGO_BUILD_JOBS = "4";
+  env.AERO_CARGO_BUILD_JOBS = "2";
+  delete env.RAYON_NUM_THREADS;
+
+  const stdout = execFileSync(
+    path.join(repoRoot, "scripts/safe-run.sh"),
+    ["bash", "-c", 'printf "%s|%s" "$CARGO_BUILD_JOBS" "$RAYON_NUM_THREADS"'],
+    {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(stdout, "2|2");
+});
+
 test(
   "safe-run.sh works via bash even if scripts lose executable bits (Linux)",
   { skip: process.platform !== "linux" },

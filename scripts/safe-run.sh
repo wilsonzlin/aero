@@ -37,17 +37,16 @@ MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
 # Or override directly:
 #   CARGO_BUILD_JOBS=2 bash ./scripts/safe-run.sh cargo test --locked
 _aero_default_cargo_build_jobs=1
-if [[ -z "${CARGO_BUILD_JOBS:-}" ]]; then
-    if [[ -n "${AERO_CARGO_BUILD_JOBS:-}" ]]; then
-        if [[ "${AERO_CARGO_BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
-            export CARGO_BUILD_JOBS="${AERO_CARGO_BUILD_JOBS}"
-        else
-            echo "[safe-run] warning: invalid AERO_CARGO_BUILD_JOBS value: ${AERO_CARGO_BUILD_JOBS} (expected positive integer); using ${_aero_default_cargo_build_jobs}" >&2
-            export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
-        fi
+if [[ -n "${AERO_CARGO_BUILD_JOBS:-}" ]]; then
+    # Canonical knob for agent sandboxes: override any pre-existing CARGO_BUILD_JOBS.
+    if [[ "${AERO_CARGO_BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+        export CARGO_BUILD_JOBS="${AERO_CARGO_BUILD_JOBS}"
     else
+        echo "[safe-run] warning: invalid AERO_CARGO_BUILD_JOBS value: ${AERO_CARGO_BUILD_JOBS} (expected positive integer); using ${_aero_default_cargo_build_jobs}" >&2
         export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
     fi
+elif [[ -z "${CARGO_BUILD_JOBS:-}" ]]; then
+    export CARGO_BUILD_JOBS="${_aero_default_cargo_build_jobs}"
 fi
 unset _aero_default_cargo_build_jobs 2>/dev/null || true
 
@@ -71,8 +70,8 @@ if [[ $# -lt 1 ]]; then
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
-    echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1)" >&2
-    echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (takes precedence if set)" >&2
+    echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
+    echo "  CARGO_BUILD_JOBS=1       Cargo parallelism override (used when AERO_CARGO_BUILD_JOBS is unset)" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 cargo build --locked" >&2
