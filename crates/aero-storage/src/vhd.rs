@@ -15,7 +15,7 @@ const VHD_FILE_FORMAT_VERSION: u32 = 0x0001_0000;
 // Hard caps to avoid absurd allocations from untrusted images.
 const MAX_BAT_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
-                                                // DoS guard: keep dynamic VHD allocation units bounded. Extremely large block sizes can cause
+                                                 // DoS guard: keep dynamic VHD allocation units bounded. Extremely large block sizes can cause
                                                 // pathological file growth on the first write to a new block (the image must be extended by
                                                 // `block_size` bytes).
                                                 //
@@ -23,6 +23,10 @@ const MAX_BITMAP_BYTES: u64 = 32 * 1024 * 1024; // 32 MiB
                                                 // `sparse.rs`) so untrusted VHDs can't request significantly more work per allocation unit than
                                                 // our native sparse format.
 const MAX_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
+
+// Read large metadata tables in reasonably sized chunks to reduce backend call overhead (important
+// for synchronous backends like OPFS handles).
+const VHD_TABLE_READ_CHUNK_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
 
 // Bound bitmap caching when reading large fully-allocated dynamic VHDs.
 const VHD_BITMAP_CACHE_BUDGET_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
@@ -353,9 +357,10 @@ impl<B: StorageBackend> VhdDisk<B> {
                     .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
 
                 let mut buf = Vec::new();
-                buf.try_reserve_exact(64 * 1024)
+                let buf_len = bat_bytes_usize.min(VHD_TABLE_READ_CHUNK_BYTES);
+                buf.try_reserve_exact(buf_len)
                     .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
-                buf.resize(64 * 1024, 0);
+                buf.resize(buf_len, 0);
 
                 let mut remaining = bat_bytes_usize;
                 let mut off = dynamic.table_offset;

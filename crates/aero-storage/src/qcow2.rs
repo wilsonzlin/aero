@@ -16,6 +16,10 @@ const QCOW2_OFLAG_ZERO: u64 = 1 << 0;
 // Hard cap to avoid absurd allocations when parsing untrusted images.
 const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 
+// Read large metadata tables in reasonably sized chunks to reduce backend call overhead (important
+// for synchronous backends like OPFS handles).
+const QCOW2_TABLE_READ_CHUNK_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
+
 // Bound in-memory metadata caching when accessing untrusted images.
 //
 // Each L2 table or refcount block is exactly one cluster in size. We size the cache based on
@@ -261,10 +265,11 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .try_reserve_exact(l1_entries)
             .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
         let mut l1_buf = Vec::new();
+        let l1_buf_len = l1_bytes_usize.min(QCOW2_TABLE_READ_CHUNK_BYTES);
         l1_buf
-            .try_reserve_exact(64 * 1024)
+            .try_reserve_exact(l1_buf_len)
             .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
-        l1_buf.resize(64 * 1024, 0);
+        l1_buf.resize(l1_buf_len, 0);
         let mut remaining = l1_bytes_usize;
         let mut off = header.l1_table_offset;
         while remaining > 0 {
@@ -292,10 +297,11 @@ impl<B: StorageBackend> Qcow2Disk<B> {
             .try_reserve_exact(refcount_entries)
             .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
         let mut refcount_buf = Vec::new();
+        let refcount_buf_len = refcount_bytes_usize.min(QCOW2_TABLE_READ_CHUNK_BYTES);
         refcount_buf
-            .try_reserve_exact(64 * 1024)
+            .try_reserve_exact(refcount_buf_len)
             .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
-        refcount_buf.resize(64 * 1024, 0);
+        refcount_buf.resize(refcount_buf_len, 0);
         let mut remaining = refcount_bytes_usize;
         let mut off = header.refcount_table_offset;
         while remaining > 0 {
