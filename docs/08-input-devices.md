@@ -621,9 +621,9 @@ The repository includes a concrete browser-side input capture implementation:
 - `web/src/input/event_queue.ts` — allocation-free event queue and batching transport to the I/O worker.
 - `web/src/input/scancodes.ts` — auto-generated `KeyboardEvent.code` → PS/2 Set 2 scancode mapping (including multi-byte sequences like PrintScreen/Pause).
 - `web/src/input/scancode.ts` — small helpers (allocation-free lookup + browser `preventDefault` policy).
-  - The default policy prevents browser/UI actions while the VM is focused (e.g. function keys like **F5** refresh, **Alt** menu/address-bar focus, browser navigation keys like **BrowserBack**).
+  - The default policy prevents browser/UI actions while the VM is focused (e.g. function keys like **F5** refresh, **Alt** menu/address-bar focus, browser keys like **BrowserBack**/**BrowserSearch**).
   - `Meta` shortcuts are intentionally *not* prevented by default so host shortcuts can win when desired.
-    - Exception: browser navigation keys like `BrowserBack` are always swallowed to avoid navigating away from the VM.
+    - Exception: browser navigation keys like `BrowserBack`/`BrowserSearch` are always swallowed to avoid navigating away from the VM.
   - `Ctrl`-only shortcuts are also not prevented by default (copy/paste/etc.), but `Ctrl+Alt` (often reported for **AltGr** layouts) is treated as a capture combination and prevented by default so it reaches the guest reliably.
 
 #### Worker Transport / Wire Format

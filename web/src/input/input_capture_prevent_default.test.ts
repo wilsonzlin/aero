@@ -21,7 +21,7 @@ function withStubbedDocument<T>(run: (doc: any) => T): T {
 }
 
 describe("InputCapture preventDefault policy", () => {
-  it("prevents default for BrowserBack even though it is not mapped to guest input", () => {
+  it("prevents default for browser navigation keys even though they are not mapped to guest input", () => {
     withStubbedDocument(() => {
       const canvas = {
         tabIndex: 0,
@@ -35,21 +35,23 @@ describe("InputCapture preventDefault policy", () => {
       // Simulate the canvas being focused.
       (capture as any).hasFocus = true;
 
-      const preventDefault = vi.fn();
-      const event = {
-        code: "BrowserBack",
-        repeat: false,
-        timeStamp: 0,
-        altKey: false,
-        ctrlKey: false,
-        shiftKey: false,
-        metaKey: false,
-        preventDefault,
-        stopPropagation: vi.fn(),
-      } as unknown as KeyboardEvent;
+      for (const code of ["BrowserBack", "BrowserSearch"]) {
+        const preventDefault = vi.fn();
+        const event = {
+          code,
+          repeat: false,
+          timeStamp: 0,
+          altKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          metaKey: false,
+          preventDefault,
+          stopPropagation: vi.fn(),
+        } as unknown as KeyboardEvent;
 
-      (capture as any).handleKeyDown(event);
-      expect(preventDefault).toHaveBeenCalledTimes(1);
+        (capture as any).handleKeyDown(event);
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+      }
     });
   });
 

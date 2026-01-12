@@ -34,6 +34,8 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
       "BrowserRefresh",
       "BrowserStop",
       "BrowserHome",
+      "BrowserSearch",
+      "BrowserFavorites",
       "F1",
       "F2",
       "F3",
@@ -48,7 +50,15 @@ describe("shouldPreventDefaultForKeyboardEvent", () => {
       "F12",
     ];
 
-    const always = new Set<string>(["BrowserBack", "BrowserForward", "BrowserRefresh", "BrowserStop", "BrowserHome"]);
+    const always = new Set<string>([
+      "BrowserBack",
+      "BrowserForward",
+      "BrowserRefresh",
+      "BrowserStop",
+      "BrowserHome",
+      "BrowserSearch",
+      "BrowserFavorites",
+    ]);
 
     for (const code of codes) {
       expect(shouldPreventDefaultForKeyboardEvent(makeEvent({ code }))).toBe(true);
