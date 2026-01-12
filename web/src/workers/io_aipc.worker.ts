@@ -8,6 +8,7 @@ import { I8042Controller } from "../io/devices/i8042.ts";
 import { PciTestDevice } from "../io/devices/pci_test_device.ts";
 import { UART_COM1, Uart16550 } from "../io/devices/uart16550.ts";
 import { AeroIpcIoServer } from "../io/ipc/aero_ipc_io.ts";
+import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, IRQ_REFCOUNT_SATURATED, IRQ_REFCOUNT_UNDERFLOW, applyIrqRefCountChange } from "../io/irq_refcount.ts";
 import type { IrqSink } from "../io/device_manager.ts";
 import type { SerialOutputSink } from "../io/devices/uart16550.ts";
 
@@ -35,11 +36,38 @@ ctx.onmessage = (ev: MessageEvent<IoAipcWorkerInitMessage>) => {
   const cmdQ = openRingByKind(ipcBuffer, cmdKind);
   const evtQ = openRingByKind(ipcBuffer, evtKind);
 
+  // IRQ delivery models physical line levels with refcounted wire-OR semantics
+  // (see `docs/irq-semantics.md`). Emit only effective line transitions:
+  //  - `irqRaise` on 0→1
+  //  - `irqLower` on 1→0
+  //
+  // This matches the canonical browser IO worker implementation.
+  const irqRefCounts = new Uint16Array(256);
+  const irqWarnedUnderflow = new Uint8Array(256);
+  const irqWarnedSaturated = new Uint8Array(256);
   const irqSink: IrqSink = {
-    // IRQ events are line level transitions (assert/deassert) transported over AIPC. Edge-triggered
-    // devices must emit explicit pulses (`raiseIrq` then `lowerIrq`). See `docs/irq-semantics.md`.
-    raiseIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
-    lowerIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
+    raiseIrq: (irq) => {
+      const idx = irq & 0xff;
+      const flags = applyIrqRefCountChange(irqRefCounts, idx, true);
+      if (flags & IRQ_REFCOUNT_ASSERT) {
+        evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: idx }));
+      }
+      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+        irqWarnedSaturated[idx] = 1;
+        console.warn(`[io_aipc.worker] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
+      }
+    },
+    lowerIrq: (irq) => {
+      const idx = irq & 0xff;
+      const flags = applyIrqRefCountChange(irqRefCounts, idx, false);
+      if (flags & IRQ_REFCOUNT_DEASSERT) {
+        evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: idx }));
+      }
+      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+        irqWarnedUnderflow[idx] = 1;
+        console.warn(`[io_aipc.worker] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
+      }
+    },
   };
 
   const systemControl = {

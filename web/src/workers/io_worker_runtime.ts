@@ -13,6 +13,7 @@ import {
   IO_OP_SERIAL_OUT,
   writeIoMessage,
 } from "../io/ipc/io_protocol.ts";
+import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, IRQ_REFCOUNT_SATURATED, IRQ_REFCOUNT_UNDERFLOW, applyIrqRefCountChange } from "../io/irq_refcount.ts";
 import type { IrqSink } from "../io/device_manager.ts";
 import type { SerialOutputSink } from "../io/devices/uart16550.ts";
 
@@ -32,16 +33,35 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
 
   const irqTx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
   const serialTx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
+  const irqRefCounts = new Uint16Array(256);
+  const irqWarnedUnderflow = new Uint8Array(256);
+  const irqWarnedSaturated = new Uint8Array(256);
   const irqSink: IrqSink = {
     raiseIrq: (irq) => {
       // IRQs are transported as line level transitions (assert/deassert). Edge-triggered sources
       // are represented as explicit pulses (raise then lower). See `docs/irq-semantics.md`.
-      writeIoMessage(irqTx, { type: IO_OP_IRQ_RAISE, id: 0, addrLo: irq & 0xff, addrHi: 0, size: 0, value: 0 });
-      respRing.pushBlocking(irqTx);
+      const idx = irq & 0xff;
+      const flags = applyIrqRefCountChange(irqRefCounts, idx, true);
+      if (flags & IRQ_REFCOUNT_ASSERT) {
+        writeIoMessage(irqTx, { type: IO_OP_IRQ_RAISE, id: 0, addrLo: idx, addrHi: 0, size: 0, value: 0 });
+        respRing.pushBlocking(irqTx);
+      }
+      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+        irqWarnedSaturated[idx] = 1;
+        console.warn(`[io_worker_runtime] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
+      }
     },
     lowerIrq: (irq) => {
-      writeIoMessage(irqTx, { type: IO_OP_IRQ_LOWER, id: 0, addrLo: irq & 0xff, addrHi: 0, size: 0, value: 0 });
-      respRing.pushBlocking(irqTx);
+      const idx = irq & 0xff;
+      const flags = applyIrqRefCountChange(irqRefCounts, idx, false);
+      if (flags & IRQ_REFCOUNT_DEASSERT) {
+        writeIoMessage(irqTx, { type: IO_OP_IRQ_LOWER, id: 0, addrLo: idx, addrHi: 0, size: 0, value: 0 });
+        respRing.pushBlocking(irqTx);
+      }
+      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+        irqWarnedUnderflow[idx] = 1;
+        console.warn(`[io_worker_runtime] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
+      }
     },
   };
 

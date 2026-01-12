@@ -4,6 +4,7 @@ import { openRingByKind } from "../../../ipc/ipc.ts";
 import { queueKind } from "../../../ipc/layout.ts";
 import { encodeEvent } from "../../../ipc/protocol.ts";
 import { DeviceManager } from "../../device_manager.ts";
+import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, applyIrqRefCountChange } from "../../irq_refcount.ts";
 import type { IrqSink } from "../../device_manager.ts";
 import type { MmioHandler } from "../../bus/mmio.ts";
 import { I8042Controller } from "../../devices/i8042.ts";
@@ -19,9 +20,20 @@ const { ipcBuffer, tickIntervalMs } = workerData as {
 const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
 const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
 
+// Match the browser runtime IRQ contract: refcounted wire-OR level transitions.
+// Emit only 0→1 (`irqRaise`) and 1→0 (`irqLower`) transitions.
+const irqRefCounts = new Uint16Array(256);
 const irqSink: IrqSink = {
-  raiseIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
-  lowerIrq: (irq) => evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
+  raiseIrq: (irq) => {
+    const idx = irq & 0xff;
+    const flags = applyIrqRefCountChange(irqRefCounts, idx, true);
+    if (flags & IRQ_REFCOUNT_ASSERT) evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: idx }));
+  },
+  lowerIrq: (irq) => {
+    const idx = irq & 0xff;
+    const flags = applyIrqRefCountChange(irqRefCounts, idx, false);
+    if (flags & IRQ_REFCOUNT_DEASSERT) evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: idx }));
+  },
 };
 
 const systemControl = {

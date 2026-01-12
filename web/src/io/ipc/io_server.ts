@@ -11,6 +11,13 @@ import {
   decodeU64,
   writeIoMessage,
 } from "./io_protocol.ts";
+import {
+  IRQ_REFCOUNT_ASSERT,
+  IRQ_REFCOUNT_DEASSERT,
+  IRQ_REFCOUNT_SATURATED,
+  IRQ_REFCOUNT_UNDERFLOW,
+  applyIrqRefCountChange,
+} from "../irq_refcount.ts";
 import type { IrqSink } from "../device_manager.ts";
 
 export interface IoDispatchTarget {
@@ -33,6 +40,9 @@ export class IoServer implements IrqSink {
 
   readonly #rx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
   readonly #tx = new Uint32Array(IO_MESSAGE_STRIDE_U32);
+  readonly #irqRefCounts = new Uint16Array(256);
+  readonly #irqWarnedUnderflow = new Uint8Array(256);
+  readonly #irqWarnedSaturated = new Uint8Array(256);
 
   constructor(reqRing: SharedRingBuffer, respRing: SharedRingBuffer, target: IoDispatchTarget, opts: IoServerOptions = {}) {
     if (reqRing.stride !== IO_MESSAGE_STRIDE_U32) {
@@ -50,11 +60,23 @@ export class IoServer implements IrqSink {
   raiseIrq(irq: number): void {
     // IRQs are transported as line level transitions (assert/deassert). Edge-triggered sources
     // are represented as explicit pulses (raise then lower). See `docs/irq-semantics.md`.
-    this.#sendIrq(IO_OP_IRQ_RAISE, irq);
+    const idx = irq & 0xff;
+    const flags = applyIrqRefCountChange(this.#irqRefCounts, idx, true);
+    if (flags & IRQ_REFCOUNT_ASSERT) this.#sendIrq(IO_OP_IRQ_RAISE, idx);
+    if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && this.#irqWarnedSaturated[idx] === 0) {
+      this.#irqWarnedSaturated[idx] = 1;
+      console.warn(`[io_server] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
+    }
   }
 
   lowerIrq(irq: number): void {
-    this.#sendIrq(IO_OP_IRQ_LOWER, irq);
+    const idx = irq & 0xff;
+    const flags = applyIrqRefCountChange(this.#irqRefCounts, idx, false);
+    if (flags & IRQ_REFCOUNT_DEASSERT) this.#sendIrq(IO_OP_IRQ_LOWER, idx);
+    if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && this.#irqWarnedUnderflow[idx] === 0) {
+      this.#irqWarnedUnderflow[idx] = 1;
+      console.warn(`[io_server] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
+    }
   }
 
   #sendIrq(type: number, irq: number): void {
