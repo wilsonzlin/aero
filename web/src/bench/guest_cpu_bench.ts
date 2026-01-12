@@ -292,25 +292,25 @@ function checkDeterminismOrThrow(params: {
 }
 
 export async function runGuestCpuBench(opts: GuestCpuBenchOpts): Promise<GuestCpuBenchRun> {
+  if (opts.seconds !== undefined && opts.iters !== undefined) {
+    throw new Error('Guest CPU benchmark: "seconds" and "iters" are mutually exclusive; specify only one.');
+  }
+
+  // Validate option values early (even if the requested `mode` is not implemented),
+  // so callers get consistent error messages for malformed inputs.
+  const secondsValidated = opts.seconds !== undefined ? requirePositiveFiniteSeconds(opts.seconds) : undefined;
+  const itersValidated = opts.iters !== undefined ? requirePositiveU32Iters(opts.iters) : undefined;
+
   if (opts.mode !== "interpreter") {
     throw new Error(
       `Guest CPU benchmark mode "${opts.mode}" is not implemented yet. Only "interpreter" is supported.`,
     );
   }
 
-  if (opts.seconds !== undefined && opts.iters !== undefined) {
-    throw new Error('Guest CPU benchmark: "seconds" and "iters" are mutually exclusive; specify only one.');
-  }
+  const usingIters = itersValidated !== undefined;
+  const secondsBudget = secondsValidated ?? (usingIters ? undefined : DEFAULT_SECONDS);
 
-  const usingIters = opts.iters !== undefined;
-  const secondsBudget =
-    opts.seconds !== undefined
-      ? requirePositiveFiniteSeconds(opts.seconds)
-      : usingIters
-        ? undefined
-        : DEFAULT_SECONDS;
-
-  const itersPerRun = usingIters ? requirePositiveU32Iters(opts.iters!) : DEFAULT_ITERS_PER_RUN;
+  const itersPerRun = usingIters ? itersValidated! : DEFAULT_ITERS_PER_RUN;
   const warmupRuns = secondsBudget !== undefined ? DEFAULT_WARMUP_RUNS : 0;
 
   const { api } = await initWasmForContext();
