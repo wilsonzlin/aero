@@ -32,9 +32,10 @@ if (( ${#tracked_agent_notes[@]} > 0 )); then
   die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
 fi
 
-# Doc-invoked shell scripts should always be executable.
+# Doc-referenced shell scripts should always be executable.
 #
-# Some documentation recommends running scripts directly (e.g. `./path/to/foo.sh`).
+# Some documentation recommends running scripts directly (e.g. `./path/to/foo.sh`,
+# `drivers/scripts/foo.sh`).
 # If those targets aren't tracked as executable (100755), the docs will fail with
 # "permission denied" for users who follow them verbatim.
 #
@@ -52,11 +53,16 @@ repo_root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"]
 tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
 md_files = [p for p in tracked if p.endswith(".md")]
 
-# Match `./foo.sh` or `./some/path/foo.sh` (stopping at whitespace/backticks).
+# Match:
+# - Explicit invocations: `./foo.sh`, `./some/path/foo.sh`
+# - Repo-root relative paths: `drivers/scripts/foo.sh`, `scripts/ci/bar.sh`, etc.
 #
 # Note: many docs embed commands inside backticks, so treat backtick as a stop
 # character in addition to whitespace.
-pattern = re.compile(r"(?<!\w)\./([^\s`]+?\.sh)\b")
+#
+# We intentionally match only paths that look like repo-local references (common
+# top-level dirs) to avoid accidentally matching URLs that end in `.sh`.
+pattern = re.compile(r"(?<!\w)((?:\./|\.\./|scripts/|drivers/|infra/|deploy/|backend/|tools/)[^\s`]+?\.sh)\b")
 
 
 def git_mode(path):
@@ -67,24 +73,41 @@ def git_mode(path):
     return out.split()[0]
 
 
+import posixpath
+
 errors = []
 doc_refs = {}
+
+def normalize_rel(path_str):
+    path_str = path_str.replace("\\\\", "/")
+    norm = posixpath.normpath(path_str)
+    if norm in ("", ".", "/"):
+        return None
+    if norm == ".." or norm.startswith("../"):
+        return None
+    if norm.startswith("/"):
+        return None
+    return norm
 
 for md in md_files:
     text = (repo_root / md).read_text(encoding="utf-8", errors="ignore")
     md_dir = Path(md).parent
 
     for m in pattern.finditer(text):
-        referenced = m.group(0)  # includes leading `./`
-        after_dot_slash = m.group(1)
+        referenced = m.group(1)
 
-        # Resolve to a repo-root relative path. If the reference is just `./foo.sh`
-        # (no slash), assume it's intended to run from the doc's directory; fall
-        # back to repo root if needed.
-        if "/" in after_dot_slash:
-            candidates = [Path(after_dot_slash)]
-        else:
-            candidates = [md_dir / after_dot_slash, Path(after_dot_slash)]
+        candidates = []
+
+        # Try repo-root relative first (e.g. `./scripts/foo.sh`, `drivers/scripts/foo.sh`).
+        c1 = normalize_rel(referenced)
+        if c1 is not None:
+            candidates.append(c1)
+
+        # Then try doc-relative (e.g. `./verify.sh` from `infra/local-object-store/README.md`,
+        # or markdown links like `../scripts/agent-env.sh`).
+        c2 = normalize_rel(posixpath.join(md_dir.as_posix(), referenced))
+        if c2 is not None and c2 not in candidates:
+            candidates.append(c2)
 
         resolved = None
         for c in candidates:
@@ -92,12 +115,11 @@ for md in md_files:
                 resolved = c
                 break
         if resolved is None:
-            tried = ", ".join(str(c) for c in candidates)
+            tried = ", ".join(candidates) if candidates else "(no repo-local candidates)"
             errors.append("%s: references '%s', but no such file exists (tried: %s)" % (md, referenced, tried))
             continue
 
-        resolved_str = resolved.as_posix()
-        doc_refs.setdefault(resolved_str, set()).add((md, referenced))
+        doc_refs.setdefault(resolved, set()).add((md, referenced))
 
 for path in sorted(doc_refs.keys()):
     mode = git_mode(path)
