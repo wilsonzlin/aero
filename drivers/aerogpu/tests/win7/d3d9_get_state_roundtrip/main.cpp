@@ -7,6 +7,14 @@
 
 using aerogpu_test::ComPtr;
 
+static bool NearlyEqual(float a, float b, float eps) {
+  float d = a - b;
+  if (d < 0.0f) {
+    d = -d;
+  }
+  return d <= eps;
+}
+
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
                                          HWND hwnd,
                                          D3DPRESENT_PARAMETERS* pp,
@@ -40,6 +48,34 @@ static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
 
 static bool MatrixEqual(const D3DMATRIX& a, const D3DMATRIX& b) {
   return std::memcmp(&a, &b, sizeof(D3DMATRIX)) == 0;
+}
+
+static bool MatrixNearlyEqual(const D3DMATRIX& a, const D3DMATRIX& b, float eps) {
+  const float* fa = reinterpret_cast<const float*>(&a);
+  const float* fb = reinterpret_cast<const float*>(&b);
+  for (int i = 0; i < 16; ++i) {
+    if (!NearlyEqual(fa[i], fb[i], eps)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static D3DMATRIX MulMat4RowMajor(const D3DMATRIX& a, const D3DMATRIX& b) {
+  const float* af = reinterpret_cast<const float*>(&a);
+  const float* bf = reinterpret_cast<const float*>(&b);
+  D3DMATRIX out;
+  float* of = reinterpret_cast<float*>(&out);
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      of[r * 4 + c] =
+          af[r * 4 + 0] * bf[0 * 4 + c] +
+          af[r * 4 + 1] * bf[1 * 4 + c] +
+          af[r * 4 + 2] * bf[2 * 4 + c] +
+          af[r * 4 + 3] * bf[3 * 4 + c];
+    }
+  }
+  return out;
 }
 
 static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
@@ -308,6 +344,208 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
   if (!MatrixEqual(world_a, world_got)) {
     return reporter.Fail("GetTransform(D3DTS_WORLD) mismatch");
+  }
+
+  // MultiplyTransform round-trip: ensure the computed matrix is observable via GetTransform.
+  {
+    D3DMATRIX base;
+    ZeroMemory(&base, sizeof(base));
+    base._11 = 2.0f;
+    base._22 = 3.0f;
+    base._33 = 4.0f;
+    base._44 = 1.0f;
+    base._41 = 10.0f;
+    base._42 = 20.0f;
+    base._43 = 30.0f;
+
+    hr = dev->SetTransform(D3DTS_WORLD, &base);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetTransform(D3DTS_WORLD) (MultiplyTransform base)", hr);
+    }
+
+    D3DMATRIX mul;
+    ZeroMemory(&mul, sizeof(mul));
+    mul._11 = 1.0f;
+    mul._22 = 1.0f;
+    mul._33 = 1.0f;
+    mul._44 = 1.0f;
+    mul._41 = 1.5f;
+    mul._42 = -2.5f;
+    mul._43 = 0.25f;
+
+    hr = dev->MultiplyTransform(D3DTS_WORLD, &mul);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("MultiplyTransform(D3DTS_WORLD)", hr);
+    }
+
+    D3DMATRIX got;
+    ZeroMemory(&got, sizeof(got));
+    hr = dev->GetTransform(D3DTS_WORLD, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetTransform(D3DTS_WORLD) (after MultiplyTransform)", hr);
+    }
+
+    D3DMATRIX expected = MulMat4RowMajor(base, mul);
+    if (!MatrixNearlyEqual(got, expected, 1e-6f)) {
+      return reporter.Fail("MultiplyTransform/GetTransform mismatch");
+    }
+  }
+
+  // Clip plane round-trip (fixed-function cached state).
+  {
+    const float plane_set[4] = {1.25f, -2.5f, 3.75f, -4.0f};
+    hr = dev->SetClipPlane(0, plane_set);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetClipPlane(0)", hr);
+    }
+    float plane_got[4] = {};
+    hr = dev->GetClipPlane(0, plane_got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetClipPlane(0)", hr);
+    }
+    for (int i = 0; i < 4; ++i) {
+      if (!NearlyEqual(plane_got[i], plane_set[i], 1e-6f)) {
+        return reporter.Fail("GetClipPlane mismatch at element %d: got=%f expected=%f",
+                             i,
+                             (double)plane_got[i],
+                             (double)plane_set[i]);
+      }
+    }
+  }
+
+  // StreamSourceFreq (cached state).
+  {
+    const UINT kStream = 0;
+    const UINT freq_set = 7;
+    hr = dev->SetStreamSourceFreq(kStream, freq_set);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSourceFreq(0)", hr);
+    }
+    UINT got = 0;
+    hr = dev->GetStreamSourceFreq(kStream, &got);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetStreamSourceFreq(0)", hr);
+    }
+    if (got != freq_set) {
+      return reporter.Fail("GetStreamSourceFreq mismatch: got=%u expected=%u",
+                           (unsigned)got,
+                           (unsigned)freq_set);
+    }
+  }
+
+  // Shader constant int/bool caching.
+  {
+    int vals_i[8] = {10, 11, 12, 13, 20, 21, 22, 23}; // 2 x int4
+    hr = dev->SetVertexShaderConstantI(7, vals_i, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantI", hr);
+    }
+    int got_i[8] = {};
+    hr = dev->GetVertexShaderConstantI(7, got_i, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexShaderConstantI", hr);
+    }
+    if (std::memcmp(got_i, vals_i, sizeof(vals_i)) != 0) {
+      return reporter.Fail("GetVertexShaderConstantI mismatch");
+    }
+
+    BOOL vals_b[4] = {TRUE, FALSE, TRUE, FALSE};
+    hr = dev->SetPixelShaderConstantB(3, vals_b, 4);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantB", hr);
+    }
+    BOOL got_b[4] = {};
+    hr = dev->GetPixelShaderConstantB(3, got_b, 4);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPixelShaderConstantB", hr);
+    }
+    for (int i = 0; i < 4; ++i) {
+      const BOOL a = vals_b[i] ? TRUE : FALSE;
+      const BOOL b = got_b[i] ? TRUE : FALSE;
+      if (a != b) {
+        return reporter.Fail("GetPixelShaderConstantB mismatch at %d: got=%d expected=%d",
+                             i,
+                             (int)b,
+                             (int)a);
+      }
+    }
+  }
+
+  // Fixed-function lighting/material caching.
+  {
+    D3DMATERIAL9 mat;
+    ZeroMemory(&mat, sizeof(mat));
+    mat.Diffuse.r = 0.1f;
+    mat.Diffuse.g = 0.2f;
+    mat.Diffuse.b = 0.3f;
+    mat.Diffuse.a = 0.4f;
+    mat.Ambient.r = 0.5f;
+    mat.Ambient.g = 0.6f;
+    mat.Ambient.b = 0.7f;
+    mat.Ambient.a = 0.8f;
+    mat.Specular.r = 0.9f;
+    mat.Specular.g = 0.25f;
+    mat.Specular.b = 0.125f;
+    mat.Specular.a = 1.0f;
+    mat.Emissive.r = 0.0f;
+    mat.Emissive.g = 0.01f;
+    mat.Emissive.b = 0.02f;
+    mat.Emissive.a = 0.03f;
+    mat.Power = 16.0f;
+
+    hr = dev->SetMaterial(&mat);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetMaterial", hr);
+    }
+    D3DMATERIAL9 got_mat;
+    ZeroMemory(&got_mat, sizeof(got_mat));
+    hr = dev->GetMaterial(&got_mat);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetMaterial", hr);
+    }
+    if (std::memcmp(&got_mat, &mat, sizeof(mat)) != 0) {
+      return reporter.Fail("GetMaterial mismatch");
+    }
+
+    D3DLIGHT9 light;
+    ZeroMemory(&light, sizeof(light));
+    light.Type = D3DLIGHT_POINT;
+    light.Diffuse.r = 0.25f;
+    light.Diffuse.g = 0.5f;
+    light.Diffuse.b = 0.75f;
+    light.Diffuse.a = 1.0f;
+    light.Position.x = 1.0f;
+    light.Position.y = 2.0f;
+    light.Position.z = 3.0f;
+    light.Range = 100.0f;
+    light.Attenuation0 = 1.0f;
+
+    hr = dev->SetLight(0, &light);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetLight(0)", hr);
+    }
+    D3DLIGHT9 got_light;
+    ZeroMemory(&got_light, sizeof(got_light));
+    hr = dev->GetLight(0, &got_light);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetLight(0)", hr);
+    }
+    if (std::memcmp(&got_light, &light, sizeof(light)) != 0) {
+      return reporter.Fail("GetLight mismatch");
+    }
+
+    hr = dev->LightEnable(0, TRUE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("LightEnable(0, TRUE)", hr);
+    }
+    BOOL enabled = FALSE;
+    hr = dev->GetLightEnable(0, &enabled);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetLightEnable(0)", hr);
+    }
+    if (!enabled) {
+      return reporter.Fail("GetLightEnable mismatch: expected enabled");
+    }
   }
 
   {
