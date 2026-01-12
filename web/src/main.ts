@@ -956,7 +956,10 @@ function renderMachinePanel(): HTMLElement {
           testState.width = width;
           testState.height = height;
           testState.strideBytes = strideBytes;
-          vgaInfo.textContent = `vga: ${width}x${height} stride=${strideBytes} frames=${testState.framesPresented}`;
+          vgaInfo.textContent =
+            `vga: ${width}x${height} stride=${strideBytes} ` +
+            `frames=${testState.framesPresented} transport=${testState.transport}` +
+            (testState.sharedFramesPublished ? ` shared=${testState.sharedFramesPublished}` : "");
         } catch (err) {
           vgaFailed = true;
           const message = err instanceof Error ? err.message : String(err);
