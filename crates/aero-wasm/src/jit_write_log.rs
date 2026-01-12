@@ -168,6 +168,27 @@ mod tests {
         assert_eq!(drained, vec![(0, 30)]);
     }
 
+    #[test]
+    fn write_log_overflow_falls_back_to_full_invalidation() {
+        let mut log = GuestWriteLog::new();
+
+        // Force an overflow by recording many disjoint 1-byte ranges.
+        for i in 0..(super::WRITE_LOG_CAP + 1) {
+            log.record((i as u64) * 2, 1);
+        }
+
+        let mut drained: Vec<(u64, usize)> = Vec::new();
+        log.drain_to(0x10_000, |paddr, len| drained.push((paddr, len)));
+
+        assert_eq!(drained, vec![(0, 0x10_000)]);
+
+        // The overflow flag should clear after draining, so we can log again.
+        log.record(0x1234, 1);
+        drained.clear();
+        log.drain_to(0x10_000, |paddr, len| drained.push((paddr, len)));
+        assert_eq!(drained, vec![(0x1234, 1)]);
+    }
+
     #[derive(Default)]
     struct NeverExecBackend;
 
