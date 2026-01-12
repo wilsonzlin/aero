@@ -324,8 +324,10 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     break;
                 }
                 StepExit::BiosInterrupt(vector) => {
-                    // Tier-0 surfaces BIOS ROM stubs (`HLT` reached after an `INT n`) as a
-                    // `BiosInterrupt` exit. `step()` consumes the recorded vector via
+                    // Tier-0 surfaces BIOS ROM stubs (`HLT; IRET`) as a `BiosInterrupt` exit when
+                    // real/v8086-mode vector delivery transfers control into the stub.
+                    //
+                    // `step()` consumes the recorded vector via
                     // `take_pending_bios_int()`, but this `Interpreter` trait does not return it.
                     // Re-store the vector in CPU state so the embedding can observe and dispatch
                     // it before resuming execution at the stub's `IRET`.

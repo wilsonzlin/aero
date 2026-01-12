@@ -435,6 +435,11 @@ interrupt hypercall tracking). Higher-level runtime bookkeeping that lives outsi
 pending external interrupts / interrupt-shadow state / local APIC queues) should be captured via the
 `DEVICES` section by the snapshot adapter (see `CPU_INTERNAL` below).
 
+The BIOS hypercall mechanism is based on the firmware installing IVT entries that point to ROM stubs
+beginning with `HLT; IRET` (bytes `F4 CF`). When real/v8086 vector delivery enters one of these stubs,
+Tier-0 treats the `HLT` as a `BiosInterrupt(vector)` exit rather than halting the CPU. The
+`pending_bios_int_valid/pending_bios_int` fields capture that pending BIOS vector across snapshots.
+
 ---
 
 ## MMU section encoding
