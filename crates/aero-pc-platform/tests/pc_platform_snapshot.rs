@@ -1,5 +1,6 @@
 use std::io::Cursor;
 
+use aero_devices::ioapic::IoApic;
 use aero_devices::pci::{GsiLevelSink, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 use aero_pc_platform::{PcPlatform, PcPlatformSnapshotHarness};
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
@@ -98,4 +99,101 @@ fn snapshot_restore_redrives_pci_intx_levels_to_interrupt_sink() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 10);
+}
+
+#[test]
+fn snapshot_restore_redrives_hpet_level_to_interrupt_sink() {
+    // This is a regression test for HPET restore ordering. HPET snapshots do not include the
+    // `irq_asserted` handshake state, so restore must call `Hpet::sync_levels_to_sink()` after the
+    // interrupt controller sink is restored.
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    // HPET MMIO offsets.
+    const HPET_REG_GENERAL_CONFIG: u64 = 0x010;
+    const HPET_REG_GENERAL_INT_STATUS: u64 = 0x020;
+    const HPET_REG_TIMER0_BASE: u64 = 0x100;
+    const HPET_REG_TIMER_CONFIG: u64 = 0x00;
+    const HPET_REG_TIMER_COMPARATOR: u64 = 0x08;
+
+    const HPET_GEN_CONF_ENABLE: u64 = 1 << 0;
+    const HPET_TIMER_CFG_INT_LEVEL: u64 = 1 << 1;
+    const HPET_TIMER_CFG_INT_ENABLE: u64 = 1 << 2;
+
+    let mut pc = PcPlatform::new(RAM_SIZE);
+
+    // Configure the legacy PIC so IRQ0 delivery is observable.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(0, false);
+    }
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    // Program HPET timer0 to fire a level-triggered interrupt, but deliver it into a dummy sink
+    // rather than the platform interrupt controller. This leaves the platform GSI line low while
+    // HPET has a pending `general_int_status` bit set.
+    {
+        let clock = pc.clock();
+        let hpet = pc.hpet();
+        let mut hpet = hpet.borrow_mut();
+        let mut dummy_sink = IoApic::default();
+
+        hpet.mmio_write(
+            HPET_REG_GENERAL_CONFIG,
+            8,
+            HPET_GEN_CONF_ENABLE,
+            &mut dummy_sink,
+        );
+
+        let timer0_cfg = hpet.mmio_read(
+            HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+            8,
+            &mut dummy_sink,
+        );
+        hpet.mmio_write(
+            HPET_REG_TIMER0_BASE + HPET_REG_TIMER_CONFIG,
+            8,
+            timer0_cfg | HPET_TIMER_CFG_INT_ENABLE | HPET_TIMER_CFG_INT_LEVEL,
+            &mut dummy_sink,
+        );
+        hpet.mmio_write(
+            HPET_REG_TIMER0_BASE + HPET_REG_TIMER_COMPARATOR,
+            8,
+            1,
+            &mut dummy_sink,
+        );
+
+        clock.advance_ns(100);
+        hpet.poll(&mut dummy_sink);
+
+        assert_ne!(
+            hpet.mmio_read(HPET_REG_GENERAL_INT_STATUS, 8, &mut dummy_sink) & 1,
+            0,
+            "HPET timer0 status bit should be pending before snapshot"
+        );
+    }
+
+    // Sanity: platform interrupt controller still sees the timer line deasserted at save time.
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+
+    let snap = snapshot_bytes(&mut pc);
+
+    let mut restored = PcPlatform::new(RAM_SIZE);
+    restore_bytes(&mut restored, &snap);
+
+    // After restore, the adapter must call `Hpet::sync_levels_to_sink()` so the interrupt
+    // controller sees the asserted routed GSI (GSI2 -> IRQ0 in legacy mode).
+    let pending = restored
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("expected HPET timer0 interrupt to be pending after restore");
+    let irq = restored
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 0);
 }

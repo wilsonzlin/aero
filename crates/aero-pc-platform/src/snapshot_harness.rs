@@ -17,6 +17,7 @@ pub struct PcPlatformSnapshotHarness<'a> {
     pc: &'a mut PcPlatform,
     restore_error: Option<SnapshotError>,
     restored_interrupts: bool,
+    restored_hpet: bool,
     restored_pci_intx: bool,
 }
 
@@ -26,6 +27,7 @@ impl<'a> PcPlatformSnapshotHarness<'a> {
             pc,
             restore_error: None,
             restored_interrupts: false,
+            restored_hpet: false,
             restored_pci_intx: false,
         }
     }
@@ -59,6 +61,7 @@ impl SnapshotSource for PcPlatformSnapshotHarness<'_> {
             device_state_from_io_snapshot(DeviceId::PIT, &*pc.pit.borrow()),
             device_state_from_io_snapshot(DeviceId::RTC, &*pc.rtc.borrow()),
             device_state_from_io_snapshot(DeviceId::HPET, &*pc.hpet.borrow()),
+            device_state_from_io_snapshot(DeviceId::ACPI_PM, &*pc.acpi_pm.borrow()),
             device_state_from_io_snapshot(DeviceId::PCI_CFG, &*pc.pci_cfg.borrow()),
             device_state_from_io_snapshot(DeviceId::PCI_INTX_ROUTER, &pc.pci_intx),
         ]
@@ -148,6 +151,16 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
                             Some(SnapshotError::Corrupt("failed to restore HPET state"));
                         return;
                     }
+                    self.restored_hpet = true;
+                }
+                id if id == DeviceId::ACPI_PM => {
+                    if apply_io_snapshot_to_device(&state, &mut *self.pc.acpi_pm.borrow_mut())
+                        .is_err()
+                    {
+                        self.restore_error =
+                            Some(SnapshotError::Corrupt("failed to restore ACPI PM state"));
+                        return;
+                    }
                 }
                 id if id == DeviceId::PCI_CFG => {
                     if apply_io_snapshot_to_device(&state, &mut *self.pc.pci_cfg.borrow_mut())
@@ -203,15 +216,30 @@ impl SnapshotTarget for PcPlatformSnapshotHarness<'_> {
 
         // `PciIntxRouter::load_state()` cannot drive the platform interrupt sink. Re-drive the
         // restored INTx levels into the sink after both sides have been restored.
-        if self.restored_pci_intx {
+        if self.restored_hpet || self.restored_pci_intx {
             if !self.restored_interrupts {
                 return Err(SnapshotError::Corrupt(
-                    "PCI INTx state restored without platform interrupts state",
+                    "device state restored without platform interrupts state",
                 ));
             }
-            self.pc
-                .pci_intx
-                .sync_levels_to_sink(&mut *self.pc.interrupts.borrow_mut());
+
+            let mut interrupts = self.pc.interrupts.borrow_mut();
+
+            // `Hpet::load_state()` cannot drive its interrupt sink or restore its internal
+            // `irq_asserted` handshake state; sync pending level-triggered lines into the platform
+            // interrupt controller.
+            if self.restored_hpet {
+                self.pc
+                    .hpet
+                    .borrow_mut()
+                    .sync_levels_to_sink(&mut *interrupts);
+            }
+
+            // Same issue for PCI INTx: `PciIntxRouter::load_state()` restores internal bookkeeping
+            // but cannot drive the sink.
+            if self.restored_pci_intx {
+                self.pc.pci_intx.sync_levels_to_sink(&mut *interrupts);
+            }
         }
 
         Ok(())
