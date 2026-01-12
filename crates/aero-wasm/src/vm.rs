@@ -481,7 +481,7 @@ impl WasmVm {
 
 #[cfg(test)]
 mod tests {
-    use super::WasmPhysBus;
+    use super::{WasmPhysBus, WasmVm};
 
     use aero_mmu::MemoryBus;
     use js_sys::{Array, Reflect};
@@ -644,6 +644,73 @@ export function installAeroMmioTestShims() {
         assert_eq!(call_prop_u32(&c1, "addr"), 0x204);
         assert_eq!(call_prop_u32(&c1, "size"), 4);
         assert_eq!(call_prop_u32(&c1, "value"), 0x8877_6655);
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_vm_a20_enabled_ptr_controls_real_mode_wraparound() {
+        installAeroMmioTestShims();
+
+        // Allocate enough guest RAM to include the 1MiB alias boundary.
+        let mut guest = vec![0u8; 2 * 1024 * 1024];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        // Place distinct bytes at physical 0x0 and 0x1_00000.
+        guest[0x0000_0000] = 0x11;
+        guest[0x0010_0000] = 0x22;
+
+        // Write a tiny real-mode program at 0x0100:
+        //   mov al, [0x0010_0000]   (addr-size override, moffs32)
+        //   mov [0x0000_0200], al   (addr-size override, moffs32)
+        //   hlt
+        const ENTRY_IP: u32 = 0x0100;
+        let code = [
+            0x67, 0xA0, 0x00, 0x00, 0x10, 0x00, // mov al, [0x0010_0000]
+            0x67, 0xA2, 0x00, 0x02, 0x00, 0x00, // mov [0x0000_0200], al
+            0xF4, // hlt
+        ];
+        guest[ENTRY_IP as usize..ENTRY_IP as usize + code.len()].copy_from_slice(&code);
+
+        let mut vm = WasmVm::new(guest_base, guest_size).expect("WasmVm::new should succeed");
+
+        // ---------------------------------------------------------------------
+        // A20 enabled: reading 0x1_00000 should see 0x22.
+        // ---------------------------------------------------------------------
+        guest[0x0000_0200] = 0;
+        vm.reset_real_mode(ENTRY_IP);
+        let a20_ptr = vm.a20_enabled_ptr();
+        assert_ne!(a20_ptr, 0, "a20_enabled_ptr must return a non-zero address");
+
+        // Safety: `a20_ptr` is provided by `WasmVm` and points into wasm linear memory.
+        // Write 0/1 only (valid `bool` representation in Rust).
+        unsafe {
+            (a20_ptr as *mut u8).write(1);
+        }
+
+        let exit = vm.run_slice(128);
+        assert_eq!(exit.kind(), crate::RunExitKind::Halted);
+        assert_eq!(
+            guest[0x0000_0200], 0x22,
+            "A20 enabled: 0x1_00000 should be distinct from 0x0"
+        );
+
+        // ---------------------------------------------------------------------
+        // A20 disabled: reading 0x1_00000 should alias to 0x0 (0x11).
+        // ---------------------------------------------------------------------
+        guest[0x0000_0200] = 0;
+        vm.reset_real_mode(ENTRY_IP);
+        let a20_ptr2 = vm.a20_enabled_ptr();
+        assert_eq!(a20_ptr2, a20_ptr, "a20_enabled_ptr must be stable across reset_real_mode");
+        unsafe {
+            (a20_ptr2 as *mut u8).write(0);
+        }
+
+        let exit = vm.run_slice(128);
+        assert_eq!(exit.kind(), crate::RunExitKind::Halted);
+        assert_eq!(
+            guest[0x0000_0200], 0x11,
+            "A20 disabled: 0x1_00000 should alias to 0x0"
+        );
     }
 
     #[wasm_bindgen_test]
