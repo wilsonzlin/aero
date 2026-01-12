@@ -94,7 +94,9 @@ The manifest supports optional per-image cache validator overrides to enable sta
 and CDN caching even if filesystem mtimes change during copy/restore:
 
 - `etag`: a quoted HTTP entity-tag (e.g. `"win7-sp1-x64-v1"` or `W/"win7-sp1-x64-v1"`). Prefer a
-  strong (non-`W/`) tag so `If-Range` can be used for range resumption.
+  strong (non-`W/`) tag so `If-Range` can be used for range resumption. The value must be visible
+  ASCII (so clients can round-trip it through `If-None-Match`/`If-Range`) and is subject to a
+  server-side maximum length limit.
 - `last_modified`: an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`). Must be at or after the Unix
   epoch so it can be represented in an HTTP `Last-Modified` header.
 

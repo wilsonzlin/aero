@@ -24,7 +24,8 @@ pub struct ManifestImage {
     pub public: bool,
     /// Optional cache validator override.
     ///
-    /// Must be a valid HTTP header value (and should be a quoted entity-tag, e.g. `"abc"`).
+    /// Must be a quoted HTTP entity-tag (e.g. `"abc"` or `W/"abc"`), contain only visible ASCII
+    /// characters, and be reasonably sized (see `validate_etag` for the exact limits).
     #[serde(default)]
     pub etag: Option<String>,
     /// Optional last-modified override, provided as an RFC3339 timestamp (e.g. `2026-01-10T00:00:00Z`).
