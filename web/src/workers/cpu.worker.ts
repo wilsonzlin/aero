@@ -60,6 +60,7 @@ import {
   WRITE_FRAME_INDEX as AUDIO_WRITE_FRAME_INDEX,
   framesAvailableClamped as audioFramesAvailableClamped,
   framesFree as audioFramesFree,
+  getRingBufferLevelFrames as getAudioRingBufferLevelFrames,
   requiredBytes as audioRingRequiredBytes,
   wrapRingBuffer as wrapAudioRingBuffer,
 } from "../audio/audio_worklet_ring";
@@ -233,7 +234,7 @@ function maybePostHdaDemoStats(): void {
   const targetFrames = hdaDemoTargetFrames(capacity, sampleRate);
   const msg: AudioOutputHdaDemoStatsMessage = {
     type: "audioOutputHdaDemo.stats",
-    bufferLevelFrames: ringBufferLevelFrames(hdaDemoHeader, capacity),
+    bufferLevelFrames: getAudioRingBufferLevelFrames(hdaDemoHeader, capacity),
     targetFrames,
   };
 
@@ -254,12 +255,6 @@ function maybePostHdaDemoStats(): void {
   if (typeof lastTickDroppedFrames === "number") msg.lastTickDroppedFrames = lastTickDroppedFrames;
 
   ctx.postMessage(msg);
-}
-
-function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
-  const read = Atomics.load(header, AUDIO_READ_FRAME_INDEX) >>> 0;
-  const write = Atomics.load(header, AUDIO_WRITE_FRAME_INDEX) >>> 0;
-  return audioFramesAvailableClamped(read, write, capacityFrames);
 }
 
 function stopHdaDemo(): void {
@@ -345,7 +340,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
 
   const targetFrames = hdaDemoTargetFrames(capacityFrames, sampleRate);
   // Prime up to the target fill level (without overrunning if the buffer is already full).
-  const level = ringBufferLevelFrames(header, capacityFrames);
+  const level = getAudioRingBufferLevelFrames(header, capacityFrames);
   const prime = Math.max(0, targetFrames - level);
   if (prime > 0 && typeof demo.tick === "function") {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
@@ -355,7 +350,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
 
   const timer = ctx.setInterval(() => {
     if (!hdaDemoInstance || !hdaDemoHeader) return;
-    const level = ringBufferLevelFrames(hdaDemoHeader, hdaDemoCapacityFrames);
+    const level = getAudioRingBufferLevelFrames(hdaDemoHeader, hdaDemoCapacityFrames);
     const target = hdaDemoTargetFrames(hdaDemoCapacityFrames, hdaDemoSampleRate);
     const need = Math.max(0, target - level);
     if (need > 0) {

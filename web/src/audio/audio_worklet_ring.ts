@@ -31,6 +31,12 @@ export function framesFree(readFrameIndex: number, writeFrameIndex: number, capa
   return capacityFrames - framesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
 }
 
+export function getRingBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
+  const read = Atomics.load(header, READ_FRAME_INDEX) >>> 0;
+  const write = Atomics.load(header, WRITE_FRAME_INDEX) >>> 0;
+  return framesAvailableClamped(read, write, capacityFrames);
+}
+
 export function requiredBytes(capacityFrames: number, channelCount: number): number {
   const sampleCapacity = capacityFrames * channelCount;
   return HEADER_BYTES + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;
@@ -59,4 +65,3 @@ export function wrapRingBuffer(
     samples,
   };
 }
-

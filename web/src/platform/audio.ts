@@ -4,8 +4,8 @@ import {
   READ_FRAME_INDEX,
   UNDERRUN_COUNT_INDEX,
   WRITE_FRAME_INDEX,
-  framesAvailableClamped,
   framesFree,
+  getRingBufferLevelFrames as getAudioWorkletRingLevelFrames,
   requiredBytes as audioWorkletRingRequiredBytes,
   wrapRingBuffer as wrapAudioWorkletRingBuffer,
 } from "../audio/audio_worklet_ring";
@@ -315,9 +315,7 @@ function inferRingBufferFrames(buffer: SharedArrayBuffer, channelCount: number):
 }
 
 export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): number {
-  const read = Atomics.load(ringBuffer.header, READ_FRAME_INDEX) >>> 0;
-  const write = Atomics.load(ringBuffer.header, WRITE_FRAME_INDEX) >>> 0;
-  return framesAvailableClamped(read, write, ringBuffer.capacityFrames);
+  return getAudioWorkletRingLevelFrames(ringBuffer.header, ringBuffer.capacityFrames);
 }
 
 export function getRingBufferUnderrunCount(ringBuffer: AudioRingBufferLayout): number {
