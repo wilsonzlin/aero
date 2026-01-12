@@ -85,8 +85,8 @@ When enabled, the harness:
 The harness also emits a host-side marker for the injection step itself (useful for debugging flaky setups and for log
 scraping in CI):
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|...`
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|reason=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
 
 Note: The harness may retry input injection a few times after the guest reports `virtio-input-events|READY` to reduce
 timing flakiness (input reports can be dropped if no user-mode read is pending). In that case you may see multiple
