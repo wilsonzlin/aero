@@ -185,18 +185,37 @@ function normalizeHost(host: string): string {
 }
 
 function parsePort(port: string): number {
-  if (!/^[0-9]+$/.test(port)) {
+  if (port === "") {
     throw new TcpTargetParseError(
       "ERR_TCP_INVALID_PORT",
       `Invalid port: ${port}`,
     );
   }
-  const n = Number(port);
-  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+
+  let n = 0;
+  for (let i = 0; i < port.length; i += 1) {
+    const c = port.charCodeAt(i);
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) {
+      throw new TcpTargetParseError(
+        "ERR_TCP_INVALID_PORT",
+        `Invalid port: ${port}`,
+      );
+    }
+    n = n * 10 + (c - 0x30);
+    if (n > 65535) {
+      throw new TcpTargetParseError(
+        "ERR_TCP_INVALID_PORT",
+        `Invalid port: ${port}`,
+      );
+    }
+  }
+
+  if (n < 1) {
     throw new TcpTargetParseError(
       "ERR_TCP_INVALID_PORT",
       `Invalid port: ${port}`,
     );
   }
+
   return n;
 }
