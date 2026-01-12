@@ -116,4 +116,3 @@ mod tests {
         assert_eq!(scaler.advance_cycles(1), 1);
     }
 }
-

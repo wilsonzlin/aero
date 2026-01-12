@@ -151,8 +151,12 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     // Corrupt the interrupt controller's sink level state so restore must re-drive:
     // - PCI INTx levels via `PciIntxRouter::sync_levels_to_sink()`
     // - HPET level lines via `Hpet::sync_levels_to_sink()`.
-    interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(gsi_intx));
-    interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(gsi_hpet));
+    interrupts
+        .borrow_mut()
+        .lower_irq(InterruptInput::Gsi(gsi_intx));
+    interrupts
+        .borrow_mut()
+        .lower_irq(InterruptInput::Gsi(gsi_hpet));
 
     // Queue some i8042 controller output bytes (one in the output buffer, the rest in the pending
     // queue). Use the i8042 command 0xD2 ("write output buffer as keyboard").
@@ -174,9 +178,18 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     assert_eq!(restored.io_read(PCI_CFG_ADDR_PORT, 4), expected_cf8);
     assert_eq!(restored.io_read(PCI_CFG_DATA_PORT, 2) as u16, expected_cfc);
 
-    assert_eq!(read_ioapic_entry(&mut restored, gsi_pit), expected_ioapic_pit);
-    assert_eq!(read_ioapic_entry(&mut restored, gsi_intx), expected_ioapic_intx);
-    assert_eq!(read_ioapic_entry(&mut restored, gsi_hpet), expected_ioapic_hpet);
+    assert_eq!(
+        read_ioapic_entry(&mut restored, gsi_pit),
+        expected_ioapic_pit
+    );
+    assert_eq!(
+        read_ioapic_entry(&mut restored, gsi_intx),
+        expected_ioapic_intx
+    );
+    assert_eq!(
+        read_ioapic_entry(&mut restored, gsi_hpet),
+        expected_ioapic_hpet
+    );
 
     assert_eq!(
         restored.read_physical_u64(HPET_MMIO_BASE + 0x010),
@@ -195,7 +208,10 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
         expected_hpet_int_status
     );
 
-    assert_eq!(restored.io_read(DEFAULT_PM1A_CNT_BLK, 2) as u16, expected_pm1_cnt);
+    assert_eq!(
+        restored.io_read(DEFAULT_PM1A_CNT_BLK, 2) as u16,
+        expected_pm1_cnt
+    );
 
     // PIT count should be identical immediately after restore (no platform time has advanced yet).
     restored.io_write(PIT_CMD, 1, 0x00);
@@ -205,7 +221,10 @@ fn snapshot_restore_preserves_full_pc_platform_device_state() {
     assert_eq!(restored_pit_count, expected_pit_count);
 
     // i8042 status image preserved.
-    assert_eq!(restored.io_read(I8042_STATUS_PORT, 1) as u8, expected_i8042_status);
+    assert_eq!(
+        restored.io_read(I8042_STATUS_PORT, 1) as u8,
+        expected_i8042_status
+    );
 
     // i8042 output bytes preserved.
     let mut out = Vec::new();

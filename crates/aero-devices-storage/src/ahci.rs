@@ -12,16 +12,16 @@
 use std::fmt;
 use std::io;
 
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
-use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, AhciPortState};
-use aero_storage::SECTOR_SIZE;
-use memory::MemoryBus;
 use crate::ata::{
     AtaDrive, ATA_CMD_FLUSH_CACHE, ATA_CMD_FLUSH_CACHE_EXT, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT,
     ATA_CMD_SET_FEATURES, ATA_CMD_WRITE_DMA_EXT, ATA_ERROR_ABRT, ATA_STATUS_DRDY, ATA_STATUS_DSC,
     ATA_STATUS_ERR,
 };
 use aero_devices::irq::IrqLine;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
+use aero_io_snapshot::io::storage::state::{AhciControllerState, AhciHbaState, AhciPortState};
+use aero_storage::SECTOR_SIZE;
+use memory::MemoryBus;
 
 const HBA_REG_CAP: u64 = 0x00;
 const HBA_REG_GHC: u64 = 0x04;

@@ -65,7 +65,9 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     vm2.reset();
     vm2.restore_snapshot_bytes(&snap).unwrap();
 
-    let vga2 = vm2.vga().expect("pc platform should include VGA after restore");
+    let vga2 = vm2
+        .vga()
+        .expect("pc platform should include VGA after restore");
     vga2.borrow_mut().present();
     assert_eq!(vga2.borrow().get_resolution(), (width, height));
     let hash_after = framebuffer_hash_rgba8888(vga2.borrow().get_framebuffer());

@@ -275,8 +275,7 @@ mod tests {
             Rc::new(RefCell::new(PciConfigPorts::with_bus(pci_bus)));
         let mut adapter = SharedPciConfigPortsBiosAdapter::new(pci_ports.clone());
 
-        let before =
-            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
+        let before = firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
         let before_misaligned =
             firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3D);
         assert_eq!(before, before_misaligned);
@@ -285,8 +284,7 @@ mod tests {
         let new = (before & 0xFFFF_FF00) | u32::from(new_line);
         firmware::bios::PciConfigSpace::write_config_dword(&mut adapter, 0, 1, 0, 0x3D, new);
 
-        let after =
-            firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
+        let after = firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3C);
         let after_misaligned =
             firmware::bios::PciConfigSpace::read_config_dword(&mut adapter, 0, 1, 0, 0x3D);
         assert_eq!(after, new);

@@ -1,4 +1,6 @@
-use crate::{AeroSparseDisk, AeroSparseHeader, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk};
+use crate::{
+    AeroSparseDisk, AeroSparseHeader, Qcow2Disk, RawDisk, Result, StorageBackend, VhdDisk,
+};
 
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 const AEROSPAR_MAGIC: [u8; 8] = *b"AEROSPAR";

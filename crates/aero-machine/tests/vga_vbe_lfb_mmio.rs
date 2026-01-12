@@ -5,14 +5,15 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
-    let mut cfg = MachineConfig::default();
-    cfg.enable_pc_platform = false;
-    cfg.enable_vga = true;
-    // Keep the test output deterministic (not required for correctness, but avoids noise if the
-    // test ever gets extended).
-    cfg.enable_serial = false;
-    cfg.enable_i8042 = false;
-
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_vga: true,
+        // Keep the test output deterministic (not required for correctness, but avoids noise if the
+        // test ever gets extended).
+        enable_serial: false,
+        enable_i8042: false,
+        ..Default::default()
+    };
     let mut m = Machine::new(cfg).unwrap();
 
     // Ensure the legacy MMIO mapping is stable across resets (`map_mmio_once` persists mappings).
@@ -49,4 +50,3 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
     assert_eq!(vga.get_resolution(), (64, 64));
     assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
 }
-

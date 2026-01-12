@@ -3,10 +3,11 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
-    let mut cfg = MachineConfig::default();
-    cfg.enable_pc_platform = true;
-    cfg.enable_vga = true;
-
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    };
     let mut m = Machine::new(cfg).unwrap();
     let vga = m.vga().unwrap();
 
