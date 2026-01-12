@@ -621,6 +621,48 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
     return reporter.Fail("pixel mismatch after CreateStateBlock Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
   }
 
+  // Exercise D3DSBT_VERTEXSTATE: it should restore VB bindings (so draw works),
+  // but should NOT override pixel-state (texture/PS constants).
+  ComPtr<IDirect3DStateBlock9> sb_vertex;
+  hr = dev->CreateStateBlock(D3DSBT_VERTEXSTATE, sb_vertex.put());
+  if (FAILED(hr) || !sb_vertex) {
+    return reporter.FailHresult("CreateStateBlock(D3DSBT_VERTEXSTATE)", FAILED(hr) ? hr : E_FAIL);
+  }
+
+  // Mutate vertex state: unbind VB (draw should be broken unless vertex state is restored).
+  hr = dev->SetStreamSource(0, NULL, 0, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(NULL mutate for vertexstate)", hr);
+  }
+
+  // Mutate pixel state: make output blue (blue texture * white constant).
+  hr = dev->SetTexture(0, tex_b.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture B (vertexstate pixel mutate)", hr);
+  }
+  hr = dev->SetPixelShaderConstantF(0, c0_white, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantF(white vertexstate pixel mutate)", hr);
+  }
+
+  hr = sb_vertex->Apply();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("StateBlock Apply (vertexstate)", hr);
+  }
+  hr = DrawQuad(dev.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad (after vertexstate Apply)", hr);
+  }
+  px = 0;
+  hr = ReadBackbufferPixel(dev.get(), NULL, NULL, &px);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferPixel (after vertexstate Apply)", hr);
+  }
+  const D3DCOLOR expected_blue = 0xFF0000FFu;
+  if ((px & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu)) {
+    return reporter.Fail("pixel mismatch after vertexstate Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_blue);
+  }
+
   // Capture should update the existing block to the current device state.
   float c0_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   hr = dev->SetTexture(0, tex_a.get());
