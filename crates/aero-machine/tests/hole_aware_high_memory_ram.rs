@@ -212,3 +212,31 @@ fn physical_write_across_4gib_boundary_ignores_rom_and_writes_high_ram() {
         data[0x10..].to_vec()
     );
 }
+
+#[test]
+fn writes_to_pci_hole_do_not_mark_ram_dirty() {
+    let cfg = MachineConfig {
+        ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Machine::new performs a reset which clears dirty pages.
+    assert_eq!(
+        snapshot::SnapshotSource::take_dirty_pages(&mut m).unwrap(),
+        Vec::<u64>::new()
+    );
+
+    // This address is inside the reserved PCI/ECAM hole (no PC platform MMIO mapping in this test),
+    // so the write should be ignored and must not dirty any RAM pages.
+    m.write_physical_u8(firmware::bios::PCIE_ECAM_BASE, 0xAA);
+    assert_eq!(
+        snapshot::SnapshotSource::take_dirty_pages(&mut m).unwrap(),
+        Vec::<u64>::new()
+    );
+}
