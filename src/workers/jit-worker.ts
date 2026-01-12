@@ -242,8 +242,8 @@ ctx.addEventListener('message', (ev: MessageEvent<CpuToJitMessage>) => {
   switch (msg.type) {
     case 'JitWorkerInit':
       sharedMemory = msg.memory;
-      guestBase = msg.guest_base;
-      guestSize = msg.guest_size;
+      guestBase = clampU32(msg.guest_base);
+      guestSize = clampU32(msg.guest_size);
       // Warm up the compiler module in the background so the first hot block compile has lower latency.
       void loadJitWasmApi().catch(() => {});
       break;
