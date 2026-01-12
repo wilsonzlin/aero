@@ -11,6 +11,7 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
+use aero_storage::{MemBackend, RawDisk, VirtualDisk};
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -158,17 +159,7 @@ type Setup = (
     Rc<Cell<u32>>,
 );
 
-fn setup() -> Setup {
-    let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
-    let flushes = Rc::new(Cell::new(0u32));
-    let backend = SharedDisk {
-        data: backing.clone(),
-        flushes: flushes.clone(),
-    };
-
-    let blk = VirtioBlk::new(backend);
-    let mut dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
-
+fn setup_pci_device(mut dev: VirtioPciDevice) -> (VirtioPciDevice, Caps, GuestRam) {
     // Basic PCI identification.
     let mut id = [0u8; 4];
     dev.config_read(0, &mut id);
@@ -250,11 +241,35 @@ fn setup() -> Setup {
     bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, USED_RING);
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1); // queue_enable
 
+    (dev, caps, mem)
+}
+
+fn setup() -> Setup {
+    let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
+    let flushes = Rc::new(Cell::new(0u32));
+    let backend = SharedDisk {
+        data: backing.clone(),
+        flushes: flushes.clone(),
+    };
+
+    let blk = VirtioBlk::new(backend);
+    let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+
+    let (dev, caps, mem) = setup_pci_device(dev);
+
     (dev, caps, mem, backing, flushes)
 }
 
 fn kick_queue0(dev: &mut VirtioPciDevice, caps: &Caps, mem: &mut GuestRam) {
     dev.bar0_write(caps.notify, &0u16.to_le_bytes(), mem);
+}
+
+fn setup_aero_storage_disk() -> (VirtioPciDevice, Caps, GuestRam) {
+    let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
+    let backend: Box<dyn VirtualDisk> = Box::new(disk);
+    let blk = VirtioBlk::new(backend);
+    let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+    setup_pci_device(dev)
 }
 
 #[test]
@@ -495,4 +510,60 @@ fn virtio_blk_rejects_requests_beyond_capacity() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert!(backing.borrow().iter().all(|b| *b == 0));
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_accepts_aero_storage_virtual_disk_backend() {
+    let (mut dev, caps, mut mem) = setup_aero_storage_disk();
+
+    // WRITE request: OUT sector 2.
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+
+    let sector = 2u64;
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, sector).unwrap();
+
+    let payload: Vec<u8> = (0..512u16).flat_map(|v| v.to_le_bytes()).collect();
+    mem.write(data, &payload).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 1024, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // READ request: IN sector 2.
+    let data2 = 0xA000;
+    mem.write(data2, &vec![0u8; payload.len()]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_IN).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, sector).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data2, 1024, 0x0001 | 0x0002, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    // Add to avail ring at index 1.
+    write_u16_le(&mut mem, AVAIL_RING + 4 + 2, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 2).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    let got = mem.get_slice(data2, payload.len()).unwrap();
+    assert_eq!(got, payload.as_slice());
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 }

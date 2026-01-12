@@ -3,6 +3,7 @@ use crate::memory::write_u8;
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
+use aero_storage::{DiskError as StorageDiskError, VirtualDisk};
 
 pub const VIRTIO_DEVICE_TYPE_BLK: u16 = 2;
 
@@ -86,6 +87,35 @@ pub trait BlockBackend {
     }
     fn device_id(&self) -> [u8; 20] {
         [0; 20]
+    }
+}
+
+fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
+    match err {
+        StorageDiskError::OutOfBounds { .. } => BlockBackendError::OutOfBounds,
+        _ => BlockBackendError::IoError,
+    }
+}
+
+impl BlockBackend for Box<dyn VirtualDisk> {
+    fn len(&self) -> u64 {
+        self.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        self.as_mut()
+            .read_at(offset, dst)
+            .map_err(map_storage_error)
+    }
+
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        self.as_mut()
+            .write_at(offset, src)
+            .map_err(map_storage_error)
+    }
+
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
+        self.as_mut().flush().map_err(map_storage_error)
     }
 }
 
