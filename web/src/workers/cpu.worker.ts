@@ -204,6 +204,8 @@ let didIoDemo = false;
 
 let irqBitmapLo = 0;
 let irqBitmapHi = 0;
+let a20Enabled = false;
+let wasmVmA20View: Uint8Array | null = null;
 // Per-IRQ reference counts so multiple devices can share an interrupt input line
 // (wire-OR semantics).
 //
@@ -292,6 +294,51 @@ function readDemoNumber(demo: unknown, key: string): number | undefined {
     }
   }
   return undefined;
+}
+
+function writeWasmVmA20Flag(enabled: boolean): void {
+  a20Enabled = Boolean(enabled);
+  const view = wasmVmA20View;
+  if (!view) return;
+  const value = a20Enabled ? 1 : 0;
+  try {
+    // Prefer Atomics for shared memories so other threads (if any) observe the update immediately.
+    const Sab = globalThis.SharedArrayBuffer;
+    if (typeof Sab !== "undefined" && view.buffer instanceof Sab) {
+      Atomics.store(view, 0, value);
+    } else {
+      view[0] = value;
+    }
+  } catch {
+    // Fall back to a plain store if Atomics is unavailable (e.g. non-shared memory).
+    view[0] = value;
+  }
+}
+
+function initWasmVmA20View(vm: unknown): void {
+  wasmVmA20View = null;
+  if (!vm || typeof vm !== "object") return;
+  const record = vm as Record<string, unknown>;
+  const fn = record.a20_enabled_ptr;
+  if (typeof fn !== "function") return;
+  let ptr: unknown;
+  try {
+    ptr = (fn as (...args: unknown[]) => unknown).call(vm);
+  } catch {
+    return;
+  }
+  const addr = typeof ptr === "number" ? ptr : 0;
+  if (!Number.isFinite(addr) || addr <= 0) return;
+  const off = addr >>> 0;
+  if (off === 0) return;
+  try {
+    const buf = guestU8.buffer;
+    const byteLen = (buf as ArrayBufferLike).byteLength ?? 0;
+    if (off >= byteLen) return;
+    wasmVmA20View = new Uint8Array(buf, off, 1);
+  } catch {
+    wasmVmA20View = null;
+  }
 }
 
 function maybePostHdaDemoStats(): void {
@@ -1865,6 +1912,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       ioNetRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
       irqBitmapLo = 0;
       irqBitmapHi = 0;
+      a20Enabled = false;
+      wasmVmA20View = null;
       irqRefCounts.fill(0);
       irqWarnedUnderflow.fill(0);
       irqWarnedSaturated.fill(0);
@@ -1897,6 +1946,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         },
         onA20: (enabled) => {
           perf.counter("cpu:io:a20Enabled", enabled ? 1 : 0);
+          writeWasmVmA20Flag(enabled);
           Atomics.store(status, StatusIndex.CpuA20Enabled, enabled ? 1 : 0);
         },
         onSerialOutput: (port, data) => {
@@ -2087,6 +2137,7 @@ async function initWasmInBackground(
     wasmApi = api;
     cpuDemo = null;
     wasmVm = null;
+    wasmVmA20View = null;
     vmBooted = false;
     vmBootSectorLoaded = false;
     vmLastVgaTextBytes = null;
@@ -2118,9 +2169,14 @@ async function initWasmInBackground(
     if (WasmVm) {
       try {
         wasmVm = new WasmVm(guestU8.byteOffset >>> 0, guestU8.byteLength >>> 0);
+        initWasmVmA20View(wasmVm);
+        // Keep CPU-side A20 gating consistent with any already-observed platform state (e.g. IO
+        // worker delivered an a20Set event before WASM init completed).
+        writeWasmVmA20Flag(a20Enabled);
       } catch (err) {
         console.warn("Failed to init WasmVm wasm export:", err);
         wasmVm = null;
+        wasmVmA20View = null;
       }
     }
 
@@ -2481,14 +2537,17 @@ async function runLoopInner(): Promise<void> {
             }
           }
 
-          if (vmBootSectorLoaded && !vmBooted) {
-            try {
-              wasmVm.reset_real_mode(0x7c00);
-              vmBooted = true;
-              vmLastVgaTextBytes = null;
-            } catch (err) {
-              console.error("[cpu] vm boot: reset_real_mode failed:", err);
-            }
+            if (vmBootSectorLoaded && !vmBooted) {
+              try {
+                wasmVm.reset_real_mode(0x7c00);
+                // `reset_real_mode` reconstructs the CPU core (including `a20_enabled`), so
+                // re-apply the current platform A20 gate state.
+                writeWasmVmA20Flag(a20Enabled);
+                vmBooted = true;
+                vmLastVgaTextBytes = null;
+              } catch (err) {
+                console.error("[cpu] vm boot: reset_real_mode failed:", err);
+              }
           }
 
           if (vmBooted) {
@@ -2653,6 +2712,7 @@ async function runLoopInner(): Promise<void> {
       // ignore
     }
     wasmVm = null;
+    wasmVmA20View = null;
   }
   ctx.close();
 }

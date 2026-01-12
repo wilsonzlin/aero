@@ -888,6 +888,13 @@ export interface WasmApi {
         reset_real_mode(entryIp: number): void;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         /**
+         * Return the linear-memory pointer to the `CpuState.a20_enabled` flag.
+         *
+         * Newer builds expose this so the JS host can update the A20 gate state without
+         * re-entering WASM while the VM is executing (re-entrant `&mut self` would be UB).
+         */
+        a20_enabled_ptr?(): number;
+        /**
          * Deterministic CPU/MMU snapshot helpers for the minimal Tier-0 VM loop.
          *
          * Used by the multi-worker VM snapshot orchestrator (CPU + IO workers).

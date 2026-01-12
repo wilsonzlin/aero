@@ -294,6 +294,21 @@ impl WasmVm {
         self.bus.sync(&self.cpu.state);
     }
 
+    /// Return the linear-memory pointer to the `CpuState.a20_enabled` flag.
+    ///
+    /// The browser runtime updates the A20 gate state in response to I/O worker events. Those
+    /// events can arrive *while the VM is executing* (e.g. during an `IN`/`OUT` instruction that
+    /// calls a JS import to perform port I/O, which synchronously drains pending device events).
+    ///
+    /// Calling back into WASM from that import to mutate `WasmVm` would be *re-entrant* and can
+    /// violate Rust's aliasing rules (nested `&mut self` borrows). Instead, the host can write
+    /// `0`/`1` into the returned address directly in the module's linear memory.
+    pub fn a20_enabled_ptr(&self) -> u32 {
+        // Safety: the pointer is into this module's linear memory (wasm32); JS can treat it as an
+        // absolute byte offset into `WebAssembly.Memory.buffer`.
+        core::ptr::addr_of!(self.cpu.state.a20_enabled) as u32
+    }
+
     /// Execute up to `max_insts` instructions.
     ///
     /// This is a cooperative slice intended to be called repeatedly by the CPU worker.
