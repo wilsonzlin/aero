@@ -78,6 +78,34 @@ static VOID evt_dpc(_Inout_ PVIRTIO_INTX Intx, _In_ UCHAR IsrStatus, _In_opt_ PV
     ctx->last_isr_status = IsrStatus;
 }
 
+static int g_mmio_read_count = 0;
+static const volatile VOID* g_last_mmio_read_reg = NULL;
+static size_t g_last_mmio_read_width = 0;
+
+static BOOLEAN mmio_read_handler(_In_ const volatile VOID* Register, _In_ size_t Width, _Out_ ULONGLONG* ValueOut)
+{
+    const volatile UCHAR* reg_u8;
+
+    if (ValueOut == NULL) {
+        return FALSE;
+    }
+
+    g_mmio_read_count++;
+    g_last_mmio_read_reg = Register;
+    g_last_mmio_read_width = Width;
+
+    if (Register == NULL || Width != 1) {
+        return FALSE;
+    }
+
+    reg_u8 = (const volatile UCHAR*)Register;
+
+    /* Read-to-clear semantics for ISR byte. */
+    *ValueOut = (ULONGLONG)(*reg_u8);
+    *(volatile UCHAR*)reg_u8 = 0;
+    return TRUE;
+}
+
 static CM_PARTIAL_RESOURCE_DESCRIPTOR make_int_desc(void)
 {
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
@@ -126,6 +154,36 @@ static void test_connect_validation(void)
     /* Parameter validation failures must not call through to WDK interrupt routines. */
     assert(WdkTestGetIoConnectInterruptCount() == 0);
     assert(WdkTestGetIoDisconnectInterruptCount() == 0);
+}
+
+static void test_isr_uses_mmio_read_hook_when_installed(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+
+    g_mmio_read_count = 0;
+    g_last_mmio_read_reg = NULL;
+    g_last_mmio_read_width = 0;
+    WdkSetMmioHandlers(mmio_read_handler, NULL);
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    isr_reg = 0x3;
+    assert(WdkTestTriggerInterrupt(intx.InterruptObject) != FALSE);
+
+    assert(g_mmio_read_count == 1);
+    assert(g_last_mmio_read_reg == (const volatile VOID*)&isr_reg);
+    assert(g_last_mmio_read_width == 1);
+    assert(isr_reg == 0);
+
+    VirtioIntxDisconnect(&intx);
+
+    WdkSetMmioHandlers(NULL, NULL);
 }
 
 static void test_connect_descriptor_translation(void)
@@ -1009,6 +1067,7 @@ static void test_evt_dpc_receives_unknown_bits(void)
 int main(void)
 {
     test_connect_validation();
+    test_isr_uses_mmio_read_hook_when_installed();
     test_connect_descriptor_translation();
     test_connect_failure_zeroes_state();
     test_connect_disconnect_calls_wdk_routines();
