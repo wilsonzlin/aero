@@ -193,3 +193,40 @@ fn snapshot_load_tolerates_gpe0_length_mismatch_for_forward_compat() {
         assert_eq!(pm.read(cfg.gpe0_blk + 3, 1) as u8, 0xDD);
     }
 }
+
+#[test]
+fn snapshot_load_does_not_trigger_s5_poweroff_callback() {
+    // Even if a snapshot encodes a PM1 control register value that would normally request S5,
+    // restoring that state must *not* invoke the host power-off callback. The callback should only
+    // fire in response to a guest write while the VM is running.
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+
+    let power_off_calls = Rc::new(RefCell::new(0u32));
+    let power_off_calls_for_cb = power_off_calls.clone();
+
+    let mut pm = AcpiPmIo::new_with_callbacks_and_clock(
+        cfg,
+        AcpiPmCallbacks {
+            sci_irq: Box::new(IrqLog::default()),
+            request_power_off: Some(Box::new(move || {
+                *power_off_calls_for_cb.borrow_mut() += 1;
+            })),
+        },
+        clock,
+    );
+
+    // Build an intentionally contrived snapshot that sets SLP_TYP=S5 and SLP_EN=1.
+    const TAG_PM1_CNT: u16 = 3;
+    let pm1_cnt = (u16::from(aero_devices::acpi_pm::SLP_TYP_S5) << 10) | (1 << 13);
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u16(TAG_PM1_CNT, pm1_cnt);
+    let bytes = w.finish();
+
+    pm.load_state(&bytes).unwrap();
+    assert_eq!(
+        *power_off_calls.borrow(),
+        0,
+        "load_state must not call request_power_off"
+    );
+}
