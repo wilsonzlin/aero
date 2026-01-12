@@ -42,8 +42,12 @@ pub enum Command {
 
     /// Disk read request.
     ///
-    /// Read `len` bytes starting at `disk_offset` into the shared guest memory
-    /// buffer at `guest_offset`.
+    /// Read `len` bytes starting at `disk_offset` into guest memory at `guest_offset`.
+    ///
+    /// `guest_offset` is a **guest physical address** (GPA). Depending on the platform, guest RAM
+    /// may be non-contiguous (e.g. PC/Q35 ECAM/PCI hole + high-RAM remap above 4 GiB), so the
+    /// implementation must translate GPAs back into its backing store before indexing a flat
+    /// byte buffer.
     DiskRead {
         id: u32,
         disk_offset: u64,
@@ -53,8 +57,10 @@ pub enum Command {
 
     /// Disk write request.
     ///
-    /// Write `len` bytes from the shared guest memory buffer at `guest_offset`
-    /// to the disk starting at `disk_offset`.
+    /// Write `len` bytes from guest memory at `guest_offset` to the disk starting at `disk_offset`.
+    ///
+    /// `guest_offset` is a **guest physical address** (GPA). See [`Command::DiskRead`] for notes on
+    /// non-contiguous guest RAM layouts.
     DiskWrite {
         id: u32,
         disk_offset: u64,
