@@ -61,6 +61,9 @@ pub use pci_io_router::{PciIoBarHandler, PciIoBarRouter};
 mod windows7_storage;
 pub use windows7_storage::Windows7StorageTopologyConfig;
 
+mod snapshot_harness;
+pub use snapshot_harness::PcPlatformSnapshotHarness;
+
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///
 /// This follows the QEMU Q35 convention (256MiB window at 0xB000_0000 covering buses 0..=255).

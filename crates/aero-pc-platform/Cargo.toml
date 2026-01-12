@@ -22,6 +22,7 @@ aero-pc-constants = { path = "../aero-pc-constants" }
 aero-storage = { path = "../aero-storage" }
 aero-virtio = { path = "../aero-virtio", default-features = false }
 firmware = { path = "../firmware" }
+aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 memory = { path = "../memory" }
 
 [dev-dependencies]
