@@ -211,6 +211,62 @@ fn tier2_wasm_memory_import_rejects_maximum_above_wasm32_limit() {
     );
 }
 
+#[test]
+#[should_panic(expected = "exceeds wasm32 max pages")]
+fn tier1_wasm_memory_import_rejects_minimum_above_wasm32_limit() {
+    let _ = Tier1WasmCodegen::new().compile_block_with_options(
+        &trivial_tier1_block(),
+        Tier1WasmOptions {
+            memory_min_pages: WASM32_MAX_PAGES + 1,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "exceeds wasm32 max pages")]
+fn tier2_wasm_memory_import_rejects_minimum_above_wasm32_limit() {
+    let trace = trivial_tier2_trace();
+    let plan = RegAllocPlan::default();
+    let _ = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            memory_min_pages: WASM32_MAX_PAGES + 1,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "> max_pages")]
+fn tier1_wasm_memory_import_rejects_min_greater_than_max() {
+    let _ = Tier1WasmCodegen::new().compile_block_with_options(
+        &trivial_tier1_block(),
+        Tier1WasmOptions {
+            memory_min_pages: 5,
+            memory_max_pages: Some(4),
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "> max_pages")]
+fn tier2_wasm_memory_import_rejects_min_greater_than_max() {
+    let trace = trivial_tier2_trace();
+    let plan = RegAllocPlan::default();
+    let _ = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            memory_min_pages: 5,
+            memory_max_pages: Some(4),
+            ..Default::default()
+        },
+    );
+}
+
 #[cfg(feature = "legacy-baseline")]
 #[test]
 fn legacy_wasm_memory_import_shared_defaults_to_4gib_maximum() {
@@ -261,6 +317,35 @@ fn legacy_wasm_memory_import_rejects_maximum_above_wasm32_limit() {
         &block,
         LegacyWasmOptions {
             memory_max_pages: Some(WASM32_MAX_PAGES + 1),
+            ..Default::default()
+        },
+    );
+}
+
+#[cfg(feature = "legacy-baseline")]
+#[test]
+#[should_panic(expected = "exceeds wasm32 max pages")]
+fn legacy_wasm_memory_import_rejects_minimum_above_wasm32_limit() {
+    let block = trivial_legacy_block();
+    let _ = LegacyWasmCodegen::new().compile_block_with_options(
+        &block,
+        LegacyWasmOptions {
+            memory_min_pages: WASM32_MAX_PAGES + 1,
+            ..Default::default()
+        },
+    );
+}
+
+#[cfg(feature = "legacy-baseline")]
+#[test]
+#[should_panic(expected = "> max_pages")]
+fn legacy_wasm_memory_import_rejects_min_greater_than_max() {
+    let block = trivial_legacy_block();
+    let _ = LegacyWasmCodegen::new().compile_block_with_options(
+        &block,
+        LegacyWasmOptions {
+            memory_min_pages: 5,
+            memory_max_pages: Some(4),
             ..Default::default()
         },
     );
