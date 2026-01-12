@@ -40,7 +40,8 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
 - `AEROGPU_D3D9_TRACE_FILTER=<TOKENS>`  
   Records only entrypoints whose trace name contains any of the comma-separated tokens (case-insensitive substring match).
   Leading/trailing whitespace around tokens is ignored.
-  Note: the filter applies to both recording and dump triggers (for example, `AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` / `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` will only fire for filtered-in entrypoints).
+  Note: the filter applies to recording and per-entrypoint dump triggers (`AEROGPU_D3D9_TRACE_DUMP_ON_FAIL=1` / `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` will only fire for filtered-in entrypoints).
+  The present-count dump trigger (`AEROGPU_D3D9_TRACE_DUMP_PRESENT`) is not suppressed by the filter, but the filter still controls which calls are recorded (including whether the triggering `Present` call is force-recorded).
   Example: `AEROGPU_D3D9_TRACE_FILTER=StateBlock,ValidateDevice`
   Tip: use `AEROGPU_D3D9_TRACE_FILTER=stub` to record only stubbed entrypoints (trace names include the substring `(stub)`).
 
@@ -85,6 +86,7 @@ The trace buffer is only dumped when triggered:
 - `AEROGPU_D3D9_TRACE_DUMP_PRESENT=<N>`  
   Dumps once when the UMD device `present_count` reaches `N` (works for both `Present` and `PresentEx`).
   Note: when `AEROGPU_D3D9_TRACE_MODE=unique`, the triggering `Present`/`PresentEx` call is force-recorded so the dump still includes the call that caused the trigger (unless it is filtered out by `AEROGPU_D3D9_TRACE_FILTER`).
+  The dump still triggers even if the present entrypoints are filtered out; the dump just won't include the present call record.
 
 - `AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1`  
   Dumps once on `DllMain(DLL_PROCESS_DETACH)`.
