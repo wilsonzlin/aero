@@ -43,8 +43,9 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, GsiLevelSink, PciBarDefinition, PciBarMmioHandler,
-    PciBarMmioRouter, PciBdf, PciConfigPorts, PciCoreSnapshot, PciDevice, PciEcamConfig,
-    PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
+    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciResourceAllocator,
     PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -1208,53 +1209,6 @@ impl MmioHandler for HpetMmio {
         let mut hpet = self.hpet.borrow_mut();
         let mut interrupts = self.interrupts.borrow_mut();
         hpet.mmio_write(offset, size, value, &mut *interrupts);
-    }
-}
-
-/// AHCI ABAR (BAR5) handler registered via the machine's [`PciBarMmioRouter`].
-///
-/// The AHCI device model gates MMIO accesses on PCI COMMAND.MEM (bit 1). `Machine` maintains a
-/// separate canonical PCI config space (`PciConfigPorts`) for guest enumeration, so we must mirror
-/// the live PCI command (and BAR base) into the AHCI model before each MMIO access.
-struct MachineAhciMmioBar {
-    pci_cfg: SharedPciConfigPorts,
-    ahci: Rc<RefCell<AhciPciDevice>>,
-    bdf: PciBdf,
-}
-
-impl MachineAhciMmioBar {
-    fn sync_pci_state(&mut self) {
-        let (command, bar5_base) = {
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(self.bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar5_base = cfg
-                .and_then(|cfg| cfg.bar_range(aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            (command, bar5_base)
-        };
-
-        let mut ahci = self.ahci.borrow_mut();
-        ahci.config_mut().set_command(command);
-        if bar5_base != 0 {
-            ahci.config_mut().set_bar_base(
-                aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
-                bar5_base,
-            );
-        }
-    }
-}
-
-impl PciBarMmioHandler for MachineAhciMmioBar {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        self.sync_pci_state();
-        self.ahci.borrow_mut().mmio_read(offset, size)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        self.sync_pci_state();
-        self.ahci.borrow_mut().mmio_write(offset, size, value);
     }
 }
 
@@ -3019,11 +2973,12 @@ impl Machine {
                         router.register_handler(
                             bdf,
                             aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
-                            MachineAhciMmioBar {
-                                pci_cfg: pci_cfg.clone(),
+                            PciConfigSyncedMmioBar::new(
+                                pci_cfg.clone(),
                                 ahci,
                                 bdf,
-                            },
+                                aero_devices_storage::pci_ahci::AHCI_ABAR_BAR_INDEX,
+                            ),
                         );
                     }
                     if let Some(vga) = vga.clone() {
