@@ -206,6 +206,142 @@ fn build_ps_cbuffer0_dxbc() -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
+fn build_ps_passthrough_color_dxbc() -> Vec<u8> {
+    // Minimal PS that returns COLOR0 (`v1`) as SV_Target0.
+    let isgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x0f,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+    let osgn = build_signature_chunk(&[SigParam {
+        semantic_name: "SV_Target",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x0f,
+    }]);
+
+    // ps_4_0
+    let version_token = 0x40u32;
+    // mov o0, v1
+    let mov_token = 0x01u32 | (5u32 << 11);
+    let dst_o0 = 0x0010_f022u32;
+    let src_v1 = 0x001e_4016u32;
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        mov_token,
+        dst_o0,
+        0, // o0 index
+        src_v1,
+        1, // v1 index
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shdr = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shdr.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+}
+
+fn build_vs_sample_t0_s0_to_color1_dxbc(u: f32, v: f32) -> Vec<u8> {
+    // Minimal VS that samples t0+s0 at a constant coord and outputs it as COLOR0 (o1). Position is
+    // passed through from input POSITION0 (v0) to SV_Position (o0).
+    //
+    // Token stream (SM4 subset):
+    //   sample_l o1, l(u, v, 0, 0), t0, s0, l(0)
+    //   mov o0, v0
+    //   ret
+    let isgn = build_signature_chunk(&[SigParam {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        register: 0,
+        mask: 0x07,
+    }]);
+    let osgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x0f,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+
+    // vs_4_0
+    let version_token = 0x0001_0040u32;
+
+    // Vertex shaders cannot use implicit-derivative sampling (`textureSample`) in WebGPU/WGSL, so
+    // use the `sample_l` variant which translates to `textureSampleLevel` (explicit LOD) and is
+    // valid in the vertex stage.
+    let sample_l_opcode_token = 0x46u32 | (14u32 << 11);
+    let mov_token = 0x01u32 | (5u32 << 11);
+    let ret_token = 0x3eu32 | (1u32 << 11);
+
+    let dst_o = 0x0010_f022u32;
+    let imm_vec4 = 0x0000_f042u32;
+    let imm_scalar = 0x0000_0049u32;
+    let t0 = 0x0010_0072u32;
+    let s0 = 0x0010_0062u32;
+    let src_v0 = 0x001e_4016u32;
+
+    let u = u.to_bits();
+    let v = v.to_bits();
+
+    let mut tokens = vec![
+        version_token,
+        0, // length patched below
+        // sample_l o1, l(u,v,0,0), t0, s0, l(0)
+        sample_l_opcode_token,
+        dst_o,
+        1, // o1 index
+        imm_vec4,
+        u,
+        v,
+        0,
+        0,
+        t0,
+        0,
+        s0,
+        0,
+        imm_scalar,
+        0, // lod=0
+        // mov o0, v0
+        mov_token,
+        dst_o,
+        0, // o0
+        src_v0,
+        0, // v0
+        ret_token,
+    ];
+    tokens[1] = tokens.len() as u32;
+
+    let mut shdr = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        shdr.extend_from_slice(&t.to_le_bytes());
+    }
+
+    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+}
+
 fn build_ilay_pos3() -> Vec<u8> {
     // Build an ILAY blob that matches the `vs_matrix.dxbc` fixture input signature: POSITION0 only.
     //
@@ -438,6 +574,134 @@ fn aerogpu_cmd_runtime_signature_driven_ps_constant_buffer_binding() {
         for (i, px) in pixels.chunks_exact(4).enumerate() {
             assert_eq!(px, &[0, 0, 255, 255], "pixel index {i}");
         }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_runtime_signature_driven_vs_texture_sampler_binding() {
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const IL: u32 = 3;
+        const VB: u32 = 4;
+        const TEX: u32 = 5;
+        const RTEX: u32 = 6;
+        const SAMPLER: u32 = 7;
+
+        rt.create_shader_dxbc(VS, &build_vs_sample_t0_s0_to_color1_dxbc(1.1, 0.5))
+            .unwrap();
+        rt.create_shader_dxbc(PS, &build_ps_passthrough_color_dxbc())
+            .unwrap();
+        rt.create_input_layout(IL, &build_ilay_pos3()).unwrap();
+
+        let vertices: [VertexPos3; 3] = [
+            VertexPos3 {
+                pos: [-1.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [3.0, -1.0, 0.0],
+            },
+            VertexPos3 {
+                pos: [-1.0, 3.0, 0.0],
+            },
+        ];
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        // 2x2 texture with left column red and right column green (both rows identical). This
+        // makes clamp vs repeat observable for u=1.1.
+        rt.create_texture2d(
+            TEX,
+            2,
+            2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let tex_data: [[u8; 4]; 4] = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+        ];
+        rt.write_texture_rgba8(TEX, 2, 2, 2 * 4, bytemuck::bytes_of(&tex_data))
+            .unwrap();
+        rt.set_vs_texture(0, Some(TEX));
+
+        rt.create_texture2d(
+            RTEX,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(IL));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<VertexPos3>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        // Default sampler fallback is clamp-to-edge; u=1.1 should clamp and hit the right column.
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 255, 0, 255], "default clamp sampler");
+
+        // Explicit repeat sampler should wrap u=1.1 -> 0.1 and hit the left column.
+        rt.create_sampler(
+            SAMPLER,
+            &wgpu::SamplerDescriptor {
+                label: Some("aerogpu_cmd_runtime vs repeat sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        rt.set_vs_sampler(0, Some(SAMPLER));
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![255, 0, 0, 255], "repeat sampler");
+
+        // Unbound SRVs should fall back to a dummy (0,0,0,1) texture.
+        rt.set_vs_texture(0, None);
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(pixels, vec![0, 0, 0, 255], "unbound texture fallback");
     });
 }
 
