@@ -709,6 +709,9 @@ struct VgaLfbMmio {
 
 impl MmioHandler for VgaLfbMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         let size = match size {
             1 | 2 | 4 | 8 => size,
             _ => size.clamp(1, 8),
@@ -726,6 +729,9 @@ impl MmioHandler for VgaLfbMmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let size = match size {
             1 | 2 | 4 | 8 => size,
             _ => size.clamp(1, 8),
@@ -4070,6 +4076,19 @@ mod tests {
         sector[510] = 0x55;
         sector[511] = 0xAA;
         sector
+    }
+
+    #[test]
+    fn vga_lfb_mmio_size0_is_noop() {
+        let vga = Rc::new(RefCell::new(VgaDevice::new()));
+        vga.borrow_mut().vram_mut()[0] = 0xAA;
+
+        let mut mmio = VgaLfbMmio { dev: vga.clone() };
+
+        assert_eq!(MmioHandler::read(&mut mmio, 0, 0), 0);
+        MmioHandler::write(&mut mmio, 0, 0, 0x55);
+
+        assert_eq!(vga.borrow().vram()[0], 0xAA);
     }
 
     fn build_paged_serial_boot_sector(message: &[u8]) -> [u8; 512] {
