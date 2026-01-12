@@ -311,6 +311,40 @@ type ChunkCache = {
   close?: () => void;
 };
 
+class NoopChunkCache implements ChunkCache {
+  async getChunk(_chunkIndex: number): Promise<Uint8Array<ArrayBuffer> | null> {
+    return null;
+  }
+
+  async putChunk(_chunkIndex: number, _bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+    // no-op
+  }
+
+  async prefetchChunks(_chunkIndices: number[]): Promise<void> {
+    // no-op
+  }
+
+  getCachedBytes(): number {
+    return 0;
+  }
+
+  getCacheLimitBytes(): number | null {
+    return 0;
+  }
+
+  async flush(): Promise<void> {
+    // no-op
+  }
+
+  async clear(): Promise<void> {
+    // no-op
+  }
+
+  close(): void {
+    // no-op
+  }
+}
+
 class IdbChunkCache implements ChunkCache {
   private cachedBytes: number;
   private readonly cacheLimitBytes: number | null;
@@ -1055,7 +1089,9 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     };
 
     let cache: ChunkCache;
-    if (options.store) {
+    if (resolved.cacheLimitBytes === 0) {
+      cache = new NoopChunkCache();
+    } else if (options.store) {
       // Tests can inject an in-memory store to avoid depending on OPFS/IDB.
       const manager = new RemoteCacheManager(new StoreDirHandle(resolved.store, REMOTE_CACHE_ROOT_PATH));
       const opened = await manager.openCache(cacheKeyParts, { chunkSizeBytes: manifest.chunkSize, validators });
