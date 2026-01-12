@@ -190,6 +190,35 @@ function buildDynamicVhdFixture(): { file: Uint8Array; logical: Uint8Array } {
   return { file, logical };
 }
 
+function buildFixedVhdFixtureWithFooterCopy(): { file: Uint8Array; logical: Uint8Array } {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  // Fixed disks use dataOffset = u64::MAX.
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const fileSize = footerSize + logicalSize + footerSize;
+  const file = new Uint8Array(fileSize);
+  // Optional footer copy at offset 0.
+  file.set(footer, 0);
+
+  const sector0 = new Uint8Array(512);
+  for (let i = 0; i < sector0.length; i++) sector0[i] = (0x10 + i) & 0xff;
+  file.set(sector0, footerSize);
+
+  // Footer at end.
+  file.set(footer, fileSize - footerSize);
+
+  const logical = new Uint8Array(logicalSize);
+  logical.set(sector0, 0);
+  return { file, logical };
+}
+
 function buildIsoFixture(): Uint8Array {
   const size = 0x8001 + 5;
   const file = new Uint8Array(size);
@@ -273,6 +302,11 @@ test("detectFormat: qcow2/vhd/iso signatures", async () => {
     assert.equal(fmt, "vhd");
   }
   {
+    const { file } = buildFixedVhdFixtureWithFooterCopy();
+    const fmt = await detectFormat(new MemSource(file), "disk.unknown");
+    assert.equal(fmt, "vhd");
+  }
+  {
     const file = buildIsoFixture();
     const fmt = await detectFormat(new MemSource(file), "disk.unknown");
     assert.equal(fmt, "iso");
@@ -327,6 +361,20 @@ test("convertToAeroSparse: qcow2 sparse copy preserves logical bytes", async () 
 
 test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () => {
   const { file, logical } = buildDynamicVhdFixture();
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });
+  assert.equal(manifest.originalFormat, "vhd");
+  assert.equal(manifest.logicalSize, logical.byteLength);
+
+  const parsed = parseAeroSparse(sync.toBytes());
+  const roundtrip = readLogical(parsed, 0, logical.byteLength);
+  assert.deepEqual(roundtrip, logical);
+  assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
+});
+
+test("convertToAeroSparse: fixed VHD footer copy at offset 0 is ignored", async () => {
+  const { file, logical } = buildFixedVhdFixtureWithFooterCopy();
   const src = new MemSource(file);
   const sync = new MemSyncAccessHandle();
   const { manifest } = await convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 });

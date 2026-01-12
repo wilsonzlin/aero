@@ -546,7 +546,24 @@ async function convertVhdToSparse(
 
   if (footer.diskType === VHD_TYPE_FIXED) {
     // Fixed VHD is raw data followed by footer.
-    return await convertRawSliceToSparse(src, sync, blockSize, logicalSize, 0, options, "vhd");
+    //
+    // Some tools may also write a redundant copy of the footer at offset 0. When present and
+    // identical to the EOF footer, the data region begins immediately after it.
+    let baseOffset = 0;
+    if (src.size >= 1024) {
+      const cookie0 = await src.readAt(0, 8);
+      if (ascii(cookie0) === "conectix") {
+        try {
+          const footer0 = VhdFooter.parse(await src.readAt(0, 512));
+          if (footer0.diskType === VHD_TYPE_FIXED && bytesEqual(footer0.raw, footer.raw)) {
+            baseOffset = 512;
+          }
+        } catch {
+          // Ignore: offset 0 may be raw disk data that happens to start with the VHD cookie.
+        }
+      }
+    }
+    return await convertRawSliceToSparse(src, sync, blockSize, logicalSize, baseOffset, options, "vhd");
   }
 
   if (footer.diskType !== VHD_TYPE_DYNAMIC) {
@@ -692,6 +709,14 @@ function ascii(bytes: Uint8Array): string {
   return out;
 }
 
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 function readU32BE(buf: Uint8Array, offset: number): number {
   return (
     (buf[offset] << 24) |
@@ -796,9 +821,8 @@ class Qcow2 {
 }
 
 class VhdFooter {
-  static async read(src: RandomAccessSource): Promise<VhdFooter> {
-    if (src.size < 512) throw new Error("VHD too small");
-    const footerBytes = await src.readAt(src.size - 512, 512);
+  static parse(footerBytes: Uint8Array): VhdFooter {
+    if (footerBytes.byteLength !== 512) throw new Error("invalid VHD footer length");
     if (ascii(footerBytes.subarray(0, 8)) !== "conectix") throw new Error("missing VHD footer cookie");
 
     const storedChecksum = readU32BE(footerBytes, 64);
@@ -813,17 +837,25 @@ class VhdFooter {
     const currentSize = Number(readU64BE(footerBytes, 48));
     const diskType = readU32BE(footerBytes, 60);
     if (!Number.isSafeInteger(currentSize) || currentSize <= 0) throw new Error("invalid VHD current_size");
-    return new VhdFooter(dataOffset, currentSize, diskType);
+    return new VhdFooter(dataOffset, currentSize, diskType, footerBytes.slice());
+  }
+
+  static async read(src: RandomAccessSource): Promise<VhdFooter> {
+    if (src.size < 512) throw new Error("VHD too small");
+    const footerBytes = await src.readAt(src.size - 512, 512);
+    return VhdFooter.parse(footerBytes);
   }
 
   public readonly dataOffset: number;
   public readonly currentSize: number;
   public readonly diskType: number;
+  public readonly raw: Uint8Array;
 
-  private constructor(dataOffset: number, currentSize: number, diskType: number) {
+  private constructor(dataOffset: number, currentSize: number, diskType: number, raw: Uint8Array) {
     this.dataOffset = dataOffset;
     this.currentSize = currentSize;
     this.diskType = diskType;
+    this.raw = raw;
   }
 }
 
