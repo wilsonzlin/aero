@@ -110,6 +110,7 @@ import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 import {
+  VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
@@ -229,6 +230,16 @@ function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
   }
 
   return null;
+}
+
+function snapshotI8042DeviceState(): { kind: string; bytes: Uint8Array } | null {
+  if (!i8042) return null;
+  try {
+    return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes: i8042.saveState() };
+  } catch (err) {
+    console.warn("[io.worker] i8042 saveState failed:", err);
+    return null;
+  }
 }
 
 function restoreUsbDeviceState(bytes: Uint8Array): void {
@@ -1345,8 +1356,10 @@ async function handleVmSnapshotSaveToOpfs(path: string, cpu: ArrayBuffer, mmu: A
     }
 
     const usb = snapshotUsbDeviceState();
+    const ps2 = snapshotI8042DeviceState();
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
     if (usb) devices.push(usb);
+    if (ps2) devices.push(ps2);
 
     const saveExport = resolveVmSnapshotSaveToOpfsExport(api);
     if (!saveExport) {
@@ -1442,6 +1455,17 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         restoreUsbDeviceState(usbBlob.bytes);
       }
 
+      const i8042Blob = devicesRaw.find(
+        (entry): entry is { kind: string; bytes: Uint8Array } =>
+          !!entry &&
+          typeof (entry as { kind?: unknown }).kind === "string" &&
+          (entry as { kind: string }).kind === VM_SNAPSHOT_DEVICE_I8042_KIND &&
+          (entry as { bytes?: unknown }).bytes instanceof Uint8Array,
+      );
+      if (i8042Blob && i8042) {
+        i8042.loadState(i8042Blob.bytes);
+      }
+
       return {
         cpu: copyU8ToArrayBuffer(rec.cpu),
         mmu: copyU8ToArrayBuffer(rec.mmu),
@@ -1461,6 +1485,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
 
       const devices: VmSnapshotDeviceBlob[] = [];
       let usbBytes: Uint8Array | null = null;
+      let i8042Bytes: Uint8Array | null = null;
       for (const entry of rec.devices) {
         if (!entry || typeof entry !== "object") {
           throw new Error(
@@ -1485,11 +1510,17 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) {
           usbBytes = e.data;
         }
+        if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) {
+          i8042Bytes = e.data;
+        }
         devices.push({ kind, bytes: copyU8ToArrayBuffer(e.data) });
       }
 
       if (usbBytes) {
         restoreUsbDeviceState(usbBytes);
+      }
+      if (i8042Bytes && i8042) {
+        i8042.loadState(i8042Bytes);
       }
 
       return {

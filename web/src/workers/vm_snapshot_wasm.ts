@@ -1,9 +1,13 @@
 import type { WasmApi } from "../runtime/wasm_loader";
 
 export const VM_SNAPSHOT_DEVICE_USB_KIND = "usb.uhci";
+export const VM_SNAPSHOT_DEVICE_I8042_KIND = "input.i8042";
 
 // `aero_snapshot::DeviceId::USB` (see `docs/16-snapshots.md`).
 export const VM_SNAPSHOT_DEVICE_ID_USB = 12;
+// `aero_snapshot::DeviceId::I8042` (see `docs/08-input-devices.md`).
+// NOTE: This must match the Rust `DeviceId` assignment.
+export const VM_SNAPSHOT_DEVICE_ID_I8042 = 13;
 
 export const VM_SNAPSHOT_SAVE_TO_OPFS_EXPORT_NAMES = [
   // Preferred names (Task 1078).
@@ -84,11 +88,12 @@ export function parseAeroIoSnapshotVersion(bytes: Uint8Array): { version: number
 
 export function vmSnapshotDeviceIdToKind(id: number): string | null {
   if ((id >>> 0) === VM_SNAPSHOT_DEVICE_ID_USB) return VM_SNAPSHOT_DEVICE_USB_KIND;
+  if ((id >>> 0) === VM_SNAPSHOT_DEVICE_ID_I8042) return VM_SNAPSHOT_DEVICE_I8042_KIND;
   return null;
 }
 
 export function vmSnapshotDeviceKindToId(kind: string): number | null {
   if (kind === VM_SNAPSHOT_DEVICE_USB_KIND) return VM_SNAPSHOT_DEVICE_ID_USB;
+  if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) return VM_SNAPSHOT_DEVICE_ID_I8042;
   return null;
 }
-

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
 import {
+  VM_SNAPSHOT_DEVICE_I8042_KIND,
+  VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_USB,
   VM_SNAPSHOT_DEVICE_USB_KIND,
   parseAeroIoSnapshotVersion,
@@ -73,6 +75,8 @@ describe("workers/vm_snapshot_wasm", () => {
   it("maps USB device kinds/ids for WorkerVmSnapshot", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_I8042_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_I8042);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_I8042)).toBe(VM_SNAPSHOT_DEVICE_I8042_KIND);
     expect(vmSnapshotDeviceKindToId("unknown")).toBeNull();
     expect(vmSnapshotDeviceIdToKind(999)).toBeNull();
   });
@@ -93,4 +97,3 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(parseAeroIoSnapshotVersion(new Uint8Array())).toEqual({ version: 1, flags: 0 });
   });
 });
-

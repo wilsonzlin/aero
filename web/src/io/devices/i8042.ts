@@ -3,12 +3,23 @@ import type { PortIoHandler } from "../bus/portio.ts";
 import type { IrqSink } from "../device_manager.ts";
 
 const STATUS_OBF = 0x01; // Output Buffer Full
+const STATUS_MOBF = 0x20; // Mouse Output Buffer Full
 const STATUS_SYS = 0x04; // System flag
 
 const OUTPUT_PORT_RESET = 0x01; // Bit 0 (active-low reset line)
 const OUTPUT_PORT_A20 = 0x02; // Bit 1
 
-type OutputSource = "controller" | "keyboard";
+const SNAPSHOT_MAGIC0 = 0x49; // I
+const SNAPSHOT_MAGIC1 = 0x38; // 8
+const SNAPSHOT_MAGIC2 = 0x30; // 0
+const SNAPSHOT_MAGIC3 = 0x34; // 4
+const SNAPSHOT_VERSION = 1;
+
+const MAX_CONTROLLER_OUTPUT_QUEUE = 1024;
+const MAX_KEYBOARD_OUTPUT_QUEUE = 1024;
+const MAX_MOUSE_OUTPUT_QUEUE = 1024;
+
+type OutputSource = "controller" | "keyboard" | "mouse";
 
 interface OutputByte {
   value: number;
@@ -24,6 +35,621 @@ export interface I8042ControllerOptions {
   systemControl?: I8042SystemControlSink;
 }
 
+class ByteWriter {
+  #buf: Uint8Array;
+  #len = 0;
+
+  constructor(initialCapacity = 256) {
+    this.#buf = new Uint8Array(initialCapacity);
+  }
+
+  bytes(): Uint8Array {
+    return this.#buf.slice(0, this.#len);
+  }
+
+  #ensure(additional: number): void {
+    const required = this.#len + additional;
+    if (required <= this.#buf.byteLength) return;
+    let cap = this.#buf.byteLength;
+    while (cap < required) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.#buf);
+    this.#buf = next;
+  }
+
+  u8(v: number): void {
+    this.#ensure(1);
+    this.#buf[this.#len++] = v & 0xff;
+  }
+
+  u16(v: number): void {
+    this.#ensure(2);
+    const x = v >>> 0;
+    this.#buf[this.#len++] = x & 0xff;
+    this.#buf[this.#len++] = (x >>> 8) & 0xff;
+  }
+
+  u32(v: number): void {
+    this.#ensure(4);
+    const x = v >>> 0;
+    this.#buf[this.#len++] = x & 0xff;
+    this.#buf[this.#len++] = (x >>> 8) & 0xff;
+    this.#buf[this.#len++] = (x >>> 16) & 0xff;
+    this.#buf[this.#len++] = (x >>> 24) & 0xff;
+  }
+
+  i32(v: number): void {
+    this.u32(v | 0);
+  }
+
+  bytesRaw(bytes: Uint8Array): void {
+    this.#ensure(bytes.byteLength);
+    this.#buf.set(bytes, this.#len);
+    this.#len += bytes.byteLength;
+  }
+}
+
+class ByteReader {
+  readonly #buf: Uint8Array;
+  #off = 0;
+
+  constructor(bytes: Uint8Array) {
+    this.#buf = bytes;
+  }
+
+  remaining(): number {
+    return this.#buf.byteLength - this.#off;
+  }
+
+  #normalizeLen(len: number): number {
+    if (!Number.isFinite(len) || len < 0) {
+      throw new Error(`i8042 snapshot requested an invalid byte length: ${String(len)}.`);
+    }
+    return Math.floor(len);
+  }
+
+  #need(n: number): void {
+    if (this.#off + n > this.#buf.byteLength) {
+      throw new Error(`i8042 snapshot is truncated (need ${n} bytes, have ${this.remaining()}).`);
+    }
+  }
+
+  u8(): number {
+    this.#need(1);
+    return this.#buf[this.#off++]!;
+  }
+
+  u16(): number {
+    this.#need(2);
+    const a = this.#buf[this.#off++]!;
+    const b = this.#buf[this.#off++]!;
+    return (a | (b << 8)) >>> 0;
+  }
+
+  u32(): number {
+    this.#need(4);
+    const a = this.#buf[this.#off++]!;
+    const b = this.#buf[this.#off++]!;
+    const c = this.#buf[this.#off++]!;
+    const d = this.#buf[this.#off++]!;
+    return (a | (b << 8) | (c << 16) | (d << 24)) >>> 0;
+  }
+
+  i32(): number {
+    return this.u32() | 0;
+  }
+
+  bytesRaw(len: number): Uint8Array {
+    const n = this.#normalizeLen(len);
+    this.#need(n);
+    const out = this.#buf.subarray(this.#off, this.#off + n);
+    this.#off += n;
+    return out;
+  }
+
+  skip(len: number): void {
+    const n = this.#normalizeLen(len);
+    this.#need(n);
+    this.#off += n;
+  }
+}
+
+function encodeOutputSource(source: OutputSource): number {
+  switch (source) {
+    case "controller":
+      return 0;
+    case "keyboard":
+      return 1;
+    case "mouse":
+      return 2;
+    default: {
+      const neverSource: never = source;
+      throw new Error(`Unknown OutputSource: ${String(neverSource)}`);
+    }
+  }
+}
+
+function decodeOutputSource(code: number): OutputSource {
+  switch (code & 0xff) {
+    case 0:
+      return "controller";
+    case 1:
+      return "keyboard";
+    case 2:
+      return "mouse";
+    default:
+      return "controller";
+  }
+}
+
+class Ps2Keyboard {
+  scancodeSet = 2;
+  leds = 0;
+  typematicDelay = 0x0b;
+  typematicRate = 0x0b;
+  scanningEnabled = true;
+  expectingData = false;
+  lastCommand = 0;
+  readonly outQueue: number[] = [];
+
+  resetDefaults(): void {
+    this.scancodeSet = 2;
+    this.leds = 0;
+    this.typematicDelay = 0x0b;
+    this.typematicRate = 0x0b;
+    this.scanningEnabled = true;
+    this.expectingData = false;
+    this.lastCommand = 0;
+    this.outQueue.length = 0;
+  }
+
+  injectScancodes(bytes: Uint8Array): void {
+    if (!this.scanningEnabled) return;
+    for (const b of bytes) {
+      if (this.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
+      this.outQueue.push(b & 0xff);
+    }
+  }
+
+  receiveByte(byte: number): void {
+    const b = byte & 0xff;
+    if (this.expectingData) {
+      this.expectingData = false;
+      this.#handleCommandData(this.lastCommand, b);
+      return;
+    }
+    this.#handleCommand(b);
+  }
+
+  popOutputByte(): number | null {
+    const b = this.outQueue.shift();
+    return typeof b === "number" ? (b & 0xff) : null;
+  }
+
+  #queueByte(b: number): void {
+    if (this.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) return;
+    this.outQueue.push(b & 0xff);
+  }
+
+  #handleCommand(cmd: number): void {
+    switch (cmd & 0xff) {
+      case 0xed: // Set LEDs (next byte)
+        this.expectingData = true;
+        this.lastCommand = cmd & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      case 0xee: // Echo
+        this.#queueByte(0xee);
+        return;
+      case 0xf0: // Get/Set scancode set (next byte)
+        this.expectingData = true;
+        this.lastCommand = cmd & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf2: // Identify
+        this.#queueByte(0xfa);
+        this.#queueByte(0xab);
+        this.#queueByte(0x83);
+        return;
+      case 0xf3: // Set typematic rate/delay (next byte)
+        this.expectingData = true;
+        this.lastCommand = cmd & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf4: // Enable scanning
+        this.scanningEnabled = true;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf5: // Disable scanning
+        this.scanningEnabled = false;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf6: // Set defaults
+        this.scancodeSet = 2;
+        this.typematicDelay = 0x0b;
+        this.typematicRate = 0x0b;
+        this.scanningEnabled = true;
+        this.expectingData = false;
+        this.lastCommand = 0;
+        this.#queueByte(0xfa);
+        return;
+      case 0xff: // Reset
+        this.resetDefaults();
+        this.#queueByte(0xfa);
+        this.#queueByte(0xaa);
+        return;
+      default:
+        // ACK unknown commands by default.
+        this.#queueByte(0xfa);
+        return;
+    }
+  }
+
+  #handleCommandData(cmd: number, data: number): void {
+    switch (cmd & 0xff) {
+      case 0xed: // Set LEDs
+        this.leds = data & 0x07;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf0: {
+        // Get/set scancode set.
+        const set = data & 0xff;
+        if (set === 0x00) {
+          this.#queueByte(0xfa);
+          this.#queueByte(this.scancodeSet & 0xff);
+          return;
+        }
+        if (set === 0x01 || set === 0x02 || set === 0x03) {
+          this.scancodeSet = set;
+        }
+        this.#queueByte(0xfa);
+        return;
+      }
+      case 0xf3: {
+        // Set typematic rate/delay. Keep the raw components; callers may choose to interpret.
+        const delay = (data >>> 5) & 0x03;
+        const rate = data & 0x1f;
+        this.typematicDelay = delay & 0xff;
+        this.typematicRate = rate & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      }
+      default:
+        this.#queueByte(0xfa);
+        return;
+    }
+  }
+
+  saveState(w: ByteWriter): void {
+    w.u8(this.scancodeSet);
+    w.u8(this.leds);
+    w.u8(this.typematicDelay);
+    w.u8(this.typematicRate);
+    w.u8(this.scanningEnabled ? 1 : 0);
+    w.u8(this.expectingData ? 1 : 0);
+    w.u8(this.lastCommand);
+    w.u8(0); // padding
+
+    const len = Math.min(this.outQueue.length, MAX_KEYBOARD_OUTPUT_QUEUE);
+    w.u32(len);
+    for (let i = 0; i < len; i++) w.u8(this.outQueue[i]!);
+  }
+
+  loadState(r: ByteReader): void {
+    this.scancodeSet = r.u8() & 0xff;
+    this.leds = r.u8() & 0xff;
+    this.typematicDelay = r.u8() & 0xff;
+    this.typematicRate = r.u8() & 0xff;
+    this.scanningEnabled = (r.u8() & 1) !== 0;
+    this.expectingData = (r.u8() & 1) !== 0;
+    this.lastCommand = r.u8() & 0xff;
+    r.u8(); // padding
+
+    const lenRaw = r.u32();
+    const len = Math.min(lenRaw, MAX_KEYBOARD_OUTPUT_QUEUE);
+    this.outQueue.length = 0;
+    for (let i = 0; i < len; i++) this.outQueue.push(r.u8() & 0xff);
+    if (lenRaw > len) r.skip(lenRaw - len);
+  }
+}
+
+type MouseMode = "stream" | "remote" | "wrap";
+type MouseScaling = "linear" | "double";
+
+function encodeMouseMode(mode: MouseMode): number {
+  switch (mode) {
+    case "stream":
+      return 0;
+    case "remote":
+      return 1;
+    case "wrap":
+      return 2;
+    default: {
+      const neverMode: never = mode;
+      throw new Error(`Unknown MouseMode: ${String(neverMode)}`);
+    }
+  }
+}
+
+function decodeMouseMode(code: number): MouseMode {
+  switch (code & 0xff) {
+    case 0:
+      return "stream";
+    case 1:
+      return "remote";
+    case 2:
+      return "wrap";
+    default:
+      return "stream";
+  }
+}
+
+function encodeMouseScaling(s: MouseScaling): number {
+  return s === "double" ? 1 : 0;
+}
+
+function decodeMouseScaling(code: number): MouseScaling {
+  return (code & 0xff) === 1 ? "double" : "linear";
+}
+
+class Ps2Mouse {
+  mode: MouseMode = "stream";
+  scaling: MouseScaling = "linear";
+  resolution = 4;
+  sampleRate = 100;
+  reportingEnabled = false;
+  deviceId = 0x00;
+  buttons = 0;
+  dx = 0;
+  dy = 0;
+  dz = 0;
+  readonly sampleRateSeq: number[] = [];
+  expectingData = false;
+  lastCommand = 0;
+  readonly outQueue: number[] = [];
+
+  resetDefaults(): void {
+    this.mode = "stream";
+    this.scaling = "linear";
+    this.resolution = 4;
+    this.sampleRate = 100;
+    this.reportingEnabled = false;
+    this.deviceId = 0x00;
+    this.buttons = 0;
+    this.dx = 0;
+    this.dy = 0;
+    this.dz = 0;
+    this.sampleRateSeq.length = 0;
+    this.expectingData = false;
+    this.lastCommand = 0;
+    this.outQueue.length = 0;
+  }
+
+  receiveByte(byte: number): void {
+    const b = byte & 0xff;
+    if (this.expectingData) {
+      this.expectingData = false;
+      this.#handleCommandData(this.lastCommand, b);
+      return;
+    }
+    this.#handleCommand(b);
+  }
+
+  movement(dx: number, dy: number, dz = 0): void {
+    this.dx += dx | 0;
+    this.dy += dy | 0;
+    this.dz += dz | 0;
+
+    if (this.mode === "stream" && this.reportingEnabled) {
+      this.#sendMovementPacket();
+    }
+  }
+
+  setButtons(buttonMask: number): void {
+    this.buttons = buttonMask & 0xff;
+    if (this.mode === "stream" && this.reportingEnabled) {
+      this.#sendMovementPacket();
+    }
+  }
+
+  popOutputByte(): number | null {
+    const b = this.outQueue.shift();
+    return typeof b === "number" ? (b & 0xff) : null;
+  }
+
+  #queueByte(b: number): void {
+    if (this.outQueue.length >= MAX_MOUSE_OUTPUT_QUEUE) return;
+    this.outQueue.push(b & 0xff);
+  }
+
+  #statusByte(): number {
+    // Bit0/1/2 = buttons, bit3=always 1, bit4=scale21, bit5=data reporting.
+    let st = (this.buttons & 0x07) | 0x08;
+    if (this.scaling === "double") st |= 0x10;
+    if (this.reportingEnabled) st |= 0x20;
+    // bits6/7 reserved
+    return st & 0xff;
+  }
+
+  #recordSampleRate(rate: number): void {
+    this.sampleRateSeq.push(rate & 0xff);
+    while (this.sampleRateSeq.length > 3) this.sampleRateSeq.shift();
+
+    if (this.sampleRateSeq.length === 3) {
+      const [a, b, c] = this.sampleRateSeq;
+      // IntelliMouse (wheel)
+      if (a === 200 && b === 100 && c === 80) this.deviceId = 0x03;
+      // IntelliMouse Explorer (5-button)
+      else if (a === 200 && b === 200 && c === 80) this.deviceId = 0x04;
+    }
+  }
+
+  #handleCommand(cmd: number): void {
+    switch (cmd & 0xff) {
+      case 0xe6: // Set scaling 1:1
+        this.scaling = "linear";
+        this.#queueByte(0xfa);
+        return;
+      case 0xe7: // Set scaling 2:1
+        this.scaling = "double";
+        this.#queueByte(0xfa);
+        return;
+      case 0xe8: // Set resolution (next byte)
+        this.expectingData = true;
+        this.lastCommand = cmd & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      case 0xe9: // Status request
+        this.#queueByte(0xfa);
+        this.#queueByte(this.#statusByte());
+        this.#queueByte(this.resolution & 0xff);
+        this.#queueByte(this.sampleRate & 0xff);
+        return;
+      case 0xea: // Set stream mode
+        this.mode = "stream";
+        this.#queueByte(0xfa);
+        return;
+      case 0xeb: // Read data (remote mode)
+        this.#queueByte(0xfa);
+        this.#sendMovementPacket();
+        return;
+      case 0xec: // Reset wrap mode
+        this.#queueByte(0xfa);
+        return;
+      case 0xee: // Set wrap mode
+        this.mode = "wrap";
+        this.#queueByte(0xfa);
+        return;
+      case 0xf0: // Set remote mode
+        this.mode = "remote";
+        this.#queueByte(0xfa);
+        return;
+      case 0xf2: // Get device ID
+        this.#queueByte(0xfa);
+        this.#queueByte(this.deviceId & 0xff);
+        return;
+      case 0xf3: // Set sample rate (next byte)
+        this.expectingData = true;
+        this.lastCommand = cmd & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf4: // Enable data reporting
+        this.reportingEnabled = true;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf5: // Disable data reporting
+        this.reportingEnabled = false;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf6: // Set defaults
+        this.resetDefaults();
+        this.#queueByte(0xfa);
+        return;
+      case 0xff: // Reset
+        this.resetDefaults();
+        this.#queueByte(0xfa);
+        this.#queueByte(0xaa);
+        this.#queueByte(0x00);
+        return;
+      default:
+        this.#queueByte(0xfa);
+        return;
+    }
+  }
+
+  #handleCommandData(cmd: number, data: number): void {
+    switch (cmd & 0xff) {
+      case 0xe8: // Set resolution
+        this.resolution = data & 0xff;
+        this.#queueByte(0xfa);
+        return;
+      case 0xf3: // Set sample rate
+        this.sampleRate = data & 0xff;
+        this.#recordSampleRate(this.sampleRate);
+        this.#queueByte(0xfa);
+        return;
+      default:
+        this.#queueByte(0xfa);
+        return;
+    }
+  }
+
+  #sendMovementPacket(): void {
+    // PS/2 packet uses 9-bit signed deltas with explicit sign bits.
+    const dx = Math.max(-256, Math.min(255, this.dx | 0));
+    const dy = Math.max(-256, Math.min(255, this.dy | 0));
+
+    let b0 = (this.buttons & 0x07) | 0x08;
+    if (dx < 0) b0 |= 0x10;
+    if (dy < 0) b0 |= 0x20;
+    // Overflow bits are ignored for now.
+
+    this.#queueByte(b0);
+    this.#queueByte(dx & 0xff);
+    this.#queueByte(dy & 0xff);
+
+    // IntelliMouse wheel / extra buttons.
+    if (this.deviceId === 0x03 || this.deviceId === 0x04) {
+      const dz = Math.max(-8, Math.min(7, this.dz | 0));
+      this.#queueByte(dz & 0x0f);
+    }
+
+    this.dx = 0;
+    this.dy = 0;
+    this.dz = 0;
+  }
+
+  saveState(w: ByteWriter): void {
+    w.u8(encodeMouseMode(this.mode));
+    w.u8(encodeMouseScaling(this.scaling));
+    w.u8(this.resolution);
+    w.u8(this.sampleRate);
+    w.u8(this.reportingEnabled ? 1 : 0);
+    w.u8(this.deviceId);
+    w.u8(this.buttons);
+    w.u8(this.expectingData ? 1 : 0);
+    w.u8(this.lastCommand);
+    const seqLen = Math.min(this.sampleRateSeq.length, 3);
+    w.u8(seqLen);
+    for (let i = 0; i < seqLen; i++) w.u8(this.sampleRateSeq[i]!);
+    for (let i = seqLen; i < 3; i++) w.u8(0); // padding to fixed 3 bytes
+    w.i32(this.dx);
+    w.i32(this.dy);
+    w.i32(this.dz);
+
+    const outLen = Math.min(this.outQueue.length, MAX_MOUSE_OUTPUT_QUEUE);
+    w.u32(outLen);
+    for (let i = 0; i < outLen; i++) w.u8(this.outQueue[i]!);
+  }
+
+  loadState(r: ByteReader): void {
+    this.mode = decodeMouseMode(r.u8());
+    this.scaling = decodeMouseScaling(r.u8());
+    this.resolution = r.u8() & 0xff;
+    this.sampleRate = r.u8() & 0xff;
+    this.reportingEnabled = (r.u8() & 1) !== 0;
+    this.deviceId = r.u8() & 0xff;
+    this.buttons = r.u8() & 0xff;
+    this.expectingData = (r.u8() & 1) !== 0;
+    this.lastCommand = r.u8() & 0xff;
+    const seqLenRaw = r.u8() & 0xff;
+    const seqLen = Math.min(seqLenRaw, 3);
+    this.sampleRateSeq.length = 0;
+    for (let i = 0; i < seqLen; i++) this.sampleRateSeq.push(r.u8() & 0xff);
+    // Consume remaining fixed 3-byte slot.
+    for (let i = seqLen; i < 3; i++) r.u8();
+    this.dx = r.i32();
+    this.dy = r.i32();
+    this.dz = r.i32();
+
+    const outLenRaw = r.u32();
+    const outLen = Math.min(outLenRaw, MAX_MOUSE_OUTPUT_QUEUE);
+    this.outQueue.length = 0;
+    for (let i = 0; i < outLen; i++) this.outQueue.push(r.u8() & 0xff);
+    if (outLenRaw > outLen) r.skip(outLenRaw - outLen);
+  }
+}
+
 /**
  * Minimal i8042 PS/2 controller model sufficient for early boot and tests.
  *
@@ -35,6 +661,10 @@ export interface I8042ControllerOptions {
  * - IRQ1 level signalling when keyboard data is pending and interrupts enabled.
  */
 export class I8042Controller implements PortIoHandler {
+  static readonly MAX_CONTROLLER_OUTPUT_QUEUE = MAX_CONTROLLER_OUTPUT_QUEUE;
+  static readonly MAX_KEYBOARD_OUTPUT_QUEUE = MAX_KEYBOARD_OUTPUT_QUEUE;
+  static readonly MAX_MOUSE_OUTPUT_QUEUE = MAX_MOUSE_OUTPUT_QUEUE;
+
   readonly #irq: IrqSink;
   readonly #sysCtrl?: I8042SystemControlSink;
 
@@ -44,8 +674,12 @@ export class I8042Controller implements PortIoHandler {
 
   #outQueue: OutputByte[] = [];
   #irq1Asserted = false;
+  #irq12Asserted = false;
 
   #outputPort = OUTPUT_PORT_RESET;
+
+  readonly #keyboard = new Ps2Keyboard();
+  readonly #mouse = new Ps2Mouse();
 
   constructor(irq: IrqSink, opts: I8042ControllerOptions = {}) {
     this.#irq = irq;
@@ -58,6 +692,7 @@ export class I8042Controller implements PortIoHandler {
     switch (port & 0xffff) {
       case 0x0060: {
         const item = this.#outQueue.shift() ?? null;
+        this.#pumpDeviceQueues();
         this.#syncStatusAndIrq();
         return item ? item.value & 0xff : 0x00;
       }
@@ -92,7 +727,9 @@ export class I8042Controller implements PortIoHandler {
    * byte interrupt-enable bit.
    */
   injectKeyboardBytes(bytes: Uint8Array): void {
-    for (const b of bytes) this.#enqueue(b, "keyboard");
+    this.#keyboard.injectScancodes(bytes);
+    this.#pumpDeviceQueues();
+    this.#syncStatusAndIrq();
   }
 
   #writeCommand(cmd: number): void {
@@ -111,6 +748,31 @@ export class I8042Controller implements PortIoHandler {
         return;
       case 0xd1: // Write output port (next data byte)
         this.#pendingCommand = 0xd1;
+        return;
+      case 0xa7: // Disable mouse port
+        this.#commandByte |= 0x20;
+        this.#syncStatusAndIrq();
+        return;
+      case 0xa8: // Enable mouse port
+        this.#commandByte &= ~0x20;
+        this.#syncStatusAndIrq();
+        return;
+      case 0xa9: // Test mouse port
+        this.#enqueue(0x00, "controller");
+        return;
+      case 0xab: // Test keyboard port
+        this.#enqueue(0x00, "controller");
+        return;
+      case 0xad: // Disable keyboard
+        this.#commandByte |= 0x10;
+        this.#syncStatusAndIrq();
+        return;
+      case 0xae: // Enable keyboard
+        this.#commandByte &= ~0x10;
+        this.#syncStatusAndIrq();
+        return;
+      case 0xd4: // Write to mouse (next data byte)
+        this.#pendingCommand = 0xd4;
         return;
       case 0xdd: // Non-standard: disable A20 gate
         this.#setOutputPort(this.#outputPort & ~OUTPUT_PORT_A20);
@@ -142,32 +804,51 @@ export class I8042Controller implements PortIoHandler {
       return;
     }
 
-    // Send byte to PS/2 keyboard.
-    const replies = this.#keyboardHandleCommand(data);
-    for (const b of replies) this.#enqueue(b, "keyboard");
-  }
-
-  #keyboardHandleCommand(cmd: number): number[] {
-    switch (cmd & 0xff) {
-      case 0xff: // Reset
-        return [0xfa, 0xaa];
-      default:
-        // Always ACK unknown commands for now.
-        return [0xfa];
+    if (this.#pendingCommand === 0xd4) {
+      this.#pendingCommand = null;
+      this.#mouse.receiveByte(data);
+      this.#pumpDeviceQueues();
+      this.#syncStatusAndIrq();
+      return;
     }
+
+    // Send byte to PS/2 keyboard.
+    this.#keyboard.receiveByte(data);
+    this.#pumpDeviceQueues();
+    this.#syncStatusAndIrq();
   }
 
   #enqueue(value: number, source: OutputSource): void {
+    if (this.#outQueue.length >= MAX_CONTROLLER_OUTPUT_QUEUE) return;
     this.#outQueue.push({ value: value & 0xff, source });
     this.#syncStatusAndIrq();
+  }
+
+  #pumpDeviceQueues(): void {
+    while (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+      const kb = this.#keyboard.popOutputByte();
+      if (kb !== null) {
+        this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
+        continue;
+      }
+      const ms = this.#mouse.popOutputByte();
+      if (ms !== null) {
+        this.#outQueue.push({ value: ms & 0xff, source: "mouse" });
+        continue;
+      }
+      break;
+    }
   }
 
   #syncStatusAndIrq(): void {
     if (this.#outQueue.length > 0) this.#status |= STATUS_OBF;
     else this.#status &= ~STATUS_OBF;
 
-    const irqEnabled = (this.#commandByte & 0x01) !== 0;
     const headSource = this.#outQueue[0]?.source ?? null;
+    if (headSource === "mouse") this.#status |= STATUS_MOBF;
+    else this.#status &= ~STATUS_MOBF;
+
+    const irqEnabled = (this.#commandByte & 0x01) !== 0;
     const shouldAssert = irqEnabled && headSource === "keyboard";
 
     if (shouldAssert && !this.#irq1Asserted) {
@@ -177,6 +858,96 @@ export class I8042Controller implements PortIoHandler {
       this.#irq.lowerIrq(1);
       this.#irq1Asserted = false;
     }
+
+    const mouseIrqEnabled = (this.#commandByte & 0x02) !== 0;
+    const shouldAssertMouse = mouseIrqEnabled && headSource === "mouse";
+    if (shouldAssertMouse && !this.#irq12Asserted) {
+      this.#irq.raiseIrq(12);
+      this.#irq12Asserted = true;
+    } else if (!shouldAssertMouse && this.#irq12Asserted) {
+      this.#irq.lowerIrq(12);
+      this.#irq12Asserted = false;
+    }
+  }
+
+  saveState(): Uint8Array {
+    const w = new ByteWriter(256);
+    w.u8(SNAPSHOT_MAGIC0);
+    w.u8(SNAPSHOT_MAGIC1);
+    w.u8(SNAPSHOT_MAGIC2);
+    w.u8(SNAPSHOT_MAGIC3);
+    w.u16(SNAPSHOT_VERSION);
+    w.u16(0); // flags/reserved
+
+    w.u8(this.#status);
+    w.u8(this.#commandByte);
+    w.u8(this.#outputPort);
+    w.u8(this.#pendingCommand === null ? 0xff : this.#pendingCommand & 0xff);
+
+    const outLen = Math.min(this.#outQueue.length, MAX_CONTROLLER_OUTPUT_QUEUE);
+    w.u32(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const item = this.#outQueue[i]!;
+      w.u8(item.value);
+      w.u8(encodeOutputSource(item.source));
+    }
+
+    this.#keyboard.saveState(w);
+    this.#mouse.saveState(w);
+
+    return w.bytes();
+  }
+
+  loadState(bytes: Uint8Array): void {
+    // Deassert IRQ lines according to current state before overwriting queues.
+    if (this.#irq1Asserted) {
+      this.#irq.lowerIrq(1);
+      this.#irq1Asserted = false;
+    }
+    if (this.#irq12Asserted) {
+      this.#irq.lowerIrq(12);
+      this.#irq12Asserted = false;
+    }
+
+    const r = new ByteReader(bytes);
+    const m0 = r.u8();
+    const m1 = r.u8();
+    const m2 = r.u8();
+    const m3 = r.u8();
+    if (m0 !== SNAPSHOT_MAGIC0 || m1 !== SNAPSHOT_MAGIC1 || m2 !== SNAPSHOT_MAGIC2 || m3 !== SNAPSHOT_MAGIC3) {
+      throw new Error("i8042 snapshot has invalid magic.");
+    }
+
+    const version = r.u16();
+    if (version !== SNAPSHOT_VERSION) {
+      throw new Error(`Unsupported i8042 snapshot version: ${version} (expected ${SNAPSHOT_VERSION}).`);
+    }
+    r.u16(); // flags/reserved
+
+    this.#status = r.u8() & 0xff;
+    this.#commandByte = r.u8() & 0xff;
+    this.#outputPort = r.u8() & 0xff;
+    const pending = r.u8() & 0xff;
+    this.#pendingCommand = pending === 0xff ? null : pending;
+
+    this.#outQueue.length = 0;
+    const outLenRaw = r.u32();
+    const outLen = Math.min(outLenRaw, MAX_CONTROLLER_OUTPUT_QUEUE);
+    for (let i = 0; i < outLen; i++) {
+      const value = r.u8() & 0xff;
+      const source = decodeOutputSource(r.u8());
+      this.#outQueue.push({ value, source });
+    }
+    if (outLenRaw > outLen) {
+      // Each entry is (value:u8, source:u8).
+      r.skip((outLenRaw - outLen) * 2);
+    }
+
+    this.#keyboard.loadState(r);
+    this.#mouse.loadState(r);
+
+    // Restore derived status bits and IRQ line levels.
+    this.#syncStatusAndIrq();
   }
 
   #setOutputPort(value: number): void {
