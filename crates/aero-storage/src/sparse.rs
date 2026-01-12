@@ -228,7 +228,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
         if table_bytes > MAX_TABLE_BYTES {
-            return Err(DiskError::InvalidConfig("aerosparse allocation table too large"));
+            return Err(DiskError::InvalidConfig(
+                "aerosparse allocation table too large",
+            ));
         }
         let table_end = (HEADER_SIZE as u64)
             .checked_add(table_bytes)
@@ -419,7 +421,9 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             let mask = 1u64 << bit_idx;
             let word = seen_phys_idx
                 .get_mut(word_idx)
-                .ok_or(DiskError::CorruptSparseImage("data block offset out of bounds"))?;
+                .ok_or(DiskError::CorruptSparseImage(
+                    "data block offset out of bounds",
+                ))?;
             if (*word & mask) != 0 {
                 return Err(DiskError::CorruptSparseImage("duplicate data block offset"));
             }
