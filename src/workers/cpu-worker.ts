@@ -207,7 +207,12 @@ async function runSyntheticProgram(iterations: number, threshold: number) {
     }
 
     // Yield periodically so the worker stays responsive while compilation happens in parallel.
-    if ((i & 0x0f) === 0) await new Promise((r) => setTimeout(r, 0));
+    if ((i & 0x0f) === 0) {
+      await new Promise((r) => {
+        const timer = setTimeout(r, 0);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      });
+    }
   }
 
   if (compilePromise) {

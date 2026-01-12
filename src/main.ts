@@ -326,6 +326,7 @@ async function runWebUsbProbeWorker(
       webUsbProbePending.delete(id);
       reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
     }, timeoutMs);
+    (timeoutHandle as unknown as { unref?: () => void }).unref?.();
 
     webUsbProbePending.set(id, { resolve, reject, timeoutHandle });
 
@@ -1259,6 +1260,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for HDA demo worker init (${timeoutMs}ms).`));
         }, timeoutMs);
+        (timer as unknown as { unref?: () => void }).unref?.();
 
         const cleanup = () => {
           window.clearTimeout(timer);

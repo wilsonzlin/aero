@@ -94,6 +94,7 @@ async function runRequestDeviceProbe(
           },
         });
       }, timeoutMs);
+      (timeoutHandle as unknown as { unref?: () => void }).unref?.();
     });
 
     const result = await Promise.race([settle, timeout]);
