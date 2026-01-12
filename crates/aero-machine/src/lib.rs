@@ -1335,6 +1335,12 @@ impl Machine {
             // Keep the core's A20 view coherent with the chipset latch.
             self.cpu.state.a20_enabled = self.chipset.a20().enabled();
 
+            // Synchronize PCI INTx sources (e.g. E1000) into the platform interrupt controller
+            // *before* we poll for pending vectors. This must happen even when the guest cannot
+            // currently accept maskable interrupts (IF=0 / interrupt shadow) so level-triggered
+            // lines remain asserted until delivery is possible.
+            self.sync_pci_intx_sources_to_interrupts();
+
             // Poll the platform interrupt controller (PIC/IOAPIC+LAPIC) and enqueue at most one
             // pending external interrupt vector into the CPU core.
             //
@@ -1943,6 +1949,7 @@ impl snapshot::SnapshotTarget for Machine {
 mod tests {
     use super::*;
     use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
+    use aero_devices::pci::PciInterruptPin;
     use pretty_assertions::assert_eq;
     use std::io::{Cursor, Read};
     use std::sync::{
@@ -2993,6 +3000,103 @@ mod tests {
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
             Some(0x20)
+        );
+    }
+
+    #[test]
+    fn pc_e1000_intx_is_synced_and_delivered_to_cpu_core() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let expected_vector = if gsi < 8 {
+            0x20u8.wrapping_add(gsi as u8)
+        } else {
+            0x28u8.wrapping_add((gsi as u8).wrapping_sub(8))
+        };
+
+        // Install a trivial real-mode ISR for the expected vector.
+        //
+        // mov byte ptr [0x2000], 0xAA
+        // iret
+        const HANDLER_IP: u16 = 0x1100;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        write_ivt_entry(&mut m, expected_vector, HANDLER_IP, 0x0000);
+
+        const ENTRY_IP: u16 = 0x1000;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+
+        // Configure the legacy PIC to use the standard remapped offsets and unmask the routed IRQ.
+        {
+            let mut ints = interrupts.borrow_mut();
+            ints.pic_mut().set_offsets(0x20, 0x28);
+            // If the routed GSI maps to the slave PIC, ensure cascade (IRQ2) is unmasked as well.
+            ints.pic_mut().set_masked(2, false);
+            if let Ok(irq) = u8::try_from(gsi) {
+                if irq < 16 {
+                    ints.pic_mut().set_masked(irq, false);
+                }
+            }
+        }
+
+        // Assert E1000 INTx level by enabling + setting a cause bit.
+        let e1000 = m.e1000().expect("e1000 enabled");
+        {
+            let mut dev = e1000.borrow_mut();
+            dev.mmio_write_reg(0x00D0, 4, aero_net_e1000::ICR_TXDW); // IMS
+            dev.mmio_write_reg(0x00C8, 4, aero_net_e1000::ICR_TXDW); // ICS
+            assert!(dev.irq_level());
+        }
+
+        // Prior to running a slice, the INTx level has not been synced into the platform
+        // interrupt controller yet.
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            None
+        );
+
+        // With IF=0, `run_slice` must not acknowledge the interrupt, but it should still sync PCI
+        // INTx sources so the PIC sees the asserted line.
+        init_real_mode_cpu(&mut m, ENTRY_IP, 0);
+        m.cpu.state.halted = true;
+        let exit = m.run_slice(5);
+        assert_eq!(exit, RunExit::Halted { executed: 0 });
+        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(expected_vector)
+        );
+        assert_eq!(m.read_physical_u8(0x2000), 0x00);
+
+        // Once IF is set, the queued/pending interrupt should be delivered into the CPU core and
+        // the handler should run.
+        m.cpu.state.set_rflags(RFLAGS_IF);
+        m.cpu.state.halted = true;
+        let _ = m.run_slice(5);
+        assert_eq!(m.read_physical_u8(0x2000), 0xAA);
+        assert!(
+            !m.cpu.state.halted,
+            "CPU should wake from HLT once PCI INTx is delivered"
         );
     }
 }
