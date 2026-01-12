@@ -59,6 +59,36 @@ pub const TLB_FLAG_WRITE: u64 = 1 << 1;
 pub const TLB_FLAG_EXEC: u64 = 1 << 2;
 pub const TLB_FLAG_IS_RAM: u64 = 1 << 3;
 
+const _: () = {
+    // Flags are packed into the low 12 bits of the translation `data` word.
+    const FLAGS_LIMIT: u64 = PAGE_SIZE;
+
+    assert!(TLB_FLAG_READ < FLAGS_LIMIT);
+    assert!(TLB_FLAG_WRITE < FLAGS_LIMIT);
+    assert!(TLB_FLAG_EXEC < FLAGS_LIMIT);
+    assert!(TLB_FLAG_IS_RAM < FLAGS_LIMIT);
+
+    // Each flag must be a single bit.
+    assert!(TLB_FLAG_READ.is_power_of_two());
+    assert!(TLB_FLAG_WRITE.is_power_of_two());
+    assert!(TLB_FLAG_EXEC.is_power_of_two());
+    assert!(TLB_FLAG_IS_RAM.is_power_of_two());
+
+    // Ensure no overlap.
+    assert!((TLB_FLAG_READ & TLB_FLAG_WRITE) == 0);
+    assert!((TLB_FLAG_READ & TLB_FLAG_EXEC) == 0);
+    assert!((TLB_FLAG_READ & TLB_FLAG_IS_RAM) == 0);
+    assert!((TLB_FLAG_WRITE & TLB_FLAG_EXEC) == 0);
+    assert!((TLB_FLAG_WRITE & TLB_FLAG_IS_RAM) == 0);
+    assert!((TLB_FLAG_EXEC & TLB_FLAG_IS_RAM) == 0);
+
+    // JS glue exports these flags as u32 values.
+    assert!(TLB_FLAG_READ <= u32::MAX as u64);
+    assert!(TLB_FLAG_WRITE <= u32::MAX as u64);
+    assert!(TLB_FLAG_EXEC <= u32::MAX as u64);
+    assert!(TLB_FLAG_IS_RAM <= u32::MAX as u64);
+};
+
 // ---- Default public entry points --------------------------------------------------------------
 
 pub use tier1::{
