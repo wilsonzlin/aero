@@ -15,7 +15,7 @@
 
 ## Overview
 
-This workstream owns **audio emulation**: HD Audio (HDA) controller, codec emulation, and the Web Audio API integration that plays sound in the browser.
+This workstream owns **audio emulation**: Intel HD Audio (HDA) controller + codec emulation, virtio-snd (optional paravirtual audio), and the Web Audio API integration that plays sound in the browser.
 
 Audio is important for user experience but not on the critical boot path.
 
@@ -26,6 +26,7 @@ Audio is important for user experience but not on the critical boot path.
 | Crate/Directory | Purpose |
 |-----------------|---------|
 | `crates/aero-audio/` | Guest audio device models (HDA controller + codec + PCM helpers) |
+| `crates/aero-virtio/` | Virtio device models (includes virtio-snd) |
 | `crates/platform/src/audio/` | SharedArrayBuffer ring layouts + WASM bridges (`WorkletBridge`, `MicBridge`) |
 | `web/src/platform/` | Web Audio output setup + AudioWorklet consumer (`audio.ts`, `audio-worklet-processor.js`) |
 | `web/src/audio/` | Microphone capture UI + AudioWorklet producer (`mic_capture.ts`, `mic-worklet-processor.js`) |
