@@ -119,6 +119,61 @@ fn snapshot_restore_preserves_pm_timer_value_and_continuity() {
 }
 
 #[test]
+fn snapshot_restore_without_elapsed_ns_falls_back_to_pm_timer_ticks() {
+    const TAG_PM_TIMER_ELAPSED_NS: u16 = 6;
+
+    let cfg = AcpiPmConfig::default();
+
+    let clock0 = ManualClock::new();
+    let mut pm0 =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock0.clone());
+
+    clock0.set_ns(1_000_000);
+    clock0.advance_ns(123_456_789);
+    let t0 = pm0.read(cfg.pm_tmr_blk, 4);
+
+    let snap_full = pm0.save_state();
+    let r = SnapshotReader::parse(
+        &snap_full,
+        <AcpiPmIo<ManualClock> as IoSnapshot>::DEVICE_ID,
+    )
+    .unwrap();
+
+    // Re-encode a snapshot that preserves all fields except elapsed-ns, forcing load_state()
+    // to use the tick-count fallback path.
+    let header = r.header();
+    let mut w = SnapshotWriter::new(header.device_id, header.device_version);
+    for tag in 1u16..=9 {
+        if tag == TAG_PM_TIMER_ELAPSED_NS {
+            continue;
+        }
+        if let Some(bytes) = r.bytes(tag) {
+            w.field_bytes(tag, bytes.to_vec());
+        }
+    }
+    let snap_no_elapsed = w.finish();
+
+    let r2 = SnapshotReader::parse(
+        &snap_no_elapsed,
+        <AcpiPmIo<ManualClock> as IoSnapshot>::DEVICE_ID,
+    )
+    .unwrap();
+    assert!(
+        r2.u64(TAG_PM_TIMER_ELAPSED_NS).unwrap().is_none(),
+        "test snapshot must omit TAG_PM_TIMER_ELAPSED_NS"
+    );
+
+    let clock1 = ManualClock::new();
+    clock1.set_ns(9_000_000);
+    let mut pm1 =
+        AcpiPmIo::new_with_callbacks_and_clock(cfg, AcpiPmCallbacks::default(), clock1.clone());
+    pm1.load_state(&snap_no_elapsed).unwrap();
+
+    let t1 = pm1.read(cfg.pm_tmr_blk, 4);
+    assert_eq!(t0, t1, "PM_TMR must match after restore from tick-only snapshot");
+}
+
+#[test]
 fn snapshot_encodes_pm_timer_ticks_and_fractional_remainder() {
     const PM_TIMER_HZ: u128 = 3_579_545;
     const NS_PER_SEC: u128 = 1_000_000_000;
