@@ -281,6 +281,75 @@ fn machine_hpet_timer0_wakes_cpu_from_hlt_in_apic_mode() {
 }
 
 #[test]
+fn machine_hpet_timer0_wakes_cpu_from_hlt_after_dirty_snapshot_restore() {
+    // HPET timer0 defaults to GSI2 (matching the ACPI MADT legacy timer interrupt source override).
+    const HPET_GSI: u32 = 2;
+
+    // Use a deterministic IOAPIC vector and a small real-mode handler that flips a flag.
+    let vector = 0x62u8;
+    let flag_addr = 0x0507u16;
+    let flag_value = 0xA5u8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut m = Machine::new(pc_machine_mmio_config()).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    // Ensure the guest reaches `sti; hlt` first so the HPET interrupt must wake it.
+    run_until_halt(&mut m);
+
+    // Capture a base snapshot before programming HPET so we exercise dirty-snapshot restore.
+    let base = m.take_snapshot_full().unwrap();
+
+    // Enable A20 before touching MMIO (HPET base 0xFED0_0000 aliases to IOAPIC at 0xFEC0_0000 when
+    // A20 is disabled).
+    enable_a20(&mut m);
+
+    // Switch interrupt routing to APIC mode and route HPET GSI2 to `vector`.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // HPET timer interrupts are typically level-triggered, active-high.
+        let low = u32::from(vector) | (1 << 15);
+        program_ioapic_entry(&mut ints, HPET_GSI, low, 0);
+    }
+
+    // Program HPET timer0 via guest-visible MMIO:
+    // - route: 2 (GSI2)
+    // - level-triggered
+    // - interrupt enabled
+    let timer0_cfg = (2u64 << 9) | (1 << 1) | (1 << 2);
+    m.write_physical_u64(HPET_MMIO_BASE + 0x100, timer0_cfg);
+    // Comparator: 10_000 ticks at 10MHz is 1ms (counter_clk_period_fs=100_000_000).
+    m.write_physical_u64(HPET_MMIO_BASE + 0x108, 10_000);
+    // Enable HPET (general config).
+    m.write_physical_u64(HPET_MMIO_BASE + 0x010, 1);
+
+    let diff = m.take_snapshot_dirty().unwrap();
+
+    let mut restored = Machine::new(pc_machine_mmio_config()).unwrap();
+    restored.set_disk_image(boot.to_vec()).unwrap();
+    restored.reset();
+    restored.restore_snapshot_bytes(&base).unwrap();
+    restored.restore_snapshot_bytes(&diff).unwrap();
+
+    for _ in 0..50 {
+        let _ = restored.run_slice(10_000);
+        if restored.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "HPET timer0 interrupt did not wake HLT CPU after snapshot restore (flag=0x{:02x})",
+        restored.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
 fn machine_run_slice_polls_platform_pic_and_delivers_interrupt() {
     let vector = 0x21u8; // IRQ1 with PIC base 0x20
     let flag_addr = 0x0500u16;
