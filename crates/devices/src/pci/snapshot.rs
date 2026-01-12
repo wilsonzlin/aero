@@ -16,9 +16,14 @@ use super::{GsiLevelSink, PciConfigPorts, PciIntxRouter};
 /// stored as two separate `(DeviceId::PCI, 1, 0)` entries. This wrapper avoids that collision by
 /// nesting both io-snapshots under one outer `DeviceId::PCI` entry.
 ///
-/// Backward compatibility note: older snapshot adapters may store PCI core state as split entries
-/// using `DeviceId::PCI_CFG` (`PCPT`) and `DeviceId::PCI_INTX` (`INTX`). New snapshot adapters
-/// should prefer the single-entry `DeviceId::PCI` + `PCIC` wrapper convention.
+/// Snapshot adapter layout note:
+///
+/// - **Canonical full-system snapshots** store PCI core state as *split* `DEVICES` entries with
+///   distinct outer ids (e.g. `DeviceId::PCI_CFG` for `PCPT` and `DeviceId::PCI_INTX_ROUTER` for
+///   `INTX`).
+/// - This `PCIC` wrapper is primarily useful for **legacy/compatibility** snapshot formats that
+///   want to store PCI core state under a single outer `DeviceId::PCI` entry while still capturing
+///   both sub-snapshots.
 ///
 /// Restore note: the INTx router snapshot captures internal assertion refcounts, but it cannot
 /// directly manipulate the platform interrupt sink during `load_state()`. Callers should invoke
