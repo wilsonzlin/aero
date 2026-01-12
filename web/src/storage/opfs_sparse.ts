@@ -293,6 +293,19 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
         throw new Error(`short header read: expected=${HEADER_SIZE} actual=${n}`);
       }
       const header = decodeHeader(headerBytes);
+      const fileSize = sync.getSize();
+      if (!Number.isSafeInteger(fileSize) || fileSize < 0) {
+        throw new Error(`invalid file size: ${fileSize}`);
+      }
+      if (fileSize < header.dataOffset) {
+        throw new Error("data region out of bounds");
+      }
+      const expectedMinLenBig =
+        BigInt(header.dataOffset) + BigInt(header.allocatedBlocks) * BigInt(header.blockSizeBytes);
+      const expectedMinLen = toSafeNumber(expectedMinLenBig, "expectedMinLen");
+      if (fileSize < expectedMinLen) {
+        throw new Error("allocated blocks extend beyond end of image");
+      }
 
       const tableBytesLenBig = BigInt(header.tableEntries) * 8n;
       if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -302,6 +315,12 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
         throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
       }
       const table = new Float64Array(header.tableEntries);
+      let actualAllocatedBlocks = 0;
+      // Track which physical blocks (0..allocatedBlocks) are referenced by the table to detect
+      // duplicates and validate `allocatedBlocks` against the table contents.
+      const bitsetLen = Math.ceil(header.allocatedBlocks / 32);
+      const seenPhysIdx = new Uint32Array(bitsetLen);
+
       // Read the on-disk table in chunks to avoid allocating a second full-size table buffer in
       // memory (worst case: 64MiB Uint8Array + 64MiB Float64Array).
       const chunkEntries = 8192; // 64KiB
@@ -315,8 +334,41 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
           throw new Error(`short table read: expected=${bytes} actual=${n}`);
         }
         for (let j = 0; j < count; j++) {
-          table[i + j] = toSafeNumber(view.getBigUint64(j * 8, true), `table[${i + j}]`);
+          const phys = toSafeNumber(view.getBigUint64(j * 8, true), `table[${i + j}]`);
+          table[i + j] = phys;
+          if (phys === 0) continue;
+
+          actualAllocatedBlocks++;
+          if (actualAllocatedBlocks > header.allocatedBlocks) {
+            throw new Error("allocatedBlocks does not match allocation table");
+          }
+          if (phys < header.dataOffset) {
+            throw new Error("data block offset before data region");
+          }
+          const rel = phys - header.dataOffset;
+          if (rel % header.blockSizeBytes !== 0) {
+            throw new Error("misaligned data block offset");
+          }
+          const physIdx = rel / header.blockSizeBytes;
+          if (!Number.isSafeInteger(physIdx) || physIdx < 0 || physIdx >= header.allocatedBlocks) {
+            throw new Error("data block offset out of bounds");
+          }
+          const physEnd = phys + header.blockSizeBytes;
+          if (!Number.isSafeInteger(physEnd) || physEnd > expectedMinLen) {
+            throw new Error("data block offset out of bounds");
+          }
+
+          const wordIdx = Math.floor(physIdx / 32);
+          const bitIdx = physIdx % 32;
+          const mask = 1 << bitIdx;
+          if ((seenPhysIdx[wordIdx]! & mask) !== 0) {
+            throw new Error("duplicate data block offset");
+          }
+          seenPhysIdx[wordIdx] |= mask;
         }
+      }
+      if (actualAllocatedBlocks !== header.allocatedBlocks) {
+        throw new Error("allocatedBlocks does not match allocation table");
       }
 
       return new OpfsAeroSparseDisk(sync, header, table, opts.maxCachedBlocks ?? 64);
