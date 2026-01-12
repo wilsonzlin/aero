@@ -474,6 +474,42 @@ fn ata_bus_master_dma_scatter_gather_with_odd_prd_lengths() {
 }
 
 #[test]
+fn ata_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
+    // Guests often mask IDE interrupts (Device Control nIEN=1) while polling for completion. The
+    // interrupt condition should be latched so re-enabling interrupts can still surface it if the
+    // guest never acknowledged the completion by reading the Status register.
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Mask interrupts.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // Issue a non-data command that completes immediately.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xE7); // FLUSH CACHE
+
+    // Interrupt should be pending internally but masked by nIEN.
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Re-enable interrupts; the pending completion should now surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    // Reading Status acknowledges and clears the pending interrupt.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn ata_bus_master_dma_ext_read_write_256_sectors_roundtrip() {
     // Exercise 48-bit sector count handling for DMA EXT commands by transferring 256 sectors
     // (requires writing a non-zero high byte to the sector count register).

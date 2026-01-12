@@ -327,9 +327,13 @@ impl Channel {
     }
 
     fn set_irq(&mut self) {
-        if (self.control & IDE_CTRL_NIEN) == 0 {
-            self.irq_pending = true;
-        }
+        // `nIEN` (bit 1 of the Device Control register) masks the interrupt *output*, but the
+        // interrupt condition itself is still latched until the guest acknowledges it (typically
+        // by reading the Status register).
+        //
+        // This matches how the simpler legacy IDE model in `src/ide.rs` behaves and avoids losing
+        // interrupts if the guest temporarily disables them while polling.
+        self.irq_pending = true;
     }
 
     fn clear_irq(&mut self) {
