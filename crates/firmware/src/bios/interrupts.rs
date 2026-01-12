@@ -550,6 +550,14 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             };
             cpu.rflags &= !FLAG_CF;
         }
+        0x8600 => {
+            // Wait (CX:DX microseconds).
+            //
+            // We do not emulate wall-clock delays in the HLE BIOS; report success immediately so
+            // callers that use this for simple hardware delay loops do not fail.
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
+            cpu.rflags &= !FLAG_CF;
+        }
         _ => match (ax >> 8) as u8 {
             0x88 => {
                 // Extended memory size (KB above 1MB).
@@ -1111,6 +1119,21 @@ fn build_e820_map(
             assert_eq!(cpu.gpr[gpr::RCX] as u16, expected_ax);
             assert_eq!(cpu.gpr[gpr::RDX] as u16, expected_bx);
         }
+    }
+
+    #[test]
+    fn int15_wait_returns_success() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut bus = TestMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        cpu.gpr[gpr::RAX] = 0x8600; // AH=86h Wait
+        cpu.gpr[gpr::RCX] = 0x0001;
+        cpu.gpr[gpr::RDX] = 0x0002;
+        handle_int15(&mut bios, &mut cpu, &mut bus);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
     }
 
     #[test]
