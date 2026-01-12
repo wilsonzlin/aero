@@ -125,7 +125,11 @@ impl PerfWorker {
     }
 
     /// Retire `n` guest architectural instructions (interpreter: `n=1`,
-    /// JIT: `n=block_instruction_count`).
+    /// JIT: `n=block_instruction_count` on committed exits, `n=0` on rollback exits).
+    ///
+    /// In a tiered execution loop, prefer feeding this with the CPU dispatcher's
+    /// reported `instructions_retired` count so embedders don't need to special-case
+    /// interpreter vs JIT execution.
     #[inline(always)]
     pub fn retire_instructions(&mut self, n: u64) {
         self.local_instructions += n;

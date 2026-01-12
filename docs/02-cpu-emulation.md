@@ -83,6 +83,39 @@ In `aero_cpu_core`, this is modeled by:
 
 `ExecDispatcher::step()` always gives interrupts a chance at *instruction boundaries* via `ExecCpu::maybe_deliver_interrupt()` before running the next block.
 
+### Instruction retirement accounting (time + interrupt-shadow)
+
+“Instruction retirement” is the canonical unit used by:
+
+- virtual time / TSC progression (`time::TimeSource`), and
+- interrupt-shadow aging (`interrupts::PendingEventState`).
+
+Tier-0 already performs these updates once per retired guest instruction. **Tiered/JIT execution must preserve the exact same semantics.**
+
+In particular:
+
+- **Committed JIT exits:** a compiled block must retire exactly `block_instruction_count` guest instructions.
+  - `block_instruction_count` is provided out-of-band by the compilation pipeline via
+    `CompiledBlockMeta.instruction_count` (stored alongside the cached block handle).
+- **Rollback JIT exits:** if a block exits via an MMIO/page-fault/runtime bailout that restores the pre-block
+  architectural state, it must retire **0** guest instructions.
+- **Interrupt shadow:** `PendingEventState` must be aged by the **same retired-instruction count** as virtual time.
+  - Do **not** age the shadow on rollback exits, and do **not** “fake” retirement by counting blocks instead of
+    guest instructions.
+
+This retirement count is also the right unit for embedding-facing instruction counters (see “Perf counters
+integration” below).
+
+### Tiered/JIT block exit signaling (Tasks 5/6)
+
+To make the above unambiguous and hard to regress, the tiered runtime uses explicit API surfaces:
+
+- `CompiledBlockMeta.instruction_count`: number of guest architectural instructions in the compiled block.
+- `JitBlockExit`: includes committed vs rollback signaling in addition to the next RIP / “exit to interpreter”
+  decision.
+- `ExecDispatcher::StepOutcome::Block { instructions_retired, .. }` (Task 6): reports the exact number of guest
+  instructions retired by the step, regardless of which tier executed.
+
 ---
 
 ## Tier-0 interpreter (`interp::tier0`)
@@ -142,11 +175,41 @@ Important integration detail: assists may modify paging-related state (`CR0/CR3/
 
 The CPU’s timestamp counter is modeled by [`time::TimeSource`](../crates/aero-cpu-core/src/time.rs) (not by `CpuState` or `AssistContext`):
 
-- **Deterministic mode (default):** TSC advances on instruction retirement. Today the Tier-0 batch glue increments time via `TimeSource::advance_cycles(1)` once per retired instruction (including assists).
+- **Deterministic mode (default):** TSC advances on *guest instruction retirement*.
+  - Tier-0 increments time via `TimeSource::advance_cycles(1)` once per retired instruction (including assists).
+  - JIT/tiered execution must advance by the exact same number of retired guest instructions:
+    - committed JIT block: advance by `CompiledBlockMeta.instruction_count`
+    - rollback JIT exit: advance by `0`
 - **Wall-clock mode (optional):** TSC is derived from a host `Instant` stored inside `TimeSource` (intended for native/non-WASM integrations; it is inherently non-deterministic).
 - **Coherency:** `CpuState.msr.tsc` mirrors `TimeSource`:
   - execution glue updates `state.msr.tsc = time.read_tsc()` after each retirement, and
   - `RDTSC/RDTSCP` and `RDMSR/WRMSR IA32_TSC` read/write through `TimeSource` and update `state.msr.tsc` as part of their architectural semantics.
+
+### Perf counters integration
+
+Instruction retirement is also the unit used by `aero-perf` counters (`PerfWorker::retire_instructions`).
+When driving the CPU through `ExecDispatcher`, embedders should use the dispatcher-provided retirement count,
+which already accounts for interpreter vs JIT and committed vs rollback exits:
+
+```rust
+use aero_cpu_core::exec::StepOutcome;
+
+loop {
+    let outcome = dispatcher.step(&mut vcpu);
+    match outcome {
+        StepOutcome::InterruptDelivered => {}
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            perf.retire_instructions(instructions_retired);
+            // `tier` can be used for profiling, but instruction counting does not need to special-case it.
+            let _ = tier;
+        }
+    }
+}
+```
 
 ---
 
