@@ -22,6 +22,13 @@ const VIRTIO_STATUS_DRIVER = 2;
 const VIRTIO_STATUS_DRIVER_OK = 4;
 const VIRTIO_STATUS_FEATURES_OK = 8;
 
+// Feature bits (subset required by the Aero virtio-net contract v1).
+const VIRTIO_NET_F_MAC = 1 << 5;
+const VIRTIO_NET_F_STATUS = 1 << 16;
+const VIRTIO_F_RING_INDIRECT_DESC = 1 << 28;
+// VIRTIO_F_VERSION_1 is bit 32 in the 64-bit feature set, i.e. bit 0 when `features_sel = 1`.
+const VIRTIO_F_VERSION_1_SEL1_BIT = 1 << 0;
+
 // Virtqueue descriptor flags.
 const VIRTQ_DESC_F_NEXT = 1;
 const VIRTQ_DESC_F_WRITE = 2;
@@ -292,12 +299,21 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE);
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
+      let featuresLo = 0;
+      let featuresHi = 0;
       for (const sel of [0, 1]) {
         mmioWriteU32(commonBase + 0x00n, sel);
         const f = mmioReadU32(commonBase + 0x04n);
+        if (sel === 0) featuresLo = f;
+        else featuresHi = f;
         mmioWriteU32(commonBase + 0x08n, sel);
         mmioWriteU32(commonBase + 0x0cn, f);
       }
+
+      expect((featuresLo & VIRTIO_NET_F_MAC) !== 0).toBe(true);
+      expect((featuresLo & VIRTIO_NET_F_STATUS) !== 0).toBe(true);
+      expect((featuresLo & VIRTIO_F_RING_INDIRECT_DESC) !== 0).toBe(true);
+      expect((featuresHi & VIRTIO_F_VERSION_1_SEL1_BIT) !== 0).toBe(true);
 
       mmioWriteU8(commonBase + 0x14n, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
       expect(mmioReadU8(commonBase + 0x14n) & VIRTIO_STATUS_FEATURES_OK).not.toBe(0);
