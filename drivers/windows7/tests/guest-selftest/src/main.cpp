@@ -2391,14 +2391,20 @@ static void ProcessMouseReport(VirtioInputEventsTestResult& out, const uint8_t* 
   if (out.saw_mouse_left_down && !left) out.saw_mouse_left_up = true;
 }
 
-static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log) {
+static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const VirtioInputTestResult& input) {
   VirtioInputEventsTestResult out{};
 
-  const auto paths = FindVirtioInputHidPaths(log);
-  if (!paths.reason.empty()) {
-    out.reason = paths.reason;
-    out.win32_error = paths.win32_error;
-    return out;
+  std::wstring keyboard_path = input.keyboard_device_path;
+  std::wstring mouse_path = input.mouse_device_path;
+  if (keyboard_path.empty() || mouse_path.empty()) {
+    const auto paths = FindVirtioInputHidPaths(log);
+    if (!paths.reason.empty()) {
+      out.reason = paths.reason;
+      out.win32_error = paths.win32_error;
+      return out;
+    }
+    keyboard_path = paths.keyboard_path;
+    mouse_path = paths.mouse_path;
   }
 
   HidOverlappedReader kbd{};
@@ -2406,13 +2412,13 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log) {
   kbd.buf.resize(64);
   mouse.buf.resize(64);
 
-  kbd.h = OpenHidDeviceForRead(paths.keyboard_path.c_str());
+  kbd.h = OpenHidDeviceForRead(keyboard_path.c_str());
   if (kbd.h == INVALID_HANDLE_VALUE) {
     out.reason = "open_keyboard_failed";
     out.win32_error = GetLastError();
     return out;
   }
-  mouse.h = OpenHidDeviceForRead(paths.mouse_path.c_str());
+  mouse.h = OpenHidDeviceForRead(mouse_path.c_str());
   if (mouse.h == INVALID_HANDLE_VALUE) {
     out.reason = "open_mouse_failed";
     out.win32_error = GetLastError();
@@ -5931,7 +5937,7 @@ int wmain(int argc, wchar_t** argv) {
   if (!opt.test_input_events) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set");
   } else {
-    const auto input_events = VirtioInputEventsTest(log);
+    const auto input_events = VirtioInputEventsTest(log, input);
     if (input_events.ok) {
       log.Logf(
           "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|kbd_reports=%d|mouse_reports=%d|kbd_a_down=%d|kbd_a_up=%d|mouse_move=%d|mouse_left_down=%d|mouse_left_up=%d",
