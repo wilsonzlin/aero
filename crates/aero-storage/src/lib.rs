@@ -14,7 +14,7 @@
 //!
 //! ## Example: open with format detection
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use aero_storage::{DiskImage, MemBackend, VirtualDisk};
 //!
 //! // In production this could be an OPFS backend such as `aero_opfs::OpfsByteStorage` (wasm32).

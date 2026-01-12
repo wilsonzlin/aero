@@ -72,6 +72,15 @@ fn sparse_disk_reads_zero_until_allocated() {
 }
 
 #[test]
+fn doc_example_open_auto_works() {
+    let backend = MemBackend::with_len(1024 * 1024).unwrap();
+    let mut disk = crate::DiskImage::open_auto(backend).unwrap();
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut sector).unwrap();
+}
+
+#[test]
 fn sparse_disk_allocates_and_persists() {
     let backend = MemBackend::new();
     let mut disk = AeroSparseDisk::create(
