@@ -1063,4 +1063,164 @@ describe("RemoteRangeDisk", () => {
     expect(buf).toEqual(data.subarray(0, buf.byteLength));
     expect(refreshCalls).toBe(1);
   });
+
+  it("aborts inflight read-ahead fetches and closes cleanly", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(chunkSize * 4);
+
+    let blockedStartedResolve: (() => void) | null = null;
+    const blockedStarted = new Promise<void>((resolve) => {
+      blockedStartedResolve = resolve;
+    });
+    let releaseBlockedFetch: (() => void) | null = null;
+    let writeAfterClose = false;
+
+    class TrackingSparseDisk extends MemorySparseDisk {
+      closed = false;
+      override async writeBlock(blockIndex: number, bytes: Uint8Array): Promise<void> {
+        if (this.closed) writeAfterClose = true;
+        return await super.writeBlock(blockIndex, bytes);
+      }
+      override async close(): Promise<void> {
+        this.closed = true;
+      }
+    }
+
+    class TrackingFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: TrackingSparseDisk | null = null;
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new TrackingSparseDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+      const buf = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buf).set(bytes);
+      return buf;
+    };
+
+    const fetcher: typeof fetch = async (_url, init) => {
+      const method = String(init?.method || "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? headers.get("Range") || undefined
+          : typeof headers === "object" && headers
+            ? ((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined)
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method !== "GET") {
+        return new Response(null, { status: 405 });
+      }
+
+      if (!rangeHeader) {
+        return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
+      }
+
+      const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+      if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+      const start = Number(m[1]);
+      const endInclusive = Number(m[2]);
+      const slice = data.subarray(start, Math.min(endInclusive + 1, data.byteLength));
+      const body = toArrayBuffer(slice);
+      const resp = new Response(body, {
+        status: 206,
+        headers: { "Content-Range": `bytes ${start}-${start + body.byteLength - 1}/${data.byteLength}`, ETag: "\"v1\"" },
+      });
+
+      // Block the first read-ahead chunk (chunk 2).
+      if (start === chunkSize * 2) {
+        blockedStartedResolve?.();
+        blockedStartedResolve = null;
+
+        return await new Promise<Response>((resolve, reject) => {
+          let settled = false;
+          const signal = init?.signal;
+
+          const abortErr = () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            return e;
+          };
+
+          const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            releaseBlockedFetch = null;
+            reject(abortErr());
+          };
+
+          if (signal?.aborted) {
+            onAbort();
+            return;
+          }
+
+          signal?.addEventListener("abort", onAbort, { once: true });
+
+          releaseBlockedFetch = () => {
+            if (settled) return;
+            settled = true;
+            signal?.removeEventListener("abort", onAbort);
+            resolve(resp);
+          };
+        });
+      }
+
+      return resp;
+    };
+
+    const factory = new TrackingFactory();
+    const disk = await RemoteRangeDisk.open("https://example.invalid/disk.img", {
+      cacheKeyParts: {
+        imageId: "prefetch-close-race",
+        version: "v1",
+        deliveryType: remoteRangeDeliveryType(chunkSize),
+      },
+      chunkSize,
+      readAheadChunks: 1,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      fetchFn: fetcher,
+    });
+
+    // First read sets the sequential baseline.
+    await disk.readSectors(0, new Uint8Array(chunkSize));
+    // Second sequential read triggers read-ahead.
+    await disk.readSectors(1, new Uint8Array(chunkSize));
+    await blockedStarted;
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const closePromise = disk.close();
+      releaseBlockedFetch?.();
+      await closePromise;
+
+      // Give any remaining microtasks a chance to run.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(factory.lastCreated?.closed).toBe(true);
+      expect(unhandled).toEqual([]);
+      expect(writeAfterClose).toBe(false);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });

@@ -148,6 +148,39 @@ async function cancelBody(resp: Response): Promise<void> {
   }
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
+function makeAbortError(): Error {
+  // Ensure a stable `.name === "AbortError"` across runtimes.
+  try {
+    return new DOMException("The operation was aborted.", "AbortError");
+  } catch {
+    const err = new Error("The operation was aborted.");
+    err.name = "AbortError";
+    return err;
+  }
+}
+
+function abortAny(signals: AbortSignal[]): AbortSignal {
+  // Prefer the built-in combinator when available (avoids leaking listeners).
+  const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (anyFn) return anyFn(signals);
+
+  // Fallback: create a composite signal. This can attach a small number of listeners over the disk lifetime.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  for (const s of signals) {
+    if (s.aborted) {
+      controller.abort();
+      break;
+    }
+    s.addEventListener("abort", onAbort, { once: true });
+  }
+  return controller.signal;
+}
+
 class Semaphore {
   private inUse = 0;
   private readonly waiters: Array<() => void> = [];
@@ -301,10 +334,30 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
   return bytesToHex(new Uint8Array(digest));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+  }
+  if (signal.aborted) {
+    return Promise.reject(makeAbortError());
+  }
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(makeAbortError());
+    };
+
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
     (timer as unknown as { unref?: () => void }).unref?.();
+
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -315,17 +368,26 @@ function isRetryableHttpStatus(status: number): boolean {
 function isRetryableError(err: unknown): boolean {
   if (err instanceof RemoteValidatorMismatchError) return false;
   if (err instanceof HttpStatusError) return isRetryableHttpStatus(err.status);
+  if (isAbortError(err)) return false;
   // Most other errors are treated as retryable because they might be transient (network or CDN hiccup).
   return true;
 }
 
-async function probeRemoteImage(lease: DiskAccessLease, fetchFn: typeof fetch): Promise<RemoteProbe> {
+async function probeRemoteImage(
+  lease: DiskAccessLease,
+  fetchFn: typeof fetch,
+  opts?: { signal?: AbortSignal },
+): Promise<RemoteProbe> {
   let sizeBytes: number | null = null;
   let etag: string | undefined;
   let lastModified: string | undefined;
 
   try {
-    const head = await fetchWithDiskAccessLease(lease, { method: "HEAD" }, { fetch: fetchFn, retryAuthOnce: true });
+    const head = await fetchWithDiskAccessLease(
+      lease,
+      { method: "HEAD", signal: opts?.signal },
+      { fetch: fetchFn, retryAuthOnce: true },
+    );
     if (head.ok) {
       const lenStr = head.headers.get("content-length");
       if (lenStr) {
@@ -344,7 +406,7 @@ async function probeRemoteImage(lease: DiskAccessLease, fetchFn: typeof fetch): 
   if (sizeBytes === null) {
     const probe = await fetchWithDiskAccessLease(
       lease,
-      { method: "GET", headers: { Range: "bytes=0-0" } },
+      { method: "GET", headers: { Range: "bytes=0-0" }, signal: opts?.signal },
       { fetch: fetchFn, retryAuthOnce: true },
     );
     if (probe.status === 200) {
@@ -463,6 +525,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private cacheGeneration = 0;
 
   private readonly inflightChunks = new Map<number, { generation: number; promise: Promise<void> }>();
+  private readonly inflightWrites = new Set<Promise<void>>();
   private readonly fetchSemaphore: Semaphore;
   private invalidationPromise: Promise<void> | null = null;
 
@@ -483,6 +546,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushPending = false;
   private readonly leaseRefresher: DiskAccessLeaseRefresher;
+  private closed = false;
+  private readonly abort = new AbortController();
+  private fetchAbort = new AbortController();
+  private fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
 
   private constructor(
     private readonly sourceId: string,
@@ -630,7 +697,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
   private async init(): Promise<void> {
     await this.maybeRefreshLease();
-    const remote = await probeRemoteImage(this.lease, this.opts.fetchFn);
+    const remote = await probeRemoteImage(this.lease, this.opts.fetchFn, { signal: this.fetchSignal });
 
     this.capacityBytesValue = remote.sizeBytes;
     this.remoteEtag = remote.etag;
@@ -719,13 +786,14 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private ensureOpen(): RemoteRangeDiskSparseCache {
-    if (!this.cache) {
+    if (this.closed || !this.cache) {
       throw new Error("RemoteRangeDisk is closed");
     }
     return this.cache;
   }
 
   async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
+    if (this.closed) throw new Error("RemoteRangeDisk is closed");
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
@@ -778,11 +846,17 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   async clearCache(): Promise<void> {
+    if (this.closed) throw new Error("RemoteRangeDisk is closed");
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+
+    // Cancel outstanding downloads before we close/delete the cache backing file.
+    // We'll re-create the controller at the end so future reads can proceed.
+    this.fetchAbort.abort();
+
+    const inflight = [...this.inflightChunks.values()].map((e) => e.promise);
     this.cacheGeneration += 1;
-    this.inflightChunks.clear();
     this.lastReadEnd = null;
     this.resetTelemetry();
 
@@ -793,6 +867,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.flushPending = false;
 
     this.cancelPendingMetaPersist();
+    await Promise.allSettled(inflight);
+    this.inflightChunks.clear();
 
     const oldCache = this.cache;
     await oldCache?.close?.();
@@ -832,22 +908,36 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.meta = metaToPersist;
     this.metaDirty = false;
     await this.metadataStore.write(this.cacheId, metaToPersist);
+
+    // Allow subsequent reads after the clear completes.
+    this.fetchAbort = new AbortController();
+    this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
   }
 
   async close(): Promise<void> {
-    if (!this.cache) return;
-    if (this.invalidationPromise) {
-      await this.invalidationPromise;
-    }
+    if (this.closed) return;
+    this.closed = true;
+
+    // Stop any background network activity and prevent further prefetches.
+    this.abort.abort();
+    this.fetchAbort.abort();
+
+    // Stop refreshing the lease; once we're closed, no more network activity should occur.
     this.leaseRefresher.stop();
+
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
     this.flushPending = false;
-    if (this.invalidationPromise) {
-      await this.invalidationPromise;
-    }
+
+    // If a cache invalidation is in progress, allow it to finish/settle, but never let it
+    // prevent resource cleanup during close.
+    await this.invalidationPromise?.catch(() => {});
+
+    // Wait for any inflight chunk tasks to settle before touching the cache handle.
+    await Promise.allSettled([...this.inflightChunks.values()].map((e) => e.promise));
+
     await this.flushPendingMetaPersist(this.cacheGeneration).catch(() => {
       // best-effort metadata persistence
     });
@@ -857,6 +947,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const cache = this.cache;
     this.cache = null;
     this.inflightChunks.clear();
+
+    if (!cache) return;
+
     let flushErr: unknown;
     try {
       await cache.flush();
@@ -888,10 +981,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private async ensureChunkCached(chunkIndex: number): Promise<void> {
+    if (this.closed) throw new Error("RemoteRangeDisk is closed");
     assertNonNegativeSafeInteger(chunkIndex, "chunkIndex");
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    if (this.closed) throw new Error("RemoteRangeDisk is closed");
     const generation = this.cacheGeneration;
     const cache = this.ensureOpen();
 
@@ -933,6 +1028,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private async fetchAndStoreChunk(chunkIndex: number, generation: number): Promise<void> {
     let invalidations = 0;
     while (true) {
+      if (this.closed) throw new Error("RemoteRangeDisk is closed");
       if (generation !== this.cacheGeneration) {
         // Cache was invalidated while we were waiting in the task queue.
         return await this.ensureChunkCached(chunkIndex);
@@ -944,12 +1040,19 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       try {
         const start = performance.now();
         const bytes = await this.downloadChunkWithRetries(chunkIndex, generation);
+        if (this.closed) throw new Error("RemoteRangeDisk is closed");
         if (generation !== this.cacheGeneration) {
           // Cache invalidated after download; discard and let the caller retry.
           continue;
         }
 
-        await cache.writeBlock(chunkIndex, bytes);
+        const write = cache.writeBlock(chunkIndex, bytes);
+        this.inflightWrites.add(write);
+        try {
+          await write;
+        } finally {
+          this.inflightWrites.delete(write);
+        }
         if (generation === this.cacheGeneration) {
           this.lastFetchMs = performance.now() - start;
           this.lastFetchAtMs = Date.now();
@@ -958,6 +1061,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         this.scheduleBackgroundFlush();
         return;
       } catch (err) {
+        if (isAbortError(err) && generation !== this.cacheGeneration) {
+          // An inflight fetch was aborted due to cache invalidation/clearCache; retry against the new cache generation.
+          return await this.ensureChunkCached(chunkIndex);
+        }
         if (err instanceof RemoteValidatorMismatchError && invalidations < 1) {
           invalidations += 1;
           await this.invalidateAndReopenCache();
@@ -980,7 +1087,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           throw err;
         }
         const delay = this.opts.retryBaseDelayMs * Math.pow(2, attempt);
-        await sleep(delay);
+        await sleep(delay, this.fetchSignal);
       } finally {
         release();
       }
@@ -1018,7 +1125,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     await this.maybeRefreshLease();
     const resp = await fetchWithDiskAccessLease(
       this.lease,
-      { method: "GET", headers },
+      { method: "GET", headers, signal: this.fetchSignal },
       { fetch: this.opts.fetchFn, retryAuthOnce: true },
     );
 
@@ -1244,11 +1351,17 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private async invalidateAndReopenCache(): Promise<void> {
+    if (this.closed) throw new Error("RemoteRangeDisk is closed");
     if (this.invalidationPromise) return await this.invalidationPromise;
 
     this.invalidationPromise = (async () => {
       this.cacheGeneration += 1;
-      this.inflightChunks.clear();
+
+      // Cancel inflight downloads for the previous cache generation and prepare a fresh controller
+      // for subsequent reads.
+      this.fetchAbort.abort();
+      this.fetchAbort = new AbortController();
+      this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
 
       if (this.flushTimer !== null) {
         clearTimeout(this.flushTimer);
@@ -1257,6 +1370,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.flushPending = false;
 
       this.cancelPendingMetaPersist();
+
+      // Ensure no cache writes are in-flight before closing the underlying file handle.
+      await Promise.allSettled([...this.inflightWrites]);
 
       const oldCache = this.cache;
       await oldCache?.close?.();
@@ -1272,7 +1388,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       await this.metadataStore.delete(this.cacheId);
 
       await this.maybeRefreshLease();
-      const remote = await probeRemoteImage(this.lease, this.opts.fetchFn);
+      const remote = await probeRemoteImage(this.lease, this.opts.fetchFn, { signal: this.fetchSignal });
       this.capacityBytesValue = remote.sizeBytes;
       this.remoteEtag = remote.etag;
       this.remoteLastModified = remote.lastModified;
