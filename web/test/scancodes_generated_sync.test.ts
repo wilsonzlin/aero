@@ -161,3 +161,31 @@ test('generated PS/2 Set-2 scancode tables are in sync with tools/gen_scancodes/
     jsonScancodes,
   );
 });
+
+test("scancode tables cover standard, extended (E0), and multi-byte sequences", () => {
+  // Standard keys (letters/digits).
+  for (const [code, make] of [
+    ["KeyA", [0x1c]],
+    ["Digit1", [0x16]],
+  ] as const) {
+    assert.deepStrictEqual(webPs2Set2BytesForKeyEvent(code, true), make);
+    assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent(code, true), make);
+  }
+
+  // Extended keys (E0 prefix).
+  assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("ArrowUp", true), [0xe0, 0x75]);
+  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("ArrowUp", true), [0xe0, 0x75]);
+
+  // Multi-byte sequences (PrintScreen / Pause).
+  assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("PrintScreen", true), [0xe0, 0x12, 0xe0, 0x7c]);
+  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("PrintScreen", true), [0xe0, 0x12, 0xe0, 0x7c]);
+
+  assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("Pause", true), [
+    0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77,
+  ]);
+  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("Pause", true), [
+    0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77,
+  ]);
+  assert.deepStrictEqual(webPs2Set2BytesForKeyEvent("Pause", false), []);
+  assert.deepStrictEqual(harnessPs2Set2BytesForKeyEvent("Pause", false), []);
+});
