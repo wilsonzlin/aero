@@ -5537,7 +5537,11 @@ impl AerogpuD3d11Executor {
         // would otherwise cause us to overwrite the copy with stale guest-memory contents.
         if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
             dst.dirty = false;
-            dst.host_shadow = None;
+            // `host_shadow` only tracks mip0/layer0. Invalidate it only when the copy touches that
+            // subresource.
+            if dst_mip_level == 0 && dst_array_layer == 0 {
+                dst.host_shadow = None;
+            }
             // GPU copies do not update guest memory backing.
             dst.guest_backing_is_current = false;
         }
@@ -9586,6 +9590,122 @@ mod tests {
                 vec![0x11u8; (width * height * 4) as usize],
                 "COPY_TEXTURE2D into a dirty guest-backed texture must upload guest memory first when other subresources exist"
             );
+        });
+    }
+
+    #[test]
+    fn copy_texture2d_into_mip1_preserves_upload_resource_shadow() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const SRC_TEX: u32 = 1;
+            const DST_TEX: u32 = 2;
+
+            let width = 4u32;
+            let height = 4u32;
+            let mip_levels = 2u32;
+
+            let allocs = AllocTable::new(None).unwrap();
+
+            // Create SRC and DST as host-owned RGBA8 textures with 2 mips.
+            for handle in [SRC_TEX, DST_TEX] {
+                let mut create = Vec::new();
+                create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+                create.extend_from_slice(&56u32.to_le_bytes());
+                create.extend_from_slice(&handle.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+                create.extend_from_slice(&width.to_le_bytes());
+                create.extend_from_slice(&height.to_le_bytes());
+                create.extend_from_slice(&mip_levels.to_le_bytes()); // mip_levels
+                create.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+                create.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+                create.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id (host owned)
+                create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(create.len(), 56);
+                exec.exec_create_texture2d(&create, &allocs)
+                    .expect("CREATE_TEXTURE2D should succeed");
+            }
+
+            // Full UPLOAD_RESOURCE to establish host shadows.
+            let src_len = (width * height * 4) as usize;
+            let src_data = vec![0x33u8; src_len];
+            exec.upload_resource_payload(SRC_TEX, 0, src_data.len() as u64, &src_data)
+                .expect("UPLOAD_RESOURCE(src) should succeed");
+
+            let dst_data = vec![0x00u8; src_len];
+            exec.upload_resource_payload(DST_TEX, 0, dst_data.len() as u64, &dst_data)
+                .expect("UPLOAD_RESOURCE(dst) should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&DST_TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_some()),
+                "UPLOAD_RESOURCE should populate host_shadow"
+            );
+
+            // Copy into mip1 (2x2) of dst. This should not invalidate the mip0/layer0 shadow.
+            let mut copy = Vec::new();
+            copy.extend_from_slice(&(AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
+            copy.extend_from_slice(&64u32.to_le_bytes());
+            copy.extend_from_slice(&DST_TEX.to_le_bytes());
+            copy.extend_from_slice(&SRC_TEX.to_le_bytes());
+            copy.extend_from_slice(&1u32.to_le_bytes()); // dst_mip_level
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_x
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_y
+            copy.extend_from_slice(&2u32.to_le_bytes()); // width
+            copy.extend_from_slice(&2u32.to_le_bytes()); // height
+            copy.extend_from_slice(&0u32.to_le_bytes()); // flags
+            copy.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            assert_eq!(copy.len(), 64);
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test copy mip1 preserves shadow encoder"),
+                });
+            let mut guest_mem = VecGuestMemory::new(0);
+            let mut pending_writebacks = Vec::new();
+            exec.exec_copy_texture2d(
+                &mut encoder,
+                &copy,
+                &allocs,
+                &mut guest_mem,
+                &mut pending_writebacks,
+            )
+            .expect("COPY_TEXTURE2D should succeed");
+            assert!(pending_writebacks.is_empty());
+            exec.submit_encoder(&mut encoder, "aerogpu_cmd test copy mip1 submit");
+            exec.poll_wait();
+
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&DST_TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_some()),
+                "COPY_TEXTURE2D into mip1 must not invalidate mip0 host_shadow"
+            );
+
+            // Verify that partial UPLOAD_RESOURCE patches still work (they rely on host_shadow).
+            exec.upload_resource_payload(DST_TEX, 0, 1, &[0xAA])
+                .expect("partial UPLOAD_RESOURCE should succeed");
+            let pixels = exec
+                .read_texture_rgba8(DST_TEX)
+                .await
+                .expect("readback should succeed");
+            assert_eq!(pixels[0], 0xAA);
         });
     }
 }
