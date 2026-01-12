@@ -41,8 +41,10 @@ import {
   IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
   createSharedMemoryViews,
+  guestToLinear,
   ringRegionsForWorker,
   setReadyFlag,
+  type GuestRamLayout,
   type WorkerRole,
 } from "../runtime/shared_layout";
 import {
@@ -197,6 +199,7 @@ let commandRing!: RingBuffer;
 let eventRing!: RingBuffer;
 let guestI32!: Int32Array;
 let guestU8!: Uint8Array;
+let guestLayout: GuestRamLayout | null = null;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
 let io: AeroIpcIoClient | null = null;
@@ -2116,6 +2119,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       };
       const views = createSharedMemoryViews(segments);
       status = views.status;
+      guestLayout = views.guestLayout;
       guestI32 = views.guestI32;
       guestU8 = views.guestU8;
       vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
@@ -2983,8 +2987,19 @@ async function runDiskReadDemo(): Promise<void> {
     if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
 
     if (evt.ok && evt.bytes >= 4) {
-      const firstDword = new DataView(guestU8.buffer, guestU8.byteOffset + Number(guestOffset), 4).getUint32(0, true);
-      perf.counter("diskReadDemoFirstDword", firstDword);
+      // `guestOffset` is a guest physical address; translate it through the PC/Q35 hole/high-RAM
+      // remap layout before indexing the flat `guestU8` backing store.
+      const layout = guestLayout;
+      const paddr = Number(guestOffset);
+      if (layout && Number.isSafeInteger(paddr) && BigInt(paddr) === guestOffset) {
+        try {
+          const linear = guestToLinear(layout, paddr);
+          const firstDword = new DataView(guestU8.buffer, linear, 4).getUint32(0, true);
+          perf.counter("diskReadDemoFirstDword", firstDword);
+        } catch {
+          // ignore (demo-only)
+        }
+      }
     }
   } catch (err) {
     // eslint-disable-next-line no-console
