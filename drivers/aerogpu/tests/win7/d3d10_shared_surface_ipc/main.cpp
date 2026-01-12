@@ -524,7 +524,8 @@ static int RunConsumer(int argc, char** argv) {
                          (unsigned long)pixel,
                          (unsigned long)expected);
   }
-  return 0;
+
+  return reporter.Pass();
 }
 
 static int RunProducer(int argc, char** argv) {
@@ -821,10 +822,18 @@ static int RunProducer(int argc, char** argv) {
   if (exit_code != 0) {
     return reporter.Fail("consumer failed: exit_code=%lu", (unsigned long)exit_code);
   }
-  return 0;
+
+  if (dump) {
+    reporter.AddArtifactPathIfExistsW(dump_bmp_path);
+  }
+
+  // Close our copy of the shared handle (the texture and consumer remain live while needed).
+  CloseHandle(shared);
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   if (aerogpu_test::HasArg(argc, argv, "--consumer")) {
     return RunConsumer(argc, argv);
   }
