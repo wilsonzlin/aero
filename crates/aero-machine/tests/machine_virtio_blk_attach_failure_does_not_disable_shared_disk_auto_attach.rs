@@ -66,8 +66,7 @@ fn virtio_blk_attach_failure_does_not_disable_shared_disk_auto_attach() {
     let new_capacity_sectors = u64::from_le_bytes(cap_bytes);
 
     assert_ne!(
-        new_capacity_sectors,
-        initial_capacity_sectors,
+        new_capacity_sectors, initial_capacity_sectors,
         "expected virtio-blk capacity to update after shared disk backend change"
     );
     assert_eq!(
