@@ -1,4 +1,6 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_devices::pic8259::{MASTER_CMD, MASTER_DATA, SLAVE_CMD, SLAVE_DATA};
+use aero_devices::pit8254::{PIT_CH0, PIT_CMD};
 
 fn build_hlt_pit_boot_sector() -> [u8; 512] {
     let mut code: Vec<u8> = Vec::new();
@@ -17,31 +19,31 @@ fn build_hlt_pit_boot_sector() -> [u8; 512] {
     // -----------------------------------------------------------------------------------------
     // ICW1: start init + ICW4
     code.extend_from_slice(&[0xB0, 0x11]); // mov al,0x11
-    code.extend_from_slice(&[0xE6, 0x20]); // out 0x20,al
-    code.extend_from_slice(&[0xE6, 0xA0]); // out 0xA0,al
+    code.extend_from_slice(&[0xE6, MASTER_CMD as u8]); // out 0x20,al
+    code.extend_from_slice(&[0xE6, SLAVE_CMD as u8]); // out 0xA0,al
 
     // ICW2: vector offsets
     code.extend_from_slice(&[0xB0, 0x20]); // mov al,0x20
-    code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
+    code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0x28]); // mov al,0x28
-    code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
+    code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
 
     // ICW3: master has a slave on IRQ2; slave identity is 2.
     code.extend_from_slice(&[0xB0, 0x04]); // mov al,0x04
-    code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
+    code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0x02]); // mov al,0x02
-    code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
+    code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
 
     // ICW4: 8086 mode
     code.extend_from_slice(&[0xB0, 0x01]); // mov al,0x01
-    code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
-    code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
+    code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
+    code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
 
     // Unmask only IRQ0 (timer) on the master PIC; mask all on the slave.
     code.extend_from_slice(&[0xB0, 0xFE]); // mov al,0xFE
-    code.extend_from_slice(&[0xE6, 0x21]); // out 0x21,al
+    code.extend_from_slice(&[0xE6, MASTER_DATA as u8]); // out 0x21,al
     code.extend_from_slice(&[0xB0, 0xFF]); // mov al,0xFF
-    code.extend_from_slice(&[0xE6, 0xA1]); // out 0xA1,al
+    code.extend_from_slice(&[0xE6, SLAVE_DATA as u8]); // out 0xA1,al
 
     // -----------------------------------------------------------------------------------------
     // Install a real-mode IVT handler for vector 0x20 at IVT[0x20] = 0x0000:handler.
@@ -62,17 +64,17 @@ fn build_hlt_pit_boot_sector() -> [u8; 512] {
     // mov al, 0x34  ; ch0, lobyte/hibyte, mode2, binary
     code.extend_from_slice(&[0xB0, 0x34]);
     // out 0x43, al
-    code.extend_from_slice(&[0xE6, 0x43]);
+    code.extend_from_slice(&[0xE6, PIT_CMD as u8]);
 
     // Reload divisor (small period so tests complete quickly).
     // mov ax, 0x0020
     code.extend_from_slice(&[0xB8, 0x20, 0x00]);
     // out 0x40, al (low byte)
-    code.extend_from_slice(&[0xE6, 0x40]);
+    code.extend_from_slice(&[0xE6, PIT_CH0 as u8]);
     // mov al, ah
     code.extend_from_slice(&[0x8A, 0xC4]);
     // out 0x40, al (high byte)
-    code.extend_from_slice(&[0xE6, 0x40]);
+    code.extend_from_slice(&[0xE6, PIT_CH0 as u8]);
 
     // sti; hlt
     code.push(0xFB);
@@ -101,11 +103,11 @@ fn build_hlt_pit_boot_sector() -> [u8; 512] {
     // mov al, 0xFF ; mask all on master PIC (stop further timer interrupts)
     code.extend_from_slice(&[0xB0, 0xFF]);
     // out 0x21, al
-    code.extend_from_slice(&[0xE6, 0x21]);
+    code.extend_from_slice(&[0xE6, MASTER_DATA as u8]);
     // mov al, 0x20 ; EOI
     code.extend_from_slice(&[0xB0, 0x20]);
     // out 0x20, al
-    code.extend_from_slice(&[0xE6, 0x20]);
+    code.extend_from_slice(&[0xE6, MASTER_CMD as u8]);
     // pop ax
     code.push(0x58);
     // iret
