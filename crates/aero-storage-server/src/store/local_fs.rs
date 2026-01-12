@@ -6,7 +6,7 @@ use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::OnceCell;
 
-use super::manifest::{Manifest, ManifestImage};
+use super::manifest::{Manifest, ManifestError, ManifestImage};
 use super::{
     validate_image_id, BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError,
     CONTENT_TYPE_DISK_IMAGE,
@@ -17,10 +17,12 @@ use super::{
 /// # Catalog source
 ///
 /// If a `manifest.json` is present under `root`, it is used as the image catalog (preferred).
-/// Otherwise, the store falls back to a stable directory listing of `root` (development only).
+/// Otherwise, the store falls back to a stable directory listing of `root` (development only),
+/// unless [`LocalFsImageStore::with_require_manifest`] is enabled.
 #[derive(Debug, Clone)]
 pub struct LocalFsImageStore {
     root: PathBuf,
+    require_manifest: bool,
     manifest: std::sync::Arc<OnceCell<Option<Manifest>>>,
 }
 
@@ -34,8 +36,18 @@ impl LocalFsImageStore {
         let root = std::fs::canonicalize(&root).unwrap_or(root);
         Self {
             root,
+            require_manifest: false,
             manifest: std::sync::Arc::new(OnceCell::new()),
         }
+    }
+
+    /// Require `manifest.json` to exist under the store root.
+    ///
+    /// When enabled, the store will not fall back to directory listing in `list_images`, and
+    /// `get_meta/get_image/open_range` will fail if no manifest can be loaded.
+    pub fn with_require_manifest(mut self, require_manifest: bool) -> Self {
+        self.require_manifest = require_manifest;
+        self
     }
 
     async fn ensure_within_root(&self, path: &Path) -> Result<PathBuf, StoreError> {
@@ -51,12 +63,22 @@ impl LocalFsImageStore {
 
     async fn load_manifest(&self) -> Result<Option<Manifest>, StoreError> {
         let root = self.root.clone();
+        let require_manifest = self.require_manifest;
         self.manifest
             .get_or_try_init(|| async move {
                 let manifest_path = root.join("manifest.json");
                 match fs::read_to_string(manifest_path).await {
                     Ok(raw) => Ok(Some(Manifest::parse_str(&raw)?)),
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        if require_manifest {
+                            Err(ManifestError::Missing {
+                                path: root.join("manifest.json").display().to_string(),
+                            }
+                            .into())
+                        } else {
+                            Ok(None)
+                        }
+                    }
                     Err(err) => Err(StoreError::Io(err)),
                 }
             })

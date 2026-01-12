@@ -36,6 +36,8 @@ pub enum ManifestError {
     InvalidId(String),
     #[error("invalid file path for image {id}: {file}")]
     InvalidFilePath { id: String, file: String },
+    #[error("manifest.json is required but missing at {path}")]
+    Missing { path: String },
     #[error("manifest must include at least one image")]
     Empty,
 }

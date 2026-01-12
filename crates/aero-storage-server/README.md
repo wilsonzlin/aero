@@ -25,6 +25,7 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | `--cors-origin` | `AERO_STORAGE_CORS_ORIGIN` | _(unset → `Access-Control-Allow-Origin: *`)_ |
 | `--cross-origin-resource-policy` | `AERO_STORAGE_CROSS_ORIGIN_RESOURCE_POLICY` | `same-site` |
 | `--images-root` | `AERO_STORAGE_IMAGE_ROOT` | `./images` |
+| `--require-manifest` | `AERO_STORAGE_REQUIRE_MANIFEST` | `false` |
 | `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
 | `--max-range-bytes` | `AERO_STORAGE_MAX_RANGE_BYTES` | `8388608` (8 MiB) |
 | `--public-cache-max-age-secs` | `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS` | `3600` |
@@ -64,6 +65,10 @@ curl -sSf http://localhost:8080/metrics
 Put disk images under `./images` (or the configured `--images-root`). If a `manifest.json` exists
 under the images root, it is used as the image catalog; otherwise the server falls back to a
 directory listing (development only).
+
+In production, strongly consider enabling `--require-manifest` (or `AERO_STORAGE_REQUIRE_MANIFEST`)
+to **disable directory listing fallback**. This prevents accidentally exposing arbitrary files
+placed in the images directory.
 
 ## Reverse proxy (TLS + HTTP/2)
 

@@ -24,7 +24,10 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::fs::create_dir_all(&config.images_root).await?;
 
-    let store = Arc::new(LocalFsImageStore::new(config.images_root.clone()));
+    let store = Arc::new(
+        LocalFsImageStore::new(config.images_root.clone())
+            .with_require_manifest(config.require_manifest),
+    );
     let mut state = AppState::new(store);
 
     if let Some(origins) = config.cors_origins.as_deref() {
@@ -62,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         listen_addr = %config.listen_addr,
         images_root = %config.images_root.display(),
+        require_manifest = %config.require_manifest,
         cors_origins = ?config.cors_origins,
         cross_origin_resource_policy = %corp_policy,
         max_range_bytes = ?config.max_range_bytes,

@@ -18,6 +18,7 @@ impl TestServer {
         let server = start(StorageServerConfig {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             images_dir: tempdir.path().to_path_buf(),
+            require_manifest: false,
         })
         .await?;
 

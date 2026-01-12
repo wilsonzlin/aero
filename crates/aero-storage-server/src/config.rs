@@ -41,6 +41,16 @@ struct Args {
     #[arg(long, env = "AERO_STORAGE_IMAGE_ROOT")]
     images_root: Option<PathBuf>,
 
+    /// Require `manifest.json` to exist under `--images-root`.
+    ///
+    /// When set, the server will refuse to fall back to directory listing when `manifest.json` is
+    /// missing. This is recommended in production to avoid accidentally exposing files placed in
+    /// the images directory.
+    ///
+    /// Environment variable: `AERO_STORAGE_REQUIRE_MANIFEST`.
+    #[arg(long, env = "AERO_STORAGE_REQUIRE_MANIFEST")]
+    require_manifest: bool,
+
     /// Log filter (tracing-subscriber EnvFilter syntax).
     ///
     /// Environment variable: `AERO_STORAGE_LOG_LEVEL`.
@@ -72,6 +82,7 @@ pub struct Config {
     pub cors_origins: Option<Vec<String>>,
     pub cross_origin_resource_policy: String,
     pub images_root: PathBuf,
+    pub require_manifest: bool,
     pub log_level: String,
     pub max_range_bytes: Option<u64>,
     pub public_cache_max_age_secs: Option<u64>,
@@ -134,6 +145,7 @@ impl Config {
             cors_origins,
             cross_origin_resource_policy,
             images_root,
+            require_manifest: args.require_manifest,
             log_level,
             max_range_bytes: args.max_range_bytes,
             public_cache_max_age_secs: args.public_cache_max_age_secs,

@@ -14,6 +14,7 @@ use crate::AppState;
 pub struct StorageServerConfig {
     pub bind_addr: SocketAddr,
     pub images_dir: PathBuf,
+    pub require_manifest: bool,
 }
 
 pub struct RunningStorageServer {
@@ -56,7 +57,9 @@ pub async fn start(config: StorageServerConfig) -> anyhow::Result<RunningStorage
         .await
         .with_context(|| format!("create images dir {}", config.images_dir.display()))?;
 
-    let store: Arc<dyn ImageStore> = Arc::new(LocalFsImageStore::new(&config.images_dir));
+    let store: Arc<dyn ImageStore> = Arc::new(
+        LocalFsImageStore::new(&config.images_dir).with_require_manifest(config.require_manifest),
+    );
     let app = crate::app(AppState::new(store));
 
     let listener = TcpListener::bind(config.bind_addr)
