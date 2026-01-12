@@ -11,7 +11,7 @@ async fn freedos_boot_smoke() -> Result<()> {
     let freedos_img = harness::repo_root().join("test-images/freedos/fd14-boot-aero.img");
     harness::ensure_ci_prereq(
         &freedos_img,
-        "Run `./scripts/prepare-freedos.sh` to download + patch FreeDOS test media.",
+        "Run `bash ./scripts/prepare-freedos.sh` to download + patch FreeDOS test media.",
     )?;
     if !freedos_img.exists() {
         return Ok(());

@@ -19,7 +19,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # Auto-detect the Node workspace (repo root vs web/ vs other) so `just` stays in
-# sync with CI and `./scripts/test-all.sh`.
+# sync with CI and `bash ./scripts/test-all.sh`.
 #
 # Canonical override: AERO_NODE_DIR. Deprecated: AERO_WEB_DIR, WEB_DIR.
 #
@@ -82,7 +82,7 @@ _detect_wasm_crate_dir:
     args+=(--wasm-crate-dir "${WASM_CRATE_DIR}")
   fi
 
-  out="$(./scripts/ci/detect-wasm-crate.sh "${args[@]}")"
+  out="$(bash ./scripts/ci/detect-wasm-crate.sh "${args[@]}")"
   dir=""
   while IFS="=" read -r key value; do
     case "$key" in
@@ -508,4 +508,4 @@ object-store-verify *args:
 check-iac:
   #!/usr/bin/env bash
   set -euo pipefail
-  ./scripts/ci/check-iac.sh
+  bash ./scripts/ci/check-iac.sh

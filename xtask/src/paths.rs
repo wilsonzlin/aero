@@ -99,7 +99,7 @@ pub fn resolve_wasm_crate_dir(repo_root: &Path, cli_override: Option<&str>) -> R
     // This keeps crate selection consistent (including ambiguity checks) between:
     // - `cargo xtask test-all`
     // - CI workflows/scripts
-    // - `./scripts/test-all.sh` (wrapper)
+    // - `bash ./scripts/test-all.sh` (wrapper)
     let detect_script = repo_root.join("scripts/ci/detect-wasm-crate.mjs");
     if detect_script.is_file() {
         let mut cmd = Command::new("node");
