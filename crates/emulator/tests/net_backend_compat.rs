@@ -69,15 +69,15 @@ fn ring_backend_paths_work() {
     assert_eq!(backend.poll_receive(), None);
 
     assert_eq!(
-        backend.l2_ring_stats(),
-        Some(L2TunnelRingBackendStats {
+        backend.stats(),
+        L2TunnelRingBackendStats {
             tx_pushed_frames: 1,
             tx_dropped_oversize: 0,
             tx_dropped_full: 1,
             rx_popped_frames: 1,
             rx_dropped_oversize: 0,
             rx_corrupt: 0,
-        })
+        }
     );
 }
 
@@ -94,4 +94,3 @@ fn traits_are_reexported() {
     }
     assert_network_backend_impl::<Dummy>();
 }
-
