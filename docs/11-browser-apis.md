@@ -850,10 +850,10 @@ import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } fr
 
 class WorkerCoordinator {
     constructor() {
-        this.cpuWorker = new Worker('cpu-worker.js', { type: 'module' });
-        this.gpuWorker = new Worker('gpu-worker.js', { type: 'module' });
-        this.ioWorker = new Worker('io-worker.js', { type: 'module' });
-        this.jitWorker = new Worker('jit-worker.js', { type: 'module' });
+        this.cpuWorker = new Worker(new URL('../workers/cpu.worker.ts', import.meta.url), { type: 'module' });
+        this.gpuWorker = new Worker(new URL('../workers/gpu.worker.ts', import.meta.url), { type: 'module' });
+        this.ioWorker = new Worker(new URL('../workers/io.worker.ts', import.meta.url), { type: 'module' });
+        this.jitWorker = new Worker(new URL('../workers/jit.worker.ts', import.meta.url), { type: 'module' });
     }
 
     static async create() {
