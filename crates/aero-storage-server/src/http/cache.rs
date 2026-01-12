@@ -63,39 +63,50 @@ where
     F: FnOnce() -> String,
 {
     if let Some(etag) = etag {
-        let trimmed = etag.trim();
-        if looks_like_etag(trimmed) {
-            match HeaderValue::from_str(trimmed) {
-                Ok(v) => {
-                    // `HeaderValue::from_str` allows obs-text, but our conditional request logic
-                    // (`If-None-Match` / `If-Range`) parses request headers using `to_str()`, which
-                    // rejects non-visible ASCII. Ensure the value we emit is representable as a
-                    // header string so clients can round-trip it back to us for cache revalidation.
-                    if v.to_str().is_ok() {
-                        return v;
-                    }
-
-                    let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
-                    tracing::warn!(
-                        etag = ?etag_for_log.as_ref(),
-                        "store-provided ETag contains non-visible ASCII; using fallback"
-                    );
-                }
-                Err(err) => {
-                    let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
-                    tracing::warn!(
-                        etag = ?etag_for_log.as_ref(),
-                        error = %err,
-                        "invalid store-provided ETag header value; using fallback"
-                    );
-                }
-            }
-        } else if !trimmed.is_empty() {
-            let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+        // If the raw value is far beyond our max length, treat it as invalid without trimming.
+        // This avoids spending O(n) time trimming attacker-controlled whitespace from very large
+        // strings.
+        if etag.len() > MAX_ETAG_LEN + 32 {
+            let etag_for_log = super::observability::truncate_for_span(etag, 256);
             tracing::warn!(
                 etag = ?etag_for_log.as_ref(),
-                "store-provided ETag is not a valid HTTP entity-tag; using fallback"
+                "store-provided ETag is too long; using fallback"
             );
+        } else {
+            let trimmed = etag.trim();
+            if looks_like_etag(trimmed) {
+                match HeaderValue::from_str(trimmed) {
+                    Ok(v) => {
+                        // `HeaderValue::from_str` allows obs-text, but our conditional request logic
+                        // (`If-None-Match` / `If-Range`) parses request headers using `to_str()`, which
+                        // rejects non-visible ASCII. Ensure the value we emit is representable as a
+                        // header string so clients can round-trip it back to us for cache revalidation.
+                        if v.to_str().is_ok() {
+                            return v;
+                        }
+    
+                        let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+                        tracing::warn!(
+                            etag = ?etag_for_log.as_ref(),
+                            "store-provided ETag contains non-visible ASCII; using fallback"
+                        );
+                    }
+                    Err(err) => {
+                        let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+                        tracing::warn!(
+                            etag = ?etag_for_log.as_ref(),
+                            error = %err,
+                            "invalid store-provided ETag header value; using fallback"
+                        );
+                    }
+                }
+            } else if !trimmed.is_empty() {
+                let etag_for_log = super::observability::truncate_for_span(trimmed, 256);
+                tracing::warn!(
+                    etag = ?etag_for_log.as_ref(),
+                    "store-provided ETag is not a valid HTTP entity-tag; using fallback"
+                );
+            }
         }
     }
 
