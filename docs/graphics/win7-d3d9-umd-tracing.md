@@ -34,8 +34,8 @@ Tracing is **disabled by default**. Enable it by setting environment variables i
   - `unique`: records only the **first call per entrypoint** (best for `dwm.exe`, avoids log spam)
   - `all`: records every call until the fixed buffer is full
 
-- `AEROGPU_D3D9_TRACE_MAX=<N>` (default: 512, clamped to `[1, 512]`)  
-  Maximum number of records to store.
+- `AEROGPU_D3D9_TRACE_MAX=<N>` (default: 512)  
+  Maximum number of records to store (clamped to `<= 512`). `0` is treated as “use the default” (512).
 
 - `AEROGPU_D3D9_TRACE_FILTER=<TOKENS>`  
   Records only entrypoints whose trace name contains any of the comma-separated tokens (case-insensitive substring match).
@@ -131,6 +131,15 @@ aerogpu-d3d9-trace: dump reason=...
 ---
 
 ## Reading the output
+
+When tracing is enabled, the UMD prints a one-line banner describing the active configuration.
+When a dump trigger fires, the first dump line repeats key parts of that configuration:
+
+- `mode`: `unique` or `all`
+- `max`: effective record capacity (after applying `AEROGPU_D3D9_TRACE_MAX`)
+- `dump_on_stub`: whether `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` is enabled
+- `stderr_on`: whether `AEROGPU_D3D9_TRACE_STDERR=1` is enabled (Windows-only echo)
+- `filter_on` / `filter_count`: whether `AEROGPU_D3D9_TRACE_FILTER` is active and how many entrypoints are included
 
 Example:
 
