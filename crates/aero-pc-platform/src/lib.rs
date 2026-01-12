@@ -517,6 +517,58 @@ impl PortIoDevice for E1000PciIoBar {
     }
 }
 
+/// AHCI (BAR5) handler registered via the platform's PCI MMIO router.
+///
+/// The ICH9 AHCI device model (`aero_devices_storage::AhciPciDevice`) maintains its own PCI config
+/// space (for Bus Master + INTx disable gating). The platform also maintains a separate guest-facing
+/// `PciConfigSpace` in `SharedPciConfigPorts`.
+///
+/// Keep the device model's PCI command/BAR view in sync on every MMIO access so:
+/// - MMIO reads/writes respect Memory Space Enable (PCI command bit 1)
+/// - DMA processing respects Bus Master Enable (PCI command bit 2)
+/// - INTx level is gated by Interrupt Disable (PCI command bit 10)
+#[derive(Clone)]
+struct PcAhciMmioBar {
+    pci_cfg: SharedPciConfigPorts,
+    ahci: Rc<RefCell<AhciPciDevice>>,
+    bdf: PciBdf,
+}
+
+impl PcAhciMmioBar {
+    fn sync_config(&self) {
+        // Keep the internal AHCI config space aligned with the guest-visible PCI config space.
+        let (command, bar5_base) = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let cfg = bus.device_config(self.bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar5_base = cfg
+                .and_then(|cfg| cfg.bar_range(5))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar5_base)
+        };
+
+        let mut ahci = self.ahci.borrow_mut();
+        ahci.config_mut().set_command(command);
+        if bar5_base != 0 {
+            ahci.config_mut().set_bar_base(5, bar5_base);
+        }
+    }
+}
+
+impl PciBarMmioHandler for PcAhciMmioBar {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.sync_config();
+        self.ahci.borrow_mut().mmio_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.sync_config();
+        self.ahci.borrow_mut().mmio_write(offset, size, value);
+    }
+}
+
 type PciIoBarKey = (PciBdf, u8);
 type SharedPciIoBarMap = Rc<RefCell<HashMap<PciIoBarKey, Box<dyn PortIoDevice>>>>;
 
