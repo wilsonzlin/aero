@@ -1,9 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices_nvme::NvmeController;
+use aero_devices_nvme::{AeroStorageDiskAdapter, NvmeController};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
-use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
 use memory::MemoryBus;
 
 #[derive(Clone)]
@@ -121,9 +120,7 @@ fn read_cqe(mem: &mut TestMem, addr: u64) -> CqEntry {
 #[test]
 fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let disk = SharedDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut ctrl = NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -178,9 +175,8 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let snap = ctrl.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored =
+        NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
@@ -220,9 +216,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
 #[test]
 fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let disk = SharedDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut ctrl = NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -282,9 +276,8 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let snap = ctrl.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmeController::new(Box::new(AeroVirtualDiskAsNvmeBackend::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored =
+        NvmeController::new(Box::new(AeroStorageDiskAdapter::new(Box::new(disk.clone()))));
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
