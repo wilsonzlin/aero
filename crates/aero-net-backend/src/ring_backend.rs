@@ -213,6 +213,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::Arc;
 
     use aero_ipc::ring::{PopError, RingBuffer};
@@ -319,5 +320,68 @@ mod tests {
                 rx_corrupt: 0,
             }
         );
+    }
+
+    struct CorruptOnceRing {
+        calls: Cell<u32>,
+    }
+
+    impl CorruptOnceRing {
+        fn new() -> Self {
+            Self {
+                calls: Cell::new(0),
+            }
+        }
+
+        fn calls(&self) -> u32 {
+            self.calls.get()
+        }
+    }
+
+    impl FrameRing for CorruptOnceRing {
+        fn capacity_bytes(&self) -> usize {
+            64
+        }
+
+        fn try_push(&self, _payload: &[u8]) -> Result<(), PushError> {
+            Ok(())
+        }
+
+        fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
+            let calls = self.calls.get();
+            self.calls.set(calls + 1);
+
+            if calls == 0 {
+                Err(PopError::Corrupt)
+            } else {
+                Ok(vec![0x42])
+            }
+        }
+    }
+
+    #[test]
+    fn poll_receive_marks_rx_broken_on_corrupt_and_stops_polling_ring() {
+        let tx = Arc::new(RingBuffer::new(64));
+        let rx = Arc::new(CorruptOnceRing::new());
+        let mut backend = L2TunnelRingBackend::new(tx, rx.clone());
+
+        assert_eq!(backend.poll_receive(), None);
+        assert_eq!(rx.calls(), 1);
+        assert_eq!(
+            backend.stats(),
+            L2TunnelRingBackendStats {
+                tx_pushed_frames: 0,
+                tx_dropped_oversize: 0,
+                tx_dropped_full: 0,
+                rx_popped_frames: 0,
+                rx_dropped_oversize: 0,
+                rx_corrupt: 1,
+            }
+        );
+
+        // Corrupt RX permanently breaks the ring; the backend should not attempt further pops.
+        assert_eq!(backend.poll_receive(), None);
+        assert_eq!(rx.calls(), 1);
+        assert_eq!(backend.stats().rx_corrupt, 1);
     }
 }
