@@ -82,6 +82,8 @@ pub enum MemoryBusError {
     LengthOverflow,
     /// Scatter/gather buffer length mismatch.
     LengthMismatch { expected: usize, actual: usize },
+    /// Failed to allocate a host buffer for the requested operation.
+    OutOfMemory { len: usize },
 }
 
 impl std::fmt::Display for MemoryBusError {
@@ -117,6 +119,7 @@ impl std::fmt::Display for MemoryBusError {
                 f,
                 "scatter/gather length mismatch: expected={expected} actual={actual}"
             ),
+            MemoryBusError::OutOfMemory { len } => write!(f, "out of memory allocating {len} bytes"),
         }
     }
 }
@@ -568,7 +571,10 @@ impl MemoryBus {
         if len == 0 {
             return Ok(Cow::Borrowed(&[]));
         }
-        let mut buf = vec![0u8; len];
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(len)
+            .map_err(|_| MemoryBusError::OutOfMemory { len })?;
+        buf.resize(len, 0);
         self.try_read_ram_bytes(addr, &mut buf)?;
         Ok(Cow::Owned(buf))
     }

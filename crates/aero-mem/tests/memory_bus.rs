@@ -136,6 +136,15 @@ fn dma_bulk_read_write_within_ram() {
 }
 
 #[test]
+fn memcpy_from_guest_allocation_failure_returns_error_instead_of_panicking() {
+    let ram = make_ram(0x1000);
+    let bus = MemoryBus::new(ram);
+
+    let err = bus.memcpy_from_guest(0, usize::MAX).unwrap_err();
+    assert!(matches!(err, aero_mem::MemoryBusError::OutOfMemory { .. }));
+}
+
+#[test]
 fn dma_bulk_crosses_chunk_boundary() {
     let ram = make_ram(0x9000);
     let bus = MemoryBus::new(ram.clone());
