@@ -5667,6 +5667,9 @@ impl snapshot::SnapshotTarget for Machine {
 }
 
 #[cfg(test)]
+mod virtio_intx_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
