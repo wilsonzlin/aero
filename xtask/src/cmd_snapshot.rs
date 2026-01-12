@@ -3,20 +3,11 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
-    Compression, CpuState, DeviceId, DiskOverlayRefs, RamMode, SectionId, SnapshotError,
+    limits, Compression, CpuState, DeviceId, DiskOverlayRefs, RamMode, SectionId, SnapshotError,
     SnapshotIndex, SnapshotSectionInfo, SnapshotTarget,
 };
 
 use crate::error::{Result, XtaskError};
-
-const MAX_DEVICE_COUNT: u32 = 4096;
-const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
-const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
-// Keep in sync with `aero_snapshot`'s restore-time MAX_CPU_COUNT (currently 256).
-const MAX_CPU_COUNT: u32 = 256;
-const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
-const MAX_DISK_REFS: u32 = 256;
-const MAX_DISK_PATH_LEN: u32 = 64 * 1024;
 
 pub fn print_help() {
     println!(
@@ -198,7 +189,7 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
             return;
         }
     };
-    if count > MAX_DEVICE_COUNT {
+    if count > limits::MAX_DEVICE_COUNT {
         println!("  <too many devices: {count}>");
         return;
     }
@@ -458,7 +449,7 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
             return;
         }
     };
-    if count > MAX_CPU_COUNT {
+    if count > limits::MAX_CPU_COUNT {
         println!("  <too many CPUs: {count}>");
         return;
     }
@@ -919,7 +910,7 @@ fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> 
     if count == 0 {
         return Err(XtaskError::Message("missing CPU entry".to_string()));
     }
-    if count > MAX_CPU_COUNT {
+    if count > limits::MAX_CPU_COUNT {
         return Err(XtaskError::Message("too many CPUs".to_string()));
     }
 
@@ -961,7 +952,7 @@ fn validate_vcpu_entry(entry_reader: &mut impl Read, version: u16) -> Result<u32
     }
 
     let internal_len = read_u64_le(entry_reader)?;
-    if internal_len > MAX_VCPU_INTERNAL_LEN {
+    if internal_len > limits::MAX_VCPU_INTERNAL_LEN {
         return Err(XtaskError::Message(
             "vCPU internal state too large".to_string(),
         ));
@@ -1004,7 +995,7 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
             "unsupported DEVICES section version".to_string(),
         ));
     }
-    if section.len > MAX_DEVICES_SECTION_LEN {
+    if section.len > limits::MAX_DEVICES_SECTION_LEN {
         return Err(XtaskError::Message("devices section too large".to_string()));
     }
 
@@ -1018,7 +1009,7 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
 
     ensure_section_remaining(file, section_end, 4, "device count")?;
     let count = read_u32_le(file)?;
-    if count > MAX_DEVICE_COUNT {
+    if count > limits::MAX_DEVICE_COUNT {
         return Err(XtaskError::Message("too many devices".to_string()));
     }
 
@@ -1034,7 +1025,7 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
             ));
         }
         let len = read_u64_le(file)?;
-        if len > MAX_DEVICE_ENTRY_LEN {
+        if len > limits::MAX_DEVICE_ENTRY_LEN {
             return Err(XtaskError::Message("device entry too large".to_string()));
         }
 
@@ -1066,7 +1057,7 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
 
     let mut limited = file.take(section.len);
     let count = read_u32_le(&mut limited)?;
-    if count > MAX_DISK_REFS {
+    if count > limits::MAX_DISK_REFS {
         return Err(XtaskError::Message("too many disks".to_string()));
     }
 
@@ -1078,8 +1069,8 @@ fn validate_disks_section(file: &mut fs::File, section: &SnapshotSectionInfo) ->
                 "duplicate disk entry (disk_id must be unique)".to_string(),
             ));
         }
-        validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk base_image")?;
-        validate_string_u32_utf8(&mut limited, MAX_DISK_PATH_LEN, "disk overlay_image")?;
+        validate_string_u32_utf8(&mut limited, limits::MAX_DISK_PATH_LEN, "disk base_image")?;
+        validate_string_u32_utf8(&mut limited, limits::MAX_DISK_PATH_LEN, "disk overlay_image")?;
     }
 
     Ok(())

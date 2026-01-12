@@ -3,6 +3,7 @@ mod error;
 mod format;
 mod inspect;
 mod io;
+pub mod limits;
 mod ram;
 mod types;
 
@@ -36,11 +37,6 @@ use crate::io::{ReadLeExt, WriteLeExt};
 const DUPLICATE_DEVICE_ENTRY: &str = "duplicate device entry (id/version/flags must be unique)";
 const DUPLICATE_DISK_ENTRY: &str = "duplicate disk entry (disk_id must be unique)";
 const DUPLICATE_APIC_ID: &str = "duplicate APIC ID in CPU list (apic_id must be unique)";
-const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
-const MAX_DEVICE_COUNT: usize = 4096;
-const MAX_CPU_COUNT: usize = 256;
-const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
-const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
@@ -181,7 +177,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     if cpus.is_empty() {
         return Err(SnapshotError::Corrupt("missing CPU entry"));
     }
-    if cpus.len() > MAX_CPU_COUNT {
+    if cpus.len() > limits::MAX_CPU_COUNT as usize {
         return Err(SnapshotError::Corrupt("too many CPUs"));
     }
     cpus.sort_by_key(|cpu| cpu.apic_id);
@@ -216,7 +212,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 
     write_section(w, SectionId::DEVICES, 1, 0, |w| {
         let mut devices = source.device_states();
-        if devices.len() > MAX_DEVICE_COUNT {
+        if devices.len() > limits::MAX_DEVICE_COUNT as usize {
             return Err(SnapshotError::Corrupt("too many devices"));
         }
 
@@ -232,7 +228,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
                 .and_then(|v| v.checked_add(u64::try_from(device.data.len()).unwrap_or(u64::MAX)))
                 .ok_or(SnapshotError::Corrupt("devices section too large"))?;
         }
-        if payload_len > MAX_DEVICES_SECTION_LEN {
+        if payload_len > limits::MAX_DEVICES_SECTION_LEN {
             return Err(SnapshotError::Corrupt("devices section too large"));
         }
 
@@ -423,7 +419,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
     let mut seen_ram = false;
 
     while let Some(header) = read_section_header(r)? {
-        if header.id == SectionId::DEVICES && header.len > MAX_DEVICES_SECTION_LEN {
+        if header.id == SectionId::DEVICES && header.len > limits::MAX_DEVICES_SECTION_LEN {
             return Err(SnapshotError::Corrupt("devices section too large"));
         }
 
@@ -474,7 +470,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     if count == 0 {
                         return Err(SnapshotError::Corrupt("missing CPU entry"));
                     }
-                    if count > MAX_CPU_COUNT {
+                    if count > limits::MAX_CPU_COUNT as usize {
                         return Err(SnapshotError::Corrupt("too many CPUs"));
                     }
                     let mut cpus = Vec::with_capacity(count.min(64));
@@ -487,7 +483,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         let apic_id = entry_reader.read_u32_le()?;
                         let cpu = CpuState::decode_v1(&mut entry_reader)?;
                         let internal_len = entry_reader.read_u64_le()?;
-                        if internal_len > MAX_VCPU_INTERNAL_LEN {
+                        if internal_len > limits::MAX_VCPU_INTERNAL_LEN {
                             return Err(SnapshotError::Corrupt("vCPU internal state too large"));
                         }
                         if internal_len > entry_reader.limit() {
@@ -519,7 +515,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     if count == 0 {
                         return Err(SnapshotError::Corrupt("missing CPU entry"));
                     }
-                    if count > MAX_CPU_COUNT {
+                    if count > limits::MAX_CPU_COUNT as usize {
                         return Err(SnapshotError::Corrupt("too many CPUs"));
                     }
                     let mut cpus = Vec::with_capacity(count.min(64));
@@ -532,7 +528,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         let apic_id = entry_reader.read_u32_le()?;
                         let cpu = CpuState::decode_v2(&mut entry_reader)?;
                         let internal_len = entry_reader.read_u64_le()?;
-                        if internal_len > MAX_VCPU_INTERNAL_LEN {
+                        if internal_len > limits::MAX_VCPU_INTERNAL_LEN {
                             return Err(SnapshotError::Corrupt("vCPU internal state too large"));
                         }
                         if internal_len > entry_reader.limit() {
@@ -582,7 +578,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     }
                     seen_devices_section = true;
                     let count = section_reader.read_u32_le()? as usize;
-                    if count > MAX_DEVICE_COUNT {
+                    if count > limits::MAX_DEVICE_COUNT as usize {
                         return Err(SnapshotError::Corrupt("too many devices"));
                     }
                     let mut devices = Vec::with_capacity(count.min(64));
@@ -591,7 +587,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         let version = section_reader.read_u16_le()?;
                         let flags = section_reader.read_u16_le()?;
                         let len = section_reader.read_u64_le()?;
-                        if len > MAX_DEVICE_ENTRY_LEN {
+                        if len > limits::MAX_DEVICE_ENTRY_LEN {
                             return Err(SnapshotError::Corrupt("device entry too large"));
                         }
                         if len > section_reader.limit() {
