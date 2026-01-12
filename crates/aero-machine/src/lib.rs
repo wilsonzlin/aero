@@ -46,6 +46,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
+use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 use aero_net_e1000::E1000Device;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
@@ -58,7 +59,7 @@ use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
     DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
-    PhysicalMemoryBus,
+    MmioHandler, PhysicalMemoryBus,
 };
 
 mod pci_firmware;
@@ -429,6 +430,101 @@ impl PciDevice for E1000PciConfigDevice {
 
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.cfg
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
+// -----------------------------------------------------------------------------
+
+struct IoApicMmio {
+    interrupts: Rc<RefCell<PlatformInterrupts>>,
+}
+
+impl MmioHandler for IoApicMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let size = size.clamp(1, 8);
+        let interrupts = self.interrupts.borrow_mut();
+        let mut out = 0u64;
+        for i in 0..size {
+            let off = offset.wrapping_add(i as u64);
+            let word_offset = off & !3;
+            let shift = ((off & 3) * 8) as u32;
+            let word = interrupts.ioapic_mmio_read(word_offset) as u64;
+            let byte = (word >> shift) & 0xFF;
+            out |= byte << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let size = size.clamp(1, 8);
+        let mut interrupts = self.interrupts.borrow_mut();
+
+        let mut idx = 0usize;
+        while idx < size {
+            let off = offset.wrapping_add(idx as u64);
+            let word_offset = off & !3;
+            let start_in_word = (off & 3) as usize;
+            let mut word = interrupts.ioapic_mmio_read(word_offset);
+
+            for byte_idx in start_in_word..4 {
+                if idx >= size {
+                    break;
+                }
+                let off = offset.wrapping_add(idx as u64);
+                if (off & !3) != word_offset {
+                    break;
+                }
+                let byte = ((value >> (idx * 8)) & 0xFF) as u32;
+                let shift = (byte_idx * 8) as u32;
+                word &= !(0xFF_u32 << shift);
+                word |= byte << shift;
+                idx += 1;
+            }
+
+            interrupts.ioapic_mmio_write(word_offset, word);
+        }
+    }
+}
+
+struct LapicMmio {
+    interrupts: Rc<RefCell<PlatformInterrupts>>,
+}
+
+impl MmioHandler for LapicMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let size = size.clamp(1, 8);
+        let interrupts = self.interrupts.borrow();
+        let mut buf = [0u8; 8];
+        interrupts.lapic_mmio_read(offset, &mut buf[..size]);
+        u64::from_le_bytes(buf)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let size = size.clamp(1, 8);
+        let interrupts = self.interrupts.borrow();
+        let bytes = value.to_le_bytes();
+        interrupts.lapic_mmio_write(offset, &bytes[..size]);
+    }
+}
+
+struct HpetMmio {
+    hpet: Rc<RefCell<hpet::Hpet<ManualClock>>>,
+    interrupts: Rc<RefCell<PlatformInterrupts>>,
+}
+
+impl MmioHandler for HpetMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let mut hpet = self.hpet.borrow_mut();
+        let mut interrupts = self.interrupts.borrow_mut();
+        hpet.mmio_read(offset, size, &mut *interrupts)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let mut hpet = self.hpet.borrow_mut();
+        let mut interrupts = self.interrupts.borrow_mut();
+        hpet.mmio_write(offset, size, value, &mut *interrupts);
     }
 }
 
@@ -1096,6 +1192,26 @@ impl Machine {
                     hpet
                 }
             };
+
+            // Map PC platform MMIO windows into the persistent physical memory bus so guests can
+            // program interrupt controllers and timers (APIC mode).
+            self.mem.map_mmio_once(LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE, || {
+                Box::new(LapicMmio {
+                    interrupts: interrupts.clone(),
+                })
+            });
+            self.mem.map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
+                Box::new(IoApicMmio {
+                    interrupts: interrupts.clone(),
+                })
+            });
+            self.mem
+                .map_mmio_once(hpet::HPET_MMIO_BASE, hpet::HPET_MMIO_SIZE, || {
+                    Box::new(HpetMmio {
+                        hpet: hpet.clone(),
+                        interrupts: interrupts.clone(),
+                    })
+                });
 
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
@@ -2770,6 +2886,68 @@ mod tests {
         // Once the shadow expires, the pending IRQ should be acknowledged + delivered.
         let _ = m.run_slice(10);
         assert_eq!(m.read_physical_u8(0x2000), 0xAA);
+    }
+
+    #[test]
+    fn pc_platform_mmio_mappings_route_ioapic_interrupts_in_apic_mode() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            // Keep the machine minimal for deterministic MMIO + interrupt routing assertions.
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+        // Exercise stable `Rc` identities and idempotent MMIO mappings across resets.
+        m.reset();
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        interrupts
+            .borrow_mut()
+            .set_mode(aero_platform::interrupts::PlatformInterruptMode::Apic);
+
+        // Program IOAPIC redirection entry for GSI10 -> vector 0x60 (active-low, level-triggered).
+        const GSI: u32 = 10;
+        const VECTOR: u32 = 0x60;
+        let low: u32 = VECTOR | (1 << 13) | (1 << 15); // polarity low + level triggered
+        let redtbl_low = 0x10u32 + GSI * 2;
+        let redtbl_high = redtbl_low + 1;
+
+        {
+            let mut bus = m.mem.inner.borrow_mut();
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, 0);
+        }
+
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            None
+        );
+
+        interrupts
+            .borrow_mut()
+            .raise_irq(aero_platform::interrupts::InterruptInput::Gsi(GSI));
+
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            Some(VECTOR as u8)
+        );
+
+        // Smoke test LAPIC + HPET MMIO mappings as well.
+        let svr = m.mem.inner.borrow_mut().read_physical_u32(LAPIC_MMIO_BASE + 0xF0);
+        assert_eq!(svr & 0x1FF, 0x1FF);
+
+        let caps = m
+            .mem
+            .inner
+            .borrow_mut()
+            .read_physical_u64(hpet::HPET_MMIO_BASE);
+        assert_eq!((caps >> 16) & 0xFFFF, 0x8086);
     }
 
     #[test]

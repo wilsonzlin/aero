@@ -9,6 +9,7 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
+aero-interrupts = { path = "../aero-interrupts" }
 aero-mmu = { path = "../aero-mmu" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-pc-platform = { path = "../aero-pc-platform" }
