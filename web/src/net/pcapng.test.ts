@@ -301,6 +301,11 @@ describe("net/pcapng.PcapngWriter", () => {
         expect(valueEnd).toBeLessThanOrEqual(optsEnd);
         if (code === 4) {
           expect(textDecoder.decode(bytes.subarray(valueStart, valueEnd))).toBe(userAppl);
+          // Ensure option padding is zeroed.
+          const paddedEnd = alignUp4(valueEnd);
+          for (let i = valueEnd; i < paddedEnd; i += 1) {
+            expect(bytes[i]).toBe(0);
+          }
           found = true;
         }
         optOff = alignUp4(valueEnd);
@@ -330,17 +335,29 @@ describe("net/pcapng.PcapngWriter", () => {
       const len = view.getUint16(optOff + 2, true);
       optOff += 4;
       if (code === 0) break;
+      const valueStart = optOff;
+      const valueEnd = valueStart + len;
+      expect(valueEnd).toBeLessThanOrEqual(idbOptsEnd);
       if (code === 2) {
-        expect(textDecoder.decode(bytes.subarray(optOff, optOff + len))).toBe(ifaceName);
+        expect(textDecoder.decode(bytes.subarray(valueStart, valueEnd))).toBe(ifaceName);
+        // Ensure option padding is zeroed.
+        const paddedEnd = alignUp4(valueEnd);
+        for (let i = valueEnd; i < paddedEnd; i += 1) {
+          expect(bytes[i]).toBe(0);
+        }
         foundName = true;
       }
       if (code === 9) {
         expect(len).toBe(1);
-        expect(bytes[optOff]).toBe(9);
+        expect(bytes[valueStart]).toBe(9);
+        // Ensure option padding is zeroed.
+        const paddedEnd = alignUp4(valueEnd);
+        for (let i = valueEnd; i < paddedEnd; i += 1) {
+          expect(bytes[i]).toBe(0);
+        }
         foundTsresol = true;
       }
-      optOff += len;
-      optOff = alignUp4(optOff);
+      optOff = alignUp4(valueEnd);
     }
     expect(foundName).toBe(true);
     expect(foundTsresol).toBe(true);
@@ -363,6 +380,10 @@ describe("net/pcapng.PcapngWriter", () => {
       const payload = bytes.slice(packetDataStart, packetDataEnd);
 
       const epbOptsStart = packetDataStart + alignUp4(capLen);
+      // Ensure packet padding is zeroed.
+      for (let i = packetDataEnd; i < epbOptsStart; i += 1) {
+        expect(bytes[i]).toBe(0);
+      }
       const epbOptsEnd = off + epbLen - 4;
       let optOff = epbOptsStart;
       let flags: number | null = null;
