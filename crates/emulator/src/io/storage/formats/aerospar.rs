@@ -8,6 +8,7 @@ use crate::io::storage::disk::{ByteStorage, DiskBackend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SECTOR_SIZE: u32 = 512;
+
 fn disk_error_from_storage(err: StorageDiskError) -> DiskError {
     match err {
         StorageDiskError::UnalignedLength { len, alignment } => DiskError::UnalignedBuffer {

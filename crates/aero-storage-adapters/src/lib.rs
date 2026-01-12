@@ -178,26 +178,30 @@ impl From<Box<dyn VirtualDisk + Send>> for AeroVirtualDiskAsDeviceBackend {
 
 fn map_aero_storage_error_to_io(err: aero_storage::DiskError) -> io::Error {
     match err {
-        aero_storage::DiskError::UnalignedLength { .. }
+        err @ (aero_storage::DiskError::UnalignedLength { .. }
         | aero_storage::DiskError::OffsetOverflow
         | aero_storage::DiskError::InvalidConfig(_)
-        | aero_storage::DiskError::InvalidSparseHeader(_) => {
+        | aero_storage::DiskError::InvalidSparseHeader(_)) => {
             io::Error::new(io::ErrorKind::InvalidInput, err)
         }
-        aero_storage::DiskError::CorruptImage(_) | aero_storage::DiskError::CorruptSparseImage(_) => {
+        err @ (aero_storage::DiskError::CorruptImage(_)
+        | aero_storage::DiskError::CorruptSparseImage(_)) => {
             io::Error::new(io::ErrorKind::InvalidData, err)
         }
-        aero_storage::DiskError::OutOfBounds { .. } => {
+        err @ aero_storage::DiskError::OutOfBounds { .. } => {
             io::Error::new(io::ErrorKind::UnexpectedEof, err)
         }
-        aero_storage::DiskError::Unsupported(_) | aero_storage::DiskError::NotSupported(_) => {
+        err @ (aero_storage::DiskError::Unsupported(_)
+        | aero_storage::DiskError::NotSupported(_)) => {
             io::Error::new(io::ErrorKind::Unsupported, err)
         }
-        aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
-        aero_storage::DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
-        aero_storage::DiskError::InvalidState(_) => io::Error::other(err),
-        aero_storage::DiskError::BackendUnavailable => io::Error::new(io::ErrorKind::NotConnected, err),
-        aero_storage::DiskError::Io(_) => io::Error::other(err),
+        err @ aero_storage::DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
+        err @ aero_storage::DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
+        err @ aero_storage::DiskError::InvalidState(_) => io::Error::other(err),
+        err @ aero_storage::DiskError::BackendUnavailable => {
+            io::Error::new(io::ErrorKind::NotConnected, err)
+        }
+        err @ aero_storage::DiskError::Io(_) => io::Error::other(err),
     }
 }
 

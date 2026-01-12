@@ -72,8 +72,8 @@ mod platform_handle {
 
         match err {
             DiskError::NotSupported(_)
-            | DiskError::BackendUnavailable
-            | DiskError::Unsupported(_) => {
+            | DiskError::Unsupported(_)
+            | DiskError::BackendUnavailable => {
                 io::Error::new(io::ErrorKind::Unsupported, err.to_string())
             }
             DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
