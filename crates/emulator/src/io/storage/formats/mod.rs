@@ -33,9 +33,27 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
         }
     }
 
+    // Read the first 12 bytes when possible so we can check both the QCOW2 version field
+    // (big-endian at offset 4) and the sparse-format version field (little-endian at offset 8)
+    // without issuing multiple small reads.
+    let mut first8: Option<[u8; 8]> = None;
+    let mut le_version_at_8: u32 = 0;
     if len >= 8 {
-        let mut first8 = [0u8; 8];
-        storage.read_at(0, &mut first8)?;
+        if len >= 12 {
+            let mut first12 = [0u8; 12];
+            storage.read_at(0, &mut first12)?;
+            let mut buf8 = [0u8; 8];
+            buf8.copy_from_slice(&first12[..8]);
+            first8 = Some(buf8);
+            le_version_at_8 = u32::from_le_bytes([first12[8], first12[9], first12[10], first12[11]]);
+        } else {
+            let mut buf8 = [0u8; 8];
+            storage.read_at(0, &mut buf8)?;
+            first8 = Some(buf8);
+        }
+    }
+
+    if let Some(first8) = first8 {
         if first8[..4] == QCOW2_MAGIC {
             let version = be_u32(&first8[4..8]);
             if version == 2 || version == 3 {
@@ -48,6 +66,28 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
         // returns a corruption error instead of silently falling back to raw.
         if len < 512 && first8 == VHD_COOKIE {
             return Ok(DiskFormat::Vhd);
+        }
+
+        if first8 == AEROSPAR_MAGIC {
+            // If the file is too small to contain a full header, still treat it as sparse so
+            // `open_auto` returns a corruption error rather than silently falling back to raw.
+            if len < 64 {
+                return Ok(DiskFormat::Sparse);
+            }
+            if le_version_at_8 == 1 {
+                return Ok(DiskFormat::Sparse);
+            }
+        }
+
+        if first8 == AEROSPRS_MAGIC {
+            // If the file is too small to contain a full header, still treat it as sparse so
+            // `open_auto` returns a corruption error rather than silently falling back to raw.
+            if len < 4096 {
+                return Ok(DiskFormat::Sparse);
+            }
+            if le_version_at_8 == 1 {
+                return Ok(DiskFormat::Sparse);
+            }
         }
     }
 
@@ -77,39 +117,6 @@ pub fn detect_format<S: ByteStorage>(storage: &mut S) -> DiskResult<DiskFormat> 
                 }
             } else {
                 return Ok(DiskFormat::Vhd);
-            }
-        }
-    }
-
-    if len >= 8 {
-        let mut magic = [0u8; 8];
-        storage.read_at(0, &mut magic)?;
-        if magic == AEROSPAR_MAGIC {
-            // If the file is too small to contain a full header, still treat it as sparse so
-            // `open_auto` returns a corruption error rather than silently falling back to raw.
-            if len < 64 {
-                return Ok(DiskFormat::Sparse);
-            }
-
-            let mut version_bytes = [0u8; 4];
-            storage.read_at(8, &mut version_bytes)?;
-            let version = u32::from_le_bytes(version_bytes);
-            if version == 1 {
-                return Ok(DiskFormat::Sparse);
-            }
-        }
-        if magic == AEROSPRS_MAGIC {
-            // If the file is too small to contain a full header, still treat it as sparse so
-            // `open_auto` returns a corruption error rather than silently falling back to raw.
-            if len < 4096 {
-                return Ok(DiskFormat::Sparse);
-            }
-
-            let mut version_bytes = [0u8; 4];
-            storage.read_at(8, &mut version_bytes)?;
-            let version = u32::from_le_bytes(version_bytes);
-            if version == 1 {
-                return Ok(DiskFormat::Sparse);
             }
         }
     }

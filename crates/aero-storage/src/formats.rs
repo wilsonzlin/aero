@@ -33,64 +33,90 @@ pub fn detect_format<B: StorageBackend>(backend: &mut B) -> Result<DiskFormat> {
     }
 
     if len >= 8 {
-        let mut first8 = [0u8; 8];
-        backend.read_at(0, &mut first8)?;
-        if first8[..4] == QCOW2_MAGIC {
-            let version = be_u32(&first8[4..8]);
-            if version == 2 || version == 3 {
-                return Ok(DiskFormat::Qcow2);
-            }
-        }
+        // Read the first 12 bytes when possible so we can check both the QCOW2 version field
+        // (big-endian at offset 4) and the AeroSparse version field (little-endian at offset 8)
+        // without issuing multiple small reads.
+        if len >= 12 {
+            let mut first12 = [0u8; 12];
+            backend.read_at(0, &mut first12)?;
+            let mut first8 = [0u8; 8];
+            first8.copy_from_slice(&first12[..8]);
 
-        // AeroSparse: check magic plus a minimally plausible version field.
-        //
-        // We intentionally avoid fully validating the header here; `open_auto` should attempt to
-        // open the image and report a corruption/unsupported error instead of silently treating an
-        // AeroSparse-looking image as raw.
-        if first8 == AEROSPAR_MAGIC {
-            // If the file is too small to contain a complete header, still treat it as AeroSparse
-            // so callers get a corruption error instead of silently falling back to raw.
-            if len < 64 {
-                return Ok(DiskFormat::AeroSparse);
+            if first8[..4] == QCOW2_MAGIC {
+                let version = be_u32(&first8[4..8]);
+                if version == 2 || version == 3 {
+                    return Ok(DiskFormat::Qcow2);
+                }
             }
 
-            let mut version_bytes = [0u8; 4];
-            backend.read_at(8, &mut version_bytes)?;
-            let version = u32::from_le_bytes(version_bytes);
-            if version == 1 {
-                return Ok(DiskFormat::AeroSparse);
-            }
-        }
+            // AeroSparse: check magic plus a minimally plausible version field.
+            //
+            // We intentionally avoid fully validating the header here; `open_auto` should attempt to
+            // open the image and report a corruption/unsupported error instead of silently treating an
+            // AeroSparse-looking image as raw.
+            if first8 == AEROSPAR_MAGIC {
+                // If the file is too small to contain a complete header, still treat it as AeroSparse
+                // so callers get a corruption error instead of silently falling back to raw.
+                if len < 64 {
+                    return Ok(DiskFormat::AeroSparse);
+                }
 
-        // VHD dynamic disks commonly store a footer copy at offset 0.
-        if first8 == VHD_COOKIE {
-            // If the file begins with the VHD cookie but is too small to contain a complete footer,
-            // still treat it as a VHD so callers get a structured corruption error instead of
-            // silently falling back to raw.
-            if len < VHD_FOOTER_SIZE as u64 {
-                return Ok(DiskFormat::Vhd);
+                let version = u32::from_le_bytes([first12[8], first12[9], first12[10], first12[11]]);
+                if version == 1 {
+                    return Ok(DiskFormat::AeroSparse);
+                }
             }
 
-            let mut footer = [0u8; VHD_FOOTER_SIZE];
-            backend.read_at(0, &mut footer)?;
-            if looks_like_vhd_footer(&footer, len) {
-                // For fixed disks, a valid footer at offset 0 implies the optional footer copy is
-                // present, meaning the file must be large enough to contain:
-                //   footer_copy (512) + data (current_size) + eof_footer (512)
-                //
-                // Without this check, a raw disk image whose first sector coincidentally resembles
-                // a VHD footer could be misclassified as a VHD and then fail to open.
-                let disk_type = be_u32(&footer[60..64]);
-                if disk_type == 2 {
-                    let current_size = be_u64(&footer[48..56]);
-                    if let Some(required) = current_size.checked_add((VHD_FOOTER_SIZE as u64) * 2) {
-                        if len >= required {
-                            return Ok(DiskFormat::Vhd);
-                        }
-                    }
-                } else {
+            // VHD dynamic disks commonly store a footer copy at offset 0.
+            if first8 == VHD_COOKIE {
+                // If the file begins with the VHD cookie but is too small to contain a complete footer,
+                // still treat it as a VHD so callers get a structured corruption error instead of
+                // silently falling back to raw.
+                if len < VHD_FOOTER_SIZE as u64 {
                     return Ok(DiskFormat::Vhd);
                 }
+
+                let mut footer = [0u8; VHD_FOOTER_SIZE];
+                backend.read_at(0, &mut footer)?;
+                if looks_like_vhd_footer(&footer, len) {
+                    // For fixed disks, a valid footer at offset 0 implies the optional footer copy is
+                    // present, meaning the file must be large enough to contain:
+                    //   footer_copy (512) + data (current_size) + eof_footer (512)
+                    //
+                    // Without this check, a raw disk image whose first sector coincidentally resembles
+                    // a VHD footer could be misclassified as a VHD and then fail to open.
+                    let disk_type = be_u32(&footer[60..64]);
+                    if disk_type == 2 {
+                        let current_size = be_u64(&footer[48..56]);
+                        if let Some(required) =
+                            current_size.checked_add((VHD_FOOTER_SIZE as u64) * 2)
+                        {
+                            if len >= required {
+                                return Ok(DiskFormat::Vhd);
+                            }
+                        }
+                    } else {
+                        return Ok(DiskFormat::Vhd);
+                    }
+                }
+            }
+        } else {
+            let mut first8 = [0u8; 8];
+            backend.read_at(0, &mut first8)?;
+            if first8[..4] == QCOW2_MAGIC {
+                let version = be_u32(&first8[4..8]);
+                if version == 2 || version == 3 {
+                    return Ok(DiskFormat::Qcow2);
+                }
+            }
+
+            // For a truncated AeroSparse/VHD file, treat the image as the corresponding format so
+            // the subsequent open reports corruption instead of silently falling back to raw.
+            if first8 == AEROSPAR_MAGIC {
+                return Ok(DiskFormat::AeroSparse);
+            }
+            if first8 == VHD_COOKIE {
+                return Ok(DiskFormat::Vhd);
             }
         }
     }
