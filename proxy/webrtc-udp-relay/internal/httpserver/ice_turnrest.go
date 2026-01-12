@@ -25,10 +25,26 @@ func withTURNRESTCredentials(servers []webrtc.ICEServer, username, credential st
 
 func iceServerHasTURNURL(server webrtc.ICEServer) bool {
 	for _, raw := range server.URLs {
-		url := strings.ToLower(strings.TrimSpace(raw))
-		if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
+		url := strings.TrimSpace(raw)
+		if asciiHasPrefixFold(url, "turn:") || asciiHasPrefixFold(url, "turns:") {
 			return true
 		}
 	}
 	return false
+}
+
+func asciiHasPrefixFold(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c = c + ('a' - 'A')
+		}
+		if c != prefix[i] {
+			return false
+		}
+	}
+	return true
 }
