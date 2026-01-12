@@ -45,6 +45,10 @@ export function readDnsName(message: Buffer, offset: number): { name: string; of
   let jumped = false;
   let offsetAfter = offset;
   const seenPointers = new Set<number>();
+  // RFC1035: domain names are limited to 255 bytes in wire format (including length
+  // octets and the terminating 0-length label). Enforce this defensively to avoid
+  // unbounded allocations on malicious inputs.
+  let nameBytes = 0;
 
   while (true) {
     if (offset >= message.length) throw new Error("DNS name out of bounds");
@@ -67,6 +71,8 @@ export function readDnsName(message: Buffer, offset: number): { name: string; of
 
     if (length === 0) {
       offset += 1;
+      nameBytes += 1;
+      if (nameBytes > 255) throw new Error("DNS name too long");
       if (!jumped) offsetAfter = offset;
       break;
     }
@@ -75,6 +81,8 @@ export function readDnsName(message: Buffer, offset: number): { name: string; of
     offset += 1;
     if (offset + length > message.length) throw new Error("DNS name label out of bounds");
     labels.push(message.toString("utf8", offset, offset + length));
+    nameBytes += 1 + length;
+    if (nameBytes > 255) throw new Error("DNS name too long");
     offset += length;
     if (!jumped) offsetAfter = offset;
   }
