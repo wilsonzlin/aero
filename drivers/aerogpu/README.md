@@ -53,11 +53,12 @@ Artifacts produced by the workflow:
 
 Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-package.json`:
 
-- `infFiles` selects which INF(s) to stage at the **package root**. AeroGPU CI currently stages:
-  - `packaging/win7/aerogpu_dx11.inf` (DX11-capable package; canonical binding)
+- `infFiles` selects which INF(s) to stage at the **package root**.
+  - **Policy:** AeroGPU CI intentionally stages **only one** canonical INF at the package root to avoid ambiguous installs/driver selection when multiple INFs match the same HWID.
+  - Current default:
+    - `packaging/win7/aerogpu_dx11.inf` (DX11-capable package; canonical binding)
 
-  If you stage both `aerogpu.inf` and `aerogpu_dx11.inf`, Windows PnP should prefer `aerogpu_dx11.inf` (lower `FeatureScore`: `0xF7` vs `0xF8`),
-  and `packaging/win7/install.cmd` also prefers `aerogpu_dx11.inf` when it is present at the package root.
+  If you explicitly customize packaging to stage both `aerogpu.inf` and `aerogpu_dx11.inf`, both will match the same HWID. Driver ranking is set so Windows prefers `aerogpu_dx11.inf` (lower `FeatureScore`: `0xF7` vs `0xF8`), and `packaging/win7/install.cmd` also prefers `aerogpu_dx11.inf` when it is present at the package root.
 
   Legacy binding INFs are shipped separately under `legacy/` (see `drivers/aerogpu/legacy/`):
   - `legacy/aerogpu.inf` (D3D9-only; shipped in CI packages by default)
