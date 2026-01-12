@@ -1354,17 +1354,19 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
 
     // PCI config scan for Intel ICH6 HDA (8086:2668).
     const PCI_ENABLE = 0x8000_0000;
-    const pciCfgAddr = (device: number, reg: number): number => (PCI_ENABLE | ((device & 0x1f) << 11) | (reg & 0xfc)) >>> 0;
-    const pciReadDword = (device: number, reg: number): number => {
-      ioClient.portWrite(0x0cf8, 4, pciCfgAddr(device, reg));
+    const pciCfgAddr = (bus: number, device: number, fn: number, reg: number): number =>
+      (PCI_ENABLE | ((bus & 0xff) << 16) | ((device & 0x1f) << 11) | ((fn & 0x7) << 8) | (reg & 0xfc)) >>> 0;
+    const pciReadDword = (bus: number, device: number, fn: number, reg: number): number => {
+      ioClient.portWrite(0x0cf8, 4, pciCfgAddr(bus, device, fn, reg));
       return ioClient.portRead(0x0cfc, 4) >>> 0;
     };
-    const pciWriteDword = (device: number, reg: number, value: number): void => {
-      ioClient.portWrite(0x0cf8, 4, pciCfgAddr(device, reg));
+    const pciWriteDword = (bus: number, device: number, fn: number, reg: number, value: number): void => {
+      ioClient.portWrite(0x0cf8, 4, pciCfgAddr(bus, device, fn, reg));
       ioClient.portWrite(0x0cfc, 4, value >>> 0);
     };
 
     let pciDevice = -1;
+    let pciFn = 0;
     let bar0 = 0;
     // WASM + device bring-up can be slow in CI/headless environments (especially if the shared
     // guest-memory build has to compile on-demand). Be generous here so we don't fail the
@@ -1372,15 +1374,36 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     const deadlineMs = performance.now() + 30_000;
     while (performance.now() < deadlineMs) {
       for (let dev = 0; dev < 32; dev++) {
-        const id = pciReadDword(dev, 0x00);
-        const vendorId = id & 0xffff;
-        const deviceId = (id >>> 16) & 0xffff;
-        if (vendorId === 0xffff) continue;
-        if (vendorId === 0x8086 && deviceId === 0x2668) {
+        const id0 = pciReadDword(0, dev, 0, 0x00);
+        const vendor0 = id0 & 0xffff;
+        const device0 = (id0 >>> 16) & 0xffff;
+        if (vendor0 === 0xffff) continue;
+        if (vendor0 === 0x8086 && device0 === 0x2668) {
           pciDevice = dev;
-          bar0 = pciReadDword(dev, 0x10) >>> 0;
+          pciFn = 0;
+          bar0 = pciReadDword(0, dev, 0, 0x10) >>> 0;
           break;
         }
+
+        // Header type at 0x0e: bit7 indicates multifunction.
+        const hdr0 = pciReadDword(0, dev, 0, 0x0c);
+        const headerType = (hdr0 >>> 16) & 0xff;
+        const multiFunction = (headerType & 0x80) !== 0;
+        if (!multiFunction) continue;
+
+        for (let fn = 1; fn < 8; fn++) {
+          const id = pciReadDword(0, dev, fn, 0x00);
+          const vendorId = id & 0xffff;
+          const deviceId = (id >>> 16) & 0xffff;
+          if (vendorId === 0xffff) continue;
+          if (vendorId === 0x8086 && deviceId === 0x2668) {
+            pciDevice = dev;
+            pciFn = fn;
+            bar0 = pciReadDword(0, dev, fn, 0x10) >>> 0;
+            break;
+          }
+        }
+        if (pciDevice >= 0 && bar0 !== 0) break;
       }
       if (pciDevice >= 0 && bar0 !== 0) break;
       await sleepMs(50);
@@ -1393,8 +1416,8 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     }
 
     // Enable memory-space decoding (and bus mastering for realism).
-    const cmd = pciReadDword(pciDevice, 0x04);
-    pciWriteDword(pciDevice, 0x04, (cmd | 0x0000_0006) >>> 0);
+    const cmd = pciReadDword(0, pciDevice, pciFn, 0x04);
+    pciWriteDword(0, pciDevice, pciFn, 0x04, (cmd | 0x0000_0006) >>> 0);
 
     const mmioBase = BigInt(bar0 >>> 0) & 0xffff_fff0n;
 
