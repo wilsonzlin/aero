@@ -460,6 +460,26 @@ async function runTieredVm(iterations: number, threshold: number) {
     }
   }
 
+  if ((jitCtxHeaderBytes & 7) !== 0) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_ctx_header_bytes (expected 8-byte alignment): ${JSON.stringify({
+        jitCtxHeaderBytes,
+      })}`,
+    });
+    return;
+  }
+
+  if (jitTlbEntryBytes < 16 || (jitTlbEntryBytes & 7) !== 0) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid jit_tlb_entry_bytes (expected >=16 and 8-byte aligned): ${JSON.stringify({
+        jitTlbEntryBytes,
+      })}`,
+    });
+    return;
+  }
+
   if (commitFlagBytes !== undefined && (commitFlagBytes >>> 0) !== 4) {
     postToMain({
       type: 'CpuWorkerError',
@@ -497,6 +517,16 @@ async function runTieredVm(iterations: number, threshold: number) {
         cpu_state_size,
         derivedJitCtxTotalBytes,
         tier2CtxBytes,
+      })}`,
+    });
+    return;
+  }
+
+  if ((commitFlagOffset & 3) !== 0) {
+    postToMain({
+      type: 'CpuWorkerError',
+      reason: `Invalid commit_flag_offset alignment (expected 4-byte alignment): ${JSON.stringify({
+        commitFlagOffset,
       })}`,
     });
     return;
