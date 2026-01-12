@@ -70,8 +70,14 @@ describe("io/devices/virtio_input PCI config", () => {
     const fn0 = new VirtioInputPciFunction({ kind: "keyboard", device: dev, irqSink });
     const fn1 = new VirtioInputPciFunction({ kind: "mouse", device: dev, irqSink });
 
-    pciBus.registerDevice(fn0, { device: 10, function: 0 });
-    pciBus.registerDevice(fn1, { device: 10, function: 1 });
+    expect(fn0.bdf).toEqual({ bus: 0, device: 10, function: 0 });
+    expect(fn1.bdf).toEqual({ bus: 0, device: 10, function: 1 });
+
+    // Register at the canonical BDFs via the device-provided defaults.
+    const addr0 = pciBus.registerDevice(fn0);
+    const addr1 = pciBus.registerDevice(fn1);
+    expect(addr0).toEqual(fn0.bdf);
+    expect(addr1).toEqual(fn1.bdf);
 
     const cfg = makeCfgIo(portBus);
 
