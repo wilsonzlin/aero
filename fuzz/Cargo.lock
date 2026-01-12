@@ -72,6 +72,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "futures-intrusive",
+ "js-sys",
  "lru",
  "serde",
  "serde_json",
