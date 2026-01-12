@@ -103,6 +103,39 @@ AERO_TIMEOUT=900 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh cargo test --lock
 AERO_TIMEOUT=900 AERO_MEM_LIMIT=unlimited bash ./scripts/safe-run.sh cargo test --locked
 ```
 
+### Linker caveat (lld threads + wasm `RUSTFLAGS` gotcha)
+
+On Linux, the pinned Rust toolchain links via **LLVM lld** (`-fuse-ld=lld`). lld defaults to using
+all available hardware threads and can hit per-user thread limits under shared-host contention.
+
+To keep builds reliable, `scripts/agent-env.sh` and `scripts/safe-run.sh` cap lld’s parallelism via
+Cargo’s **per-target rustflags** environment variables:
+
+```
+CARGO_TARGET_<TRIPLE>_RUSTFLAGS="... -C link-arg=-Wl,--threads=<n>"
+```
+
+For **wasm32** targets, rustc invokes `rust-lld -flavor wasm` directly, so the native `-Wl,` prefix
+is invalid. Use the wasm-compatible form:
+
+```
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="... -C link-arg=--threads=<n>"
+```
+
+Avoid setting linker thread caps via **global `RUSTFLAGS`**, e.g.:
+
+```bash
+# ⚠️ Avoid: breaks wasm builds because rust-lld doesn't understand -Wl,
+export RUSTFLAGS="-C link-arg=-Wl,--threads=1"
+```
+
+If you need to change the cap, prefer adjusting build parallelism instead:
+
+```bash
+export AERO_CARGO_BUILD_JOBS=2
+source ./scripts/agent-env.sh
+```
+
 ### Using `run_limited.sh` (Recommended)
 
 ```bash
