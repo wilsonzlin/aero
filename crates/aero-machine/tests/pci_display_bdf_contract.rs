@@ -1,5 +1,5 @@
-use aero_devices::pci::PciBdf;
 use aero_devices::pci::profile::CANONICAL_IO_DEVICES;
+use aero_devices::pci::PciBdf;
 use aero_machine::{Machine, MachineConfig};
 
 #[test]

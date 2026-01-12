@@ -1466,11 +1466,8 @@ fn pc_platform_uhci_usb_err_int_asserts_intx_on_crc_timeout() {
 
     pc.io.write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
     pc.io.write(bar4_base + REG_FRNUM, 2, 0);
-    pc.io.write(
-        bar4_base + REG_USBINTR,
-        2,
-        u32::from(USBINTR_TIMEOUT_CRC),
-    );
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_TIMEOUT_CRC));
     pc.io.write(
         bar4_base + REG_USBCMD,
         2,
