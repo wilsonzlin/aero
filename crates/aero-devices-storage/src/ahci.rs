@@ -725,8 +725,16 @@ fn dma_read_sectors_into_guest(
     byte_len: usize,
 ) -> io::Result<()> {
     // Avoid allocating a potentially huge contiguous buffer for the full transfer. Instead, stream
-    // through the PRDT scatter/gather list one entry at a time.
+    // through the PRDT scatter/gather list and DMA in bounded chunks.
+    const MAX_DMA_CHUNK_BYTES: usize = 256 * 1024; // must remain a multiple of 512
+    debug_assert!(MAX_DMA_CHUNK_BYTES.is_multiple_of(SECTOR_SIZE));
+
+    if byte_len == 0 {
+        return Ok(());
+    }
+
     let mut remaining = byte_len;
+    let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
 
     for i in 0..header.prdt_entries() as u64 {
         if remaining == 0 {
@@ -737,21 +745,28 @@ fn dma_read_sectors_into_guest(
             .wrapping_add(0x80)
             .wrapping_add(i.wrapping_mul(16));
         let prd = PrdtEntry::read(mem, prd_addr);
-        let chunk_len = (prd.dbc as usize).min(remaining);
+        let mut seg_remaining = (prd.dbc as usize).min(remaining);
 
-        if !chunk_len.is_multiple_of(SECTOR_SIZE) {
+        if !seg_remaining.is_multiple_of(SECTOR_SIZE) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unaligned PRDT length for ATA read DMA",
             ));
         }
 
-        let mut buf = try_alloc_zeroed(chunk_len)?;
-        drive.read_sectors(lba, &mut buf)?;
-        mem.write_physical(prd.dba, &buf);
+        let mut seg_off = 0usize;
+        while seg_remaining != 0 {
+            let chunk_len = seg_remaining.min(MAX_DMA_CHUNK_BYTES);
+            let dst = prd.dba.wrapping_add(seg_off as u64);
 
-        lba = lba.wrapping_add((chunk_len / SECTOR_SIZE) as u64);
-        remaining -= chunk_len;
+            drive.read_sectors(lba, &mut scratch[..chunk_len])?;
+            mem.write_physical(dst, &scratch[..chunk_len]);
+
+            lba = lba.wrapping_add((chunk_len / SECTOR_SIZE) as u64);
+            remaining -= chunk_len;
+            seg_remaining -= chunk_len;
+            seg_off += chunk_len;
+        }
     }
 
     if remaining != 0 {
@@ -772,8 +787,16 @@ fn dma_write_sectors_from_guest(
     byte_len: usize,
 ) -> io::Result<()> {
     // Avoid allocating a potentially huge contiguous buffer for the full transfer. Instead, stream
-    // through the PRDT scatter/gather list one entry at a time.
+    // through the PRDT scatter/gather list and DMA in bounded chunks.
+    const MAX_DMA_CHUNK_BYTES: usize = 256 * 1024; // must remain a multiple of 512
+    debug_assert!(MAX_DMA_CHUNK_BYTES.is_multiple_of(SECTOR_SIZE));
+
+    if byte_len == 0 {
+        return Ok(());
+    }
+
     let mut remaining = byte_len;
+    let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
 
     for i in 0..header.prdt_entries() as u64 {
         if remaining == 0 {
@@ -784,21 +807,28 @@ fn dma_write_sectors_from_guest(
             .wrapping_add(0x80)
             .wrapping_add(i.wrapping_mul(16));
         let prd = PrdtEntry::read(mem, prd_addr);
-        let chunk_len = (prd.dbc as usize).min(remaining);
+        let mut seg_remaining = (prd.dbc as usize).min(remaining);
 
-        if !chunk_len.is_multiple_of(SECTOR_SIZE) {
+        if !seg_remaining.is_multiple_of(SECTOR_SIZE) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unaligned PRDT length for ATA write DMA",
             ));
         }
 
-        let mut buf = try_alloc_zeroed(chunk_len)?;
-        mem.read_physical(prd.dba, &mut buf);
-        drive.write_sectors(lba, &buf)?;
+        let mut seg_off = 0usize;
+        while seg_remaining != 0 {
+            let chunk_len = seg_remaining.min(MAX_DMA_CHUNK_BYTES);
+            let src = prd.dba.wrapping_add(seg_off as u64);
 
-        lba = lba.wrapping_add((chunk_len / SECTOR_SIZE) as u64);
-        remaining -= chunk_len;
+            mem.read_physical(src, &mut scratch[..chunk_len]);
+            drive.write_sectors(lba, &scratch[..chunk_len])?;
+
+            lba = lba.wrapping_add((chunk_len / SECTOR_SIZE) as u64);
+            remaining -= chunk_len;
+            seg_remaining -= chunk_len;
+            seg_off += chunk_len;
+        }
     }
 
     if remaining != 0 {
