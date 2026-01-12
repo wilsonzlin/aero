@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use aero_d3d9::runtime::{
     PersistedShaderArtifact, ShaderCache, ShaderCacheSource, ShaderTranslationFlags,
+    D3D9_TRANSLATOR_CACHE_VERSION,
 };
 use js_sys::{Object, Reflect};
 use wasm_bindgen::closure::Closure;
@@ -65,11 +66,23 @@ async fn persistent_cache_opens_once_and_reports_sources() {
     let api = Object::new();
 
     // computeShaderCacheKey: return a stable string key.
-    let compute =
-        Closure::wrap(
-            Box::new(move |_dxbc: JsValue, _flags: JsValue| JsValue::from_str("test-key"))
-                as Box<dyn FnMut(JsValue, JsValue) -> JsValue>,
+    let compute = Closure::wrap(Box::new(move |_dxbc: JsValue, flags: JsValue| {
+        let version = Reflect::get(&flags, &JsValue::from_str("d3d9TranslatorVersion"))
+            .expect("get d3d9TranslatorVersion");
+        assert_eq!(
+            version.as_f64().map(|v| v as u32),
+            Some(D3D9_TRANSLATOR_CACHE_VERSION),
+            "d3d9TranslatorVersion should be present in flags so shader cache keys are invalidated when translation semantics change",
         );
+        let half = Reflect::get(&flags, &JsValue::from_str("halfPixelCenter"))
+            .expect("get halfPixelCenter");
+        assert_eq!(
+            half.as_bool(),
+            Some(false),
+            "halfPixelCenter should be normalized to a boolean"
+        );
+        JsValue::from_str("test-key")
+    }) as Box<dyn FnMut(JsValue, JsValue) -> JsValue>);
     Reflect::set(
         &api,
         &JsValue::from_str("computeShaderCacheKey"),
