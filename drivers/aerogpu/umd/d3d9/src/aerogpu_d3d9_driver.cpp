@@ -1133,11 +1133,7 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetAutoGenFilterType, D3d9TraceFunc::DeviceSetAutoGenFilterType, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetAutoGenFilterType, D3d9TraceFunc::DeviceGetAutoGenFilterType, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetPriority, D3d9TraceFunc::DeviceSetPriority, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetPriority, D3d9TraceFunc::DeviceGetPriority, D3DERR_NOTAVAILABLE);
 
 // Cursor management is not implemented yet, but these can be treated as benign
 // no-ops for bring-up.
@@ -11244,6 +11240,326 @@ HRESULT device_get_gamma_ramp_dispatch(Args... args) {
   }
   return D3DERR_NOTAVAILABLE;
 }
+
+template <typename HandleT>
+Resource* device_priority_as_resource(HandleT hResource) {
+  if constexpr (aerogpu_has_member_pDrvPrivate<HandleT>::value) {
+    return reinterpret_cast<Resource*>(hResource.pDrvPrivate);
+  }
+  return nullptr;
+}
+
+template <typename HandleT, typename PriorityT>
+HRESULT device_set_priority_core(D3DDDI_HDEVICE hDevice, HandleT hResource, PriorityT new_priority, uint32_t* out_old_value) {
+  if (out_old_value) {
+    *out_old_value = 0;
+  }
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  auto* res = device_priority_as_resource(hResource);
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (out_old_value) {
+    *out_old_value = res->priority;
+  }
+  res->priority = d3d9_to_u32(new_priority);
+  return S_OK;
+}
+
+template <typename Ret, typename HandleT, typename PriorityT>
+Ret device_set_priority_impl(D3DDDI_HDEVICE hDevice, HandleT hResource, PriorityT new_priority) {
+  const uint32_t new_value = d3d9_to_u32(new_priority);
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetPriority,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      static_cast<uint64_t>(new_value),
+                      0);
+
+  if constexpr (!std::is_same_v<Ret, HRESULT> && !std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  uint32_t old_value = 0;
+  const HRESULT hr = device_set_priority_core(hDevice, hResource, new_priority, &old_value);
+
+  (void)trace.ret(hr);
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return static_cast<Ret>(hr);
+  } else {
+    return static_cast<Ret>(old_value);
+  }
+}
+
+template <typename Ret, typename HandleT, typename PriorityT, typename OutT>
+Ret device_set_priority_impl(D3DDDI_HDEVICE hDevice, HandleT hResource, PriorityT new_priority, OutT* pOldPriority) {
+  d3d9_write_u32(pOldPriority, 0u);
+  const uint32_t new_value = d3d9_to_u32(new_priority);
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetPriority,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      static_cast<uint64_t>(new_value),
+                      d3d9_trace_arg_ptr(pOldPriority));
+
+  if constexpr (!std::is_same_v<Ret, HRESULT> && !std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  uint32_t old_value = 0;
+  const HRESULT hr = device_set_priority_core(hDevice, hResource, new_priority, &old_value);
+  d3d9_write_u32(pOldPriority, old_value);
+
+  (void)trace.ret(hr);
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return static_cast<Ret>(hr);
+  } else {
+    return static_cast<Ret>(old_value);
+  }
+}
+
+template <typename Ret, typename... Args>
+Ret device_set_priority_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_priority_impl<Ret>(args...);
+  } else if constexpr (sizeof...(Args) == 4) {
+    return device_set_priority_impl<Ret>(args...);
+  }
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return D3DERR_NOTAVAILABLE;
+  } else {
+    return Ret{};
+  }
+}
+
+template <typename Ret, typename HandleT, typename OutT>
+Ret device_get_priority_impl(D3DDDI_HDEVICE hDevice, HandleT hResource, OutT* pPriority) {
+  d3d9_write_u32(pPriority, 0u);
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetPriority,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      d3d9_trace_arg_ptr(pPriority),
+                      0);
+
+  if constexpr (!std::is_same_v<Ret, HRESULT> && !std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  HRESULT hr = S_OK;
+  uint32_t value = 0;
+  if (!hDevice.pDrvPrivate || !pPriority) {
+    hr = E_INVALIDARG;
+  } else {
+    auto* dev = as_device(hDevice);
+    auto* res = device_priority_as_resource(hResource);
+    if (!dev || !res) {
+      hr = E_INVALIDARG;
+    } else {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      value = res->priority;
+      d3d9_write_u32(pPriority, value);
+    }
+  }
+
+  (void)trace.ret(hr);
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return static_cast<Ret>(hr);
+  } else {
+    return static_cast<Ret>(value);
+  }
+}
+
+template <typename Ret, typename HandleT>
+Ret device_get_priority_impl(D3DDDI_HDEVICE hDevice, HandleT hResource) {
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetPriority,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      0,
+                      0);
+
+  if constexpr (!std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  HRESULT hr = S_OK;
+  uint32_t value = 0;
+  if (!hDevice.pDrvPrivate) {
+    hr = E_INVALIDARG;
+  } else {
+    auto* dev = as_device(hDevice);
+    auto* res = device_priority_as_resource(hResource);
+    if (!dev || !res) {
+      hr = E_INVALIDARG;
+    } else {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      value = res->priority;
+    }
+  }
+
+  (void)trace.ret(hr);
+  return static_cast<Ret>(value);
+}
+
+template <typename Ret, typename... Args>
+Ret device_get_priority_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_priority_impl<Ret>(args...);
+  } else if constexpr (sizeof...(Args) == 3) {
+    return device_get_priority_impl<Ret>(args...);
+  }
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return D3DERR_NOTAVAILABLE;
+  } else {
+    return Ret{};
+  }
+}
+
+template <typename Ret, typename HandleT, typename FilterT>
+Ret device_set_auto_gen_filter_type_impl(D3DDDI_HDEVICE hDevice, HandleT hResource, FilterT filter_type) {
+  const uint32_t new_value = d3d9_to_u32(filter_type);
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetAutoGenFilterType,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      static_cast<uint64_t>(new_value),
+                      0);
+
+  if constexpr (!std::is_same_v<Ret, HRESULT> && !std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  HRESULT hr = S_OK;
+  uint32_t old_value = 0;
+  if (!hDevice.pDrvPrivate) {
+    hr = E_INVALIDARG;
+  } else {
+    auto* dev = as_device(hDevice);
+    auto* res = device_priority_as_resource(hResource);
+    if (!dev || !res) {
+      hr = E_INVALIDARG;
+    } else {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      old_value = res->auto_gen_filter_type;
+      res->auto_gen_filter_type = new_value;
+    }
+  }
+
+  (void)trace.ret(hr);
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return static_cast<Ret>(hr);
+  } else {
+    return static_cast<Ret>(old_value);
+  }
+}
+
+template <typename Ret, typename... Args>
+Ret device_set_auto_gen_filter_type_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 3) {
+    return device_set_auto_gen_filter_type_impl<Ret>(args...);
+  }
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return D3DERR_NOTAVAILABLE;
+  } else {
+    return Ret{};
+  }
+}
+
+template <typename Ret, typename HandleT, typename OutT>
+Ret device_get_auto_gen_filter_type_impl(D3DDDI_HDEVICE hDevice, HandleT hResource, OutT* pFilterType) {
+  d3d9_write_u32(pFilterType, 2u);
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetAutoGenFilterType,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      d3d9_trace_arg_ptr(pFilterType),
+                      0);
+
+  if constexpr (!std::is_same_v<Ret, HRESULT> && !std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  HRESULT hr = S_OK;
+  uint32_t value = 2u;
+  if (!hDevice.pDrvPrivate || !pFilterType) {
+    hr = E_INVALIDARG;
+  } else {
+    auto* dev = as_device(hDevice);
+    auto* res = device_priority_as_resource(hResource);
+    if (!dev || !res) {
+      hr = E_INVALIDARG;
+    } else {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      value = res->auto_gen_filter_type;
+      d3d9_write_u32(pFilterType, value);
+    }
+  }
+
+  (void)trace.ret(hr);
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return static_cast<Ret>(hr);
+  } else {
+    return static_cast<Ret>(value);
+  }
+}
+
+template <typename Ret, typename HandleT>
+Ret device_get_auto_gen_filter_type_impl(D3DDDI_HDEVICE hDevice, HandleT hResource) {
+  const uint64_t res_ptr = d3d9_trace_arg_ptr(device_priority_as_resource(hResource));
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetAutoGenFilterType,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      res_ptr,
+                      0,
+                      0);
+
+  if constexpr (!std::is_integral_v<Ret>) {
+    (void)trace.ret(D3DERR_NOTAVAILABLE);
+    return Ret{};
+  }
+
+  HRESULT hr = S_OK;
+  uint32_t value = 2u;
+  if (!hDevice.pDrvPrivate) {
+    hr = E_INVALIDARG;
+  } else {
+    auto* dev = as_device(hDevice);
+    auto* res = device_priority_as_resource(hResource);
+    if (!dev || !res) {
+      hr = E_INVALIDARG;
+    } else {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      value = res->auto_gen_filter_type;
+    }
+  }
+
+  (void)trace.ret(hr);
+  return static_cast<Ret>(value);
+}
+
+template <typename Ret, typename... Args>
+Ret device_get_auto_gen_filter_type_dispatch(Args... args) {
+  if constexpr (sizeof...(Args) == 2) {
+    return device_get_auto_gen_filter_type_impl<Ret>(args...);
+  } else if constexpr (sizeof...(Args) == 3) {
+    return device_get_auto_gen_filter_type_impl<Ret>(args...);
+  }
+  if constexpr (std::is_same_v<Ret, HRESULT>) {
+    return D3DERR_NOTAVAILABLE;
+  } else {
+    return Ret{};
+  }
+}
 #endif
 
 template <typename ValueT>
@@ -12312,6 +12628,66 @@ template <typename Ret, typename... Args>
 struct aerogpu_d3d9_impl_pfnGetGammaRamp<Ret(*)(Args...)> {
   static Ret pfnGetGammaRamp(Args... args) {
     return static_cast<Ret>(device_get_gamma_ramp_dispatch(args...));
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetPriority;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetPriority<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetPriority(Args... args) {
+    return device_set_priority_dispatch<Ret>(args...);
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetPriority<Ret(*)(Args...)> {
+  static Ret pfnSetPriority(Args... args) {
+    return device_set_priority_dispatch<Ret>(args...);
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetPriority;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetPriority<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetPriority(Args... args) {
+    return device_get_priority_dispatch<Ret>(args...);
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetPriority<Ret(*)(Args...)> {
+  static Ret pfnGetPriority(Args... args) {
+    return device_get_priority_dispatch<Ret>(args...);
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnSetAutoGenFilterType;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetAutoGenFilterType<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnSetAutoGenFilterType(Args... args) {
+    return device_set_auto_gen_filter_type_dispatch<Ret>(args...);
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnSetAutoGenFilterType<Ret(*)(Args...)> {
+  static Ret pfnSetAutoGenFilterType(Args... args) {
+    return device_set_auto_gen_filter_type_dispatch<Ret>(args...);
+  }
+};
+
+template <typename Fn>
+struct aerogpu_d3d9_impl_pfnGetAutoGenFilterType;
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetAutoGenFilterType<Ret(__stdcall*)(Args...)> {
+  static Ret __stdcall pfnGetAutoGenFilterType(Args... args) {
+    return device_get_auto_gen_filter_type_dispatch<Ret>(args...);
+  }
+};
+template <typename Ret, typename... Args>
+struct aerogpu_d3d9_impl_pfnGetAutoGenFilterType<Ret(*)(Args...)> {
+  static Ret pfnGetAutoGenFilterType(Args... args) {
+    return device_get_auto_gen_filter_type_dispatch<Ret>(args...);
   }
 };
 
@@ -16036,11 +16412,11 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
   if constexpr (aerogpu_has_member_pfnSetPriority<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnSetPriority,
-                           aerogpu_d3d9_stub_pfnSetPriority<decltype(pDeviceFuncs->pfnSetPriority)>::pfnSetPriority);
+                           aerogpu_d3d9_impl_pfnSetPriority<decltype(pDeviceFuncs->pfnSetPriority)>::pfnSetPriority);
   }
   if constexpr (aerogpu_has_member_pfnGetPriority<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetPriority,
-                           aerogpu_d3d9_stub_pfnGetPriority<decltype(pDeviceFuncs->pfnGetPriority)>::pfnGetPriority);
+                           aerogpu_d3d9_impl_pfnGetPriority<decltype(pDeviceFuncs->pfnGetPriority)>::pfnGetPriority);
   }
   if constexpr (aerogpu_has_member_pfnGetDisplayModeEx<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(pfnGetDisplayModeEx, device_get_display_mode_ex);
@@ -16057,13 +16433,13 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   if constexpr (aerogpu_has_member_pfnSetAutoGenFilterType<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetAutoGenFilterType,
-        aerogpu_d3d9_stub_pfnSetAutoGenFilterType<decltype(
+        aerogpu_d3d9_impl_pfnSetAutoGenFilterType<decltype(
             pDeviceFuncs->pfnSetAutoGenFilterType)>::pfnSetAutoGenFilterType);
   }
   if constexpr (aerogpu_has_member_pfnGetAutoGenFilterType<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
         pfnGetAutoGenFilterType,
-        aerogpu_d3d9_stub_pfnGetAutoGenFilterType<decltype(
+        aerogpu_d3d9_impl_pfnGetAutoGenFilterType<decltype(
             pDeviceFuncs->pfnGetAutoGenFilterType)>::pfnGetAutoGenFilterType);
   }
   if constexpr (aerogpu_has_member_pfnGenerateMipSubLevels<D3D9DDI_DEVICEFUNCS>::value) {

@@ -214,6 +214,13 @@ struct Resource {
   // The stable ID referenced in command buffers is `backing_alloc_id`.
   WddmAllocationHandle wddm_hAllocation = 0;
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // Legacy resource properties (cached only, not currently emitted to the
+  // AeroGPU command stream).
+  uint32_t priority = 0;
+  uint32_t auto_gen_filter_type = 2u; // D3DTEXF_LINEAR
+#endif
+
   std::vector<uint8_t> storage;
   std::vector<uint8_t> shared_private_driver_data;
 };

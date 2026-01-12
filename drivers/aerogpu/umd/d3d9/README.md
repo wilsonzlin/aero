@@ -279,16 +279,19 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet.
 
-Note: several legacy fixed-function state paths are cached (Set*/Get* round-trip)
-but are not currently emitted to the AeroGPU command stream. This includes:
+Note: several legacy fixed-function/resource state paths are cached (Set*/Get*
+round-trip) but are not currently emitted to the AeroGPU command stream. This
+includes:
 
 - texture stage state (D3DTSS_*)
 - transforms / clip planes / N-patch mode
 - shader int/bool constants
-- lighting/material, palettes, clip status, gamma ramp
+- lighting/material
+- palettes / clip status / gamma ramp
+- resource priority
+- autogen filter type
 - `pfnSetConvolutionMonoKernel` (no-op, returns `S_OK`)
-- `pfnSetAutoGenFilterType`, `pfnGetAutoGenFilterType`, `pfnGenerateMipSubLevels` (stubbed for completeness)
-- `pfnSetPriority` / `pfnGetPriority` (stubbed for completeness)
+- `pfnGenerateMipSubLevels` (stubbed for completeness)
 - `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`,
   (no-op, returns `S_OK`)
 - `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
