@@ -1,4 +1,4 @@
-use aero_devices::pci::{PciBarKind, PciBdf, PciDevice, SharedPciConfigPorts};
+use aero_devices::pci::{PciBarKind, PciBdf, SharedPciConfigPorts};
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -42,79 +42,6 @@ impl<T: PciBarMmioHandler> PciBarMmioHandler for SharedPciBarMmioHandler<T> {
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
         self.0.borrow_mut().write(offset, size, value)
-    }
-}
-
-/// Generic adapter for device models that maintain their own internal PCI config space.
-///
-/// The PC platform maintains a separate canonical PCI config space (`SharedPciConfigPorts`) for
-/// guest enumeration. Some device models also gate MMIO on their internal config (e.g. PCI
-/// COMMAND.MEM), so keep the internal PCI state synchronized on every MMIO access.
-///
-/// This wrapper is BAR-scoped: it syncs the PCI command register and the base of the BAR being
-/// accessed.
-///
-/// This replaces older one-off wrappers like `PcAhciMmioBar` / `PcNvmeMmioBar` by allowing any
-/// `T: PciDevice + MmioHandler` to be registered via a single generic adapter.
-pub struct PciConfigSyncedMmioBar<T> {
-    pci_cfg: SharedPciConfigPorts,
-    dev: Rc<RefCell<T>>,
-    bdf: PciBdf,
-    bar: u8,
-}
-
-impl<T> PciConfigSyncedMmioBar<T> {
-    pub fn new(
-        pci_cfg: SharedPciConfigPorts,
-        dev: Rc<RefCell<T>>,
-        bdf: PciBdf,
-        bar: u8,
-    ) -> Self {
-        Self {
-            pci_cfg,
-            dev,
-            bdf,
-            bar,
-        }
-    }
-}
-
-impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
-    fn sync_pci_state(&mut self) {
-        let (command, bar_base) = {
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(self.bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar_base = cfg
-                .and_then(|cfg| cfg.bar_range(self.bar))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            (command, bar_base)
-        };
-
-        let mut dev = self.dev.borrow_mut();
-        dev.config_mut().set_command(command);
-        if bar_base != 0 {
-            dev.config_mut().set_bar_base(self.bar, bar_base);
-        }
-    }
-}
-
-impl<T: MmioHandler + PciDevice> PciBarMmioHandler for PciConfigSyncedMmioBar<T> {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if !(1..=8).contains(&size) {
-            return all_ones(size);
-        }
-        self.sync_pci_state();
-        MmioHandler::read(&mut *self.dev.borrow_mut(), offset, size)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if !(1..=8).contains(&size) {
-            return;
-        }
-        self.sync_pci_state();
-        MmioHandler::write(&mut *self.dev.borrow_mut(), offset, size, value);
     }
 }
 

@@ -10,6 +10,7 @@ mod acpi;
 mod bar_mmio_router;
 mod bios;
 mod bus;
+mod config_synced_mmio_bar;
 mod ecam;
 mod platform;
 mod ports;
@@ -24,6 +25,7 @@ pub use config::{
     PciBarDefinition, PciBarKind, PciBarRange, PciCommandChange, PciConfigSpace,
     PciConfigSpaceState, PciConfigWriteEffects, PciDevice, PciSubsystemIds, PciVendorDeviceId,
 };
+pub use config_synced_mmio_bar::PciConfigSyncedMmioBar;
 pub use ecam::{PciEcamConfig, PciEcamMmio, PCIE_ECAM_BUS_STRIDE};
 pub use irq_router::{
     GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,

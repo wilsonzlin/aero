@@ -45,7 +45,8 @@ use std::rc::Rc;
 mod cpu_core;
 mod pci_mmio;
 pub use cpu_core::{PcCpuBus, PcInterruptController};
-pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter, PciConfigSyncedMmioBar};
+pub use pci_mmio::{PciBarMmioHandler, PciBarMmioRouter};
+pub use aero_devices::pci::PciConfigSyncedMmioBar;
 
 mod firmware_pci;
 pub use firmware_pci::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
@@ -1712,7 +1713,7 @@ impl PcPlatform {
                 router.register_handler(
                     bdf,
                     5,
-                    pci_mmio::PciConfigSyncedMmioBar::new(pci_cfg.clone(), ahci, bdf, 5),
+                    PciConfigSyncedMmioBar::new(pci_cfg.clone(), ahci, bdf, 5),
                 );
             }
             if let Some(e1000) = e1000.clone() {
@@ -1734,7 +1735,7 @@ impl PcPlatform {
                 router.register_handler(
                     bdf,
                     0,
-                    pci_mmio::PciConfigSyncedMmioBar::new(pci_cfg.clone(), nvme, bdf, 0),
+                    PciConfigSyncedMmioBar::new(pci_cfg.clone(), nvme, bdf, 0),
                 );
             }
         }

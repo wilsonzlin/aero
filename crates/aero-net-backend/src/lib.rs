@@ -30,6 +30,7 @@ pub trait NetworkBackend {
     fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
         None
     }
+
     /// Poll for a host → guest Ethernet frame.
     ///
     /// Backends may return immediate responses (ARP/DHCP/DNS, etc.) when the guest transmits,
