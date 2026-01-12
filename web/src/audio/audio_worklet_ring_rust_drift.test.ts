@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  HEADER_BYTES,
   HEADER_U32_LEN,
   OVERRUN_COUNT_INDEX,
   READ_FRAME_INDEX,
@@ -28,11 +29,12 @@ describe("AudioWorklet ring layout matches Rust source of truth", () => {
     const rustUrl = new URL("../../../crates/platform/src/audio/worklet_bridge.rs", import.meta.url);
     const rust = readFileSync(rustUrl, "utf8");
 
-    expect(HEADER_U32_LEN).toBe(parseRustUsizeConst(rust, "HEADER_U32_LEN"));
+    const rustHeaderU32Len = parseRustUsizeConst(rust, "HEADER_U32_LEN");
+    expect(HEADER_U32_LEN).toBe(rustHeaderU32Len);
+    expect(HEADER_BYTES).toBe(rustHeaderU32Len * 4);
     expect(READ_FRAME_INDEX).toBe(parseRustUsizeConst(rust, "READ_FRAME_INDEX"));
     expect(WRITE_FRAME_INDEX).toBe(parseRustUsizeConst(rust, "WRITE_FRAME_INDEX"));
     expect(UNDERRUN_COUNT_INDEX).toBe(parseRustUsizeConst(rust, "UNDERRUN_COUNT_INDEX"));
     expect(OVERRUN_COUNT_INDEX).toBe(parseRustUsizeConst(rust, "OVERRUN_COUNT_INDEX"));
   });
 });
-
