@@ -1439,9 +1439,12 @@ impl E1000Device {
     pub fn restore_state(&mut self, state: &E1000DeviceState) {
         // Restore PCI config space.
         self.pci.regs = state.pci_regs;
-        self.pci.bar0 = state.pci_bar0;
+        // PCI BARs are aligned/sanitized by the live device model when written via config space.
+        // Keep restore resilient to corrupted snapshots by re-applying the same invariants here.
+        self.pci.bar0 = state.pci_bar0 & 0xffff_fff0;
         self.pci.bar0_probe = state.pci_bar0_probe;
-        self.pci.bar1 = state.pci_bar1;
+        // I/O BAR: bit0 must remain set.
+        self.pci.bar1 = (state.pci_bar1 & 0xffff_fffc) | 0x1;
         self.pci.bar1_probe = state.pci_bar1_probe;
 
         // Restore MMIO-visible register state + internal runtime state.

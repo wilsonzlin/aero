@@ -95,7 +95,8 @@ impl Default for E1000DeviceState {
             pci_regs: [0; 256],
             pci_bar0: 0,
             pci_bar0_probe: false,
-            pci_bar1: 0,
+            // BAR1 is an I/O BAR; bit0 must remain set.
+            pci_bar1: 0x1,
             pci_bar1_probe: false,
             ctrl: 0,
             status: 0,
@@ -385,6 +386,17 @@ impl IoSnapshot for E1000DeviceState {
         self.pci_bar0_probe = r.bool(TAG_PCI_BAR0_PROBE)?.unwrap_or(self.pci_bar0_probe);
         self.pci_bar1 = r.u32(TAG_PCI_BAR1)?.unwrap_or(self.pci_bar1);
         self.pci_bar1_probe = r.bool(TAG_PCI_BAR1_PROBE)?.unwrap_or(self.pci_bar1_probe);
+
+        // Validate PCI BAR invariants enforced by the live device model.
+        //
+        // BAR0 is a memory BAR; the model always clears the low 4 flag bits and aligns the base.
+        // BAR1 is an I/O BAR; bit0 must remain set and bit1 must remain clear.
+        if (self.pci_bar0 & 0xF) != 0 {
+            return Err(SnapshotError::InvalidFieldEncoding("e1000 pci bar0"));
+        }
+        if (self.pci_bar1 & 0x3) != 0x1 {
+            return Err(SnapshotError::InvalidFieldEncoding("e1000 pci bar1"));
+        }
 
         self.ctrl = r.u32(TAG_CTRL)?.unwrap_or(self.ctrl);
         self.status = r.u32(TAG_STATUS)?.unwrap_or(self.status);

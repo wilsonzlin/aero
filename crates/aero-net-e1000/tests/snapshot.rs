@@ -460,6 +460,42 @@ fn snapshot_roundtrip_preserves_pci_bar_probe_flags() {
 }
 
 #[test]
+fn snapshot_rejects_unaligned_pci_bar0() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_PCI_BAR0: u16 = 2;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    // BAR0 must be aligned; the live model always clears the low 4 bits.
+    w.field_u32(TAG_PCI_BAR0, 0xDEAD_BEEF);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar0"));
+}
+
+#[test]
+fn snapshot_rejects_invalid_pci_bar1_io_flag() {
+    // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
+    const TAG_PCI_BAR1: u16 = 4;
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    // BAR1 is an I/O BAR; bit0 must remain set.
+    w.field_u32(TAG_PCI_BAR1, 0x1234_0000);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 pci bar1"));
+}
+
+#[test]
 fn snapshot_rejects_out_of_range_tx_ring_indices() {
     // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
     const TAG_TDLEN: u16 = 52;
