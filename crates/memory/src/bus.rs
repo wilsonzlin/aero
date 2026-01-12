@@ -102,6 +102,68 @@ pub trait MemoryBus {
     }
 }
 
+impl<T: MemoryBus + ?Sized> MemoryBus for &mut T {
+    #[inline]
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        <T as MemoryBus>::read_physical(&mut **self, paddr, buf)
+    }
+
+    #[inline]
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        <T as MemoryBus>::write_physical(&mut **self, paddr, buf)
+    }
+
+    #[inline]
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        <T as MemoryBus>::read_u8(&mut **self, paddr)
+    }
+
+    #[inline]
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        <T as MemoryBus>::read_u16(&mut **self, paddr)
+    }
+
+    #[inline]
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        <T as MemoryBus>::read_u32(&mut **self, paddr)
+    }
+
+    #[inline]
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        <T as MemoryBus>::read_u64(&mut **self, paddr)
+    }
+
+    #[inline]
+    fn read_u128(&mut self, paddr: u64) -> u128 {
+        <T as MemoryBus>::read_u128(&mut **self, paddr)
+    }
+
+    #[inline]
+    fn write_u8(&mut self, paddr: u64, val: u8) {
+        <T as MemoryBus>::write_u8(&mut **self, paddr, val)
+    }
+
+    #[inline]
+    fn write_u16(&mut self, paddr: u64, val: u16) {
+        <T as MemoryBus>::write_u16(&mut **self, paddr, val)
+    }
+
+    #[inline]
+    fn write_u32(&mut self, paddr: u64, val: u32) {
+        <T as MemoryBus>::write_u32(&mut **self, paddr, val)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, paddr: u64, val: u64) {
+        <T as MemoryBus>::write_u64(&mut **self, paddr, val)
+    }
+
+    #[inline]
+    fn write_u128(&mut self, paddr: u64, val: u128) {
+        <T as MemoryBus>::write_u128(&mut **self, paddr, val)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RomRegion {
     pub start: u64,
