@@ -29,6 +29,25 @@ describe("io/irq_refcount", () => {
     expect(counts[irq]).toBe(0);
   });
 
+  it("treats edge-style pulses as no-ops when the line is already asserted (wire-OR)", () => {
+    const counts = new Uint16Array(256);
+    const irq = 12;
+
+    // Some other device is already asserting the line.
+    expect(applyIrqRefCountChange(counts, irq, true)).toBe(IRQ_REFCOUNT_ASSERT);
+    expect(counts[irq]).toBe(1);
+
+    // An edge-triggered source "pulses" by doing raise then lower. Because the line is already
+    // high, this should not create any observable transitions.
+    expect(applyIrqRefCountChange(counts, irq, true)).toBe(0);
+    expect(applyIrqRefCountChange(counts, irq, false)).toBe(0);
+    expect(counts[irq]).toBe(1);
+
+    // When the original device deasserts, the line finally drops.
+    expect(applyIrqRefCountChange(counts, irq, false)).toBe(IRQ_REFCOUNT_DEASSERT);
+    expect(counts[irq]).toBe(0);
+  });
+
   it("guards against refcount underflow and overflow (saturating)", () => {
     const counts = new Uint16Array(256);
     const irq = 7;
@@ -43,4 +62,3 @@ describe("io/irq_refcount", () => {
     expect(counts[irq]).toBe(IRQ_REFCOUNT_MAX);
   });
 });
-
