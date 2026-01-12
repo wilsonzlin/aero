@@ -267,6 +267,18 @@ fn qcow2_rejects_l1_entries_pointing_past_eof() {
 }
 
 #[test]
+fn qcow2_rejects_incompatible_features() {
+    let virtual_size = 1024 * 1024;
+    let mut storage = make_qcow2_empty(virtual_size);
+
+    // incompatible_features is at offset 72 in the v3 header extension.
+    storage.write_at(72, &1u64.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(storage).err().expect("expected error");
+    assert!(matches!(err, DiskError::Unsupported(_)));
+}
+
+#[test]
 fn qcow2_unallocated_reads_zero() {
     let storage = make_qcow2_empty(1024 * 1024);
     let mut disk = DiskImage::open_auto(storage).unwrap();
@@ -336,6 +348,21 @@ fn vhd_rejects_bat_entries_pointing_past_eof() {
     let mut disk = VhdDisk::open(storage).unwrap();
     let mut buf = vec![0u8; SECTOR];
     let err = disk.read_sectors(0, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::CorruptImage(_)));
+}
+
+#[test]
+fn vhd_rejects_bad_footer_checksum() {
+    let mut storage = make_vhd_fixed_with_pattern();
+
+    // Corrupt a byte in the footer (but keep the cookie intact) so the checksum no longer matches.
+    let footer_offset = 1024 * 1024;
+    let mut footer = [0u8; 512];
+    storage.read_at(footer_offset, &mut footer).unwrap();
+    footer[8] ^= 0x01;
+    storage.write_at(footer_offset, &footer).unwrap();
+
+    let err = VhdDisk::open(storage).err().expect("expected error");
     assert!(matches!(err, DiskError::CorruptImage(_)));
 }
 

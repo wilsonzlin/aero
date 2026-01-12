@@ -6,8 +6,24 @@
 //! - [`VirtualDisk`]: byte-addressed disk interface with sector helpers
 //! - [`RawDisk`]: maps a resizable byte backend to a fixed-capacity disk (raw images)
 //! - [`AeroSparseDisk`]: Aero-specific sparse disk format for huge virtual disks
+//! - [`Qcow2Disk`]: QCOW2 v2/v3 (subset) support for common developer images
+//! - [`VhdDisk`]: VHD (fixed + dynamic) support
 //! - [`AeroCowDisk`]: copy-on-write overlay on top of a base disk
 //! - [`BlockCachedDisk`]: LRU, write-back block cache wrapper
+//! - [`DiskImage`]: auto-detect + open wrapper for multiple formats
+//!
+//! ## Example: open with format detection
+//!
+//! ```rust,no_run
+//! use aero_storage::{DiskImage, MemBackend, VirtualDisk};
+//!
+//! // In production this would be an OPFS/IndexedDB backend; MemBackend is for tests/examples.
+//! let backend = MemBackend::with_len(1024 * 1024).unwrap();
+//! let mut disk = DiskImage::open_auto(backend).unwrap();
+//!
+//! let mut sector = [0u8; 512];
+//! disk.read_sectors(0, &mut sector).unwrap();
+//! ```
 //!
 //! In the browser, local persistence is typically backed by OPFS. Aero provides a
 //! Rust/wasm32 OPFS backend implementation in `crates/aero-opfs` that implements

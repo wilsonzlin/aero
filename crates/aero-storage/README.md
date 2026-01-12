@@ -26,6 +26,9 @@ Note: IndexedDB-based storage is generally async and is not currently exposed as
   - Fixed (type 2)
   - Dynamic (type 3): BAT + bitmap + block allocation
 
+For convenience, `DiskImage::open_auto` can auto-detect and open these formats from a
+single `StorageBackend`.
+
 ## Using `aero-storage` disks with device models
 
 Device models such as NVMe and virtio-blk live in separate crates and generally use their own
