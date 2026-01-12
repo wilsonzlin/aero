@@ -158,6 +158,7 @@ import {
 } from "./vm_snapshot_wasm";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
 import { registerVirtioInputKeyboardPciFunction } from "./io_virtio_input_register";
+import { VmTimebase } from "../runtime/vm_timebase";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -401,8 +402,7 @@ let snapshotRestoredDeviceBlobs: Array<{ kind: string; bytes: Uint8Array }> = []
 // To keep snapshot pause/resume semantics deterministic, we maintain a monotonic
 // "VM tick time" that does *not* advance while `snapshotPaused` is true. All
 // devices are ticked against this virtual time.
-let ioTickHostLastNowMs: number | null = null;
-let ioTickVirtualNowMs: number | null = null;
+const ioTickTimebase = new VmTimebase();
 // While the IO worker is snapshot-paused we must not allow any asynchronous messages (e.g. WebUSB
 // completions, WebHID input reports) to call into WASM and mutate guest RAM/device state; otherwise
 // snapshot save would race with those writes and become nondeterministic.
@@ -2841,11 +2841,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           setUsbProxyCompletionRingDispatchPaused(false);
           // Ensure the next device tick doesn't interpret wall-clock time spent in
           // snapshot save/restore as elapsed VM time.
-          if (typeof performance?.now === "function") {
-            ioTickHostLastNowMs = performance.now();
-          } else {
-            ioTickHostLastNowMs = Date.now();
-          }
+          const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+          ioTickTimebase.resetHostNowMs(now);
           ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
           return;
         }
@@ -3292,23 +3289,7 @@ function startIoIpcServer(): void {
     diskRead,
     diskWrite,
     tick: (nowMs) => {
-      // Convert the host tick time into a monotonic VM-relative time that does not
-      // advance while snapshotPaused is true. This prevents time-based devices
-      // (especially audio) from observing large deltas after snapshot pause/resume.
-      if (ioTickHostLastNowMs === null || ioTickVirtualNowMs === null) {
-        ioTickHostLastNowMs = nowMs;
-        ioTickVirtualNowMs = nowMs;
-      } else {
-        let deltaHostMs = nowMs - ioTickHostLastNowMs;
-        ioTickHostLastNowMs = nowMs;
-        if (!Number.isFinite(deltaHostMs) || deltaHostMs <= 0) {
-          deltaHostMs = 0;
-        }
-        if (!snapshotPaused) {
-          ioTickVirtualNowMs += deltaHostMs;
-        }
-      }
-      const vmNowMs = ioTickVirtualNowMs ?? nowMs;
+      const vmNowMs = ioTickTimebase.tick(nowMs, snapshotPaused);
 
       const perfActive = isPerfActive();
       const t0 = perfActive ? performance.now() : 0;
