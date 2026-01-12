@@ -546,6 +546,32 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
             }
             cpu.rflags &= !FLAG_CF;
         }
+        0x10 => {
+            // Read extended keystroke (blocking in real BIOS; we return 0 if none).
+            //
+            // For now this behaves like AH=00h: the BIOS does not distinguish "extended"
+            // vs "non-extended" keys in the queue representation.
+            if let Some(k) = bios.keyboard_queue.pop_front() {
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (k as u64);
+                cpu.rflags &= !FLAG_ZF;
+            } else {
+                cpu.gpr[gpr::RAX] &= !0xFFFF;
+                cpu.rflags |= FLAG_ZF;
+            }
+            cpu.rflags &= !FLAG_CF;
+        }
+        0x11 => {
+            // Check for extended keystroke (ZF=1 if none).
+            //
+            // For now this behaves like AH=01h.
+            if let Some(&k) = bios.keyboard_queue.front() {
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (k as u64);
+                cpu.rflags &= !FLAG_ZF;
+            } else {
+                cpu.rflags |= FLAG_ZF;
+            }
+            cpu.rflags &= !FLAG_CF;
+        }
         _ => {
             eprintln!("BIOS: unhandled INT 16h AH={ah:02x}");
             cpu.rflags |= FLAG_CF;
@@ -795,7 +821,7 @@ fn build_e820_map(
         A20Gate, BiosConfig, InMemoryDisk, TestMemory, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
-    use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF};
+    use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};
     use memory::MemoryBus as _;
 
     #[test]
@@ -992,6 +1018,39 @@ fn build_e820_map(
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] & 0xFF) as u8, 0);
+    }
+
+    #[test]
+    fn int16_extended_read_and_check_use_keyboard_queue() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+
+        bios.push_key(0x1234);
+
+        // AH=11h (check for extended keystroke) should not dequeue.
+        cpu.gpr[gpr::RAX] = 0x1100;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
+
+        // AH=01h should still see the same key (queue not drained).
+        cpu.gpr[gpr::RAX] = 0x0100;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
+
+        // AH=10h (read extended keystroke) should dequeue.
+        cpu.gpr[gpr::RAX] = 0x1000;
+        handle_int16(&mut bios, &mut cpu);
+        assert_eq!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
+
+        // Now the queue should be empty.
+        cpu.gpr[gpr::RAX] = 0x1100;
+        handle_int16(&mut bios, &mut cpu);
+        assert_ne!(cpu.rflags & FLAG_ZF, 0);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
     }
 
     #[test]
