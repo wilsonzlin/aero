@@ -699,6 +699,12 @@ impl IdeController {
     }
 
     pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
+        // Treat zero-sized accesses as true no-ops. (They are not representable by the x86 ISA,
+        // but defensive callers may still attempt them.)
+        if size == 0 {
+            return 0;
+        }
+
         // Command blocks.
         let off = port.wrapping_sub(self.primary.ports.cmd_base);
         if off < 8 {
@@ -738,6 +744,10 @@ impl IdeController {
     }
 
     pub fn io_write(&mut self, port: u16, size: u8, val: u32) {
+        if size == 0 {
+            return;
+        }
+
         // Command blocks.
         let off = port.wrapping_sub(self.primary.ports.cmd_base);
         if off < 8 {
@@ -1609,6 +1619,41 @@ pub fn register_piix3_ide_ports(bus: &mut IoPortBus, ide: SharedPiix3IdePciDevic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let mut ctl = IdeController::new(0xFFF0);
+
+        // Pretend an ATA master is present so Status reads would normally clear IRQ state.
+        ctl.primary.drive_present[0] = true;
+        ctl.primary.irq_pending = true;
+
+        let status_port = ctl.primary.ports.cmd_base + ATA_REG_STATUS_COMMAND;
+        let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
+
+        // Sanity: a normal status read clears IRQ.
+        let _ = ctl.io_read(status_port, 1);
+        assert!(
+            !ctl.primary.irq_pending,
+            "sanity check failed: STATUS read should clear IRQ"
+        );
+
+        // Re-assert and ensure a size-0 read is a true no-op.
+        ctl.primary.irq_pending = true;
+        assert_eq!(ctl.io_read(status_port, 0), 0);
+        assert!(
+            ctl.primary.irq_pending,
+            "size-0 STATUS read must not clear IRQ"
+        );
+
+        // Size-0 writes must not update registers (e.g. drive select).
+        let before_device = ctl.primary.tf.device;
+        ctl.io_write(device_port, 0, 0xE0);
+        assert_eq!(
+            ctl.primary.tf.device, before_device,
+            "size-0 write must not update taskfile registers"
+        );
+    }
 
     #[test]
     fn ide_controller_reset_clears_control_registers_and_bus_master_state() {

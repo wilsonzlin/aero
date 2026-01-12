@@ -1663,6 +1663,7 @@ struct VgaPortWindow {
 impl aero_platform::io::PortIoDevice for VgaPortWindow {
     fn read(&mut self, port: u16, size: u8) -> u32 {
         let size = match size {
+            0 => return 0,
             1 | 2 | 4 => size as usize,
             _ => return u32::MAX,
         };

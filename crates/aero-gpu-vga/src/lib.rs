@@ -47,6 +47,7 @@ pub const DEFAULT_VRAM_SIZE: usize = 16 * 1024 * 1024;
 
 fn io_all_ones(size: usize) -> u32 {
     match size {
+        0 => 0,
         1 => 0xFF,
         2 => 0xFFFF,
         4 => 0xFFFF_FFFF,
@@ -1393,6 +1394,17 @@ mod tests {
             std::slice::from_raw_parts(dev.front.as_ptr() as *const u8, dev.front.len() * 4)
         };
         fnv1a64(bytes)
+    }
+
+    #[test]
+    fn port_io_size0_is_noop() {
+        let mut dev = VgaDevice::new();
+
+        // Reading input status (0x3DA) normally resets the attribute flip-flop, but a size-0 access
+        // must be a true no-op.
+        dev.attribute_flip_flop_data = true;
+        assert_eq!(dev.port_read(0x3DA, 0), 0);
+        assert!(dev.attribute_flip_flop_data);
     }
 
     #[test]

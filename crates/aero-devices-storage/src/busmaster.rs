@@ -139,6 +139,9 @@ impl BusMasterChannel {
     }
 
     pub fn read(&self, reg_off: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         match reg_off {
             0 => self.cmd as u32,
             2 => {
@@ -166,6 +169,9 @@ impl BusMasterChannel {
     }
 
     pub fn write(&mut self, reg_off: u16, size: u8, val: u32) {
+        if size == 0 {
+            return;
+        }
         match reg_off {
             0 => {
                 // Only bits 0 (start) and 3 (direction) are writable.
@@ -302,6 +308,19 @@ impl Default for BusMasterChannel {
 mod tests {
     use super::*;
     use memory::{Bus, MemoryBus};
+
+    #[test]
+    fn size0_access_is_noop() {
+        let mut bm = BusMasterChannel::new();
+
+        bm.write(0, 1, 0x09);
+        assert_eq!(bm.read(0, 1), 0x09);
+
+        // Regression guard: size-0 accesses must be true no-ops.
+        assert_eq!(bm.read(0, 0), 0);
+        bm.write(0, 0, 0);
+        assert_eq!(bm.read(0, 1), 0x09);
+    }
 
     #[test]
     fn reset_preserves_dma_capability_bits() {
