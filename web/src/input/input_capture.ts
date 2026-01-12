@@ -209,6 +209,15 @@ export class InputCapture {
       this.suppressedKeyUps.delete(event.code);
     }
 
+    if (this.suppressedKeyUps.has(event.code)) {
+      // A host-only chord already swallowed a keydown for this key and we're still waiting for the
+      // corresponding keyup. Swallow any repeat keydown events so the guest never sees a make
+      // without a break (which would otherwise produce a stuck key).
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (this.pointerLock.isLocked && this.releaseChord && chordMatches(event, this.releaseChord)) {
       event.preventDefault();
       event.stopPropagation();

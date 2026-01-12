@@ -163,4 +163,73 @@ describe("InputCapture releasePointerLockChord", () => {
       expect(upStopPropagation).toHaveBeenCalled();
     });
   });
+
+  it("swallows repeated keydown events for a chord key while waiting for the corresponding keyup", () => {
+    withStubbedDocument((doc) => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      doc.pointerLockElement = canvas;
+
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        releasePointerLockChord: { code: "Escape" },
+      });
+
+      (capture as any).hasFocus = true;
+      (capture as any).pointerLock.locked = true;
+
+      // Trigger the chord; this should swallow and mark Escape for keyup suppression.
+      (capture as any).handleKeyDown({
+        code: "Escape",
+        repeat: false,
+        timeStamp: 0,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as KeyboardEvent);
+      expect((capture as any).suppressedKeyUps.has("Escape")).toBe(true);
+
+      // Simulate pointer lock exit and browser key repeat still firing while Escape is held.
+      (capture as any).pointerLock.locked = false;
+      (capture as any).handleKeyDown({
+        code: "Escape",
+        repeat: true,
+        timeStamp: 1,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as KeyboardEvent);
+
+      // Repeat events must not be forwarded to the guest; the queue should stay empty.
+      expect((capture as any).queue.size).toBe(0);
+
+      // Keyup is swallowed to complete the host-only chord.
+      (capture as any).handleKeyUp({
+        code: "Escape",
+        repeat: false,
+        timeStamp: 2,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as KeyboardEvent);
+
+      expect((capture as any).suppressedKeyUps.has("Escape")).toBe(false);
+    });
+  });
 });
