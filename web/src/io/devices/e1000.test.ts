@@ -122,7 +122,7 @@ describe("io/devices/E1000PciDevice", () => {
     expect(Array.from(netTx.tryPop()!)).toEqual([0x01]);
   });
 
-  it("raises/lowers IRQ only on edges", () => {
+  it("treats PCI INTx as a level-triggered IRQ and only emits transitions on edges", () => {
     const { buffer } = createIpcBuffer([
       { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 4096 },
       { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 4096 },
