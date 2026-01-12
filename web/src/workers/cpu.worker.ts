@@ -1409,16 +1409,22 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     hdaWrite(0x4a, 2, 0x00ff); // CORBRP
     hdaWrite(0x58, 2, 0x00ff); // RIRBWP
 
-    // Start rings.
-    hdaWrite(0x5c, 1, 0x02); // RIRBCTL.RUN
-    hdaWrite(0x4c, 1, 0x02); // CORBCTL.RUN
-
     // Queue one verb: SET_STREAM_CHANNEL on input converter (NID 4) to stream 2, channel 0.
+    //
     // cmd = (cad<<28) | (nid<<20) | verb_20
     const verb20 = ((0x706 << 8) | 0x20) >>> 0;
     const cmdWord = ((4 << 20) | verb20) >>> 0;
     guestWriteU32(corbBase, cmdWord);
     hdaWrite(0x48, 2, 0x0000); // CORBWP = 0
+
+    // Start rings.
+    //
+    // Important: do this *after* writing the CORB entry + CORBWP. The IO worker ticks
+    // HDA asynchronously, and starting the rings early can race a tick that consumes
+    // an uninitialized CORB slot (leaving our real verb unprocessed).
+    hdaWrite(0x5d, 1, 0xff); // RIRBSTS (RW1C): clear stale response status
+    hdaWrite(0x5c, 1, 0x02); // RIRBCTL.RUN
+    hdaWrite(0x4c, 1, 0x02); // CORBCTL.RUN
 
     // Wait (briefly) for the verb to be processed so the capture stream is accepted.
     const rirbDeadline = performance.now() + 1000;
