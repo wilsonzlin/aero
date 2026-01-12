@@ -1,3 +1,5 @@
+export * from "../platform/audio_worklet_ring_layout.js";
+
 import {
   HEADER_BYTES,
   HEADER_U32_LEN,
@@ -6,23 +8,7 @@ import {
   UNDERRUN_COUNT_INDEX,
   WRITE_FRAME_INDEX,
   framesAvailable,
-  framesAvailableClamped,
-  framesFree,
-  getRingBufferLevelFrames,
 } from "../platform/audio_worklet_ring_layout.js";
-
-export {
-  HEADER_BYTES,
-  HEADER_U32_LEN,
-  OVERRUN_COUNT_INDEX,
-  READ_FRAME_INDEX,
-  UNDERRUN_COUNT_INDEX,
-  WRITE_FRAME_INDEX,
-  framesAvailable,
-  framesAvailableClamped,
-  framesFree,
-  getRingBufferLevelFrames,
-};
 
 export type AudioWorkletRingBufferViews = {
   header: Uint32Array;
