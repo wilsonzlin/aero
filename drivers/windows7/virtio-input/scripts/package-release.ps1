@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
 Packages the Aero virtio-input Windows 7 driver into a redistributable zip.
