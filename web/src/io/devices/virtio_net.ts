@@ -315,20 +315,29 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   tick(nowMs: number): void {
     if (this.#destroyed) return;
 
+    // PCI Bus Master Enable (command bit 2) gates whether the device is allowed to DMA into guest
+    // memory (virtqueue descriptor reads / used-ring writes / RX buffer fills).
+    //
+    // The WASM virtio-pci backend does not currently mirror the JS PCI config space, so enforce the
+    // bus-master gate here (mirrors the canonical Rust PC platform behavior).
+    const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+
     const bridge = this.#bridge;
-    if (typeof bridge.poll === "function") {
-      try {
-        bridge.poll();
-      } catch {
-        // ignore device errors during tick
-      }
-    } else if (typeof bridge.tick === "function") {
-      try {
-        // Some wasm-bindgen builds enforce method arity; pass `nowMs` only when accepted.
-        if (bridge.tick.length >= 1) bridge.tick(nowMs);
-        else bridge.tick();
-      } catch {
-        // ignore device errors during tick
+    if (busMasterEnabled) {
+      if (typeof bridge.poll === "function") {
+        try {
+          bridge.poll();
+        } catch {
+          // ignore device errors during tick
+        }
+      } else if (typeof bridge.tick === "function") {
+        try {
+          // Some wasm-bindgen builds enforce method arity; pass `nowMs` only when accepted.
+          if (bridge.tick.length >= 1) bridge.tick(nowMs);
+          else bridge.tick();
+        } catch {
+          // ignore device errors during tick
+        }
       }
     }
 

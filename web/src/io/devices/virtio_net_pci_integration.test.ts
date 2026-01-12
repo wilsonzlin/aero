@@ -289,7 +289,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       cfgWriteU32(pciAddr, 0x10, bar0LowInitial);
       cfgWriteU32(pciAddr, 0x14, bar0HighInitial);
 
-      // Enable PCI memory decoding (Command register bit 1).
+      // Enable PCI memory decoding (Command register bit 1) + Bus Master Enable (bit 2).
       // Many guests write the full 32-bit dword at 0x04 with the upper (Status)
       // bits as zero; the TS PCI bus must preserve status bits such as
       // CAP_LIST used by virtio-pci.
@@ -297,12 +297,13 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       expect((statusBefore & 0x0010) !== 0).toBe(true);
 
       const cmd = cfgReadU16(pciAddr, 0x04);
-      cfgWriteU32(pciAddr, 0x04, (cmd | 0x2) >>> 0);
+      cfgWriteU32(pciAddr, 0x04, (cmd | 0x6) >>> 0);
 
       const statusAfter = cfgReadU16(pciAddr, 0x06);
       expect((statusAfter & 0x0010) !== 0).toBe(true);
       const cmdAfter = cfgReadU16(pciAddr, 0x04);
       expect((cmdAfter & 0x0002) !== 0).toBe(true);
+      expect((cmdAfter & 0x0004) !== 0).toBe(true);
 
       // Compute mapped MMIO base.
       const bar0LowBeforeRemap = cfgReadU32(pciAddr, 0x10);

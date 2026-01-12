@@ -122,6 +122,28 @@ describe("io/devices/VirtioNetPciDevice", () => {
     expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0xdead_beef);
   });
 
+  it("gates device polling on PCI Bus Master Enable (command bit 2)", () => {
+    const poll = vi.fn();
+    const bridge: VirtioNetPciBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      poll,
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioNetPciDevice({ bridge, irqSink });
+
+    // Not bus-master enabled by default; tick should not poll the device.
+    dev.tick(0);
+    expect(poll).not.toHaveBeenCalled();
+
+    // Enable BME (bit 2).
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(1);
+    expect(poll).toHaveBeenCalledTimes(1);
+  });
+
   it("respects PCI command Interrupt Disable bit (bit 10) when syncing INTx level", () => {
     let irq = false;
     const bridge: VirtioNetPciBridgeLike = {
