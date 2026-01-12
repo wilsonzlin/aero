@@ -6,342 +6,326 @@
 //! 2. Drain guest TX frames to a host [`NetworkBackend`], with a bounded budget.
 //! 3. Poll backend RX frames and enqueue into the NIC, with a bounded budget.
 //! 4. Run NIC DMA again to flush newly enqueued RX frames into guest buffers.
+#![forbid(unsafe_code)]
 
 use aero_net_backend::NetworkBackend;
 use aero_net_e1000::E1000Device;
 use memory::MemoryBus;
 
-/// Per-tick pump for an [`E1000Device`].
-#[derive(Debug, Clone)]
-pub struct E1000Pump {
-    /// Maximum number of guest → host frames to forward in one [`tick`].
-    pub max_tx_frames_per_tick: usize,
-    /// Maximum number of host → guest frames to inject in one [`tick`].
-    pub max_rx_frames_per_tick: usize,
+/// Default frame budget for each direction per [`E1000Pump::poll`] call.
+pub const DEFAULT_MAX_FRAMES_PER_POLL: usize = 256;
+
+/// Moves Ethernet frames between an [`E1000Device`] and a host-side [`NetworkBackend`].
+#[derive(Debug)]
+pub struct E1000Pump<B> {
+    nic: E1000Device,
+    backend: B,
+
+    max_tx_frames_per_poll: usize,
+    max_rx_frames_per_poll: usize,
 }
 
-impl E1000Pump {
-    /// Construct a pump with the given TX/RX budgets.
-    pub fn new(max_tx_frames_per_tick: usize, max_rx_frames_per_tick: usize) -> Self {
+impl<B: NetworkBackend> E1000Pump<B> {
+    /// Create a pump with default budgets.
+    pub fn new(nic: E1000Device, backend: B) -> Self {
+        Self::with_budgets(
+            nic,
+            backend,
+            DEFAULT_MAX_FRAMES_PER_POLL,
+            DEFAULT_MAX_FRAMES_PER_POLL,
+        )
+    }
+
+    /// Create a pump with explicit budgets.
+    pub fn with_budgets(
+        nic: E1000Device,
+        backend: B,
+        max_tx_frames_per_poll: usize,
+        max_rx_frames_per_poll: usize,
+    ) -> Self {
         Self {
-            max_tx_frames_per_tick,
-            max_rx_frames_per_tick,
+            nic,
+            backend,
+            max_tx_frames_per_poll,
+            max_rx_frames_per_poll,
         }
     }
 
-    /// Pump frames between the guest NIC and the host backend.
-    ///
-    /// Ordering is deterministic and intentionally mirrors virtio-net:
-    /// 1) `nic.poll(mem)` to process DMA and publish queued guest TX.
-    /// 2) Drain up to `max_tx_frames_per_tick` from `nic.pop_tx_frame()` into `backend.transmit`.
-    /// 3) Drain up to `max_rx_frames_per_tick` from `backend.poll_receive()` into
-    ///    `nic.enqueue_rx_frame`.
-    /// 4) `nic.poll(mem)` again to flush newly enqueued RX into guest buffers.
-    pub fn tick(
-        &mut self,
-        nic: &mut E1000Device,
-        mem: &mut dyn MemoryBus,
-        backend: &mut impl NetworkBackend,
-    ) {
+    /// Run one pump iteration.
+    pub fn poll(&mut self, mem: &mut dyn MemoryBus) {
         // Step 1: allow the NIC to process descriptor rings (DMA).
-        nic.poll(mem);
+        self.nic.poll(mem);
 
         // Step 2: forward guest TX frames.
-        for _ in 0..self.max_tx_frames_per_tick {
-            let Some(frame) = nic.pop_tx_frame() else {
+        for _ in 0..self.max_tx_frames_per_poll {
+            let Some(frame) = self.nic.pop_tx_frame() else {
                 break;
             };
-            backend.transmit(frame);
+            self.backend.transmit(frame);
         }
 
         // Step 3: inject host RX frames.
-        for _ in 0..self.max_rx_frames_per_tick {
-            let Some(frame) = backend.poll_receive() else {
+        for _ in 0..self.max_rx_frames_per_poll {
+            let Some(frame) = self.backend.poll_receive() else {
                 break;
             };
-            nic.enqueue_rx_frame(frame);
+            self.nic.enqueue_rx_frame(frame);
         }
 
         // Step 4: flush injected RX frames into guest buffers.
-        nic.poll(mem);
+        self.nic.poll(mem);
     }
-}
 
-impl Default for E1000Pump {
-    fn default() -> Self {
-        // Conservative defaults; callers can tune based on their tick frequency / performance
-        // needs.
-        Self {
-            max_tx_frames_per_tick: 64,
-            max_rx_frames_per_tick: 64,
-        }
+    pub fn nic(&self) -> &E1000Device {
+        &self.nic
+    }
+
+    pub fn nic_mut(&mut self) -> &mut E1000Device {
+        &mut self.nic
+    }
+
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
+    pub fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+
+    pub fn into_parts(self) -> (E1000Device, B) {
+        (self.nic, self.backend)
+    }
+
+    pub fn max_tx_frames_per_poll(&self) -> usize {
+        self.max_tx_frames_per_poll
+    }
+
+    pub fn max_rx_frames_per_poll(&self) -> usize {
+        self.max_rx_frames_per_poll
+    }
+
+    pub fn set_max_tx_frames_per_poll(&mut self, value: usize) {
+        self.max_tx_frames_per_poll = value;
+    }
+
+    pub fn set_max_rx_frames_per_poll(&mut self, value: usize) {
+        self.max_rx_frames_per_poll = value;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-
     use super::*;
 
-    const REG_RDBAL: u32 = 0x2800;
-    const REG_RDBAH: u32 = 0x2804;
-    const REG_RDLEN: u32 = 0x2808;
-    const REG_RDH: u32 = 0x2810;
-    const REG_RDT: u32 = 0x2818;
+    use aero_net_backend::L2TunnelBackend;
 
-    const REG_TDBAL: u32 = 0x3800;
-    const REG_TDBAH: u32 = 0x3804;
-    const REG_TDLEN: u32 = 0x3808;
-    const REG_TDH: u32 = 0x3810;
-    const REG_TDT: u32 = 0x3818;
-
-    const REG_RCTL: u32 = 0x0100;
-    const REG_TCTL: u32 = 0x0400;
-
-    const RCTL_EN: u32 = 1 << 1;
-    const TCTL_EN: u32 = 1 << 1;
-
-    const TXD_CMD_EOP: u8 = 1 << 0;
-    const TXD_CMD_RS: u8 = 1 << 3;
-
-    const RXD_STAT_DD: u8 = 1 << 0;
-    const RXD_STAT_EOP: u8 = 1 << 1;
-
-    #[derive(Clone, Debug)]
     struct TestMem {
-        buf: Vec<u8>,
+        mem: Vec<u8>,
     }
 
     impl TestMem {
         fn new(size: usize) -> Self {
-            Self { buf: vec![0; size] }
+            Self { mem: vec![0; size] }
         }
 
         fn write(&mut self, addr: u64, bytes: &[u8]) {
-            let addr = usize::try_from(addr).unwrap();
-            self.buf[addr..addr + bytes.len()].copy_from_slice(bytes);
+            let addr = addr as usize;
+            self.mem[addr..addr + bytes.len()].copy_from_slice(bytes);
         }
 
         fn read_vec(&self, addr: u64, len: usize) -> Vec<u8> {
-            let addr = usize::try_from(addr).unwrap();
-            self.buf[addr..addr + len].to_vec()
+            let addr = addr as usize;
+            self.mem[addr..addr + len].to_vec()
         }
     }
 
     impl MemoryBus for TestMem {
         fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-            let addr = usize::try_from(paddr).unwrap();
-            buf.copy_from_slice(&self.buf[addr..addr + buf.len()]);
+            let addr = paddr as usize;
+            buf.copy_from_slice(&self.mem[addr..addr + buf.len()]);
         }
 
         fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-            let addr = usize::try_from(paddr).unwrap();
-            self.buf[addr..addr + buf.len()].copy_from_slice(buf);
+            let addr = paddr as usize;
+            self.mem[addr..addr + buf.len()].copy_from_slice(buf);
         }
     }
 
-    fn build_frame(tag: u8) -> Vec<u8> {
-        // Ethernet header: dst(6) + src(6) + ethertype(2).
-        let mut frame = Vec::with_capacity(aero_net_e1000::MIN_L2_FRAME_LEN);
-        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, tag]);
-        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0xFF]);
+    fn write_u64_le(mem: &mut TestMem, addr: u64, v: u64) {
+        mem.write(addr, &v.to_le_bytes());
+    }
+
+    /// Minimal legacy TX descriptor layout (16 bytes).
+    fn write_tx_desc(mem: &mut TestMem, addr: u64, buf_addr: u64, len: u16, cmd: u8, status: u8) {
+        write_u64_le(mem, addr, buf_addr);
+        mem.write(addr + 8, &len.to_le_bytes());
+        mem.write(addr + 10, &[0u8]); // cso
+        mem.write(addr + 11, &[cmd]);
+        mem.write(addr + 12, &[status]);
+        mem.write(addr + 13, &[0u8]); // css
+        mem.write(addr + 14, &0u16.to_le_bytes()); // special
+    }
+
+    /// Minimal legacy RX descriptor layout (16 bytes).
+    fn write_rx_desc(mem: &mut TestMem, addr: u64, buf_addr: u64, status: u8) {
+        write_u64_le(mem, addr, buf_addr);
+        mem.write(addr + 8, &0u16.to_le_bytes()); // length
+        mem.write(addr + 10, &0u16.to_le_bytes()); // checksum
+        mem.write(addr + 12, &[status]);
+        mem.write(addr + 13, &[0u8]); // errors
+        mem.write(addr + 14, &0u16.to_le_bytes()); // special
+    }
+
+    fn build_test_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(14 + payload.len());
+        // Ethernet header (dst/src/ethertype).
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        frame.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
         frame.extend_from_slice(&0x0800u16.to_be_bytes());
-        debug_assert!(frame.len() >= aero_net_e1000::MIN_L2_FRAME_LEN);
+        frame.extend_from_slice(payload);
         frame
     }
 
-    fn write_tx_desc(mem: &mut TestMem, desc_addr: u64, buf_addr: u64, len: u16, cmd: u8) {
-        let mut desc = [0u8; 16];
-        desc[0..8].copy_from_slice(&buf_addr.to_le_bytes());
-        desc[8..10].copy_from_slice(&len.to_le_bytes());
-        desc[10] = 0; // cso
-        desc[11] = cmd;
-        desc[12] = 0; // status
-        desc[13] = 0; // css
-        desc[14..16].copy_from_slice(&0u16.to_le_bytes());
-        mem.write(desc_addr, &desc);
+    fn configure_tx_ring(dev: &mut E1000Device, desc_base: u32, desc_count: u32) {
+        dev.mmio_write_u32_reg(0x3800, desc_base); // TDBAL
+        dev.mmio_write_u32_reg(0x3804, 0); // TDBAH
+        dev.mmio_write_u32_reg(0x3808, desc_count * 16); // TDLEN
+        dev.mmio_write_u32_reg(0x3810, 0); // TDH
+        dev.mmio_write_u32_reg(0x3818, 0); // TDT
+        dev.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
     }
 
-    fn write_rx_desc(mem: &mut TestMem, desc_addr: u64, buf_addr: u64) {
-        let mut desc = [0u8; 16];
-        desc[0..8].copy_from_slice(&buf_addr.to_le_bytes());
-        // remaining fields zero
-        mem.write(desc_addr, &desc);
+    fn configure_rx_ring(dev: &mut E1000Device, desc_base: u32, desc_count: u32, tail: u32) {
+        dev.mmio_write_u32_reg(0x2800, desc_base); // RDBAL
+        dev.mmio_write_u32_reg(0x2804, 0); // RDBAH
+        dev.mmio_write_u32_reg(0x2808, desc_count * 16); // RDLEN
+        dev.mmio_write_u32_reg(0x2810, 0); // RDH
+        dev.mmio_write_u32_reg(0x2818, tail); // RDT
+        dev.mmio_write_u32_reg(0x0100, 1 << 1); // RCTL.EN (defaults to 2048 buffer)
     }
 
-    #[derive(Default, Debug)]
-    struct VecBackend {
-        tx: Vec<Vec<u8>>,
-        rx: VecDeque<Vec<u8>>,
-        respond_on_transmit: bool,
+    #[test]
+    fn guest_to_host_is_pumped_to_backend() {
+        let mut mem = TestMem::new(0x40_000);
+        let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let backend = L2TunnelBackend::new();
+        let mut pump = E1000Pump::new(nic, backend);
+
+        configure_tx_ring(pump.nic_mut(), 0x1000, 4);
+
+        let pkt_out = build_test_frame(b"guest->host");
+        mem.write(0x4000, &pkt_out);
+        write_tx_desc(
+            &mut mem,
+            0x1000,
+            0x4000,
+            pkt_out.len() as u16,
+            0b0000_1001, // EOP|RS
+            0,
+        );
+        pump.nic_mut().mmio_write_u32_reg(0x3818, 1); // TDT
+
+        pump.poll(&mut mem);
+
+        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![pkt_out]);
     }
 
-    impl VecBackend {
-        fn push_rx(&mut self, frame: Vec<u8>) {
-            self.rx.push_back(frame);
-        }
+    #[test]
+    fn host_to_guest_is_pumped_into_guest_memory() {
+        let mut mem = TestMem::new(0x40_000);
+        let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let backend = L2TunnelBackend::new();
+        let mut pump = E1000Pump::new(nic, backend);
+
+        configure_rx_ring(pump.nic_mut(), 0x2000, 2, 1);
+        write_rx_desc(&mut mem, 0x2000, 0x3000, 0);
+        write_rx_desc(&mut mem, 0x2010, 0x3400, 0);
+
+        let pkt_in = build_test_frame(b"host->guest");
+        pump.backend_mut().push_rx_frame(pkt_in.clone());
+
+        pump.poll(&mut mem);
+
+        assert_eq!(mem.read_vec(0x3000, pkt_in.len()), pkt_in);
     }
 
-    impl NetworkBackend for VecBackend {
-        fn transmit(&mut self, frame: Vec<u8>) {
-            if self.respond_on_transmit {
-                // Echo-ish response with distinct destination tag so tests can tell it apart.
-                let mut resp = frame.clone();
-                if !resp.is_empty() {
-                    resp[5] ^= 0xAA;
-                }
-                self.rx.push_back(resp);
-            }
-            self.tx.push(frame);
-        }
+    #[test]
+    fn tx_budget_limits_frames_per_poll() {
+        let mut mem = TestMem::new(0x80_000);
+        let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let backend = L2TunnelBackend::new();
+        let mut pump = E1000Pump::with_budgets(nic, backend, 1, DEFAULT_MAX_FRAMES_PER_POLL);
 
-        fn poll_receive(&mut self) -> Option<Vec<u8>> {
-            self.rx.pop_front()
-        }
-    }
+        // Ring of 4 descriptors with tail=3 -> 3 frames in a single guest TX batch.
+        configure_tx_ring(pump.nic_mut(), 0x1000, 4);
 
-    fn setup_tx_ring(nic: &mut E1000Device, mem: &mut TestMem, frames: &[Vec<u8>]) {
-        let ring_base = 0x1000u64;
-        let desc_count = 4u32;
-        let tdl = 16u32 * desc_count;
-
-        nic.mmio_write_u32(mem, REG_TDBAL, ring_base as u32);
-        nic.mmio_write_u32(mem, REG_TDBAH, 0);
-        nic.mmio_write_u32(mem, REG_TDLEN, tdl);
-        nic.mmio_write_u32(mem, REG_TDH, 0);
-
-        // Leave TCTL disabled until after we've set TDT, so `tick()`'s initial `nic.poll()`
-        // is responsible for publishing TX frames.
-        nic.mmio_write_u32(mem, REG_TCTL, 0);
+        let frames = [
+            build_test_frame(b"tx0"),
+            build_test_frame(b"tx1"),
+            build_test_frame(b"tx2"),
+        ];
 
         for (i, frame) in frames.iter().enumerate() {
-            let buf_addr = 0x2000u64 + (i as u64) * 0x100;
-            mem.write(buf_addr, frame);
+            let buf = 0x4000 + (i as u64) * 0x200;
+            let desc = 0x1000 + (i as u64) * 16;
+            mem.write(buf, frame);
             write_tx_desc(
-                mem,
-                ring_base + (i as u64) * 16,
-                buf_addr,
+                &mut mem,
+                desc,
+                buf,
                 frame.len() as u16,
-                TXD_CMD_EOP | TXD_CMD_RS,
+                0b0000_1001, // EOP|RS
+                0,
             );
         }
+        pump.nic_mut().mmio_write_u32_reg(0x3818, 3); // TDT
 
-        nic.mmio_write_u32(mem, REG_TDT, frames.len() as u32);
-        nic.mmio_write_u32(mem, REG_TCTL, TCTL_EN);
+        pump.poll(&mut mem);
+        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![frames[0].clone()]);
+
+        pump.poll(&mut mem);
+        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![frames[1].clone()]);
+
+        pump.poll(&mut mem);
+        assert_eq!(pump.backend_mut().drain_tx_frames(), vec![frames[2].clone()]);
     }
 
-    fn setup_rx_ring(nic: &mut E1000Device, mem: &mut TestMem, desc_count: u32) -> u64 {
-        assert!(desc_count >= 2, "need at least 2 RX descriptors");
-        let ring_base = 0x3000u64;
-        let rdlen = 16u32 * desc_count;
+    #[test]
+    fn rx_budget_limits_frames_per_poll() {
+        let mut mem = TestMem::new(0x80_000);
+        let nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let backend = L2TunnelBackend::new();
+        let mut pump = E1000Pump::with_budgets(nic, backend, DEFAULT_MAX_FRAMES_PER_POLL, 1);
 
-        nic.mmio_write_u32(mem, REG_RDBAL, ring_base as u32);
-        nic.mmio_write_u32(mem, REG_RDBAH, 0);
-        nic.mmio_write_u32(mem, REG_RDLEN, rdlen);
-        nic.mmio_write_u32(mem, REG_RDH, 0);
-        nic.mmio_write_u32(mem, REG_RDT, desc_count - 1);
-        nic.mmio_write_u32(mem, REG_RCTL, RCTL_EN);
+        // RX rings keep one descriptor unused to distinguish full/empty conditions.
+        // desc_count=4, tail=3 gives us 3 usable RX descriptors (indices 0..2).
+        configure_rx_ring(pump.nic_mut(), 0x2000, 4, 3);
 
-        for i in 0..desc_count {
-            let buf_addr = 0x4000u64 + (i as u64) * 0x100;
-            write_rx_desc(mem, ring_base + (i as u64) * 16, buf_addr);
+        let bufs = [0x3000u64, 0x3400, 0x3800, 0x3C00];
+        for (i, buf) in bufs.iter().enumerate() {
+            write_rx_desc(&mut mem, 0x2000 + (i as u64) * 16, *buf, 0);
         }
 
-        ring_base
-    }
+        let frames = [
+            build_test_frame(b"rx0"),
+            build_test_frame(b"rx1"),
+            build_test_frame(b"rx2"),
+        ];
 
-    #[test]
-    fn tx_forwarding_guest_frames_reach_backend() {
-        let mut mem = TestMem::new(0x20_000);
-        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-        let mut backend = VecBackend::default();
+        for frame in &frames {
+            pump.backend_mut().push_rx_frame(frame.clone());
+        }
 
-        let frame = build_frame(0x01);
-        setup_tx_ring(&mut nic, &mut mem, &[frame.clone()]);
+        pump.poll(&mut mem);
+        assert_eq!(mem.read_vec(bufs[0], frames[0].len()), frames[0]);
+        assert_ne!(mem.read_vec(bufs[1], frames[1].len()), frames[1]);
 
-        let mut pump = E1000Pump::new(16, 16);
-        pump.tick(&mut nic, &mut mem, &mut backend);
+        pump.poll(&mut mem);
+        assert_eq!(mem.read_vec(bufs[1], frames[1].len()), frames[1]);
+        assert_ne!(mem.read_vec(bufs[2], frames[2].len()), frames[2]);
 
-        assert_eq!(backend.tx, vec![frame]);
-    }
-
-    #[test]
-    fn rx_injection_backend_frames_written_to_guest_buffers() {
-        let mut mem = TestMem::new(0x20_000);
-        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-        let mut backend = VecBackend::default();
-        let ring_base = setup_rx_ring(&mut nic, &mut mem, 2);
-
-        let frame = build_frame(0x10);
-        backend.push_rx(frame.clone());
-
-        let mut pump = E1000Pump::new(0, 16);
-        pump.tick(&mut nic, &mut mem, &mut backend);
-
-        // Frame should be DMA-written to the first RX buffer (descriptor 0).
-        let buf_addr = 0x4000u64;
-        assert_eq!(mem.read_vec(buf_addr, frame.len()), frame);
-
-        // Descriptor 0 should be marked done with correct length.
-        let desc0 = mem.read_vec(ring_base, 16);
-        let len = u16::from_le_bytes(desc0[8..10].try_into().unwrap()) as usize;
-        let status = desc0[12];
-        assert_eq!(len, frame.len());
-        assert_eq!(status & (RXD_STAT_DD | RXD_STAT_EOP), RXD_STAT_DD | RXD_STAT_EOP);
-    }
-
-    #[test]
-    fn budget_enforcement_limits_frames_per_tick_and_preserves_rest() {
-        let mut mem = TestMem::new(0x40_000);
-        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-        let mut backend = VecBackend::default();
-
-        let tx1 = build_frame(0x01);
-        let tx2 = build_frame(0x02);
-        setup_tx_ring(&mut nic, &mut mem, &[tx1.clone(), tx2.clone()]);
-
-        setup_rx_ring(&mut nic, &mut mem, 4);
-        let rx1 = build_frame(0xA1);
-        let rx2 = build_frame(0xA2);
-        backend.push_rx(rx1.clone());
-        backend.push_rx(rx2.clone());
-
-        let mut pump = E1000Pump::new(1, 1);
-
-        pump.tick(&mut nic, &mut mem, &mut backend);
-        assert_eq!(backend.tx, vec![tx1.clone()]);
-        assert_eq!(backend.rx.len(), 1, "one RX frame should remain in backend queue");
-
-        pump.tick(&mut nic, &mut mem, &mut backend);
-        assert_eq!(backend.tx, vec![tx1, tx2]);
-        assert_eq!(backend.rx.len(), 0);
-    }
-
-    #[test]
-    fn same_tick_backend_response_is_delivered_to_guest_rx() {
-        let mut mem = TestMem::new(0x40_000);
-        let mut nic = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
-        let mut backend = VecBackend {
-            respond_on_transmit: true,
-            ..VecBackend::default()
-        };
-
-        let tx_frame = build_frame(0x33);
-        setup_tx_ring(&mut nic, &mut mem, &[tx_frame.clone()]);
-        setup_rx_ring(&mut nic, &mut mem, 2);
-
-        let mut pump = E1000Pump::new(8, 8);
-        pump.tick(&mut nic, &mut mem, &mut backend);
-
-        // Backend should have observed the guest TX.
-        assert_eq!(backend.tx, vec![tx_frame.clone()]);
-
-        // And its generated response should have been DMA-written into the guest RX buffer in
-        // the same tick.
-        let mut expected_resp = tx_frame;
-        expected_resp[5] ^= 0xAA;
-        assert_eq!(mem.read_vec(0x4000u64, expected_resp.len()), expected_resp);
+        pump.poll(&mut mem);
+        assert_eq!(mem.read_vec(bufs[2], frames[2].len()), frames[2]);
     }
 }
 
