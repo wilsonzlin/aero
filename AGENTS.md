@@ -71,8 +71,6 @@ source ./scripts/agent-env.sh                   # Activate recommended env vars
 AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
 ```
 
-Note: `safe-run.sh` enforces an address-space cap (RLIMIT_AS). Some Node/V8 + WebAssembly workloads reserve large virtual address space and can hit this limit even when actual RAM usage is low (e.g. `WebAssembly.Instance(): Out of memory`). If that happens, increase `AERO_MEM_LIMIT` for that command (or set `AERO_MEM_LIMIT=unlimited` while keeping the timeout).
-
 Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
 
 ```bash
@@ -84,6 +82,32 @@ timeout 600 cargo build --release --locked
 ```
 
 See [Agent Resource Limits Guide](./docs/agent-resource-limits.md) for details.
+
+---
+
+## 📋 Workstream Instructions
+
+Development is organized into **parallel workstreams**. Each workstream has its own instruction file with specific tasks, key crates, and documentation:
+
+| Workstream | File | Focus |
+|------------|------|-------|
+| **A: CPU/JIT** | [`instructions/cpu-jit.md`](./instructions/cpu-jit.md) | CPU emulation, decoder, JIT, memory |
+| **B: Graphics** | [`instructions/graphics.md`](./instructions/graphics.md) | VGA, DirectX 9/10/11, WebGPU |
+| **C: Windows Drivers** | [`instructions/windows-drivers.md`](./instructions/windows-drivers.md) | AeroGPU, virtio drivers |
+| **D: Storage** | [`instructions/io-storage.md`](./instructions/io-storage.md) | AHCI, NVMe, OPFS, streaming |
+| **E: Network** | [`instructions/network.md`](./instructions/network.md) | E1000, L2 proxy, TCP/UDP |
+| **F: USB/Input** | [`instructions/usb-input.md`](./instructions/usb-input.md) | PS/2, USB HID, keyboard/mouse |
+| **G: Audio** | [`instructions/audio.md`](./instructions/audio.md) | HD Audio, AudioWorklet |
+| **H: Integration** | [`instructions/integration.md`](./instructions/integration.md) | BIOS, ACPI, PCI, boot |
+
+**Start by reading your workstream's instruction file.** Each file contains:
+- Specific task lists with priorities and dependencies
+- Key crates and directories
+- Essential documentation to read
+- Interface contracts relevant to that workstream
+- Coordination points with other workstreams
+
+See [`instructions/README.md`](./instructions/README.md) for the full index.
 
 ---
 
@@ -417,13 +441,23 @@ pub trait DisplayAdapter {
 
 ## Getting Started
 
-1. Read `[LEGAL.md](./LEGAL.md)` and `[CONTRIBUTING.md](./CONTRIBUTING.md)` (clean-room rules, licensing, and distribution constraints)
-2. **If running concurrently with other agents:** Read [Agent Resource Limits](./docs/agent-resource-limits.md) and ensure limits are enforced
-3. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
-4. Review the documentation for your area of focus
-5. Understand the [Interface Contracts](./docs/15-agent-task-breakdown.md#interface-contracts)
-6. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
-7. Begin implementation following test-driven development
+1. **Read this entire document** — it contains critical operational guidance
+2. Read [`LEGAL.md`](./LEGAL.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md) (clean-room rules, licensing, distribution constraints)
+3. **Run environment setup:**
+   ```bash
+   ./scripts/agent-env-setup.sh          # One-time validation
+   source ./scripts/agent-env.sh         # Activate env vars
+   ```
+4. **Read your workstream's instruction file** from [`instructions/`](./instructions/README.md)
+5. Read [Architecture Overview](./docs/01-architecture-overview.md) for system design
+6. Understand the [Interface Contracts](#interface-contracts) below
+7. Check [Project Milestones](./docs/14-project-milestones.md) for timeline
+8. **Build and test:**
+   ```bash
+   ./scripts/safe-run.sh cargo build --locked
+   ./scripts/safe-run.sh cargo test --locked
+   ```
+9. Begin implementation following test-driven development
 
 ---
 
