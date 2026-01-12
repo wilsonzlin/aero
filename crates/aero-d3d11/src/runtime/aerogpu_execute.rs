@@ -692,18 +692,27 @@ impl AerogpuCmdRuntime {
                 ps.reflection.bindings.as_slice(),
             ],
         )?;
-        let layout_key = pipeline_bindings.layout_key.clone();
-        let bind_group_layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
-            .group_layouts
-            .iter()
-            .map(|l| l.layout.as_ref())
-            .collect();
-        let pipeline_layout = self.pipeline_layout_cache.get_or_create(
-            &self.device,
-            &layout_key,
-            &bind_group_layout_refs,
-            Some("aero-d3d11 aerogpu pipeline layout"),
-        );
+        let reflection_bindings::PipelineBindingsInfo {
+            layout_key,
+            group_layouts,
+            group_bindings,
+        } = pipeline_bindings;
+
+        let pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            cache.get_or_create_with(&layout_key, || {
+                let layout_refs: Vec<&wgpu::BindGroupLayout> = group_layouts
+                    .iter()
+                    .map(|l| l.layout.as_ref())
+                    .collect();
+                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aero-d3d11 aerogpu pipeline layout"),
+                    bind_group_layouts: &layout_refs,
+                    push_constant_ranges: &[],
+                }))
+            })
+        };
 
         let key = RenderPipelineKey {
             vertex_shader: vs.hash,
@@ -778,11 +787,10 @@ impl AerogpuCmdRuntime {
         )?;
 
         let mut bind_groups: Vec<Arc<wgpu::BindGroup>> =
-            Vec::with_capacity(pipeline_bindings.group_layouts.len());
-        for (group_index, (layout, bindings)) in pipeline_bindings
-            .group_layouts
+            Vec::with_capacity(group_layouts.len());
+        for (group_index, (layout, bindings)) in group_layouts
             .iter()
-            .zip(pipeline_bindings.group_bindings.iter())
+            .zip(group_bindings.iter())
             .enumerate()
         {
             let stage_state = match group_index as u32 {
