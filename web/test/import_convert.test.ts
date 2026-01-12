@@ -740,6 +740,30 @@ test("convertToAeroSparse: rejects dynamic VHD with huge block_size", async () =
   );
 });
 
+test("convertToAeroSparse: rejects fixed VHD with data_offset != u64::MAX", async () => {
+  const footerSize = 512;
+  const logicalSize = 512;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  writeU64BE(footer, 16, 0xffff_ffff_ffff_fffen); // invalid for fixed disks
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 2); // disk type fixed
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const file = new Uint8Array(logicalSize + footerSize);
+  file.set(footer, file.byteLength - footerSize);
+
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /invalid VHD data_offset/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: fixed VHD footer copy at offset 0 is ignored", async () => {
   const { file, logical } = buildFixedVhdFixtureWithFooterCopy();
   const src = new MemSource(file);

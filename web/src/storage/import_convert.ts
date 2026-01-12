@@ -979,7 +979,7 @@ class VhdFooter {
     const expected = (~sum) >>> 0;
     if (expected !== storedChecksum) throw new Error("VHD footer checksum mismatch");
 
-    const dataOffset = Number(readU64BE(footerBytes, 16));
+    const dataOffsetBig = readU64BE(footerBytes, 16);
     const currentSize = Number(readU64BE(footerBytes, 48));
     const diskType = readU32BE(footerBytes, 60);
     if (!Number.isSafeInteger(currentSize) || currentSize <= 0) throw new Error("invalid VHD current_size");
@@ -988,8 +988,9 @@ class VhdFooter {
     if (diskType !== VHD_TYPE_FIXED && diskType !== VHD_TYPE_DYNAMIC) {
       throw new Error("unsupported VHD disk_type");
     }
+    const dataOffset = Number(dataOffsetBig);
     if (diskType === VHD_TYPE_FIXED) {
-      if (dataOffset !== Number(0xffff_ffff_ffff_ffffn)) throw new Error("invalid VHD data_offset");
+      if (dataOffsetBig !== 0xffff_ffff_ffff_ffffn) throw new Error("invalid VHD data_offset");
     } else {
       if (!Number.isSafeInteger(dataOffset) || dataOffset <= 0) throw new Error("invalid VHD data_offset");
       if (dataOffset % 512 !== 0) throw new Error("invalid VHD data_offset");
