@@ -123,6 +123,10 @@ int main() {
   PRINT_SIZE(void*);
   printf("\n");
 
+#ifdef D3D_UMD_INTERFACE_VERSION
+  printf("D3D_UMD_INTERFACE_VERSION = %u\n", (unsigned)D3D_UMD_INTERFACE_VERSION);
+#endif
+
   print_header("D3D10DDIARG_OPENADAPTER");
   PRINT_SIZE(D3D10DDIARG_OPENADAPTER);
   PRINT_OFF(D3D10DDIARG_OPENADAPTER, Interface);

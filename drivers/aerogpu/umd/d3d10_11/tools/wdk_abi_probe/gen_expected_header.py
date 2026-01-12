@@ -33,6 +33,7 @@ _EXPORT_RE = re.compile(
     re.MULTILINE,
 )
 _MSC_VER_RE = re.compile(r"^_MSC_VER\s*=\s*(?P<value>\d+)\s*$", re.MULTILINE)
+_UMD_IFACE_VER_RE = re.compile(r"^D3D_UMD_INTERFACE_VERSION\s*=\s*(?P<value>\d+)\s*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class ProbeData:
     offsetof: dict[tuple[str, str], int]
     exports: dict[str, int]
     msc_ver: int | None
+    d3d_umd_interface_version: int | None
 
 
 def _parse_probe_output(text: str) -> ProbeData:
@@ -58,11 +60,13 @@ def _parse_probe_output(text: str) -> ProbeData:
         exports[m.group("which")] = int(m.group("bytes"))
 
     m_msc = _MSC_VER_RE.search(text)
+    m_iface = _UMD_IFACE_VER_RE.search(text)
     return ProbeData(
         sizeof=sizeof,
         offsetof=offsetof,
         exports=exports,
         msc_ver=int(m_msc.group("value")) if m_msc else None,
+        d3d_umd_interface_version=int(m_iface.group("value")) if m_iface else None,
     )
 
 
@@ -199,6 +203,14 @@ def _emit_header(x86: ProbeData, x64: ProbeData) -> str:
         lines.append(f"#define AEROGPU_D3D10_11_WDK_ABI_PROBE_X86_MSC_VER {x86.msc_ver}")
     if x64.msc_ver is not None:
         lines.append(f"#define AEROGPU_D3D10_11_WDK_ABI_PROBE_X64_MSC_VER {x64.msc_ver}")
+    if x86.d3d_umd_interface_version is not None:
+        lines.append(
+            f"#define AEROGPU_D3D10_11_WDK_ABI_PROBE_X86_D3D_UMD_INTERFACE_VERSION {x86.d3d_umd_interface_version}"
+        )
+    if x64.d3d_umd_interface_version is not None:
+        lines.append(
+            f"#define AEROGPU_D3D10_11_WDK_ABI_PROBE_X64_D3D_UMD_INTERFACE_VERSION {x64.d3d_umd_interface_version}"
+        )
 
     lines.extend(
         [
