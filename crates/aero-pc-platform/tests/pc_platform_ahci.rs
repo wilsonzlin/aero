@@ -211,6 +211,52 @@ fn pc_platform_ahci_mmio_syncs_device_command_before_each_access() {
 }
 
 #[test]
+fn pc_platform_ahci_mmio_reenable_is_immediate_after_process_sync() {
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let bar5_base = read_ahci_bar5_base(&mut pc);
+
+    // Record a baseline value while MMIO decoding is enabled.
+    let baseline = pc.memory.read_u32(bar5_base + HBA_GHC);
+    assert_ne!(baseline, 0xFFFF_FFFF);
+    assert_ne!(
+        baseline & GHC_AE,
+        0,
+        "BIOS POST should enable AHCI (GHC.AE)"
+    );
+
+    // Disable PCI memory decoding and force `process_ahci()` to sync the disabled command register
+    // into the device model.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0000);
+    pc.process_ahci();
+    assert_eq!(
+        pc.ahci
+            .as_ref()
+            .expect("AHCI is enabled")
+            .borrow()
+            .config()
+            .command()
+            & 0x2,
+        0,
+        "process_ahci() should sync COMMAND.MEM into the device model"
+    );
+
+    // Re-enable PCI memory decoding. A guest may touch MMIO immediately after this config write,
+    // before the next `process_ahci()` tick.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+
+    // MMIO reads should immediately work again (not return unmapped 0xFF bytes).
+    let ghc = pc.memory.read_u32(bar5_base + HBA_GHC);
+    assert_ne!(
+        ghc,
+        0xFFFF_FFFF,
+        "MMIO should re-enable immediately after COMMAND.MEM is set"
+    );
+    assert_ne!(ghc & GHC_AE, 0);
+    assert_eq!(ghc & (GHC_AE | GHC_IE), baseline & (GHC_AE | GHC_IE));
+}
+
+#[test]
 fn pc_platform_gates_ahci_dma_on_pci_bus_master_enable() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
