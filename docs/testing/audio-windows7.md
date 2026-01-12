@@ -291,6 +291,7 @@ Collect:
 - If available: guest HDA stream debug (`LPIB`, `CBL`, position buffer).
 - Browser console logs (preserve timestamps; include `[cpu]`/`[io]` worker logs if present).
 - If Perf tracing is enabled in the build, export a trace (it should include `audio.*` counters when the host is sampling audio metrics).
+  - See: [`docs/16-perf-tracing.md`](../16-perf-tracing.md)
 
 ### C) Microphone failures
 
@@ -348,5 +349,6 @@ When reporting a Win7 audio regression, include (at minimum):
   - Ring buffer counters (buffer level + underruns + overruns)
   - Browser console log output during the repro (including worker-prefixed logs like `[cpu]`, `[io]` if present)
   - If tracing is available, a **trace export** taken during the repro (Perf HUD → Trace Start/Stop → Trace JSON)
-- Snapshot file exported after repro (if available)
+    - See: [`docs/16-perf-tracing.md`](../16-perf-tracing.md)
+  - Snapshot file exported after repro (if available)
 - For driver binding issues: a snippet from `C:\Windows\inf\setupapi.dev.log` around the audio device’s Hardware ID can be extremely helpful.

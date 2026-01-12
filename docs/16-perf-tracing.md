@@ -76,6 +76,9 @@ When `startAudioPerfSampling()` is enabled for an `EnabledAudioOutput`, the trac
 - `audio.overrunFrames` — total frames dropped due to producer writes exceeding available capacity
 - `audio.sampleRate` — AudioContext sample rate
 
+These counters are what we typically want to capture during manual end-to-end audio validation (for example, the Windows 7
+in-box HDA driver smoke test in [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md)).
+
 See:
 
 - `web/src/platform/audio.ts` (`startAudioPerfSampling`, `getMetrics`)
