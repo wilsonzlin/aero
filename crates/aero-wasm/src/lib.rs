@@ -123,7 +123,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
-use aero_net_backend::{L2TunnelRingBackend, NetworkBackend};
+use aero_net_backend::{L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
@@ -2310,6 +2310,10 @@ impl NetworkBackend for SharedL2TunnelRingBackend {
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
         self.inner.borrow_mut().poll_receive()
+    }
+
+    fn l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
+        Some(self.inner.borrow().stats())
     }
 }
 
