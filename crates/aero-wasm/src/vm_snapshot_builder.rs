@@ -52,7 +52,7 @@ fn guest_region_from_layout_contract() -> Result<(u32, usize), JsValue> {
     let guest_size_u64 = mem_bytes.saturating_sub(guest_base);
     if guest_size_u64 > crate::guest_layout::PCI_MMIO_BASE {
         return Err(js_error(format!(
-            "Guest RAM overlaps the PCI MMIO aperture: guest_size=0x{guest_size_u64:x} PCI_MMIO_BASE=0x{mmio_base:x}",
+            "Guest RAM overlaps the PCI MMIO BAR window: guest_size=0x{guest_size_u64:x} PCI_MMIO_BASE=0x{mmio_base:x}",
             mmio_base = crate::guest_layout::PCI_MMIO_BASE
         )));
     }

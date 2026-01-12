@@ -246,7 +246,7 @@ impl WasmVm {
         } else {
             guest_size as u64
         };
-        // Keep guest RAM below the PCI MMIO aperture. This ensures that any future
+        // Keep guest RAM below the PCI MMIO BAR window. This ensures that any future
         // MMIO forwarding based on "addr >= guest_size" cannot be corrupted by a
         // huge guest RAM size overlapping PCI BAR space.
         let guest_size_u64 = guest_size_u64.min(crate::guest_layout::GUEST_PCI_MMIO_BASE);

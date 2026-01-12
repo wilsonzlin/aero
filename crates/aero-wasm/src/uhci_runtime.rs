@@ -45,7 +45,7 @@ impl LinearGuestMemory {
         let pages = core::arch::wasm32::memory_size(0) as u64;
         let mem_bytes = pages.saturating_mul(64 * 1024);
 
-        // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
+        // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
         //
         // For parity with other wasm-bindgen APIs, accept `guest_size == 0` as a "use the remainder
         // of linear memory" sentinel.

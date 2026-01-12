@@ -42,7 +42,7 @@ impl WorkerVmSnapshot {
             return Err(js_error("guest_size must be non-zero"));
         }
 
-        // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
+        // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
         let guest_size_u64 = u64::from(guest_size).min(crate::guest_layout::PCI_MMIO_BASE);
         let guest_size: u32 = guest_size_u64
             .try_into()

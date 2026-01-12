@@ -400,7 +400,7 @@ pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
     //
     // Clamp it to:
     // - the wasm32 4GiB linear-memory limit (accounting for the runtime-reserved region), and
-    // - the fixed PCI MMIO aperture start, so PCI BARs never overlap guest RAM.
+    // - the fixed PCI MMIO BAR window start, so PCI BARs never overlap guest RAM.
     let max_guest_pages_by_wasm = guest_layout::MAX_WASM32_PAGES.saturating_sub(base_pages);
     let max_guest_bytes_by_wasm = max_guest_pages_by_wasm * guest_layout::WASM_PAGE_BYTES;
     let max_guest_bytes = max_guest_bytes_by_wasm.min(guest_layout::GUEST_PCI_MMIO_BASE);

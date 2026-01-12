@@ -116,7 +116,7 @@ impl HdaControllerBridge {
         } else {
             guest_size as u64
         };
-        // Keep guest RAM below the PCI MMIO aperture (see `guest_ram_layout` contract).
+        // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
         let guest_size_u64 = guest_size_u64.min(crate::guest_layout::PCI_MMIO_BASE);
         if guest_size_u64 == 0 {
             return Err(js_error("guest_size must be non-zero"));

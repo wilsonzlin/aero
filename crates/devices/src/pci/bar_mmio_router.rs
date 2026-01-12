@@ -59,7 +59,7 @@ impl<H: PciBarMmioHandler> MmioHandler for PciBarMmioHandlerAdapter<H> {
     }
 }
 
-/// Routes accesses within a fixed PCI MMIO aperture to registered PCI BAR MMIO handlers.
+/// Routes accesses within a fixed PCI MMIO BAR window to registered PCI BAR MMIO handlers.
 ///
 /// This is intended for platforms that:
 /// - allocate all PCI MMIO BARs from a single big window (e.g. Q35-style `mmio_base..mmio_end`),
@@ -70,7 +70,7 @@ impl<H: PciBarMmioHandler> MmioHandler for PciBarMmioHandlerAdapter<H> {
 /// BAR base/size and the device's command register state. This makes BAR updates visible without
 /// needing explicit refresh hooks.
 pub struct PciBarMmioRouter {
-    /// Base physical address of the MMIO aperture this router is mapped to.
+    /// Base physical address of the MMIO window this router is mapped to.
     window_base: u64,
     /// Canonical PCI configuration space (shared with port-based config and ECAM).
     pci_cfg: SharedPciConfigPorts,
