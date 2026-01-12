@@ -60,7 +60,9 @@ Recommended workflow on Win7:
    - `Capture Global Win32`
 3. Start the target app:
    - `drivers/aerogpu/tests/win7/d3d9ex_dwm_probe`
+   - `drivers/aerogpu/tests/win7/d3d9_validate_device_sanity`
    - `drivers/aerogpu/tests/win7/d3d9ex_triangle`
+   - `drivers/aerogpu/tests/win7/d3d9ex_stateblock_sanity`
    - or restart `dwm.exe` after setting env vars
 
 You should see lines starting with:
@@ -125,4 +127,3 @@ The exact packing per entrypoint is defined where the DDI is instrumented:
 4. Iterate:
    - Add support for the next DDI/caps struct/state that the trace indicates is being queried or used.
    - Re-run and compare traces.
-
