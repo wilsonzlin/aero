@@ -22,14 +22,13 @@ int main() {
  
   aerogpu::d3d9_trace_init_from_env();
  
-  // Record a call so the dump includes at least one entry.
+  // First present: should not dump yet.
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DevicePresentEx, 0x111, 0, 0, 0);
     trace.ret(S_OK);
+    trace.maybe_dump_on_present(1);
   }
  
-  // Should not dump yet.
-  aerogpu::d3d9_trace_maybe_dump_on_present(1);
   std::fflush(stderr);
   std::string output = slurp_file(out_path);
   if (output.find("dump reason=present_count") != std::string::npos) {
@@ -37,8 +36,13 @@ int main() {
     return 1;
   }
  
-  // Should dump at the configured count.
-  aerogpu::d3d9_trace_maybe_dump_on_present(2);
+  // Second present: should dump at the configured count.
+  {
+    aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DevicePresentEx, 0x222, 0, 0, 0);
+    trace.ret(S_OK);
+    trace.maybe_dump_on_present(2);
+  }
+ 
   std::fflush(stderr);
   output = slurp_file(out_path);
   if (output.find("dump reason=present_count") == std::string::npos) {
@@ -49,8 +53,8 @@ int main() {
     std::fprintf(stdout, "FAIL: expected trace dump to include Device::PresentEx record (log=%s)\n", out_path.c_str());
     return 1;
   }
-  if (output.find("a0=0x111") == std::string::npos) {
-    std::fprintf(stdout, "FAIL: expected present record a0=0x111 (log=%s)\n", out_path.c_str());
+  if (output.find("a0=0x222") == std::string::npos) {
+    std::fprintf(stdout, "FAIL: expected present record a0=0x222 (log=%s)\n", out_path.c_str());
     return 1;
   }
  

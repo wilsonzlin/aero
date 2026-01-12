@@ -30,7 +30,7 @@ int main() {
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DevicePresentEx, 0x111, 0, 0, 0);
     trace.ret(E_INVALIDARG);
-    aerogpu::d3d9_trace_maybe_dump_on_present(1);
+    trace.maybe_dump_on_present(1);
   }
 
   std::fflush(stderr);
@@ -56,4 +56,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-
