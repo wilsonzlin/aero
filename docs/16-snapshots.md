@@ -122,17 +122,17 @@ Restore notes:
 
 Some platform devices are snapshotted as their own `DEVICES` entries and use dedicated `DeviceId` constants:
 
-- `DeviceId::APIC` (`2`) — platform interrupt controller complex (`PlatformInterrupts`: legacy PIC + IOAPIC + LAPIC + IMCR routing). Historical id used by older snapshots.
-- `DeviceId::PLATFORM_INTERRUPTS` (`21`) — preferred id for `PlatformInterrupts` snapshots (used by the canonical machine)
-- `DeviceId::PIT` (`3`) — PIT (8254)
-- `DeviceId::RTC` (`4`) — RTC/CMOS (0x70/0x71)
+- `DeviceId::APIC` (`2`) — platform interrupt controller complex (`PlatformInterrupts`: legacy PIC + IOAPIC + LAPIC + IMCR routing). Historical id used by older snapshots (inner `INTR`).
+- `DeviceId::PLATFORM_INTERRUPTS` (`21`) — preferred id for `PlatformInterrupts` snapshots (used by the canonical machine) (inner `INTR`)
+- `DeviceId::PIT` (`3`) — PIT (8254; inner `PIT4`)
+- `DeviceId::RTC` (`4`) — RTC/CMOS (0x70/0x71; inner `RTCC`)
 - `DeviceId::PCI` (`5`) — PCI core state (`PciCoreSnapshot` wrapper, inner `PCIC`, containing `PCPT` + `INTX`; see `PCI core state` below)
-- `DeviceId::I8042` (`13`) — i8042 PS/2 controller (0x60/0x64)
+- `DeviceId::I8042` (`13`) — i8042 PS/2 controller (0x60/0x64; inner `8042`)
 - `DeviceId::PCI_CFG` (`14`) — legacy split-out PCI config I/O ports + PCI bus config-space image state (`PciConfigPorts`, inner `PCPT`)
 - `DeviceId::PCI_INTX` (`15`) — legacy split-out PCI INTx router (`PciIntxRouter`, inner `INTX`)
-- `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer)
-- `DeviceId::HPET` (`17`) — HPET timer state
-- `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state
+- `DeviceId::ACPI_PM` (`16`) — ACPI power management registers (PM1 + PM timer; inner `ACPM`)
+- `DeviceId::HPET` (`17`) — HPET timer state (inner `HPET`)
+- `DeviceId::HDA` (`18`) — guest-visible HD Audio (HDA) controller/runtime state (inner `HDA0`)
 - `DeviceId::E1000` (`19`) — Intel E1000 NIC (`aero-net-e1000`, inner `E1K0`)
 - `DeviceId::NET_STACK` (`20`) — user-space network stack/backend state (`aero-io-snapshot` inner `NETS`)
 
