@@ -5256,9 +5256,17 @@ impl AerogpuD3d9Executor {
         encoder.copy_buffer_to_buffer(&staging_normal, 0, &self.clear_color_buffer, 0, 32);
 
         if clear_color_enabled {
+            let srgb_write = self
+                .state
+                .render_states
+                .get(d3d9::D3DRS_SRGBWRITEENABLE as usize)
+                .copied()
+                .unwrap_or(0)
+                != 0;
+
             // Collect render target formats/extents so we can build per-format pipelines without
             // holding borrows into `self.resources`.
-            let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool)> = Vec::new();
+            let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool, bool)> = Vec::new();
             for slot in 0..rt.color_count.min(8) as usize {
                 let handle = rt.colors[slot];
                 if handle == 0 {
@@ -5273,22 +5281,34 @@ impl AerogpuD3d9Executor {
                     Resource::Texture2d {
                         format,
                         format_raw,
+                        view_srgb,
                         width,
                         height,
                         ..
-                    } => targets.push((
-                        underlying,
-                        *format,
-                        *width,
-                        *height,
-                        is_x8_format(*format_raw),
-                    )),
+                    } => {
+                        let is_x8 = is_x8_format(*format_raw);
+                        let mut out_format = *format;
+                        let mut use_srgb_view = false;
+                        if srgb_write && view_srgb.is_some() {
+                            out_format = match out_format {
+                                wgpu::TextureFormat::Rgba8Unorm => {
+                                    wgpu::TextureFormat::Rgba8UnormSrgb
+                                }
+                                wgpu::TextureFormat::Bgra8Unorm => {
+                                    wgpu::TextureFormat::Bgra8UnormSrgb
+                                }
+                                other => other,
+                            };
+                            use_srgb_view = out_format != *format;
+                        }
+                        targets.push((underlying, out_format, *width, *height, is_x8, use_srgb_view))
+                    }
                     _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
                 }
             }
 
             let mut current_is_x8 = false;
-            for (underlying, format, width, height, is_x8) in targets {
+            for (underlying, format, width, height, is_x8, use_srgb_view) in targets {
                 let Some((x, y, w, h)) =
                     clamp_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3, width, height)
                 else {
@@ -5311,7 +5331,15 @@ impl AerogpuD3d9Executor {
                     .get(&underlying)
                     .ok_or(AerogpuD3d9Error::UnknownResource(underlying))?
                 {
-                    Resource::Texture2d { view, .. } => view,
+                    Resource::Texture2d {
+                        view, view_srgb, ..
+                    } => {
+                        if use_srgb_view {
+                            view_srgb.as_ref().unwrap_or(view)
+                        } else {
+                            view
+                        }
+                    }
                     _ => return Err(AerogpuD3d9Error::UnknownResource(underlying)),
                 };
                 let attachment = wgpu::RenderPassColorAttachment {
