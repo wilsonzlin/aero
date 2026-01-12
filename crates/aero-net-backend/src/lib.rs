@@ -53,3 +53,19 @@ impl<T: NetworkBackend + ?Sized> NetworkBackend for &mut T {
         <T as NetworkBackend>::poll_receive(&mut **self)
     }
 }
+
+impl NetworkBackend for () {
+    fn transmit(&mut self, _frame: Vec<u8>) {}
+}
+
+impl<B: NetworkBackend> NetworkBackend for Option<B> {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        if let Some(backend) = self.as_mut() {
+            backend.transmit(frame);
+        }
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        self.as_mut().and_then(|backend| backend.poll_receive())
+    }
+}
