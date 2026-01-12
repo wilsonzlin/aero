@@ -610,7 +610,10 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
     pnpPowerCallbacks.EvtDeviceSurpriseRemoval = VirtioInputEvtDeviceSurpriseRemoval;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpPowerCallbacks);
 
-    /* Internal HID IOCTLs use the request's buffers directly; keep it simple for now. */
+    /*
+     * HID class IOCTLs are METHOD_NEITHER and may embed user-mode pointers even when delivered as internal IOCTLs.
+     * The individual IOCTL handlers must probe/lock/map user buffers safely when RequestorMode==UserMode.
+     */
     WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
 
     status = VirtioInputFileConfigure(DeviceInit);
