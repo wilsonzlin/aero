@@ -6,6 +6,7 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use core::net::Ipv4Addr;
+use std::collections::BinaryHeap;
 
 // Snapshots may be loaded from untrusted sources (downloaded files). Keep decoding bounded so
 // corrupted snapshots cannot force pathological allocations.
@@ -156,15 +157,35 @@ impl IoSnapshot for NetworkStackSnapshotState {
         }
         w.field_bytes(TAG_DNS_CACHE, dns.finish());
 
-        // TCP connections: sort by id for deterministic encoding.
-        let mut conns = self.tcp_connections.clone();
-        conns.sort_by_key(|c| c.id);
-        if conns.len() > MAX_TCP_CONNECTIONS {
-            conns.truncate(MAX_TCP_CONNECTIONS);
-        }
+        // TCP connections: encode in deterministic order (by id), but keep serialization bounded
+        // even if the caller somehow constructed a `NetworkStackSnapshotState` with an enormous
+        // `tcp_connections` vector. Avoid cloning/sorting the entire list when it exceeds the hard
+        // cap.
+        let tcp_order: Vec<usize> = if self.tcp_connections.len() <= MAX_TCP_CONNECTIONS {
+            let mut idxs: Vec<usize> = (0..self.tcp_connections.len()).collect();
+            idxs.sort_by_key(|i| self.tcp_connections[*i].id);
+            idxs
+        } else {
+            // Keep the smallest `(id, original_index)` pairs, matching the behavior of a stable
+            // sort-by-id followed by truncation.
+            let mut heap: BinaryHeap<(u32, usize)> =
+                BinaryHeap::with_capacity(MAX_TCP_CONNECTIONS + 1);
+            for (idx, conn) in self.tcp_connections.iter().enumerate() {
+                heap.push((conn.id, idx));
+                if heap.len() > MAX_TCP_CONNECTIONS {
+                    heap.pop();
+                }
+            }
 
-        let mut tcp = Encoder::new().u32(conns.len() as u32);
-        for conn in &conns {
+            heap.into_sorted_vec()
+                .into_iter()
+                .map(|(_, idx)| idx)
+                .collect()
+        };
+
+        let mut tcp = Encoder::new().u32(tcp_order.len() as u32);
+        for idx in tcp_order {
+            let conn = &self.tcp_connections[idx];
             tcp = tcp
                 .u32(conn.id)
                 .u16(conn.guest_port)
