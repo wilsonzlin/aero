@@ -237,6 +237,108 @@ struct GuestTextureBacking {
     size_bytes: u64,
 }
 
+/// Subresource layout for guest-backed textures with mip levels and array layers.
+///
+/// MVP layout:
+/// - Subresources are tightly packed (no per-row padding beyond `mip_width * bpp`).
+/// - For each array layer, mip levels are laid out sequentially starting at mip 0.
+/// - Array layers are laid out sequentially.
+#[derive(Debug, Clone, Copy)]
+struct GuestTextureSubresourceLayout {
+    width: u32,
+    height: u32,
+    mip_level_count: u32,
+    array_layers: u32,
+    bytes_per_pixel: u32,
+}
+
+impl GuestTextureSubresourceLayout {
+    fn new(
+        width: u32,
+        height: u32,
+        mip_level_count: u32,
+        array_layers: u32,
+        bytes_per_pixel: u32,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            mip_level_count,
+            array_layers,
+            bytes_per_pixel,
+        }
+    }
+
+    fn mip_width(&self, mip_level: u32) -> u32 {
+        mip_dim(self.width, mip_level)
+    }
+
+    fn mip_height(&self, mip_level: u32) -> u32 {
+        mip_dim(self.height, mip_level)
+    }
+
+    fn subresource_row_pitch_bytes(
+        &self,
+        _array_layer: u32,
+        mip_level: u32,
+    ) -> Result<u32, AerogpuD3d9Error> {
+        self.mip_width(mip_level).checked_mul(self.bytes_per_pixel).ok_or_else(|| {
+            AerogpuD3d9Error::Validation("texture subresource row pitch overflow".into())
+        })
+    }
+
+    fn subresource_size_bytes(
+        &self,
+        array_layer: u32,
+        mip_level: u32,
+    ) -> Result<u64, AerogpuD3d9Error> {
+        let bpr = self.subresource_row_pitch_bytes(array_layer, mip_level)? as u64;
+        let height = self.mip_height(mip_level) as u64;
+        bpr.checked_mul(height)
+            .ok_or_else(|| AerogpuD3d9Error::Validation("texture subresource size overflow".into()))
+    }
+
+    fn layer_size_bytes(&self) -> Result<u64, AerogpuD3d9Error> {
+        let mut total = 0u64;
+        for mip in 0..self.mip_level_count {
+            total = total
+                .checked_add(self.subresource_size_bytes(0, mip)?)
+                .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
+        }
+        Ok(total)
+    }
+
+    fn total_size_bytes(&self) -> Result<u64, AerogpuD3d9Error> {
+        let layer = self.layer_size_bytes()?;
+        layer
+            .checked_mul(self.array_layers as u64)
+            .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))
+    }
+
+    fn subresource_offset_bytes(
+        &self,
+        array_layer: u32,
+        mip_level: u32,
+    ) -> Result<u64, AerogpuD3d9Error> {
+        if array_layer >= self.array_layers || mip_level >= self.mip_level_count {
+            return Err(AerogpuD3d9Error::Validation(
+                "subresource index out of bounds".into(),
+            ));
+        }
+
+        let layer_size = self.layer_size_bytes()?;
+        let mut offset = layer_size
+            .checked_mul(array_layer as u64)
+            .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
+        for mip in 0..mip_level {
+            offset = offset
+                .checked_add(self.subresource_size_bytes(array_layer, mip)?)
+                .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
+        }
+        Ok(offset)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TextureWritebackPlan {
     backing: GuestTextureBacking,
@@ -1808,11 +1910,6 @@ impl AerogpuD3d9Executor {
                 let backing = if backing_alloc_id == 0 {
                     None
                 } else {
-                    if mip_level_count > 1 || array_layers > 1 {
-                        return Err(AerogpuD3d9Error::Validation(
-                            "guest-backed textures with mip_levels/array_layers > 1 are not supported".into(),
-                        ));
-                    }
                     if row_pitch_bytes == 0 {
                         return Err(AerogpuD3d9Error::Validation(
                             "CREATE_TEXTURE2D: row_pitch_bytes must be non-zero when backing_alloc_id != 0"
@@ -1829,15 +1926,38 @@ impl AerogpuD3d9Executor {
                             "CREATE_TEXTURE2D: row_pitch_bytes {row_pitch_bytes} is smaller than required {expected_row_pitch}"
                         )));
                     }
-                    let row_pitch = row_pitch_bytes;
-                    let required =
+
+                    let required = if mip_level_count == 1 && array_layers == 1 {
+                        // Single-subresource: allow padded row pitch (the legacy path).
+                        let row_pitch = row_pitch_bytes;
                         (row_pitch as u64)
                             .checked_mul(height as u64)
                             .ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "CREATE_TEXTURE2D: texture backing overflow".into(),
                                 )
-                            })?;
+                            })?
+                    } else {
+                        // Multi-subresource: MVP assumes tight packing in guest memory.
+                        //
+                        // `row_pitch_bytes` is part of the CREATE_TEXTURE2D protocol contract for
+                        // guest-backed textures, but we currently treat mip chains/array layers as
+                        // tightly packed, with no padding beyond width*bpp.
+                        if row_pitch_bytes != expected_row_pitch {
+                            return Err(AerogpuD3d9Error::Validation(format!(
+                                "CREATE_TEXTURE2D: guest-backed textures with mip_levels/array_layers > 1 require tight row_pitch_bytes (expected {expected_row_pitch} got {row_pitch_bytes})"
+                            )));
+                        }
+                        GuestTextureSubresourceLayout::new(
+                            width,
+                            height,
+                            mip_level_count,
+                            array_layers,
+                            bpp,
+                        )
+                        .total_size_bytes()?
+                    };
+
                     let backing_offset = backing_offset_bytes as u64;
                     let required_end = backing_offset.checked_add(required).ok_or_else(|| {
                         AerogpuD3d9Error::Validation(
@@ -1858,7 +1978,7 @@ impl AerogpuD3d9Executor {
                     Some(GuestTextureBacking {
                         alloc_id: backing_alloc_id,
                         alloc_offset_bytes: backing_offset,
-                        row_pitch_bytes: row_pitch,
+                        row_pitch_bytes: row_pitch_bytes,
                         size_bytes: required,
                     })
                 };
@@ -2749,8 +2869,6 @@ impl AerogpuD3d9Executor {
                             dst: dst_texture,
                         });
                     }
-
-                    let mip_dim = |base: u32, mip: u32| base.checked_shr(mip).unwrap_or(0).max(1);
 
                     let dst_mip_w = mip_dim(dst_w, dst_mip_level);
                     let dst_mip_h = mip_dim(dst_h, dst_mip_level);
@@ -3807,6 +3925,8 @@ impl AerogpuD3d9Executor {
             format,
             width,
             height,
+            mip_level_count,
+            array_layers,
             backing,
             dirty_ranges,
             ..
@@ -3846,183 +3966,341 @@ impl AerogpuD3d9Executor {
             )));
         }
 
-        let mut encoder = encoder;
-        let ranges = dirty_ranges.clone();
-        let row_pitch = backing.row_pitch_bytes as u64;
-        if row_pitch == 0 {
-            return Err(AerogpuD3d9Error::Validation(
-                "texture row_pitch_bytes is 0".into(),
-            ));
-        }
-
-        let mut row_ranges = Vec::<Range<u32>>::new();
-        for r in &ranges {
-            let start_row = (r.start / row_pitch) as u32;
-            let end_row = r.end.div_ceil(row_pitch) as u32;
-            row_ranges.push(start_row..end_row);
-        }
-        coalesce_ranges_u32(&mut row_ranges);
-        for rows in &row_ranges {
-            if rows.end > *height {
-                return Err(AerogpuD3d9Error::Validation(format!(
-                    "computed dirty row range {rows:?} exceeds texture height {height}"
-                )));
-            }
-        }
-
         let guest_bpp = bytes_per_pixel_aerogpu_format(*format_raw)?;
         let host_bpp = bytes_per_pixel(*format);
         let is_x8 = is_x8_format(*format_raw);
         let needs_16bit_expand = *format_raw == AerogpuFormat::B5G6R5Unorm as u32
             || *format_raw == AerogpuFormat::B5G5R5A1Unorm as u32;
-        let unpadded_bpr_guest = width.checked_mul(guest_bpp).ok_or_else(|| {
-            AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into())
-        })?;
-        let unpadded_bpr_host =
-            width
-                .checked_mul(host_bpp)
-                .ok_or_else(|| AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into()))?;
-        let upload_bpr = if !needs_16bit_expand
-            && backing
-                .row_pitch_bytes
-                .is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-        {
-            backing.row_pitch_bytes
-        } else {
-            align_to(unpadded_bpr_host, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-        };
 
-        for rows in row_ranges {
-            let upload_h = rows.end.saturating_sub(rows.start);
-            if upload_h == 0 {
-                continue;
+        let mut encoder = encoder;
+
+        if *mip_level_count == 1 && *array_layers == 1 {
+            // Fast path: use dirty range -> dirty rows for a single-subresource texture.
+            let ranges = dirty_ranges.clone();
+            let row_pitch = backing.row_pitch_bytes as u64;
+            if row_pitch == 0 {
+                return Err(AerogpuD3d9Error::Validation(
+                    "texture row_pitch_bytes is 0".into(),
+                ));
             }
 
-            let upload_h_usize = upload_h as usize;
-            let upload_bpr_usize = upload_bpr as usize;
-            let mut staging = vec![0u8; upload_bpr_usize * upload_h_usize];
-            let mut expanded_row = if needs_16bit_expand {
-                Some(vec![0u8; unpadded_bpr_guest as usize])
+            let mut row_ranges = Vec::<Range<u32>>::new();
+            for r in &ranges {
+                let start_row = (r.start / row_pitch) as u32;
+                let end_row = r.end.div_ceil(row_pitch) as u32;
+                row_ranges.push(start_row..end_row);
+            }
+            coalesce_ranges_u32(&mut row_ranges);
+            for rows in &row_ranges {
+                if rows.end > *height {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "computed dirty row range {rows:?} exceeds texture height {height}"
+                    )));
+                }
+            }
+
+            let unpadded_bpr_guest = width.checked_mul(guest_bpp).ok_or_else(|| {
+                AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into())
+            })?;
+            let unpadded_bpr_host = width.checked_mul(host_bpp).ok_or_else(|| {
+                AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into())
+            })?;
+            let upload_bpr = if !needs_16bit_expand
+                && backing
+                    .row_pitch_bytes
+                    .is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            {
+                backing.row_pitch_bytes
             } else {
-                None
+                align_to(unpadded_bpr_host, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             };
-            for i in 0..upload_h {
-                let row = rows.start + i;
-                let row_off = (row as u64).checked_mul(row_pitch).ok_or_else(|| {
-                    AerogpuD3d9Error::Validation("texture backing overflow".into())
-                })?;
-                let alloc_offset =
-                    backing
+
+            for rows in row_ranges {
+                let upload_h = rows.end.saturating_sub(rows.start);
+                if upload_h == 0 {
+                    continue;
+                }
+
+                let upload_h_usize = upload_h as usize;
+                let upload_bpr_usize = upload_bpr as usize;
+                let mut staging = vec![0u8; upload_bpr_usize * upload_h_usize];
+                let mut expanded_row = needs_16bit_expand.then(|| vec![0u8; unpadded_bpr_guest as usize]);
+
+                for i in 0..upload_h {
+                    let row = rows.start + i;
+                    let row_off = (row as u64).checked_mul(row_pitch).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture backing overflow".into())
+                    })?;
+                    let alloc_offset = backing
                         .alloc_offset_bytes
                         .checked_add(row_off)
-                        .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation("texture backing overflow".into())
-                        })?;
-                let src_gpa = alloc_gpa.checked_add(alloc_offset).ok_or_else(|| {
-                    AerogpuD3d9Error::Validation("texture backing overflow".into())
-                })?;
-                if src_gpa.checked_add(unpadded_bpr_guest as u64).is_none() {
-                    return Err(AerogpuD3d9Error::Validation(
-                        "texture backing overflow".into(),
-                    ));
-                }
-                let dst_off = i as usize * upload_bpr_usize;
-                if needs_16bit_expand {
-                    let row_buf = expanded_row
-                        .as_mut()
-                        .expect("needs_16bit_expand implies row buffer exists");
-                    guest_memory.read(src_gpa, row_buf)?;
-                    let dst_end = dst_off + unpadded_bpr_host as usize;
-                    let dst = staging
-                        .get_mut(dst_off..dst_end)
-                        .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation(
-                                "texture staging buffer out of bounds".into(),
-                            )
-                        })?;
-                    match *format_raw {
-                        x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
-                            expand_b5g6r5_unorm_to_rgba8(row_buf, dst)
-                        }
-                        x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
-                            expand_b5g5r5a1_unorm_to_rgba8(row_buf, dst)
-                        }
-                        _ => unreachable!("needs_16bit_expand implies B5* format"),
+                        .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
+                    let src_gpa = alloc_gpa.checked_add(alloc_offset).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture backing overflow".into())
+                    })?;
+                    if src_gpa.checked_add(unpadded_bpr_guest as u64).is_none() {
+                        return Err(AerogpuD3d9Error::Validation(
+                            "texture backing overflow".into(),
+                        ));
                     }
-                } else {
-                    let dst_end = dst_off + unpadded_bpr_host as usize;
-                    let dst = staging
-                        .get_mut(dst_off..dst_end)
-                        .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation(
-                                "texture staging buffer out of bounds".into(),
-                            )
-                        })?;
-                    guest_memory.read(src_gpa, dst)?;
-                    if is_x8 && host_bpp == 4 {
-                        force_opaque_alpha_rgba8(dst);
-                    }
-                }
-            }
 
-            if let Some(encoder) = encoder.as_deref_mut() {
-                let staging_buf =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("aerogpu-d3d9.flush_dirty_range.texture_staging"),
-                            contents: &staging,
-                            usage: wgpu::BufferUsages::COPY_SRC,
-                        });
-                encoder.copy_buffer_to_texture(
-                    wgpu::ImageCopyBuffer {
-                        buffer: &staging_buf,
-                        layout: wgpu::ImageDataLayout {
+                    let dst_off = i as usize * upload_bpr_usize;
+                    let dst_end = dst_off + unpadded_bpr_host as usize;
+                    let dst = staging.get_mut(dst_off..dst_end).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture staging buffer out of bounds".into())
+                    })?;
+                    if needs_16bit_expand {
+                        let row_buf = expanded_row
+                            .as_mut()
+                            .expect("needs_16bit_expand implies row buffer exists");
+                        guest_memory.read(src_gpa, row_buf)?;
+                        match *format_raw {
+                            x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
+                                expand_b5g6r5_unorm_to_rgba8(row_buf, dst)
+                            }
+                            x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                                expand_b5g5r5a1_unorm_to_rgba8(row_buf, dst)
+                            }
+                            _ => unreachable!("needs_16bit_expand implies B5* format"),
+                        }
+                    } else {
+                        guest_memory.read(src_gpa, dst)?;
+                        if is_x8 && host_bpp == 4 {
+                            force_opaque_alpha_rgba8(dst);
+                        }
+                    }
+                }
+
+                if let Some(encoder) = encoder.as_deref_mut() {
+                    let staging_buf =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("aerogpu-d3d9.flush_dirty_range.texture_staging"),
+                                contents: &staging,
+                                usage: wgpu::BufferUsages::COPY_SRC,
+                            });
+                    encoder.copy_buffer_to_texture(
+                        wgpu::ImageCopyBuffer {
+                            buffer: &staging_buf,
+                            layout: wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(upload_bpr),
+                                rows_per_image: Some(upload_h),
+                            },
+                        },
+                        wgpu::ImageCopyTexture {
+                            texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: rows.start,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::Extent3d {
+                            width: *width,
+                            height: upload_h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                } else {
+                    // No active encoder yet: use `queue.write_texture` as a fast path.
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: rows.start,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &staging,
+                        wgpu::ImageDataLayout {
                             offset: 0,
                             bytes_per_row: Some(upload_bpr),
                             rows_per_image: Some(upload_h),
                         },
-                    },
-                    wgpu::ImageCopyTexture {
-                        texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: rows.start,
-                            z: 0,
+                        wgpu::Extent3d {
+                            width: *width,
+                            height: upload_h,
+                            depth_or_array_layers: 1,
                         },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::Extent3d {
-                        width: *width,
-                        height: upload_h,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            } else {
-                // No active encoder yet: use `queue.write_texture` as a fast path.
-                self.queue.write_texture(
-                    wgpu::ImageCopyTexture {
-                        texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: rows.start,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &staging,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: Some(upload_bpr),
-                        rows_per_image: Some(upload_h),
-                    },
-                    wgpu::Extent3d {
-                        width: *width,
-                        height: upload_h,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                    );
+                }
+            }
+        } else {
+            // MVP: for multi-subresource guest-backed textures, do a full upload of every
+            // subresource whenever any dirty range is present.
+            let layout = GuestTextureSubresourceLayout::new(
+                *width,
+                *height,
+                *mip_level_count,
+                *array_layers,
+                guest_bpp,
+            );
+
+            for layer in 0..*array_layers {
+                for mip in 0..*mip_level_count {
+                    let mip_w = layout.mip_width(mip);
+                    let mip_h = layout.mip_height(mip);
+                    let unpadded_bpr_guest = mip_w.checked_mul(guest_bpp).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into())
+                    })?;
+                    let unpadded_bpr_host = mip_w.checked_mul(host_bpp).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into())
+                    })?;
+                    let sub_size_guest =
+                        (unpadded_bpr_guest as u64).checked_mul(mip_h as u64).ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture backing overflow".into())
+                        })?;
+                    let sub_offset = layout.subresource_offset_bytes(layer, mip)?;
+                    let sub_end = sub_offset.checked_add(sub_size_guest).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture backing overflow".into())
+                    })?;
+                    if sub_end > backing.size_bytes {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "texture subresource out of bounds (layer={layer} mip={mip} end=0x{sub_end:x} size=0x{:x})",
+                            backing.size_bytes
+                        )));
+                    }
+
+                    let alloc_offset = backing
+                        .alloc_offset_bytes
+                        .checked_add(sub_offset)
+                        .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
+                    let src_gpa = alloc_gpa.checked_add(alloc_offset).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture backing overflow".into())
+                    })?;
+                    if src_gpa.checked_add(sub_size_guest).is_none() {
+                        return Err(AerogpuD3d9Error::Validation(
+                            "texture backing overflow".into(),
+                        ));
+                    }
+
+                    let len: usize = sub_size_guest.try_into().map_err(|_| {
+                        AerogpuD3d9Error::Validation("texture subresource size out of range".into())
+                    })?;
+                    let mut guest_data = vec![0u8; len];
+                    guest_memory.read(src_gpa, &mut guest_data)?;
+
+                    let upload_bpr =
+                        align_to(unpadded_bpr_host, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                    let upload_bpr_usize = upload_bpr as usize;
+                    let unpadded_bpr_guest_usize = unpadded_bpr_guest as usize;
+                    let unpadded_bpr_host_usize = unpadded_bpr_host as usize;
+                    let mip_h_usize = mip_h as usize;
+
+                    let upload_data = if !needs_16bit_expand
+                        && unpadded_bpr_guest == unpadded_bpr_host
+                        && upload_bpr == unpadded_bpr_host
+                    {
+                        if is_x8 && host_bpp == 4 {
+                            for row in 0..mip_h_usize {
+                                let start = row * unpadded_bpr_host_usize;
+                                let end = start + unpadded_bpr_host_usize;
+                                force_opaque_alpha_rgba8(&mut guest_data[start..end]);
+                            }
+                        }
+                        guest_data
+                    } else {
+                        let mut staging = vec![0u8; upload_bpr_usize * mip_h_usize];
+                        for row in 0..mip_h_usize {
+                            let src_start = row * unpadded_bpr_guest_usize;
+                            let src_end = src_start + unpadded_bpr_guest_usize;
+                            let src = &guest_data[src_start..src_end];
+
+                            let dst_start = row * upload_bpr_usize;
+                            let dst_end = dst_start + unpadded_bpr_host_usize;
+                            let dst = staging.get_mut(dst_start..dst_end).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture subresource staging out of bounds".into(),
+                                )
+                            })?;
+
+                            if needs_16bit_expand {
+                                match *format_raw {
+                                    x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
+                                        expand_b5g6r5_unorm_to_rgba8(src, dst)
+                                    }
+                                    x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                                        expand_b5g5r5a1_unorm_to_rgba8(src, dst)
+                                    }
+                                    _ => unreachable!("needs_16bit_expand implies B5* format"),
+                                }
+                            } else {
+                                dst.copy_from_slice(src);
+                                if is_x8 && host_bpp == 4 {
+                                    force_opaque_alpha_rgba8(dst);
+                                }
+                            }
+                        }
+                        staging
+                    };
+
+                    if let Some(encoder) = encoder.as_deref_mut() {
+                        let staging_buf =
+                            self.device
+                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some(
+                                        "aerogpu-d3d9.flush_dirty_range.texture_subresource_staging",
+                                    ),
+                                    contents: &upload_data,
+                                    usage: wgpu::BufferUsages::COPY_SRC,
+                                });
+                        encoder.copy_buffer_to_texture(
+                            wgpu::ImageCopyBuffer {
+                                buffer: &staging_buf,
+                                layout: wgpu::ImageDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(upload_bpr),
+                                    rows_per_image: Some(mip_h),
+                                },
+                            },
+                            wgpu::ImageCopyTexture {
+                                texture,
+                                mip_level: mip,
+                                origin: wgpu::Origin3d {
+                                    x: 0,
+                                    y: 0,
+                                    z: layer,
+                                },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::Extent3d {
+                                width: mip_w,
+                                height: mip_h,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    } else {
+                        self.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture,
+                                mip_level: mip,
+                                origin: wgpu::Origin3d {
+                                    x: 0,
+                                    y: 0,
+                                    z: layer,
+                                },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &upload_data,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(upload_bpr),
+                                rows_per_image: Some(mip_h),
+                            },
+                            wgpu::Extent3d {
+                                width: mip_w,
+                                height: mip_h,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    }
+                }
             }
         }
 
@@ -6063,6 +6341,10 @@ fn align_up_u64(value: u64, alignment: u64) -> Result<u64, AerogpuD3d9Error> {
         .checked_add(alignment - 1)
         .map(|v| v & !(alignment - 1))
         .ok_or_else(|| AerogpuD3d9Error::Validation("alignment overflow".into()))
+}
+
+fn mip_dim(base: u32, level: u32) -> u32 {
+    base.checked_shr(level).unwrap_or(0).max(1)
 }
 
 fn is_x8_format(format_raw: u32) -> bool {
