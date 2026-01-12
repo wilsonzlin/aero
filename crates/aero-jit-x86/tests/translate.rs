@@ -565,11 +565,11 @@ block 0x6000:
   write.rbx v0
   v1 = read.rbx
   v2 = const.i64 0xd
-  v3 = shr.i64 v1, v2
+  v3 = shr.i64 v1, v2 ; flags=CF|PF|AF|ZF|SF|OF
   write.rbx v3
   v4 = read.rbx
   v5 = const.i64 0x1
-  v6 = shl.i64 v4, v5
+  v6 = shl.i64 v4, v5 ; flags=CF|PF|AF|ZF|SF|OF
   write.rbx v6
   v7 = read.rsp
   v8 = load.i64 [v7]
