@@ -10,6 +10,22 @@ See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitiona
 
 ---
 
+## Canonical Windows 7 storage topology (PCI + media attachment)
+
+For Windows 7 boot/install, Aero uses a **deterministic, compatibility-first storage topology**:
+
+- **ICH9 AHCI** for the primary HDD (Windows installs/boots from this disk)
+- **PIIX3 IDE + ATAPI** for the CD-ROM (Windows install ISO / driver ISOs)
+
+The canonical PCI BDF assignments, port/drive mapping, BIOS boot flows, and INTx→GSI routing are
+defined in:
+
+- [`05-storage-topology-win7.md`](./05-storage-topology-win7.md)
+
+This topology is treated as part of the platform ABI: drift should be caught by unit tests.
+
+---
+
 ## Storage Architecture
 
 ```
