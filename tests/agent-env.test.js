@@ -160,7 +160,7 @@ test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { ski
 test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
   const repoRoot = setupTempRepo();
   try {
-    // `agent-env.sh` now caps lld threads via *per-target* rustflags env vars
+    // `agent-env.sh` caps lld threads via *per-target* rustflags env vars
     // (`CARGO_TARGET_<TRIPLE>_RUSTFLAGS`) instead of mutating `RUSTFLAGS`,
     // because global `RUSTFLAGS` breaks wasm32 builds (`rust-lld -flavor wasm`
     // does not understand `-Wl,...`).
@@ -183,8 +183,8 @@ test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", 
     delete env.RUSTFLAGS;
     delete env.CARGO_BUILD_JOBS;
     // Keep the test deterministic: if a caller exports CARGO_BUILD_TARGET=wasm32-...,
-    // agent-env will inject the wasm-specific linker flag instead of `-Wl,...`.
-    // These assertions target the default native path.
+    // agent-env may rewrite any existing `-Wl,--threads=...` flags in RUSTFLAGS for wasm
+    // compatibility. These assertions target the default native path.
     delete env.CARGO_BUILD_TARGET;
     env.AERO_CARGO_BUILD_JOBS = "2";
     delete env.AERO_RUST_CODEGEN_UNITS;
@@ -194,29 +194,27 @@ test("agent-env: does not force rustc codegen-units based on CARGO_BUILD_JOBS", 
     }
     delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
 
-    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+    const rustflags = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "${RUSTFLAGS:-}"'], {
       cwd: repoRoot,
       encoding: "utf8",
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    assert.ok(!stdout.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${stdout}`);
-    // On Linux we still cap LLVM lld parallelism to match build jobs, but do it via
+    assert.ok(!rustflags.includes("codegen-units="), `expected RUSTFLAGS not to force codegen-units, got: ${rustflags}`);
+
+    // On Linux we cap LLVM lld parallelism to match build jobs, but do it via
     // `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` so wasm builds in the same shell are not broken.
     if (process.platform === "linux") {
       assert.ok(
-        !stdout.includes("--threads=") && !stdout.includes("-Wl,--threads="),
-        `expected agent-env.sh not to mutate global RUSTFLAGS with lld --threads, got: ${stdout}`,
+        !rustflags.includes("--threads=") && !rustflags.includes("-Wl,--threads="),
+        `expected agent-env.sh not to mutate global RUSTFLAGS with lld --threads, got: ${rustflags}`,
       );
 
       if (hostTargetVar) {
         const targetFlags = execFileSync(
           "bash",
-          [
-            "-c",
-            'source scripts/agent-env.sh >/dev/null; printf "%s" "${!AERO_TARGET_RUSTFLAGS_VAR}"',
-          ],
+          ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "${!AERO_TARGET_RUSTFLAGS_VAR}"'],
           {
             cwd: repoRoot,
             encoding: "utf8",
@@ -247,7 +245,7 @@ test("agent-env: uses --threads=<n> for wasm32 when CARGO_BUILD_TARGET is set", 
     delete env.AERO_CODEGEN_UNITS;
     delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
 
-    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS"'], {
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}"'], {
       cwd: repoRoot,
       encoding: "utf8",
       env,
@@ -256,7 +254,10 @@ test("agent-env: uses --threads=<n> for wasm32 when CARGO_BUILD_TARGET is set", 
 
     if (process.platform === "linux") {
       assert.match(stdout, /-C link-arg=--threads=2\b/);
-      assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm32 RUSTFLAGS to avoid -Wl,--threads, got: ${stdout}`);
+      assert.ok(
+        !stdout.includes("-Wl,--threads="),
+        `expected wasm32 target rustflags to avoid -Wl,--threads, got: ${stdout}`,
+      );
     }
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -283,7 +284,7 @@ test("agent-env: rewrites -Wl,--threads=<n> into --threads=<n> for wasm32 target
 
     if (process.platform === "linux") {
       assert.match(stdout, /-C link-arg=--threads=7\b/);
-      assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm32 RUSTFLAGS to avoid -Wl,--threads, got: ${stdout}`);
+      assert.ok(!stdout.includes("-Wl,--threads="), `expected wasm32 target rustflags to avoid -Wl,--threads, got: ${stdout}`);
     }
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });

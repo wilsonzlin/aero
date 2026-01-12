@@ -215,6 +215,20 @@ fi
 # This keeps native builds capped while allowing `cargo --target wasm32-...` to work in the
 # same shell after sourcing this script.
 if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
+  aero_target="${CARGO_BUILD_TARGET:-}"
+
+  # If we already have the native-style `-Wl,--threads=...` in the environment and the default
+  # Cargo target is wasm32 (via CARGO_BUILD_TARGET), rewrite it to the wasm-compatible form.
+  #
+  # This keeps `cargo build` working for wasm32 even when some other tooling (or a previous shell
+  # session) injected the native linker flag into `RUSTFLAGS`.
+  if [[ "${aero_target}" == wasm32-* ]] && [[ "${RUSTFLAGS:-}" == *"-Wl,--threads="* ]]; then
+    # Handle both `-C link-arg=...` and `-Clink-arg=...` spellings.
+    export RUSTFLAGS="${RUSTFLAGS//-C link-arg=-Wl,--threads=/-C link-arg=--threads=}"
+    export RUSTFLAGS="${RUSTFLAGS//-Clink-arg=-Wl,--threads=/-C link-arg=--threads=}"
+    export RUSTFLAGS="${RUSTFLAGS# }"
+  fi
+
   # Append a linker threads cap to `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` if one is not already present.
   _aero_add_lld_threads_rustflags() {
     local target="${1}"
@@ -271,6 +285,7 @@ if [[ "$(uname 2>/dev/null || true)" == "Linux" ]]; then
   fi
 
   unset aero_host_target 2>/dev/null || true
+  unset aero_target 2>/dev/null || true
   unset -f _aero_add_lld_threads_rustflags 2>/dev/null || true
 fi
 
