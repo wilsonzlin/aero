@@ -392,7 +392,6 @@ let hdaControllerBridge: HdaControllerBridge | null = null;
 type VirtioInputPciDevice = VirtioInputPciDeviceLike;
 let virtioInputKeyboard: VirtioInputPciFunction | null = null;
 let virtioInputMouse: VirtioInputPciFunction | null = null;
-
 type WebUsbGuestBridge = WebUsbUhciHotplugBridgeLike & UsbPassthroughBridgeLike;
 let webUsbGuestBridge: WebUsbGuestBridge | null = null;
 let lastUsbSelected: UsbSelectedMessage | null = null;
@@ -1611,7 +1610,7 @@ function maybeInitHdaDevice(): void {
   const api = wasmApi;
   const mgr = deviceManager;
   if (!api || !mgr) return;
-  if (!guestBase || !guestSize) return;
+  if (!guestBase) return;
 
   const Bridge = api.HdaControllerBridge;
   if (!Bridge) return;
@@ -2433,7 +2432,6 @@ function attachAudioRingBuffer(
   const cap = (capacityFrames ?? 0) >>> 0;
   const cc = (channelCount ?? 0) >>> 0;
   const sr = (dstSampleRate ?? 0) >>> 0;
-
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
@@ -2442,10 +2440,14 @@ function attachAudioRingBuffer(
     if (!(ringBuffer instanceof Sab)) {
       throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
     }
+
     // Validate against the canonical ring buffer layout (also creates convenient views).
     if (ringBuffer.byteLength < AUDIO_OUT_HEADER_BYTES) {
       throw new Error(`audio ring buffer is too small: need at least ${AUDIO_OUT_HEADER_BYTES} bytes`);
     }
+    if (cap === 0) throw new Error("setAudioRingBuffer: capacityFrames must be non-zero.");
+    if (cc === 0) throw new Error("setAudioRingBuffer: channelCount must be non-zero.");
+    if (sr === 0) throw new Error("setAudioRingBuffer: dstSampleRate must be non-zero.");
   }
 
   audioOutRingBuffer = ringBuffer;
@@ -3326,7 +3328,29 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<SetAudioRingBufferMessage>).type === "setAudioRingBuffer") {
       const msg = data as Partial<SetAudioRingBufferMessage>;
-      attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames, msg.channelCount, msg.dstSampleRate);
+      attachAudioRingBuffer(
+        (msg.ringBuffer as SharedArrayBuffer | null) ?? null,
+        msg.capacityFrames,
+        msg.channelCount,
+        msg.dstSampleRate,
+      );
+      return;
+    }
+
+    // Backwards-compatible alias used by older call sites/docs.
+    if ((data as { type?: unknown }).type === "setAudioOutputRingBuffer") {
+      const legacy = data as Partial<{
+        ringBuffer: SharedArrayBuffer | null;
+        sampleRate: number;
+        channelCount: number;
+        capacityFrames: number;
+      }>;
+      attachAudioRingBuffer(
+        (legacy.ringBuffer as SharedArrayBuffer | null) ?? null,
+        legacy.capacityFrames,
+        legacy.channelCount,
+        legacy.sampleRate,
+      );
       return;
     }
 

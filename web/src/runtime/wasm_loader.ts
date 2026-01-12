@@ -1025,6 +1025,10 @@ export interface WasmApi {
          * Alias for {@link process} retained for older call sites.
          */
         step_frames(frames: number): void;
+        /**
+         * Older stepping API retained by some WASM builds.
+         */
+        tick?(frames: number): void;
 
         irq_level(): boolean;
 
@@ -1209,9 +1213,9 @@ function toApi(mod: RawWasmModule): WasmApi {
         MicBridge: mod.MicBridge,
         attach_mic_bridge: mod.attach_mic_bridge,
         SineTone: mod.SineTone,
+        HdaControllerBridge: mod.HdaControllerBridge,
         HdaPcmWriter: mod.HdaPcmWriter,
         HdaPlaybackDemo: mod.HdaPlaybackDemo,
-        HdaControllerBridge: mod.HdaControllerBridge,
     };
 }
 

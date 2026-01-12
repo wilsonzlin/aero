@@ -151,8 +151,7 @@ describe("NetTracer", () => {
     expect(tx).toBeTruthy();
     expect(rx).toBeTruthy();
 
-    // Mirror Rust/NetTracer PCAPNG structure: a single Ethernet interface (`guest-eth0`), with
-    // direction encoded via `epb_flags`.
+    // Ethernet frames use a single interface ("guest-eth0"); direction is encoded via EPB flags.
     expect(tx!.interfaceId).toBe(0);
     expect(rx!.interfaceId).toBe(0);
 

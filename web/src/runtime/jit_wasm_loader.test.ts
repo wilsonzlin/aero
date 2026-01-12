@@ -33,6 +33,8 @@ afterEach(() => {
 });
 
 describe("runtime/jit_wasm_loader", () => {
+  // This test can be slow in heavily loaded CI/worker environments (dynamic module loading +
+  // WebAssembly compilation); give it a bit more headroom than Vitest's default 5s.
   it(
     "exposes compile_tier1_block and returns valid wasm bytes",
     async () => {
@@ -63,7 +65,7 @@ describe("runtime/jit_wasm_loader", () => {
       bytes.buffer instanceof ArrayBuffer ? (bytes as Uint8Array<ArrayBuffer>) : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
     expect(WebAssembly.validate(bytesForWasm)).toBe(true);
     },
-    20_000
+    20_000,
   );
 
   it(
