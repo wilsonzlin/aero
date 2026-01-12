@@ -28,20 +28,29 @@ const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 #[derive(Debug, Clone, Copy)]
 struct WasmGuestMemory {
     guest_base: u32,
+    guest_size: u64,
     mem_bytes: u64,
 }
 
 impl WasmGuestMemory {
     fn new(guest_base: u32) -> Self {
         let pages = core::arch::wasm32::memory_size(0) as u64;
+        let mem_bytes = pages.saturating_mul(64 * 1024);
+        let guest_size = mem_bytes
+            .saturating_sub(guest_base as u64)
+            .min(crate::guest_layout::PCI_MMIO_BASE);
         Self {
             guest_base,
-            mem_bytes: pages.saturating_mul(64 * 1024),
+            guest_size,
+            mem_bytes,
         }
     }
 
     fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
         let end = paddr.checked_add(len as u64)?;
+        if end > self.guest_size {
+            return None;
+        }
         let mapped = (self.guest_base as u64).checked_add(end)?;
         if mapped > self.mem_bytes {
             return None;
