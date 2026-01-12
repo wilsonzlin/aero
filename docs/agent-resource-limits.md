@@ -551,7 +551,8 @@ Mitigations:
   ```
 - If it still happens, reduce per-crate codegen parallelism further:
   ```bash
-  RUSTFLAGS="-C codegen-units=1" bash ./scripts/safe-run.sh cargo test --locked
+  AERO_RUST_CODEGEN_UNITS=1 bash ./scripts/safe-run.sh cargo test --locked
+  # (alias): AERO_CODEGEN_UNITS=1 bash ./scripts/safe-run.sh cargo test --locked
   ```
 
 ### "Too many open files"
