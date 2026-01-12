@@ -12,5 +12,7 @@ pub mod ide;
 
 pub mod ata;
 pub mod bus;
+pub mod pci_ahci;
 
 pub use bus::{GuestMemory, GuestMemoryExt, IrqLine};
+pub use pci_ahci::AhciPciDevice;

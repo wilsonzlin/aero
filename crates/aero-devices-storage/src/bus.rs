@@ -1,4 +1,7 @@
+use std::cell::RefCell;
 use std::fmt;
+
+use memory::MemoryBus;
 
 /// Minimal guest physical memory interface used for DMA.
 ///
@@ -56,6 +59,54 @@ impl<T: GuestMemory + ?Sized> GuestMemoryExt for T {}
 /// Interrupt line used by devices that signal legacy INTx-style interrupts.
 pub trait IrqLine {
     fn set_level(&self, high: bool);
+}
+
+/// Adapter that lets storage devices DMA through the platform's [`memory::MemoryBus`].
+///
+/// The storage device models in this crate use [`GuestMemory`] as a very small DMA surface.
+/// `MemoryBusGuestMemory` bridges that to the richer PC platform memory bus.
+///
+/// This adapter is intentionally defensive:
+/// - out-of-range / overflowing addresses do not panic
+/// - reads return zeroes
+/// - writes are ignored
+pub struct MemoryBusGuestMemory<'a> {
+    bus: RefCell<&'a mut dyn MemoryBus>,
+}
+
+impl<'a> MemoryBusGuestMemory<'a> {
+    pub fn new(bus: &'a mut dyn MemoryBus) -> Self {
+        Self {
+            bus: RefCell::new(bus),
+        }
+    }
+}
+
+impl GuestMemory for MemoryBusGuestMemory<'_> {
+    fn read(&self, paddr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        if paddr.checked_add(buf.len() as u64).is_none() {
+            buf.fill(0);
+            return;
+        }
+
+        self.bus.borrow_mut().read_physical(paddr, buf);
+    }
+
+    fn write(&mut self, paddr: u64, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        if paddr.checked_add(buf.len() as u64).is_none() {
+            return;
+        }
+
+        self.bus.borrow_mut().write_physical(paddr, buf);
+    }
 }
 
 #[derive(Default)]

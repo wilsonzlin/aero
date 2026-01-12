@@ -6,4 +6,5 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-storage = { path = "../aero-storage" }
-
+aero-devices = { path = "../devices" }
+memory = { path = "../memory" }

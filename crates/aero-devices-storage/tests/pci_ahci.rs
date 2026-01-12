@@ -1,0 +1,228 @@
+use aero_devices::pci::profile;
+use aero_devices::pci::PciDevice as _;
+use aero_devices_storage::ata::{AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
+use aero_devices_storage::AhciPciDevice;
+use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use memory::{Bus, MemoryBus};
+
+const HBA_GHC: u64 = 0x04;
+
+const PORT_BASE: u64 = 0x100;
+
+const PORT_REG_CLB: u64 = 0x00;
+const PORT_REG_CLBU: u64 = 0x04;
+const PORT_REG_FB: u64 = 0x08;
+const PORT_REG_FBU: u64 = 0x0C;
+const PORT_REG_IS: u64 = 0x10;
+const PORT_REG_IE: u64 = 0x14;
+const PORT_REG_CMD: u64 = 0x18;
+const PORT_REG_CI: u64 = 0x38;
+
+const GHC_IE: u32 = 1 << 1;
+const GHC_AE: u32 = 1 << 31;
+
+const PORT_CMD_ST: u32 = 1 << 0;
+const PORT_CMD_FRE: u32 = 1 << 4;
+
+const PORT_IS_DHRS: u32 = 1 << 0;
+
+fn write_cmd_header(
+    mem: &mut dyn MemoryBus,
+    clb: u64,
+    slot: usize,
+    ctba: u64,
+    prdtl: u16,
+    write: bool,
+) {
+    let cfl = 5u32;
+    let w = if write { 1u32 << 6 } else { 0 };
+    let flags = cfl | w | ((prdtl as u32) << 16);
+    let addr = clb + (slot as u64) * 32;
+    mem.write_u32(addr, flags);
+    mem.write_u32(addr + 4, 0); // PRDBC
+    mem.write_u32(addr + 8, ctba as u32);
+    mem.write_u32(addr + 12, (ctba >> 32) as u32);
+}
+
+fn write_prdt(mem: &mut dyn MemoryBus, ctba: u64, entry: usize, dba: u64, dbc: u32) {
+    let addr = ctba + 0x80 + (entry as u64) * 16;
+    mem.write_u32(addr, dba as u32);
+    mem.write_u32(addr + 4, (dba >> 32) as u32);
+    mem.write_u32(addr + 8, 0);
+    // DBC field stores byte_count-1 in bits 0..21.
+    mem.write_u32(addr + 12, (dbc - 1) & 0x003F_FFFF);
+}
+
+fn write_cfis(mem: &mut dyn MemoryBus, ctba: u64, command: u8, lba: u64, count: u16) {
+    let mut cfis = [0u8; 64];
+    cfis[0] = 0x27;
+    cfis[1] = 0x80;
+    cfis[2] = command;
+    cfis[7] = 0x40; // LBA mode
+
+    cfis[4] = (lba & 0xFF) as u8;
+    cfis[5] = ((lba >> 8) & 0xFF) as u8;
+    cfis[6] = ((lba >> 16) & 0xFF) as u8;
+    cfis[8] = ((lba >> 24) & 0xFF) as u8;
+    cfis[9] = ((lba >> 32) & 0xFF) as u8;
+    cfis[10] = ((lba >> 40) & 0xFF) as u8;
+
+    cfis[12] = (count & 0xFF) as u8;
+    cfis[13] = (count >> 8) as u8;
+
+    mem.write_physical(ctba, &cfis);
+}
+
+#[test]
+fn pci_config_header_fields_and_bar5_size_probe() {
+    let mut dev = AhciPciDevice::new(1);
+
+    let expected = profile::SATA_AHCI_ICH9;
+    let id = dev.config().vendor_device_id();
+    assert_eq!(id.vendor_id, expected.vendor_id);
+    assert_eq!(id.device_id, expected.device_id);
+
+    let class = dev.config().class_code();
+    let class_code =
+        ((class.class as u32) << 16) | ((class.subclass as u32) << 8) | (class.prog_if as u32);
+    assert_eq!(class_code, 0x010601);
+
+    // BAR5 (ABAR) size probing.
+    let bar5_off = 0x10u16 + 5 * 4;
+    dev.config_mut().write(bar5_off, 4, 0xFFFF_FFFF);
+    let got = dev.config_mut().read(bar5_off, 4);
+    assert_eq!(got, 0xFFFF_E000);
+}
+
+#[test]
+fn mmio_identify_and_read_dma_ext_via_pci_wrapper() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"BOOT");
+    sector0[510] = 0x55;
+    sector0[511] = 0xAA;
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let mut dev = AhciPciDevice::new(1);
+    dev.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+
+    // Enable bus mastering so DMA is permitted.
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    let mut mem = Bus::new(0x20_000);
+
+    // Basic port programming.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CLB, 4, clb);
+    dev.mmio_write(PORT_BASE + PORT_REG_CLBU, 4, clb >> 32);
+    dev.mmio_write(PORT_BASE + PORT_REG_FB, 4, fb);
+    dev.mmio_write(PORT_BASE + PORT_REG_FBU, 4, fb >> 32);
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_IE | GHC_AE));
+    dev.mmio_write(PORT_BASE + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
+    dev.mmio_write(
+        PORT_BASE + PORT_REG_CMD,
+        4,
+        u64::from(PORT_CMD_ST | PORT_CMD_FRE),
+    );
+
+    // IDENTIFY DMA.
+    write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+    write_cfis(&mut mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut mem, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+
+    assert!(dev.intx_level());
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_CI, 4) as u32, 0);
+    assert_ne!(
+        dev.mmio_read(PORT_BASE + PORT_REG_IS, 4) as u32 & PORT_IS_DHRS,
+        0
+    );
+
+    let mut identify = [0u8; SECTOR_SIZE];
+    mem.read_physical(identify_buf, &mut identify);
+    assert_eq!(identify[0], 0x40);
+
+    // Clear interrupt and ensure INTx deasserts.
+    dev.mmio_write(PORT_BASE + PORT_REG_IS, 4, u64::from(PORT_IS_DHRS));
+    assert!(!dev.intx_level());
+
+    // READ DMA EXT for LBA 0, 1 sector.
+    let read_buf = 0x5000u64;
+    write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+    write_cfis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 0, 1);
+    write_prdt(&mut mem, ctba, 0, read_buf, SECTOR_SIZE as u32);
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+
+    let mut out = [0u8; SECTOR_SIZE];
+    mem.read_physical(read_buf, &mut out);
+    assert_eq!(&out[0..4], b"BOOT");
+    assert_eq!(&out[510..512], &[0x55, 0xAA]);
+}
+
+#[test]
+fn interrupt_enable_bits_and_pci_interrupt_disable_gate_intx() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut dev = AhciPciDevice::new(1);
+    dev.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    let mut mem = Bus::new(0x20_000);
+
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let buf = 0x4000u64;
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CLB, 4, clb);
+    dev.mmio_write(PORT_BASE + PORT_REG_FB, 4, fb);
+    dev.mmio_write(
+        PORT_BASE + PORT_REG_CMD,
+        4,
+        u64::from(PORT_CMD_ST | PORT_CMD_FRE),
+    );
+
+    // Issue an IDENTIFY command with interrupts initially disabled.
+    write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+    write_cfis(&mut mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut mem, ctba, 0, buf, SECTOR_SIZE as u32);
+
+    dev.mmio_write(PORT_BASE + PORT_REG_CI, 4, 1);
+    dev.process(&mut mem);
+
+    // PxIS is set, but both PxIE and GHC.IE are clear, so no INTx.
+    assert_ne!(
+        dev.mmio_read(PORT_BASE + PORT_REG_IS, 4) as u32 & PORT_IS_DHRS,
+        0
+    );
+    assert!(!dev.intx_level());
+
+    // Enable global interrupts only (still no INTx because PxIE=0).
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_AE | GHC_IE));
+    assert!(!dev.intx_level());
+
+    // Enable per-port interrupts: INTx should assert because PxIS already has DHRS pending.
+    dev.mmio_write(PORT_BASE + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
+    assert!(dev.intx_level());
+
+    // PCI command bit 10 should mask legacy INTx.
+    let cmd = dev.config().command();
+    dev.config_mut().set_command(cmd | (1 << 10));
+    assert!(!dev.intx_level());
+    dev.config_mut().set_command(cmd & !(1 << 10));
+    assert!(dev.intx_level());
+
+    // Clearing PxIS should deassert the interrupt.
+    dev.mmio_write(PORT_BASE + PORT_REG_IS, 4, u64::from(PORT_IS_DHRS));
+    assert!(!dev.intx_level());
+}
