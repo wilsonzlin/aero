@@ -2051,8 +2051,10 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     Adapter->State = AerovNetAdapterStopped;
     NdisReleaseSpinLock(&Adapter->Lock);
 
-    // Quiesce the device. Full cleanup happens in HaltEx (PASSIVE_LEVEL).
-    VirtioPciSetStatus(&Adapter->Vdev, 0);
+    // On surprise removal, the device may no longer be accessible. Avoid any
+    // further virtio BAR MMIO access here; full software cleanup happens in
+    // HaltEx (PASSIVE_LEVEL).
+    DbgPrint("aero_virtio_net: pnp: SurpriseRemoved=TRUE; stopping without virtio MMIO\n");
   }
 }
 
