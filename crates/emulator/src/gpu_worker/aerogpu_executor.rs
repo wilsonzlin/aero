@@ -836,7 +836,7 @@ fn write_scanout0_rgba8(
         let src_row = &scanout.rgba8[src_row_start..src_row_start + src_width * 4];
 
         match regs.scanout0.format {
-            AeroGpuFormat::B8G8R8A8Unorm => {
+            AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                 for x in 0..copy_width {
                     let src = &src_row[x * 4..x * 4 + 4];
                     let dst = &mut row_buf[x * 4..x * 4 + 4];
@@ -846,7 +846,7 @@ fn write_scanout0_rgba8(
                     dst[3] = src[3];
                 }
             }
-            AeroGpuFormat::B8G8R8X8Unorm => {
+            AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                 for x in 0..copy_width {
                     let src = &src_row[x * 4..x * 4 + 4];
                     let dst = &mut row_buf[x * 4..x * 4 + 4];
@@ -856,10 +856,10 @@ fn write_scanout0_rgba8(
                     dst[3] = 0xff;
                 }
             }
-            AeroGpuFormat::R8G8B8A8Unorm => {
+            AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                 row_buf[..copy_width * 4].copy_from_slice(&src_row[..copy_width * 4]);
             }
-            AeroGpuFormat::R8G8B8X8Unorm => {
+            AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                 for x in 0..copy_width {
                     let src = &src_row[x * 4..x * 4 + 4];
                     let dst = &mut row_buf[x * 4..x * 4 + 4];
@@ -892,13 +892,7 @@ fn write_scanout0_rgba8(
                     dst.copy_from_slice(&pix.to_le_bytes());
                 }
             }
-            AeroGpuFormat::Invalid
-            | AeroGpuFormat::D24UnormS8Uint
-            | AeroGpuFormat::D32Float
-            | AeroGpuFormat::Bc1Unorm
-            | AeroGpuFormat::Bc2Unorm
-            | AeroGpuFormat::Bc3Unorm
-            | AeroGpuFormat::Bc7Unorm => {
+            _ => {
                 return Err(format!(
                     "unsupported scanout format {:?}",
                     regs.scanout0.format

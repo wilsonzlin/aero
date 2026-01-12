@@ -658,6 +658,10 @@ impl AeroGpuSoftwareExecutor {
             | AeroGpuFormat::B8G8R8X8Unorm
             | AeroGpuFormat::R8G8B8A8Unorm
             | AeroGpuFormat::R8G8B8X8Unorm
+            | AeroGpuFormat::B8G8R8A8UnormSrgb
+            | AeroGpuFormat::B8G8R8X8UnormSrgb
+            | AeroGpuFormat::R8G8B8A8UnormSrgb
+            | AeroGpuFormat::R8G8B8X8UnormSrgb
             // Depth formats are treated as 4 bytes/texel for backing-size computations, matching
             // host executors and the rest of this software backend.
             | AeroGpuFormat::D24UnormS8Uint
@@ -670,12 +674,17 @@ impl AeroGpuSoftwareExecutor {
                 })
             }
             // Block-compressed formats (4x4 blocks).
-            AeroGpuFormat::Bc1Unorm => Some(Texture2DLayoutFormat::BlockCompressed {
-                block_bytes: 8,
-            }),
+            AeroGpuFormat::Bc1Unorm | AeroGpuFormat::Bc1UnormSrgb => {
+                Some(Texture2DLayoutFormat::BlockCompressed {
+                    block_bytes: 8,
+                })
+            }
             AeroGpuFormat::Bc2Unorm
+            | AeroGpuFormat::Bc2UnormSrgb
             | AeroGpuFormat::Bc3Unorm
-            | AeroGpuFormat::Bc7Unorm => Some(Texture2DLayoutFormat::BlockCompressed {
+            | AeroGpuFormat::Bc3UnormSrgb
+            | AeroGpuFormat::Bc7Unorm
+            | AeroGpuFormat::Bc7UnormSrgb => Some(Texture2DLayoutFormat::BlockCompressed {
                 block_bytes: 16,
             }),
             AeroGpuFormat::Invalid => None,
@@ -818,14 +827,14 @@ impl AeroGpuSoftwareExecutor {
             | AeroGpuFormat::B8G8R8X8Unorm
             | AeroGpuFormat::R8G8B8A8Unorm
             | AeroGpuFormat::R8G8B8X8Unorm
+            | AeroGpuFormat::B8G8R8A8UnormSrgb
+            | AeroGpuFormat::B8G8R8X8UnormSrgb
+            | AeroGpuFormat::R8G8B8A8UnormSrgb
+            | AeroGpuFormat::R8G8B8X8UnormSrgb
             | AeroGpuFormat::D24UnormS8Uint
             | AeroGpuFormat::D32Float => Some(4),
             AeroGpuFormat::B5G6R5Unorm | AeroGpuFormat::B5G5R5A1Unorm => Some(2),
-            AeroGpuFormat::Bc1Unorm
-            | AeroGpuFormat::Bc2Unorm
-            | AeroGpuFormat::Bc3Unorm
-            | AeroGpuFormat::Bc7Unorm
-            | AeroGpuFormat::Invalid => None,
+            _ => None,
         }
     }
 
@@ -842,21 +851,33 @@ impl AeroGpuSoftwareExecutor {
             return None;
         }
         match tex.format {
-            AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8X8Unorm => Some([
+            AeroGpuFormat::B8G8R8A8Unorm
+            | AeroGpuFormat::B8G8R8A8UnormSrgb
+            | AeroGpuFormat::B8G8R8X8Unorm
+            | AeroGpuFormat::B8G8R8X8UnormSrgb => Some([
                 tex.data[off + 2], // r
                 tex.data[off + 1], // g
                 tex.data[off],     // b
-                if matches!(tex.format, AeroGpuFormat::B8G8R8A8Unorm) {
+                if matches!(
+                    tex.format,
+                    AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb
+                ) {
                     tex.data[off + 3]
                 } else {
                     0xff
                 },
             ]),
-            AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8X8Unorm => Some([
+            AeroGpuFormat::R8G8B8A8Unorm
+            | AeroGpuFormat::R8G8B8A8UnormSrgb
+            | AeroGpuFormat::R8G8B8X8Unorm
+            | AeroGpuFormat::R8G8B8X8UnormSrgb => Some([
                 tex.data[off],
                 tex.data[off + 1],
                 tex.data[off + 2],
-                if matches!(tex.format, AeroGpuFormat::R8G8B8A8Unorm) {
+                if matches!(
+                    tex.format,
+                    AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb
+                ) {
                     tex.data[off + 3]
                 } else {
                     0xff
@@ -970,25 +991,25 @@ impl AeroGpuSoftwareExecutor {
         }
         let [r, g, b, a] = rgba;
         match tex.format {
-            AeroGpuFormat::B8G8R8A8Unorm => {
+            AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                 tex.data[off] = b;
                 tex.data[off + 1] = g;
                 tex.data[off + 2] = r;
                 tex.data[off + 3] = a;
             }
-            AeroGpuFormat::B8G8R8X8Unorm => {
+            AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                 tex.data[off] = b;
                 tex.data[off + 1] = g;
                 tex.data[off + 2] = r;
                 tex.data[off + 3] = 0xff;
             }
-            AeroGpuFormat::R8G8B8A8Unorm => {
+            AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                 tex.data[off] = r;
                 tex.data[off + 1] = g;
                 tex.data[off + 2] = b;
                 tex.data[off + 3] = a;
             }
-            AeroGpuFormat::R8G8B8X8Unorm => {
+            AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                 tex.data[off] = r;
                 tex.data[off + 1] = g;
                 tex.data[off + 2] = b;
@@ -1125,25 +1146,25 @@ impl AeroGpuSoftwareExecutor {
             for x in 0..width {
                 let off = row_start + x * 4;
                 match tex.format {
-                    AeroGpuFormat::B8G8R8A8Unorm => {
+                    AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                         tex.data[off] = b;
                         tex.data[off + 1] = g;
                         tex.data[off + 2] = r;
                         tex.data[off + 3] = a;
                     }
-                    AeroGpuFormat::B8G8R8X8Unorm => {
+                    AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                         tex.data[off] = b;
                         tex.data[off + 1] = g;
                         tex.data[off + 2] = r;
                         tex.data[off + 3] = 0xff;
                     }
-                    AeroGpuFormat::R8G8B8A8Unorm => {
+                    AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                         tex.data[off] = r;
                         tex.data[off + 1] = g;
                         tex.data[off + 2] = b;
                         tex.data[off + 3] = a;
                     }
-                    AeroGpuFormat::R8G8B8X8Unorm => {
+                    AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                         tex.data[off] = r;
                         tex.data[off + 1] = g;
                         tex.data[off + 2] = b;

@@ -13,15 +13,22 @@ pub enum AeroGpuFormat {
     R8G8B8X8Unorm = ProtocolAerogpuFormat::R8G8B8X8Unorm as u32,
     B5G6R5Unorm = ProtocolAerogpuFormat::B5G6R5Unorm as u32,
     B5G5R5A1Unorm = ProtocolAerogpuFormat::B5G5R5A1Unorm as u32,
+    B8G8R8A8UnormSrgb = ProtocolAerogpuFormat::B8G8R8A8UnormSrgb as u32,
+    B8G8R8X8UnormSrgb = ProtocolAerogpuFormat::B8G8R8X8UnormSrgb as u32,
+    R8G8B8A8UnormSrgb = ProtocolAerogpuFormat::R8G8B8A8UnormSrgb as u32,
+    R8G8B8X8UnormSrgb = ProtocolAerogpuFormat::R8G8B8X8UnormSrgb as u32,
     D24UnormS8Uint = ProtocolAerogpuFormat::D24UnormS8Uint as u32,
     D32Float = ProtocolAerogpuFormat::D32Float as u32,
-    // Values reserved for future protocol extensions. The scanout/cursor paths do not currently
-    // support these formats, but we keep them representable so the software executor can size and
-    // safely ignore them.
-    Bc1Unorm = 64,
-    Bc2Unorm = 65,
-    Bc3Unorm = 66,
-    Bc7Unorm = 67,
+    // The scanout/cursor paths do not currently support BC formats, but we keep them representable
+    // so the software executor can compute backing sizes (and ignore them when presenting).
+    Bc1Unorm = ProtocolAerogpuFormat::BC1RgbaUnorm as u32,
+    Bc1UnormSrgb = ProtocolAerogpuFormat::BC1RgbaUnormSrgb as u32,
+    Bc2Unorm = ProtocolAerogpuFormat::BC2RgbaUnorm as u32,
+    Bc2UnormSrgb = ProtocolAerogpuFormat::BC2RgbaUnormSrgb as u32,
+    Bc3Unorm = ProtocolAerogpuFormat::BC3RgbaUnorm as u32,
+    Bc3UnormSrgb = ProtocolAerogpuFormat::BC3RgbaUnormSrgb as u32,
+    Bc7Unorm = ProtocolAerogpuFormat::BC7RgbaUnorm as u32,
+    Bc7UnormSrgb = ProtocolAerogpuFormat::BC7RgbaUnormSrgb as u32,
 }
 
 impl AeroGpuFormat {
@@ -38,18 +45,34 @@ impl AeroGpuFormat {
             Self::B5G6R5Unorm
         } else if value == Self::B5G5R5A1Unorm as u32 {
             Self::B5G5R5A1Unorm
+        } else if value == Self::B8G8R8A8UnormSrgb as u32 {
+            Self::B8G8R8A8UnormSrgb
+        } else if value == Self::B8G8R8X8UnormSrgb as u32 {
+            Self::B8G8R8X8UnormSrgb
+        } else if value == Self::R8G8B8A8UnormSrgb as u32 {
+            Self::R8G8B8A8UnormSrgb
+        } else if value == Self::R8G8B8X8UnormSrgb as u32 {
+            Self::R8G8B8X8UnormSrgb
         } else if value == Self::D24UnormS8Uint as u32 {
             Self::D24UnormS8Uint
         } else if value == Self::D32Float as u32 {
             Self::D32Float
         } else if value == Self::Bc1Unorm as u32 {
             Self::Bc1Unorm
+        } else if value == Self::Bc1UnormSrgb as u32 {
+            Self::Bc1UnormSrgb
         } else if value == Self::Bc2Unorm as u32 {
             Self::Bc2Unorm
+        } else if value == Self::Bc2UnormSrgb as u32 {
+            Self::Bc2UnormSrgb
         } else if value == Self::Bc3Unorm as u32 {
             Self::Bc3Unorm
+        } else if value == Self::Bc3UnormSrgb as u32 {
+            Self::Bc3UnormSrgb
         } else if value == Self::Bc7Unorm as u32 {
             Self::Bc7Unorm
+        } else if value == Self::Bc7UnormSrgb as u32 {
+            Self::Bc7UnormSrgb
         } else {
             Self::Invalid
         }
@@ -57,18 +80,16 @@ impl AeroGpuFormat {
 
     pub fn bytes_per_pixel(self) -> Option<usize> {
         match self {
-            Self::Invalid
-            | Self::D24UnormS8Uint
-            | Self::D32Float
-            | Self::Bc1Unorm
-            | Self::Bc2Unorm
-            | Self::Bc3Unorm
-            | Self::Bc7Unorm => None,
             Self::B8G8R8A8Unorm
             | Self::B8G8R8X8Unorm
             | Self::R8G8B8A8Unorm
-            | Self::R8G8B8X8Unorm => Some(4),
+            | Self::R8G8B8X8Unorm
+            | Self::B8G8R8A8UnormSrgb
+            | Self::B8G8R8X8UnormSrgb
+            | Self::R8G8B8A8UnormSrgb
+            | Self::R8G8B8X8UnormSrgb => Some(4),
             Self::B5G6R5Unorm | Self::B5G5R5A1Unorm => Some(2),
+            _ => None,
         }
     }
 }
@@ -125,7 +146,7 @@ impl AeroGpuScanoutConfig {
             let dst_row = &mut out[y * width * 4..(y + 1) * width * 4];
 
             match self.format {
-                AeroGpuFormat::B8G8R8A8Unorm => {
+                AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                     for x in 0..width {
                         let src = &row_buf[x * 4..x * 4 + 4];
                         let dst = &mut dst_row[x * 4..x * 4 + 4];
@@ -135,7 +156,7 @@ impl AeroGpuScanoutConfig {
                         dst[3] = src[3];
                     }
                 }
-                AeroGpuFormat::B8G8R8X8Unorm => {
+                AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                     for x in 0..width {
                         let src = &row_buf[x * 4..x * 4 + 4];
                         let dst = &mut dst_row[x * 4..x * 4 + 4];
@@ -145,10 +166,10 @@ impl AeroGpuScanoutConfig {
                         dst[3] = 0xff;
                     }
                 }
-                AeroGpuFormat::R8G8B8A8Unorm => {
+                AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                     dst_row.copy_from_slice(&row_buf);
                 }
-                AeroGpuFormat::R8G8B8X8Unorm => {
+                AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                     for x in 0..width {
                         let src = &row_buf[x * 4..x * 4 + 4];
                         let dst = &mut dst_row[x * 4..x * 4 + 4];
@@ -185,13 +206,7 @@ impl AeroGpuScanoutConfig {
                         dst[3] = if a != 0 { 0xff } else { 0x00 };
                     }
                 }
-                AeroGpuFormat::Invalid
-                | AeroGpuFormat::D24UnormS8Uint
-                | AeroGpuFormat::D32Float
-                | AeroGpuFormat::Bc1Unorm
-                | AeroGpuFormat::Bc2Unorm
-                | AeroGpuFormat::Bc3Unorm
-                | AeroGpuFormat::Bc7Unorm => return None,
+                _ => return None,
             }
         }
 
@@ -274,7 +289,7 @@ impl AeroGpuCursorConfig {
             let dst_row = &mut out[y * width * 4..(y + 1) * width * 4];
 
             match self.format {
-                AeroGpuFormat::B8G8R8A8Unorm => {
+                AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
                     for x in 0..width {
                         let src = &row_buf[x * 4..x * 4 + 4];
                         let dst = &mut dst_row[x * 4..x * 4 + 4];
@@ -284,12 +299,12 @@ impl AeroGpuCursorConfig {
                         dst[3] = src[3];
                     }
                 }
-                AeroGpuFormat::R8G8B8A8Unorm => {
+                AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
                     dst_row.copy_from_slice(&row_buf);
                 }
                 // Cursor should be ARGB, but accept XRGB for now (opaque alpha) so
                 // diagnostics/debug cursors are visible even if the guest picks X8R8G8B8.
-                AeroGpuFormat::B8G8R8X8Unorm => {
+                AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
                     for x in 0..width {
                         let src = &row_buf[x * 4..x * 4 + 4];
                         let dst = &mut dst_row[x * 4..x * 4 + 4];
@@ -299,7 +314,7 @@ impl AeroGpuCursorConfig {
                         dst[3] = 0xff;
                     }
                 }
-                AeroGpuFormat::R8G8B8X8Unorm => {
+                AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
                     for x in 0..width {
                         let src = &row_buf[x * 4..x * 4 + 4];
                         let dst = &mut dst_row[x * 4..x * 4 + 4];
