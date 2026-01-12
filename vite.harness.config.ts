@@ -123,9 +123,11 @@ function wasmMimeTypePlugin(): Plugin {
 
 function audioWorkletDependenciesPlugin(): Plugin {
   // Vite treats AudioWorklet modules loaded via `audioWorklet.addModule(new URL(...))` as static
-  // assets and does not follow their ESM imports. Our mic worklet (`web/src/audio/mic-worklet-processor.js`)
-  // imports `./mic_ring.js`, so we manually emit a copy into `dist/assets/` so the browser can
-  // resolve it at runtime.
+  // assets and does not follow their ESM imports. Our worklets have runtime ESM imports:
+  // - `web/src/audio/mic-worklet-processor.js` imports `./mic_ring.js`
+  // - `web/src/platform/audio-worklet-processor.js` imports `./audio_worklet_ring_layout.js`
+  //
+  // Emit copies into `dist/assets/` so the browser can resolve them at runtime.
   const srcMicRingPath = resolve(rootDir, 'web/src/audio/mic_ring.js');
   const source = readFileSync(srcMicRingPath, 'utf8');
   const srcAudioWorkletRingLayoutPath = resolve(rootDir, 'web/src/platform/audio_worklet_ring_layout.js');
