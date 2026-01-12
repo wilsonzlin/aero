@@ -203,7 +203,7 @@ Inside the guest:
    - Find the virtio-input PCI device(s) (often show as unknown before binding)
    - Update Driver → Have Disk… → point at the directory containing:
       - `aero_virtio_input.inf`
-     - `aero_virtio_input.sys`
+      - `aero_virtio_input.sys`
       - `aero_virtio_input.cat`
 
 ### 3.3 Verify HID keyboard + mouse enumeration
