@@ -77,8 +77,8 @@ use aero_snapshot as snapshot;
 use firmware::bda::{BDA_CURSOR_POS_PAGE0_ADDR, BDA_CURSOR_SHAPE_ADDR, BDA_SCREEN_COLS_ADDR};
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
-    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, GuestMemoryMapping, MapError,
-    MappedGuestMemory, MemoryBus as _, MmioHandler,
+    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
+    MmioHandler, SparseMemory,
 };
 
 mod pci_firmware;
@@ -87,6 +87,10 @@ use pci_firmware::SharedPciConfigPortsBiosAdapter;
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+const FOUR_GIB: u64 = 0x1_0000_0000;
+// Use a sparse RAM backend once memory sizes exceed this threshold to avoid accidentally
+// allocating multi-GB buffers in tests and constrained environments.
+const SPARSE_RAM_THRESHOLD_BYTES: u64 = 512 * 1024 * 1024;
 
 pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
@@ -325,42 +329,29 @@ struct SystemMemory {
 
 impl SystemMemory {
     fn new(ram_size_bytes: u64, a20: A20GateHandle) -> Result<Self, MachineError> {
-        const FOUR_GIB: u64 = 0x1_0000_0000;
-        let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
-
-        let ram = DenseMemory::new(ram_size_bytes)
-            .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
-        let (ram, dirty) = DirtyGuestMemory::new(Box::new(ram), SNAPSHOT_DIRTY_PAGE_SIZE);
-        let ram: Box<dyn memory::GuestMemory> = if ram_size_bytes > low_ram_end {
-            // Match the BIOS E820 map behavior: once RAM extends into the PCIe ECAM / PCI hole
-            // below 4GiB, remap the remainder above 4GiB.
-            let high_len = ram_size_bytes - low_ram_end;
-            let phys_size = FOUR_GIB
-                .checked_add(high_len)
-                .ok_or(MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
-            let mapped = MappedGuestMemory::new(
-                Box::new(ram),
-                phys_size,
-                vec![
-                    GuestMemoryMapping {
-                        phys_start: 0,
-                        phys_end: low_ram_end,
-                        inner_offset: 0,
-                    },
-                    GuestMemoryMapping {
-                        phys_start: FOUR_GIB,
-                        phys_end: phys_size,
-                        inner_offset: low_ram_end,
-                    },
-                ],
-            )
-            .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
-            Box::new(mapped)
+        // Keep the RAM backing store contiguous in "RAM-offset space" `[0, ram_size_bytes)`, even
+        // when the guest physical address space contains the PCI/ECAM/MMIO hole below 4GiB.
+        //
+        // For large configured sizes, prefer a sparse backend so unit tests can configure RAM just
+        // above the ECAM base without allocating multiple GiB.
+        let backing: Box<dyn memory::GuestMemory> = if ram_size_bytes <= SPARSE_RAM_THRESHOLD_BYTES {
+            let ram = DenseMemory::new(ram_size_bytes)
+                .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
+            Box::new(ram)
         } else {
+            let ram = SparseMemory::new(ram_size_bytes)
+                .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
             Box::new(ram)
         };
+
+        // Dirty tracking must be in *RAM-offset space* so dirty page indices match the contiguous
+        // RAM image used by snapshots even when the PC platform remaps high memory above 4GiB.
+        let (backing, dirty) = DirtyGuestMemory::new(backing, SNAPSHOT_DIRTY_PAGE_SIZE);
+
+        // `PlatformMemoryBus::with_ram` wraps the provided RAM backend with the PC high-memory
+        // layout (PCI/ECAM hole + >4GiB remap) when `ram_size_bytes > PCIE_ECAM_BASE`.
         let filter = AddressFilter::new(a20.clone());
-        let bus = PlatformMemoryBus::with_ram(filter, ram);
+        let bus = PlatformMemoryBus::with_ram(filter, Box::new(backing));
 
         Ok(Self {
             a20,
@@ -3314,7 +3305,6 @@ impl snapshot::SnapshotSource for Machine {
     }
 
     fn read_ram(&self, offset: u64, buf: &mut [u8]) -> snapshot::Result<()> {
-        const FOUR_GIB: u64 = 0x1_0000_0000;
         let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
         let end = offset
             .checked_add(buf.len() as u64)
@@ -3322,36 +3312,34 @@ impl snapshot::SnapshotSource for Machine {
         if end > self.cfg.ram_size_bytes {
             return Err(snapshot::SnapshotError::Corrupt("ram read out of range"));
         }
-
         // Snapshots encode RAM as a dense byte array of length `ram_size_bytes` (not including any
         // guest-physical MMIO holes). When RAM is remapped above 4GiB to make room for the PCIe
         // ECAM/PCI hole, translate dense RAM offsets into the corresponding guest-physical
         // addresses.
         let ram = self.mem.bus.ram();
-        if self.cfg.ram_size_bytes <= low_ram_end || buf.is_empty() {
-            ram.read_into(offset, buf)
-                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
-            return Ok(());
-        }
 
-        if offset < low_ram_end {
-            let low_len = (low_ram_end - offset) as usize;
-            let first = low_len.min(buf.len());
-            ram.read_into(offset, &mut buf[..first])
-                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
-            if first < buf.len() {
-                let phys = FOUR_GIB;
-                ram.read_into(phys, &mut buf[first..])
-                    .map_err(|_err: GuestMemoryError| {
-                        snapshot::SnapshotError::Corrupt("ram read failed")
-                    })?;
-            }
-            return Ok(());
-        }
+        let mut cur_offset = offset;
+        let mut remaining = buf;
+        while !remaining.is_empty() {
+            let phys = if cur_offset < low_ram_end {
+                cur_offset
+            } else {
+                FOUR_GIB + (cur_offset - low_ram_end)
+            };
 
-        let phys = FOUR_GIB + (offset - low_ram_end);
-        ram.read_into(phys, buf)
-            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            let chunk_len = if cur_offset < low_ram_end {
+                let until_boundary = low_ram_end - cur_offset;
+                let until_boundary = usize::try_from(until_boundary).unwrap_or(remaining.len());
+                remaining.len().min(until_boundary)
+            } else {
+                remaining.len()
+            };
+
+            ram.read_into(phys, &mut remaining[..chunk_len])
+                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
+            cur_offset += chunk_len as u64;
+            remaining = &mut remaining[chunk_len..];
+        }
         Ok(())
     }
 
@@ -3884,7 +3872,6 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> snapshot::Result<()> {
-        const FOUR_GIB: u64 = 0x1_0000_0000;
         let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
         let end = offset
             .checked_add(data.len() as u64)
@@ -3892,32 +3879,30 @@ impl snapshot::SnapshotTarget for Machine {
         if end > self.cfg.ram_size_bytes {
             return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
         }
-
         let ram = self.mem.bus.ram_mut();
-        if self.cfg.ram_size_bytes <= low_ram_end || data.is_empty() {
-            ram.write_from(offset, data)
-                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
-            return Ok(());
-        }
 
-        if offset < low_ram_end {
-            let low_len = (low_ram_end - offset) as usize;
-            let first = low_len.min(data.len());
-            ram.write_from(offset, &data[..first])
-                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
-            if first < data.len() {
-                let phys = FOUR_GIB;
-                ram.write_from(phys, &data[first..])
-                    .map_err(|_err: GuestMemoryError| {
-                        snapshot::SnapshotError::Corrupt("ram write failed")
-                    })?;
-            }
-            return Ok(());
-        }
+        let mut cur_offset = offset;
+        let mut remaining = data;
+        while !remaining.is_empty() {
+            let phys = if cur_offset < low_ram_end {
+                cur_offset
+            } else {
+                FOUR_GIB + (cur_offset - low_ram_end)
+            };
 
-        let phys = FOUR_GIB + (offset - low_ram_end);
-        ram.write_from(phys, data)
-            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+            let chunk_len = if cur_offset < low_ram_end {
+                let until_boundary = low_ram_end - cur_offset;
+                let until_boundary = usize::try_from(until_boundary).unwrap_or(remaining.len());
+                remaining.len().min(until_boundary)
+            } else {
+                remaining.len()
+            };
+
+            ram.write_from(phys, &remaining[..chunk_len])
+                .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
+            cur_offset += chunk_len as u64;
+            remaining = &remaining[chunk_len..];
+        }
         Ok(())
     }
 
@@ -6081,16 +6066,16 @@ mod tests {
         let (backing, _dirty) =
             DirtyGuestMemory::new(Box::new(backing), SNAPSHOT_DIRTY_PAGE_SIZE);
 
-        let mapped = MappedGuestMemory::new(
+        let mapped = memory::MappedGuestMemory::new(
             Box::new(backing),
             phys_size,
             vec![
-                GuestMemoryMapping {
+                memory::GuestMemoryMapping {
                     phys_start: 0,
                     phys_end: low_end,
                     inner_offset: 0,
                 },
-                GuestMemoryMapping {
+                memory::GuestMemoryMapping {
                     phys_start: FOUR_GIB,
                     phys_end: phys_size,
                     inner_offset: low_end,
