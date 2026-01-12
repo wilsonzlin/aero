@@ -621,6 +621,20 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.Fail("GetVertexShaderConstantI mismatch");
     }
 
+    int ps_vals_i[4] = {31, 32, 33, 34};
+    hr = dev->SetPixelShaderConstantI(5, ps_vals_i, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantI", hr);
+    }
+    int got_ps_i[4] = {};
+    hr = dev->GetPixelShaderConstantI(5, got_ps_i, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPixelShaderConstantI", hr);
+    }
+    if (std::memcmp(got_ps_i, ps_vals_i, sizeof(ps_vals_i)) != 0) {
+      return reporter.Fail("GetPixelShaderConstantI mismatch");
+    }
+
     BOOL vals_b[4] = {TRUE, FALSE, TRUE, FALSE};
     hr = dev->SetPixelShaderConstantB(3, vals_b, 4);
     if (FAILED(hr)) {
@@ -636,6 +650,27 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       const BOOL b = got_b[i] ? TRUE : FALSE;
       if (a != b) {
         return reporter.Fail("GetPixelShaderConstantB mismatch at %d: got=%d expected=%d",
+                             i,
+                             (int)b,
+                             (int)a);
+      }
+    }
+
+    BOOL vs_vals_b[2] = {FALSE, TRUE};
+    hr = dev->SetVertexShaderConstantB(6, vs_vals_b, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantB", hr);
+    }
+    BOOL got_vs_b[2] = {};
+    hr = dev->GetVertexShaderConstantB(6, got_vs_b, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexShaderConstantB", hr);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const BOOL a = vs_vals_b[i] ? TRUE : FALSE;
+      const BOOL b = got_vs_b[i] ? TRUE : FALSE;
+      if (a != b) {
+        return reporter.Fail("GetVertexShaderConstantB mismatch at %d: got=%d expected=%d",
                              i,
                              (int)b,
                              (int)a);
@@ -850,6 +885,8 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   // ---------------------------------------------------------------------------
   const int vs_i_sb[4] = {101, 102, 103, 104};
   const BOOL ps_b_sb[2] = {TRUE, FALSE};
+  const BOOL vs_b_sb[2] = {FALSE, TRUE};
+  const int ps_i_sb[4] = {201, 202, 203, 204};
   const UINT stream_freq_sb = 13;
   const UINT stream_freq_clobber = 1;
   bool stream_freq_test = false;
@@ -1217,6 +1254,15 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     return reporter.FailHresult("SetPixelShaderConstantB (stateblock)", hr);
   }
 
+  hr = dev->SetVertexShaderConstantB(9, vs_b_sb, 2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetVertexShaderConstantB (stateblock)", hr);
+  }
+  hr = dev->SetPixelShaderConstantI(11, ps_i_sb, 1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetPixelShaderConstantI (stateblock)", hr);
+  }
+
   hr = dev->SetStreamSourceFreq(0, stream_freq_sb);
   if (FAILED(hr)) {
     aerogpu_test::PrintfStdout(
@@ -1422,6 +1468,17 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetPixelShaderConstantB(7, ps_b_clobber, 2);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetPixelShaderConstantB (clobber)", hr);
+    }
+
+    const BOOL vs_b_clobber[2] = {TRUE, TRUE};
+    hr = dev->SetVertexShaderConstantB(9, vs_b_clobber, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantB (clobber)", hr);
+    }
+    const int ps_i_clobber[4] = {-11, -12, -13, -14};
+    hr = dev->SetPixelShaderConstantI(11, ps_i_clobber, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantI (clobber)", hr);
     }
 
     if (stream_freq_test) {
@@ -1688,6 +1745,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       }
     }
 
+    BOOL got_vs_b[2] = {};
+    hr = dev->GetVertexShaderConstantB(9, got_vs_b, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexShaderConstantB (after Apply)", hr);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const BOOL a = vs_b_sb[i] ? TRUE : FALSE;
+      const BOOL b = got_vs_b[i] ? TRUE : FALSE;
+      if (a != b) {
+        return reporter.Fail("stateblock restore mismatch: VertexShaderConstantB[%d] got=%d expected=%d",
+                             i,
+                             (int)b,
+                             (int)a);
+      }
+    }
+
+    int got_ps_i[4] = {};
+    hr = dev->GetPixelShaderConstantI(11, got_ps_i, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPixelShaderConstantI (after Apply)", hr);
+    }
+    if (std::memcmp(got_ps_i, ps_i_sb, sizeof(ps_i_sb)) != 0) {
+      return reporter.Fail("stateblock restore mismatch: PixelShaderConstantI");
+    }
+
     if (stream_freq_test) {
       UINT got_freq = 0;
       hr = dev->GetStreamSourceFreq(0, &got_freq);
@@ -1883,6 +1965,13 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetVertexShaderConstantI (pre CreateStateBlock)", hr);
     }
 
+    const BOOL vs_b_0[2] = {TRUE, FALSE};
+    const BOOL vs_b_1[2] = {FALSE, TRUE};
+    hr = dev->SetVertexShaderConstantB(30, vs_b_0, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantB (pre CreateStateBlock)", hr);
+    }
+
     // Capture the baseline via CreateStateBlock.
     hr = dev->CreateStateBlock(D3DSBT_VERTEXSTATE, sb_vertex.put());
     if (FAILED(hr) || !sb_vertex) {
@@ -1904,6 +1993,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       hr = dev->SetVertexShaderConstantI(20, vsi_clobber, 1);
       if (FAILED(hr)) {
         return reporter.FailHresult("SetVertexShaderConstantI (clobber pre Apply baseline)", hr);
+      }
+
+      hr = dev->SetVertexShaderConstantB(30, vs_b_1, 2);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetVertexShaderConstantB (clobber pre Apply baseline)", hr);
       }
 
       if (freq_ok) {
@@ -1965,6 +2059,22 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       }
       if (std::memcmp(got_i, vsi_0, sizeof(vsi_0)) != 0) {
         return reporter.Fail("CreateStateBlock baseline mismatch: VertexShaderConstantI");
+      }
+
+      BOOL got_b[2] = {};
+      hr = dev->GetVertexShaderConstantB(30, got_b, 2);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetVertexShaderConstantB (after Apply vertex baseline)", hr);
+      }
+      for (int i = 0; i < 2; ++i) {
+        const BOOL a = vs_b_0[i] ? TRUE : FALSE;
+        const BOOL b = got_b[i] ? TRUE : FALSE;
+        if (a != b) {
+          return reporter.Fail("CreateStateBlock baseline mismatch: VertexShaderConstantB[%d] got=%d expected=%d",
+                               i,
+                               (int)b,
+                               (int)a);
+        }
       }
 
       ComPtr<IDirect3DVertexBuffer9> got_vb;
@@ -2089,6 +2199,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetVertexShaderConstantI (pre Capture)", hr);
     }
 
+    hr = dev->SetVertexShaderConstantB(30, vs_b_1, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantB (pre Capture)", hr);
+    }
+
     hr = dev->SetStreamSource(0, vb_1.get(), vb_offset_1, vb_stride_1);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetStreamSource(0) (pre Capture vertex)", hr);
@@ -2121,6 +2236,11 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetVertexShaderConstantI(20, vsi_2, 1);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetVertexShaderConstantI (pre Apply)", hr);
+    }
+
+    hr = dev->SetVertexShaderConstantB(30, vs_b_0, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShaderConstantB (pre Apply)", hr);
     }
 
     if (clip_status_ok) {
@@ -2172,6 +2292,22 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
     if (std::memcmp(got_i, vsi_1, sizeof(vsi_1)) != 0) {
       return reporter.Fail("CreateStateBlock restore mismatch: VertexShaderConstantI");
+    }
+
+    BOOL got_b[2] = {};
+    hr = dev->GetVertexShaderConstantB(30, got_b, 2);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetVertexShaderConstantB (after Apply vertex)", hr);
+    }
+    for (int i = 0; i < 2; ++i) {
+      const BOOL a = vs_b_1[i] ? TRUE : FALSE;
+      const BOOL b = got_b[i] ? TRUE : FALSE;
+      if (a != b) {
+        return reporter.Fail("CreateStateBlock restore mismatch: VertexShaderConstantB[%d] got=%d expected=%d",
+                             i,
+                             (int)b,
+                             (int)a);
+      }
     }
 
     ComPtr<IDirect3DVertexBuffer9> got_vb;
@@ -2357,6 +2493,13 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       return reporter.FailHresult("SetPixelShaderConstantB (pre CreateStateBlock pixel)", hr);
     }
 
+    const int ps_i_0[4] = {41, 42, 43, 44};
+    const int ps_i_1[4] = {-41, -42, -43, -44};
+    hr = dev->SetPixelShaderConstantI(25, ps_i_0, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantI (pre CreateStateBlock pixel)", hr);
+    }
+
     D3DVIEWPORT9 vp_0;
     ZeroMemory(&vp_0, sizeof(vp_0));
     vp_0.X = 10;
@@ -2495,6 +2638,10 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
       if (FAILED(hr)) {
         return reporter.FailHresult("SetPixelShaderConstantB (clobber pre Apply pixel baseline)", hr);
       }
+      hr = dev->SetPixelShaderConstantI(25, ps_i_1, 1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetPixelShaderConstantI (clobber pre Apply pixel baseline)", hr);
+      }
       D3DVIEWPORT9 vp_clobber = vp_0;
       vp_clobber.X = 1;
       vp_clobber.Y = 2;
@@ -2607,6 +2754,15 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                                (int)b,
                                (int)a);
         }
+      }
+
+      int got_i[4] = {};
+      hr = dev->GetPixelShaderConstantI(25, got_i, 1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetPixelShaderConstantI (after Apply pixel baseline)", hr);
+      }
+      if (std::memcmp(got_i, ps_i_0, sizeof(ps_i_0)) != 0) {
+        return reporter.Fail("CreateStateBlock baseline mismatch: PixelShaderConstantI");
       }
 
       D3DVIEWPORT9 got_vp;
@@ -2725,6 +2881,10 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("SetPixelShaderConstantB (pre Capture pixel)", hr);
     }
+    hr = dev->SetPixelShaderConstantI(25, ps_i_1, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantI (pre Capture pixel)", hr);
+    }
     D3DVIEWPORT9 vp_1 = vp_0;
     vp_1.X = 30;
     vp_1.Y = 40;
@@ -2809,6 +2969,10 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetPixelShaderConstantB(20, ps_b_2, 2);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetPixelShaderConstantB (pre Apply pixel)", hr);
+    }
+    hr = dev->SetPixelShaderConstantI(25, ps_i_0, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShaderConstantI (pre Apply pixel)", hr);
     }
     D3DVIEWPORT9 vp_2 = vp_0;
     vp_2.X = 0;
@@ -2925,6 +3089,15 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
                              (int)b,
                              (int)a);
       }
+    }
+
+    int got_i[4] = {};
+    hr = dev->GetPixelShaderConstantI(25, got_i, 1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("GetPixelShaderConstantI (after Apply pixel)", hr);
+    }
+    if (std::memcmp(got_i, ps_i_1, sizeof(ps_i_1)) != 0) {
+      return reporter.Fail("CreateStateBlock restore mismatch: PixelShaderConstantI");
     }
 
     D3DVIEWPORT9 got_vp;
