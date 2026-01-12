@@ -374,6 +374,49 @@ test("safe-run.sh: AERO_ISOLATE_CARGO_HOME accepts a custom path value (Linux)",
   }
 });
 
+test("safe-run.sh auto-uses .cargo-home when present and CARGO_HOME is default (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-auto-cargo-home-"));
+  try {
+    const repoDir = path.join(tmpRoot, "repo");
+    const scriptsDir = path.join(repoDir, "scripts");
+    fs.mkdirSync(scriptsDir, { recursive: true });
+
+    for (const rel of ["safe-run.sh", "with-timeout.sh", "run_limited.sh"]) {
+      const src = path.join(repoRoot, "scripts", rel);
+      const dst = path.join(scriptsDir, rel);
+      fs.copyFileSync(src, dst);
+      fs.chmodSync(dst, 0o755);
+    }
+
+    fs.mkdirSync(path.join(repoDir, ".cargo-home"), { recursive: true });
+
+    const homeDir = path.join(tmpRoot, "home");
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$CARGO_HOME"\n', { mode: 0o755 });
+
+    const env = { ...process.env };
+    delete env.AERO_ISOLATE_CARGO_HOME;
+    env.HOME = homeDir;
+    env.CARGO_HOME = path.join(homeDir, ".cargo");
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(scriptsDir, "safe-run.sh"), ["cargo"], {
+      cwd: repoDir,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.equal(stdout.trim(), path.join(repoDir, ".cargo-home"));
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe-run.sh clears sccache wrappers by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-sccache-wrapper-"));
   try {
