@@ -416,7 +416,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --timeout-seconds 600
 ```
 
-Note: `--with-input-events` requires a guest image provisioned with virtio-input event testing enabled (so the guest selftest runs with `--test-input-events` / env var; otherwise the guest will emit `virtio-input-events|SKIP|flag_not_set` and the harness will fail (PowerShell: `VIRTIO_INPUT_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: ...`)). If the guest selftest is too old/misconfigured and does not emit any `virtio-input-events` marker at all after completing `virtio-input`, the harness will also fail early. See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
+Note: `--with-input-events` requires a guest image provisioned with virtio-input event testing enabled (so the guest selftest runs with `--test-input-events` / env var; otherwise the guest will emit `virtio-input-events|SKIP|flag_not_set` and the harness will fail (PowerShell: `VIRTIO_INPUT_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: ...`)). If the end-to-end path is broken and the guest reports `virtio-input-events|FAIL|...`, the harness will fail (PowerShell: `VIRTIO_INPUT_EVENTS_FAILED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_FAILED: ...`). If QMP input injection fails, the harness will fail (`QMP_INPUT_INJECT_FAILED`). If the guest selftest is too old/misconfigured and does not emit any `virtio-input-events` marker at all after completing `virtio-input`, the harness will also fail early. See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
 
 Example: attach virtio-snd and capture deterministic wav output + verify non-silence:
 

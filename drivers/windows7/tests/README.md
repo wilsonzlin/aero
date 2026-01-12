@@ -116,9 +116,13 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
       `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
       When `-WithInputEvents` / `--with-input-events` is enabled, that SKIP causes the harness to fail
       (PowerShell: `VIRTIO_INPUT_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: ...`).
+      If the guest reports `...|virtio-input-events|FAIL|...`, the harness fails
+      (PowerShell: `VIRTIO_INPUT_EVENTS_FAILED`; Python: `FAIL: VIRTIO_INPUT_EVENTS_FAILED: ...`).
     - Note: if the guest selftest does not emit any `virtio-input-events` marker at all (READY/SKIP/PASS/FAIL) after
       completing `virtio-input`, the harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: prints
       `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.
+      If QMP input injection fails, the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python:
+      `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
     - The harness also emits a host marker for the injection step itself:
       `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|...`
       - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
