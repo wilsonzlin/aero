@@ -35,6 +35,7 @@ bool g_trace_unique_only = true;
 uint32_t g_trace_max_records = kTraceCapacity;
 uint32_t g_trace_dump_present_count = 0;
 bool g_trace_dump_on_detach = false;
+bool g_trace_dump_on_fail = false;
 
 std::atomic<uint32_t> g_trace_write_index{0};
 D3d9TraceRecord g_trace_records[kTraceCapacity]{};
@@ -539,6 +540,7 @@ void d3d9_trace_init_from_env() {
 
   g_trace_dump_present_count = env_u32("AEROGPU_D3D9_TRACE_DUMP_PRESENT", 0);
   g_trace_dump_on_detach = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_DETACH");
+  g_trace_dump_on_fail = env_bool("AEROGPU_D3D9_TRACE_DUMP_ON_FAIL");
 
   if (!enabled) {
     return;
@@ -546,11 +548,12 @@ void d3d9_trace_init_from_env() {
 
   g_trace_enabled.store(true, std::memory_order_release);
 
-  trace_outf("aerogpu-d3d9-trace: enabled mode=%s max=%u dump_present=%u dump_on_detach=%u\n",
+  trace_outf("aerogpu-d3d9-trace: enabled mode=%s max=%u dump_present=%u dump_on_detach=%u dump_on_fail=%u\n",
              g_trace_unique_only ? "unique" : "all",
              static_cast<unsigned>(g_trace_max_records),
              static_cast<unsigned>(g_trace_dump_present_count),
-             static_cast<unsigned>(g_trace_dump_on_detach ? 1u : 0u));
+             static_cast<unsigned>(g_trace_dump_on_detach ? 1u : 0u),
+             static_cast<unsigned>(g_trace_dump_on_fail ? 1u : 0u));
 }
 
 void d3d9_trace_on_process_detach() {
@@ -575,6 +578,9 @@ D3d9TraceCall::D3d9TraceCall(D3d9TraceFunc func, uint64_t arg0, uint64_t arg1, u
 D3d9TraceCall::~D3d9TraceCall() {
   if (record_) {
     record_->hr = hr_;
+    if (g_trace_dump_on_fail && FAILED(hr_)) {
+      dump_trace(func_name(static_cast<D3d9TraceFunc>(record_->func_id)));
+    }
   }
 }
 
