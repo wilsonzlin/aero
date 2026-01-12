@@ -15,11 +15,15 @@ pub const ATA_STATUS_ERR: u8 = 0x01;
 pub const ATA_ERROR_ABRT: u8 = 0x04;
 
 pub const ATA_CMD_IDENTIFY: u8 = 0xEC;
+pub const ATA_CMD_IDENTIFY_PACKET: u8 = 0xA1;
+pub const ATA_CMD_PACKET: u8 = 0xA0;
 pub const ATA_CMD_READ_SECTORS: u8 = 0x20;
 pub const ATA_CMD_READ_SECTORS_EXT: u8 = 0x24;
+pub const ATA_CMD_READ_DMA: u8 = 0xC8;
 pub const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 pub const ATA_CMD_WRITE_SECTORS: u8 = 0x30;
 pub const ATA_CMD_WRITE_SECTORS_EXT: u8 = 0x34;
+pub const ATA_CMD_WRITE_DMA: u8 = 0xCA;
 pub const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
 pub const ATA_CMD_FLUSH_CACHE: u8 = 0xE7;
 pub const ATA_CMD_FLUSH_CACHE_EXT: u8 = 0xEA;
