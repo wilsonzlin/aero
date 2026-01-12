@@ -3,7 +3,7 @@ use crate::io::storage::{
     SECTOR_SIZE,
 };
 
-use aero_io_snapshot::io::storage::state::IdeAtaDeviceState;
+use aero_io_snapshot::io::storage::state::{IdeAtaDeviceState, MAX_IDE_DATA_BUFFER_BYTES};
 
 pub struct AtaDevice {
     backend: Box<dyn DiskBackend>,
@@ -28,12 +28,15 @@ impl AtaDevice {
         true
     }
 
-    pub fn sector_bytes(&self, sectors: u64) -> Vec<u8> {
+    pub fn sector_bytes(&self, sectors: u64) -> DiskResult<Vec<u8>> {
         let len = sectors
             .checked_mul(SECTOR_SIZE as u64)
             .and_then(|v| usize::try_from(v).ok())
-            .unwrap_or(0);
-        vec![0u8; len]
+            .ok_or(DiskError::InvalidBufferLength)?;
+        if len > MAX_IDE_DATA_BUFFER_BYTES {
+            return Err(DiskError::InvalidBufferLength);
+        }
+        Ok(vec![0u8; len])
     }
 
     pub fn identify_data(&self) -> Vec<u8> {
@@ -118,6 +121,9 @@ impl AtaDevice {
             .checked_mul(SECTOR_SIZE as u64)
             .and_then(|v| usize::try_from(v).ok())
             .ok_or(DiskError::InvalidBufferLength)?;
+        if len > MAX_IDE_DATA_BUFFER_BYTES {
+            return Err(DiskError::InvalidBufferLength);
+        }
         let mut buf = vec![0u8; len];
         self.backend.read_sectors(lba, &mut buf)?;
         Ok(buf)
@@ -131,6 +137,9 @@ impl AtaDevice {
             .checked_mul(SECTOR_SIZE as u64)
             .and_then(|v| usize::try_from(v).ok())
             .ok_or(DiskError::InvalidBufferLength)?;
+        if expected > MAX_IDE_DATA_BUFFER_BYTES {
+            return Err(DiskError::InvalidBufferLength);
+        }
         let slice = if data.len() >= expected {
             &data[..expected]
         } else {

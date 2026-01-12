@@ -525,7 +525,7 @@ impl IoSnapshot for DiskLayerState {
 // Snapshots may be loaded from untrusted sources. The IDE controller can expose
 // multi-sector PIO and ATAPI transfers; cap any inlined data buffers to avoid
 // pathological allocations.
-const MAX_IDE_DATA_BUFFER_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+pub const MAX_IDE_DATA_BUFFER_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PciConfigSpaceState {

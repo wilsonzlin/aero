@@ -14,7 +14,7 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use aero_io_snapshot::io::storage::state::{
     IdeChannelState, IdeControllerState, IdeDataMode, IdeDmaCommitState, IdeDmaDirection,
     IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState, IdeTaskFileState,
-    IdeTransferKind, PciConfigSpaceState,
+    IdeTransferKind, PciConfigSpaceState, MAX_IDE_DATA_BUFFER_BYTES,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_storage::SECTOR_SIZE;
@@ -803,8 +803,19 @@ impl IdeController {
                     } else {
                         (chan.tf.lba28(), chan.tf.sector_count28() as u64)
                     };
-                    chan.pio_write = Some((lba, sectors));
-                    chan.begin_pio_out(TransferKind::AtaPioWrite, (sectors as usize) * SECTOR_SIZE);
+
+                    let byte_len = sectors
+                        .checked_mul(SECTOR_SIZE as u64)
+                        .and_then(|v| usize::try_from(v).ok())
+                        .filter(|&v| v <= MAX_IDE_DATA_BUFFER_BYTES);
+
+                    if let Some(byte_len) = byte_len {
+                        chan.pio_write = Some((lba, sectors));
+                        chan.begin_pio_out(TransferKind::AtaPioWrite, byte_len);
+                    } else {
+                        chan.set_error(0x04);
+                        chan.status &= !IDE_STATUS_BSY;
+                    }
                 } else {
                     chan.set_error(0x04);
                     chan.status &= !IDE_STATUS_BSY;
@@ -822,11 +833,12 @@ impl IdeController {
                 let req = match chan.devices[dev_idx].as_mut() {
                     Some(IdeDevice::Ata(dev)) => {
                         if is_write {
-                            Some(DmaRequest::ata_write(
-                                vec![0u8; sectors as usize * SECTOR_SIZE],
-                                lba,
-                                sectors,
-                            ))
+                            let byte_len = sectors
+                                .checked_mul(SECTOR_SIZE as u64)
+                                .and_then(|v| usize::try_from(v).ok())
+                                .filter(|&v| v <= MAX_IDE_DATA_BUFFER_BYTES);
+
+                            byte_len.map(|len| DmaRequest::ata_write(vec![0u8; len], lba, sectors))
                         } else {
                             ata_pio_read(dev, lba, sectors)
                                 .ok()
@@ -966,6 +978,12 @@ fn ata_pio_read(dev: &mut AtaDrive, lba: u64, sectors: u64) -> io::Result<Vec<u8
         .checked_mul(SECTOR_SIZE as u64)
         .and_then(|v| usize::try_from(v).ok())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "transfer too large"))?;
+    if byte_len > MAX_IDE_DATA_BUFFER_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "transfer too large",
+        ));
+    }
     let mut buf = vec![0u8; byte_len];
     dev.read_sectors(lba, &mut buf)?;
     Ok(buf)
@@ -976,6 +994,12 @@ fn ata_pio_write(dev: &mut AtaDrive, lba: u64, sectors: u64, data: &[u8]) -> io:
         .checked_mul(SECTOR_SIZE as u64)
         .and_then(|v| usize::try_from(v).ok())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "transfer too large"))?;
+    if byte_len > MAX_IDE_DATA_BUFFER_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "transfer too large",
+        ));
+    }
     if data.len() < byte_len {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,

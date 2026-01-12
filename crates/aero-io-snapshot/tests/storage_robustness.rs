@@ -2,7 +2,7 @@ use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_io_snapshot::io::storage::state::{
     DiskBackendState, DiskLayerState, IdeControllerState, LocalDiskBackendKind, LocalDiskBackendState,
-    NvmeControllerState,
+    NvmeControllerState, MAX_IDE_DATA_BUFFER_BYTES,
 };
 
 #[test]
@@ -165,8 +165,7 @@ fn disk_layer_snapshot_rejects_unaligned_disk_size() {
 
 #[test]
 fn ide_snapshot_rejects_oversized_pio_data_buffer() {
-    // Keep in sync with `MAX_IDE_DATA_BUFFER_BYTES` in `aero-io-snapshot`.
-    const MAX_IDE_PIO: u32 = 16 * 1024 * 1024;
+    let max_ide_pio = u32::try_from(MAX_IDE_DATA_BUFFER_BYTES).expect("max IDE buffer too large");
 
     const TAG_PRIMARY: u16 = 2;
 
@@ -205,7 +204,7 @@ fn ide_snapshot_rejects_oversized_pio_data_buffer() {
         .u8(0)
         // data_index + data_len
         .u32(0)
-        .u32(MAX_IDE_PIO + 1)
+        .u32(max_ide_pio + 1)
         .finish();
 
     let mut w = SnapshotWriter::new(
@@ -226,8 +225,7 @@ fn ide_snapshot_rejects_oversized_pio_data_buffer() {
 
 #[test]
 fn ide_snapshot_rejects_oversized_dma_buffer() {
-    // Keep in sync with `MAX_IDE_DATA_BUFFER_BYTES` in `aero-io-snapshot`.
-    const MAX_IDE_BUF: u32 = 16 * 1024 * 1024;
+    let max_ide_buf = u32::try_from(MAX_IDE_DATA_BUFFER_BYTES).expect("max IDE buffer too large");
 
     const TAG_PRIMARY: u16 = 2;
 
@@ -274,7 +272,7 @@ fn ide_snapshot_rejects_oversized_dma_buffer() {
         // dma direction
         .u8(0)
         // dma buffer length (oversized)
-        .u32(MAX_IDE_BUF + 1)
+        .u32(max_ide_buf + 1)
         .finish();
 
     let mut w = SnapshotWriter::new(

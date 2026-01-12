@@ -18,7 +18,7 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use aero_io_snapshot::io::storage::state::{
     IdeChannelState, IdeControllerState, IdeDataMode, IdeDmaCommitState, IdeDmaDirection,
     IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState, IdeTaskFileState,
-    IdeTransferKind, PciConfigSpaceState,
+    IdeTransferKind, PciConfigSpaceState, MAX_IDE_DATA_BUFFER_BYTES,
 };
 use memory::MemoryBus;
 
@@ -1049,8 +1049,19 @@ impl IdeController {
                     } else {
                         (chan.tf.lba28(), chan.tf.sector_count28() as u64)
                     };
-                    chan.pio_write = Some((lba, sectors));
-                    chan.begin_pio_out(TransferKind::AtaPioWrite, (sectors as usize) * SECTOR_SIZE);
+
+                    let byte_len = sectors
+                        .checked_mul(SECTOR_SIZE as u64)
+                        .and_then(|v| usize::try_from(v).ok())
+                        .filter(|&v| v <= MAX_IDE_DATA_BUFFER_BYTES);
+
+                    if let Some(byte_len) = byte_len {
+                        chan.pio_write = Some((lba, sectors));
+                        chan.begin_pio_out(TransferKind::AtaPioWrite, byte_len);
+                    } else {
+                        chan.set_error(0x04);
+                        chan.status &= !IDE_STATUS_BSY;
+                    }
                 } else {
                     chan.set_error(0x04);
                     chan.status &= !IDE_STATUS_BSY;
@@ -1068,11 +1079,9 @@ impl IdeController {
                 let req = match chan.devices[dev_idx].as_mut() {
                     Some(IdeDevice::Ata(dev)) => {
                         if is_write {
-                            Some(busmaster::DmaRequest::ata_write(
-                                dev.sector_bytes(sectors),
-                                lba,
-                                sectors,
-                            ))
+                            dev.sector_bytes(sectors)
+                                .ok()
+                                .map(|buf| busmaster::DmaRequest::ata_write(buf, lba, sectors))
                         } else {
                             dev.pio_read(lba, sectors)
                                 .ok()

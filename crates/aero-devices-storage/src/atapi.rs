@@ -1,6 +1,6 @@
 use std::io;
 
-use aero_io_snapshot::io::storage::state::IdeAtapiDeviceState;
+use aero_io_snapshot::io::storage::state::{IdeAtapiDeviceState, MAX_IDE_DATA_BUFFER_BYTES};
 use aero_storage::{DiskError, VirtualDisk};
 
 /// Read-only ISO9660 (or raw CD) backing store.
@@ -408,6 +408,14 @@ impl AtapiCdrom {
                 };
             }
         };
+        if len > MAX_IDE_DATA_BUFFER_BYTES {
+            self.set_sense(SENSE_ILLEGAL_REQUEST, 0x21, 0);
+            return PacketResult::Error {
+                sense_key: SENSE_ILLEGAL_REQUEST,
+                asc: 0x21,
+                ascq: 0,
+            };
+        }
         let mut buf = vec![0u8; len];
         let res = if let Some(backend) = self.backend.as_mut() {
             backend.read_sectors(lba, &mut buf)
