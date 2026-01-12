@@ -1165,6 +1165,9 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
         rip: Option<u64>,
         mode: Option<String>,
         halted: Option<bool>,
+        a20_enabled: Option<bool>,
+        pending_bios_int: Option<u8>,
+        irq13_pending: Option<bool>,
         internal_len: Option<u64>,
         internal_preview: Option<Vec<u8>>,
         decode_error: Option<String>,
@@ -1222,6 +1225,9 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
         let mut rip: Option<u64> = None;
         let mut mode: Option<String> = None;
         let mut halted: Option<bool> = None;
+        let mut a20_enabled: Option<bool> = None;
+        let mut pending_bios_int: Option<u8> = None;
+        let mut irq13_pending: Option<bool> = None;
         let mut internal_len: Option<u64> = None;
         let mut internal_preview: Option<Vec<u8>> = None;
         let mut decode_error: Option<String> = None;
@@ -1244,6 +1250,11 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
                     if section.version >= 2 {
                         mode = Some(format!("{:?}", cpu.mode));
                         halted = Some(cpu.halted);
+                        a20_enabled = Some(cpu.a20_enabled);
+                        if cpu.pending_bios_int_valid {
+                            pending_bios_int = Some(cpu.pending_bios_int);
+                        }
+                        irq13_pending = Some(cpu.irq13_pending);
                     }
                 }
                 Err(e) => {
@@ -1283,6 +1294,9 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
             rip,
             mode,
             halted,
+            a20_enabled,
+            pending_bios_int,
+            irq13_pending,
             internal_len,
             internal_preview,
             decode_error,
@@ -1314,6 +1328,15 @@ fn print_cpus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo
         }
         if let Some(halted) = entry.halted {
             suffix.push_str(&format!(" halted={halted}"));
+        }
+        if let Some(a20) = entry.a20_enabled {
+            suffix.push_str(&format!(" a20_enabled={a20}"));
+        }
+        if let Some(vector) = entry.pending_bios_int {
+            suffix.push_str(&format!(" pending_bios_int=0x{vector:02x}"));
+        }
+        if let Some(irq13) = entry.irq13_pending {
+            suffix.push_str(&format!(" irq13_pending={irq13}"));
         }
         if let Some(internal_len) = entry.internal_len {
             suffix.push_str(&format!(" internal_len={internal_len}"));
