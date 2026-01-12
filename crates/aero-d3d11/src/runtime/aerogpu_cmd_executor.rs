@@ -8739,6 +8739,7 @@ fn anyhow_guest_mem(err: GuestMemoryError) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_gpu::guest_memory::VecGuestMemory;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
 
     fn require_webgpu() -> bool {
@@ -8831,5 +8832,118 @@ mod tests {
             map_aerogpu_texture_format(AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB, true).unwrap(),
             wgpu::TextureFormat::Bc1RgbaUnormSrgb
         );
+    }
+
+    #[test]
+    fn guest_backed_texture_invalidates_upload_resource_shadow_on_guest_updates() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const TEX: u32 = 1;
+            const ALLOC_ID: u32 = 1;
+            const ALLOC_GPA: u64 = 0x100;
+
+            let width = 2u32;
+            let height = 2u32;
+            let row_pitch_bytes = width * 4;
+            let tex_len = (row_pitch_bytes * height) as usize;
+
+            let allocs = [AerogpuAllocEntry {
+                alloc_id: ALLOC_ID,
+                flags: 0,
+                gpa: ALLOC_GPA,
+                size_bytes: tex_len as u64,
+                reserved0: 0,
+            }];
+            let allocs = AllocTable::new(Some(&allocs)).unwrap();
+
+            let mut guest_mem = VecGuestMemory::new(0x1000);
+
+            // Create an allocation-backed texture.
+            let mut create = Vec::new();
+            create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+            create.extend_from_slice(&56u32.to_le_bytes());
+            create.extend_from_slice(&TEX.to_le_bytes());
+            create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+            create.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+            create.extend_from_slice(&width.to_le_bytes());
+            create.extend_from_slice(&height.to_le_bytes());
+            create.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            create.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            create.extend_from_slice(&row_pitch_bytes.to_le_bytes()); // row_pitch_bytes
+            create.extend_from_slice(&ALLOC_ID.to_le_bytes()); // backing_alloc_id
+            create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            assert_eq!(create.len(), 56);
+            exec.exec_create_texture2d(&create, &allocs)
+                .expect("CREATE_TEXTURE2D should succeed");
+
+            // Upload via UPLOAD_RESOURCE to populate `host_shadow`.
+            let full_data: Vec<u8> = (0u8..(tex_len as u8)).collect();
+            exec.upload_resource_payload(TEX, 0, full_data.len() as u64, &full_data)
+                .expect("full UPLOAD_RESOURCE should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_some()),
+                "UPLOAD_RESOURCE should populate host_shadow"
+            );
+
+            // Simulate guest memory update without invalidating `host_shadow`.
+            // This matches the pre-fix failure mode (dirty=true + stale host_shadow).
+            let guest_data = vec![0xEFu8; tex_len];
+            guest_mem.write(ALLOC_GPA, &guest_data).unwrap();
+            {
+                let tex = exec.resources.textures.get_mut(&TEX).unwrap();
+                tex.dirty = true;
+                assert!(tex.host_shadow.is_some());
+            }
+            exec.upload_texture_from_guest_memory(TEX, &allocs, &mut guest_mem)
+                .expect("guest upload should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_none()),
+                "guest-backed upload must invalidate stale host_shadow"
+            );
+
+            // Recreate `host_shadow` via another UPLOAD_RESOURCE and ensure RESOURCE_DIRTY_RANGE
+            // invalidates it as well.
+            exec.upload_resource_payload(TEX, 0, full_data.len() as u64, &full_data)
+                .expect("full UPLOAD_RESOURCE should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_some()),
+                "UPLOAD_RESOURCE should repopulate host_shadow"
+            );
+
+            let mut dirty = Vec::new();
+            dirty.extend_from_slice(&(AerogpuCmdOpcode::ResourceDirtyRange as u32).to_le_bytes());
+            dirty.extend_from_slice(&32u32.to_le_bytes());
+            dirty.extend_from_slice(&TEX.to_le_bytes());
+            dirty.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            dirty.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+            dirty.extend_from_slice(&(tex_len as u64).to_le_bytes()); // size_bytes
+            assert_eq!(dirty.len(), 32);
+            exec.exec_resource_dirty_range(&dirty)
+                .expect("RESOURCE_DIRTY_RANGE should succeed");
+            assert!(
+                exec.resources
+                    .textures
+                    .get(&TEX)
+                    .is_some_and(|tex| tex.host_shadow.is_none()),
+                "RESOURCE_DIRTY_RANGE must invalidate stale host_shadow"
+            );
+        });
     }
 }
