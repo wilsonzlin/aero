@@ -61,7 +61,7 @@ fn parse_metric(body: &str, name: &str) -> Option<u64> {
     None
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_control_payload_is_rejected() {
     let _lock = ENV_LOCK.lock().await;
 

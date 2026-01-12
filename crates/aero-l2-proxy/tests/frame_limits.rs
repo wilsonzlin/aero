@@ -136,7 +136,7 @@ fn max_dhcp_offer_frame_len(discover_frame: &[u8]) -> usize {
         .expect("expected DHCP discover to yield at least one reply frame")
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_stack_frames_are_dropped_and_increment_metric() {
     let _lock = ENV_LOCK.lock().await;
 

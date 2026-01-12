@@ -258,7 +258,7 @@ async fn run_case(max_pending: u32, expect_servfail: bool) {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stack_max_pending_dns_env_controls_dns_servfail() {
     let _lock = ENV_LOCK.lock().await;
 

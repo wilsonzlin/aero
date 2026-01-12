@@ -223,7 +223,7 @@ fn wrap_udp_ipv4_eth(
     .expect("build Ethernet frame")
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn udp_flow_cap_drops_new_flows() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -347,7 +347,7 @@ async fn udp_flow_cap_drops_new_flows() {
     udp_echo.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn udp_flow_idle_timeout_closes_flow() {
     let _lock = ENV_LOCK.lock().await;
 

@@ -190,7 +190,7 @@ fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
     out
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dns_fail_metric_increments_on_invalid_hostname() {
     let _lock = ENV_LOCK.lock().await;
 

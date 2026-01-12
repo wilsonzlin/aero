@@ -335,7 +335,7 @@ async fn run_dns_case(
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dns_domain_allow_and_block_lists_affect_resolution() {
     let _lock = ENV_LOCK.lock().await;
 

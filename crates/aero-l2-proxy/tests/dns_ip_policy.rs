@@ -404,7 +404,7 @@ async fn run_localhost_case(
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dns_loopback_a_records_are_filtered_unless_private_ips_allowed() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -412,7 +412,7 @@ async fn dns_loopback_a_records_are_filtered_unless_private_ips_allowed() {
     run_dns_case(true, Some([127, 0, 0, 1])).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dns_private_ip_filter_increments_policy_denied_metric_for_system_resolution() {
     let _lock = ENV_LOCK.lock().await;
 

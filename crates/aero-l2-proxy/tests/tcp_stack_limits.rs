@@ -412,7 +412,7 @@ async fn run_buffer_case(max_buffered_tcp_bytes: u32, expect_rst: bool) {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stack_max_tcp_connections_zero_rejects_syn() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -510,7 +510,7 @@ async fn stack_max_tcp_connections_zero_rejects_syn() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stack_max_tcp_connections_env_rejects_new_syn_when_at_capacity() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -630,7 +630,7 @@ async fn stack_max_tcp_connections_env_rejects_new_syn_when_at_capacity() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stack_max_buffered_tcp_bytes_env_controls_rst_vs_ack() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -638,7 +638,7 @@ async fn stack_max_buffered_tcp_bytes_env_controls_rst_vs_ack() {
     run_buffer_case(1024, false).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tcp_connect_failures_increment_metric() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -759,7 +759,7 @@ async fn tcp_connect_failures_increment_metric() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tcp_conns_active_gauge_tracks_open_connections() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -914,7 +914,7 @@ async fn tcp_conns_active_gauge_tracks_open_connections() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn policy_denied_metric_increments_for_denied_tcp_port() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -1040,7 +1040,7 @@ async fn policy_denied_metric_increments_for_denied_tcp_port() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tcp_conns_active_gauge_decrements_after_guest_rst() {
     let _lock = ENV_LOCK.lock().await;
 

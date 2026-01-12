@@ -314,7 +314,7 @@ async fn run_case(max_cache_entries: u32, expected_queries_total: u64) {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stack_dns_cache_entries_env_controls_eviction() {
     let _lock = ENV_LOCK.lock().await;
 

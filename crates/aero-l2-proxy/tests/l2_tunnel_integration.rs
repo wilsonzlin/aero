@@ -13,7 +13,7 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     let echo = start_tcp_echo_server().await;
     let udp_echo = start_udp_echo_server().await;

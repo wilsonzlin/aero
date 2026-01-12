@@ -177,7 +177,7 @@ fn wrap_udp_ipv4_eth(
     .expect("build Ethernet frame")
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn udp_send_fail_metric_increments_on_icmp_unreachable() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -291,7 +291,7 @@ async fn udp_send_fail_metric_increments_on_icmp_unreachable() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn udp_flows_active_decrements_after_send_error() {
     let _lock = ENV_LOCK.lock().await;
 

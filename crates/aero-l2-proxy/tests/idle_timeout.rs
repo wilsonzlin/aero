@@ -77,7 +77,7 @@ fn ws_request(addr: SocketAddr) -> tokio_tungstenite::tungstenite::http::Request
     req
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_timeout_closes_tunnel_and_increments_metric() {
     let _lock = ENV_LOCK.lock().await;
 
@@ -134,7 +134,7 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_timeout_resets_on_inbound_keepalive() {
     let _lock = ENV_LOCK.lock().await;
 

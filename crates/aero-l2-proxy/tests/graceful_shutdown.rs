@@ -41,7 +41,7 @@ fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn readyz_drains_on_shutdown() {
     let cfg = test_config(
         SocketAddr::from(([127, 0, 0, 1], 0)),
@@ -61,7 +61,7 @@ async fn readyz_drains_on_shutdown() {
     handle.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_tunnels_close_on_shutdown_and_server_exits() {
     let shutdown_grace = Duration::from_millis(2000);
     let cfg = test_config(SocketAddr::from(([127, 0, 0, 1], 0)), shutdown_grace);

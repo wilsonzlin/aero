@@ -1169,7 +1169,7 @@ async fn resolve_host_port(host: &str, port: u16) -> std::io::Result<SocketAddr>
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn close_with_error_does_not_hang_when_ws_channel_full() {
         let l2_limits = aero_l2_protocol::Limits {
             max_frame_payload: 1024,
@@ -1197,7 +1197,7 @@ mod tests {
         .expect("close_with_error should not hang when the outbound channel is backpressured");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn close_shutting_down_does_not_hang_when_ws_channel_full() {
         let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
         ws_out_tx
@@ -1212,7 +1212,7 @@ mod tests {
             );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn close_policy_violation_does_not_hang_when_ws_channel_full() {
         let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
         ws_out_tx
@@ -1230,7 +1230,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn send_ws_message_returns_backpressure_when_ws_channel_full() {
         let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
         ws_out_tx
@@ -1251,7 +1251,7 @@ mod tests {
         assert_eq!(err.reason(), "outbound websocket backpressure");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn resolve_host_port_prefers_ipv4_when_available() {
         let port = 12345;
         let addrs: Vec<SocketAddr> = tokio::net::lookup_host(("localhost", port))

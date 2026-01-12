@@ -205,7 +205,7 @@ fn make_relay_jwt(secret: &str, sid: &str, exp: u64, origin: Option<&str>) -> St
     auth::mint_relay_jwt_hs256(&claims, secret.as_bytes())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn subprotocol_required_rejects_missing_protocol() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -232,7 +232,7 @@ async fn subprotocol_required_rejects_missing_protocol() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn origin_required_by_default_rejects_missing_origin() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -258,7 +258,7 @@ async fn origin_required_by_default_rejects_missing_origin() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn wildcard_allowed_origins_still_requires_origin_header() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -284,7 +284,7 @@ async fn wildcard_allowed_origins_still_requires_origin_header() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multiple_origin_headers_are_rejected() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -314,7 +314,7 @@ async fn multiple_origin_headers_are_rejected() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn origin_allowlist_and_open_mode() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -370,7 +370,7 @@ async fn origin_allowlist_and_open_mode() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn wildcard_still_rejects_invalid_origin_values() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -398,7 +398,7 @@ async fn wildcard_still_rejects_invalid_origin_values() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_allowlist_entry_rejected() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -415,7 +415,7 @@ async fn invalid_allowlist_entry_rejected() {
     ProxyConfig::from_env().expect_err("expected invalid origin allowlist entry to be rejected");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn allowed_origins_fallback_to_shared_env_var() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -441,7 +441,7 @@ async fn allowed_origins_fallback_to_shared_env_var() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn empty_aero_allowed_origins_falls_back_to_shared_env_var() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -467,7 +467,7 @@ async fn empty_aero_allowed_origins_falls_back_to_shared_env_var() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn comma_only_aero_allowed_origins_falls_back_to_shared_env_var() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -494,7 +494,7 @@ async fn comma_only_aero_allowed_origins_falls_back_to_shared_env_var() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn allowed_origins_extra_appends_without_replacing_base() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -528,7 +528,7 @@ async fn allowed_origins_extra_appends_without_replacing_base() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn token_required_query_and_subprotocol() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -602,7 +602,7 @@ async fn token_required_query_and_subprotocol() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn api_key_auth_mode_accepts_query_and_subprotocol_tokens() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -673,7 +673,7 @@ async fn api_key_auth_mode_accepts_query_and_subprotocol_tokens() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn api_key_auth_mode_falls_back_to_legacy_token_env() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -705,7 +705,7 @@ async fn api_key_auth_mode_falls_back_to_legacy_token_env() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jwt_auth_accepts_query_and_subprotocol_tokens() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -792,7 +792,7 @@ async fn jwt_auth_accepts_query_and_subprotocol_tokens() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jwt_origin_claim_is_enforced() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -844,7 +844,7 @@ async fn jwt_origin_claim_is_enforced() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cookie_or_jwt_accepts_either_auth_mechanism() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -905,7 +905,7 @@ async fn cookie_or_jwt_accepts_either_auth_mechanism() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cookie_or_jwt_accepts_either_credential() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -972,7 +972,7 @@ async fn cookie_or_jwt_accepts_either_credential() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cookie_or_api_key_accepts_either_credential() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1059,7 +1059,7 @@ async fn cookie_or_api_key_accepts_either_credential() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn host_allowlist_rejects_mismatch() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1106,7 +1106,7 @@ async fn host_allowlist_rejects_mismatch() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn trust_proxy_host_allows_forwarded_host_to_satisfy_allowlist() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1183,7 +1183,7 @@ async fn trust_proxy_host_allows_forwarded_host_to_satisfy_allowlist() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn host_allowlist_rejects_invalid_host_and_increments_metric() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1222,7 +1222,7 @@ async fn host_allowlist_rejects_invalid_host_and_increments_metric() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cookie_auth_requires_valid_session_cookie() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1354,7 +1354,7 @@ async fn cookie_auth_requires_valid_session_cookie() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jwt_auth_accepts_bearer_and_query_and_validates_audience_and_issuer() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1446,7 +1446,7 @@ async fn jwt_auth_accepts_bearer_and_query_and_validates_audience_and_issuer() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_connections_per_session_enforced_for_jwt() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1524,7 +1524,7 @@ async fn max_connections_per_session_enforced_for_jwt() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cookie_auth_falls_back_to_session_secret() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1563,7 +1563,7 @@ async fn cookie_auth_falls_back_to_session_secret() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_or_token_accepts_token_without_cookie() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1597,7 +1597,7 @@ async fn session_or_token_accepts_token_without_cookie() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_and_token_requires_both_mechanisms() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1660,7 +1660,7 @@ async fn session_and_token_requires_both_mechanisms() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open_mode_disables_origin_but_not_token_auth() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1701,7 +1701,7 @@ async fn open_mode_disables_origin_but_not_token_auth() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auth_rejection_metrics_increment_for_missing_and_invalid_token() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1782,7 +1782,7 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_token() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auth_rejection_metrics_increment_for_invalid_session_cookie() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1837,7 +1837,7 @@ async fn auth_rejection_metrics_increment_for_invalid_session_cookie() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auth_rejection_metrics_increment_for_invalid_jwt() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1890,7 +1890,7 @@ async fn auth_rejection_metrics_increment_for_invalid_jwt() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auth_rejection_metrics_increment_for_jwt_origin_mismatch() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1954,7 +1954,7 @@ async fn auth_rejection_metrics_increment_for_jwt_origin_mismatch() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn token_errors_take_precedence_over_origin_errors() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -1997,7 +1997,7 @@ async fn token_errors_take_precedence_over_origin_errors() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_connections_enforced() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2054,7 +2054,7 @@ async fn max_connections_enforced() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_connections_per_session_enforced() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2138,7 +2138,7 @@ async fn max_connections_per_session_enforced() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_connections_per_ip_enforced_with_x_forwarded_for_when_trusting_proxy() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2213,7 +2213,7 @@ async fn max_connections_per_ip_enforced_with_x_forwarded_for_when_trusting_prox
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_connections_per_ip_enforced_with_forwarded_header_when_trusting_proxy() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2287,7 +2287,7 @@ async fn max_connections_per_ip_enforced_with_forwarded_header_when_trusting_pro
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn byte_quota_closes_connection() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2355,7 +2355,7 @@ async fn byte_quota_closes_connection() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn byte_quota_counts_tx_bytes() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2420,7 +2420,7 @@ async fn byte_quota_counts_tx_bytes() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keepalive_ping_counts_toward_byte_quota() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2480,7 +2480,7 @@ async fn keepalive_ping_counts_toward_byte_quota() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fps_quota_closes_connection() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
@@ -2546,7 +2546,7 @@ async fn fps_quota_closes_connection() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_ws_messages_are_rejected_at_websocket_layer() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");

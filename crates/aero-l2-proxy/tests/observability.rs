@@ -67,7 +67,7 @@ impl TestServer {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metrics_increment_after_frames() {
     let server = TestServer::start(None, None).await;
 
@@ -112,7 +112,7 @@ async fn metrics_increment_after_frames() {
     server.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metrics_increment_after_stack_emits_frames() {
     let server = TestServer::start(None, None).await;
 
@@ -214,7 +214,7 @@ async fn metrics_increment_after_stack_emits_frames() {
     server.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sessions_active_gauge_tracks_open_tunnels() {
     let server = TestServer::start(None, None).await;
 
@@ -293,7 +293,7 @@ async fn sessions_active_gauge_tracks_open_tunnels() {
     server.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade_rejection_metrics_increment_on_missing_origin() {
     let stack_defaults = StackConfig::default();
     let cfg = ProxyConfig {
@@ -358,7 +358,7 @@ async fn upgrade_rejection_metrics_increment_on_missing_origin() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade_rejection_metrics_increment_on_origin_not_allowed() {
     let stack_defaults = StackConfig::default();
     let cfg = ProxyConfig {
@@ -430,7 +430,7 @@ async fn upgrade_rejection_metrics_increment_on_origin_not_allowed() {
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade_rejection_metrics_increment_on_missing_host() {
     let stack_defaults = StackConfig::default();
     let cfg = ProxyConfig {
@@ -512,7 +512,7 @@ Sec-WebSocket-Protocol: {TUNNEL_SUBPROTOCOL}\r\n\
     proxy.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn version_endpoint_returns_json() {
     let server = TestServer::start(None, None).await;
 
@@ -540,7 +540,7 @@ async fn version_endpoint_returns_json() {
     server.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn capture_creates_non_empty_file() {
     let dir = tempfile::tempdir().unwrap();
     let server = TestServer::start(Some(dir.path().to_path_buf()), None).await;
@@ -588,7 +588,7 @@ async fn capture_creates_non_empty_file() {
     server.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_messages_close_session_with_protocol_error() {
     let server = TestServer::start(None, None).await;
 
@@ -672,7 +672,7 @@ async fn invalid_messages_close_session_with_protocol_error() {
     server.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ping_rtt_histogram_increments() {
     let server = TestServer::start(None, Some(Duration::from_millis(10))).await;
 
