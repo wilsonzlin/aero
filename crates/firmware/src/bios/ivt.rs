@@ -15,6 +15,7 @@ const BDA_KEYBOARD_BUF_START: u16 = 0x001E; // 0x40:0x1E -> 0x41E absolute
 const BDA_KEYBOARD_BUF_END: u16 = 0x003E; // 0x40:0x3E -> 0x43E absolute
 const BDA_KEYBOARD_BUF_START_PTR_OFFSET: u64 = 0x80; // 0x480 absolute
 const BDA_KEYBOARD_BUF_END_PTR_OFFSET: u64 = 0x82; // 0x482 absolute
+const BDA_HARD_DISK_COUNT_OFFSET: u64 = 0x75; // 0x475 absolute
 const BDA_MEM_SIZE_KB_OFFSET: u64 = 0x13; // 0x413 absolute
 
 pub fn init_ivt(bus: &mut dyn BiosBus) {
@@ -86,6 +87,9 @@ pub fn init_bda(bus: &mut dyn BiosBus) {
     );
     bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET, BDA_KEYBOARD_BUF_END);
 
+    // Number of hard disks installed (used by some bootloaders/DOS utilities).
+    bus.write_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET, 1);
+
     // Conventional memory size in KiB (up to EBDA).
     let base_mem_kb = (EBDA_BASE / 1024) as u16;
     bus.write_u16(BDA_BASE + BDA_MEM_SIZE_KB_OFFSET, base_mem_kb);
@@ -134,5 +138,6 @@ mod tests {
             mem.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_END_PTR_OFFSET),
             BDA_KEYBOARD_BUF_END
         );
+        assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 1);
     }
 }
