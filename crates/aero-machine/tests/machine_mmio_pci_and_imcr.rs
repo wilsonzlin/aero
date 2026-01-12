@@ -1,9 +1,12 @@
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::atapi::AtapiCdrom;
+use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_machine::{Machine, MachineConfig};
-use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
+use aero_platform::interrupts::{
+    InterruptController, InterruptInput, PlatformInterruptMode, IMCR_INDEX, IMCR_SELECT_PORT,
+};
 use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use firmware::bios::PCIE_ECAM_BASE;
 use pretty_assertions::assert_eq;
@@ -98,10 +101,11 @@ fn build_real_mode_imcr_interrupt_wait_boot_sector(
     // Program IMCR to route interrupts through the APIC/IOAPIC path:
     //   out 0x22, 0x70; out 0x23, 0x01
     // mov dx, 0x22
-    sector[i..i + 3].copy_from_slice(&[0xBA, 0x22, 0x00]);
+    let imcr_select_port = IMCR_SELECT_PORT.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xBA, imcr_select_port[0], imcr_select_port[1]]);
     i += 3;
     // mov al, 0x70
-    sector[i..i + 2].copy_from_slice(&[0xB0, 0x70]);
+    sector[i..i + 2].copy_from_slice(&[0xB0, IMCR_INDEX]);
     i += 2;
     // out dx, al
     sector[i] = 0xEE;
@@ -224,11 +228,11 @@ fn imcr_port_switch_to_apic_mode_delivers_ide_irq14_programmed_via_mmio() {
     cfg_write(&mut m, profile::IDE_PIIX3.bdf, 0x04, 2, 0x0001);
 
     // Issue ATA IDENTIFY DEVICE (0xEC) via legacy ports.
-    m.io_write(0x1F6, 1, 0xA0);
-    m.io_write(0x1F7, 1, 0xEC);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
 
     // Verify that IDENTIFY data is reachable via the data port (0x1F0).
-    let word0 = m.io_read(0x1F0, 2) as u16;
+    let word0 = m.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x0040);
 
     for _ in 0..50 {
@@ -271,11 +275,11 @@ fn imcr_port_switch_to_apic_mode_delivers_ide_irq15_programmed_via_mmio() {
     cfg_write(&mut m, profile::IDE_PIIX3.bdf, 0x04, 2, 0x0001);
 
     // ATAPI IDENTIFY PACKET DEVICE (0xA1) via secondary legacy ports.
-    m.io_write(0x176, 1, 0xA0); // select secondary master
-    m.io_write(0x177, 1, 0xA1);
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0); // select secondary master
+    m.io_write(SECONDARY_PORTS.cmd_base + 7, 1, 0xA1);
 
     // Verify that IDENTIFY data is reachable via the data port (0x170).
-    let word0 = m.io_read(0x170, 2) as u16;
+    let word0 = m.io_read(SECONDARY_PORTS.cmd_base, 2) as u16;
     assert_eq!(word0, 0x8581);
 
     for _ in 0..50 {

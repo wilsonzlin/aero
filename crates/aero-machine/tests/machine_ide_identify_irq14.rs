@@ -503,12 +503,12 @@ fn machine_ide_primary_dma_read_wakes_halted_cpu_via_ioapic_in_apic_mode() {
     m.io_write(bm_base, 1, 0x09);
 
     // Issue ATA READ DMA (0xC8) for LBA 0, count 1, primary master.
-    m.io_write(0x1F2, 1, 1);
-    m.io_write(0x1F3, 1, 0);
-    m.io_write(0x1F4, 1, 0);
-    m.io_write(0x1F5, 1, 0);
-    m.io_write(0x1F6, 1, 0xE0);
-    m.io_write(0x1F7, 1, 0xC8);
+    m.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    m.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
 
     for _ in 0..10 {
         let _ = m.run_slice(256);
@@ -610,12 +610,12 @@ fn machine_ide_primary_dma_write_wakes_halted_cpu_via_ioapic_in_apic_mode() {
     m.io_write(bm_base, 1, 0x01); // start, direction=0 (from memory)
 
     // Issue ATA WRITE DMA (0xCA) for LBA 1, count 1, primary master.
-    m.io_write(0x1F2, 1, 1);
-    m.io_write(0x1F3, 1, 1);
-    m.io_write(0x1F4, 1, 0);
-    m.io_write(0x1F5, 1, 0);
-    m.io_write(0x1F6, 1, 0xE0);
-    m.io_write(0x1F7, 1, 0xCA);
+    m.io_write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    m.io_write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
+    m.io_write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    m.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA);
 
     for _ in 0..10 {
         let _ = m.run_slice(256);
@@ -720,9 +720,9 @@ fn machine_ide_secondary_atapi_read10_dma_wakes_halted_cpu_via_ioapic_in_apic_mo
     // Clear the initial UNIT ATTENTION that real ATAPI devices report after media insertion.
     let mut tur = [0u8; 12];
     tur[0] = 0x00; // TEST UNIT READY
-    m.io_write(0x176, 1, 0xA0);
-    send_atapi_packet(&mut m, 0x170, 0x00, &tur, 0);
-    let _ = m.io_read(0x177, 1); // clear IRQ
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+    send_atapi_packet(&mut m, SECONDARY_PORTS.cmd_base, 0x00, &tur, 0);
+    let _ = m.io_read(SECONDARY_PORTS.cmd_base + 7, 1); // clear IRQ
 
     // Send ATAPI READ(10) for LBA 1, blocks=1, using DMA (features bit0=1).
     let mut pkt = [0u8; 12];
@@ -730,17 +730,17 @@ fn machine_ide_secondary_atapi_read10_dma_wakes_halted_cpu_via_ioapic_in_apic_mo
     pkt[2..6].copy_from_slice(&1u32.to_be_bytes()); // LBA=1
     pkt[7..9].copy_from_slice(&1u16.to_be_bytes()); // blocks=1
 
-    m.io_write(0x176, 1, 0xA0);
+    m.io_write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
     send_atapi_packet(
         &mut m,
-        0x170,
+        SECONDARY_PORTS.cmd_base,
         0x01, // DMA requested
         &pkt,
         AtapiCdrom::SECTOR_SIZE as u16,
     );
 
     // Clear the "packet request" IRQ so we only observe the DMA completion interrupt.
-    let _ = m.io_read(0x177, 1);
+    let _ = m.io_read(SECONDARY_PORTS.cmd_base + 7, 1);
 
     // With bus mastering disabled, the DMA transfer must not complete.
     for _ in 0..3 {
