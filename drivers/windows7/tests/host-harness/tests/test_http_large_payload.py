@@ -131,6 +131,19 @@ class HarnessHttpLargePayloadTests(unittest.TestCase):
                 self.assertEqual(r.getheader("Content-Length"), str(len(body)))
                 self.assertEqual(r.getheader("Cache-Control"), "no-store")
                 self.assertIsNone(r.getheader("ETag"))
+
+                # Unknown path should 404 (HEAD) with deterministic headers/body length.
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                c.request("HEAD", "/does-not-exist")
+                r = c.getresponse()
+                body = r.read()
+                c.close()
+                self.assertEqual(r.status, 404)
+                self.assertEqual(body, b"")
+                self.assertEqual(r.getheader("Content-Type"), "text/plain")
+                self.assertEqual(r.getheader("Content-Length"), "10")
+                self.assertEqual(r.getheader("Cache-Control"), "no-store")
+                self.assertIsNone(r.getheader("ETag"))
             finally:
                 httpd.shutdown()
                 thread.join(timeout=2)
