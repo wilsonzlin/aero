@@ -319,17 +319,19 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   // If the single build is unavailable, fall back to the default auto selection.
   let api: WasmApi;
   try {
-    // The WASM module uses a custom allocator that reserves the low 64MiB of
-    // linear memory for the runtime (so guest RAM can live above it). When we
+    // The WASM module uses a custom allocator that reserves a fixed low-address
+    // region of linear memory for the runtime (so guest RAM can live above it).
+    //
+    // When we
     // instantiate the module without a coordinator-provided `WebAssembly.Memory`,
     // the wasm-bindgen glue defaults to a ~1MiB memory, leaving essentially no
     // heap and causing `HdaPlaybackDemo::new()` to abort on allocation.
     //
-    // Allocate a minimal non-shared memory (64MiB) so the demo can allocate its
+    // Allocate a minimal non-shared memory (currently 128MiB) so the demo can allocate its
     // guest backing store and stream audio without requiring the full VM worker
     // harness.
     if (!hdaDemoWasmMemory) {
-      const pages = 64 * 1024 * 1024 / (64 * 1024); // 64MiB / 64KiB
+      const pages = 128 * 1024 * 1024 / (64 * 1024); // 128MiB / 64KiB
       hdaDemoWasmMemory = new WebAssembly.Memory({ initial: pages, maximum: pages });
     }
     ({ api } = await initWasmForContext({ variant: "single", memory: hdaDemoWasmMemory }));

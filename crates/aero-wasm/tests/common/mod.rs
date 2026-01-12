@@ -2,7 +2,9 @@
 #![allow(dead_code)]
 
 pub const WASM_PAGE_BYTES: u32 = 64 * 1024;
-pub const RUNTIME_RESERVED_BYTES: u32 = 64 * 1024 * 1024;
+// Keep this in sync with `crates/aero-wasm/src/guest_layout.rs` (`RUNTIME_RESERVED_BYTES`) and
+// `web/src/runtime/shared_layout.ts` (`RUNTIME_RESERVED_BYTES`).
+pub const RUNTIME_RESERVED_BYTES: u32 = 128 * 1024 * 1024;
 
 /// Allocate a guest RAM region for wasm-bindgen tests without consuming the wasm heap.
 ///
