@@ -462,6 +462,64 @@ fn vhd_fixed_fixture_read() {
 }
 
 #[test]
+fn qcow2_unaligned_write_at_roundtrip_and_zero_fill() {
+    let cluster_size = 1u64 << 12;
+
+    let mut backend = make_qcow2_empty(64 * 1024);
+    let initial_len = backend.len().unwrap();
+    assert_eq!(initial_len, cluster_size * 5);
+
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    disk.write_at(123, &[1, 2, 3, 4]).unwrap();
+    disk.flush().unwrap();
+
+    let backend = disk.into_backend();
+    let mut reopened = Qcow2Disk::open(backend).unwrap();
+
+    let mut back = [0u8; 4];
+    reopened.read_at(123, &mut back).unwrap();
+    assert_eq!(back, [1, 2, 3, 4]);
+
+    // The remainder of the allocated cluster should still read as zero.
+    let mut surrounding = [0xFFu8; 32];
+    reopened
+        .read_at(cluster_size - 16, &mut surrounding)
+        .unwrap();
+    assert!(surrounding.iter().all(|b| *b == 0));
+}
+
+#[test]
+fn qcow2_write_at_spanning_clusters_roundtrip() {
+    let cluster_size = 1u64 << 12;
+
+    let backend = make_qcow2_empty(64 * 1024);
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    // Write across a cluster boundary (last 10 bytes of cluster 0, first 10 of cluster 1).
+    let mut pattern = [0u8; 20];
+    for (i, b) in pattern.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    disk.write_at(cluster_size - 10, &pattern).unwrap();
+    disk.flush().unwrap();
+
+    let backend = disk.into_backend();
+    let mut reopened = Qcow2Disk::open(backend).unwrap();
+
+    let mut back = [0u8; 20];
+    reopened.read_at(cluster_size - 10, &mut back).unwrap();
+    assert_eq!(back, pattern);
+
+    // Verify surrounding bytes remain zero.
+    let mut window = [0u8; 40];
+    reopened.read_at(cluster_size - 20, &mut window).unwrap();
+    assert!(window[0..10].iter().all(|b| *b == 0));
+    assert_eq!(&window[10..30], &pattern);
+    assert!(window[30..].iter().all(|b| *b == 0));
+}
+
+#[test]
 fn vhd_fixed_write_last_sector_persists_and_footer_remains_valid() {
     let virtual_size = 64 * 1024u64;
     let backend = make_vhd_fixed_with_pattern();
@@ -493,6 +551,57 @@ fn vhd_dynamic_unallocated_reads_zero_and_writes_allocate() {
     let mut back = vec![0u8; SECTOR_SIZE * 2];
     disk.read_sectors(1, &mut back).unwrap();
     assert_eq!(back, data);
+}
+
+#[test]
+fn vhd_dynamic_unaligned_write_at_roundtrip() {
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+    let initial_len = backend.len().unwrap();
+
+    let mut disk = VhdDisk::open(backend).unwrap();
+    disk.write_at(3, &[9, 8, 7, 6]).unwrap();
+    disk.flush().unwrap();
+
+    let backend = disk.into_backend();
+    let mut reopened = VhdDisk::open(backend).unwrap();
+    let mut back = [0u8; 4];
+    reopened.read_at(3, &mut back).unwrap();
+    assert_eq!(back, [9, 8, 7, 6]);
+
+    // Image must have grown due to block allocation.
+    let mut backend = reopened.into_backend();
+    assert!(backend.len().unwrap() > initial_len);
+}
+
+#[test]
+fn vhd_dynamic_write_at_spanning_two_sectors_sets_bitmap_bits() {
+    let block_size = 16 * 1024u32;
+    let backend = make_vhd_dynamic_empty(64 * 1024, block_size);
+    let mut disk = VhdDisk::open(backend).unwrap();
+
+    // Write across sector 0 and 1.
+    let data = vec![0x11u8; 200];
+    disk.write_at((SECTOR_SIZE as u64) - 100, &data).unwrap();
+    disk.flush().unwrap();
+
+    let mut backend = disk.into_backend();
+
+    // The first allocation for this fixture should start at the old footer offset.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let table_offset = dyn_header_offset + 1024;
+    let bat_size = SECTOR_SIZE as u64; // 4 entries padded to 512
+    let block_start = (SECTOR_SIZE as u64) + 1024 + bat_size; // old footer offset
+
+    let mut bat_entry_bytes = [0u8; 4];
+    backend.read_at(table_offset, &mut bat_entry_bytes).unwrap();
+    let bat_entry = u32::from_be_bytes(bat_entry_bytes);
+    assert_eq!(bat_entry, (block_start / SECTOR_SIZE as u64) as u32);
+
+    // Bitmap should have sectors 0 and 1 marked as present (bits 7 and 6).
+    let mut bitmap_first = [0u8; 1];
+    backend.read_at(block_start, &mut bitmap_first).unwrap();
+    assert_eq!(bitmap_first[0], 0xC0);
 }
 
 #[test]
