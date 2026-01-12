@@ -197,8 +197,8 @@ bash ./scripts/safe-run.sh cargo test -p aero-cpu-decoder --locked
 bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-mmu --locked
 
-# Run all tests
-bash ./scripts/safe-run.sh cargo test --locked
+# Run all tests (workspace-wide; first run can take >10 minutes in clean/contended sandboxes)
+AERO_TIMEOUT=1800 bash ./scripts/safe-run.sh cargo test --locked
 ```
 
 Use `crates/conformance` for differential testing against QEMU.
