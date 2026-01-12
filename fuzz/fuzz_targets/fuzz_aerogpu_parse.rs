@@ -829,7 +829,14 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    fuzz_command_processor(&cmd_proc_synth, Some(&allocs));
+    // Run multiple submissions through a single processor instance to exercise stateful validation
+    // (e.g. retired share tokens, idempotent resource rebinds, fence monotonicity).
+    let mut proc = AeroGpuCommandProcessor::new();
+    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 1);
+    // Replaying the same stream should hit "already exported"/"retired token" style paths.
+    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 2);
+    // Also try the same stream without providing allocations to trigger missing-alloc-table paths.
+    let _ = proc.process_submission_with_allocations(&cmd_proc_synth, None, 3);
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
