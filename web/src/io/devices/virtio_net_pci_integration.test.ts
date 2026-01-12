@@ -239,6 +239,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       void cfgReadU32(pciAddr, 0x14);
       // Bits 2:1 = 0b10 indicates a 64-bit memory BAR.
       expect(bar0LowInitial & 0x6).toBe(0x4);
+      const oldBar0Base = BigInt(bar0LowInitial & 0xffff_fff0);
 
       // BAR sizing probe (guest writes all-ones then reads back size mask).
       // For BAR0 size=0x4000, mask is 0xFFFF_FFFF_FFFF_C000 (low dword includes type bits 0x4).
@@ -310,6 +311,9 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
       const notifyBase = bar0Base + BigInt(caps.notifyOff!);
       const deviceBase = bar0Base + BigInt(caps.deviceOff!);
       const isrBase = bar0Base + BigInt(caps.isrOff!);
+
+      // Remapping the BAR must unmap the old MMIO window.
+      expect(mgr.mmioRead(oldBar0Base + BigInt(caps.commonOff!), 4) >>> 0).toBe(0xffff_ffff);
 
       // -----------------------------------------------------------------------------------------
       // Virtio modern init (feature negotiation).
