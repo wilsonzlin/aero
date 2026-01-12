@@ -602,9 +602,40 @@ async function convertVhdToSparse(
   const sectorsPerBlock = dyn.blockSize / 512;
   const bitmapBytes = Math.ceil(sectorsPerBlock / 8);
   const bitmapSize = nextPow2(Math.max(512, bitmapBytes));
+  const blockTotalSize = bitmapSize + dyn.blockSize;
+  if (!Number.isSafeInteger(blockTotalSize) || blockTotalSize <= 0) throw new Error("invalid VHD block size");
   const bitmap = new Uint8Array(bitmapSize);
   const buf = new Uint8Array(dyn.blockSize);
   const totalBlocks = divCeil(logicalSize, dyn.blockSize);
+
+  // Pre-validate BAT entries to avoid reading metadata as block payload when the image is corrupt.
+  const footerOffset = src.size - 512;
+  const batBytes = dyn.maxTableEntries * 4;
+  const metadataRanges: Array<{ start: number; end: number }> = [
+    { start: 0, end: 512 }, // footer copy
+    { start: footer.dataOffset, end: footer.dataOffset + 1024 }, // dynamic header
+    { start: dyn.tableOffset, end: dyn.tableOffset + batBytes }, // BAT
+  ];
+
+  const allocatedBlockOffsets: number[] = [];
+  for (let blockIndex = 0; blockIndex < totalBlocks; blockIndex++) {
+    const entry = bat.entries[blockIndex]!;
+    if (entry === VHD_BAT_FREE) continue;
+    const blockOff = entry * 512;
+    if (!Number.isSafeInteger(blockOff) || blockOff < 512) throw new Error("VHD block offset invalid");
+    const end = blockOff + blockTotalSize;
+    if (!Number.isSafeInteger(end) || end > footerOffset) throw new Error("VHD block out of range");
+    for (const r of metadataRanges) {
+      if (rangesOverlap(blockOff, end, r.start, r.end)) throw new Error("VHD block overlaps metadata");
+    }
+    allocatedBlockOffsets.push(blockOff);
+  }
+  allocatedBlockOffsets.sort((a, b) => a - b);
+  for (let i = 1; i < allocatedBlockOffsets.length; i++) {
+    const prev = allocatedBlockOffsets[i - 1]!;
+    const cur = allocatedBlockOffsets[i]!;
+    if (cur < prev + blockTotalSize) throw new Error("VHD blocks overlap");
+  }
 
   for (let blockIndex = 0; blockIndex < totalBlocks; blockIndex++) {
     if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -955,10 +986,18 @@ class VhdDynamicHeader {
     const expected = (~sum) >>> 0;
     if (expected !== storedChecksum) throw new Error("VHD dynamic header checksum mismatch");
 
+    const dataOffset = readU64BE(dh, 8);
+    if (dataOffset !== 0xffff_ffff_ffff_ffffn) throw new Error("invalid VHD dynamic header data_offset");
+
     const tableOffset = Number(readU64BE(dh, 16));
+    if (!Number.isSafeInteger(tableOffset) || tableOffset <= 0) throw new Error("invalid VHD BAT offset");
+    if (tableOffset % 512 !== 0) throw new Error("invalid VHD BAT offset");
+
+    const headerVersion = readU32BE(dh, 24);
+    if (headerVersion !== 0x0001_0000) throw new Error("invalid VHD dynamic header version");
+
     const maxTableEntries = readU32BE(dh, 28);
     const blockSize = readU32BE(dh, 32);
-    if (!Number.isSafeInteger(tableOffset) || tableOffset <= 0) throw new Error("invalid VHD BAT offset");
     if (!Number.isSafeInteger(maxTableEntries) || maxTableEntries <= 0) throw new Error("invalid VHD BAT entry count");
     return new VhdDynamicHeader(tableOffset, maxTableEntries, blockSize);
   }
@@ -996,4 +1035,8 @@ function vhdBitmapBit(bitmap: Uint8Array, sector: number): boolean {
   const b = bitmap[Math.floor(sector / 8)];
   const bit = 7 - (sector % 8);
   return ((b >> bit) & 1) !== 0;
+}
+
+function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && bStart < aEnd;
 }

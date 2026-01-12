@@ -161,7 +161,9 @@ function buildDynamicVhdFixture(maxTableEntries = 1): { file: Uint8Array; logica
 
   const dyn = new Uint8Array(dynHeaderSize);
   dyn.set(new TextEncoder().encode("cxsparse"), 0);
+  writeU64BE(dyn, 8, 0xffff_ffff_ffff_ffffn);
   writeU64BE(dyn, 16, BigInt(batOffset));
+  writeU32BE(dyn, 24, 0x0001_0000);
   writeU32BE(dyn, 28, maxTableEntries); // max table entries
   writeU32BE(dyn, 32, blockSize);
   writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
@@ -191,6 +193,53 @@ function buildDynamicVhdFixture(maxTableEntries = 1): { file: Uint8Array; logica
   const logical = new Uint8Array(logicalSize);
   logical.set(sector0, 0);
   return { file, logical };
+}
+
+function buildDynamicVhdFixtureTwoBlocks(options: { overlap: boolean }): { file: Uint8Array } {
+  const footerSize = 512;
+  const dynHeaderOffset = 512;
+  const dynHeaderSize = 1024;
+  const batOffset = 1536;
+  const blockSize = 1024;
+  const bitmapSize = 512;
+  const logicalSize = 2048;
+
+  const block0Off = 2048;
+  const blockTotalSize = bitmapSize + blockSize;
+  const block1Off = options.overlap ? block0Off : block0Off + blockTotalSize;
+  const footerOff = Math.max(block0Off, block1Off) + blockTotalSize;
+  const fileSize = footerOff + footerSize;
+
+  const footer = new Uint8Array(footerSize);
+  footer.set(new TextEncoder().encode("conectix"), 0);
+  writeU32BE(footer, 8, 2); // features
+  writeU32BE(footer, 12, 0x0001_0000); // file_format_version
+  writeU64BE(footer, 16, BigInt(dynHeaderOffset)); // data offset
+  writeU64BE(footer, 48, BigInt(logicalSize)); // current size
+  writeU32BE(footer, 60, 3); // disk type dynamic
+  writeU32BE(footer, 64, vhdChecksum(footer, 64));
+
+  const dyn = new Uint8Array(dynHeaderSize);
+  dyn.set(new TextEncoder().encode("cxsparse"), 0);
+  writeU64BE(dyn, 8, 0xffff_ffff_ffff_ffffn);
+  writeU64BE(dyn, 16, BigInt(batOffset));
+  writeU32BE(dyn, 24, 0x0001_0000);
+  writeU32BE(dyn, 28, 2); // max table entries
+  writeU32BE(dyn, 32, blockSize);
+  writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
+
+  const file = new Uint8Array(fileSize);
+  // Footer copy at offset 0.
+  file.set(footer, 0);
+  file.set(dyn, dynHeaderOffset);
+
+  // BAT entries.
+  writeU32BE(file, batOffset, block0Off / 512);
+  writeU32BE(file, batOffset + 4, block1Off / 512);
+
+  // Footer at end.
+  file.set(footer, footerOff);
+  return { file };
 }
 
 function buildFixedVhdFixtureWithFooterCopy(): { file: Uint8Array; logical: Uint8Array } {
@@ -451,6 +500,28 @@ test("convertToAeroSparse: dynamic VHD respects BAT + sector bitmap", async () =
   assert.equal(manifest.checksum.value, sparseChecksumCrc32(parsed));
 });
 
+test("convertToAeroSparse: dynamic VHD rejects BAT entries overlapping metadata", async () => {
+  const { file } = buildDynamicVhdFixture();
+  // Point the first BAT entry at the dynamic header (offset 512).
+  writeU32BE(file, 1536, 1);
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD block overlaps metadata/i.test(err.message),
+  );
+});
+
+test("convertToAeroSparse: dynamic VHD rejects overlapping blocks", async () => {
+  const { file } = buildDynamicVhdFixtureTwoBlocks({ overlap: true });
+  const src = new MemSource(file);
+  const sync = new MemSyncAccessHandle();
+  await assert.rejects(
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
+    (err: any) => err instanceof Error && /VHD blocks overlap/i.test(err.message),
+  );
+});
+
 test("convertToAeroSparse: dynamic VHD allows max_table_entries > required", async () => {
   const { file, logical } = buildDynamicVhdFixture(2);
   const src = new MemSource(file);
@@ -486,7 +557,9 @@ test("convertToAeroSparse: rejects dynamic VHD with absurd BAT size", async () =
 
   const dyn = new Uint8Array(dynHeaderSize);
   dyn.set(new TextEncoder().encode("cxsparse"), 0);
+  writeU64BE(dyn, 8, 0xffff_ffff_ffff_ffffn);
   writeU64BE(dyn, 16, BigInt(batOffset));
+  writeU32BE(dyn, 24, 0x0001_0000);
   writeU32BE(dyn, 28, maxTableEntries);
   writeU32BE(dyn, 32, blockSize);
   writeU32BE(dyn, 36, vhdChecksum(dyn, 36));
