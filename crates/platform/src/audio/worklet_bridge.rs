@@ -541,6 +541,9 @@ mod wasm {
         ///
         /// This does not restore the ring's sample contents; any previously-buffered host audio is
         /// dropped and replaced with silence to avoid replaying stale samples after restore.
+        ///
+        /// Note: underrun/overrun counters are host-side telemetry and are not part of the
+        /// snapshot; restore intentionally leaves them untouched.
         pub fn restore_state(&self, state: &AudioWorkletRingState) {
             // Snapshot restore should generally recreate the same ring capacity (the host runtime
             // decides the ring size). In debug builds, assert to catch integration bugs. In release

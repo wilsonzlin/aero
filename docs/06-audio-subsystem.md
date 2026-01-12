@@ -305,6 +305,8 @@ In the outer `aero-snapshot` `DEVICES` table, HDA audio state is stored under:
      - `WorkletBridge::snapshot_state()` / `WorkletBridge::restore_state()` (wasm; the real SAB-backed ring)
      - `InterleavedRingBuffer::snapshot_state()` (pure Rust helper used by unit tests)
      - `web/src/platform/audio_ring_restore.ts`: `restoreAudioWorkletRing()` (JS helper used when restoring rings on the web side)
+   - Note: ring underrun/overrun counters are host-side telemetry and are not part of the snapshot; restore intentionally leaves
+     them untouched (and they may reset if the ring is recreated).
 
 Implementation references:
 
