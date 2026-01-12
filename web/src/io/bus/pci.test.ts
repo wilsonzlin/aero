@@ -99,6 +99,30 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(7, 0, 0x00)).toBe(0xffff_ffff);
   });
 
+  it("throws when registering two devices that request the same BDF", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const a: PciDevice = {
+      name: "a",
+      vendorId: 0x1111,
+      deviceId: 0x2222,
+      classCode: 0,
+      bdf: { bus: 0, device: 3, function: 0 },
+    };
+    const b: PciDevice = {
+      name: "b",
+      vendorId: 0x3333,
+      deviceId: 0x4444,
+      classCode: 0,
+      bdf: { bus: 0, device: 3, function: 0 },
+    };
+    pciBus.registerDevice(a);
+    expect(() => pciBus.registerDevice(b)).toThrow();
+  });
+
   it("populates Subsystem Vendor ID / Subsystem ID (0x2c..0x2f) by default", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
