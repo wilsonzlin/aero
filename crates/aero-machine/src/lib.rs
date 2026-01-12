@@ -42,7 +42,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 pub use aero_devices_input::Ps2MouseButton;
-use aero_net_backend::NetworkBackend;
+use aero_net_backend::{FrameRing, L2TunnelRingBackend, NetworkBackend};
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::{InterruptController as PlatformInterruptController, PlatformInterrupts};
 use aero_platform::io::IoPortBus;
@@ -62,9 +62,7 @@ const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const SNAPSHOT_MAX_PENDING_EXTERNAL_INTERRUPTS: usize = 1024 * 1024;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod pc;
-#[cfg(not(target_arch = "wasm32"))]
 pub use pc::{PcMachine, PcMachineConfig};
 
 /// Configuration for [`Machine`].
@@ -445,6 +443,35 @@ impl Machine {
     /// - call [`Machine::detach_network`] before snapshotting to make the lifecycle explicit.
     pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
         self.network_backend = Some(backend);
+    }
+
+    /// Attach a ring-buffer-backed L2 tunnel network backend (NET_TX / NET_RX).
+    pub fn attach_l2_tunnel_rings<TX: FrameRing + 'static, RX: FrameRing + 'static>(
+        &mut self,
+        tx: TX,
+        rx: RX,
+    ) {
+        self.set_network_backend(Box::new(L2TunnelRingBackend::new(tx, rx)));
+    }
+
+    /// Convenience for native callers using [`aero_ipc::ring::RingBuffer`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn attach_l2_tunnel_rings_native(
+        &mut self,
+        tx: aero_ipc::ring::RingBuffer,
+        rx: aero_ipc::ring::RingBuffer,
+    ) {
+        self.attach_l2_tunnel_rings(tx, rx);
+    }
+
+    /// Convenience for WASM/browser callers using [`aero_ipc::wasm::SharedRingBuffer`].
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_l2_tunnel_rings_wasm(
+        &mut self,
+        tx: aero_ipc::wasm::SharedRingBuffer,
+        rx: aero_ipc::wasm::SharedRingBuffer,
+    ) {
+        self.attach_l2_tunnel_rings(tx, rx);
     }
 
     /// Detach (drop) any currently installed network backend.

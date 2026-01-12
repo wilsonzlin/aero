@@ -1,13 +1,10 @@
-//! Native-only PC machine integration built on [`aero_pc_platform::PcPlatform`].
+//! PC machine integration built on [`aero_pc_platform::PcPlatform`].
 //!
 //! This module exists primarily for integration tests and experiments that need:
 //! - a PCI-capable platform (MMIO, port I/O, PCI config ports, INTx routing),
 //! - BIOS POST with PCI enumeration, and
 //! - optional E1000 + ring-backed networking.
 //!
-//! Note: This module is currently `wasm32`-disabled because it pulls in the full PC
-//! platform and firmware stack, which is not yet part of the canonical browser VM.
-#![cfg(not(target_arch = "wasm32"))]
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
@@ -228,10 +225,21 @@ impl PcMachine {
     }
 
     /// Convenience for native callers using [`aero_ipc::ring::RingBuffer`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_l2_tunnel_rings_native(
         &mut self,
         tx: aero_ipc::ring::RingBuffer,
         rx: aero_ipc::ring::RingBuffer,
+    ) {
+        self.attach_l2_tunnel_rings(tx, rx);
+    }
+
+    /// Convenience for WASM/browser callers using [`aero_ipc::wasm::SharedRingBuffer`].
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_l2_tunnel_rings_wasm(
+        &mut self,
+        tx: aero_ipc::wasm::SharedRingBuffer,
+        rx: aero_ipc::wasm::SharedRingBuffer,
     ) {
         self.attach_l2_tunnel_rings(tx, rx);
     }
