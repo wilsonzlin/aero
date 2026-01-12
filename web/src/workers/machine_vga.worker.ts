@@ -1,0 +1,395 @@
+/// <reference lib="webworker" />
+
+import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
+import {
+  FRAMEBUFFER_COPY_MESSAGE_TYPE,
+  FRAMEBUFFER_FORMAT_RGBA8888,
+  HEADER_INDEX_CONFIG_COUNTER,
+  HEADER_INDEX_FRAME_COUNTER,
+  HEADER_INDEX_FORMAT,
+  HEADER_INDEX_HEIGHT,
+  HEADER_INDEX_STRIDE_BYTES,
+  HEADER_INDEX_WIDTH,
+  addHeaderI32,
+  initFramebufferHeader,
+  requiredFramebufferBytes,
+  storeHeaderI32,
+  type FramebufferCopyMessageV1,
+  wrapSharedFramebuffer,
+} from "../display/framebuffer_protocol";
+
+type MachineVgaWorkerStartMessage = {
+  type: "machineVga.start";
+  /**
+   * Serial bytes to print from the boot sector (ASCII/UTF-8), written to COM1.
+   */
+  message?: string;
+  /**
+   * Guest RAM size passed to `new api.Machine(ramSizeBytes)`.
+   *
+   * Keep this small: the wasm32 runtime allocator reserves a fixed 128MiB region
+   * for Rust heap allocations.
+   */
+  ramSizeBytes?: number;
+};
+
+type MachineVgaWorkerStopMessage = {
+  type: "machineVga.stop";
+};
+
+type MachineVgaWorkerReadyMessage = {
+  type: "machineVga.ready";
+  transport: "shared" | "copy";
+  /**
+   * Present-only shared framebuffer region (RGBA8888 + framebuffer_protocol header).
+   *
+   * Present when `transport === "shared"`.
+   */
+  framebuffer?: SharedArrayBuffer;
+};
+
+type MachineVgaWorkerSerialMessage = {
+  type: "machineVga.serial";
+  data: Uint8Array;
+};
+
+type MachineVgaWorkerStatusMessage = {
+  type: "machineVga.status";
+  detail: string;
+};
+
+type MachineVgaWorkerErrorMessage = {
+  type: "machineVga.error";
+  message: string;
+};
+
+type MachineVgaWorkerMessage =
+  | MachineVgaWorkerReadyMessage
+  | MachineVgaWorkerSerialMessage
+  | MachineVgaWorkerStatusMessage
+  | MachineVgaWorkerErrorMessage
+  | FramebufferCopyMessageV1;
+
+const ctx = self as unknown as DedicatedWorkerGlobalScope;
+
+const encoder = new TextEncoder();
+
+let api: WasmApi | null = null;
+let wasmMemory: WebAssembly.Memory | null = null;
+let machine: InstanceType<WasmApi["Machine"]> | null = null;
+
+let transport: "shared" | "copy" = "copy";
+let sharedSab: SharedArrayBuffer | null = null;
+let sharedFb: ReturnType<typeof wrapSharedFramebuffer> | null = null;
+let sharedWidth = 0;
+let sharedHeight = 0;
+let sharedStrideBytes = 0;
+
+let tickTimer: number | null = null;
+let copyFrameCounter = 0;
+
+// Avoid pathological allocations/copies if a buggy guest or WASM build reports absurd scanout modes.
+const MAX_VGA_FRAME_BYTES = 32 * 1024 * 1024;
+
+function post(msg: MachineVgaWorkerMessage, transfer?: Transferable[]): void {
+  if (transfer && transfer.length) {
+    ctx.postMessage(msg, transfer);
+  } else {
+    ctx.postMessage(msg);
+  }
+}
+
+function stop(): void {
+  if (tickTimer !== null) {
+    ctx.clearInterval(tickTimer);
+    tickTimer = null;
+  }
+
+  if (machine) {
+    try {
+      (machine as unknown as { free?: () => void }).free?.();
+    } catch {
+      // ignore
+    }
+  }
+  machine = null;
+  api = null;
+  wasmMemory = null;
+
+  sharedSab = null;
+  sharedFb = null;
+  sharedWidth = 0;
+  sharedHeight = 0;
+  sharedStrideBytes = 0;
+  copyFrameCounter = 0;
+}
+
+function buildSerialBootSector(message: string): Uint8Array {
+  const msgBytes = encoder.encode(message);
+  const sector = new Uint8Array(512);
+  let off = 0;
+
+  // Emit a tiny VGA text-mode banner ("AERO!") into 0xB8000 so the demo has visible output.
+  //
+  // cld
+  sector[off++] = 0xfc;
+  // mov ax, 0xb800
+  sector.set([0xb8, 0x00, 0xb8], off);
+  off += 3;
+  // mov es, ax
+  sector.set([0x8e, 0xc0], off);
+  off += 2;
+  // xor di, di
+  sector.set([0x31, 0xff], off);
+  off += 2;
+  // mov ah, 0x1f  (white-on-blue)
+  sector.set([0xb4, 0x1f], off);
+  off += 2;
+  for (const ch of encoder.encode("AERO!")) {
+    // mov al, imm8
+    sector.set([0xb0, ch], off);
+    off += 2;
+    // stosw
+    sector[off++] = 0xab;
+  }
+
+  // mov dx, 0x3f8
+  sector.set([0xba, 0xf8, 0x03], off);
+  off += 3;
+
+  for (const b of msgBytes) {
+    // mov al, imm8
+    sector.set([0xb0, b], off);
+    off += 2;
+    // out dx, al
+    sector[off++] = 0xee;
+  }
+
+  // sti (ensure IRQs can wake the CPU)
+  sector[off++] = 0xfb;
+  // hlt; jmp hlt (wait-for-interrupt loop)
+  const hltOff = off;
+  sector[off++] = 0xf4;
+  const jmpOff = off;
+  sector[off++] = 0xeb;
+  sector[off++] = (hltOff - (jmpOff + 2)) & 0xff;
+
+  // Boot signature.
+  sector[510] = 0x55;
+  sector[511] = 0xaa;
+  return sector;
+}
+
+function ensureSharedFramebuffer(): ReturnType<typeof wrapSharedFramebuffer> | null {
+  const Sab = globalThis.SharedArrayBuffer;
+  if (typeof Sab === "undefined") return null;
+
+  // Size for a modest SVGA mode. Real mode changes are communicated via the header.
+  const maxWidth = 1024;
+  const maxHeight = 768;
+  const maxStrideBytes = maxWidth * 4;
+  const bytes = requiredFramebufferBytes(maxWidth, maxHeight, maxStrideBytes);
+  const sab = new SharedArrayBuffer(bytes);
+  const fb = wrapSharedFramebuffer(sab, 0);
+  initFramebufferHeader(fb.header, { width: 1, height: 1, strideBytes: 4, format: FRAMEBUFFER_FORMAT_RGBA8888 });
+  sharedSab = sab;
+  sharedFb = fb;
+  sharedWidth = 1;
+  sharedHeight = 1;
+  sharedStrideBytes = 4;
+  return fb;
+}
+
+function publishSharedFrame(width: number, height: number, strideBytes: number, pixels: Uint8Array): void {
+  const fb = sharedFb;
+  if (!fb) return;
+
+  if (sharedWidth !== width || sharedHeight !== height || sharedStrideBytes !== strideBytes) {
+    storeHeaderI32(fb.header, HEADER_INDEX_WIDTH, width);
+    storeHeaderI32(fb.header, HEADER_INDEX_HEIGHT, height);
+    storeHeaderI32(fb.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
+    storeHeaderI32(fb.header, HEADER_INDEX_FORMAT, FRAMEBUFFER_FORMAT_RGBA8888);
+    addHeaderI32(fb.header, HEADER_INDEX_CONFIG_COUNTER, 1);
+    sharedWidth = width;
+    sharedHeight = height;
+    sharedStrideBytes = strideBytes;
+  }
+
+  const requiredBytes = strideBytes * height;
+  if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
+  if (requiredBytes > fb.pixelsU8.byteLength) return;
+  fb.pixelsU8.set(pixels.subarray(0, requiredBytes), 0);
+  addHeaderI32(fb.header, HEADER_INDEX_FRAME_COUNTER, 1);
+}
+
+function postCopyFrame(width: number, height: number, strideBytes: number, pixels: Uint8Array): void {
+  const requiredBytes = strideBytes * height;
+  if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
+  const copy = new Uint8Array(requiredBytes);
+  copy.set(pixels.subarray(0, requiredBytes));
+  copyFrameCounter = (copyFrameCounter + 1) >>> 0;
+
+  const msg: FramebufferCopyMessageV1 = {
+    type: FRAMEBUFFER_COPY_MESSAGE_TYPE,
+    width,
+    height,
+    strideBytes,
+    format: FRAMEBUFFER_FORMAT_RGBA8888,
+    frameCounter: copyFrameCounter,
+    pixels: copy.buffer,
+  };
+  post(msg, [copy.buffer]);
+}
+
+function presentVgaFrame(): void {
+  const m = machine;
+  if (!m) return;
+
+  const presentFn = (m as unknown as { vga_present?: () => void }).vga_present;
+  const widthFn = (m as unknown as { vga_width?: () => number }).vga_width;
+  const heightFn = (m as unknown as { vga_height?: () => number }).vga_height;
+  if (typeof presentFn !== "function" || typeof widthFn !== "function" || typeof heightFn !== "function") return;
+
+  // Update the WASM-side VGA front buffer.
+  presentFn.call(m);
+
+  const width = widthFn.call(m) >>> 0;
+  const height = heightFn.call(m) >>> 0;
+  if (width === 0 || height === 0) return;
+
+  const strideFn = (m as unknown as { vga_stride_bytes?: () => number }).vga_stride_bytes;
+  const strideBytes = (typeof strideFn === "function" ? strideFn.call(m) : width * 4) >>> 0;
+  if (strideBytes < width * 4) return;
+
+  const requiredBytes = strideBytes * height;
+  if (requiredBytes > MAX_VGA_FRAME_BYTES) return;
+
+  let pixels: Uint8Array | null = null;
+  const mem = wasmMemory;
+  const ptrFn = (m as unknown as { vga_framebuffer_ptr?: () => number }).vga_framebuffer_ptr;
+  const lenFn = (m as unknown as { vga_framebuffer_len_bytes?: () => number }).vga_framebuffer_len_bytes;
+  if (mem && typeof ptrFn === "function" && typeof lenFn === "function") {
+    const ptr = ptrFn.call(m) >>> 0;
+    const len = lenFn.call(m) >>> 0;
+    if (ptr !== 0 && len >= requiredBytes) {
+      const buf = mem.buffer;
+      if (ptr + requiredBytes <= buf.byteLength) {
+        pixels = new Uint8Array(buf, ptr, requiredBytes);
+      }
+    }
+  }
+
+  if (!pixels) {
+    const copyFn = (m as unknown as { vga_framebuffer_copy_rgba8888?: () => Uint8Array }).vga_framebuffer_copy_rgba8888;
+    const legacyFn = (m as unknown as { vga_framebuffer_rgba8888_copy?: () => Uint8Array | null }).vga_framebuffer_rgba8888_copy;
+    if (typeof copyFn === "function") {
+      pixels = copyFn.call(m);
+    } else if (typeof legacyFn === "function") {
+      pixels = legacyFn.call(m);
+    }
+  }
+
+  if (!pixels || pixels.byteLength < requiredBytes) return;
+
+  if (transport === "shared") {
+    publishSharedFrame(width, height, strideBytes, pixels);
+  } else {
+    postCopyFrame(width, height, strideBytes, pixels);
+  }
+}
+
+function tick(): void {
+  const m = machine;
+  if (!m) return;
+
+  const exit = m.run_slice(50_000);
+  const detail = (exit as unknown as { detail?: string }).detail;
+  if (typeof detail === "string") {
+    post({ type: "machineVga.status", detail });
+  }
+
+  const serialBytes = m.serial_output();
+  if (serialBytes instanceof Uint8Array && serialBytes.byteLength > 0) {
+    // Prefer transferring the buffer for standalone ArrayBuffers, but avoid throwing if the
+    // underlying memory is non-transferable (e.g. a WebAssembly.Memory view).
+    const buf = serialBytes.buffer;
+    if (
+      buf instanceof ArrayBuffer &&
+      serialBytes.byteOffset === 0 &&
+      serialBytes.byteLength === buf.byteLength
+    ) {
+      try {
+        post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage, [buf]);
+      } catch {
+        post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage);
+      }
+    } else {
+      post({ type: "machineVga.serial", data: serialBytes } satisfies MachineVgaWorkerSerialMessage);
+    }
+  }
+
+  presentVgaFrame();
+
+  try {
+    (exit as unknown as { free?: () => void }).free?.();
+  } catch {
+    // ignore
+  }
+}
+
+async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
+  stop();
+
+  // Prefer single-threaded WASM for this standalone worker demo. It avoids requiring
+  // crossOriginIsolated + shared WebAssembly.Memory.
+  const init = await initWasmForContext({ variant: "single" });
+  api = init.api;
+  wasmMemory = init.wasmMemory ?? null;
+
+  if (!api.Machine) {
+    throw new Error("Machine export unavailable in this WASM build.");
+  }
+
+  const ramSizeBytes = typeof msg.ramSizeBytes === "number" ? msg.ramSizeBytes : 2 * 1024 * 1024;
+  machine = new api.Machine(ramSizeBytes >>> 0);
+  machine.set_disk_image(buildSerialBootSector(msg.message ?? "Hello from machine_vga.worker\\n"));
+  machine.reset();
+
+  // Prefer shared-buffer transport when supported; otherwise fall back to copy frames.
+  transport = ensureSharedFramebuffer() ? "shared" : "copy";
+
+  post({
+    type: "machineVga.ready",
+    transport,
+    ...(transport === "shared" && sharedSab ? { framebuffer: sharedSab } : {}),
+  } satisfies MachineVgaWorkerReadyMessage);
+
+  tickTimer = ctx.setInterval(() => {
+    try {
+      tick();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      post({ type: "machineVga.error", message } satisfies MachineVgaWorkerErrorMessage);
+      stop();
+    }
+  }, 50);
+  (tickTimer as unknown as { unref?: () => void }).unref?.();
+}
+
+ctx.onmessage = (ev: MessageEvent<unknown>) => {
+  const msg = ev.data as Partial<MachineVgaWorkerStartMessage & MachineVgaWorkerStopMessage> | null | undefined;
+  if (!msg || typeof msg.type !== "string") return;
+
+  if (msg.type === "machineVga.stop") {
+    stop();
+    return;
+  }
+
+  if (msg.type === "machineVga.start") {
+    void start(msg as MachineVgaWorkerStartMessage).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      post({ type: "machineVga.error", message } satisfies MachineVgaWorkerErrorMessage);
+      stop();
+    });
+  }
+};

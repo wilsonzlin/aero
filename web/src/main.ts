@@ -30,7 +30,9 @@ import {
   HEADER_INDEX_STRIDE_BYTES,
   HEADER_INDEX_WIDTH,
   addHeaderI32,
+  copyFrameFromMessageV1,
   initFramebufferHeader,
+  isFramebufferCopyMessageV1,
   requiredFramebufferBytes,
   storeHeaderI32,
   wrapSharedFramebuffer,
@@ -367,6 +369,7 @@ function render(): void {
     renderWasmPanel(),
     renderGraphicsPanel(report),
     renderMachinePanel(),
+    renderMachineWorkerPanel(),
     renderSnapshotPanel(report),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
@@ -1015,6 +1018,149 @@ function renderMachinePanel(): HTMLElement {
     el("h2", { text: "Machine (canonical VM) – serial + VGA demo" }),
     status,
     inputHint,
+    el("div", { class: "row" }, canvas),
+    vgaInfo,
+    output,
+    error,
+  );
+}
+
+function renderMachineWorkerPanel(): HTMLElement {
+  const status = el("pre", { text: "Machine worker demo: idle" });
+  const vgaInfo = el("pre", { text: "" });
+  const canvas = el("canvas", { id: "canonical-machine-vga-worker-canvas" }) as HTMLCanvasElement;
+  canvas.tabIndex = 0;
+  canvas.style.width = "640px";
+  canvas.style.height = "400px";
+  canvas.style.border = "1px solid rgba(127, 127, 127, 0.5)";
+  canvas.style.background = "#000";
+  canvas.style.imageRendering = "pixelated";
+  canvas.addEventListener("click", () => canvas.focus());
+
+  const output = el("pre", { text: "" });
+  const error = el("pre", { text: "" });
+
+  const decoder = new TextDecoder();
+
+  let worker: Worker | null = null;
+  let presenter: VgaPresenter | null = null;
+  let shared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
+
+  const stop = (): void => {
+    if (worker) {
+      try {
+        worker.postMessage({ type: "machineVga.stop" });
+      } catch {
+        // ignore
+      }
+      try {
+        worker.terminate();
+      } catch {
+        // ignore
+      }
+      worker = null;
+    }
+    if (presenter) {
+      presenter.destroy();
+      presenter = null;
+    }
+    shared = null;
+    vgaInfo.textContent = "";
+  };
+
+  const start = (): void => {
+    stop();
+    error.textContent = "";
+    output.textContent = "";
+
+    status.textContent = "Machine worker demo: starting…";
+    const w = new Worker(new URL("./workers/machine_vga.worker.ts", import.meta.url), { type: "module" });
+    worker = w;
+
+    w.addEventListener("message", (ev: MessageEvent<unknown>) => {
+      const msg = ev.data as any;
+      if (!msg || typeof msg !== "object") return;
+
+      if (msg.type === "machineVga.ready") {
+        const transport = msg.transport === "shared" ? "shared" : "copy";
+        status.textContent = `Machine worker demo: ready (transport=${transport})`;
+
+        presenter = new VgaPresenter(canvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
+        presenter.start();
+
+        if (transport === "shared") {
+          const sab = msg.framebuffer;
+          if (typeof SharedArrayBuffer === "undefined" || !(sab instanceof SharedArrayBuffer)) {
+            error.textContent = "machineVga.ready missing SharedArrayBuffer framebuffer";
+            return;
+          }
+          shared = wrapSharedFramebuffer(sab, 0);
+          presenter.setSharedFramebuffer(shared);
+          return;
+        }
+
+        // Copy-frame transport: presenter will consume frames via `pushCopyFrame`.
+        presenter.setSharedFramebuffer(null);
+        return;
+      }
+
+      if (msg.type === "machineVga.serial") {
+        const bytes = msg.data;
+        if (bytes instanceof Uint8Array && bytes.byteLength) {
+          output.textContent = `${output.textContent ?? ""}${decoder.decode(bytes)}`;
+        }
+        return;
+      }
+
+      if (msg.type === "machineVga.status") {
+        const detail = msg.detail;
+        if (typeof detail === "string") {
+          status.textContent = `Machine worker demo: ${detail}`;
+        }
+        return;
+      }
+
+      if (msg.type === "machineVga.error") {
+        const message = typeof msg.message === "string" ? msg.message : String(msg.message);
+        error.textContent = message;
+        status.textContent = "Machine worker demo: error";
+        stop();
+        return;
+      }
+
+      if (isFramebufferCopyMessageV1(msg)) {
+        if (!presenter) return;
+        presenter.pushCopyFrame(copyFrameFromMessageV1(msg));
+        vgaInfo.textContent = `vga: ${msg.width}x${msg.height} stride=${msg.strideBytes} frame=${msg.frameCounter}`;
+        return;
+      }
+    });
+
+    w.addEventListener("error", (ev) => {
+      error.textContent = String((ev as ErrorEvent).message ?? "Worker error");
+      status.textContent = "Machine worker demo: error";
+      stop();
+    });
+
+    w.postMessage({
+      type: "machineVga.start",
+      message: "Hello from machine_vga.worker\\n",
+      ramSizeBytes: 2 * 1024 * 1024,
+    });
+  };
+
+  const startButton = el("button", { text: "Start" }) as HTMLButtonElement;
+  const stopButton = el("button", { text: "Stop" }) as HTMLButtonElement;
+  startButton.addEventListener("click", start);
+  stopButton.addEventListener("click", stop);
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Machine (canonical VM) – worker VGA scanout demo" }),
+    el("div", { class: "hint", text: "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes VGA scanout via the framebuffer protocol." }),
+    el("div", { class: "row" }, startButton, stopButton),
+    status,
     el("div", { class: "row" }, canvas),
     vgaInfo,
     output,
