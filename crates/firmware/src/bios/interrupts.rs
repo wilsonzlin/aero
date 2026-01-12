@@ -261,12 +261,20 @@ fn handle_int13(
     match ah {
         0x00 => {
             // Reset disk system.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         0x01 => {
             // Get status of last disk operation.
+            if !drive_present(bus, drive) {
+                set_error(bios, cpu, 0x01);
+                return;
+            }
             let status = bios.last_int13_status;
             cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
             if status == 0 {
@@ -1423,6 +1431,30 @@ mod tests {
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+    }
+
+    #[test]
+    fn int13_reset_and_get_status_fail_for_nonexistent_drive() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let disk_bytes = vec![0u8; 512];
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RDX] = 0x0000; // DL=floppy 0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        // Booting from a hard disk -> do not advertise any floppy drives in the BDA.
+        ivt::init_bda(&mut mem, 0x80);
+
+        cpu.gpr[gpr::RAX] = 0x0000; // AH=00h reset
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
+
+        cpu.gpr[gpr::RAX] = 0x0100; // AH=01h get status
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
     }
 
     #[test]
