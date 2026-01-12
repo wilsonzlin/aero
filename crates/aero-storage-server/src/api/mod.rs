@@ -17,6 +17,7 @@ struct StatusResponse {
 }
 
 pub fn router(state: AppState) -> Router {
+    let state_for_guard = state.clone();
     Router::new()
         .route("/health", get(health))
         .route("/healthz", get(healthz))
@@ -25,6 +26,11 @@ pub fn router(state: AppState) -> Router {
         .route("/version", get(version))
         .merge(images::router())
         .with_state(state)
+        // DoS hardening: reject pathological `:id` segments before `Path<String>` extraction.
+        .route_layer(axum::middleware::from_fn_with_state(
+            state_for_guard,
+            images::image_id_path_len_guard,
+        ))
 }
 
 fn insert_cors_headers(headers: &mut HeaderMap, state: &AppState, req_headers: &HeaderMap) {

@@ -26,11 +26,13 @@ pub fn router() -> Router<AppState> {
                 .head(head_image_meta)
                 .options(options_image_meta),
         )
-        // DoS hardening: reject pathological `:id` segments before `Path<String>` extraction.
-        .route_layer(axum::middleware::from_fn(image_id_path_len_guard))
 }
 
-async fn image_id_path_len_guard(req: Request<Body>, next: Next) -> Response {
+pub(crate) async fn image_id_path_len_guard(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
     let path = req.uri().path();
     let Some(rest) = path.strip_prefix("/v1/images/") else {
         return next.run(req).await;
@@ -47,7 +49,9 @@ async fn image_id_path_len_guard(req: Request<Body>, next: Next) -> Response {
     // A percent-encoded byte takes 3 chars (`%xx`), so if the raw path segment exceeds
     // `MAX_IMAGE_ID_LEN * 3` then the decoded ID must exceed `MAX_IMAGE_ID_LEN` as well.
     if rest.len() > crate::store::MAX_IMAGE_ID_LEN * 3 {
-        return StatusCode::BAD_REQUEST.into_response();
+        let mut resp = StatusCode::BAD_REQUEST.into_response();
+        *resp.headers_mut() = metadata_cache_headers(&state, req.headers());
+        return resp;
     }
 
     next.run(req).await
@@ -309,9 +313,15 @@ mod tests {
 
     #[tokio::test]
     async fn image_id_path_len_guard_rejects_pathological_raw_segments() {
+        let store = std::sync::Arc::new(crate::store::LocalFsImageStore::new("."));
+        let state = AppState::new(store);
         let app = Router::new()
             .route("/v1/images/:id/meta", get(|| async { StatusCode::OK }))
-            .route_layer(axum::middleware::from_fn(image_id_path_len_guard));
+            .with_state(state.clone())
+            .route_layer(axum::middleware::from_fn_with_state(
+                state,
+                image_id_path_len_guard,
+            ));
 
         let too_long_raw = "a".repeat(crate::store::MAX_IMAGE_ID_LEN * 3 + 1);
         let resp = app
