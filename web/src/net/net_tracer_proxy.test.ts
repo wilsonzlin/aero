@@ -183,4 +183,20 @@ describe("NetTracer (proxy pseudo-interfaces)", () => {
     expect(names).toContain("udp-proxy");
     expect(names).not.toContain("tcp-proxy");
   });
+
+  it("records empty proxy payloads as header-only pseudo packets", () => {
+    const tracer = new NetTracer();
+    tracer.enable();
+
+    tracer.recordTcpProxy("guest_to_remote", 123, new Uint8Array([]), 1n);
+    tracer.recordUdpProxy("guest_to_remote", "proxy", [1, 2, 3, 4], 1, 2, new Uint8Array([]), 2n);
+
+    const { epbs } = parsePcapng(tracer.exportPcapng());
+    const tcpPkt = epbs.find((epb) => ascii(epb.packetData.slice(0, 4)) === "ATCP");
+    const udpPkt = epbs.find((epb) => ascii(epb.packetData.slice(0, 4)) === "AUDP");
+    expect(tcpPkt).toBeTruthy();
+    expect(udpPkt).toBeTruthy();
+    expect(tcpPkt!.packetData.byteLength).toBe(16);
+    expect(udpPkt!.packetData.byteLength).toBe(16);
+  });
 });

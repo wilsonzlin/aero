@@ -178,7 +178,6 @@ export class NetTracer {
     if (!this.captureTcpProxy) return;
 
     const dataLen = data.byteLength;
-    if (dataLen === 0) return;
     const len = PROXY_PSEUDO_HEADER_LEN + dataLen;
     if (len > this.maxBytes || this.bytes + len > this.maxBytes) {
       this.droppedRecords += 1;
@@ -204,7 +203,6 @@ export class NetTracer {
     if (!this.captureUdpProxy) return;
 
     const dataLen = data.byteLength;
-    if (dataLen === 0) return;
     const len = PROXY_PSEUDO_HEADER_LEN + dataLen;
     if (len > this.maxBytes || this.bytes + len > this.maxBytes) {
       this.droppedRecords += 1;
