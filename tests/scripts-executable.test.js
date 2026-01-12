@@ -137,6 +137,44 @@ test("safe-run.sh can execute a trivial command (Linux)", { skip: process.platfo
   });
 });
 
+test("safe-run.sh defaults Cargo parallelism to -j1 (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  delete env.AERO_CARGO_BUILD_JOBS;
+  delete env.RAYON_NUM_THREADS;
+
+  const stdout = execFileSync(
+    path.join(repoRoot, "scripts/safe-run.sh"),
+    ["bash", "-c", 'printf "%s|%s" "$CARGO_BUILD_JOBS" "$RAYON_NUM_THREADS"'],
+    {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(stdout, "1|1");
+});
+
+test("safe-run.sh respects AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  delete env.CARGO_BUILD_JOBS;
+  delete env.RAYON_NUM_THREADS;
+  env.AERO_CARGO_BUILD_JOBS = "2";
+
+  const stdout = execFileSync(
+    path.join(repoRoot, "scripts/safe-run.sh"),
+    ["bash", "-c", 'printf "%s|%s" "$CARGO_BUILD_JOBS" "$RAYON_NUM_THREADS"'],
+    {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(stdout, "2|2");
+});
+
 test(
   "safe-run.sh works via bash even if scripts lose executable bits (Linux)",
   { skip: process.platform !== "linux" },
