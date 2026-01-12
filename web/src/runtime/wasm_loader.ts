@@ -406,6 +406,16 @@ export interface WasmApi {
       * Optional while older wasm builds are still in circulation.
       */
     synthesize_webhid_report_descriptor?: (collectionsJson: unknown) => Uint8Array;
+    /**
+     * Guest CPU benchmark harness (used by microbench tooling).
+     *
+     * Optional for older WASM builds.
+     */
+    GuestCpuBenchHarness?: new () => {
+        payload_info(variant: string): unknown;
+        run_payload_once(variant: string, iters: number): unknown;
+        free(): void;
+    };
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
         framebufferOffsetBytes: number,
@@ -772,6 +782,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         E1000Bridge: mod.E1000Bridge,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
+        GuestCpuBenchHarness: mod.GuestCpuBenchHarness,
         UsbPassthroughDemo: mod.UsbPassthroughDemo,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,

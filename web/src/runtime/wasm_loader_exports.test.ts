@@ -241,6 +241,41 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.UsbPassthroughDemo).toBe(FakeUsbPassthroughDemo);
   });
 
+  it("surfaces GuestCpuBenchHarness when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakeGuestCpuBenchHarness {
+      payload_info(_variant: string): unknown {
+        return {};
+      }
+
+      run_payload_once(_variant: string, _iters: number): unknown {
+        return {};
+      }
+
+      free(): void {}
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        GuestCpuBenchHarness: FakeGuestCpuBenchHarness,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.GuestCpuBenchHarness).toBeDefined();
+    expect(api.GuestCpuBenchHarness).toBe(FakeGuestCpuBenchHarness);
+  });
+
   it("allows threaded init without a crossOriginIsolated flag in Node-like runtimes", async () => {
     if (!sharedMemorySupported()) return;
 
