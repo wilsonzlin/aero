@@ -193,15 +193,35 @@ fn if_none_match_matches(if_none_match: &HeaderValue, current_etag: &str) -> boo
 
     let current = strip_weak_prefix(current_etag.trim());
 
-    for raw in if_none_match.split(',') {
-        let tag = raw.trim();
-        if tag == "*" {
-            return true;
+    // `If-None-Match` is a comma-separated list of entity-tags, but commas are allowed inside
+    // a quoted entity-tag value. Split only on commas that occur *outside* quotes.
+    let mut start = 0usize;
+    let mut in_quotes = false;
+    let bytes = if_none_match.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'"' => in_quotes = !in_quotes,
+            b',' if !in_quotes => {
+                let tag = if_none_match[start..i].trim();
+                if tag == "*" {
+                    return true;
+                }
+                let candidate = strip_weak_prefix(tag);
+                if candidate == current {
+                    return true;
+                }
+                start = i + 1;
+            }
+            _ => {}
         }
-        let candidate = strip_weak_prefix(tag);
-        if candidate == current {
-            return true;
-        }
+    }
+    let tag = if_none_match[start..].trim();
+    if tag == "*" {
+        return true;
+    }
+    let candidate = strip_weak_prefix(tag);
+    if candidate == current {
+        return true;
     }
 
     false
@@ -325,5 +345,30 @@ mod tests {
     fn etag_header_value_or_fallback_rejects_inner_quotes() {
         let v = etag_header_value_or_fallback(Some("\"a\"b\""), || "W/\"fallback\"".to_string());
         assert_eq!(v.to_str().unwrap(), "W/\"fallback\"");
+    }
+
+    #[test]
+    fn if_none_match_handles_commas_inside_etag() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str("\"a,b\"").unwrap(),
+        );
+
+        assert!(
+            is_not_modified(&headers, Some("\"a,b\""), None),
+            "expected comma inside quoted ETag to be treated as part of the tag"
+        );
+    }
+
+    #[test]
+    fn if_none_match_handles_commas_inside_etag_in_list() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str("W/\"x\", \"a,b\"").unwrap(),
+        );
+
+        assert!(is_not_modified(&headers, Some("\"a,b\""), None));
     }
 }
