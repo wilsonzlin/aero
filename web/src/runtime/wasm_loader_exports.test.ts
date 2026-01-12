@@ -28,8 +28,8 @@ describe("runtime/wasm_loader (optional exports)", () => {
   it("surfaces MouseButton/MouseButtons when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
-    const MouseButton = { Left: 0, Middle: 1, Right: 2 } as const;
-    const MouseButtons = { Left: 1, Right: 2, Middle: 4 } as const;
+    const MouseButton = { Left: 0, Middle: 1, Right: 2, Back: 3, Forward: 4 } as const;
+    const MouseButtons = { Left: 1, Right: 2, Middle: 4, Back: 8, Forward: 16 } as const;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (globalThis as any).__aeroWasmJsImporterOverride = {
