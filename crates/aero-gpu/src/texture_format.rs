@@ -170,6 +170,17 @@ pub fn wgpu_bc_texture_dimensions_compatible(
         return false;
     }
 
+    // WebGPU validation requires `mip_level_count` to be within the possible chain length for the
+    // given dimensions (regardless of format).
+    //
+    // This also prevents pathological `mip_level_count` values from causing extremely large loops
+    // when this helper is called on untrusted input.
+    let max_dim = width.max(height);
+    let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+    if mip_level_count > max_mip_levels {
+        return false;
+    }
+
     // wgpu/WebGPU validation currently requires the base mip dimensions to be block-aligned for BC
     // formats (4x4 blocks), even when the base mip is smaller than a full block (e.g. 2x2).
     //
@@ -260,6 +271,14 @@ mod tests {
         assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 2));
         // 4x4 -> 2x2 is OK because mip1 is smaller than a block.
         assert!(wgpu_bc_texture_dimensions_compatible(4, 4, 2));
+    }
+
+    #[test]
+    fn bc_dimension_compatibility_rejects_mip_levels_beyond_possible_chain_length() {
+        // WebGPU does not allow mip_level_count to exceed the number of distinct mip extents.
+        assert!(!wgpu_bc_texture_dimensions_compatible(1, 1, 2));
+        assert!(!wgpu_bc_texture_dimensions_compatible(4, 4, 4)); // max is 3 for 4x4
+        assert!(wgpu_bc_texture_dimensions_compatible(4, 4, 3));
     }
 
     #[test]
