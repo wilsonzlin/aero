@@ -1167,6 +1167,10 @@ buffered in memory (use **Clear capture** or download/export to reset).
 Captures are kept **in-memory** until you export/save them. Reloading the page (or the net worker
 crashing/restarting) will discard any buffered frames.
 
+Downloading/saving a capture drains the current in-memory buffer, but does **not** automatically
+disable tracing — if tracing is still enabled, new frames will continue to be recorded into a fresh
+buffer.
+
 If the tracing backend is not installed in the current build/runtime (e.g. `window.aero.netTrace`
 is missing), the UI will surface an error when you try to enable/export. If the net worker isn't
 running yet, captures may not record anything until it starts, and operations like download/stats
@@ -1256,6 +1260,9 @@ The web tracing buffer is held in-memory and has an explicit size cap to prevent
 - Exporting via the UI (or `downloadPcapng`) uses the net worker’s `takePcapng()` path, which
   **clears the buffer after exporting**. Use this (or the clear button / API) to keep captures
   bounded during long debugging sessions.
+- Note: in the current web runtime, exporting clears the buffered frames but does **not** reset the
+  drop counters — use **Clear capture** / `clear()` if you want to reset `droppedRecords` and
+  `droppedBytes`.
 
 Performance note: enabling tracing copies each captured frame into an in-memory buffer (so it has
 CPU + memory overhead). Keep tracing disabled unless actively debugging.
