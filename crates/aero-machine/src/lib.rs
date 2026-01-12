@@ -52,7 +52,8 @@ use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
 use memory::{
-    DenseMemory, DirtyGuestMemory, DirtyTracker, MapError, MemoryBus as _, PhysicalMemoryBus,
+    DenseMemory, DirtyGuestMemory, DirtyTracker, GuestMemoryError, MapError, MemoryBus as _,
+    PhysicalMemoryBus,
 };
 
 mod pci_firmware;
@@ -1194,7 +1195,12 @@ impl snapshot::SnapshotSource for Machine {
         if end > self.cfg.ram_size_bytes {
             return Err(snapshot::SnapshotError::Corrupt("ram read out of range"));
         }
-        self.mem.inner.borrow_mut().read_physical(offset, buf);
+        self.mem
+            .inner
+            .borrow()
+            .ram
+            .read_into(offset, buf)
+            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram read failed"))?;
         Ok(())
     }
 
@@ -1294,7 +1300,6 @@ impl snapshot::SnapshotTarget for Machine {
         // `aero_devices::pci::PciCoreSnapshot`.
         let pci_state = by_id.remove(&snapshot::DeviceId::PCI);
         let pci_cfg_state = by_id.remove(&snapshot::DeviceId::PCI_CFG);
-
         if let Some(state) = pci_state {
             if let (Some(pci_cfg), Some(pci_intx)) = (&self.pci_cfg, &self.pci_intx) {
                 let mut pci_cfg = pci_cfg.borrow_mut();
@@ -1305,7 +1310,7 @@ impl snapshot::SnapshotTarget for Machine {
                         restored_pci_intx = true;
                     }
                     Err(_) => {
-                        // Backward compatibility: older snapshots stored only `PciConfigPorts`
+                        // Backward compatibility: some snapshots stored only `PciConfigPorts`
                         // (`PCPT`) under `DeviceId::PCI`.
                         let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
                             &state,
@@ -1418,7 +1423,12 @@ impl snapshot::SnapshotTarget for Machine {
         if end > self.cfg.ram_size_bytes {
             return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
         }
-        self.mem.inner.borrow_mut().write_physical(offset, data);
+        self.mem
+            .inner
+            .borrow_mut()
+            .ram
+            .write_from(offset, data)
+            .map_err(|_err: GuestMemoryError| snapshot::SnapshotError::Corrupt("ram write failed"))?;
         Ok(())
     }
 
