@@ -42,6 +42,8 @@ echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 
-# Chain: timeout (with SIGKILL fallback) wraps memory-limited command
-# The -k 10 sends SIGKILL 10s after SIGTERM if the process ignores SIGTERM
-exec timeout -k 10 "${TIMEOUT}" bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@"
+# Chain: timeout (with SIGKILL fallback) wraps memory-limited command.
+#
+# Use the shared helper so we support both GNU `timeout` and macOS `gtimeout`
+# consistently across scripts.
+exec "$SCRIPT_DIR/with-timeout.sh" "${TIMEOUT}" bash "$SCRIPT_DIR/run_limited.sh" --as "$MEM_LIMIT" -- "$@"
