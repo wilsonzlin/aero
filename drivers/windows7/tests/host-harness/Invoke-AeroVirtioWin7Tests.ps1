@@ -139,17 +139,32 @@ function Try-HandleAeroHttpRequest {
     }
 
     $ok = $false
+    $large = $false
     if ($requestLine -match "^GET\s+(\S+)\s+HTTP/") {
       $reqPath = $Matches[1]
       if ($reqPath -eq $Path) { $ok = $true }
+      elseif ($reqPath -eq "$Path-large") { $ok = $true; $large = $true }
     }
 
-    $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
     $statusLine = if ($ok) { "HTTP/1.1 200 OK" } else { "HTTP/1.1 404 Not Found" }
-    $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
+    $contentType = "text/plain"
+    $bodyBytes = $null
+    if ($ok -and $large) {
+      # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
+      $contentType = "application/octet-stream"
+      $size = 1048576
+      $bodyBytes = New-Object byte[] $size
+      for ($i = 0; $i -lt $size; $i++) {
+        $bodyBytes[$i] = [byte]($i % 256)
+      }
+    } else {
+      $body = if ($ok) { "OK`n" } else { "NOT_FOUND`n" }
+      $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($body)
+    }
+
     $hdr = @(
       $statusLine,
-      "Content-Type: text/plain",
+      "Content-Type: $contentType",
       "Content-Length: $($bodyBytes.Length)",
       "Connection: close",
       "",

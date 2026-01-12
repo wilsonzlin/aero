@@ -2126,6 +2126,39 @@ static bool DnsResolveWithFallback(Logger& log, const std::wstring& primary_host
   return false;
 }
 
+static uint64_t Fnv1a64Update(uint64_t hash, const uint8_t* data, size_t len) {
+  static const uint64_t kPrime = 1099511628211ull;
+  for (size_t i = 0; i < len; i++) {
+    hash ^= static_cast<uint64_t>(data[i]);
+    hash *= kPrime;
+  }
+  return hash;
+}
+
+static std::wstring UrlAppendSuffix(const std::wstring& url, const std::wstring& suffix) {
+  // Best-effort: append a suffix to the URL path while preserving any query/fragment.
+  //
+  // The host harness exposes `${HttpPath}-large`, so the default URL
+  //   http://10.0.2.2:18080/aero-virtio-selftest
+  // becomes
+  //   http://10.0.2.2:18080/aero-virtio-selftest-large
+  const size_t q = url.find(L'?');
+  const size_t h = url.find(L'#');
+  size_t insert_pos = std::wstring::npos;
+  if (q != std::wstring::npos && h != std::wstring::npos) {
+    insert_pos = std::min(q, h);
+  } else if (q != std::wstring::npos) {
+    insert_pos = q;
+  } else if (h != std::wstring::npos) {
+    insert_pos = h;
+  }
+  if (insert_pos == std::wstring::npos) return url + suffix;
+
+  std::wstring out = url;
+  out.insert(insert_pos, suffix);
+  return out;
+}
+
 static bool HttpGet(Logger& log, const std::wstring& url) {
   URL_COMPONENTS comp{};
   comp.dwStructSize = sizeof(comp);
@@ -2236,6 +2269,159 @@ static bool HttpGet(Logger& log, const std::wstring& url) {
   return status >= 200 && status < 300;
 }
 
+static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url) {
+  static const uint64_t kExpectedBytes = 1024ull * 1024ull;
+  // FNV-1a 64-bit hash of bytes 0..255 repeated to 1 MiB.
+  static const uint64_t kExpectedHash = 0x8505ae4435522325ull;
+  static const uint64_t kFnvOffsetBasis = 14695981039346656037ull; // 0xcbf29ce484222325
+
+  URL_COMPONENTS comp{};
+  comp.dwStructSize = sizeof(comp);
+  comp.dwSchemeLength = static_cast<DWORD>(-1);
+  comp.dwHostNameLength = static_cast<DWORD>(-1);
+  comp.dwUrlPathLength = static_cast<DWORD>(-1);
+  comp.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+  if (!WinHttpCrackUrl(url.c_str(), 0, 0, &comp)) {
+    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(),
+             GetLastError());
+    return false;
+  }
+
+  std::wstring host(comp.lpszHostName, comp.dwHostNameLength);
+  std::wstring path(comp.lpszUrlPath, comp.dwUrlPathLength);
+  if (comp.dwExtraInfoLength > 0) path.append(comp.lpszExtraInfo, comp.dwExtraInfoLength);
+  const INTERNET_PORT port = comp.nPort;
+
+  const bool secure = (comp.nScheme == INTERNET_SCHEME_HTTPS);
+  if (secure) {
+    log.LogLine("virtio-net: https urls are supported by WinHTTP, but are discouraged for tests "
+                "(certificate store variability). Prefer http.");
+  }
+
+  HINTERNET session =
+      WinHttpOpen(L"AeroVirtioSelftest/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+                  WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!session) {
+    log.Logf("virtio-net: WinHttpOpen failed err=%lu", GetLastError());
+    return false;
+  }
+
+  WinHttpSetTimeouts(session, 15000, 15000, 15000, 15000);
+
+  HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+  if (!connect) {
+    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(),
+             port, GetLastError());
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  const DWORD flags = secure ? WINHTTP_FLAG_SECURE : 0;
+  HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+  if (!request) {
+    log.Logf("virtio-net: WinHttpOpenRequest failed err=%lu", GetLastError());
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
+    log.Logf("virtio-net: WinHttpSendRequest failed err=%lu", GetLastError());
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  if (!WinHttpReceiveResponse(request, nullptr)) {
+    log.Logf("virtio-net: WinHttpReceiveResponse failed err=%lu", GetLastError());
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  DWORD status = 0;
+  DWORD status_size = sizeof(status);
+  if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                           WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size,
+                           WINHTTP_NO_HEADER_INDEX)) {
+    log.Logf("virtio-net: WinHttpQueryHeaders(status) failed err=%lu", GetLastError());
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return false;
+  }
+
+  DWORD content_len = 0;
+  DWORD content_len_size = sizeof(content_len);
+  bool has_content_len = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                             WINHTTP_HEADER_NAME_BY_INDEX, &content_len, &content_len_size,
+                                             WINHTTP_NO_HEADER_INDEX) != 0;
+
+  uint64_t total_read = 0;
+  uint64_t hash = kFnvOffsetBasis;
+  bool read_ok = true;
+  std::vector<uint8_t> buf(64 * 1024);
+
+  for (;;) {
+    DWORD available = 0;
+    if (!WinHttpQueryDataAvailable(request, &available)) {
+      log.Logf("virtio-net: WinHttpQueryDataAvailable failed err=%lu", GetLastError());
+      read_ok = false;
+      break;
+    }
+    if (available == 0) break;
+
+    while (available > 0) {
+      const DWORD to_read = std::min<DWORD>(available, static_cast<DWORD>(buf.size()));
+      DWORD read = 0;
+      if (!WinHttpReadData(request, buf.data(), to_read, &read)) {
+        log.Logf("virtio-net: WinHttpReadData failed err=%lu", GetLastError());
+        read_ok = false;
+        break;
+      }
+      if (read == 0) {
+        available = 0;
+        break;
+      }
+      total_read += static_cast<uint64_t>(read);
+      hash = Fnv1a64Update(hash, buf.data(), read);
+      available -= read;
+    }
+    if (!read_ok) break;
+  }
+
+  WinHttpCloseHandle(request);
+  WinHttpCloseHandle(connect);
+  WinHttpCloseHandle(session);
+
+  log.Logf("virtio-net: HTTP GET large done url=%s status=%lu bytes_read=%llu fnv1a64=0x%016llx%s",
+           WideToUtf8(url).c_str(), status, static_cast<unsigned long long>(total_read),
+           static_cast<unsigned long long>(hash),
+           has_content_len ? "" : " (missing Content-Length)");
+
+  if (has_content_len && content_len != kExpectedBytes) {
+    log.Logf("virtio-net: HTTP GET large Content-Length mismatch got=%lu expected=%llu",
+             static_cast<unsigned long>(content_len), static_cast<unsigned long long>(kExpectedBytes));
+  }
+
+  if (!(status >= 200 && status < 300)) return false;
+  if (!read_ok) return false;
+  if (total_read != kExpectedBytes || hash != kExpectedHash) {
+    log.Logf("virtio-net: HTTP GET large body mismatch bytes_read=%llu expected_bytes=%llu hash=0x%016llx "
+             "expected_hash=0x%016llx",
+             static_cast<unsigned long long>(total_read), static_cast<unsigned long long>(kExpectedBytes),
+             static_cast<unsigned long long>(hash), static_cast<unsigned long long>(kExpectedHash));
+    return false;
+  }
+
+  log.LogLine("virtio-net: HTTP GET large ok (size+hash match)");
+  return true;
+}
+
 static bool VirtioNetTest(Logger& log, const Options& opt) {
   const auto adapters = DetectVirtioNetAdapters(log);
   if (adapters.empty()) {
@@ -2327,6 +2513,7 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
 
   if (!DnsResolveWithFallback(log, opt.dns_host)) return false;
   if (!HttpGet(log, opt.http_url)) return false;
+  if (!HttpGetLargeDeterministic(log, UrlAppendSuffix(opt.http_url, L"-large"))) return false;
   return true;
 }
 

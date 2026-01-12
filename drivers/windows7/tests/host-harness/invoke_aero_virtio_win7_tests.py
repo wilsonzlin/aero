@@ -66,12 +66,19 @@ class _QuietHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path == self.expected_path:
             body = b"OK\n"
+            content_type = "text/plain"
+            self.send_response(200)
+        elif self.path == self.expected_path + "-large":
+            # Deterministic 1 MiB payload (0..255 repeating) for sustained virtio-net TX/RX stress.
+            body = bytes(range(256)) * (1024 * 1024 // 256)
+            content_type = "application/octet-stream"
             self.send_response(200)
         else:
             body = b"NOT_FOUND\n"
+            content_type = "text/plain"
             self.send_response(404)
 
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
