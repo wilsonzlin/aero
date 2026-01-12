@@ -49,8 +49,12 @@ fn machine_win7_storage_has_ahci_and_ide_on_canonical_bdfs() {
         assert_eq!(id & 0xffff, u32::from(SATA_AHCI_ICH9.vendor_id));
         assert_eq!((id >> 16) & 0xffff, u32::from(SATA_AHCI_ICH9.device_id));
 
-        let int_line = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x3C) & 0xFF;
+        let intr = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x3C);
+        let int_line = intr & 0xFF;
+        let int_pin = (intr >> 8) & 0xFF;
         assert_eq!(int_line, 12);
+        // INTA#
+        assert_eq!(int_pin, 1);
     }
 
     // IDE at 00:01.1
@@ -60,8 +64,12 @@ fn machine_win7_storage_has_ahci_and_ide_on_canonical_bdfs() {
         assert_eq!(id & 0xffff, u32::from(IDE_PIIX3.vendor_id));
         assert_eq!((id >> 16) & 0xffff, u32::from(IDE_PIIX3.device_id));
 
-        let int_line = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x3C) & 0xFF;
+        let intr = read_cfg_u32(&mut m, bdf.bus, bdf.device, bdf.function, 0x3C);
+        let int_line = intr & 0xFF;
+        let int_pin = (intr >> 8) & 0xFF;
         assert_eq!(int_line, 11);
+        // INTA#
+        assert_eq!(int_pin, 1);
     }
 
     // ISA bridge function at 00:01.0 should exist when IDE is enabled, with the multi-function
