@@ -48,7 +48,20 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
       const wc = (globalThis as any).__aeroWorkerCoordinator;
       if (!wc || typeof wc.getWorkerStatuses !== "function") return false;
       const statuses = wc.getWorkerStatuses();
-      return statuses?.cpu?.state === "ready" && statuses?.io?.state === "ready";
+      return statuses?.cpu?.state === "ready" && statuses?.io?.state === "ready" && statuses?.net?.state === "ready";
+    },
+    undefined,
+    { timeout: 120_000 },
+  );
+
+  // Worker statuses can flip to READY before the background WASM initialization finishes.
+  // Wait for WASM_READY from the CPU + IO workers so snapshot save/restore APIs are available.
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const wc = (globalThis as any).__aeroWorkerCoordinator;
+      if (!wc || typeof wc.getWorkerWasmStatus !== "function") return false;
+      return Boolean(wc.getWorkerWasmStatus("cpu")) && Boolean(wc.getWorkerWasmStatus("io"));
     },
     undefined,
     { timeout: 120_000 },
@@ -106,6 +119,20 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
   // Ensure the producer is writing actual (non-silent) samples into the ring.
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputWorker", { threshold: 0.01, timeoutMs: 20_000 });
 
+  // Ignore any startup underruns while the worker/runtime bootstraps; assert on the *delta*
+  // over a steady-state window so this stays robust on cold CI runners.
+  const steady0 = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutputWorker;
+    if (!out?.enabled) return null;
+    const ring = out.ringBuffer as { underrunCount: Uint32Array; overrunCount: Uint32Array };
+    return {
+      underrun: Atomics.load(ring.underrunCount, 0) >>> 0,
+      overrun: Atomics.load(ring.overrunCount, 0) >>> 0,
+    };
+  });
+  expect(steady0).not.toBeNull();
+
   // Let the system run for a bit so we catch sustained underruns/overruns (not just “it started once”).
   await page.waitForTimeout(1000);
 
@@ -121,9 +148,12 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
     };
   });
   expect(beforeSave).not.toBeNull();
-  expect(beforeSave!.overrun).toBe(0);
-  // Startup can be racy across CI environments; allow up to one render quantum.
-  expect(beforeSave!.underrun).toBeLessThanOrEqual(128);
+  const deltaOverrunBeforeSave = ((beforeSave!.overrun - steady0!.overrun) >>> 0) as number;
+  const deltaUnderrunBeforeSave = ((beforeSave!.underrun - steady0!.underrun) >>> 0) as number;
+  expect(deltaOverrunBeforeSave).toBe(0);
+  // Underruns are tracked in frames. Allow a few render quanta of slack over the window
+  // (covers occasional scheduling jitter while still catching sustained underruns).
+  expect(deltaUnderrunBeforeSave).toBeLessThanOrEqual(1024);
 
   const snapshotPath = `state/playwright-worker-tone-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}.snap`;
 

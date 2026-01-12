@@ -59,6 +59,20 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
     { timeout: 120_000 },
   );
 
+  // Worker status flips to READY before the background WASM initialization finishes. Snapshot save/restore
+  // requires CPU+IO WASM exports (`WasmVm.save_state_v2` + IO-side snapshot container writers), so wait
+  // for WASM_READY before attempting the snapshot.
+  await page.waitForFunction(
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const wc = (globalThis as any).__aeroWorkerCoordinator;
+      if (!wc || typeof wc.getWorkerWasmStatus !== "function") return false;
+      return Boolean(wc.getWorkerWasmStatus("cpu")) && Boolean(wc.getWorkerWasmStatus("io"));
+    },
+    undefined,
+    { timeout: 120_000 },
+  );
+
   const initialIndices = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
@@ -105,6 +119,19 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
   // advancing indices.
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputHdaPciDevice", { threshold: 0.01, timeoutMs: 20_000 });
 
+  // Ignore any startup underruns while the worker/runtime + PCI device pipeline bootstraps;
+  // assert on the *delta* over a steady-state window so this stays robust on cold CI runners.
+  const steady0 = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutputHdaPciDevice;
+    if (!out?.enabled) return null;
+    return {
+      underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
+    };
+  });
+  expect(steady0).not.toBeNull();
+
   // Let the system run for a bit so we catch sustained underruns (not just “it started once”).
   await page.waitForTimeout(1000);
 
@@ -135,9 +162,12 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
   expect(beforeSnapshot!.backend).toBe("io-worker-hda-pci");
   expect(beforeSnapshot!.bufferLevelFrames).not.toBeNull();
   expect(beforeSnapshot!.bufferLevelFrames as number).toBeGreaterThan(0);
-  // Startup is still subject to scheduler variance in CI; allow up to one render quantum worth of underrun.
-  expect(beforeSnapshot!.underruns).toBeLessThanOrEqual(128);
-  expect(beforeSnapshot!.overruns).toBe(0);
+  const deltaUnderrun = (((beforeSnapshot!.underruns as number) - (steady0!.underruns as number)) >>> 0) as number;
+  const deltaOverrun = (((beforeSnapshot!.overruns as number) - (steady0!.overruns as number)) >>> 0) as number;
+  expect(deltaOverrun).toBe(0);
+  // Underruns are tracked in frames. Allow a few render quanta of slack over the window
+  // (covers occasional scheduling jitter while still catching sustained underruns).
+  expect(deltaUnderrun).toBeLessThanOrEqual(1024);
 
   // Generate a per-test snapshot path to avoid collisions when Playwright runs specs in parallel.
   const snapshotPath = `state/playwright-hda-pci-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}.snap`;

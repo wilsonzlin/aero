@@ -57,19 +57,111 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
         return { ok: true as const, supported: false as const, reason: "navigator.storage.getDirectory unavailable" };
       }
 
-      const root = await storage.getDirectory();
-      // Ensure the snapshot directory exists (WorkerCoordinator writes under `state/` by default).
-      try {
-        await root.getDirectoryHandle("state", { create: true });
-      } catch {
-        // ignore best-effort
-      }
+      // SyncAccessHandle is only usable in workers. Probe via a tiny blob worker so we
+      // don't incorrectly skip environments where the API exists only off the main thread.
+      const blobUrl = URL.createObjectURL(
+        new Blob(
+          [
+            `
+              self.onmessage = async () => {
+                try {
+                  const storage = navigator.storage;
+                  if (!storage || typeof storage.getDirectory !== 'function') {
+                    self.postMessage({ supported: false, reason: 'navigator.storage.getDirectory unavailable' });
+                    return;
+                  }
 
-      const handle = await root.getFileHandle("aero-sync-access-handle-probe.tmp", { create: true });
-      const supported = typeof (handle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle === "function";
-      return supported
+                  const root = await storage.getDirectory();
+                  try {
+                    await root.getDirectoryHandle('state', { create: true });
+                  } catch {}
+
+                  const file = await root.getFileHandle('aero-sync-access-handle-probe.tmp', { create: true });
+                  if (typeof file.createSyncAccessHandle !== 'function') {
+                    self.postMessage({ supported: false, reason: 'FileSystemFileHandle.createSyncAccessHandle unavailable' });
+                    return;
+                  }
+
+                  let handle = null;
+                  try {
+                    handle = await file.createSyncAccessHandle();
+                    if (handle && typeof handle.close === 'function') {
+                      await handle.close();
+                    }
+                  } catch (err) {
+                    const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
+                    self.postMessage({ supported: false, reason: msg });
+                    return;
+                  }
+
+                  self.postMessage({ supported: true });
+                } catch (err) {
+                  const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
+                  self.postMessage({ supported: false, reason: msg });
+                }
+              };
+            `,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+
+      const workerResult = await new Promise<{ supported: boolean; reason?: string }>((resolve, reject) => {
+        const timeoutMs = 10_000;
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Timed out probing OPFS SyncAccessHandle in worker (${timeoutMs}ms).`));
+        }, timeoutMs);
+
+        let worker: Worker | null = null;
+        const cleanup = () => {
+          clearTimeout(timer);
+          try {
+            worker?.terminate();
+          } catch {
+            // ignore
+          }
+          try {
+            URL.revokeObjectURL(blobUrl);
+          } catch {
+            // ignore
+          }
+          worker = null;
+        };
+
+        try {
+          worker = new Worker(blobUrl);
+        } catch (err) {
+          cleanup();
+          reject(err);
+          return;
+        }
+
+        worker.onmessage = (ev) => {
+          cleanup();
+          const data = ev.data as unknown;
+          if (!data || typeof data !== "object") {
+            resolve({ supported: false, reason: "Invalid probe worker response." });
+            return;
+          }
+          const rec = data as { supported?: unknown; reason?: unknown };
+          resolve({ supported: rec.supported === true, reason: typeof rec.reason === "string" ? rec.reason : undefined });
+        };
+        worker.onerror = (ev) => {
+          cleanup();
+          reject(new Error(ev.message || "OPFS SyncAccessHandle probe worker error."));
+        };
+
+        worker.postMessage(null);
+      });
+
+      return workerResult.supported
         ? ({ ok: true as const, supported: true as const } satisfies OpfsSyncAccessHandleProbeResult)
-        : ({ ok: true as const, supported: false as const, reason: "FileSystemFileHandle.createSyncAccessHandle unavailable" } satisfies OpfsSyncAccessHandleProbeResult);
+        : ({
+            ok: true as const,
+            supported: false as const,
+            reason: workerResult.reason ?? "FileSystemFileHandle.createSyncAccessHandle unavailable",
+          } satisfies OpfsSyncAccessHandleProbeResult);
     } catch (err) {
       return {
         ok: false as const,
