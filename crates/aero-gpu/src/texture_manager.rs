@@ -286,6 +286,12 @@ impl<'a> TextureManager<'a> {
     }
 
     pub fn create_texture(&mut self, key: TextureKey, mut desc: TextureDesc) -> Arc<wgpu::Texture> {
+        // WebGPU requires `mip_level_count` to be within the possible chain length for the given
+        // dimensions. Clamp defensively to avoid pathological loops and wgpu validation panics if
+        // higher layers pass untrusted values.
+        let max_mip_levels = max_mip_level_count(desc.size, desc.dimension).max(1);
+        desc.mip_level_count = desc.mip_level_count.clamp(1, max_mip_levels);
+
         let selection = select_texture_format(
             desc.format,
             self.caps,
@@ -308,8 +314,12 @@ impl<'a> TextureManager<'a> {
             view_formats: &[],
         }));
 
-        let gpu_bytes =
-            estimate_texture_size_bytes(selection.actual, desc.size, desc.mip_level_count);
+        let gpu_bytes = estimate_texture_size_bytes(
+            selection.actual,
+            desc.size,
+            desc.dimension,
+            desc.mip_level_count,
+        );
 
         if let Some(old) = self.textures.remove(&key) {
             self.stats.total_gpu_bytes = self.stats.total_gpu_bytes.saturating_sub(old.gpu_bytes);
@@ -426,7 +436,7 @@ impl<'a> TextureManager<'a> {
                 .ok_or(TextureManagerError::TextureNotFound(key))?;
             entry.last_used = last_used;
             let mip_level_count = entry.desc.mip_level_count;
-            let mip_size = mip_extent(entry.desc.size, region.mip_level);
+            let mip_size = mip_extent(entry.desc.size, entry.desc.dimension, region.mip_level);
             (
                 entry.selection,
                 entry.desc.format,
@@ -558,12 +568,51 @@ impl<'a> TextureManager<'a> {
     }
 }
 
-fn mip_extent(size: wgpu::Extent3d, mip_level: u32) -> wgpu::Extent3d {
+fn mip_dimension(base: u32, mip_level: u32) -> u32 {
+    base.checked_shr(mip_level).unwrap_or(0).max(1)
+}
+
+fn mip_extent(
+    size: wgpu::Extent3d,
+    dimension: wgpu::TextureDimension,
+    mip_level: u32,
+) -> wgpu::Extent3d {
+    let width = mip_dimension(size.width, mip_level);
+    let height = match dimension {
+        wgpu::TextureDimension::D1 => 1,
+        wgpu::TextureDimension::D2 | wgpu::TextureDimension::D3 => {
+            mip_dimension(size.height, mip_level)
+        }
+    };
+    let depth_or_array_layers = match dimension {
+        wgpu::TextureDimension::D3 => mip_dimension(size.depth_or_array_layers, mip_level),
+        wgpu::TextureDimension::D1 | wgpu::TextureDimension::D2 => size.depth_or_array_layers,
+    };
     wgpu::Extent3d {
-        width: (size.width >> mip_level).max(1),
-        height: (size.height >> mip_level).max(1),
-        depth_or_array_layers: size.depth_or_array_layers,
+        width,
+        height,
+        depth_or_array_layers,
     }
+}
+
+fn max_mip_level_count(size: wgpu::Extent3d, dimension: wgpu::TextureDimension) -> u32 {
+    let valid_base = match dimension {
+        wgpu::TextureDimension::D1 => size.width != 0,
+        wgpu::TextureDimension::D2 => size.width != 0 && size.height != 0,
+        wgpu::TextureDimension::D3 => {
+            size.width != 0 && size.height != 0 && size.depth_or_array_layers != 0
+        }
+    };
+    if !valid_base {
+        return 0;
+    }
+
+    let max_dim = match dimension {
+        wgpu::TextureDimension::D1 => size.width,
+        wgpu::TextureDimension::D2 => size.width.max(size.height),
+        wgpu::TextureDimension::D3 => size.width.max(size.height).max(size.depth_or_array_layers),
+    };
+    32u32.saturating_sub(max_dim.leading_zeros())
 }
 
 fn validate_region(
@@ -578,9 +627,24 @@ fn validate_region(
         });
     }
 
-    if region.origin.x + region.size.width > mip_size.width
-        || region.origin.y + region.size.height > mip_size.height
-        || region.origin.z + region.size.depth_or_array_layers > mip_size.depth_or_array_layers
+    let end_x = region.origin.x.checked_add(region.size.width);
+    let end_y = region.origin.y.checked_add(region.size.height);
+    let end_z = region
+        .origin
+        .z
+        .checked_add(region.size.depth_or_array_layers);
+    if end_x.is_none() || end_y.is_none() || end_z.is_none() {
+        return Err(TextureManagerError::RegionOutOfBounds {
+            origin: region.origin,
+            size: region.size,
+            mip_size,
+            mip_level: region.mip_level,
+        });
+    }
+
+    if end_x.unwrap() > mip_size.width
+        || end_y.unwrap() > mip_size.height
+        || end_z.unwrap() > mip_size.depth_or_array_layers
     {
         return Err(TextureManagerError::RegionOutOfBounds {
             origin: region.origin,
@@ -601,13 +665,16 @@ fn align_to(value: u32, alignment: u32) -> u32 {
 fn estimate_texture_size_bytes(
     format: wgpu::TextureFormat,
     size: wgpu::Extent3d,
+    dimension: wgpu::TextureDimension,
     mip_level_count: u32,
 ) -> u64 {
+    let max_mip_levels = max_mip_level_count(size, dimension).max(1);
+    let mip_level_count = mip_level_count.clamp(1, max_mip_levels);
     let mut total = 0u64;
     for level in 0..mip_level_count {
-        let mip = mip_extent(size, level);
+        let mip = mip_extent(size, dimension, level);
         total += estimate_mip_level_size_bytes(format, mip.width, mip.height)
-            * size.depth_or_array_layers as u64;
+            * mip.depth_or_array_layers as u64;
     }
     total
 }
@@ -961,5 +1028,32 @@ mod tests {
                 TextureUploadTransform::Bc1ToRgba8
             );
         });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn estimate_texture_size_bytes_clamps_mip_level_count() {
+        let size = wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        };
+        let dimension = wgpu::TextureDimension::D2;
+        let max = max_mip_level_count(size, dimension);
+        assert_eq!(max, 3);
+
+        let expected =
+            estimate_texture_size_bytes(wgpu::TextureFormat::Rgba8Unorm, size, dimension, max);
+        let clamped = estimate_texture_size_bytes(
+            wgpu::TextureFormat::Rgba8Unorm,
+            size,
+            dimension,
+            max + 1000,
+        );
+        assert_eq!(clamped, expected);
+
+        let zero = estimate_texture_size_bytes(wgpu::TextureFormat::Rgba8Unorm, size, dimension, 0);
+        let one = estimate_texture_size_bytes(wgpu::TextureFormat::Rgba8Unorm, size, dimension, 1);
+        assert_eq!(zero, one);
     }
 }
