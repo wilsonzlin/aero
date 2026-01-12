@@ -87,6 +87,18 @@ pub struct MachineConfig {
     ///
     /// This is currently opt-in to keep the default machine minimal and deterministic.
     pub enable_pc_platform: bool,
+    /// Whether to attach an Intel ICH9 AHCI SATA controller at the canonical Win7 BDF
+    /// (`00:02.0`).
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_ahci: bool,
+    /// Whether to attach an Intel PIIX3 IDE controller at the canonical Win7 BDF (`00:01.1`).
+    ///
+    /// Note: When enabled, the PIIX3 ISA bridge function (`00:01.0`) is also exposed with the
+    /// multi-function bit set so OSes enumerate function 1 reliably.
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_ide: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
     /// Whether to attach a legacy i8042 controller at ports `0x60/0x64`.
@@ -109,6 +121,8 @@ impl Default for MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             cpu_count: 1,
             enable_pc_platform: false,
+            enable_ahci: false,
+            enable_ide: false,
             enable_serial: true,
             enable_i8042: true,
             enable_a20_gate: true,
@@ -156,6 +170,8 @@ pub enum MachineError {
     InvalidCpuCount(u8),
     InvalidDiskSize(usize),
     GuestMemoryTooLarge(u64),
+    AhciRequiresPcPlatform,
+    IdeRequiresPcPlatform,
     E1000RequiresPcPlatform,
 }
 
@@ -176,6 +192,12 @@ impl fmt::Display for MachineError {
                 f,
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
             ),
+            MachineError::AhciRequiresPcPlatform => {
+                write!(f, "enable_ahci requires enable_pc_platform=true")
+            }
+            MachineError::IdeRequiresPcPlatform => {
+                write!(f, "enable_ide requires enable_pc_platform=true")
+            }
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
             }
@@ -439,6 +461,72 @@ impl PciDevice for E1000PciConfigDevice {
     }
 }
 
+struct AhciPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AhciPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for AhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct IdePciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl IdePciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::IDE_PIIX3.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for IdePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct Piix3IsaPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl Piix3IsaPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::ISA_PIIX3.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for Piix3IsaPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 // -----------------------------------------------------------------------------
 // PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
 // -----------------------------------------------------------------------------
@@ -675,6 +763,12 @@ impl Machine {
         if cfg.cpu_count != 1 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
+        if (cfg.enable_ahci || cfg.enable_ide) && !cfg.enable_pc_platform {
+            if cfg.enable_ahci {
+                return Err(MachineError::AhciRequiresPcPlatform);
+            }
+            return Err(MachineError::IdeRequiresPcPlatform);
+        }
         if cfg.enable_e1000 && !cfg.enable_pc_platform {
             return Err(MachineError::E1000RequiresPcPlatform);
         }
@@ -725,7 +819,9 @@ impl Machine {
             return;
         }
 
-        let (Some(interrupts), Some(hpet), Some(pci_cfg)) = (&self.interrupts, &self.hpet, &self.pci_cfg) else {
+        let (Some(interrupts), Some(hpet), Some(pci_cfg)) =
+            (&self.interrupts, &self.hpet, &self.pci_cfg)
+        else {
             return;
         };
 
@@ -733,22 +829,25 @@ impl Machine {
         let hpet = hpet.clone();
         let pci_cfg = pci_cfg.clone();
 
-        self.mem.map_mmio_once(LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE, || {
-            Box::new(LapicMmio {
-                interrupts: interrupts.clone(),
-            })
-        });
-        self.mem.map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
-            Box::new(IoApicMmio {
-                interrupts: interrupts.clone(),
-            })
-        });
-        self.mem.map_mmio_once(hpet::HPET_MMIO_BASE, hpet::HPET_MMIO_SIZE, || {
-            Box::new(HpetMmio {
-                hpet: hpet.clone(),
-                interrupts: interrupts.clone(),
-            })
-        });
+        self.mem
+            .map_mmio_once(LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE, || {
+                Box::new(LapicMmio {
+                    interrupts: interrupts.clone(),
+                })
+            });
+        self.mem
+            .map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
+                Box::new(IoApicMmio {
+                    interrupts: interrupts.clone(),
+                })
+            });
+        self.mem
+            .map_mmio_once(hpet::HPET_MMIO_BASE, hpet::HPET_MMIO_SIZE, || {
+                Box::new(HpetMmio {
+                    hpet: hpet.clone(),
+                    interrupts: interrupts.clone(),
+                })
+            });
 
         let ecam_cfg = PciEcamConfig {
             segment: firmware::bios::PCIE_ECAM_SEGMENT,
@@ -756,9 +855,10 @@ impl Machine {
             end_bus: firmware::bios::PCIE_ECAM_END_BUS,
         };
         let ecam_len = ecam_cfg.window_size_bytes();
-        self.mem.map_mmio_once(firmware::bios::PCIE_ECAM_BASE, ecam_len, || {
-            Box::new(PciEcamMmio::new(pci_cfg, ecam_cfg))
-        });
+        self.mem
+            .map_mmio_once(firmware::bios::PCIE_ECAM_BASE, ecam_len, || {
+                Box::new(PciEcamMmio::new(pci_cfg, ecam_cfg))
+            });
     }
 
     /// Returns the current CPU state.
@@ -1469,6 +1569,26 @@ impl Machine {
                 }
             };
 
+            if self.cfg.enable_ahci {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
+                    Box::new(AhciPciConfigDevice::new()),
+                );
+            }
+
+            if self.cfg.enable_ide {
+                // PIIX3 is a multi-function PCI device. Ensure function 0 exists and has the
+                // multi-function bit set so OSes enumerate the IDE function at 00:01.1 reliably.
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::ISA_PIIX3.bdf,
+                    Box::new(Piix3IsaPciConfigDevice::new()),
+                );
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::IDE_PIIX3.bdf,
+                    Box::new(IdePciConfigDevice::new()),
+                );
+            }
+
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -1502,9 +1622,12 @@ impl Machine {
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected
             // immediately without needing dynamic MMIO unmap/remap support in `PhysicalMemoryBus`.
-            self.mem
-                .map_mmio_once(pci_allocator_cfg.mmio_base, pci_allocator_cfg.mmio_size, || {
-                    let mut router = PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
+            self.mem.map_mmio_once(
+                pci_allocator_cfg.mmio_base,
+                pci_allocator_cfg.mmio_size,
+                || {
+                    let mut router =
+                        PciBarMmioRouter::new(pci_allocator_cfg.mmio_base, pci_cfg.clone());
                     if let Some(e1000) = e1000.clone() {
                         router.register_shared_handler(
                             aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
@@ -1513,7 +1636,8 @@ impl Machine {
                         );
                     }
                     Box::new(router)
-                });
+                },
+            );
 
             // Register a dispatcher for the PCI I/O window used by `PciResourceAllocator`.
             //
@@ -1531,7 +1655,11 @@ impl Machine {
                     E1000PciIoBar { dev: e1000 },
                 );
             }
-            self.io.register_range(io_base, io_size, Box::new(PciIoBarWindow { router: io_router }));
+            self.io.register_range(
+                io_base,
+                io_size,
+                Box::new(PciIoBarWindow { router: io_router }),
+            );
 
             // Ensure options stay populated (for the first reset).
             self.platform_clock = Some(clock);
@@ -1638,7 +1766,10 @@ impl Machine {
             .as_ref()
             .and_then(|pci_cfg| {
                 let mut pci_cfg = pci_cfg.borrow_mut();
-                pci_cfg.bus_mut().device_config(bdf).map(|cfg| cfg.command())
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.command())
             })
             .unwrap_or(0);
 
@@ -3762,7 +3893,11 @@ mod tests {
         );
 
         // Smoke test LAPIC + HPET MMIO mappings as well.
-        let svr = m.mem.inner.borrow_mut().read_physical_u32(LAPIC_MMIO_BASE + 0xF0);
+        let svr = m
+            .mem
+            .inner
+            .borrow_mut()
+            .read_physical_u32(LAPIC_MMIO_BASE + 0xF0);
         assert_eq!(svr & 0x1FF, 0x1FF);
 
         let caps = m
@@ -4032,9 +4167,7 @@ mod tests {
 
         // Seed a known register value in the device model.
         let e1000 = m.e1000().expect("e1000 enabled");
-        e1000
-            .borrow_mut()
-            .mmio_write_u32_reg(0x00D0, 0x1234_5678); // IMS
+        e1000.borrow_mut().mmio_write_u32_reg(0x00D0, 0x1234_5678); // IMS
 
         // Disable PCI I/O decoding: the I/O window should behave as unmapped (reads return 0xFF).
         {
@@ -4154,7 +4287,10 @@ mod tests {
 
         // Poll once: without BME, the E1000 model must not DMA, so no frame should appear.
         m.poll_network();
-        assert!(tx_ring.try_pop().is_err(), "unexpected TX frame without bus mastering enabled");
+        assert!(
+            tx_ring.try_pop().is_err(),
+            "unexpected TX frame without bus mastering enabled"
+        );
 
         // Now enable Bus Mastering and poll again; the descriptor should be processed and the
         // resulting frame should appear on NET_TX.
