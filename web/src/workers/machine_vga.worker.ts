@@ -26,6 +26,13 @@ type MachineVgaWorkerStartMessage = {
    */
   message?: string;
   /**
+   * Optional VBE mode to program from the boot sector before halting.
+   *
+   * When set, the boot sector programs the Bochs VBE registers (0x01CE/0x01CF) for a 32bpp mode
+   * and writes a single red pixel through the banked 0xA0000 window.
+   */
+  vbeMode?: { width: number; height: number };
+  /**
    * Guest RAM size passed to `new api.Machine(ramSizeBytes)`.
    *
    * Keep this small: the wasm32 runtime allocator reserves a fixed 128MiB region
@@ -207,6 +214,78 @@ function buildSerialBootSector(message: string): Uint8Array {
   const jmpOff = off;
   sector[off++] = 0xeb;
   sector[off++] = (hltOff - (jmpOff + 2)) & 0xff;
+
+  // Boot signature.
+  sector[510] = 0x55;
+  sector[511] = 0xaa;
+  return sector;
+}
+
+function buildVbeBootSector(opts: { message: string; width: number; height: number }): Uint8Array {
+  const msgBytes = encoder.encode(opts.message);
+  const width = Math.max(1, Math.min(0xffff, opts.width | 0));
+  const height = Math.max(1, Math.min(0xffff, opts.height | 0));
+  const sector = new Uint8Array(512);
+  let off = 0;
+
+  // Program a Bochs VBE mode (WxHx32) and write a single red pixel at (0,0).
+  // cld
+  sector[off++] = 0xfc;
+
+  // mov dx, 0x01CE  (Bochs VBE index port)
+  sector.set([0xba, 0xce, 0x01], off);
+  off += 3;
+
+  const writeVbeReg = (index: number, value: number) => {
+    // mov ax, imm16 (index)
+    sector.set([0xb8, index & 0xff, (index >>> 8) & 0xff], off);
+    off += 3;
+    // out dx, ax
+    sector[off++] = 0xef;
+    // inc dx (0x01CF)
+    sector[off++] = 0x42;
+    // mov ax, imm16 (value)
+    sector.set([0xb8, value & 0xff, (value >>> 8) & 0xff], off);
+    off += 3;
+    // out dx, ax
+    sector[off++] = 0xef;
+    // dec dx (back to 0x01CE)
+    sector[off++] = 0x4a;
+  };
+
+  // XRES = width
+  writeVbeReg(0x0001, width);
+  // YRES = height
+  writeVbeReg(0x0002, height);
+  // BPP = 32
+  writeVbeReg(0x0003, 32);
+  // ENABLE = 0x0041 (enable + LFB)
+  writeVbeReg(0x0004, 0x0041);
+  // BANK = 0
+  writeVbeReg(0x0005, 0);
+
+  // mov ax, 0xA000 ; mov es, ax ; xor di, di
+  sector.set([0xb8, 0x00, 0xa0, 0x8e, 0xc0, 0x31, 0xff], off);
+  off += 7;
+
+  // Write a red pixel at (0,0) in BGRX format expected by the SVGA renderer.
+  // mov al, 0x00 ; stosb ; stosb ; mov al, 0xff ; stosb ; mov al, 0x00 ; stosb
+  sector.set([0xb0, 0x00, 0xaa, 0xaa, 0xb0, 0xff, 0xaa, 0xb0, 0x00, 0xaa], off);
+  off += 10;
+
+  // Serial output (COM1).
+  // mov dx, 0x3f8
+  sector.set([0xba, 0xf8, 0x03], off);
+  off += 3;
+  for (const b of msgBytes) {
+    sector.set([0xb0, b, 0xee], off); // mov al, imm8 ; out dx, al
+    off += 3;
+  }
+
+  // cli; hlt; jmp $
+  sector[off++] = 0xfa;
+  sector[off++] = 0xf4;
+  sector.set([0xeb, 0xfe], off);
 
   // Boot signature.
   sector[510] = 0x55;
@@ -508,7 +587,13 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
 
   const ramSizeBytes = typeof msg.ramSizeBytes === "number" ? msg.ramSizeBytes : 2 * 1024 * 1024;
   machine = new api.Machine(ramSizeBytes >>> 0);
-  machine.set_disk_image(buildSerialBootSector(msg.message ?? "Hello from machine_vga.worker\\n"));
+  const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
+  const vbeMode = msg.vbeMode;
+  const diskImage =
+    vbeMode && typeof vbeMode === "object" && typeof vbeMode.width === "number" && typeof vbeMode.height === "number"
+      ? buildVbeBootSector({ message: bootMessage, width: vbeMode.width, height: vbeMode.height })
+      : buildSerialBootSector(bootMessage);
+  machine.set_disk_image(diskImage);
   machine.reset();
 
   // Prefer shared-buffer transport when supported; otherwise fall back to copy frames.

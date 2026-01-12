@@ -1489,6 +1489,18 @@ function renderMachineWorkerPanel(): HTMLElement {
       type: "machineVga.start",
       message: "Hello from machine_vga.worker\\n",
       ramSizeBytes: 2 * 1024 * 1024,
+      ...(typeof window !== "undefined"
+        ? (() => {
+            const raw = new URLSearchParams(window.location.search).get("machineWorkerVbe");
+            if (!raw) return {};
+            const match = /^(\d+)x(\d+)$/.exec(raw.trim());
+            if (!match) return {};
+            const width = Number.parseInt(match[1] ?? "", 10);
+            const height = Number.parseInt(match[2] ?? "", 10);
+            if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {};
+            return { vbeMode: { width, height } };
+          })()
+        : {}),
     });
   };
 
