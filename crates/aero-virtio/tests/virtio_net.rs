@@ -210,7 +210,7 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     let hdr_addr = 0x7000;
     let payload_addr = 0x7100;
     let hdr = [0u8; VirtioNetHdr::BASE_LEN];
-    // Contract v1: virtio-net frames must be between 14 and 1514 bytes.
+    // Contract v1: virtio-net frames must be between 14 and 1522 bytes.
     let payload = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
     mem.write(hdr_addr, &hdr).unwrap();
     mem.write(payload_addr, payload).unwrap();

@@ -943,7 +943,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   // Allocate packet buffers.
   Adapter->Mtu = AEROVNET_MTU_DEFAULT;
-  Adapter->MaxFrameSize = Adapter->Mtu + 14;
+  // Contract v1: allow up to 2 VLAN tags (QinQ), so the L2 header can be up to 22 bytes.
+  Adapter->MaxFrameSize = Adapter->Mtu + 22;
 
   Adapter->RxBufferDataBytes = 2048;
   Adapter->RxBufferTotalBytes = sizeof(VIRTIO_NET_HDR) + Adapter->RxBufferDataBytes;
@@ -1222,7 +1223,7 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     PayloadLen = UsedLen - sizeof(VIRTIO_NET_HDR);
 
     // Contract v1: drop undersized/oversized Ethernet frames but always recycle.
-    if (PayloadLen < 14 || PayloadLen > 1514) {
+    if (PayloadLen < 14 || PayloadLen > 1522) {
       Adapter->StatRxErrors++;
       InsertTailList(&Adapter->RxFreeList, &Rx->Link);
       continue;
@@ -1963,7 +1964,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
       // Complete the send successfully (Ethernet has no delivery guarantee).
       {
         ULONG FrameLen = NET_BUFFER_DATA_LENGTH(Nb);
-        if (FrameLen < 14 || FrameLen > 1514) {
+        if (FrameLen < 14 || FrameLen > 1522) {
         Adapter->StatTxErrors++;
         AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
         NdisReleaseSpinLock(&Adapter->Lock);

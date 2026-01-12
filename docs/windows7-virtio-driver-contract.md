@@ -624,7 +624,7 @@ Because no offload or mergeable-RX features are negotiated:
 Contract v1 uses classic Ethernet II frames without FCS:
 
 - Minimum frame length: 14 bytes (Ethernet header).
-- Maximum frame length: 1514 bytes (Ethernet header + 1500 MTU payload).
+- Maximum frame length: 1522 bytes (Ethernet header + 1500 MTU payload + up to two VLAN tags).
 
 Frame drop semantics:
 
@@ -650,7 +650,7 @@ The driver supplies receive buffers via available descriptor chains.
 Buffer requirements (driver):
 
 - Each chain MUST start with a writable buffer of at least 10 bytes for `virtio_net_hdr`.
-- The chain MUST provide at least 1514 bytes of writable payload space after the header (or packets may be dropped).
+- The chain MUST provide at least 1522 bytes of writable payload space after the header (or packets may be dropped).
 
 Receive behavior (device):
 

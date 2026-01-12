@@ -6,7 +6,7 @@ use memory::{GuestMemory, GuestMemoryError};
 use std::collections::VecDeque;
 
 const MIN_FRAME_LEN: usize = 14;
-const MAX_FRAME_LEN: usize = 1514;
+const MAX_FRAME_LEN: usize = 1522;
 const MAX_TX_TOTAL_LEN: usize = VirtioNetHeader::SIZE + MAX_FRAME_LEN;
 /// Upper bound on queued host→guest frames, to avoid unbounded memory growth if the guest never
 /// posts RX buffers.
