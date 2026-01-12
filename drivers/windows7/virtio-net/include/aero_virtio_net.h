@@ -128,7 +128,7 @@ typedef struct _AEROVNET_ADAPTER {
   NDIS_SPIN_LOCK Lock;
 
   AEROVNET_ADAPTER_STATE State;
-  BOOLEAN SurpriseRemoved;
+  volatile BOOLEAN SurpriseRemoved;
   volatile LONG IsrStatus;
   volatile LONG OutstandingSgMappings;
   KEVENT OutstandingSgEvent;

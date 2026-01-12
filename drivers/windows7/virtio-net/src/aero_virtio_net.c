@@ -1201,13 +1201,15 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     USHORT LinkStatus;
     NTSTATUS NtStatus;
 
-    LinkStatus = 0;
-    NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, ETH_LENGTH_OF_ADDRESS, &LinkStatus, sizeof(LinkStatus));
-    if (NT_SUCCESS(NtStatus)) {
-      NewLinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
-      if (NewLinkUp != Adapter->LinkUp) {
-        Adapter->LinkUp = NewLinkUp;
-        LinkChanged = TRUE;
+    if (!Adapter->SurpriseRemoved) {
+      LinkStatus = 0;
+      NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, ETH_LENGTH_OF_ADDRESS, &LinkStatus, sizeof(LinkStatus));
+      if (NT_SUCCESS(NtStatus)) {
+        NewLinkUp = (LinkStatus & VIRTIO_NET_S_LINK_UP) ? TRUE : FALSE;
+        if (NewLinkUp != Adapter->LinkUp) {
+          Adapter->LinkUp = NewLinkUp;
+          LinkChanged = TRUE;
+        }
       }
     }
   }
@@ -2058,8 +2060,12 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
   }
 
   if (NetDevicePnPEvent->DevicePnPEvent == NdisDevicePnPEventSurpriseRemoved) {
-    NdisAcquireSpinLock(&Adapter->Lock);
+    // Set this flag first without taking the adapter lock. The surprise removal
+    // callback can race with DPC/ISR contexts; setting the flag early allows
+    // other paths to quickly stop issuing virtio BAR MMIO (e.g. queue notify).
     Adapter->SurpriseRemoved = TRUE;
+
+    NdisAcquireSpinLock(&Adapter->Lock);
     Adapter->State = AerovNetAdapterStopped;
 
     // Once SurpriseRemoved is set, the device may have already disappeared.
