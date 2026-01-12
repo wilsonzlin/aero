@@ -2469,11 +2469,19 @@ function runHdaMicCaptureTest(requestId: number): void {
   }
 
   try {
-    // Guest memory layout (avoid low memory regions used by other harness probes).
-    const corbBase = 0x200_000;
-    const rirbBase = 0x201_000;
-    const bdlBase = 0x202_000;
-    const pcmBase = 0x203_000;
+    // Guest memory layout.
+    //
+    // IMPORTANT: Keep this region disjoint from the CPU worker's always-on guest-memory
+    // framebuffer demos:
+    // - Shared framebuffer embed offset starts at `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` (0x20_0000).
+    // - Demo framebuffer scratch uses `DEMO_FB_OFFSET` (0x50_0000) for up to ~3MiB.
+    //
+    // The CPU worker writes those regions continuously, so overlapping addresses will corrupt
+    // CORB/RIRB/BDL/PCM state and make this test flaky.
+    const corbBase = 0x0140_0000;
+    const rirbBase = 0x0140_1000;
+    const bdlBase = 0x0141_0000;
+    const pcmBase = 0x0142_0000;
     const pcmBytes = 4096;
 
     const view = new DataView(guestU8.buffer, guestU8.byteOffset, guestU8.byteLength);
