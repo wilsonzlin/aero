@@ -1093,6 +1093,171 @@ bool TestGuestBackedTextureUnmapDirtyRange() {
   return true;
 }
 
+bool TestGuestBackedBcTextureUnmapDirtyRange() {
+#if AEROGPU_ABI_MINOR < 2
+  // ABI 1.2 adds BC formats.
+  return true;
+#else
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
+             "InitTestDevice(guest-backed bc tex2d)")) {
+    return false;
+  }
+
+  struct Case {
+    const char* name;
+    uint32_t dxgi_format;
+    uint32_t expected_format;
+    uint32_t block_bytes;
+  };
+
+  static constexpr uint32_t kWidth = 5;
+  static constexpr uint32_t kHeight = 5;
+
+  static constexpr Case kCases[] = {
+      {"DXGI_FORMAT_BC1_UNORM", kDxgiFormatBc1Unorm, AEROGPU_FORMAT_BC1_RGBA_UNORM, 8},
+      {"DXGI_FORMAT_BC1_UNORM_SRGB", kDxgiFormatBc1UnormSrgb, AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB, 8},
+      {"DXGI_FORMAT_BC7_UNORM", kDxgiFormatBc7Unorm, AEROGPU_FORMAT_BC7_RGBA_UNORM, 16},
+      {"DXGI_FORMAT_BC7_UNORM_SRGB", kDxgiFormatBc7UnormSrgb, AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB, 16},
+  };
+
+  auto div_round_up = [](uint32_t v, uint32_t d) -> uint32_t { return (v + d - 1) / d; };
+
+  for (const auto& c : kCases) {
+    TestResource tex{};
+    if (!Check(CreateStagingTexture2DWithFormat(&dev,
+                                                /*width=*/kWidth,
+                                                /*height=*/kHeight,
+                                                c.dxgi_format,
+                                                /*cpu_access_flags=*/AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                &tex),
+               "CreateStagingTexture2DWithFormat(guest-backed bc)")) {
+      return false;
+    }
+
+    AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                        tex.hResource,
+                                                        /*subresource=*/0,
+                                                        AEROGPU_DDI_MAP_WRITE,
+                                                        /*map_flags=*/0,
+                                                        &mapped);
+    if (!Check(hr == S_OK, "StagingResourceMap(WRITE) guest-backed bc tex2d")) {
+      return false;
+    }
+    if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+      return false;
+    }
+    if (!Check(mapped.RowPitch != 0, "Map returned non-zero RowPitch")) {
+      return false;
+    }
+
+    const uint32_t blocks_w = div_round_up(kWidth, 4);
+    const uint32_t blocks_h = div_round_up(kHeight, 4);
+    const uint32_t required_row_bytes = blocks_w * c.block_bytes;
+    if (!Check(mapped.RowPitch >= required_row_bytes, "Map RowPitch large enough for BC row")) {
+      return false;
+    }
+    const uint32_t expected_depth_pitch = mapped.RowPitch * blocks_h;
+    if (!Check(mapped.DepthPitch == expected_depth_pitch, "Map DepthPitch matches BC block rows")) {
+      return false;
+    }
+
+    const uint32_t row_pitch = mapped.RowPitch;
+    std::vector<uint8_t> expected(static_cast<size_t>(expected_depth_pitch), 0xCD);
+    auto* dst = static_cast<uint8_t*>(mapped.pData);
+    for (uint32_t y = 0; y < blocks_h; y++) {
+      uint8_t* row = dst + static_cast<size_t>(y) * row_pitch;
+      for (uint32_t x = 0; x < required_row_bytes; x++) {
+        const uint8_t v = static_cast<uint8_t>((y + 1u) * 31u + x);
+        row[x] = v;
+        expected[static_cast<size_t>(y) * row_pitch + x] = v;
+      }
+      if (row_pitch > required_row_bytes) {
+        std::memset(row + required_row_bytes, 0xCD, row_pitch - required_row_bytes);
+      }
+    }
+
+    dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, /*subresource=*/0);
+    hr = dev.device_funcs.pfnFlush(dev.hDevice);
+    if (!Check(hr == S_OK, "Flush after guest-backed bc tex2d Unmap")) {
+      return false;
+    }
+
+    if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+      return false;
+    }
+
+    const uint8_t* stream = dev.harness.last_stream.data();
+    const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+    if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+               "guest-backed bc tex2d Unmap should not emit UPLOAD_RESOURCE")) {
+      return false;
+    }
+    if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+               "guest-backed bc tex2d Unmap should emit RESOURCE_DIRTY_RANGE")) {
+      return false;
+    }
+
+    CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+      return false;
+    }
+    const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+    if (!Check(create_cmd->format == c.expected_format, "CREATE_TEXTURE2D format matches expected")) {
+      return false;
+    }
+    if (!Check(create_cmd->backing_alloc_id != 0, "guest-backed CREATE_TEXTURE2D backing_alloc_id != 0")) {
+      return false;
+    }
+    if (!Check(create_cmd->row_pitch_bytes == row_pitch, "CREATE_TEXTURE2D row_pitch_bytes matches Map pitch")) {
+      return false;
+    }
+
+    CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+      return false;
+    }
+    const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+    if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+      return false;
+    }
+    if (!Check(dirty_cmd->size_bytes == expected.size(), "RESOURCE_DIRTY_RANGE size matches BC tex2d bytes")) {
+      return false;
+    }
+
+    bool found_alloc = false;
+    for (auto h : dev.harness.last_allocs) {
+      if (h == create_cmd->backing_alloc_id) {
+        found_alloc = true;
+      }
+    }
+    if (!Check(found_alloc, "guest-backed bc tex2d submit alloc list contains backing alloc")) {
+      return false;
+    }
+
+    Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+    if (!Check(alloc != nullptr, "backing allocation exists in harness")) {
+      return false;
+    }
+    if (!Check(alloc->bytes.size() >= expected.size(), "backing allocation large enough")) {
+      return false;
+    }
+    if (!Check(std::memcmp(alloc->bytes.data(), expected.data(), expected.size()) == 0,
+               "guest-backed allocation bytes reflect CPU writes")) {
+      return false;
+    }
+
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+#endif
+}
+
 bool TestMapUsageValidation() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(validation)")) {
@@ -3767,6 +3932,7 @@ int main() {
   ok &= TestCreateTexture2dSrgbFormatEncodesSrgbAerogpuFormat();
   ok &= TestGuestBackedBufferUnmapDirtyRange();
   ok &= TestGuestBackedTextureUnmapDirtyRange();
+  ok &= TestGuestBackedBcTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
   ok &= TestMapFlagsValidation();
   ok &= TestMapDoNotWaitReportsStillDrawing();
