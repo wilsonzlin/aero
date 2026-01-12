@@ -753,6 +753,9 @@ struct IoApicMmio {
 
 impl MmioHandler for IoApicMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 8);
         let interrupts = self.interrupts.borrow_mut();
         let mut out = 0u64;
@@ -768,6 +771,9 @@ impl MmioHandler for IoApicMmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 8);
         let mut interrupts = self.interrupts.borrow_mut();
 
@@ -804,6 +810,9 @@ struct LapicMmio {
 
 impl MmioHandler for LapicMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
         let size = size.clamp(1, 8);
         let interrupts = self.interrupts.borrow();
         let mut buf = [0u8; 8];
@@ -812,6 +821,9 @@ impl MmioHandler for LapicMmio {
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
         let size = size.clamp(1, 8);
         let interrupts = self.interrupts.borrow();
         let bytes = value.to_le_bytes();
