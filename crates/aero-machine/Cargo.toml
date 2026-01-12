@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
+aero-mmu = { path = "../aero-mmu" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 aero-net-backend = { path = "../aero-net-backend" }

@@ -218,6 +218,21 @@ impl aero_cpu_core::paging_bus::IoBus for IoPortBus {
     }
 }
 
+impl aero_cpu_core::paging_bus::IoBus for &mut IoPortBus {
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception> {
+        aero_cpu_core::paging_bus::IoBus::io_read(&mut **self, port, size)
+    }
+
+    fn io_write(
+        &mut self,
+        port: u16,
+        size: u32,
+        val: u64,
+    ) -> Result<(), aero_cpu_core::Exception> {
+        aero_cpu_core::paging_bus::IoBus::io_write(&mut **self, port, size, val)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

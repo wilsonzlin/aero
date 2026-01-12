@@ -22,7 +22,6 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::interrupts::CpuExit;
-use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
 use aero_devices::a20_gate::A20Gate as A20GateDevice;
@@ -302,73 +301,41 @@ impl memory::MemoryBus for SystemMemory {
     }
 }
 
-struct Bus<'a> {
+struct PhysBus<'a> {
     mem: &'a mut SystemMemory,
-    io: &'a mut IoPortBus,
 }
 
-impl CpuBus for Bus<'_> {
-    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
-        Ok(self.mem.read_u8(vaddr))
+impl aero_mmu::MemoryBus for PhysBus<'_> {
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        self.mem.read_u8(paddr)
     }
 
-    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        Ok(self.mem.read_u16(vaddr))
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        self.mem.read_u16(paddr)
     }
 
-    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        Ok(self.mem.read_u32(vaddr))
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        self.mem.read_u32(paddr)
     }
 
-    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        Ok(self.mem.read_u64(vaddr))
+    fn read_u64(&mut self, paddr: u64) -> u64 {
+        self.mem.read_u64(paddr)
     }
 
-    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        Ok(self.mem.read_u128(vaddr))
+    fn write_u8(&mut self, paddr: u64, value: u8) {
+        self.mem.write_u8(paddr, value);
     }
 
-    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
-        self.mem.write_u8(vaddr, val);
-        Ok(())
+    fn write_u16(&mut self, paddr: u64, value: u16) {
+        self.mem.write_u16(paddr, value);
     }
 
-    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.mem.write_u16(vaddr, val);
-        Ok(())
+    fn write_u32(&mut self, paddr: u64, value: u32) {
+        self.mem.write_u32(paddr, value);
     }
 
-    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        self.mem.write_u32(vaddr, val);
-        Ok(())
-    }
-
-    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        self.mem.write_u64(vaddr, val);
-        Ok(())
-    }
-
-    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        self.mem.write_u128(vaddr, val);
-        Ok(())
-    }
-
-    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
-        let mut buf = [0u8; 15];
-        let len = max_len.min(15);
-        for (i, slot) in buf[..len].iter_mut().enumerate() {
-            *slot = self.mem.read_u8(vaddr.wrapping_add(i as u64));
-        }
-        Ok(buf)
-    }
-
-    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
-        Ok(self.io.read(port, size as u8) as u64)
-    }
-
-    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
-        self.io.write(port, size as u8, val as u32);
-        Ok(())
+    fn write_u64(&mut self, paddr: u64, value: u64) {
+        self.mem.write_u64(paddr, value);
     }
 }
 
@@ -868,10 +835,8 @@ impl Machine {
             }
 
             let remaining = max_insts - executed;
-            let mut bus = Bus {
-                mem: &mut self.mem,
-                io: &mut self.io,
-            };
+            let phys = PhysBus { mem: &mut self.mem };
+            let mut bus = aero_cpu_core::PagingBus::new_with_io(phys, &mut self.io);
 
             let batch = run_batch_cpu_core_with_assists(
                 &cfg,
@@ -1353,6 +1318,132 @@ mod tests {
         sector
     }
 
+    fn build_paged_serial_boot_sector(message: &[u8]) -> [u8; 512] {
+        assert!(!message.is_empty());
+        assert!(message.len() <= 32, "test boot sector message too long");
+
+        // Identity-map the code page (0x7000) so execution continues after enabling paging.
+        //
+        // Map a separate linear page (0x4000) to a different physical page (0x2000) containing
+        // the output message. If paging is not active, the guest will read from physical 0x4000
+        // instead and the serial output will not match.
+        const PD_BASE: u16 = 0x1000;
+        const PT_BASE: u16 = 0x3000;
+        const MSG_PHYS_BASE: u16 = 0x2000;
+        const MSG_LINEAR_BASE: u16 = 0x4000;
+
+        let mut sector = [0u8; 512];
+        let mut i = 0usize;
+
+        // xor ax, ax
+        sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+        i += 2;
+        // mov ds, ax
+        sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+        i += 2;
+
+        // Write the message bytes into a physical RAM page (MSG_PHYS_BASE).
+        for (off, &b) in message.iter().enumerate() {
+            let addr = MSG_PHYS_BASE.wrapping_add(off as u16);
+            // mov byte ptr [addr], imm8
+            sector[i..i + 5].copy_from_slice(&[0xC6, 0x06, addr as u8, (addr >> 8) as u8, b]);
+            i += 5;
+        }
+
+        // PDE[0] -> page table at PT_BASE (present + RW).
+        let pde0: u32 = (PT_BASE as u32) | 0x3;
+        // 66 c7 06 <disp16> <imm32>
+        sector[i..i + 9].copy_from_slice(&[
+            0x66,
+            0xC7,
+            0x06,
+            (PD_BASE & 0xFF) as u8,
+            (PD_BASE >> 8) as u8,
+            (pde0 & 0xFF) as u8,
+            ((pde0 >> 8) & 0xFF) as u8,
+            ((pde0 >> 16) & 0xFF) as u8,
+            ((pde0 >> 24) & 0xFF) as u8,
+        ]);
+        i += 9;
+
+        // PTE[MSG_LINEAR_BASE >> 12] -> MSG_PHYS_BASE (present + RW).
+        let pte_msg_off = PT_BASE.wrapping_add(((MSG_LINEAR_BASE as u32 >> 12) * 4) as u16);
+        let pte_msg: u32 = (MSG_PHYS_BASE as u32) | 0x3;
+        sector[i..i + 9].copy_from_slice(&[
+            0x66,
+            0xC7,
+            0x06,
+            (pte_msg_off & 0xFF) as u8,
+            (pte_msg_off >> 8) as u8,
+            (pte_msg & 0xFF) as u8,
+            ((pte_msg >> 8) & 0xFF) as u8,
+            ((pte_msg >> 16) & 0xFF) as u8,
+            ((pte_msg >> 24) & 0xFF) as u8,
+        ]);
+        i += 9;
+
+        // PTE[0x7000 >> 12] -> 0x7000 (code page identity map; present + RW).
+        let pte_code_off = PT_BASE.wrapping_add(((0x7000u32 >> 12) * 4) as u16);
+        let pte_code: u32 = 0x7000 | 0x3;
+        sector[i..i + 9].copy_from_slice(&[
+            0x66,
+            0xC7,
+            0x06,
+            (pte_code_off & 0xFF) as u8,
+            (pte_code_off >> 8) as u8,
+            (pte_code & 0xFF) as u8,
+            ((pte_code >> 8) & 0xFF) as u8,
+            ((pte_code >> 16) & 0xFF) as u8,
+            ((pte_code >> 24) & 0xFF) as u8,
+        ]);
+        i += 9;
+
+        // mov eax, PD_BASE (32-bit immediate)
+        sector[i..i + 6].copy_from_slice(&[
+            0x66,
+            0xB8,
+            (PD_BASE & 0xFF) as u8,
+            (PD_BASE >> 8) as u8,
+            0x00,
+            0x00,
+        ]);
+        i += 6;
+        // mov cr3, eax
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x22, 0xD8]);
+        i += 3;
+
+        // mov eax, cr0
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x20, 0xC0]);
+        i += 3;
+        // or eax, 0x8000_0000
+        sector[i..i + 6].copy_from_slice(&[0x66, 0x0D, 0x00, 0x00, 0x00, 0x80]);
+        i += 6;
+        // mov cr0, eax
+        sector[i..i + 3].copy_from_slice(&[0x0F, 0x22, 0xC0]);
+        i += 3;
+
+        // mov dx, 0x3f8
+        sector[i..i + 3].copy_from_slice(&[0xBA, 0xF8, 0x03]);
+        i += 3;
+
+        for (off, _) in message.iter().enumerate() {
+            let addr = MSG_LINEAR_BASE.wrapping_add(off as u16);
+            // mov al, moffs8
+            sector[i..i + 3].copy_from_slice(&[0xA0, addr as u8, (addr >> 8) as u8]);
+            i += 3;
+            // out dx, al
+            sector[i] = 0xEE;
+            i += 1;
+        }
+
+        // hlt
+        sector[i] = 0xF4;
+
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+        sector
+    }
+
     #[test]
     fn boots_mbr_and_writes_to_serial() {
         let mut m = Machine::new(MachineConfig {
@@ -1408,6 +1499,30 @@ mod tests {
         // Restore via the snapshot crate directly (bypasses `Machine::restore_snapshot_*` helpers).
         snapshot::restore_snapshot(&mut Cursor::new(&snap), &mut m).unwrap();
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn paging_translation_and_io_work_together() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let boot = build_paged_serial_boot_sector(b"OK\n");
+        m.set_disk_image(boot.to_vec()).unwrap();
+        m.reset();
+
+        for _ in 0..200 {
+            match m.run_slice(10_000) {
+                RunExit::Halted { .. } => break,
+                RunExit::Completed { .. } => continue,
+                other => panic!("unexpected exit: {other:?}"),
+            }
+        }
+
+        let out = m.take_serial_output();
+        assert_eq!(out, b"OK\n");
     }
 
     #[test]
