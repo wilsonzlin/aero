@@ -1,14 +1,12 @@
 #![cfg(all(feature = "io-snapshot", not(target_arch = "wasm32")))]
 
-use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use aero_io_snapshot::io::network::state::{
-    DhcpLease, Ipv4Addr, LegacyNetworkStackState, NatKey, NatProtocol, NatValue, ProxyConnStatus,
-    ProxyConnection,
+use aero_net_e1000::{E1000Device, MIN_L2_FRAME_LEN};
+use aero_net_stack::packet::MacAddr;
+use aero_net_stack::{
+    DnsCacheEntrySnapshot, NetworkStackSnapshotState, TcpConnectionSnapshot, TcpConnectionStatus,
 };
-use aero_io_snapshot::io::state::codec::Decoder;
-use aero_io_snapshot::io::state::{codec::Encoder, IoSnapshot, SnapshotError, SnapshotReader};
 use aero_snapshot::io_snapshot_bridge::{apply_io_snapshot_to_device, device_state_from_io_snapshot};
 use aero_snapshot::{
     restore_snapshot, save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRefs,
@@ -16,185 +14,57 @@ use aero_snapshot::{
     SnapshotTarget,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct E1000DummyState {
-    mac_addr: [u8; 6],
-    irq_level: bool,
-    rx_pending: Vec<Vec<u8>>,
-    tx_out: Vec<Vec<u8>>,
-    regs: BTreeMap<u32, u32>,
+// E1000 register offsets (subset) used to perturb the device into a non-default state.
+const REG_IMS: u32 = 0x00D0;
+const REG_ICS: u32 = 0x00C8;
+const REG_RCTL: u32 = 0x0100;
+
+fn make_deterministic_e1000_state() -> E1000Device {
+    let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+    // Some representative register state.
+    dev.mmio_write_u32_reg(REG_IMS, 0xFFFF_FFFF);
+    dev.mmio_write_u32_reg(REG_ICS, 0x0000_0080); // RXT0 cause => irq_level becomes true.
+    dev.mmio_write_u32_reg(REG_RCTL, 0xA5A5_A5A5);
+
+    // Touch the IOADDR latch.
+    dev.io_write_reg(0x0, 4, 0x1234);
+
+    // Queue one pending RX frame.
+    dev.enqueue_rx_frame(vec![0x11u8; MIN_L2_FRAME_LEN]);
+
+    dev
 }
 
-impl Default for E1000DummyState {
-    fn default() -> Self {
-        Self {
-            mac_addr: [0; 6],
-            irq_level: false,
-            rx_pending: Vec::new(),
-            tx_out: Vec::new(),
-            regs: BTreeMap::new(),
-        }
-    }
-}
-
-impl IoSnapshot for E1000DummyState {
-    const DEVICE_ID: [u8; 4] = *b"E1K0";
-    const DEVICE_VERSION: aero_io_snapshot::io::state::SnapshotVersion =
-        aero_io_snapshot::io::state::SnapshotVersion::new(1, 0);
-
-    fn save_state(&self) -> Vec<u8> {
-        const TAG_MAC: u16 = 1;
-        const TAG_IRQ_LEVEL: u16 = 2;
-        const TAG_RX_PENDING: u16 = 3;
-        const TAG_TX_OUT: u16 = 4;
-        const TAG_REGS: u16 = 5;
-
-        let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(
-            Self::DEVICE_ID,
-            Self::DEVICE_VERSION,
-        );
-        w.field_bytes(TAG_MAC, self.mac_addr.to_vec());
-        w.field_bool(TAG_IRQ_LEVEL, self.irq_level);
-        w.field_bytes(
-            TAG_RX_PENDING,
-            Encoder::new().vec_bytes(&self.rx_pending).finish(),
-        );
-        w.field_bytes(TAG_TX_OUT, Encoder::new().vec_bytes(&self.tx_out).finish());
-
-        let mut regs = Encoder::new().u32(self.regs.len() as u32);
-        for (k, v) in &self.regs {
-            regs = regs.u32(*k).u32(*v);
-        }
-        w.field_bytes(TAG_REGS, regs.finish());
-
-        w.finish()
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> aero_io_snapshot::io::state::SnapshotResult<()> {
-        const TAG_MAC: u16 = 1;
-        const TAG_IRQ_LEVEL: u16 = 2;
-        const TAG_RX_PENDING: u16 = 3;
-        const TAG_TX_OUT: u16 = 4;
-        const TAG_REGS: u16 = 5;
-
-        const MAX_QUEUE_ENTRIES: usize = 1024;
-        const MAX_REGS: usize = 8192;
-
-        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
-        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
-        if let Some(mac) = r.bytes(TAG_MAC) {
-            if mac.len() != 6 {
-                return Err(SnapshotError::InvalidFieldEncoding("mac"));
-            }
-            self.mac_addr.copy_from_slice(mac);
-        }
-        self.irq_level = r.bool(TAG_IRQ_LEVEL)?.unwrap_or(false);
-
-        self.rx_pending.clear();
-        if let Some(buf) = r.bytes(TAG_RX_PENDING) {
-            let mut d = Decoder::new(buf);
-            let queue = d.vec_bytes()?;
-            if queue.len() > MAX_QUEUE_ENTRIES {
-                return Err(SnapshotError::InvalidFieldEncoding("rx queue too large"));
-            }
-            self.rx_pending = queue;
-            d.finish()?;
-        }
-
-        self.tx_out.clear();
-        if let Some(buf) = r.bytes(TAG_TX_OUT) {
-            let mut d = Decoder::new(buf);
-            let queue = d.vec_bytes()?;
-            if queue.len() > MAX_QUEUE_ENTRIES {
-                return Err(SnapshotError::InvalidFieldEncoding("tx queue too large"));
-            }
-            self.tx_out = queue;
-            d.finish()?;
-        }
-
-        self.regs.clear();
-        if let Some(buf) = r.bytes(TAG_REGS) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            if count > MAX_REGS {
-                return Err(SnapshotError::InvalidFieldEncoding("too many regs"));
-            }
-            for _ in 0..count {
-                let k = d.u32()?;
-                let v = d.u32()?;
-                self.regs.insert(k, v);
-            }
-            d.finish()?;
-        }
-
-        Ok(())
-    }
-}
-
-fn make_deterministic_e1000_state() -> E1000DummyState {
-    let mut regs = BTreeMap::new();
-    regs.insert(0x00, 0xDEAD_BEEF);
-    regs.insert(0x04, 0x1234_5678);
-
-    E1000DummyState {
-        mac_addr: [0x52, 0x54, 0x00, 0x12, 0x34, 0x56],
-        irq_level: true,
-        rx_pending: vec![b"rx0".to_vec(), b"rx1".to_vec()],
-        tx_out: vec![b"tx0".to_vec()],
-        regs,
-    }
-}
-
-fn make_deterministic_net_stack_state() -> LegacyNetworkStackState {
-    let mut nat = BTreeMap::new();
-    nat.insert(
-        NatKey {
-            proto: NatProtocol::Tcp,
-            inside_ip: Ipv4Addr::new(10, 0, 2, 15),
-            inside_port: 1234,
-            outside_port: 40000,
-        },
-        NatValue {
-            remote_ip: Ipv4Addr::new(1, 1, 1, 1),
+fn make_deterministic_net_stack_state() -> NetworkStackSnapshotState {
+    NetworkStackSnapshotState {
+        guest_mac: Some(MacAddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x02])),
+        ip_assigned: true,
+        next_tcp_id: 42,
+        next_dns_id: 7,
+        ipv4_ident: 123,
+        last_now_ms: 1_000,
+        dns_cache: vec![DnsCacheEntrySnapshot {
+            name: "example.com".to_string(),
+            addr: core::net::Ipv4Addr::new(93, 184, 216, 34),
+            expires_at_ms: 2_000,
+        }],
+        tcp_connections: vec![TcpConnectionSnapshot {
+            id: 1,
+            guest_port: 1234,
+            remote_ip: core::net::Ipv4Addr::new(1, 1, 1, 1),
             remote_port: 80,
-            last_seen_tick: 42,
-        },
-    );
-
-    let mut tcp_proxy_conns = BTreeMap::new();
-    tcp_proxy_conns.insert(
-        7,
-        ProxyConnection {
-            id: 7,
-            remote_ip: Ipv4Addr::new(203, 0, 113, 1),
-            remote_port: 443,
-            // NetworkStackState::load_state always restores as Disconnected, regardless of the
-            // saved status. Keep the initial state aligned so save->load->save is deterministic.
-            status: ProxyConnStatus::Disconnected,
-        },
-    );
-
-    LegacyNetworkStackState {
-        mac_addr: [0x52, 0x54, 0x00, 0x12, 0x34, 0x56],
-        dhcp_lease: Some(DhcpLease {
-            ip: Ipv4Addr::new(10, 0, 2, 15),
-            gateway: Ipv4Addr::new(10, 0, 2, 2),
-            netmask: Ipv4Addr::new(255, 255, 255, 0),
-            lease_time_secs: 3600,
-            acquired_at_tick: 123,
-        }),
-        nat,
-        next_conn_id: 8,
-        tcp_proxy_conns,
+            // `load_state` always restores connections as disconnected; keep this aligned so
+            // save->load->save remains deterministic.
+            status: TcpConnectionStatus::Disconnected,
+        }],
     }
 }
 
 #[derive(Clone)]
 struct TestSource {
     meta: SnapshotMeta,
-    e1000: E1000DummyState,
-    net_stack: LegacyNetworkStackState,
+    devices: Vec<DeviceState>,
     ram: Vec<u8>,
 }
 
@@ -212,15 +82,7 @@ impl SnapshotSource for TestSource {
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
-        // Construct canonical device states, then intentionally reverse the ordering so the
-        // snapshot writer must re-sort them deterministically.
-        let mut states = vec![
-            device_state_from_io_snapshot(DeviceId::E1000, &self.e1000),
-            device_state_from_io_snapshot(DeviceId::NET_STACK, &self.net_stack),
-        ];
-        states.sort_by_key(|dev| (dev.id.0, dev.version, dev.flags));
-        states.reverse();
-        states
+        self.devices.clone()
     }
 
     fn disk_overlays(&self) -> DiskOverlayRefs {
@@ -248,8 +110,8 @@ impl SnapshotSource for TestSource {
 }
 
 struct TestTarget {
-    e1000: E1000DummyState,
-    net_stack: LegacyNetworkStackState,
+    e1000: E1000Device,
+    net_stack: NetworkStackSnapshotState,
     device_states: Vec<DeviceState>,
     ram: Vec<u8>,
 }
@@ -257,8 +119,8 @@ struct TestTarget {
 impl TestTarget {
     fn new(ram_len: usize) -> Self {
         Self {
-            e1000: E1000DummyState::default(),
-            net_stack: LegacyNetworkStackState::default(),
+            e1000: E1000Device::new([0; 6]),
+            net_stack: NetworkStackSnapshotState::default(),
             device_states: Vec::new(),
             ram: vec![0u8; ram_len],
         }
@@ -303,6 +165,8 @@ impl SnapshotTarget for TestTarget {
 fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
     let e1000 = make_deterministic_e1000_state();
     let net_stack = make_deterministic_net_stack_state();
+    let expected_e1000_state = device_state_from_io_snapshot(DeviceId::E1000, &e1000);
+    let expected_net_stack_state = device_state_from_io_snapshot(DeviceId::NET_STACK, &net_stack);
 
     let meta = SnapshotMeta {
         snapshot_id: 1,
@@ -315,10 +179,11 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
     save_opts.ram.compression = Compression::None;
     save_opts.ram.chunk_size = 4096;
 
+    // Intentionally return the devices in reverse order. The snapshot container must canonicalize
+    // ordering so the output bytes are deterministic.
     let mut source = TestSource {
         meta: meta.clone(),
-        e1000: e1000.clone(),
-        net_stack: net_stack.clone(),
+        devices: vec![expected_net_stack_state.clone(), expected_e1000_state.clone()],
         ram: Vec::new(),
     };
 
@@ -355,14 +220,34 @@ fn network_device_blobs_roundtrip_is_deterministic_and_ordered() {
 
     // The restored blobs should be applicable to fresh devices without error. Our SnapshotTarget
     // applies them immediately; additionally assert the in-memory state is exactly restored.
-    assert_eq!(target.e1000, e1000);
-    assert_eq!(target.net_stack, net_stack);
+    let e1000_resaved = device_state_from_io_snapshot(DeviceId::E1000, &target.e1000);
+    let net_stack_resaved = device_state_from_io_snapshot(DeviceId::NET_STACK, &target.net_stack);
+    assert_eq!(e1000_resaved, expected_e1000_state);
+    assert_eq!(net_stack_resaved, expected_net_stack_state);
+
+    // Extra sanity: apply the restored blobs into fresh devices without error.
+    let mut e1000_fresh = E1000Device::new([0; 6]);
+    let mut net_stack_fresh = NetworkStackSnapshotState::default();
+    for state in &target.device_states {
+        if state.id == DeviceId::E1000 {
+            apply_io_snapshot_to_device(state, &mut e1000_fresh).unwrap();
+        } else if state.id == DeviceId::NET_STACK {
+            apply_io_snapshot_to_device(state, &mut net_stack_fresh).unwrap();
+        }
+    }
+    assert_eq!(
+        device_state_from_io_snapshot(DeviceId::E1000, &e1000_fresh),
+        expected_e1000_state
+    );
+    assert_eq!(
+        device_state_from_io_snapshot(DeviceId::NET_STACK, &net_stack_fresh),
+        expected_net_stack_state
+    );
 
     // Re-save from the restored device state and ensure byte-for-byte determinism.
     let mut source2 = TestSource {
         meta,
-        e1000: target.e1000.clone(),
-        net_stack: target.net_stack.clone(),
+        devices: vec![net_stack_resaved, e1000_resaved],
         ram: Vec::new(),
     };
     let bytes2 = {
