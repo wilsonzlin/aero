@@ -98,7 +98,8 @@ at `00:01.0`) with the multi-function bit set in its header type (see
 ## Snapshot DISKS mapping (DiskOverlayRefs) (normative)
 
 Snapshots store disk/ISO *references* separately from device/controller state in the `DISKS`
-section as `aero_snapshot::DiskOverlayRefs` entries. Each entry is keyed by a stable `disk_id`
+section as `aero_snapshot::DiskOverlayRefs` entries (see [`docs/16-snapshots.md`](./16-snapshots.md)).
+Each entry is a `DiskOverlayRef { disk_id, base_image, overlay_image }` keyed by a stable `disk_id`
 (`u32`) that identifies a **logical attachment point** in the machine topology.
 
 When restoring a snapshot, storage controller device snapshots intentionally restore only
@@ -116,6 +117,10 @@ etc.). The host/runtime must:
 |---:|---|---|
 | `0` | ICH9 AHCI, **SATA port 0** (`00:02.0`) | Primary HDD (installed OS disk) |
 | `1` | PIIX3 IDE, **secondary channel master ATAPI** (`00:01.1`) | Install media ISO (CD-ROM) |
+| `2` | PIIX3 IDE, **primary channel master ATA** (`00:01.1`) | Optional IDE primary master ATA disk |
+
+This mapping is implemented as stable constants in the canonical machine integration layer:
+`aero_machine::Machine::DISK_ID_*`.
 
 These `disk_id` values are part of the Win7 platform ABI: changing them breaks deterministic
 snapshot restore unless all producers/consumers are updated in lockstep.
