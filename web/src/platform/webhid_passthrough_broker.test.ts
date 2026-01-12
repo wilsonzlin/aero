@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
 import { decodeHidInputReportRingRecord } from "../hid/hid_input_report_ring";
+import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import type { HidPassthroughMessage } from "./hid_passthrough_protocol";
 import { WebHidPassthroughManager } from "./webhid_passthrough";
 
@@ -95,6 +96,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(attach.type).toBe("hid:attach");
     expect(attach).toMatchObject({
       guestPort: 0,
+      guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
       vendorId: device.vendorId,
       productId: device.productId,
       productName: device.productName,
