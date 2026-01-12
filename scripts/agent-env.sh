@@ -37,7 +37,11 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
     custom="$AERO_ISOLATE_CARGO_HOME"
     # Expand the common `~/` shorthand (tilde is not expanded inside variables).
     if [[ "$custom" == "~"* ]]; then
-      custom="${custom/#\~/$HOME}"
+      if [[ -z "${HOME:-}" ]]; then
+        echo "warning: cannot expand '~' in AERO_ISOLATE_CARGO_HOME because HOME is unset; using literal path: $custom" >&2
+      else
+        custom="${custom/#\~/$HOME}"
+      fi
     fi
     # Treat non-absolute paths as relative to the repo root so the behavior is stable
     # even when sourcing from a different working directory.
@@ -46,6 +50,8 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
     fi
     export CARGO_HOME="$custom"
     mkdir -p "$CARGO_HOME"
+    # This script is sourced; avoid polluting the caller's environment with temp vars.
+    unset custom 2>/dev/null || true
     ;;
 esac
 
