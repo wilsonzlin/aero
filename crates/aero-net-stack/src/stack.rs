@@ -665,12 +665,17 @@ impl NetworkStack {
             Err(_) => return Vec::new(),
         };
         let qname = query.qname;
-        let name = match qname_to_string(qname) {
+        let mut name = match qname_to_string(qname) {
             Ok(n) => n,
             Err(_) => return Vec::new(),
         };
 
-        let name = name.trim_end_matches('.').to_ascii_lowercase();
+        // Normalise to lower-case for DNS cache keys and host actions.
+        // `make_ascii_lowercase` is in-place (no extra allocation).
+        while name.ends_with('.') {
+            name.pop();
+        }
+        name.make_ascii_lowercase();
         let rd = query.recursion_desired();
         let qtype = query.qtype;
         let qclass = query.qclass;

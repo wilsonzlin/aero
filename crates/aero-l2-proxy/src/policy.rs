@@ -96,11 +96,11 @@ impl EgressPolicy {
     }
 
     pub fn allows_domain(&self, name: &str) -> bool {
-        let name = normalize_domain(name);
+        let name = name.trim().trim_end_matches('.');
         if self
             .blocked_domains
             .iter()
-            .any(|suffix| domain_matches(&name, suffix))
+            .any(|suffix| domain_matches(name, suffix))
         {
             return false;
         }
@@ -108,7 +108,7 @@ impl EgressPolicy {
             return self
                 .allowed_domains
                 .iter()
-                .any(|suffix| domain_matches(&name, suffix));
+                .any(|suffix| domain_matches(name, suffix));
         }
         true
     }
@@ -157,13 +157,35 @@ fn normalize_domain(name: &str) -> String {
 }
 
 fn domain_matches(name: &str, suffix: &str) -> bool {
-    if name == suffix {
+    let suffix = suffix.trim().trim_end_matches('.');
+    if suffix.is_empty() {
+        return false;
+    }
+
+    if bytes_eq_ignore_ascii_case(name.as_bytes(), suffix.as_bytes()) {
         return true;
     }
-    let Some(rest) = name.strip_suffix(suffix) else {
+
+    if name.len() <= suffix.len() {
         return false;
     };
-    rest.ends_with('.')
+
+    let name_bytes = name.as_bytes();
+    let suffix_bytes = suffix.as_bytes();
+    let start = name_bytes.len() - suffix_bytes.len();
+    if name_bytes[start - 1] != b'.' {
+        return false;
+    }
+    bytes_eq_ignore_ascii_case(&name_bytes[start..], suffix_bytes)
+}
+
+fn bytes_eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
 }
 
 #[cfg(test)]
