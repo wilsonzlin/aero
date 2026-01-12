@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 use aero_devices::acpi_pm::{
-    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN,
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, DEFAULT_ACPI_DISABLE,
+    DEFAULT_ACPI_ENABLE, DEFAULT_GPE0_BLK, DEFAULT_GPE0_BLK_LEN, DEFAULT_PM1A_CNT_BLK,
+    DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT, PM1_STS_PWRBTN,
 };
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::PlatformIrqLine;
@@ -156,20 +158,38 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
     // Windows 7 is extremely sensitive to SCI correctness; these values are a
     // deliberate ABI between firmware tables and device models.
     assert_eq!(fadt.sci_int, 9, "FADT SCI_INT must remain IRQ9/GSI9");
-    assert_eq!(fadt.smi_cmd_port, 0x00B2, "FADT SMI_CMD port changed");
     assert_eq!(
-        fadt.acpi_enable_cmd, 0xA0,
+        fadt.smi_cmd_port, DEFAULT_SMI_CMD_PORT,
+        "FADT SMI_CMD port changed"
+    );
+    assert_eq!(
+        fadt.acpi_enable_cmd, DEFAULT_ACPI_ENABLE,
         "FADT ACPI_ENABLE command changed"
     );
     assert_eq!(
-        fadt.acpi_disable_cmd, 0xA1,
+        fadt.acpi_disable_cmd, DEFAULT_ACPI_DISABLE,
         "FADT ACPI_DISABLE command changed"
     );
-    assert_eq!(fadt.pm1a_evt_blk, 0x0400, "FADT PM1a_EVT_BLK port changed");
-    assert_eq!(fadt.pm1a_cnt_blk, 0x0404, "FADT PM1a_CNT_BLK port changed");
-    assert_eq!(fadt.pm_tmr_blk, 0x0408, "FADT PM_TMR_BLK port changed");
-    assert_eq!(fadt.gpe0_blk, 0x0420, "FADT GPE0_BLK port changed");
-    assert_eq!(fadt.gpe0_blk_len, 0x08, "FADT GPE0_BLK_LEN changed");
+    assert_eq!(
+        fadt.pm1a_evt_blk, DEFAULT_PM1A_EVT_BLK,
+        "FADT PM1a_EVT_BLK port changed"
+    );
+    assert_eq!(
+        fadt.pm1a_cnt_blk, DEFAULT_PM1A_CNT_BLK,
+        "FADT PM1a_CNT_BLK port changed"
+    );
+    assert_eq!(
+        fadt.pm_tmr_blk, DEFAULT_PM_TMR_BLK,
+        "FADT PM_TMR_BLK port changed"
+    );
+    assert_eq!(
+        fadt.gpe0_blk, DEFAULT_GPE0_BLK,
+        "FADT GPE0_BLK port changed"
+    );
+    assert_eq!(
+        fadt.gpe0_blk_len, DEFAULT_GPE0_BLK_LEN,
+        "FADT GPE0_BLK_LEN changed"
+    );
 
     let default_pm_cfg = AcpiPmConfig::default();
     assert_eq!(

@@ -2,6 +2,7 @@ use aero_platform::address_filter::AddressFilter;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::memory::{MemoryBus, BIOS_RESET_VECTOR_PHYS, BIOS_ROM_BASE, BIOS_ROM_SIZE};
 use aero_platform::ChipsetState;
+use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use memory::MapError;
 use std::sync::{Arc, Mutex};
 
@@ -164,7 +165,7 @@ fn a20_masking_aliases_high_mmio_addresses() {
     //
     // Example: if a device is mapped at 0xFEC0_0000, and A20 is disabled, then a guest
     // access to 0xFED0_0000 (bit 20 set) aliases to 0xFEC0_0000 (bit 20 cleared).
-    let mmio_base = 0xFEC0_0000u64;
+    let mmio_base = IOAPIC_MMIO_BASE;
     let mmio_alias = mmio_base | (1 << 20);
 
     let (mmio, mmio_state) = RecordingMmio::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
