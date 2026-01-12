@@ -57,6 +57,26 @@ source ./scripts/agent-env.sh
 
 We use RLIMIT_AS (virtual address space limit) via `prlimit` or `ulimit`. This is simpler and more portable than cgroups/systemd-run.
 
+### RLIMIT_AS caveat (Node/V8/WebAssembly)
+
+RLIMIT_AS limits **virtual address space**, not resident memory (RSS). Some runtimes reserve large virtual ranges up-front (especially Node/V8 and WebAssembly memories). Under the default `12G` cap, you may see spurious failures like:
+
+- `WebAssembly.Instance(): Out of memory: Cannot allocate Wasm memory for new instance`
+- `WebAssembly.Memory(): could not allocate memory`
+
+If you hit this while running JS/TS tooling (for example `npm -w web run test:unit`), re-run with a larger address-space limit for that command (or disable it) while keeping the timeout:
+
+```bash
+# Try raising the cap first
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G ./scripts/safe-run.sh npm -w web run test:unit
+
+# If it still fails, disable RLIMIT_AS for that command (still keeps the timeout)
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=unlimited ./scripts/safe-run.sh npm -w web run test:unit
+
+# Alternative (no address-space limit, but keep a timeout):
+./scripts/with-timeout.sh 600 ./scripts/run_limited.sh --no-as -- npm -w web run test:unit
+```
+
 ### Using `run_limited.sh` (Recommended)
 
 ```bash

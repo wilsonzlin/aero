@@ -71,6 +71,8 @@ source ./scripts/agent-env.sh                   # Activate recommended env vars
 AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G ./scripts/safe-run.sh cargo build --release --locked
 ```
 
+Note: `safe-run.sh` enforces an address-space cap (RLIMIT_AS). Some Node/V8 + WebAssembly workloads reserve large virtual address space and can hit this limit even when actual RAM usage is low (e.g. `WebAssembly.Instance(): Out of memory`). If that happens, increase `AERO_MEM_LIMIT` for that command (or set `AERO_MEM_LIMIT=unlimited` while keeping the timeout).
+
 Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
 
 ```bash
