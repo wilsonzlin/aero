@@ -113,7 +113,7 @@ export function normalizeHostname(rawHost: string): string {
   if (!ascii) throw new Error("Invalid hostname");
 
   // Avoid allocating when the IDNA-normalized hostname is already lowercase.
-  const normalized = /[A-Z]/.test(ascii) ? ascii.toLowerCase() : ascii;
+  const normalized = hasAsciiUppercase(ascii) ? ascii.toLowerCase() : ascii;
   assertValidAsciiHostname(normalized);
   return normalized;
 }
@@ -164,7 +164,7 @@ export function classifyTargetHost(rawHost: string): TargetHost {
   if (version === 4 || version === 6) {
     return {
       kind: "ip",
-      ip: /[A-F]/.test(maybeBracketedV6) ? maybeBracketedV6.toLowerCase() : maybeBracketedV6,
+      ip: hasAsciiHexUppercase(maybeBracketedV6) ? maybeBracketedV6.toLowerCase() : maybeBracketedV6,
       version,
     };
   }
@@ -232,4 +232,20 @@ export function evaluateTcpHostPolicy(rawHost: string, policy: TcpHostnameEgress
   }
 
   return { allowed: true, target };
+}
+
+function hasAsciiUppercase(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (c >= 0x41 /* 'A' */ && c <= 0x5a /* 'Z' */) return true;
+  }
+  return false;
+}
+
+function hasAsciiHexUppercase(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (c >= 0x41 /* 'A' */ && c <= 0x46 /* 'F' */) return true;
+  }
+  return false;
 }

@@ -37,7 +37,15 @@ export function normalizeDnsName(name: string): string {
   }
   const withoutTrailingDot = end === trimmed.length ? trimmed : trimmed.slice(0, end);
   // Avoid allocating in the common case where the name is already lowercase.
-  return /[A-Z]/.test(withoutTrailingDot) ? withoutTrailingDot.toLowerCase() : withoutTrailingDot;
+  return hasAsciiUppercase(withoutTrailingDot) ? withoutTrailingDot.toLowerCase() : withoutTrailingDot;
+}
+
+function hasAsciiUppercase(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (c >= 0x41 /* 'A' */ && c <= 0x5a /* 'Z' */) return true;
+  }
+  return false;
 }
 
 export function readDnsName(message: Buffer, offset: number): { name: string; offsetAfter: number } {
