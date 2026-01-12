@@ -1640,31 +1640,31 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_write_report) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-write-report are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-write-report are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_get_report_descriptor) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-get-report-descriptor are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-report-descriptor are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_get_device_descriptor) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-get-device-descriptor are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-device-descriptor are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_get_string) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-get-string are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-string are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_get_indexed_string) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-get-indexed-string are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-get-indexed-string are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_xfer_packet) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-xfer-packet are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-xfer-packet are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.hidd_bad_set_output_report) {
-        wprintf(L"--led/--led-hidd and --hidd-bad-set-output-report are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --hidd-bad-set-output-report are mutually exclusive.\n");
         return 2;
     }
     if (opt.ioctl_bad_xfer_packet && opt.ioctl_bad_write_report) {
@@ -1680,11 +1680,11 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_set_output_xfer_packet) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-set-output-xfer-packet are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-set-output-xfer-packet are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_set_output_report) {
-        wprintf(L"--led/--led-hidd and --ioctl-bad-set-output-report are mutually exclusive.\n");
+        wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --ioctl-bad-set-output-report are mutually exclusive.\n");
         return 2;
     }
     if (opt.ioctl_bad_set_output_xfer_packet && opt.ioctl_bad_set_output_report) {
