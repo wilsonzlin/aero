@@ -12,8 +12,11 @@ import {
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
 test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic)", async ({ page }) => {
-  test.setTimeout(60_000);
+  // Worker + WASM bring-up can be slow in CI/headless Chromium, especially without a cached
+  // compilation artifact. Keep this comfortably above any internal timeouts.
+  test.setTimeout(90_000);
   test.skip(test.info().project.name !== "chromium", "HDA mic capture test only runs on Chromium.");
+  page.setDefaultTimeout(90_000);
 
   // The harness programs the HDA capture stream at 48kHz but we intentionally publish a
   // different mic sample rate to exercise the capture resampler + sample-rate plumbing.
