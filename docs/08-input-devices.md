@@ -745,6 +745,26 @@ pub fn key_event_bytes(code: &str, pressed: bool) -> Option<Vec<u8>> {
 For browser input → USB HID usage mapping and report format details, see
 [`docs/usb-hid.md`](./usb-hid.md).
 
+### Browser runtime wiring (current implementation)
+
+In the web runtime, browser keyboard/mouse/gamepad events can be exposed to the guest as
+**guest-visible USB HID devices** (inbox drivers on Windows 7).
+
+Current implementation details:
+
+- The I/O worker attaches an **external USB hub** on UHCI root port 0 and then attaches three
+  fixed "synthetic" USB HID devices behind it:
+  - hub port 1: USB keyboard (boot protocol)
+  - hub port 2: USB mouse (boot protocol + wheel)
+  - hub port 3: USB gamepad (Aero's fixed 8-byte report)
+  - See: `web/src/usb/uhci_external_hub.ts`, `web/src/workers/io.worker.ts`
+- Browser input capture emits both PS/2 scancodes and HID usage events so the runtime can drive
+  multiple backends from the same captured stream.
+- The I/O worker dynamically selects an input backend:
+  - Prefer **virtio-input** when the guest driver is `driver_ok`
+  - Else prefer the synthetic **USB HID** devices once the guest configures them
+  - Else fall back to legacy **PS/2 i8042** injection during early boot
+
 For USB HID **gamepad** details (including the composite HID topology and the exact
 gamepad report descriptor + byte layout), see
 [`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md).
