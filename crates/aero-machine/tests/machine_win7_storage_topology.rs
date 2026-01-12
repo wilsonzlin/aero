@@ -28,7 +28,7 @@ fn read_cfg_u32(m: &mut Machine, bus: u8, device: u8, function: u8, offset: u8) 
 
 #[test]
 fn machine_win7_storage_has_ahci_and_ide_on_canonical_bdfs() {
-    let mut cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    let mut cfg = MachineConfig::win7_storage_defaults(2 * 1024 * 1024);
     // Keep the machine deterministic/focused for PCI topology assertions.
     cfg.enable_serial = false;
     cfg.enable_i8042 = false;
