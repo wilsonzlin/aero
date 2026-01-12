@@ -351,6 +351,11 @@ mod jit_abi_constants_tests {
         let layout = tiered_vm_jit_abi_layout();
 
         assert_eq!(
+            layout.jit_ctx_ptr_offset(),
+            read_u32(&obj, "cpu_state_size"),
+            "jit_ctx_ptr_offset should equal CpuState size"
+        );
+        assert_eq!(
             layout.jit_ctx_header_bytes(),
             read_u32(&obj, "jit_ctx_header_bytes")
         );
@@ -367,6 +372,11 @@ mod jit_abi_constants_tests {
         assert_eq!(
             layout.commit_flag_offset(),
             read_u32(&obj, "commit_flag_offset")
+        );
+        assert_eq!(
+            layout.commit_flag_offset(),
+            layout.tier2_ctx_offset() + layout.tier2_ctx_bytes(),
+            "commit_flag_offset should follow tier2 ctx"
         );
     }
 }
