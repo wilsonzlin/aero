@@ -96,7 +96,17 @@ impl AerogpuCmdRuntime {
             }
         }
 
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+            backends: if cfg!(target_os = "linux") {
+                wgpu::Backends::GL
+            } else {
+                // Prefer "native" backends; this avoids noisy platform warnings from
+                // initializing GL/WAYLAND stacks in headless CI environments.
+                wgpu::Backends::PRIMARY
+            },
+            ..Default::default()
+        });
         let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
