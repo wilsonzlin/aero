@@ -18,7 +18,7 @@ fn read_cfg_u32(m: &mut Machine, bdf: PciBdf, offset: u8) -> u32 {
 
 #[test]
 fn machine_helper_enables_canonical_win7_storage_topology_pci_functions() {
-    let cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    let cfg = MachineConfig::win7_storage_defaults(2 * 1024 * 1024);
     assert_eq!(cfg.cpu_count, 1);
     assert!(cfg.enable_pc_platform);
     assert!(cfg.enable_ahci);
