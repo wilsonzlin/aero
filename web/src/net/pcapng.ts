@@ -1,3 +1,310 @@
+// Minimal PCAPNG writer for the web runtime.
+//
+// This module contains two encoders:
+//
+// - `PcapngWriter`: incremental PCAPNG writer (port of
+//   `crates/emulator/src/io/net/trace/pcapng.rs`).
+// - `writePcapng`: convenience helper used by `NetTracer`.
+//
+// Only a small subset of the PCAPNG spec is implemented:
+// - Section Header Block (SHB)
+// - Interface Description Block (IDB)
+// - Enhanced Packet Block (EPB)
+//
+// The incremental writer supports writing an `epb_flags` option for packet
+// direction.
+
+export enum LinkType {
+  Ethernet = 1,
+  User0 = 147,
+  User1 = 148,
+}
+
+export enum PacketDirection {
+  Inbound,
+  Outbound,
+}
+
+const textEncoder = new TextEncoder();
+
+function alignUp(n: number, align: number): number {
+  // Only used with 4 in this module; still keep it generic.
+  if (!Number.isInteger(align) || align <= 0) throw new RangeError(`invalid align: ${align}`);
+  return Math.ceil(n / align) * align;
+}
+
+function padLen32(n: number): number {
+  return (4 - (n % 4)) % 4;
+}
+
+function assertU16Len(n: number, what: string): void {
+  if (!Number.isInteger(n) || n < 0 || n > 0xffff) {
+    throw new RangeError(`${what} must fit in u16: ${n}`);
+  }
+}
+
+function assertU32(n: number, what: string): void {
+  if (!Number.isInteger(n) || n < 0 || n > 0xffff_ffff) {
+    throw new RangeError(`${what} must fit in u32: ${n}`);
+  }
+}
+
+class ByteBuilder {
+  private buf: Uint8Array<ArrayBuffer>;
+  private view: DataView;
+  private len = 0;
+
+  constructor(initialCapacity = 1024) {
+    const cap = Math.max(0, Math.floor(initialCapacity));
+    this.buf = new Uint8Array(cap);
+    this.view = new DataView(this.buf.buffer);
+  }
+
+  get length(): number {
+    return this.len;
+  }
+
+  private ensureCapacity(additionalBytes: number): void {
+    const add = Math.max(0, Math.floor(additionalBytes));
+    const required = this.len + add;
+    if (required <= this.buf.byteLength) return;
+
+    // Doubling growth keeps this amortized O(n) without frequent reallocations.
+    const prev = this.buf.byteLength;
+    let next = prev > 0 ? prev : 1024;
+    while (next < required) {
+      next = Math.max(next * 2, required);
+    }
+
+    const newBuf = new Uint8Array(next);
+    newBuf.set(this.buf.subarray(0, this.len));
+    this.buf = newBuf as Uint8Array<ArrayBuffer>;
+    this.view = new DataView(this.buf.buffer);
+  }
+
+  writeU8(v: number): void {
+    this.ensureCapacity(1);
+    this.buf[this.len] = v & 0xff;
+    this.len += 1;
+  }
+
+  writeU16LE(v: number): void {
+    this.ensureCapacity(2);
+    this.view.setUint16(this.len, v & 0xffff, true);
+    this.len += 2;
+  }
+
+  writeU32LE(v: number): void {
+    this.ensureCapacity(4);
+    this.view.setUint32(this.len, v >>> 0, true);
+    this.len += 4;
+  }
+
+  writeU64LE(v: bigint): void {
+    this.ensureCapacity(8);
+    const lo = Number(v & 0xffff_ffffn);
+    const hi = Number((v >> 32n) & 0xffff_ffffn);
+    this.view.setUint32(this.len, lo, true);
+    this.view.setUint32(this.len + 4, hi, true);
+    this.len += 8;
+  }
+
+  writeBytes(bytes: Uint8Array): void {
+    this.ensureCapacity(bytes.byteLength);
+    this.buf.set(bytes, this.len);
+    this.len += bytes.byteLength;
+  }
+
+  writeZeros(n: number): void {
+    const count = Math.max(0, Math.floor(n));
+    this.ensureCapacity(count);
+    this.buf.fill(0, this.len, this.len + count);
+    this.len += count;
+  }
+
+  padTo32(): void {
+    this.writeZeros(padLen32(this.len));
+  }
+
+  intoBytes(): Uint8Array<ArrayBuffer> {
+    // Avoid copying: callers can rely on byteLength; the underlying ArrayBuffer
+    // may be larger than the written region due to growth strategy.
+    return this.buf.subarray(0, this.len) as Uint8Array<ArrayBuffer>;
+  }
+}
+
+function optTotalLen(valLen: number): number {
+  return 4 + alignUp(valLen, 4);
+}
+
+function writeOptEnd(out: ByteBuilder): void {
+  out.writeU16LE(0);
+  out.writeU16LE(0);
+}
+
+function writeOptU8(out: ByteBuilder, code: number, val: number): void {
+  out.writeU16LE(code);
+  out.writeU16LE(1);
+  out.writeU8(val);
+  out.padTo32();
+}
+
+function writeOptU32(out: ByteBuilder, code: number, val: number): void {
+  out.writeU16LE(code);
+  out.writeU16LE(4);
+  out.writeU32LE(val);
+  out.padTo32();
+}
+
+export class PcapngWriter {
+  private readonly buf: ByteBuilder;
+  private nextInterfaceId = 0;
+
+  constructor(userAppl: string) {
+    this.buf = new ByteBuilder();
+    this.writeSectionHeaderBlock(userAppl);
+  }
+
+  addInterface(linkType: LinkType, name: string): number {
+    const id = this.nextInterfaceId;
+    this.nextInterfaceId += 1;
+    this.writeInterfaceDescriptionBlock(linkType, name);
+    return id;
+  }
+
+  writePacket(
+    interfaceId: number,
+    timestampNs: bigint,
+    payload: Uint8Array,
+    direction?: PacketDirection,
+  ): void {
+    this.writeEnhancedPacketBlock(interfaceId, timestampNs, payload, direction);
+  }
+
+  intoBytes(): Uint8Array<ArrayBuffer> {
+    return this.buf.intoBytes();
+  }
+
+  private writeSectionHeaderBlock(userAppl: string): void {
+    const BLOCK_TYPE = 0x0a0d0d0a;
+
+    const userApplBytes = textEncoder.encode(userAppl);
+    assertU16Len(userApplBytes.byteLength, "shb_userappl option length");
+
+    const bodyLen = 16;
+    const optsLen = optTotalLen(userApplBytes.byteLength) + 4; // + opt_end
+    const totalLen = 12 + bodyLen + optsLen;
+    assertU32(totalLen, "pcapng SHB total length");
+
+    this.buf.writeU32LE(BLOCK_TYPE);
+    this.buf.writeU32LE(totalLen);
+
+    // Body.
+    this.buf.writeU32LE(0x1a2b3c4d); // byte-order magic
+    this.buf.writeU16LE(1); // major
+    this.buf.writeU16LE(0); // minor
+    this.buf.writeU64LE(0xffff_ffff_ffff_ffffn); // section length: unspecified
+
+    // Options.
+    this.buf.writeU16LE(4); // shb_userappl
+    this.buf.writeU16LE(userApplBytes.byteLength);
+    this.buf.writeBytes(userApplBytes);
+    this.buf.padTo32();
+    writeOptEnd(this.buf);
+
+    // Footer.
+    this.buf.writeU32LE(totalLen);
+  }
+
+  private writeInterfaceDescriptionBlock(linkType: LinkType, name: string): void {
+    const BLOCK_TYPE = 0x0000_0001;
+
+    const nameBytes = textEncoder.encode(name);
+    assertU16Len(nameBytes.byteLength, "if_name option length");
+
+    const bodyLen = 8;
+    const optsLen = optTotalLen(nameBytes.byteLength) + optTotalLen(1) + 4; // if_name + if_tsresol + opt_end
+    const totalLen = 12 + bodyLen + optsLen;
+    assertU32(totalLen, "pcapng IDB total length");
+
+    this.buf.writeU32LE(BLOCK_TYPE);
+    this.buf.writeU32LE(totalLen);
+
+    // Body.
+    this.buf.writeU16LE(linkType);
+    this.buf.writeU16LE(0); // reserved
+    this.buf.writeU32LE(65535); // snaplen
+
+    // Options.
+    // if_name
+    this.buf.writeU16LE(2);
+    this.buf.writeU16LE(nameBytes.byteLength);
+    this.buf.writeBytes(nameBytes);
+    this.buf.padTo32();
+
+    // if_tsresol (10^-9)
+    writeOptU8(this.buf, 9, 9);
+
+    writeOptEnd(this.buf);
+
+    // Footer.
+    this.buf.writeU32LE(totalLen);
+  }
+
+  private writeEnhancedPacketBlock(
+    interfaceId: number,
+    timestampNs: bigint,
+    payload: Uint8Array,
+    direction: PacketDirection | undefined,
+  ): void {
+    const BLOCK_TYPE = 0x0000_0006;
+
+    const payloadLen = payload.byteLength;
+    const payloadPad = padLen32(payloadLen);
+    const bodyLen = 20 + payloadLen + payloadPad;
+
+    const optsLen = (direction === undefined ? 0 : optTotalLen(4)) + 4; // + opt_end
+    const totalLen = 12 + bodyLen + optsLen;
+    assertU32(totalLen, "pcapng EPB total length");
+
+    this.buf.writeU32LE(BLOCK_TYPE);
+    this.buf.writeU32LE(totalLen);
+
+    // Body.
+    assertU32(interfaceId, "pcapng interface id");
+    this.buf.writeU32LE(interfaceId);
+
+    if (timestampNs < 0n || timestampNs > 0xffff_ffff_ffff_ffffn) {
+      throw new RangeError(`pcapng timestamp_ns must fit in u64: ${timestampNs.toString()}`);
+    }
+    const tsHigh = Number((timestampNs >> 32n) & 0xffff_ffffn);
+    const tsLow = Number(timestampNs & 0xffff_ffffn);
+    this.buf.writeU32LE(tsHigh);
+    this.buf.writeU32LE(tsLow);
+
+    const capLen = payloadLen > 0xffff_ffff ? 0xffff_ffff : payloadLen;
+    this.buf.writeU32LE(capLen);
+    this.buf.writeU32LE(capLen);
+
+    this.buf.writeBytes(payload);
+    this.buf.writeZeros(payloadPad);
+
+    // Options.
+    if (direction !== undefined) {
+      const dirBits = direction === PacketDirection.Inbound ? 1 : 2;
+      writeOptU32(this.buf, 2, dirBits); // epb_flags
+    }
+    writeOptEnd(this.buf);
+
+    // Footer.
+    this.buf.writeU32LE(totalLen);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Convenience encoder used by `NetTracer`.
+// ---------------------------------------------------------------------------
+
 const PCAPNG_BLOCK_TYPE_SECTION_HEADER = 0x0a0d0d0a;
 const PCAPNG_BLOCK_TYPE_INTERFACE_DESCRIPTION = 0x0000_0001;
 const PCAPNG_BLOCK_TYPE_ENHANCED_PACKET = 0x0000_0006;
@@ -6,11 +313,11 @@ const PCAPNG_BYTE_ORDER_MAGIC = 0x1a2b3c4d;
 
 // https://www.ietf.org/archive/id/draft-tuexen-opsawg-pcapng-02.html
 // (PCAPNG registry): LINKTYPE_ETHERNET
-export const PCAPNG_LINKTYPE_ETHERNET = 1;
+export const PCAPNG_LINKTYPE_ETHERNET = LinkType.Ethernet;
 // LINKTYPE_USER0 / LINKTYPE_USER1
 // Used by the Rust net tracer for proxy pseudo-packets ("ATCP"/"AUDP").
-export const PCAPNG_LINKTYPE_USER0 = 147;
-export const PCAPNG_LINKTYPE_USER1 = 148;
+export const PCAPNG_LINKTYPE_USER0 = LinkType.User0;
+export const PCAPNG_LINKTYPE_USER1 = LinkType.User1;
 
 const PCAPNG_IF_OPTION_NAME = 2;
 const PCAPNG_IF_OPTION_TSRESOL = 9;
@@ -101,7 +408,7 @@ export interface PcapngCapture {
 function computeInterfaceOptionsLength(desc: PcapngInterfaceDescription): number {
   let len = 0;
   if (desc.name !== undefined) {
-    const bytes = new TextEncoder().encode(desc.name);
+    const bytes = textEncoder.encode(desc.name);
     len += 4 + bytes.byteLength + pad4(bytes.byteLength);
   }
   if (desc.tsResolPower10 !== undefined) {
@@ -115,7 +422,7 @@ function computeInterfaceOptionsLength(desc: PcapngInterfaceDescription): number
 
 function writeInterfaceOptions(w: ByteWriter, desc: PcapngInterfaceDescription): void {
   if (desc.name !== undefined) {
-    const bytes = new TextEncoder().encode(desc.name);
+    const bytes = textEncoder.encode(desc.name);
     w.writeU16(PCAPNG_IF_OPTION_NAME);
     w.writeU16(bytes.byteLength);
     w.writeBytes(bytes);
