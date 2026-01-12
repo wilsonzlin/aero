@@ -135,7 +135,17 @@ __forceinline NTSTATUS VioInputMapUserAddress(
         return (NTSTATUS)GetExceptionCode();
     }
 
-    systemAddress = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority);
+    {
+        /*
+         * Prefer non-executable kernel mappings when the build environment supports it.
+         * (MdlMappingNoExecute is not present in older WDKs.)
+         */
+        ULONG priority = NormalPagePriority;
+#ifdef MdlMappingNoExecute
+        priority |= MdlMappingNoExecute;
+#endif
+        systemAddress = MmGetSystemAddressForMdlSafe(mdl, priority);
+    }
     if (systemAddress == NULL) {
         MmUnlockPages(mdl);
         IoFreeMdl(mdl);
