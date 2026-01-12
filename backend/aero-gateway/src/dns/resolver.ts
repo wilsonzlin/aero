@@ -53,9 +53,7 @@ export function rcodeToString(rcode: number): string {
   }
 }
 
-function isPrivateIpv4(ip: string): boolean {
-  const [a, b] = ip.split('.').map((p) => Number.parseInt(p, 10));
-  if (![a, b].every((n) => Number.isFinite(n))) return false;
+function isPrivateIpv4(a: number, b: number): boolean {
   if (a === 10) return true;
   if (a === 127) return true;
   if (a === 0) return true;
@@ -72,10 +70,23 @@ function isPrivateIpv6(bytes: Uint8Array): boolean {
   // fe80::/10 (link-local)
   if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80) return true;
   // ::1 loopback, :: unspecified
-  const allZero = bytes.every((b) => b === 0);
+  let allZero = true;
+  for (let i = 0; i < bytes.length; i += 1) {
+    if (bytes[i] !== 0) {
+      allZero = false;
+      break;
+    }
+  }
   if (allZero) return true;
-  const loopback = bytes.slice(0, 15).every((b) => b === 0) && bytes[15] === 1;
-  if (loopback) return true;
+
+  let loopback = true;
+  for (let i = 0; i < 15; i += 1) {
+    if (bytes[i] !== 0) {
+      loopback = false;
+      break;
+    }
+  }
+  if (loopback && bytes[15] === 1) return true;
   return false;
 }
 
@@ -93,24 +104,97 @@ function asciiEndsWithIgnoreCase(s: string, suffix: string): boolean {
 export function isPrivatePtrQname(qname: string): boolean {
   if (asciiEndsWithIgnoreCase(qname, '.in-addr.arpa')) {
     const base = qname.slice(0, -'.in-addr.arpa'.length);
-    const octets = base.split('.').filter(Boolean);
-    if (octets.length !== 4) return false;
-    const ip = octets.reverse().join('.');
-    return isPrivateIpv4(ip);
+    const parsed = parseInAddrArpaIPv4(base);
+    if (!parsed) return false;
+    return isPrivateIpv4(parsed.a, parsed.b);
   }
 
   if (asciiEndsWithIgnoreCase(qname, '.ip6.arpa')) {
     const base = qname.slice(0, -'.ip6.arpa'.length);
-    const nibbles = base.split('.').filter(Boolean);
-    if (nibbles.length !== 32) return false;
-    const hex = nibbles.reverse().join('');
-    if (!/^[0-9a-fA-F]{32}$/.test(hex)) return false;
-    const bytes = new Uint8Array(16);
-    for (let i = 0; i < 16; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    const bytes = parseIp6ArpaBytes(base);
+    if (!bytes) return false;
     return isPrivateIpv6(bytes);
   }
 
   return false;
+}
+
+function parseDecimalByteFromAscii(input: string, start: number, end: number): number | null {
+  if (end <= start) return null;
+  let out = 0;
+  for (let i = start; i < end; i += 1) {
+    const c = input.charCodeAt(i);
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return null;
+    out = out * 10 + (c - 0x30);
+    if (out > 255) return null;
+  }
+  return out;
+}
+
+function parseInAddrArpaIPv4(base: string): { a: number; b: number } | null {
+  // Parse the last 4 dot-delimited labels (ignoring empties) from right to left.
+  let i = base.length;
+  let labels = 0;
+  let a = 0;
+  let b = 0;
+
+  while (i > 0) {
+    while (i > 0 && base.charCodeAt(i - 1) === 0x2e /* '.' */) i -= 1;
+    if (i === 0) break;
+
+    let start = i;
+    while (start > 0 && base.charCodeAt(start - 1) !== 0x2e /* '.' */) start -= 1;
+
+    const value = parseDecimalByteFromAscii(base, start, i);
+    if (value === null) return null;
+
+    if (labels === 0) a = value;
+    else if (labels === 1) b = value;
+    labels += 1;
+    if (labels > 4) return null;
+
+    i = start - 1;
+  }
+
+  if (labels !== 4) return null;
+  return { a, b };
+}
+
+function hexNibbleValue(code: number): number | null {
+  if (code >= 0x30 /* '0' */ && code <= 0x39 /* '9' */) return code - 0x30;
+  if (code >= 0x41 /* 'A' */ && code <= 0x46 /* 'F' */) return 10 + (code - 0x41);
+  if (code >= 0x61 /* 'a' */ && code <= 0x66 /* 'f' */) return 10 + (code - 0x61);
+  return null;
+}
+
+function parseIp6ArpaBytes(base: string): Uint8Array | null {
+  // Parse 32 dot-delimited nibbles from right to left (ignoring empty labels).
+  const bytes = new Uint8Array(16);
+  let nibbleIndex = 0;
+  let i = base.length;
+
+  while (i > 0) {
+    while (i > 0 && base.charCodeAt(i - 1) === 0x2e /* '.' */) i -= 1;
+    if (i === 0) break;
+
+    let start = i;
+    while (start > 0 && base.charCodeAt(start - 1) !== 0x2e /* '.' */) start -= 1;
+
+    if (i - start !== 1) return null;
+    const value = hexNibbleValue(base.charCodeAt(start));
+    if (value === null) return null;
+    if (nibbleIndex >= 32) return null;
+
+    const byteIndex = nibbleIndex >> 1;
+    if ((nibbleIndex & 1) === 0) bytes[byteIndex] = value << 4;
+    else bytes[byteIndex] |= value;
+    nibbleIndex += 1;
+
+    i = start - 1;
+  }
+
+  if (nibbleIndex !== 32) return null;
+  return bytes;
 }
 
 export class DnsResolver {
