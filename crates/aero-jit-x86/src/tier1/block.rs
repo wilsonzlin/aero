@@ -65,7 +65,7 @@ pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits)
             InstKind::CallRel { .. } => Some(BlockEndKind::Call),
             InstKind::Ret => Some(BlockEndKind::Ret),
             InstKind::Invalid => Some(BlockEndKind::ExitToInterpreter {
-                next_rip: inst.next_rip(),
+                next_rip: inst.rip,
             }),
             _ => None,
         };

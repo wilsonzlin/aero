@@ -298,7 +298,7 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
             }
             InstKind::Invalid => {
                 terminator = IrTerminator::ExitToInterpreter {
-                    next_rip: inst.next_rip(),
+                    next_rip: inst.rip,
                 };
                 break;
             }

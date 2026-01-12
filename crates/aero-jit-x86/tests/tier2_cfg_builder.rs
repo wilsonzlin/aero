@@ -33,11 +33,10 @@ fn cfg_builder_linear_blocks() {
         Terminator::SideExit { exit_rip } => *exit_rip,
         other => panic!("expected SideExit terminator, got {other:?}"),
     };
-    assert!(
-        exit_rip > block.start_rip,
-        "side-exit rip must advance (start=0x{:x}, exit=0x{:x})",
-        block.start_rip,
-        exit_rip
+    assert_eq!(
+        exit_rip, block.start_rip,
+        "side-exit rip should point at the unsupported instruction start (start=0x{:x}, exit=0x{:x})",
+        block.start_rip, exit_rip
     );
 }
 
@@ -117,10 +116,9 @@ fn cfg_builder_loop_backedge() {
         Terminator::SideExit { exit_rip } => *exit_rip,
         other => panic!("expected SideExit terminator, got {other:?}"),
     };
-    assert!(
-        exit_rip > block.start_rip,
-        "side-exit rip must advance (start=0x{:x}, exit=0x{:x})",
-        block.start_rip,
-        exit_rip
+    assert_eq!(
+        exit_rip, block.start_rip,
+        "side-exit rip should point at the unsupported instruction start (start=0x{:x}, exit=0x{:x})",
+        block.start_rip, exit_rip
     );
 }
