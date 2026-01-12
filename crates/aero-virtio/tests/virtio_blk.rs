@@ -266,7 +266,7 @@ fn kick_queue0(dev: &mut VirtioPciDevice, caps: &Caps, mem: &mut GuestRam) {
 
 fn setup_aero_storage_disk() -> (VirtioPciDevice, Caps, GuestRam) {
     let disk = RawDisk::create(MemBackend::new(), 4096).unwrap();
-    let backend: Box<dyn VirtualDisk> = Box::new(disk);
+    let backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
     let blk = VirtioBlk::new(backend);
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
     setup_pci_device(dev)

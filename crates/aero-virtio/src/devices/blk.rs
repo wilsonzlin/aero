@@ -119,6 +119,28 @@ impl BlockBackend for Box<dyn VirtualDisk> {
     }
 }
 
+impl BlockBackend for Box<dyn VirtualDisk + Send> {
+    fn len(&self) -> u64 {
+        self.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        self.as_mut()
+            .read_at(offset, dst)
+            .map_err(map_storage_error)
+    }
+
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        self.as_mut()
+            .write_at(offset, src)
+            .map_err(map_storage_error)
+    }
+
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
+        self.as_mut().flush().map_err(map_storage_error)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MemDisk {
     data: Vec<u8>,
