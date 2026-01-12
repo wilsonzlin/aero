@@ -99,6 +99,12 @@ fn pc_platform_routes_e1000_mmio_through_bar0() {
 
     // Ensure the MMIO router supports 64-bit reads by splitting into 32-bit operations.
     assert_eq!(pc.memory.read_u64(bar0_base + 0x08), u64::from(status));
+
+    // PhysicalMemoryBus issues MMIO writes in chunks up to 8 bytes; ensure the E1000 MMIO mapping
+    // handles 64-bit writes by splitting into supported access sizes.
+    pc.memory.write_u64(bar0_base + 0x1000, 0xaabb_ccdd_eeff_0011);
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x1000), 0xeeff_0011);
+    assert_eq!(pc.memory.read_u32(bar0_base + 0x1004), 0xaabb_ccdd);
 }
 
 #[test]
