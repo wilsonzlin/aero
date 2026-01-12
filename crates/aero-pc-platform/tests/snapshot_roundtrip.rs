@@ -2,6 +2,7 @@ use aero_devices::acpi_pm::{
     DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_EVT_BLK, DEFAULT_PM_TMR_BLK, DEFAULT_SMI_CMD_PORT,
     PM1_STS_PWRBTN,
 };
+use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_devices::pci::{profile, PciBdf, PciCoreSnapshot, PciInterruptPin, PCI_CFG_ADDR_PORT};
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_devices_storage::ata::{AtaDrive, ATA_CMD_READ_DMA_EXT, ATA_CMD_WRITE_DMA_EXT};
@@ -10,7 +11,8 @@ use aero_devices_storage::pci_ide::{PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_pc_platform::PcPlatform;
 use aero_platform::interrupts::{
-    InterruptController, InterruptInput, PlatformInterruptMode, PlatformInterrupts,
+    InterruptController, InterruptInput, PlatformInterruptMode, PlatformInterrupts, IMCR_DATA_PORT,
+    IMCR_INDEX, IMCR_SELECT_PORT,
 };
 use aero_storage::{DiskError, Result as DiskResult, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
@@ -53,8 +55,8 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
     let mut pc = PcPlatform::new(RAM_SIZE);
     // Switch the platform into APIC mode via IMCR (0x22/0x23) to match how guests enable the
     // IOAPIC/LAPIC interrupt path.
-    pc.io.write_u8(0x22, 0x70);
-    pc.io.write_u8(0x23, 0x01);
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
     {
         let mut ints = pc.interrupts.borrow_mut();
@@ -69,7 +71,8 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // Put the i8042 controller into a non-default state (output buffer filled) so snapshot/restore
     // exercises the controller state machine.
-    pc.io.write_u8(0x64, 0xAA); // i8042 self-test -> returns 0x55 in output buffer.
+    pc.io
+        .write_u8(I8042_STATUS_PORT, 0xAA); // i8042 self-test -> returns 0x55 in output buffer.
 
     // Put the PCI config ports into a non-default state (address latch set) so PCI core snapshot is
     // meaningfully exercised.
@@ -238,7 +241,7 @@ fn pc_platform_snapshot_roundtrip_preserves_acpi_sci_interrupt_and_platform_devi
 
     // i8042 output buffer should still contain the self-test response.
     assert_eq!(
-        pc2.io.read_u8(0x60),
+        pc2.io.read_u8(I8042_DATA_PORT),
         0x55,
         "i8042 output buffer should survive snapshot/restore"
     );
@@ -277,8 +280,8 @@ fn pc_platform_snapshot_roundtrip_redrives_hpet_and_pci_intx_levels_after_restor
     const HPET_TIMER_CFG_INT_ROUTE_MASK: u64 = 0x1F << HPET_TIMER_CFG_INT_ROUTE_SHIFT;
 
     let mut pc = PcPlatform::new(RAM_SIZE);
-    pc.io.write_u8(0x22, 0x70);
-    pc.io.write_u8(0x23, 0x01);
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
     {
         let mut ints = pc.interrupts.borrow_mut();
@@ -445,8 +448,8 @@ fn pc_platform_snapshot_roundtrip_preserves_rtc_irq8_and_requires_status_c_clear
     const RTC_REG_B_UIE: u8 = 1 << 4;
 
     let mut pc = PcPlatform::new(RAM_SIZE);
-    pc.io.write_u8(0x22, 0x70);
-    pc.io.write_u8(0x23, 0x01);
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
     assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
     {
         let mut ints = pc.interrupts.borrow_mut();
