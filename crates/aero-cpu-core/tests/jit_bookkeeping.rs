@@ -121,7 +121,7 @@ fn committed_exit_to_interpreter_advances_tsc_and_forces_one_interpreter_step() 
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // Install the exiting block and also install a block at `next_rip` so we can ensure the forced
     // interpreter step overrides a compiled handle.
@@ -210,7 +210,7 @@ fn rollback_exit_to_interpreter_forces_one_interpreter_step() {
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // Install a compiled handle for `entry_rip` so the dispatcher would normally try to run it
     // again on the next step unless the `exit_to_interpreter` sticky flag is respected.
@@ -281,7 +281,7 @@ fn inhibit_interrupts_after_block_creates_and_ages_shadow() {
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // Block A: creates an interrupt shadow after it retires (e.g. STI/MOV SS semantics).
     {
@@ -365,7 +365,7 @@ fn rollback_does_not_create_interrupt_shadow_even_if_meta_requests_it() {
         cache_max_bytes: 0,
     };
     let jit = JitRuntime::new(config, backend, NullCompileSink);
-    let mut dispatcher = ExecDispatcher::new(NoopInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(NoopInterpreter, jit);
 
     // Install a compiled handle that claims it would create an interrupt shadow if the block
     // retired. Because the backend rolls back (`committed=false`), the dispatcher must not apply

@@ -742,7 +742,7 @@ fn pagingbus_bulk_copy_decline_does_not_update_accessed_or_dirty_bits() -> Resul
 
     // Copy 8KiB from 0x0000 to 0x4000. The second destination page (0x5000) is unmapped, so the
     // bulk op should decline without side effects.
-    assert_eq!(bus.bulk_copy(0x4000, 0, 0x2000)?, false);
+    assert!(!bus.bulk_copy(0x4000, 0, 0x2000)?);
 
     // Page table entries must be unchanged (no accessed/dirty bits set).
     let after_pml4e = bus.inner_mut().read_u64(pml4_base);
@@ -825,7 +825,7 @@ fn pagingbus_bulk_set_decline_does_not_update_accessed_or_dirty_bits() -> Result
 
     // Write 512 bytes starting near the end of page 4. The write crosses into page 5 which is
     // unmapped, so the bulk op should decline without side effects.
-    assert_eq!(bus.bulk_set(dst, &[0xAB], 0x200)?, false);
+    assert!(!bus.bulk_set(dst, &[0xAB], 0x200)?);
 
     // Page table entries must be unchanged (no accessed/dirty bits set).
     let after_pml4e = bus.inner_mut().read_u64(pml4_base);
