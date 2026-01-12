@@ -1,6 +1,6 @@
 use aero_devices::pci::{
-    PciBdf, PciConfigPorts, PciConfigSpace, PciDevice, PciEcamConfig, PciEcamMmio,
-    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+    PciBarDefinition, PciBdf, PciConfigPorts, PciConfigSpace, PciDevice, PciEcamConfig,
+    PciEcamMmio, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use memory::Bus;
 use std::cell::RefCell;
@@ -43,7 +43,18 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
     cfg_ports.borrow_mut().bus_mut().add_device(
         bdf,
         Box::new(Stub {
-            cfg: PciConfigSpace::new(0x1234, 0x5678),
+            cfg: {
+                let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+                cfg.set_bar_definition(
+                    0,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+                cfg
+            },
         }),
     );
 
@@ -95,4 +106,24 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
         .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x3C));
     let reg_ports = cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4);
     assert_eq!(reg_ports, 0x1122_3344);
+
+    // BAR0 probe/program should also be coherent between the two config mechanisms.
+    cfg_ports
+        .borrow_mut()
+        .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x10));
+    cfg_ports
+        .borrow_mut()
+        .io_write(PCI_CFG_DATA_PORT, 4, 0xFFFF_FFFF);
+    let bar0_probe_ports = cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4);
+    let bar0_probe_ecam = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4) as u32;
+    assert_eq!(bar0_probe_ports, 0xFFFF_F000);
+    assert_eq!(bar0_probe_ecam, 0xFFFF_F000);
+
+    // Program BAR0 using a single ECAM byte write to the highest byte (after probe). This should
+    // not "inherit" the probe mask's low bits.
+    mem.write(ecam_addr(ecam_base, 0, 2, 0, 0x13), 1, 0xE0);
+    let bar0_ports = cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4);
+    assert_eq!(bar0_ports, 0xE000_0000);
+    let bar0_ecam = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4) as u32;
+    assert_eq!(bar0_ecam, 0xE000_0000);
 }

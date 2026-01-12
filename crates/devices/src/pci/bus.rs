@@ -1,5 +1,6 @@
 use crate::pci::config::{
-    PciBarChange, PciCommandChange, PciConfigSpace, PciConfigSpaceState, PciConfigWriteEffects,
+    PciBarChange, PciBarDefinition, PciCommandChange, PciConfigSpace, PciConfigSpaceState,
+    PciConfigWriteEffects,
 };
 use crate::pci::{PciBarKind, PciBarRange, PciBdf, PciDevice};
 use crate::pci::{PciResourceAllocator, PciResourceError};
@@ -186,7 +187,51 @@ impl PciBus {
                     };
 
                     let cfg = dev.config_mut();
-                    let cur = cfg.read(aligned, 4);
+                    let bar = ((aligned - 0x10) / 4) as u8;
+
+                    // For BAR read-modify-writes, consult the *currently programmed base* rather
+                    // than the BAR size probe mask. Guests may probe BAR size (write 0xFFFF_FFFF),
+                    // then program the BAR using byte/word accesses; those subword writes must be
+                    // applied to the pre-probe base, not the probe response.
+                    let cur = if bar > 0 && cfg.bar_definition(bar).is_none() {
+                        match cfg.bar_definition(bar - 1) {
+                            Some(PciBarDefinition::Mmio64 { .. }) => cfg
+                                .bar_range(bar - 1)
+                                .map(|range| (range.base >> 32) as u32)
+                                .unwrap_or(0),
+                            _ => cfg.read(aligned, 4),
+                        }
+                    } else {
+                        match cfg.bar_definition(bar) {
+                            Some(PciBarDefinition::Io { .. }) => cfg
+                                .bar_range(bar)
+                                .map(|range| (range.base as u32 & 0xFFFF_FFFC) | 0x1)
+                                .unwrap_or(0x1),
+                            Some(PciBarDefinition::Mmio32 { prefetchable, .. }) => {
+                                let mut v = cfg
+                                    .bar_range(bar)
+                                    .map(|range| range.base as u32 & 0xFFFF_FFF0)
+                                    .unwrap_or(0);
+                                if prefetchable {
+                                    v |= 1 << 3;
+                                }
+                                v
+                            }
+                            Some(PciBarDefinition::Mmio64 { prefetchable, .. }) => {
+                                let mut v = cfg
+                                    .bar_range(bar)
+                                    .map(|range| range.base as u32 & 0xFFFF_FFF0)
+                                    .unwrap_or(0);
+                                // bits 2:1 = 0b10 indicate 64-bit.
+                                v |= 0b10 << 1;
+                                if prefetchable {
+                                    v |= 1 << 3;
+                                }
+                                v
+                            }
+                            None => cfg.read(aligned, 4),
+                        }
+                    };
                     let merged = (cur & !(mask << shift)) | ((value & mask) << shift);
                     cfg.write_with_effects(aligned, 4, merged)
                 } else {
@@ -744,6 +789,31 @@ mod tests {
         cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x14));
         cfg.io_write(&mut bus, 0xCFC, 2, 0xC012);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0000_C001);
+    }
+
+    #[test]
+    fn bar_subword_writes_do_not_use_probe_mask_as_rmw_base() {
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigMechanism1::new();
+
+        let mut dev = Stub::new(0x1234, 0x0001);
+        dev.cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(PciBdf::new(0, 1, 0), Box::new(dev));
+
+        cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x10));
+        cfg.io_write(&mut bus, 0xCFC, 4, 0xFFFF_FFFF);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_F000);
+
+        // Program only the high 16 bits of BAR0 via a 16-bit write. The low bits should be based
+        // on the pre-probe base (0), not on the probe response (0xFFFF_F000).
+        cfg.io_write(&mut bus, 0xCFC + 2, 2, 0xE000);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xE000_0000);
     }
 
     #[test]

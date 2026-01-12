@@ -94,18 +94,8 @@ impl PciEcamMmio {
         let mut ports = self.cfg_ports.borrow_mut();
         let bus = ports.bus_mut();
 
-        let reg_usize = usize::from(reg);
-        if (0x10..=0x27).contains(&reg_usize) {
-            // BAR registers require 32-bit aligned writes in [`PciConfigSpace`]. Emulate subword
-            // updates by read-modify-writing the containing DWORD.
-            let aligned = reg & !0x3;
-            let shift = u32::from(reg - aligned) * 8;
-            let mut dword = bus.read_config(bdf, aligned, 4);
-            dword = (dword & !(0xFFu32 << shift)) | (u32::from(value) << shift);
-            bus.write_config(bdf, aligned, 4, dword);
-            return;
-        }
-
+        // `PciBus::write_config` emulates subword BAR writes via a read-modify-write of the
+        // containing DWORD, so we can forward byte writes directly.
         bus.write_config(bdf, reg, 1, u32::from(value));
     }
 }
