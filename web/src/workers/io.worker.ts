@@ -106,9 +106,10 @@ import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
 import {
   HEADER_BYTES as AUDIO_OUT_HEADER_BYTES,
   HEADER_U32_LEN as AUDIO_OUT_HEADER_U32_LEN,
+  getRingBufferLevelFrames as getAudioOutRingBufferLevelFrames,
   OVERRUN_COUNT_INDEX as AUDIO_OUT_OVERRUN_COUNT_INDEX,
   UNDERRUN_COUNT_INDEX as AUDIO_OUT_UNDERRUN_COUNT_INDEX,
-  getRingBufferLevelFrames as getAudioOutRingBufferLevelFrames,
+  requiredBytes as audioOutRequiredBytes,
 } from "../audio/audio_worklet_ring";
 import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
@@ -1633,7 +1634,7 @@ function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: 
   micSampleRate = (sampleRate ?? 0) | 0;
 }
 
-function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFrames?: number): void {
+function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFrames?: number, channelCount?: number): void {
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
@@ -1644,6 +1645,15 @@ function attachAudioRingBuffer(ringBuffer: SharedArrayBuffer | null, capacityFra
     }
     if (ringBuffer.byteLength < AUDIO_OUT_HEADER_BYTES) {
       throw new Error(`audio ring buffer is too small: need at least ${AUDIO_OUT_HEADER_BYTES} bytes`);
+    }
+
+    const cap = (capacityFrames ?? 0) >>> 0;
+    const cc = (channelCount ?? 0) >>> 0;
+    if (cap > 0 && cc > 0) {
+      const requiredBytes = audioOutRequiredBytes(cap, cc);
+      if (ringBuffer.byteLength < requiredBytes) {
+        throw new Error(`audio ring buffer is too small: need ${requiredBytes} bytes, got ${ringBuffer.byteLength} bytes`);
+      }
     }
   }
 
@@ -2397,7 +2407,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<SetAudioRingBufferMessage>).type === "setAudioRingBuffer") {
       const msg = data as Partial<SetAudioRingBufferMessage>;
-      attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames);
+      attachAudioRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.capacityFrames, msg.channelCount);
       return;
     }
 
