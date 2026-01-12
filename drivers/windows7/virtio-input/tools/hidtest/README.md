@@ -82,6 +82,12 @@ Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
 hidtest.exe --led 0x07
 ```
 
+Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crashing the guest):
+
+```bat
+hidtest.exe --keyboard --ioctl-bad-write-report
+```
+
 Cycle LEDs (guaranteed visible changes):
 
 ```bat

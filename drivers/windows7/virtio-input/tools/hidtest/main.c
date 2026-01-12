@@ -43,6 +43,10 @@
 #define IOCTL_HID_GET_DEVICE_DESCRIPTOR HID_CTL_CODE(0)
 #endif
 
+#ifndef IOCTL_HID_WRITE_REPORT
+#define IOCTL_HID_WRITE_REPORT HID_CTL_CODE(3)
+#endif
+
 // Historical/alternate function code seen in some header sets. If our primary
 // definition fails at runtime, we try this as a fallback.
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT
@@ -89,6 +93,7 @@ typedef struct OPTIONS {
     int have_index;
     int have_led_mask;
     int led_cycle;
+    int ioctl_bad_write_report;
     int dump_desc;
     int want_keyboard;
     int want_mouse;
@@ -356,6 +361,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-cycle] [--dump-desc]\n");
+    wprintf(L"             [--ioctl-bad-write-report]\n");
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
@@ -368,6 +374,9 @@ static void print_usage(void)
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
+    wprintf(L"  --ioctl-bad-write-report\n");
+    wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid reportBuffer pointer\n");
+    wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"\n");
     wprintf(L"Notes:\n");
     wprintf(L"  - virtio-input detection: VID 0x1AF4, PID 0x0001 (keyboard) / 0x0002 (mouse)\n");
@@ -1043,6 +1052,45 @@ static void read_reports_loop(const SELECTED_DEVICE *dev)
     free(buf);
 }
 
+static void ioctl_bad_write_report(const SELECTED_DEVICE *dev)
+{
+    typedef struct HID_XFER_PACKET_MIN {
+        PUCHAR reportBuffer;
+        ULONG reportBufferLen;
+        UCHAR reportId;
+    } HID_XFER_PACKET_MIN;
+
+    BYTE inbuf[64];
+    HID_XFER_PACKET_MIN *pkt;
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return;
+    }
+
+    if ((dev->desired_access & GENERIC_WRITE) == 0) {
+        wprintf(L"Device was not opened with GENERIC_WRITE; cannot issue IOCTL_HID_WRITE_REPORT\n");
+        return;
+    }
+
+    ZeroMemory(inbuf, sizeof(inbuf));
+    pkt = (HID_XFER_PACKET_MIN *)inbuf;
+    pkt->reportId = 1; // keyboard
+    pkt->reportBufferLen = 2;
+    pkt->reportBuffer = (PUCHAR)(ULONG_PTR)0x1; // invalid user pointer
+
+    wprintf(L"\nIssuing IOCTL_HID_WRITE_REPORT with invalid reportBuffer=%p...\n", pkt->reportBuffer);
+    ok = DeviceIoControl(dev->handle, IOCTL_HID_WRITE_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return;
+    }
+
+    print_last_error_w(L"DeviceIoControl(IOCTL_HID_WRITE_REPORT bad reportBuffer)");
+}
+
 int wmain(int argc, wchar_t **argv)
 {
     OPTIONS opt;
@@ -1077,6 +1125,11 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--dump-desc") == 0) {
             opt.dump_desc = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-bad-write-report") == 0) {
+            opt.ioctl_bad_write_report = 1;
             continue;
         }
 
@@ -1182,6 +1235,12 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.dump_desc) {
         dump_report_descriptor(dev.handle);
+    }
+
+    if (opt.ioctl_bad_write_report) {
+        ioctl_bad_write_report(&dev);
+        free_selected_device(&dev);
+        return 0;
     }
 
     read_reports_loop(&dev);
