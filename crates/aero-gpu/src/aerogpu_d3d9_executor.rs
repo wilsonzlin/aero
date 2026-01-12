@@ -2551,8 +2551,9 @@ impl AerogpuD3d9Executor {
                 let format = match mapped_format {
                     // Allow BC formats to fall back to CPU decompression + RGBA8 uploads when the
                     // device can't sample BC textures (e.g. wgpu GL/WebGL2 paths), or when the
-                    // texture size isn't compatible with wgpu's BC requirements (block-aligned
-                    // width/height).
+                    // texture's mip chain isn't compatible with wgpu/WebGPU's BC dimension
+                    // requirements (mip levels that are at least one full block in size must be
+                    // block-aligned).
                     wgpu::TextureFormat::Bc1RgbaUnorm
                     | wgpu::TextureFormat::Bc2RgbaUnorm
                     | wgpu::TextureFormat::Bc3RgbaUnorm
@@ -2561,11 +2562,10 @@ impl AerogpuD3d9Executor {
                             .device
                             .features()
                             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
-                        let block = aerogpu_format_texel_block_info(format_raw)?;
-                        let block_aligned = width.is_multiple_of(block.block_width)
-                            && height.is_multiple_of(block.block_height);
 
-                        if bc_supported && block_aligned {
+                        if bc_supported
+                            && wgpu_bc_texture_dimensions_compatible(width, height, mip_levels)
+                        {
                             mapped_format
                         } else {
                             wgpu::TextureFormat::Rgba8Unorm
@@ -8292,6 +8292,22 @@ fn mip_extent(base: u32, mip_level: u32) -> u32 {
     mip_dim(base, mip_level)
 }
 
+fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_levels: u32) -> bool {
+    // WebGPU validation requires block-compressed texture dimensions to be block-aligned (4x4 for
+    // BC formats) for mip levels that are at least one full block in size.
+    //
+    // See also: wgpu validation errors like:
+    //   "Width 9 is not a multiple of Bc1RgbaUnorm's block width (4)"
+    for level in 0..mip_levels {
+        let w = mip_dim(width, level);
+        let h = mip_dim(height, level);
+        if (w >= 4 && !w.is_multiple_of(4)) || (h >= 4 && !h.is_multiple_of(4)) {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TexelBlockInfo {
     block_width: u32,
@@ -9204,6 +9220,18 @@ mod tests {
         assert_eq!(layout.mip_offsets, vec![0, 64]);
         assert_eq!(layout.layer_stride_bytes, 80);
         assert_eq!(layout.total_size_bytes, 80);
+    }
+
+    #[test]
+    fn wgpu_bc_texture_dimensions_compatible_rejects_invalid_mip_shapes() {
+        // mip1 = 6x6 is >= 4 but not block-aligned.
+        assert!(!super::wgpu_bc_texture_dimensions_compatible(12, 12, 2));
+
+        // mip1 = 4x4 is block-aligned.
+        assert!(super::wgpu_bc_texture_dimensions_compatible(8, 8, 2));
+
+        // mip1 = 2x2 is < 4 and does not need to be block-aligned.
+        assert!(super::wgpu_bc_texture_dimensions_compatible(4, 4, 2));
     }
 
     #[test]
