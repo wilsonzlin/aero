@@ -182,10 +182,18 @@ pub async fn list_images(
     req_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let images = state.store.list_images().await?;
-    let etag_entries: Vec<(String, crate::store::ImageMeta)> = images
-        .iter()
-        .map(|img| (img.id.clone(), img.meta.clone()))
-        .collect();
+
+    // Sanitize per-image ETags once so:
+    // - invalid store-provided values only log once
+    // - the per-image JSON fields and the list-level ETag are derived from the same validator
+    let mut response_images = Vec::with_capacity(images.len());
+    let mut etag_entries = Vec::<(String, crate::store::ImageMeta)>::with_capacity(images.len());
+    for mut image in images {
+        let etag = cache::etag_or_fallback(&image.meta);
+        image.meta.etag = Some(etag.clone());
+        etag_entries.push((image.id.clone(), image.meta.clone()));
+        response_images.push(ImageResponse::from_entry_with_etag(image, etag));
+    }
     let list_etag = cache::etag_for_image_list(&etag_entries);
 
     if cache::is_not_modified(&req_headers, list_etag.to_str().ok(), None) {
@@ -196,10 +204,9 @@ pub async fn list_images(
         return Ok(resp);
     }
 
-    let images: Vec<ImageResponse> = images.into_iter().map(ImageResponse::from).collect();
     let mut headers = metadata_cache_headers(&state, &req_headers);
     headers.insert(ETAG, list_etag);
-    Ok((headers, Json(images)).into_response())
+    Ok((headers, Json(response_images)).into_response())
 }
 
 pub async fn get_image_meta(
