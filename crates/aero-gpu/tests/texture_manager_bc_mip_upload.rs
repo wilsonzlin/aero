@@ -15,44 +15,71 @@ async fn create_device_queue_bc() -> Option<(wgpu::Device, wgpu::Queue)> {
         ..Default::default()
     });
 
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }?;
+    // Avoid CPU software adapters on Linux for native BC paths; they are a common source of flakes
+    // and crashes (even if they advertise TEXTURE_COMPRESSION_BC).
+    let disallow_cpu = cfg!(target_os = "linux");
 
-    if !adapter
-        .features()
-        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-    {
-        return None;
+    // Try a couple different adapter options; the default request may land on an adapter that
+    // doesn't support BC compression even when another does (e.g. integrated vs discrete).
+    let adapter_opts = if disallow_cpu {
+        [
+            wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+            wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ]
+    } else {
+        [
+            wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            },
+            wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ]
+    };
+
+    for opts in adapter_opts {
+        let Some(adapter) = instance.request_adapter(&opts).await else {
+            continue;
+        };
+        if !adapter
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        {
+            continue;
+        }
+        if disallow_cpu && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+            continue;
+        }
+
+        let Ok(device_queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aero-gpu TextureManager BC mip upload test device"),
+                    required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                },
+                None,
+            )
+            .await
+        else {
+            continue;
+        };
+        return Some(device_queue);
     }
 
-    adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-gpu TextureManager BC mip upload test device"),
-                required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .ok()
+    None
 }
 
 fn env_truthy(name: &str) -> bool {

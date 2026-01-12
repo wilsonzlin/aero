@@ -166,6 +166,11 @@ async fn create_device_queue_bc() -> Option<(wgpu::Device, wgpu::Queue)> {
         {
             continue;
         }
+        // Avoid CPU software adapters on Linux for native BC paths; they are a common source of
+        // flakes and crashes (even if they advertise TEXTURE_COMPRESSION_BC).
+        if cfg!(target_os = "linux") && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+            continue;
+        }
 
         let Ok((device, queue)) = adapter
             .request_device(
