@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_cpu_core::state::RFLAGS_IF;
-use aero_devices::pci::profile;
+use aero_devices::pci::{profile, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT, PciBdf};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::InterruptController;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk as _, SECTOR_SIZE};
@@ -22,7 +22,7 @@ fn ide_machine_config() -> MachineConfig {
     }
 }
 
-fn pci_cfg_addr(bdf: aero_devices::pci::PciBdf, offset: u8) -> u32 {
+fn pci_cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
     0x8000_0000u32
         | (u32::from(bdf.bus) << 16)
         | (u32::from(bdf.device) << 11)
@@ -62,13 +62,13 @@ fn machine_piix3_ide_pio_read_raises_irq14() {
 
     // Disable PCI I/O decode: IDE legacy ports should read as open bus (all ones).
     let bdf = profile::IDE_PIIX3.bdf;
-    m.io_write(0xCF8, 4, pci_cfg_addr(bdf, 0x04));
-    m.io_write(0xCFC, 2, 0x0000);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, 0x04));
+    m.io_write(PCI_CFG_DATA_PORT, 2, 0x0000);
     assert_eq!(m.io_read(0x1F7, 1) as u8, 0xFF);
 
     // Enable IDE COMMAND.IO | COMMAND.BME.
-    m.io_write(0xCF8, 4, pci_cfg_addr(bdf, 0x04));
-    m.io_write(0xCFC, 2, 0x0005);
+    m.io_write(PCI_CFG_ADDR_PORT, 4, pci_cfg_addr(bdf, 0x04));
+    m.io_write(PCI_CFG_DATA_PORT, 2, 0x0005);
     assert_ne!(m.io_read(0x1F7, 1) as u8, 0xFF);
 
     // Issue a PIO READ SECTORS (0x20) for LBA 0, count 1, primary master.

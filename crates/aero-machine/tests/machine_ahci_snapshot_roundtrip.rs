@@ -3,6 +3,7 @@
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use aero_devices::pci::profile::SATA_AHCI_ICH9;
+use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_io_snapshot::io::storage::state::DiskControllersSnapshot;
 use aero_machine::{Machine, MachineConfig};
@@ -37,14 +38,22 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
         | (offset as u32 & 0xFC)
 }
 
-fn write_cfg_u16(m: &mut Machine, bdf: aero_devices::pci::PciBdf, offset: u8, value: u16) {
-    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, offset));
-    m.io_write(0xCFC, 2, u32::from(value));
+fn write_cfg_u16(m: &mut Machine, bdf: PciBdf, offset: u8, value: u16) {
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
+    );
+    m.io_write(PCI_CFG_DATA_PORT, 2, u32::from(value));
 }
 
-fn write_cfg_u32(m: &mut Machine, bdf: aero_devices::pci::PciBdf, offset: u8, value: u32) {
-    m.io_write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, offset));
-    m.io_write(0xCFC, 4, value);
+fn write_cfg_u32(m: &mut Machine, bdf: PciBdf, offset: u8, value: u32) {
+    m.io_write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bdf.bus, bdf.device, bdf.function, offset),
+    );
+    m.io_write(PCI_CFG_DATA_PORT, 4, value);
 }
 
 fn snapshot_devices(bytes: &[u8]) -> Vec<snapshot::DeviceState> {
