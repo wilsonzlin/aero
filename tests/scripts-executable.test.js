@@ -194,6 +194,109 @@ test("safe-run.sh: AERO_CARGO_BUILD_JOBS overrides CARGO_BUILD_JOBS (Linux)", { 
   assert.equal(stdout, "2|2");
 });
 
+test("safe-run.sh sanitizes invalid CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const env = { ...process.env };
+  env.CARGO_BUILD_JOBS = "nope";
+  delete env.AERO_CARGO_BUILD_JOBS;
+  delete env.RAYON_NUM_THREADS;
+
+  const stdout = execFileSync(
+    path.join(repoRoot, "scripts/safe-run.sh"),
+    ["bash", "-c", 'printf "%s" "$CARGO_BUILD_JOBS"'],
+    {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(stdout, "1");
+});
+
+test("safe-run.sh sets rustc codegen-units based on CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    delete env.AERO_RUST_CODEGEN_UNITS;
+    delete env.RUSTFLAGS;
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.match(stdout, /-C codegen-units=1/);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe-run.sh sets codegen-units based on AERO_CARGO_BUILD_JOBS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-jobs-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.RUSTFLAGS;
+    delete env.AERO_RUST_CODEGEN_UNITS;
+    env.AERO_CARGO_BUILD_JOBS = "2";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.match(stdout, /-C codegen-units=2/);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe-run.sh allows overriding codegen-units via AERO_RUST_CODEGEN_UNITS (Linux)", { skip: process.platform !== "linux" }, () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-codegen-units-"));
+  try {
+    const binDir = path.join(tmpRoot, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeCargo = path.join(binDir, "cargo");
+    fs.writeFileSync(fakeCargo, '#!/usr/bin/env bash\nprintf "%s" "$RUSTFLAGS"\n');
+    fs.chmodSync(fakeCargo, 0o755);
+
+    const env = { ...process.env };
+    delete env.CARGO_BUILD_JOBS;
+    delete env.RUSTFLAGS;
+    env.AERO_CARGO_BUILD_JOBS = "4";
+    env.AERO_RUST_CODEGEN_UNITS = "1";
+    env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`;
+
+    const stdout = execFileSync(path.join(repoRoot, "scripts/safe-run.sh"), ["cargo"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.match(stdout, /-C codegen-units=1/);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test(
   "safe-run.sh works via bash even if scripts lose executable bits (Linux)",
   { skip: process.platform !== "linux" },

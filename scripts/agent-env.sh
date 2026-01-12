@@ -131,11 +131,21 @@ export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-$CARGO_BUILD_JOBS}"
 # of rustc worker threads remains bounded.
 if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
   _aero_codegen_units="${CARGO_BUILD_JOBS:-1}"
+  if [[ -n "${AERO_RUST_CODEGEN_UNITS:-}" ]]; then
+    if [[ "${AERO_RUST_CODEGEN_UNITS}" =~ ^[1-9][0-9]*$ ]]; then
+      _aero_codegen_units="${AERO_RUST_CODEGEN_UNITS}"
+    else
+      echo "warning: invalid AERO_RUST_CODEGEN_UNITS value: ${AERO_RUST_CODEGEN_UNITS} (expected positive integer); using ${_aero_codegen_units}" >&2
+    fi
+  fi
+
   if ! [[ "${_aero_codegen_units}" =~ ^[1-9][0-9]*$ ]]; then
     _aero_codegen_units=1
   fi
+
   # cap at 4 to avoid overly slow per-crate codegen when users opt into higher Cargo parallelism.
-  if [[ "${_aero_codegen_units}" -gt 4 ]]; then
+  # Opt out via AERO_RUST_CODEGEN_UNITS.
+  if [[ -z "${AERO_RUST_CODEGEN_UNITS:-}" ]] && [[ "${_aero_codegen_units}" -gt 4 ]]; then
     _aero_codegen_units=4
   fi
 

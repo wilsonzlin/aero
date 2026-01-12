@@ -156,3 +156,47 @@ test("agent-env: invalid AERO_CARGO_BUILD_JOBS falls back to the default", { ski
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("agent-env: sets rustc codegen-units based on CARGO_BUILD_JOBS", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    delete env.RUSTFLAGS;
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    delete env.AERO_RUST_CODEGEN_UNITS;
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.match(stdout, /-C codegen-units=1/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("agent-env: AERO_RUST_CODEGEN_UNITS overrides codegen-units", { skip: process.platform === "win32" }, () => {
+  const repoRoot = setupTempRepo();
+  try {
+    const env = { ...process.env };
+    delete env.RUSTFLAGS;
+    delete env.CARGO_BUILD_JOBS;
+    delete env.AERO_CARGO_BUILD_JOBS;
+    env.AERO_RUST_CODEGEN_UNITS = "2";
+
+    const stdout = execFileSync("bash", ["-c", 'source scripts/agent-env.sh >/dev/null; printf "%s" "$RUSTFLAGS"'], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assert.match(stdout, /-C codegen-units=2/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
