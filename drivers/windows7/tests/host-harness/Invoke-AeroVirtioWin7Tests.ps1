@@ -1555,7 +1555,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_EVENTS" {
-      Write-Host "FAIL: did not observe virtio-input-events marker while -WithInputEvents was enabled"
+      Write-Host "FAIL: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputEvents was enabled (guest selftest too old or missing --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
