@@ -475,6 +475,10 @@ impl PcMachine {
         let cfg = Tier0Config::from_cpuid(&self.assist.features);
 
         while executed < max_insts {
+            if let Some(kind) = self.take_reset_kind() {
+                return RunExit::ResetRequested { kind, executed };
+            }
+
             // Allow DMA-capable devices to make forward progress even while the CPU is halted.
             //
             // Storage controllers and NICs complete work asynchronously and signal completion via
@@ -564,6 +568,10 @@ impl PcMachine {
 
                     // When halted, advance platform time so timer interrupts can wake the CPU.
                     self.idle_tick_platform_1ms();
+                    self.bus.platform.process_ahci();
+                    self.bus.platform.process_nvme();
+                    self.bus.platform.process_virtio_blk();
+                    self.bus.platform.process_ide();
                     self.poll_network();
                     if self.poll_and_queue_one_external_interrupt() {
                         continue;
@@ -884,5 +892,80 @@ mod tests {
             }
             other => panic!("unexpected run exit: {other:?}"),
         }
+    }
+
+    #[test]
+    fn pc_machine_pending_reset_does_not_poll_e1000_dma() {
+        // If the host queues a reset request before entering `run_slice`, the machine loop should
+        // surface it immediately without doing additional device work (e.g. polling NIC DMA).
+
+        let mut pc = PcMachine::new_with_e1000(2 * 1024 * 1024, None);
+
+        let bdf = NIC_E1000_82540EM.bdf;
+        let bar0_base = {
+            let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+
+            let cfg = bus
+                .device_config_mut(bdf)
+                .expect("E1000 config function must exist");
+            cfg.set_command(0x7); // IO + MEM + BME
+            cfg.bar_range(0).expect("E1000 BAR0 must exist").base
+        };
+        assert_ne!(
+            bar0_base, 0,
+            "E1000 BAR0 should be assigned during BIOS POST"
+        );
+
+        let tx_ring_base = 0x3000u64;
+        let pkt_base = 0x4000u64;
+        const MIN_L2_FRAME_LEN: usize = 14;
+        let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+
+        pc.bus.platform.memory.write_physical(pkt_base, &frame);
+        let mut desc = [0u8; 16];
+        desc[0..8].copy_from_slice(&pkt_base.to_le_bytes());
+        desc[8..10].copy_from_slice(&(frame.len() as u16).to_le_bytes());
+        desc[11] = (1 << 0) | (1 << 3); // EOP|RS
+        pc.bus
+            .platform
+            .memory
+            .write_physical(tx_ring_base, &desc);
+
+        // Program E1000 TX ring over MMIO (BAR0) and enable TXDW interrupts.
+        pc.bus
+            .platform
+            .memory
+            .write_u32(bar0_base + 0x3800, tx_ring_base as u32); // TDBAL
+        pc.bus.platform.memory.write_u32(bar0_base + 0x3804, 0); // TDBAH
+        pc.bus.platform.memory.write_u32(bar0_base + 0x3808, 16 * 4); // TDLEN (4 descriptors)
+        pc.bus.platform.memory.write_u32(bar0_base + 0x3810, 0); // TDH
+        pc.bus.platform.memory.write_u32(bar0_base + 0x3818, 0); // TDT
+        pc.bus.platform.memory.write_u32(bar0_base + 0x0400, 1 << 1); // TCTL.EN
+        pc.bus.platform.memory.write_u32(bar0_base + 0x00D0, ICR_TXDW); // IMS = TXDW
+        pc.bus.platform.memory.write_u32(bar0_base + 0x3818, 1); // Doorbell: TDT=1
+
+        let e1000 = pc.bus.platform.e1000().expect("e1000 enabled");
+        assert!(
+            !e1000.borrow().irq_level(),
+            "precondition: TXDW should not be asserted until DMA runs"
+        );
+
+        // Queue a system reset and enter the run loop.
+        pc.bus.platform.io.write_u8(
+            RESET_CTRL_PORT,
+            aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE,
+        );
+
+        match pc.run_slice(16) {
+            RunExit::ResetRequested { kind, executed } => {
+                assert_eq!(executed, 0);
+                assert_eq!(kind, ResetKind::System);
+            }
+            other => panic!("unexpected run exit: {other:?}"),
+        }
+
+        // The NIC must not have been polled while handling the pending reset request.
+        assert!(!e1000.borrow().irq_level());
     }
 }
