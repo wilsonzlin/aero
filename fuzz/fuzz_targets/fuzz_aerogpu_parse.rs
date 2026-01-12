@@ -7,6 +7,7 @@ use aero_gpu::{AeroGpuCommandProcessor, AeroGpuSubmissionAllocation};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
@@ -921,6 +922,35 @@ fuzz_target!(|data: &[u8]| {
     let _ = proc.process_submission_with_allocations(&cmd_proc_synth, Some(&allocs), 3);
     // Also try the same stream without providing allocations to trigger missing-alloc-table paths.
     let _ = proc.process_submission_with_allocations(&cmd_proc_synth, None, 4);
+
+    // CommandProcessor edge-case: destroy the original shared surface handle while imported aliases
+    // keep the underlying resource alive, then issue a dirty-range for the destroyed handle.
+    //
+    // This should hit the `UnknownResourceHandle` branch in `ResourceDirtyRange` validation.
+    let mut w = AerogpuCmdWriter::new();
+    w.create_texture2d(
+        tex_handle,
+        /*usage_flags=*/ 0,
+        pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        /*width=*/ 4,
+        /*height=*/ 4,
+        /*mip_levels=*/ 1,
+        /*array_layers=*/ 1,
+        /*row_pitch_bytes=*/ 16,
+        alloc_id,
+        /*backing_offset_bytes=*/ 0,
+    );
+    w.export_shared_surface(tex_handle, share_token);
+    w.import_shared_surface(alias_handle, share_token);
+    w.destroy_resource(tex_handle);
+    w.resource_dirty_range(tex_handle, /*offset_bytes=*/ 0, /*size_bytes=*/ 4);
+    let cmd_proc_unknown_handle = w.finish();
+    let mut proc_unknown_handle = AeroGpuCommandProcessor::new();
+    let _ = proc_unknown_handle.process_submission_with_allocations(
+        &cmd_proc_unknown_handle,
+        Some(&allocs),
+        1,
+    );
 
     // Patched alloc table: force valid magic/version/stride and a self-consistent entry_count.
     let mut alloc_patched = alloc_bytes.to_vec();
