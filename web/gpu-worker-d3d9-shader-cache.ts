@@ -8,9 +8,6 @@ type ShaderCacheCounters = {
   cacheDisabled?: boolean;
 };
 
-// Debug-only: keep in sync with `crates/aero-d3d9/src/runtime/shader_cache.rs`.
-const D3D9_TRANSLATOR_CACHE_VERSION = 1;
-
 declare global {
   interface Window {
     __d3d9ShaderCacheDemo?: ShaderCacheCounters & {
@@ -115,6 +112,23 @@ function tryParseCounters(value: unknown): ShaderCacheCounters | null {
   return null;
 }
 
+function tryParseTranslatorCacheVersion(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+
+  const candidates = [
+    record.d3d9TranslatorCacheVersion,
+    record.d3d9_translator_cache_version,
+    record.d3d9TranslatorVersion,
+    record.d3d9_translator_version,
+  ];
+
+  for (const candidate of candidates) {
+    if (isFiniteNumber(candidate)) return candidate;
+  }
+  return null;
+}
+
 function findShaderCacheCounters(root: unknown): ShaderCacheCounters | null {
   const seen = new Set<unknown>();
 
@@ -137,6 +151,35 @@ function findShaderCacheCounters(root: unknown): ShaderCacheCounters | null {
     for (const child of Object.values(value as Record<string, unknown>)) {
       const found = walk(child);
       if (found) return found;
+    }
+    return null;
+  };
+
+  return walk(root);
+}
+
+function findTranslatorCacheVersion(root: unknown): number | null {
+  const seen = new Set<unknown>();
+
+  const walk = (value: unknown): number | null => {
+    const parsed = tryParseTranslatorCacheVersion(value);
+    if (parsed !== null) return parsed;
+
+    if (!value || typeof value !== "object") return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = walk(item);
+        if (found !== null) return found;
+      }
+      return null;
+    }
+
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      const found = walk(child);
+      if (found !== null) return found;
     }
     return null;
   };
@@ -169,6 +212,7 @@ async function main(): Promise<void> {
   canvas.style.height = `${cssHeight}px`;
 
   let baseline: ShaderCacheCounters = { translateCalls: 0, persistentHits: 0, persistentMisses: 0 };
+  let d3d9TranslatorCacheVersion: number | null = null;
   let baselineReadyResolve!: () => void;
   const baselineReady = new Promise<void>((resolve) => {
     baselineReadyResolve = resolve;
@@ -199,6 +243,10 @@ async function main(): Promise<void> {
       rejectCounters(new Error(msg.message));
     },
     onStats: (msg) => {
+      if (d3d9TranslatorCacheVersion === null) {
+        const foundVersion = findTranslatorCacheVersion(msg.wasm);
+        if (foundVersion !== null) d3d9TranslatorCacheVersion = foundVersion;
+      }
       const found = findShaderCacheCounters(msg.wasm);
       if (!found) return;
 
@@ -244,16 +292,17 @@ async function main(): Promise<void> {
   await gpu.submitAerogpu(cmdStream.buffer, /* fence */ 1n, undefined, /* contextId */ 0);
 
   const delta = await withTimeout(countersPromise, 10_000, "Waiting for wasm shader-cache stats");
+  const version = d3d9TranslatorCacheVersion ?? -1;
   window.__d3d9ShaderCacheDemo = {
     backend: ready.backendKind,
-    d3d9TranslatorCacheVersion: D3D9_TRANSLATOR_CACHE_VERSION,
+    d3d9TranslatorCacheVersion: version,
     ...delta,
   };
 
   if (status) {
     status.textContent =
       `backend=${ready.backendKind}\n` +
-      `d3d9TranslatorCacheVersion=${D3D9_TRANSLATOR_CACHE_VERSION}\n` +
+      `d3d9TranslatorCacheVersion=${version}\n` +
       `translateCalls=${delta.translateCalls}\n` +
       `persistentHits=${delta.persistentHits}\n` +
       `persistentMisses=${delta.persistentMisses}\n` +
@@ -268,7 +317,7 @@ void main().catch((err) => {
     persistentHits: 0,
     persistentMisses: 0,
     backend: "unknown",
-    d3d9TranslatorCacheVersion: D3D9_TRANSLATOR_CACHE_VERSION,
+    d3d9TranslatorCacheVersion: -1,
     error: message,
   };
   const status = $("status");
