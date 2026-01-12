@@ -612,6 +612,8 @@ mod tests {
         assert_eq!(encode_u8(0.5), 192);
         assert_eq!(encode_u8(-0.5), 64);
         assert_eq!(encode_u8(1.0 / 128.0), 129);
+        // Max representable decoded value (255 -> 127/128) should round back to 255.
+        assert_eq!(encode_u8(127.0 / 128.0), 255);
 
         // Non-finite inputs should never panic and should clamp deterministically.
         assert_eq!(encode_u8(f32::INFINITY), 255);
@@ -650,6 +652,46 @@ mod tests {
         assert_eq!(encode_i16(f32::NEG_INFINITY), i16::MIN);
         // `NaN` propagates through clamp/round and becomes 0 on `as i16` conversion.
         assert_eq!(encode_i16(f32::NAN), 0);
+    }
+
+    #[test]
+    fn pcm_signed_formats_round_half_lsb_away_from_zero() {
+        // These assertions codify the current behavior: we use `.round()` after scaling, which
+        // rounds ties away from zero.
+        //
+        // Use values that are exactly representable in binary to keep the test deterministic.
+
+        // 16-bit: scale is 32768 (2^15), so half an LSB is 1/65536.
+        let half_lsb_16 = 1.0 / 65_536.0;
+        let mut out16 = [0u8; 2];
+        encode_one_sample(&mut out16, 16, half_lsb_16);
+        assert_eq!(i16::from_le_bytes(out16), 1);
+        encode_one_sample(&mut out16, 16, -half_lsb_16);
+        assert_eq!(i16::from_le_bytes(out16), -1);
+
+        // 20-bit: scale is 524288 (2^19), so half an LSB is 1/2^20.
+        let half_lsb_20 = 1.0 / 1_048_576.0;
+        let mut out20 = [0u8; 4];
+        encode_one_sample(&mut out20, 20, half_lsb_20);
+        assert_eq!(i32::from_le_bytes(out20), 1);
+        encode_one_sample(&mut out20, 20, -half_lsb_20);
+        assert_eq!(i32::from_le_bytes(out20), -1);
+
+        // 24-bit: scale is 8_388_608 (2^23), so half an LSB is 1/2^24.
+        let half_lsb_24 = 1.0 / 16_777_216.0;
+        let mut out24 = [0u8; 4];
+        encode_one_sample(&mut out24, 24, half_lsb_24);
+        assert_eq!(i32::from_le_bytes(out24), 1);
+        encode_one_sample(&mut out24, 24, -half_lsb_24);
+        assert_eq!(i32::from_le_bytes(out24), -1);
+
+        // 32-bit: scale is 2_147_483_648 (2^31), so half an LSB is 1/2^32.
+        let half_lsb_32 = 1.0 / 4_294_967_296.0;
+        let mut out32 = [0u8; 4];
+        encode_one_sample(&mut out32, 32, half_lsb_32);
+        assert_eq!(i32::from_le_bytes(out32), 1);
+        encode_one_sample(&mut out32, 32, -half_lsb_32);
+        assert_eq!(i32::from_le_bytes(out32), -1);
     }
 
     #[test]
