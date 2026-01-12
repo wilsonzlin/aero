@@ -2471,6 +2471,17 @@ impl AerogpuD3d9Executor {
                         "CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1".into(),
                     ));
                 }
+                if aerogpu_format_bc(format_raw).is_some()
+                    && (usage_flags
+                        & (cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET
+                            | cmd::AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL
+                            | cmd::AEROGPU_RESOURCE_USAGE_SCANOUT))
+                        != 0
+                {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "CREATE_TEXTURE2D: BC formats cannot be used with RENDER_TARGET/DEPTH_STENCIL/SCANOUT usage flags (handle={texture_handle})"
+                    )));
+                }
                 let mapped_format = map_aerogpu_format(format_raw)?;
                 let format = match mapped_format {
                     // Allow BC formats to fall back to CPU decompression + RGBA8 uploads when the

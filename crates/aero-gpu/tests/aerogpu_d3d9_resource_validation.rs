@@ -818,6 +818,45 @@ fn d3d9_create_texture2d_guest_backing_bounds_bc3() {
 }
 
 #[test]
+fn d3d9_create_texture2d_rejects_bc_render_target_usage() {
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    };
+
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1, // texture_handle
+        AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+        AerogpuFormat::BC1RgbaUnorm as u32,
+        4,
+        4,
+        1,
+        1,
+        0,
+        0,
+        0,
+    );
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!(
+            "expected CREATE_TEXTURE2D with BC format and RENDER_TARGET usage to be rejected"
+        ),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("BC formats")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_copy_texture2d_rejects_misaligned_bc_region() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
