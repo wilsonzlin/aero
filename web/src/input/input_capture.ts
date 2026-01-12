@@ -653,8 +653,10 @@ function buttonToMask(button: number): number {
   // - left/right/middle (classic)
   // - back/forward (aka side/extra buttons)
   //
-  // Note: the PS/2 mouse backend only supports 3 buttons today and will ignore
-  // bits above 0x07, but virtio-input and USB HID backends can expose these.
+  // Note: the PS/2 mouse backend only transmits back/forward when the guest has
+  // enabled a 5-button PS/2 mouse variant (IntelliMouse Explorer, device ID 0x04).
+  // Otherwise these bits are ignored by the PS/2 encoder, but virtio-input and USB
+  // HID backends can expose them unconditionally.
   switch (button) {
     case 0:
       return 1;

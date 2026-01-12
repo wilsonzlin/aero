@@ -10,6 +10,8 @@ fn machine_accepts_ps2_mouse_injection_calls() {
     // Smoke test: ensure the wasm-bindgen wrapper exports the PS/2 mouse injection APIs and they
     // can be invoked against a live in-memory machine instance.
     m.inject_ps2_mouse_buttons(aero_wasm::MouseButtons::Left as u8); // left down
+    m.inject_ps2_mouse_buttons(aero_wasm::MouseButtons::Back as u8); // back down
+    m.inject_ps2_mouse_buttons(aero_wasm::MouseButtons::Forward as u8); // forward down
     m.inject_ps2_mouse_motion(10, 5, 1); // right + up + wheel up
     m.inject_ps2_mouse_buttons(0x00); // release
 }
