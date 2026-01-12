@@ -23,7 +23,7 @@ use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::MapError;
 
 use crate::pci_firmware::SharedPciConfigPortsBiosAdapter;
-use crate::{MachineError, RunExit, VecBlockDevice};
+use crate::{GuestTime, MachineError, RunExit, VecBlockDevice};
 
 /// Configuration for [`PcMachine`].
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ pub struct PcMachine {
     cfg: PcMachineConfig,
 
     pub cpu: CpuCore,
-    tsc_ns_remainder: u64,
+    guest_time: GuestTime,
     assist: AssistContext,
     pub bus: PcCpuBus,
     bios: Bios,
@@ -176,7 +176,7 @@ impl PcMachine {
         let mut machine = Self {
             cfg,
             cpu: CpuCore::new(CpuMode::Real),
-            tsc_ns_remainder: 0,
+            guest_time: GuestTime::default(),
             assist: AssistContext::default(),
             bus: PcCpuBus::new(platform),
             bios: Bios::new(BiosConfig::default()),
@@ -274,7 +274,7 @@ impl PcMachine {
 
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
-        self.tsc_ns_remainder = 0;
+        self.guest_time = GuestTime::new_from_cpu(&self.cpu);
 
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
@@ -344,12 +344,15 @@ impl PcMachine {
             return;
         }
 
-        const NS_PER_SEC: u128 = 1_000_000_000u128;
-        let acc = (cycles as u128) * NS_PER_SEC + (self.tsc_ns_remainder as u128);
-        let delta_ns_u128 = acc / (tsc_hz as u128);
-        self.tsc_ns_remainder = (acc % (tsc_hz as u128)) as u64;
+        if self.guest_time.cpu_hz() != tsc_hz {
+            // If the caller changes the deterministic TSC frequency, preserve continuity by
+            // resynchronizing the fractional remainder from the pre-batch TSC value.
+            let tsc_before = self.cpu.state.msr.tsc.wrapping_sub(cycles);
+            self.guest_time = GuestTime::new(tsc_hz);
+            self.guest_time.resync_from_tsc(tsc_before);
+        }
 
-        let delta_ns = delta_ns_u128.min(u64::MAX as u128) as u64;
+        let delta_ns = self.guest_time.advance_guest_time_for_instructions(cycles);
         if delta_ns != 0 {
             self.bus.platform.tick(delta_ns);
         }

@@ -70,7 +70,6 @@ use pci_firmware::SharedPciConfigPortsBiosAdapter;
 
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
-const NS_PER_SEC: u128 = 1_000_000_000;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 
 pub mod pc;
@@ -628,11 +627,9 @@ pub struct Machine {
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
 
-    /// Remainder used when converting CPU cycles (TSC ticks) into nanoseconds for deterministic
-    /// platform device ticking.
-    ///
-    /// This is `total_cycles * 1e9 mod tsc_hz`, carried across batches to avoid long-run drift.
-    tsc_ns_remainder: u64,
+    /// Deterministic guest time accumulator used when converting CPU cycles (TSC ticks) into
+    /// nanoseconds for platform device ticking.
+    guest_time: GuestTime,
 }
 
 impl Machine {
@@ -674,7 +671,7 @@ impl Machine {
             ps2_mouse_buttons: 0,
             next_snapshot_id: 1,
             last_snapshot_id: None,
-            tsc_ns_remainder: 0,
+            guest_time: GuestTime::default(),
         };
 
         machine.reset();
@@ -938,16 +935,24 @@ impl Machine {
             return;
         }
 
-        let tsc_hz = self.cpu.time.tsc_hz();
-        if tsc_hz == 0 || cycles == 0 {
+        if cycles == 0 {
             return;
         }
 
-        let acc = (cycles as u128) * NS_PER_SEC + (self.tsc_ns_remainder as u128);
-        let delta_ns_u128 = acc / (tsc_hz as u128);
-        self.tsc_ns_remainder = (acc % (tsc_hz as u128)) as u64;
+        let tsc_hz = self.cpu.time.tsc_hz();
+        if tsc_hz == 0 {
+            return;
+        }
 
-        let delta_ns = delta_ns_u128.min(u64::MAX as u128) as u64;
+        if self.guest_time.cpu_hz() != tsc_hz {
+            // If the caller changes the deterministic TSC frequency, preserve continuity by
+            // resynchronizing the fractional remainder from the pre-batch TSC value.
+            let tsc_before = self.cpu.state.msr.tsc.wrapping_sub(cycles);
+            self.guest_time = GuestTime::new(tsc_hz);
+            self.guest_time.resync_from_tsc(tsc_before);
+        }
+
+        let delta_ns = self.guest_time.advance_guest_time_for_instructions(cycles);
         if delta_ns != 0 {
             self.tick_platform(delta_ns);
         }
@@ -976,14 +981,12 @@ impl Machine {
         self.tick_platform_from_cycles(cycles);
     }
 
-    fn resync_tsc_ns_remainder_from_tsc(&mut self) {
+    fn resync_guest_time_from_tsc(&mut self) {
         let tsc_hz = self.cpu.time.tsc_hz();
-        if self.platform_clock.is_none() || tsc_hz == 0 {
-            self.tsc_ns_remainder = 0;
-            return;
+        if self.guest_time.cpu_hz() != tsc_hz {
+            self.guest_time = GuestTime::new(tsc_hz);
         }
-        let tsc = self.cpu.state.msr.tsc;
-        self.tsc_ns_remainder = ((tsc as u128) * NS_PER_SEC % (tsc_hz as u128)) as u64;
+        self.guest_time.resync_from_tsc(self.cpu.state.msr.tsc);
     }
 
     fn sync_pci_intx_sources_to_interrupts(&mut self) {
@@ -1193,7 +1196,7 @@ impl Machine {
         self.reset_latch.clear();
         self.serial_log.clear();
         self.ps2_mouse_buttons = 0;
-        self.tsc_ns_remainder = 0;
+        self.guest_time.reset();
 
         // Reset chipset lines.
         self.chipset.a20().set_enabled(false);
@@ -1489,6 +1492,7 @@ impl Machine {
 
         self.assist = AssistContext::default();
         self.cpu = CpuCore::new(CpuMode::Real);
+        self.guest_time = GuestTime::new_from_cpu(&self.cpu);
         self.mmu = aero_mmu::Mmu::new();
 
         // Run firmware POST (in Rust) to initialize IVT/BDA, map BIOS stubs, and load the boot
@@ -2222,7 +2226,7 @@ impl snapshot::SnapshotTarget for Machine {
         self.cpu.state.sync_mmu(&mut self.mmu);
         self.mem.clear_dirty();
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
-        self.resync_tsc_ns_remainder_from_tsc();
+        self.resync_guest_time_from_tsc();
         Ok(())
     }
 }
