@@ -967,11 +967,11 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     const IL_HANDLE: u32 = 5;
 
     // Vertex format mirrors the Win7 bring-up test: position + D3DCOLOR.
-    // Use a non-symmetric D3DCOLOR (red) so we catch BGRA->RGBA conversion regressions.
+    // Use a non-symmetric D3DCOLOR (blue) so we catch BGRA->RGBA conversion regressions.
     let verts = [
-        (-0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFFFF0000u32),
-        (0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFFFF0000u32),
-        (0.0f32, -0.5f32, 0.0f32, 1.0f32, 0xFFFF0000u32),
+        (-0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFF0000FFu32),
+        (0.5f32, 0.5f32, 0.0f32, 1.0f32, 0xFF0000FFu32),
+        (0.0f32, -0.5f32, 0.0f32, 1.0f32, 0xFF0000FFu32),
     ];
 
     let mut vb_data = Vec::new();
@@ -1122,10 +1122,10 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
                 push_i32(out, height as i32);
             });
 
-            // Clear black; triangle should leave top-left corner untouched.
+            // Clear red; triangle should leave top-left corner untouched.
             emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, AEROGPU_CLEAR_COLOR);
-                push_f32(out, 0.0);
+                push_f32(out, 1.0);
                 push_f32(out, 0.0);
                 push_f32(out, 0.0);
                 push_f32(out, 1.0);
@@ -1204,10 +1204,10 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     };
 
     // Geometry based on Win7 `d3d9ex_triangle`: center should be vertex color, corner should be
-    // clear color. We use a non-symmetric vertex color (red) to catch D3DCOLOR channel-ordering
+    // clear color. We use a non-symmetric vertex color (blue) to catch D3DCOLOR channel-ordering
     // regressions.
-    assert_eq!(px(width / 2, height / 2), [255, 0, 0, 255]);
-    assert_eq!(px(5, 5), [0, 0, 0, 255]);
+    assert_eq!(px(width / 2, height / 2), [0, 0, 255, 255]);
+    assert_eq!(px(5, 5), [255, 0, 0, 255]);
 }
 
 #[test]
