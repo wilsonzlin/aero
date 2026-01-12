@@ -6,6 +6,9 @@ const VERSION: u32 = 1;
 pub const HEADER_SIZE: usize = 64;
 const ZERO_BUF: [u8; 4096] = [0; 4096];
 
+// Hard cap to avoid absurd allocations from untrusted images.
+const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
+
 /// Parameters used when creating a new sparse disk.
 #[derive(Copy, Clone, Debug)]
 pub struct AeroSparseConfig {
@@ -116,10 +119,15 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         let table_entries = div_ceil_u64(cfg.disk_size_bytes, block_size)?;
         let table_entries_usize: usize = table_entries
             .try_into()
-            .map_err(|_| DiskError::InvalidConfig("allocation table too large"))?;
+            .map_err(|_| DiskError::InvalidConfig("aerosparse allocation table too large"))?;
         let table_bytes = table_entries
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
+        if table_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::InvalidConfig(
+                "aerosparse allocation table too large",
+            ));
+        }
         let data_offset = align_up_u64(HEADER_SIZE as u64 + table_bytes, block_size)?;
 
         let header = AeroSparseHeader {
@@ -180,6 +188,11 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .table_entries
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
+        if expected_table_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported(
+                "aerosparse allocation table too large",
+            ));
+        }
         let expected_data_offset =
             align_up_u64(HEADER_SIZE as u64 + expected_table_bytes, block_size)?;
         if expected_data_offset != header.data_offset {

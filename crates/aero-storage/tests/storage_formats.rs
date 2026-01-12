@@ -1,14 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage::{
-    detect_format, DiskFormat, DiskImage, MemBackend, Qcow2Disk, VhdDisk, VirtualDisk,
-    StorageBackend,
-    DiskError,
-    AeroSparseConfig, AeroSparseDisk,
+    detect_format, AeroSparseConfig, AeroSparseDisk, DiskError, DiskFormat, DiskImage, MemBackend,
+    Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk,
 };
 use proptest::prelude::*;
 
 const SECTOR: usize = 512;
+const AEROSPAR_HEADER_SIZE: u64 = 64;
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
 
 fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
@@ -247,6 +246,108 @@ fn open_auto_works_for_aerosparse_and_raw() {
 }
 
 #[test]
+fn aerosparse_rejects_table_entry_before_data_region() {
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let header = *disk.header();
+    let block_size = header.block_size_u64();
+
+    let mut backend = disk.into_backend();
+
+    // Pretend the image has allocated blocks, then inject an invalid table entry that points
+    // into the header/table region.
+    let mut bad_header = header;
+    bad_header.allocated_blocks = 1;
+    backend.set_len(header.data_offset + block_size).unwrap();
+    backend.write_at(0, &bad_header.encode()).unwrap();
+    backend
+        .write_at(AEROSPAR_HEADER_SIZE, &512u64.to_le_bytes())
+        .unwrap();
+
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::CorruptSparseImage("data block offset before data region")
+        )),
+    }
+}
+
+#[test]
+fn aerosparse_rejects_misaligned_table_entry() {
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let header = *disk.header();
+    let block_size = header.block_size_u64();
+
+    let mut backend = disk.into_backend();
+    let mut bad_header = header;
+    bad_header.allocated_blocks = 1;
+    backend.set_len(header.data_offset + block_size).unwrap();
+    backend.write_at(0, &bad_header.encode()).unwrap();
+    backend
+        .write_at(
+            AEROSPAR_HEADER_SIZE,
+            &(header.data_offset + 512).to_le_bytes(),
+        )
+        .unwrap();
+
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::CorruptSparseImage("misaligned data block offset")
+        )),
+    }
+}
+
+#[test]
+fn aerosparse_rejects_table_entry_pointing_past_allocated_region() {
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+    let header = *disk.header();
+    let block_size = header.block_size_u64();
+
+    let mut backend = disk.into_backend();
+    let mut bad_header = header;
+    bad_header.allocated_blocks = 1;
+    backend.set_len(header.data_offset + block_size).unwrap();
+    backend.write_at(0, &bad_header.encode()).unwrap();
+    backend
+        .write_at(
+            AEROSPAR_HEADER_SIZE,
+            &(header.data_offset + block_size).to_le_bytes(),
+        )
+        .unwrap();
+
+    match AeroSparseDisk::open(backend) {
+        Ok(_) => panic!("expected open to fail"),
+        Err(err) => assert!(matches!(
+            err,
+            DiskError::CorruptSparseImage("data block offset out of bounds")
+        )),
+    }
+}
+
+#[test]
 fn qcow2_rejects_l1_entries_pointing_past_eof() {
     let virtual_size = 1024 * 1024;
     let mut storage = make_qcow2_empty(virtual_size);
@@ -343,7 +444,9 @@ fn vhd_rejects_bat_entries_pointing_past_eof() {
     // The fixture writes the BAT at this fixed offset.
     let table_offset = 512u64 + 1024u64;
     let bad_sector = 0x10_0000u32; // points far past EOF
-    storage.write_at(table_offset, &bad_sector.to_be_bytes()).unwrap();
+    storage
+        .write_at(table_offset, &bad_sector.to_be_bytes())
+        .unwrap();
 
     let mut disk = VhdDisk::open(storage).unwrap();
     let mut buf = vec![0u8; SECTOR];
