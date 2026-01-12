@@ -2826,6 +2826,11 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
       __if_exists(OpenInfoT::hKMAllocation) {
         km_alloc = static_cast<uint64_t>(pOpenResource->pOpenAllocationInfo[0].hKMAllocation);
       }
+      __if_not_exists(OpenInfoT::hKMAllocation) {
+        __if_exists(OpenInfoT::hAllocation) {
+          km_alloc = static_cast<uint64_t>(pOpenResource->pOpenAllocationInfo[0].hAllocation);
+        }
+      }
       __if_exists(OpenInfoT::hAllocation) {
         runtime_alloc = static_cast<uint32_t>(pOpenResource->pOpenAllocationInfo[0].hAllocation);
       }
