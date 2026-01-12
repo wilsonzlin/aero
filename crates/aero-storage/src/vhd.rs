@@ -251,17 +251,34 @@ impl<B: StorageBackend> VhdDisk<B> {
                     .try_into()
                     .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
 
-                let mut bat_buf = vec![0u8; bat_bytes_usize];
-                match backend.read_at(dynamic.table_offset, &mut bat_buf) {
-                    Ok(()) => {}
-                    Err(DiskError::OutOfBounds { .. }) => {
-                        return Err(DiskError::CorruptImage("vhd bat truncated"));
+                // Read the BAT without allocating an additional full-size temporary buffer.
+                let mut bat = Vec::new();
+                bat.try_reserve_exact(entries)
+                    .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
+
+                let mut buf = Vec::new();
+                buf.try_reserve_exact(64 * 1024)
+                    .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
+                buf.resize(64 * 1024, 0);
+
+                let mut remaining = bat_bytes_usize;
+                let mut off = dynamic.table_offset;
+                while remaining > 0 {
+                    let read_len = remaining.min(buf.len());
+                    match backend.read_at(off, &mut buf[..read_len]) {
+                        Ok(()) => {}
+                        Err(DiskError::OutOfBounds { .. }) => {
+                            return Err(DiskError::CorruptImage("vhd bat truncated"));
+                        }
+                        Err(e) => return Err(e),
                     }
-                    Err(e) => return Err(e),
-                }
-                let mut bat = Vec::with_capacity(entries);
-                for chunk in bat_buf.chunks_exact(4) {
-                    bat.push(be_u32(chunk));
+                    for chunk in buf[..read_len].chunks_exact(4) {
+                        bat.push(be_u32(chunk));
+                    }
+                    off = off
+                        .checked_add(read_len as u64)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    remaining -= read_len;
                 }
 
                 // Size bitmap caching based on the bitmap size for this image.
