@@ -139,14 +139,6 @@ impl IdeChannel {
         self.dev_ctl & 0x02 == 0
     }
 
-    fn sync_irq_line(&self, irq: &dyn IrqLine) {
-        if self.interrupts_enabled() && self.irq_asserted {
-            irq.set_level(true);
-        } else {
-            irq.set_level(false);
-        }
-    }
-
     fn hob(&self) -> bool {
         // Device control bit 7: HOB.
         self.dev_ctl & 0x80 != 0
