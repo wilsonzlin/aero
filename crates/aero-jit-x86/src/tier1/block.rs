@@ -60,9 +60,9 @@ pub fn discover_block_mode<B: Tier1Bus>(
     let ip_mask = match bitness {
         32 => 0xffff_ffff,
         64 => u64::MAX,
-        // Tier-1 decoder does not currently model 16-bit addressing, but applying the 16-bit IP
-        // mask here keeps instruction fetch consistent with the architectural IP width if
-        // callers experiment with `bitness=16`.
+        // Tier-1 decoder only partially models 16-bit mode (eg. some 16-bit ModRM addressing
+        // forms), but applying the 16-bit IP mask here keeps instruction fetch consistent with
+        // the architectural IP width if callers experiment with `bitness=16`.
         16 => 0xffff,
         other => panic!("invalid x86 bitness {other}"),
     };
