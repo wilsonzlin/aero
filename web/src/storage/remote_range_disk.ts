@@ -1046,6 +1046,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           continue;
         }
 
+        // Ensure no writes occur after `close()` or cache invalidation. These can race with
+        // the above checks if the disk is closed (or generation bumped) between awaiting
+        // the download and starting the write.
+        if (this.closed) throw new Error("RemoteRangeDisk is closed");
+        if (generation !== this.cacheGeneration) continue;
+
         const write = cache.writeBlock(chunkIndex, bytes);
         this.inflightWrites.add(write);
         try {
