@@ -11,7 +11,7 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_storage::{MemBackend, RawDisk, VirtualDisk};
+use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
 use aero_io_snapshot::io::state::IoSnapshot;
 
 use std::cell::{Cell, RefCell};
@@ -705,5 +705,33 @@ fn virtio_blk_virtual_disk_backend_maps_errors() {
     assert_eq!(err, BlockBackendError::OutOfBounds);
 
     let err = BlockBackend::write_at(&mut backend, u64::MAX, &[0u8; 1]).unwrap_err();
+    assert_eq!(err, BlockBackendError::IoError);
+
+    struct UnsupportedDisk;
+
+    impl VirtualDisk for UnsupportedDisk {
+        fn capacity_bytes(&self) -> u64 {
+            512
+        }
+
+        fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
+            Err(StorageDiskError::Unsupported("read"))
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+            Err(StorageDiskError::Unsupported("write"))
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            Err(StorageDiskError::CorruptImage("flush"))
+        }
+    }
+
+    let mut backend: Box<dyn VirtualDisk + Send> = Box::new(UnsupportedDisk);
+    let err = BlockBackend::read_at(&mut backend, 0, &mut buf).unwrap_err();
+    assert_eq!(err, BlockBackendError::IoError);
+    let err = BlockBackend::write_at(&mut backend, 0, &[0u8; 1]).unwrap_err();
+    assert_eq!(err, BlockBackendError::IoError);
+    let err = BlockBackend::flush(&mut backend).unwrap_err();
     assert_eq!(err, BlockBackendError::IoError);
 }

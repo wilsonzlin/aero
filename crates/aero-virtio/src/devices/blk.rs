@@ -93,7 +93,19 @@ pub trait BlockBackend {
 fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
     match err {
         StorageDiskError::OutOfBounds { .. } => BlockBackendError::OutOfBounds,
-        _ => BlockBackendError::IoError,
+        StorageDiskError::UnalignedLength { .. }
+        | StorageDiskError::OffsetOverflow
+        | StorageDiskError::CorruptImage(_)
+        | StorageDiskError::Unsupported(_)
+        | StorageDiskError::InvalidSparseHeader(_)
+        | StorageDiskError::InvalidConfig(_)
+        | StorageDiskError::CorruptSparseImage(_)
+        | StorageDiskError::NotSupported(_)
+        | StorageDiskError::QuotaExceeded
+        | StorageDiskError::InUse
+        | StorageDiskError::InvalidState(_)
+        | StorageDiskError::BackendUnavailable
+        | StorageDiskError::Io(_) => BlockBackendError::IoError,
     }
 }
 

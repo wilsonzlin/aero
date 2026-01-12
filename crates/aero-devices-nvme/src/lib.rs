@@ -32,9 +32,9 @@ use aero_io_snapshot::io::storage::state::{
 /// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
 /// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
 ///
-/// NVMe is currently hard-coded to 512-byte sectors. If the underlying virtual disk
-/// capacity is not a multiple of 512, the trailing partial sector is ignored and
-/// only the largest whole-sector prefix is exposed via [`DiskBackend::total_sectors`].
+/// NVMe is currently hard-coded to 512-byte sectors. The [`from_virtual_disk`] convenience
+/// constructor rejects disks whose byte capacity is not a multiple of 512 (since capacity is
+/// reported to the guest in whole LBAs).
 pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
 use memory::{MemoryBus, MmioHandler};
 
