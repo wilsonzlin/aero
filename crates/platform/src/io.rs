@@ -495,6 +495,40 @@ mod tests {
     }
 
     #[test]
+    fn unregister_range_removes_exact_ports_but_not_range_device() {
+        let mut bus = IoPortBus::new();
+        const BASE: u16 = 0x3000;
+        const LEN: u16 = 4;
+        const OVERRIDE_PORT: u16 = BASE + 1;
+
+        bus.register_range(
+            BASE,
+            LEN,
+            Box::new(RangeEcho {
+                base: BASE,
+                len: LEN,
+            }),
+        );
+        bus.register(OVERRIDE_PORT, Box::new(ExactValue));
+        assert_eq!(bus.read(OVERRIDE_PORT, 4), 0xDEAD_BEEF);
+
+        // Unregistering the port range should remove the exact-port mapping, revealing the range
+        // device underneath.
+        bus.unregister_range(BASE, LEN);
+        assert_eq!(bus.read(BASE, 4), 0xAA00_0000);
+        assert_eq!(bus.read(OVERRIDE_PORT, 4), 0xAA00_0001);
+
+        // The range device should still exist until explicitly removed.
+        assert!(bus.unregister_range_device(BASE, LEN).is_some());
+        for off in 0..LEN {
+            let port = BASE.wrapping_add(off);
+            assert_eq!(bus.read(port, 1), 0xFF);
+            assert_eq!(bus.read(port, 2), 0xFFFF);
+            assert_eq!(bus.read(port, 4), 0xFFFF_FFFF);
+        }
+    }
+
+    #[test]
     fn invalid_port_io_sizes_float_high_and_are_not_dispatched() {
         let mut bus = IoPortBus::new();
 
