@@ -81,6 +81,12 @@ pub enum PrpError {
     Invalid,
 }
 
+// DoS guard: cap per-request DMA buffers.
+//
+// This should match the max transfer size we advertise via Identify Controller (MDTS=10, meaning
+// 2^10 * 4KiB = 4MiB max transfer).
+pub(crate) const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
+
 fn is_page_aligned(addr: u64, page_size: usize) -> bool {
     (addr as usize).is_multiple_of(page_size)
 }
@@ -164,6 +170,9 @@ pub fn dma_read(
     total_len: usize,
     page_size: usize,
 ) -> Result<Vec<u8>, PrpError> {
+    if total_len > NVME_MAX_DMA_BYTES {
+        return Err(PrpError::Invalid);
+    }
     let segments = prp_segments(mem, prp1, prp2, total_len, page_size)?;
     let mut buf = vec![0u8; total_len];
     let mut offset = 0usize;
@@ -181,6 +190,9 @@ pub fn dma_write(
     data: &[u8],
     page_size: usize,
 ) -> Result<(), PrpError> {
+    if data.len() > NVME_MAX_DMA_BYTES {
+        return Err(PrpError::Invalid);
+    }
     let segments = prp_segments(mem, prp1, prp2, data.len(), page_size)?;
     let mut offset = 0usize;
     for (addr, len) in segments {
@@ -200,10 +212,22 @@ pub fn dma_write_zeros(
     if total_len == 0 {
         return Ok(());
     }
+    if total_len > NVME_MAX_DMA_BYTES {
+        return Err(PrpError::Invalid);
+    }
     let segments = prp_segments(mem, prp1, prp2, total_len, page_size)?;
-    let zero_page = vec![0u8; page_size.max(1)];
+    const ZERO_CHUNK: [u8; 4096] = [0u8; 4096];
     for (addr, len) in segments {
-        mem.write_physical(addr, &zero_page[..len]);
+        let mut remaining = len;
+        let mut cur = addr;
+        while remaining > 0 {
+            let to_write = remaining.min(ZERO_CHUNK.len());
+            mem.write_physical(cur, &ZERO_CHUNK[..to_write]);
+            cur = cur
+                .checked_add(to_write as u64)
+                .ok_or(PrpError::Invalid)?;
+            remaining -= to_write;
+        }
     }
     Ok(())
 }

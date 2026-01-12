@@ -16,10 +16,14 @@ use commands::{
 use memory::MemoryBus;
 use queue::{
     dma_read, dma_write, dma_write_zeros, read_command_dwords, CompletionQueue, PrpError,
-    QueuePair, SubmissionQueue,
+    QueuePair, SubmissionQueue, NVME_MAX_DMA_BYTES,
 };
 use registers::*;
 use std::collections::HashMap;
+
+// DoS guards / implementation limits.
+const NVME_MAX_PAGE_SIZE: usize = 64 * 1024;
+const NVME_MAX_QUEUE_ENTRIES: u16 = 256;
 
 pub struct NvmeController {
     cap: u64,
@@ -86,11 +90,32 @@ impl NvmeController {
 
     fn enable(&mut self) {
         self.csts &= !CSTS_CFS;
-        self.csts |= CSTS_RDY;
-        self.page_size = 4096usize << ((self.cc >> 7) & 0xf);
+        let mps = ((self.cc >> 7) & 0xf) as u32;
+        let page_size = 4096usize.checked_shl(mps).unwrap_or(0);
+        if !(4096..=NVME_MAX_PAGE_SIZE).contains(&page_size) {
+            // Unsupported memory page size; fail the enable attempt rather than risking huge
+            // allocations (e.g. zero-fill buffers sized to `page_size`).
+            self.page_size = 4096;
+            self.csts |= CSTS_CFS;
+            self.csts &= !CSTS_RDY;
+            self.admin = None;
+            self.io_sqs.clear();
+            self.io_cqs.clear();
+            self.features.clear();
+            self.pending_aer.clear();
+            self.irq_level = false;
+            return;
+        }
 
-        let asqs = (self.aqa & 0xffff) as u16 + 1;
-        let acqs = ((self.aqa >> 16) & 0xffff) as u16 + 1;
+        self.csts |= CSTS_RDY;
+        self.page_size = page_size;
+
+        let asqs = ((self.aqa & 0xffff) as u32 + 1)
+            .min(NVME_MAX_QUEUE_ENTRIES as u32)
+            .max(1) as u16;
+        let acqs = (((self.aqa >> 16) & 0xffff) as u32 + 1)
+            .min(NVME_MAX_QUEUE_ENTRIES as u32)
+            .max(1) as u16;
         let admin_sq = SubmissionQueue {
             id: 0,
             base: self.asq,
@@ -460,10 +485,11 @@ impl NvmeController {
         match cmd.feature_id() {
             FID_NUMBER_OF_QUEUES => {
                 let requested = cmd.cdw11;
-                let req_ncq = (requested & 0xffff) as u16 + 1;
-                let req_nsq = (requested >> 16) as u16 + 1;
-                self.num_io_cqs = req_ncq.min(1);
-                self.num_io_sqs = req_nsq.min(1);
+                let req_ncq = (requested & 0xffff) as u32 + 1;
+                let req_nsq = (requested >> 16) as u32 + 1;
+                // We only support a single IO SQ/CQ pair for now; clamp any request to 1.
+                self.num_io_cqs = req_ncq.min(1).max(1) as u16;
+                self.num_io_sqs = req_nsq.min(1).max(1) as u16;
                 let val = ((self.num_io_sqs.saturating_sub(1) as u32) << 16)
                     | (self.num_io_cqs.saturating_sub(1) as u32);
                 (val, NvmeStatus::success())
@@ -481,7 +507,10 @@ impl NvmeController {
             return (0, NvmeStatus::invalid_field());
         }
         let size = cmd.qsize();
-        if size == 0 || !(cmd.prp1 as usize).is_multiple_of(self.page_size) {
+        if size == 0
+            || size > NVME_MAX_QUEUE_ENTRIES
+            || !(cmd.prp1 as usize).is_multiple_of(self.page_size)
+        {
             return (0, NvmeStatus::invalid_field());
         }
 
@@ -503,7 +532,10 @@ impl NvmeController {
             return (0, NvmeStatus::invalid_field());
         }
         let size = cmd.qsize();
-        if size == 0 || !(cmd.prp1 as usize).is_multiple_of(self.page_size) {
+        if size == 0
+            || size > NVME_MAX_QUEUE_ENTRIES
+            || !(cmd.prp1 as usize).is_multiple_of(self.page_size)
+        {
             return (0, NvmeStatus::invalid_field());
         }
 
@@ -565,7 +597,12 @@ impl NvmeController {
             return (0, NvmeStatus::lba_out_of_range());
         }
 
-        let len = (nlb as usize) * sector_size;
+        let Some(len) = (nlb as usize).checked_mul(sector_size) else {
+            return (0, NvmeStatus::invalid_field());
+        };
+        if len > NVME_MAX_DMA_BYTES {
+            return (0, NvmeStatus::invalid_field());
+        }
         let mut data = vec![0u8; len];
         if self.disk.read_sectors(slba, &mut data).is_err() {
             return (0, NvmeStatus::invalid_field());
@@ -591,7 +628,12 @@ impl NvmeController {
             return (0, NvmeStatus::lba_out_of_range());
         }
 
-        let len = (nlb as usize) * sector_size;
+        let Some(len) = (nlb as usize).checked_mul(sector_size) else {
+            return (0, NvmeStatus::invalid_field());
+        };
+        if len > NVME_MAX_DMA_BYTES {
+            return (0, NvmeStatus::invalid_field());
+        }
         let data = match dma_read(mem, cmd.prp1, cmd.prp2, len, page_size) {
             Ok(data) => data,
             Err(_) => return (0, NvmeStatus::invalid_field()),
