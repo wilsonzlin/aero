@@ -91,7 +91,14 @@ fn tsc_advances_on_committed_jit_blocks() {
     let mut cpu = Vcpu::new(core, bus);
 
     match dispatcher.step(&mut cpu) {
-        StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Jit),
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, u64::from(insts));
+        }
         other => panic!("unexpected outcome: {other:?}"),
     }
 
@@ -147,7 +154,14 @@ fn interrupt_shadow_ages_across_committed_jit_blocks() {
     // Shadow active: interrupt should not be delivered yet. JIT block still commits and should age
     // the shadow.
     match dispatcher.step(&mut cpu) {
-        StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Jit),
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, 1);
+        }
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
@@ -210,7 +224,14 @@ fn rollback_jit_exits_do_not_advance_time_or_age_interrupt_shadow() {
     // Run the JIT block. It "exits" but rolls back, so no retirement/time advancement should
     // occur.
     match dispatcher.step(&mut cpu) {
-        StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Jit),
+        StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, 0);
+        }
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(cpu.cpu.state.msr.tsc, initial_tsc);
