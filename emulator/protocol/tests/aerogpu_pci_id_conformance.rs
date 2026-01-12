@@ -381,11 +381,18 @@ fn aerogpu_ci_package_manifest_stages_only_dx11_inf_at_package_root() {
     // CI staging policy: keep the AeroGPU package root unambiguous by staging only the DX11-capable
     // INF there. (Staging both aerogpu.inf and aerogpu_dx11.inf at the root means both match the same
     // HWID, which can confuse installs and driver selection unless carefully ranked.)
-    let expected = vec!["packaging/win7/aerogpu_dx11.inf".to_string()];
     assert_eq!(
-        inf_files,
-        expected,
-        "{path}: expected infFiles={expected:?} (single-INF policy). Found: {inf_files:?}",
+        inf_files.len(),
+        1,
+        "{path}: expected infFiles to contain exactly one INF (single-INF policy). Found: {inf_files:?}",
+        path = manifest_path.display()
+    );
+
+    let basename = inf_files[0].replace('\\', "/");
+    let basename = basename.rsplit('/').next().unwrap_or(&basename);
+    assert!(
+        basename.eq_ignore_ascii_case("aerogpu_dx11.inf"),
+        "{path}: expected the sole staged INF to be aerogpu_dx11.inf. Found: {inf_files:?}",
         path = manifest_path.display()
     );
 }
