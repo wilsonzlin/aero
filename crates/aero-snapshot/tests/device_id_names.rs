@@ -51,6 +51,7 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         (DeviceId::NET_STACK, 20u32, "NET_STACK"),
         (DeviceId::PLATFORM_INTERRUPTS, 21u32, "PLATFORM_INTERRUPTS"),
         (DeviceId::VIRTIO_SND, 22u32, "VIRTIO_SND"),
+        (DeviceId::VIRTIO_NET, 23u32, "VIRTIO_NET"),
     ];
 
     for (id, expected_num, expected_name) in cases {

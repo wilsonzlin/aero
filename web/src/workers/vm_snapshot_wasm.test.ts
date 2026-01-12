@@ -12,8 +12,10 @@ import {
   VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
+  VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
+  VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
   resolveVmSnapshotSaveToOpfsExport,
@@ -92,12 +94,15 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND).toBe("audio.virtio_snd");
     expect(VM_SNAPSHOT_DEVICE_ID_E1000).toBe(19);
     expect(VM_SNAPSHOT_DEVICE_E1000_KIND).toBe("net.e1000");
+    expect(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET).toBe(23);
+    expect(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND).toBe("net.virtio_net");
     expect(VM_SNAPSHOT_DEVICE_ID_NET_STACK).toBe(20);
     expect(VM_SNAPSHOT_DEVICE_NET_STACK_KIND).toBe("net.stack");
 
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_USB_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_USB);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_NET_STACK_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_NET_STACK);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET);
 
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_USB)).toBe(VM_SNAPSHOT_DEVICE_USB_KIND);
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_I8042_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_I8042);
@@ -115,6 +120,9 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_E1000_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_E1000);
     expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_E1000)).toBe(VM_SNAPSHOT_DEVICE_E1000_KIND);
 
+    expect(vmSnapshotDeviceKindToId(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND)).toBe(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET);
+    expect(vmSnapshotDeviceIdToKind(VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET)).toBe(VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND);
+
     // Ensure these stable device ids do not collide.
     const ids = [
       VM_SNAPSHOT_DEVICE_ID_USB,
@@ -123,6 +131,7 @@ describe("workers/vm_snapshot_wasm", () => {
       VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND,
       VM_SNAPSHOT_DEVICE_ID_NET_STACK,
       VM_SNAPSHOT_DEVICE_ID_E1000,
+      VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET,
     ];
     expect(new Set(ids).size).toBe(ids.length);
 
