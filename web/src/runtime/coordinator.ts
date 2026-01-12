@@ -70,6 +70,24 @@ export interface WorkerWasmStatus {
   value: number;
 }
 
+/**
+ * Shared ring-buffer attachment forwarding policy for audio I/O.
+ *
+ * These are intentionally explicit because the AudioWorklet ↔ emulator rings are
+ * single-producer/single-consumer (SPSC) structures:
+ *
+ * - Audio output ring: producer = emulator (exactly ONE worker), consumer = AudioWorklet.
+ * - Microphone ring: producer = AudioWorklet/ScriptProcessor, consumer = emulator (exactly ONE worker).
+ *
+ * Accidentally attaching the same SharedArrayBuffer ring to multiple emulator workers
+ * creates multi-producer/multi-consumer access patterns and corrupts the shared
+ * read/write indices (undefined behaviour, underruns/overruns, etc).
+ *
+ * The coordinator therefore owns the policy for which worker(s) receive the SAB
+ * attachments.
+ */
+export type RingBufferOwner = "cpu" | "io" | "both" | "none";
+
 export type VmLifecycleState = "stopped" | "starting" | "running" | "restarting" | "resetting" | "poweredOff" | "failed";
 
 export type WorkerCoordinatorFatalKind =
@@ -146,6 +164,25 @@ type PendingNetTraceStatusRequest = {
 
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function ringOwnerIncludes(owner: RingBufferOwner, role: "cpu" | "io"): boolean {
+  switch (owner) {
+    case "cpu":
+      return role === "cpu";
+    case "io":
+      return role === "io";
+    case "both":
+      // Useful for debugging, but violates the SPSC contract. Prefer selecting a
+      // single owner unless you really know what you're doing.
+      return true;
+    case "none":
+      return false;
+    default: {
+      const neverOwner: never = owner;
+      throw new Error(`Unknown ring buffer owner: ${String(neverOwner)}`);
+    }
+  }
 }
 
 function maybeGetHudPerfChannel(): PerfChannel | null {
@@ -250,17 +287,25 @@ export class WorkerCoordinator {
   private lastResetRequestAtMs = 0;
 
   // Optional SharedArrayBuffer-backed microphone ring buffer attachment. This
-  // is set by the UI and forwarded to workers that consume mic input.
+  // is set by the UI and forwarded to exactly one emulation worker (SPSC).
   // IMPORTANT: `micSampleRate` is the *actual* capture sample rate
   // (AudioContext.sampleRate), not the requested rate.
   private micRingBuffer: SharedArrayBuffer | null = null;
   private micSampleRate = 0;
   // Optional SharedArrayBuffer-backed audio output ring buffer attachment. This
-  // is set by the UI and forwarded to the CPU worker when available.
+  // is set by the UI and forwarded to exactly one emulation worker (SPSC).
   private audioRingBuffer: SharedArrayBuffer | null = null;
   private audioCapacityFrames = 0;
   private audioChannelCount = 0;
   private audioDstSampleRate = 0;
+  // Explicit forwarding policies to avoid accidental multi-producer/multi-consumer bugs
+  // as real devices move between workers (e.g. HDA in the IO worker).
+  //
+  // When unset (null), these resolve to a mode-specific default:
+  // - Demo mode (`activeDiskImage == null`): cpu owns both rings (tone/loopback demos).
+  // - VM mode   (`activeDiskImage != null`): io owns both rings (real devices live in IO worker).
+  private audioRingBufferOwnerOverride: RingBufferOwner | null = null;
+  private micRingBufferOwnerOverride: RingBufferOwner | null = null;
 
   private cursorImage: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
   private cursorState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
@@ -387,6 +432,11 @@ export class WorkerCoordinator {
         this.spawnWorker(role, segments);
       }
 
+      // If the UI attached audio/mic rings before the workers were started, forward them now
+      // using the current policy (otherwise we would wait until READY).
+      this.syncMicrophoneRingBufferAttachments();
+      this.syncAudioRingBufferAttachments();
+
       this.broadcastConfig(config);
       for (const role of WORKER_ROLES) {
         void this.eventLoop(role, runId);
@@ -429,6 +479,11 @@ export class WorkerCoordinator {
     }
 
     this.broadcastConfig(config);
+
+    // `activeDiskImage` toggles whether we're in demo vs VM mode; when no explicit ring
+    // owner override is set, recompute the default forwarding targets.
+    this.syncMicrophoneRingBufferAttachments();
+    this.syncAudioRingBufferAttachments();
   }
 
   stop(): void {
@@ -523,6 +578,9 @@ export class WorkerCoordinator {
     for (const role of WORKER_ROLES) {
       this.spawnWorker(role, shared.segments);
     }
+    // Preserve ring attachments across reset (if any) while still enforcing ownership policy.
+    this.syncMicrophoneRingBufferAttachments();
+    this.syncAudioRingBufferAttachments();
     this.broadcastConfig(config);
     for (const role of WORKER_ROLES) {
       void this.eventLoop(role, runId);
@@ -662,6 +720,16 @@ export class WorkerCoordinator {
     return this.shared?.segments.guestMemory ?? null;
   }
 
+  setAudioRingBufferOwner(owner: RingBufferOwner): void {
+    this.audioRingBufferOwnerOverride = owner;
+    this.syncAudioRingBufferAttachments();
+  }
+
+  setMicrophoneRingBufferOwner(owner: RingBufferOwner): void {
+    this.micRingBufferOwnerOverride = owner;
+    this.syncMicrophoneRingBufferAttachments();
+  }
+
   setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate: number): void {
     if (ringBuffer !== null) {
       const Sab = globalThis.SharedArrayBuffer;
@@ -676,15 +744,7 @@ export class WorkerCoordinator {
     this.micRingBuffer = ringBuffer;
     this.micSampleRate = (sampleRate ?? 0) | 0;
 
-    for (const role of ["io", "cpu"] as const) {
-      const info = this.workers[role];
-      if (!info) continue;
-      info.worker.postMessage({
-        type: "setMicrophoneRingBuffer",
-        ringBuffer,
-        sampleRate: this.micSampleRate,
-      } satisfies SetMicrophoneRingBufferMessage);
-    }
+    this.syncMicrophoneRingBufferAttachments();
   }
 
   setAudioRingBuffer(
@@ -708,18 +768,7 @@ export class WorkerCoordinator {
     this.audioChannelCount = channelCount >>> 0;
     this.audioDstSampleRate = dstSampleRate >>> 0;
 
-    const info = this.workers.cpu;
-    if (info) {
-      info.worker.postMessage(
-        {
-          type: "setAudioRingBuffer",
-          ringBuffer,
-          capacityFrames: this.audioCapacityFrames,
-          channelCount: this.audioChannelCount,
-          dstSampleRate: this.audioDstSampleRate,
-        } satisfies SetAudioRingBufferMessage,
-      );
-    }
+    this.syncAudioRingBufferAttachments();
   }
 
   /**
@@ -814,6 +863,60 @@ export class WorkerCoordinator {
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
+  }
+
+  private defaultAudioRingBufferOwner(): RingBufferOwner {
+    // Demo mode (no disk): the CPU worker runs the tone/loopback demos.
+    // VM mode (disk present): audio devices live in the IO worker.
+    return this.activeConfig?.activeDiskImage ? "io" : "cpu";
+  }
+
+  private effectiveAudioRingBufferOwner(): RingBufferOwner {
+    return this.audioRingBufferOwnerOverride ?? this.defaultAudioRingBufferOwner();
+  }
+
+  private defaultMicrophoneRingBufferOwner(): RingBufferOwner {
+    // Demo mode: loopback demo consumes mic samples in CPU worker.
+    // VM mode: microphone is consumed by the IO worker device model.
+    return this.activeConfig?.activeDiskImage ? "io" : "cpu";
+  }
+
+  private effectiveMicrophoneRingBufferOwner(): RingBufferOwner {
+    return this.micRingBufferOwnerOverride ?? this.defaultMicrophoneRingBufferOwner();
+  }
+
+  private syncAudioRingBufferAttachments(): void {
+    const ringBuffer = this.audioRingBuffer;
+    const owner = this.effectiveAudioRingBufferOwner();
+
+    for (const role of ["cpu", "io"] as const) {
+      const info = this.workers[role];
+      if (!info) continue;
+      const shouldAttach = ringOwnerIncludes(owner, role);
+      info.worker.postMessage({
+        type: "setAudioRingBuffer",
+        ringBuffer: shouldAttach ? ringBuffer : null,
+        capacityFrames: this.audioCapacityFrames,
+        channelCount: this.audioChannelCount,
+        dstSampleRate: this.audioDstSampleRate,
+      } satisfies SetAudioRingBufferMessage);
+    }
+  }
+
+  private syncMicrophoneRingBufferAttachments(): void {
+    const ringBuffer = this.micRingBuffer;
+    const owner = this.effectiveMicrophoneRingBufferOwner();
+
+    for (const role of ["cpu", "io"] as const) {
+      const info = this.workers[role];
+      if (!info) continue;
+      const shouldAttach = ringOwnerIncludes(owner, role);
+      info.worker.postMessage({
+        type: "setMicrophoneRingBuffer",
+        ringBuffer: shouldAttach ? ringBuffer : null,
+        sampleRate: this.micSampleRate,
+      } satisfies SetMicrophoneRingBufferMessage);
+    }
   }
 
   async snapshotSaveToOpfs(path: string): Promise<void> {
@@ -1456,26 +1559,10 @@ export class WorkerCoordinator {
       if (role === "net") {
         this.syncNetTraceEnabledToWorker(info.worker);
       }
-
-      if ((role === "io" || role === "cpu") && this.micRingBuffer) {
-        info.worker.postMessage({
-          type: "setMicrophoneRingBuffer",
-          ringBuffer: this.micRingBuffer,
-          sampleRate: this.micSampleRate,
-        } satisfies SetMicrophoneRingBufferMessage);
-      }
-
-      if (role === "cpu" && this.audioRingBuffer) {
-        info.worker.postMessage(
-          {
-            type: "setAudioRingBuffer",
-            ringBuffer: this.audioRingBuffer,
-            capacityFrames: this.audioCapacityFrames,
-            channelCount: this.audioChannelCount,
-            dstSampleRate: this.audioDstSampleRate,
-          } satisfies SetAudioRingBufferMessage,
-        );
-      }
+      // Forward optional audio/mic ring buffers using the current ownership policy.
+      // This is re-sent on READY so newly restarted workers inherit any existing attachments.
+      this.syncMicrophoneRingBufferAttachments();
+      this.syncAudioRingBufferAttachments();
 
       // Kick the worker to start its minimal demo loop.
       void this.trySendCommand(info, { kind: "nop", seq: this.nextCmdSeq++ });
