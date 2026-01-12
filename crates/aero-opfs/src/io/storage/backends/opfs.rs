@@ -922,6 +922,22 @@ mod wasm {
             }
         }
 
+        /// Open a browser persistence backend, selecting the best available mode.
+        ///
+        /// # Warning: may return async-only backends
+        ///
+        /// This function may fall back to [`OpfsAsyncBackend`] or [`OpfsIndexedDbBackend`] when
+        /// `FileSystemSyncAccessHandle` is unavailable (e.g. main thread, missing browser support).
+        /// Those variants are **async-only** and do **not** implement the synchronous
+        /// `aero_storage::{StorageBackend, VirtualDisk}` traits used by the boot-critical Rust
+        /// controller path.
+        ///
+        /// If you *require* a synchronous backend (to back `aero-storage` disk images/controllers),
+        /// call [`OpfsBackend::open`] / [`OpfsByteStorage::open`] directly and handle
+        /// `DiskError::NotSupported` instead of assuming `OpfsStorage::open(...).await.into_sync()`
+        /// will succeed.
+        ///
+        /// See `docs/20-storage-trait-consolidation.md` and `docs/19-indexeddb-storage-story.md`.
         pub async fn open(path: &str, create: bool, size_bytes: u64) -> DiskResult<Self> {
             match OpfsBackend::open(path, create, size_bytes).await {
                 Ok(backend) => Ok(Self::Sync(backend)),
@@ -1265,6 +1281,9 @@ mod native {
             }
         }
 
+        /// Open a browser persistence backend, selecting the best available mode.
+        ///
+        /// See the wasm32 implementation for details and warnings about async-only fallbacks.
         pub async fn open(_path: &str, _create: bool, _size_bytes: u64) -> DiskResult<Self> {
             Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
         }

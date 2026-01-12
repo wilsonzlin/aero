@@ -65,7 +65,16 @@ pub enum DiskError {
 
 pub type DiskResult<T> = Result<T, DiskError>;
 
-/// Block storage abstraction. The controller speaks in the disk's sector size (typically 512B).
+/// Block storage abstraction used by the NVMe controller model.
+///
+/// # Canonical trait note
+///
+/// The repo-wide canonical synchronous disk trait is [`aero_storage::VirtualDisk`]. This NVMe
+/// crate keeps its own `DiskBackend` trait for now (custom error type + explicit sector methods),
+/// but most call sites should construct an NVMe backend from an `aero_storage` disk via
+/// [`from_virtual_disk`] / [`NvmeController::try_new_from_virtual_disk`].
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait DiskBackend: Send {
     fn sector_size(&self) -> u32;
     fn total_sectors(&self) -> u64;

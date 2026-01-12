@@ -1,5 +1,14 @@
 export const SECTOR_SIZE = 512;
 
+/**
+ * Async, sector-addressed disk interface used by the web runtime.
+ *
+ * Canonical trait note:
+ * - Rust synchronous controller/device models use `aero_storage::VirtualDisk`.
+ * - Browser-host async storage (IndexedDB, async OPFS, network) uses async abstractions like this.
+ *
+ * See `docs/20-storage-trait-consolidation.md` and `docs/19-indexeddb-storage-story.md`.
+ */
 export interface AsyncSectorDisk {
   readonly sectorSize: number;
   readonly capacityBytes: number;

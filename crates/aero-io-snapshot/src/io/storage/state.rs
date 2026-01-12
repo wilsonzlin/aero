@@ -15,6 +15,16 @@ const MAX_OVERLAY_BLOCK_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 // Disk layer state (host-side)
 // ----------------------------------------
 
+/// Snapshot-layer disk backend interface.
+///
+/// This trait exists to keep `aero-io-snapshot` self-contained (snapshots can be decoded without
+/// depending on any particular disk implementation). It is **not** intended to be a general
+/// purpose disk abstraction for device/controller code.
+///
+/// New synchronous disk code in this repo should prefer [`aero_storage::VirtualDisk`] and adapt to
+/// this snapshot trait using [`AeroStorageDiskBackend`] when needed.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait DiskBackend {
     fn read_at(&self, offset: u64, buf: &mut [u8]);
     fn write_at(&mut self, offset: u64, data: &[u8]);

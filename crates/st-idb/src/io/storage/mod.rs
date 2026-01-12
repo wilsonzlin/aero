@@ -25,6 +25,14 @@ pub struct DiskBackendStats {
 ///
 /// It is not the same as `aero_storage::StorageBackend`, which is synchronous and is
 /// typically backed by OPFS sync access handles in the browser (`crates/aero-opfs`).
+///
+/// # Canonical trait note
+///
+/// For async browser-host storage in Rust/wasm, this `st-idb` trait is the canonical abstraction
+/// today. For synchronous device/controller models and disk image formats, use
+/// `aero_storage::{StorageBackend, VirtualDisk}` instead.
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait DiskBackend {
     fn capacity(&self) -> u64;
     fn stats(&self) -> DiskBackendStats;

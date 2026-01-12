@@ -2,6 +2,22 @@ use std::io;
 
 use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
 
+/// Byte-addressed disk backend used by `aero-devices` device models (e.g. virtio-blk).
+///
+/// # Canonical trait note
+///
+/// Most of the Rust storage stack in this repo is converging on [`aero_storage::VirtualDisk`] as
+/// the canonical synchronous disk trait (disk image formats, AHCI/IDE/NVMe controller wiring).
+///
+/// This `aero-devices` trait remains because some device models want:
+/// - `std::io::Result` errors
+/// - `&self` reads (interior mutability / locking inside the backend)
+/// - a byte-addressed interface at the device boundary
+///
+/// Prefer passing `Box<dyn aero_storage::VirtualDisk>` through high-level wiring and adapt as
+/// needed using [`aero_storage_adapters::AeroVirtualDiskAsDeviceBackend`].
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 pub trait DiskBackend: Send {
     /// Total disk size in bytes.
     fn len(&self) -> u64;

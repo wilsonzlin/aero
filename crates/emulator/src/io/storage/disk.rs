@@ -21,7 +21,15 @@ pub enum WriteCachePolicy {
 
 /// A byte-addressable random-access storage primitive.
 ///
-/// This is intentionally minimal so it can be implemented on top of browser APIs
+/// # Canonical trait note
+///
+/// This trait is **legacy** and exists to support `crates/emulator`'s historical disk stack.
+/// New code should prefer the canonical synchronous byte-backend trait:
+/// [`aero_storage::StorageBackend`].
+///
+/// See `docs/20-storage-trait-consolidation.md`.
+///
+/// This trait is intentionally minimal so it can be implemented on top of browser APIs
 /// (e.g. OPFS SyncAccessHandle) without pulling in OS-specific file APIs.
 pub trait ByteStorage {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> DiskResult<()>;
@@ -35,6 +43,14 @@ pub trait ByteStorage {
 }
 
 /// Synchronous virtual block device interface.
+///
+/// # Canonical trait note
+///
+/// This trait is **legacy** and exists to support `crates/emulator`'s historical device/controller
+/// stack. New synchronous controller/device code should prefer the canonical disk trait:
+/// [`aero_storage::VirtualDisk`] (plus adapters when wiring into device-specific traits).
+///
+/// See `docs/20-storage-trait-consolidation.md`.
 ///
 /// Callers are expected to use whole sectors; implementations must return
 /// `DiskError::UnalignedBuffer` when given a buffer length that is not a multiple
