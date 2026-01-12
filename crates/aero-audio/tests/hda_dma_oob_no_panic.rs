@@ -1,5 +1,6 @@
 use aero_audio::hda::HdaController;
 use aero_audio::mem::MemoryAccess;
+use aero_audio::capture::SilenceCaptureSource;
 
 /// Guest memory wrapper used by browser/WASM bridges: out-of-bounds DMA must not panic.
 ///
@@ -142,4 +143,79 @@ fn hda_process_completes_on_dma_addr_overflow() {
     hda.process(&mut mem, 128);
     // Second tick: attempts to DMA from `near_end + 512`, which overflows; must not panic.
     hda.process(&mut mem, 128);
+}
+
+#[test]
+fn hda_capture_dma_write_completes_on_oob_bdl_address() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+    let mut capture = SilenceCaptureSource;
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Configure the input converter to use stream ID 2, channel 0.
+    // SET_STREAM_CHANNEL: verb 0x706, payload = stream<<4 | channel
+    let set_stream_ch = (0x706u32 << 8) | 0x20;
+    hda.codec_mut().execute_verb(4, set_stream_ch);
+
+    let bdl_base = 0x1000u64;
+    let oob_dst = mem.data.len() as u64 + 0x1000;
+    let buf_len = 0x1000u32;
+
+    mem.write_u64(bdl_base, oob_dst);
+    mem.write_u32(bdl_base + 8, buf_len);
+    mem.write_u32(bdl_base + 12, 0);
+
+    {
+        let sd = hda.stream_mut(1);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = buf_len;
+        sd.lvi = 0;
+        sd.fmt = 0x0010; // 48kHz, 16-bit, mono
+        // SRST | RUN | stream number 2.
+        sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
+    }
+
+    hda.process_with_capture(&mut mem, 128, &mut capture);
+}
+
+#[test]
+fn hda_capture_dma_write_completes_on_dma_addr_overflow() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+    let mut capture = SilenceCaptureSource;
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Configure the input converter to use stream ID 2, channel 0.
+    let set_stream_ch = (0x706u32 << 8) | 0x20;
+    hda.codec_mut().execute_verb(4, set_stream_ch);
+
+    let bdl_base = 0x1000u64;
+    let buf_len = 0x1000u32;
+    // Choose an address such that `addr + bdl_offset` will overflow on the second tick.
+    let near_end = u64::MAX - 100;
+
+    mem.write_u64(bdl_base, near_end);
+    mem.write_u32(bdl_base + 8, buf_len);
+    mem.write_u32(bdl_base + 12, 0);
+
+    {
+        let sd = hda.stream_mut(1);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = buf_len;
+        sd.lvi = 0;
+        sd.fmt = 0x0010; // 48kHz, 16-bit, mono
+        // SRST | RUN | stream number 2.
+        sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
+    }
+
+    // First tick writes some bytes at `near_end` (SafeGuestMemory ignores the OOB/overflow write).
+    hda.process_with_capture(&mut mem, 128, &mut capture);
+    // Second tick would attempt to DMA at `near_end + bdl_offset` (overflow) and must not panic.
+    hda.process_with_capture(&mut mem, 128, &mut capture);
 }
