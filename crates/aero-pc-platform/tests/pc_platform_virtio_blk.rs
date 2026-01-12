@@ -62,8 +62,10 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         interrupts.pic_mut().set_masked(11, false);
     }
 
-    // Allow the device model to DMA from guest memory while processing.
-    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+    // Keep bus mastering disabled initially so we can verify that:
+    // - BAR0 notify writes do not perform DMA, and
+    // - `process_virtio_blk()` is properly gated on PCI command.busmaster (bit 2).
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
 
     // BAR0 layout for Aero's virtio-pci contract:
     // - common cfg @ 0x0000
@@ -134,6 +136,18 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     // Notify queue0 (offset 0 within notify region).
     pc.memory.write_u16(bar0_base + NOTIFY, 0);
 
+    // Deferred-DMA check: notify must not cause queue processing in the MMIO handler.
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 0);
+    assert_eq!(pc.memory.read_u8(status), 0xff);
+
+    // Bus-master gating check: processing must be a no-op until COMMAND.BME is set.
+    pc.process_virtio_blk();
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 0);
+    assert_eq!(pc.memory.read_u8(status), 0xff);
+
+    // Allow the device model to DMA from guest memory while processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
     pc.process_virtio_blk();
 
     // Used ring should advance and the status byte should be updated.
@@ -155,4 +169,3 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 11);
 }
-
