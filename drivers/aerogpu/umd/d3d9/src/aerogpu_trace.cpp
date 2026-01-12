@@ -352,7 +352,7 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceSetStreamSourceFreq:
       return "Device::SetStreamSourceFreq";
     case D3d9TraceFunc::DeviceSetGammaRamp:
-      return "Device::SetGammaRamp (stub)";
+      return "Device::SetGammaRamp";
     case D3d9TraceFunc::DeviceCreateStateBlock:
       return "Device::CreateStateBlock";
     case D3d9TraceFunc::DeviceDeleteStateBlock:
@@ -372,15 +372,15 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceShowCursor:
       return "Device::ShowCursor (stub)";
     case D3d9TraceFunc::DeviceSetPaletteEntries:
-      return "Device::SetPaletteEntries (stub)";
+      return "Device::SetPaletteEntries";
     case D3d9TraceFunc::DeviceSetCurrentTexturePalette:
-      return "Device::SetCurrentTexturePalette (stub)";
+      return "Device::SetCurrentTexturePalette";
     case D3d9TraceFunc::DeviceSetClipStatus:
-      return "Device::SetClipStatus (stub)";
+      return "Device::SetClipStatus";
     case D3d9TraceFunc::DeviceGetClipStatus:
-      return "Device::GetClipStatus (stub)";
+      return "Device::GetClipStatus";
     case D3d9TraceFunc::DeviceGetGammaRamp:
-      return "Device::GetGammaRamp (stub)";
+      return "Device::GetGammaRamp";
     case D3d9TraceFunc::DeviceDrawRectPatch:
       return "Device::DrawRectPatch (stub)";
     case D3d9TraceFunc::DeviceDrawTriPatch:
@@ -428,9 +428,9 @@ const char* func_name(D3d9TraceFunc func) {
     case D3d9TraceFunc::DeviceGetRenderState:
       return "Device::GetRenderState";
     case D3d9TraceFunc::DeviceGetPaletteEntries:
-      return "Device::GetPaletteEntries (stub)";
+      return "Device::GetPaletteEntries";
     case D3d9TraceFunc::DeviceGetCurrentTexturePalette:
-      return "Device::GetCurrentTexturePalette (stub)";
+      return "Device::GetCurrentTexturePalette";
     case D3d9TraceFunc::DeviceGetNPatchMode:
       return "Device::GetNPatchMode";
     case D3d9TraceFunc::DeviceGetFVF:
