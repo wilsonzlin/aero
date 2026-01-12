@@ -125,6 +125,22 @@ describe("io/bus/pci", () => {
     expect(() => pciBus.registerDevice(b)).toThrow();
   });
 
+  it("rejects unsupported bus numbers in PciDevice.bdf", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "bad_bus",
+      vendorId: 0x1111,
+      deviceId: 0x2222,
+      classCode: 0,
+      bdf: { bus: 1, device: 0, function: 0 },
+    };
+    expect(() => pciBus.registerDevice(dev)).toThrow(/only PCI bus 0 is supported/i);
+  });
+
   it("populates Subsystem Vendor ID / Subsystem ID (0x2c..0x2f) by default", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
