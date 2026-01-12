@@ -9460,11 +9460,20 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->user_vs_set && dev->user_vs != sb->user_vs) {
     dev->user_vs = sb->user_vs;
     shaders_dirty = true;
-    stateblock_record_shader_locked(dev, kD3d9ShaderStageVs, dev->user_vs);
   }
   if (sb->user_ps_set && dev->user_ps != sb->user_ps) {
     dev->user_ps = sb->user_ps;
     shaders_dirty = true;
+  }
+
+  // If ApplyStateBlock is invoked while Begin/EndStateBlock recording is active,
+  // we must record the shader bindings even when they are already bound (no-op
+  // apply). Otherwise, the recorded state block would omit shader state and
+  // would not reproduce the intended bindings when applied later.
+  if (sb->user_vs_set) {
+    stateblock_record_shader_locked(dev, kD3d9ShaderStageVs, dev->user_vs);
+  }
+  if (sb->user_ps_set) {
     stateblock_record_shader_locked(dev, kD3d9ShaderStagePs, dev->user_ps);
   }
   if (shaders_dirty) {

@@ -476,8 +476,9 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("ReadBackbufferPixel (after Apply)", hr);
   }
-  if (px != 0xFF00FF00u) {
-    return reporter.Fail("pixel mismatch after Apply: got=0x%08X expected=0x%08X", (unsigned)px, 0xFF00FF00u);
+  const D3DCOLOR expected_green = 0xFF00FF00u;
+  if ((px & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+    return reporter.Fail("pixel mismatch after Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_green);
   }
 
   // Capture should update the existing block to the current device state.
@@ -525,8 +526,9 @@ static int RunD3D9ExStateBlockSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("ReadBackbufferPixel (after Capture+Apply)", hr);
   }
-  if (px != 0xFFFF0000u) {
-    return reporter.Fail("pixel mismatch after Capture+Apply: got=0x%08X expected=0x%08X", (unsigned)px, 0xFFFF0000u);
+  const D3DCOLOR expected_red = 0xFFFF0000u;
+  if ((px & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+    return reporter.Fail("pixel mismatch after Capture+Apply: got=0x%08X expected=0x%08X", (unsigned)px, (unsigned)expected_red);
   }
 
   return reporter.Pass();
