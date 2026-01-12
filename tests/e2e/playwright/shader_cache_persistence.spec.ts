@@ -13,9 +13,10 @@ test("shader translation is persisted and skipped on next run", async ({}, testI
   const rootDir = path.resolve(process.cwd(), "web");
   const server = await startStaticServer(rootDir);
 
+  let userDataDir: string | null = null;
   try {
     // Use a persistent browser profile to ensure IndexedDB survives across browser restarts.
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-shader-cache-"));
+    userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-shader-cache-"));
 
     async function runOnce(): Promise<{
       cacheHit: boolean;
@@ -69,5 +70,12 @@ test("shader translation is persisted and skipped on next run", async ({}, testI
     expect(second.translationMs).toBeLessThan(first.translationMs / 3);
   } finally {
     await server.close();
+    if (userDataDir) {
+      try {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failures; they are non-fatal.
+      }
+    }
   }
 });
