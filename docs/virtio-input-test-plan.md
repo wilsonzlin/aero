@@ -52,6 +52,8 @@ These are not “virtio-input only”, but they lock down the **shared** virtio-
 
 ```bash
 ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_ring_features
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
 ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test pci_profile
 ./scripts/safe-run.sh cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
 ```
@@ -147,6 +149,18 @@ The host-side unit test asserts these mappings. If this fails, fix the mapping i
 Full reference:
 
 - `drivers/windows7/virtio-input/tests/qemu/README.md`
+
+### 3.0 Build/package/sign the driver (host)
+
+QEMU bring-up requires an installable driver package directory containing:
+
+- `aero_virtio_input.inf`
+- `aero_virtio_input.sys`
+- `aero_virtio_input.cat` (recommended; required for signature verification)
+
+See the canonical driver README for the full build + signing workflow and CI output paths:
+
+- `drivers/windows7/virtio-input/README.md`
 
 ### 3.1 Boot QEMU with virtio-input devices
 
