@@ -6,6 +6,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - Physical bus routing logic
 - Storage controller emulation (AHCI + IDE + ATAPI)
 - HTTP `Range` header parsing (`aero-http-range`)
+- AeroSparse disk image parsing/open (`aero-storage`)
 
 ## Prereqs
 
@@ -26,6 +27,7 @@ cargo +"$nightly" fuzz run fuzz_ahci
 cargo +"$nightly" fuzz run fuzz_ide
 cargo +"$nightly" fuzz run fuzz_http_range
 cargo +"$nightly" fuzz run fuzz_atapi
+cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 ```
 
 To run time-bounded:

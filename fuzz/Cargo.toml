@@ -71,3 +71,9 @@ name = "fuzz_atapi"
 path = "fuzz_targets/fuzz_atapi.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_aero_storage_sparse_open"
+path = "fuzz_targets/fuzz_aero_storage_sparse_open.rs"
+test = false
+doc = false

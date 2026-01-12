@@ -3,4 +3,3 @@
 # stable via the root `rust-toolchain.toml`, but override to nightly when working in `fuzz/`.
 channel = "nightly-2025-12-08"
 profile = "minimal"
-

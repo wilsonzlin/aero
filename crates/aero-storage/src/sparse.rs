@@ -4,6 +4,7 @@ use crate::{DiskError, Result, StorageBackend, VirtualDisk, SECTOR_SIZE};
 const MAGIC: &[u8; 8] = b"AEROSPAR";
 const VERSION: u32 = 1;
 pub const HEADER_SIZE: usize = 64;
+const ZERO_BUF: [u8; 4096] = [0; 4096];
 
 /// Parameters used when creating a new sparse disk.
 #[derive(Copy, Clone, Debug)]
@@ -143,16 +144,32 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         backend.read_at(0, &mut header_bytes)?;
         let header = AeroSparseHeader::decode(&header_bytes)?;
 
+        let backend_len = backend.len()?;
+
         let block_size = header.block_size_u64();
         if block_size == 0 || !block_size.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::InvalidSparseHeader(
                 "block_size must be a non-zero multiple of 512",
             ));
         }
+        if !header.block_size_bytes.is_power_of_two() {
+            return Err(DiskError::InvalidSparseHeader(
+                "block_size must be power of two",
+            ));
+        }
+        if header.disk_size_bytes == 0 {
+            return Err(DiskError::InvalidSparseHeader("disk_size must be non-zero"));
+        }
         if header.table_entries == 0 {
             return Err(DiskError::InvalidSparseHeader(
                 "table_entries must be non-zero",
             ));
+        }
+
+        // Validate table_entries matches disk_size_bytes and block_size_bytes.
+        let expected_table_entries = div_ceil_u64(header.disk_size_bytes, block_size)?;
+        if expected_table_entries != header.table_entries {
+            return Err(DiskError::InvalidSparseHeader("unexpected table_entries"));
         }
 
         // Validate data_offset.
@@ -166,10 +183,47 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             return Err(DiskError::InvalidSparseHeader("unexpected data_offset"));
         }
 
+        // Validate the image isn't truncated before reading the allocation table.
+        let table_end = (HEADER_SIZE as u64)
+            .checked_add(expected_table_bytes)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if backend_len < table_end {
+            return Err(DiskError::CorruptSparseImage("allocation table out of bounds"));
+        }
+        if backend_len < header.data_offset {
+            return Err(DiskError::CorruptSparseImage("data region out of bounds"));
+        }
+
+        if header.allocated_blocks > header.table_entries {
+            return Err(DiskError::InvalidSparseHeader(
+                "allocated_blocks exceeds table_entries",
+            ));
+        }
+        let expected_min_len = header
+            .data_offset
+            .checked_add(
+                header
+                    .allocated_blocks
+                    .checked_mul(block_size)
+                    .ok_or(DiskError::OffsetOverflow)?,
+            )
+            .ok_or(DiskError::OffsetOverflow)?;
+        if backend_len < expected_min_len {
+            return Err(DiskError::CorruptSparseImage(
+                "allocated blocks extend beyond end of image",
+            ));
+        }
+
         // Read allocation table.
-        let mut table_bytes = vec![0u8; expected_table_bytes as usize];
+        let expected_table_bytes_usize: usize =
+            expected_table_bytes.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+        let table_entries_usize: usize = header
+            .table_entries
+            .try_into()
+            .map_err(|_| DiskError::OffsetOverflow)?;
+        let mut table_bytes = vec![0u8; expected_table_bytes_usize];
         backend.read_at(HEADER_SIZE as u64, &mut table_bytes)?;
-        let mut table = Vec::with_capacity(header.table_entries as usize);
+        let mut table = Vec::with_capacity(table_entries_usize);
         for chunk in table_bytes.chunks_exact(8) {
             table.push(u64::from_le_bytes(chunk.try_into().unwrap()));
         }
@@ -265,6 +319,23 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             .ok_or(DiskError::OffsetOverflow)?;
         self.backend.write_at(phys_off, src)
     }
+
+    fn write_zeros_in_block(
+        &mut self,
+        phys: u64,
+        offset_in_block: usize,
+        len: usize,
+    ) -> Result<()> {
+        let mut remaining = len;
+        let mut off = offset_in_block;
+        while remaining > 0 {
+            let chunk_len = remaining.min(ZERO_BUF.len());
+            self.write_to_alloc_table(phys, off, &ZERO_BUF[..chunk_len])?;
+            off += chunk_len;
+            remaining -= chunk_len;
+        }
+        Ok(())
+    }
 }
 
 impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
@@ -284,7 +355,10 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
             let remaining = buf.len() - pos;
             let chunk_len = (block_size as usize - within).min(remaining);
 
-            let phys = self.table[block_idx as usize];
+            let phys = *self
+                .table
+                .get(block_idx as usize)
+                .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
             if phys == 0 {
                 buf[pos..pos + chunk_len].fill(0);
             } else {
@@ -301,30 +375,28 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
         checked_range(offset, buf.len(), self.capacity_bytes())?;
 
         let block_size = self.header.block_size_u64();
+        let block_size_usize: usize =
+            block_size.try_into().map_err(|_| DiskError::OffsetOverflow)?;
         let mut pos = 0usize;
         while pos < buf.len() {
             let abs = offset + pos as u64;
             let block_idx = abs / block_size;
             let within = (abs % block_size) as usize;
             let remaining = buf.len() - pos;
-            let chunk_len = (block_size as usize - within).min(remaining);
+            let chunk_len = (block_size_usize - within).min(remaining);
 
             let (phys, existed) = self.ensure_block_allocated(block_idx)?;
 
-            // Fast path: full-block write (already aligned).
-            if within == 0 && chunk_len as u64 == block_size && existed {
-                self.write_to_alloc_table(phys, 0, &buf[pos..pos + chunk_len])?;
-                pos += chunk_len;
-                continue;
+            if !existed {
+                if within > 0 {
+                    self.write_zeros_in_block(phys, 0, within)?;
+                }
+                let end = within + chunk_len;
+                if end < block_size_usize {
+                    self.write_zeros_in_block(phys, end, block_size_usize - end)?;
+                }
             }
-
-            // Read-modify-write the full block to preserve untouched bytes.
-            let mut block = vec![0u8; block_size as usize];
-            if existed {
-                self.read_from_alloc_table(phys, 0, &mut block)?;
-            }
-            block[within..within + chunk_len].copy_from_slice(&buf[pos..pos + chunk_len]);
-            self.write_to_alloc_table(phys, 0, &block)?;
+            self.write_to_alloc_table(phys, within, &buf[pos..pos + chunk_len])?;
 
             pos += chunk_len;
         }
