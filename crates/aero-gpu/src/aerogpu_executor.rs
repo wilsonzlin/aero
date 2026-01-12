@@ -1830,6 +1830,16 @@ fn fs_main() -> @location(0) vec4<f32> {
                 "CREATE_TEXTURE2D mip_levels/array_layers must be non-zero (got mip_levels={mip_levels}, array_layers={array_layers})"
             )));
         }
+
+        // Guard against invalid / pathological mip counts (WebGPU requires mip_level_count to be
+        // within the possible chain length for the given dimensions).
+        let max_dim = width.max(height);
+        let max_mip_levels = 32u32.saturating_sub(max_dim.leading_zeros());
+        if mip_levels > max_mip_levels {
+            return Err(ExecutorError::Validation(format!(
+                "CREATE_TEXTURE2D mip_levels too large for dimensions (width={width}, height={height}, mip_levels={mip_levels}, max_mip_levels={max_mip_levels})"
+            )));
+        }
         if array_layers != 1 {
             return Err(ExecutorError::Validation(format!(
                 "only array_layers=1 is supported for now (got array_layers={array_layers})"
