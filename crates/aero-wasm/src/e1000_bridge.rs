@@ -266,7 +266,11 @@ impl E1000Bridge {
         // `Vec<u8>`. We already have an owned buffer from the JS → WASM copy, so enqueue it
         // directly.
         self.dev.enqueue_rx_frame(buf);
-        self.dev.poll(&mut self.mem);
+        // Do not call `poll()` here: the JS wrapper drains the shared NET_RX ring and calls
+        // `receive_frame` per frame. Polling here would effectively make "RX ring drain" do
+        // unbounded guest-memory DMA work.
+        //
+        // Instead, defer the DMA flush to the wrapper's bounded per-tick `poll()` call.
     }
 
     pub fn pop_tx_frame(&mut self) -> Option<Uint8Array> {

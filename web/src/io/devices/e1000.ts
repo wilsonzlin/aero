@@ -190,13 +190,23 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   tick(_nowMs: number): void {
     if (this.#destroyed) return;
 
-    try {
-      this.#bridge.poll();
-    } catch {
-      // ignore device errors during tick
+    this.#pumpRxRing();
+
+    // PCI Bus Master Enable (command bit 2) gates whether the device is allowed to DMA into guest
+    // memory (descriptor reads/writes and RX buffer fills).
+    //
+    // Newer WASM builds expose `set_pci_command` so the Rust device model can enforce this gate
+    // internally. However, older builds may default BME to enabled; enforce the gate here so we
+    // don't DMA unless the guest explicitly enables bus mastering.
+    const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+    if (busMasterEnabled) {
+      try {
+        this.#bridge.poll();
+      } catch {
+        // ignore device errors during tick
+      }
     }
 
-    this.#pumpRxRing();
     this.#pumpTxRing();
     this.#syncIrq();
   }

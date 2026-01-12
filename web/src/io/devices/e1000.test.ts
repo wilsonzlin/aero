@@ -139,6 +139,40 @@ describe("io/devices/E1000PciDevice", () => {
     expect(Array.from(netTx.tryPop()!)).toEqual([0x01]);
   });
 
+  it("gates device polling on PCI Bus Master Enable (command bit 2)", () => {
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    const poll = vi.fn();
+    const bridge: E1000BridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      poll,
+      receive_frame: vi.fn(),
+      pop_tx_frame: vi.fn(() => undefined),
+      irq_level: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    // Not bus-master enabled by default; tick should not poll the device.
+    dev.tick(0);
+    expect(poll).not.toHaveBeenCalled();
+
+    // Enable BME (bit 2).
+    dev.onPciCommandWrite?.(1 << 2);
+    dev.tick(1);
+    expect(poll).toHaveBeenCalledTimes(1);
+  });
+
   it("clears pending host-side TX and re-syncs IRQ level on snapshot restore", () => {
     // Capacity 8 bytes: enough for a single 1-byte payload record
     // (len=1 => record size alignUp(4+1,8)=8).
