@@ -49,6 +49,24 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 1, 0x00)).toBe(0x4444_3333);
   });
 
+  it("populates Subsystem Vendor ID / Subsystem ID (0x2c..0x2f) by default", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = { name: "subsys_dev", vendorId: 0x1234, deviceId: 0x5678, classCode: 0 };
+    const addr = pciBus.registerDevice(dev);
+
+    const cfg = makeCfgIo(portBus);
+
+    // Vendor ID (low 16) / Device ID (high 16)
+    expect(cfg.readU32(addr.device, addr.function, 0x00)).toBe(0x5678_1234);
+
+    // Subsystem Vendor ID (low 16) / Subsystem ID (high 16)
+    expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0x5678_1234);
+  });
+
   it("sets the multifunction bit in header_type (fn0) when additional functions exist", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();

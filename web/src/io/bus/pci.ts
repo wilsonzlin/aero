@@ -207,8 +207,9 @@ export class PciBus implements PortIoHandler {
     config[0x0e] = (device.headerType ?? 0x00) & 0xff;
 
     // Subsystem IDs (type 0 header).
-    const subsystemVendorId = device.subsystemVendorId ?? 0x0000;
-    const subsystemId = device.subsystemId ?? 0x0000;
+    // Default to the device's own vendor/device IDs (improves guest driver matching).
+    const subsystemVendorId = device.subsystemVendorId ?? device.vendorId;
+    const subsystemId = device.subsystemId ?? device.deviceId;
     config[0x2c] = subsystemVendorId & 0xff;
     config[0x2d] = (subsystemVendorId >>> 8) & 0xff;
     config[0x2e] = subsystemId & 0xff;
