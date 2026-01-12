@@ -486,6 +486,25 @@ impl PortIoDevice for E1000PciIoBar {
 type PciIoBarKey = (PciBdf, u8);
 type SharedPciIoBarMap = Rc<RefCell<HashMap<PciIoBarKey, Box<dyn PortIoDevice>>>>;
 
+type SharedPciBarMmioRouter = Rc<RefCell<PciBarMmioRouter>>;
+
+#[derive(Clone)]
+struct SharedPciBarMmioRouterMmio {
+    router: SharedPciBarMmioRouter,
+}
+
+impl MmioHandler for SharedPciBarMmioRouterMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        let mut router = self.router.borrow_mut();
+        MmioHandler::read(&mut *router, offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        let mut router = self.router.borrow_mut();
+        MmioHandler::write(&mut *router, offset, size, value);
+    }
+}
+
 #[derive(Clone)]
 struct PciIoWindowPort {
     pci_cfg: SharedPciConfigPorts,
@@ -935,6 +954,7 @@ pub struct PcPlatform {
     pci_intx_sources: Vec<PciIntxSource>,
     pci_allocator: PciResourceAllocator,
     pci_io_bars: SharedPciIoBarMap,
+    pci_mmio_router: SharedPciBarMmioRouter,
 
     clock: ManualClock,
     pit: SharedPit8254,
@@ -1636,59 +1656,62 @@ impl PcPlatform {
 
         // Map the PCI MMIO window used by `PciResourceAllocator` so BAR reprogramming is reflected
         // immediately without needing MMIO unmap/remap support in `MemoryBus`.
-        let mut pci_mmio_router =
-            PciBarMmioRouter::new(pci_allocator_config.mmio_base, pci_cfg.clone());
-        if let Some(hda) = hda.clone() {
-            pci_mmio_router.register_shared_handler(
-                aero_devices::pci::profile::HDA_ICH6.bdf,
-                0,
-                hda,
-            );
-        }
-        if let Some(ahci) = ahci.clone() {
-            // ICH9 AHCI uses BAR5 (ABAR).
-            let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-            pci_mmio_router.register_handler(
-                bdf,
-                5,
-                PcAhciMmioBar {
-                    pci_cfg: pci_cfg.clone(),
-                    ahci,
+        let pci_mmio_router: SharedPciBarMmioRouter = Rc::new(RefCell::new(PciBarMmioRouter::new(
+            pci_allocator_config.mmio_base,
+            pci_cfg.clone(),
+        )));
+        {
+            let mut router = pci_mmio_router.borrow_mut();
+            if let Some(hda) = hda.clone() {
+                router.register_shared_handler(aero_devices::pci::profile::HDA_ICH6.bdf, 0, hda);
+            }
+            if let Some(ahci) = ahci.clone() {
+                // ICH9 AHCI uses BAR5 (ABAR).
+                let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+                router.register_handler(
                     bdf,
-                },
-            );
-        }
-        if let Some(e1000) = e1000.clone() {
-            pci_mmio_router.register_shared_handler(
-                aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
-                0,
-                e1000,
-            );
-        }
-        if let Some(virtio_blk) = virtio_blk.clone() {
-            pci_mmio_router.register_handler(
-                aero_devices::pci::profile::VIRTIO_BLK.bdf,
-                0,
-                VirtioPciBar0Mmio { dev: virtio_blk },
-            );
-        }
-        if let Some(nvme) = nvme.clone() {
-            let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-            pci_mmio_router.register_handler(
-                bdf,
-                0,
-                PcNvmeMmioBar {
-                    pci_cfg: pci_cfg.clone(),
-                    nvme,
+                    5,
+                    PcAhciMmioBar {
+                        pci_cfg: pci_cfg.clone(),
+                        ahci,
+                        bdf,
+                    },
+                );
+            }
+            if let Some(e1000) = e1000.clone() {
+                router.register_shared_handler(
+                    aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                    0,
+                    e1000,
+                );
+            }
+            if let Some(virtio_blk) = virtio_blk.clone() {
+                router.register_handler(
+                    aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                    0,
+                    VirtioPciBar0Mmio { dev: virtio_blk },
+                );
+            }
+            if let Some(nvme) = nvme.clone() {
+                let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+                router.register_handler(
                     bdf,
-                },
-            );
+                    0,
+                    PcNvmeMmioBar {
+                        pci_cfg: pci_cfg.clone(),
+                        nvme,
+                        bdf,
+                    },
+                );
+            }
         }
         memory
             .map_mmio(
                 pci_allocator_config.mmio_base,
                 pci_allocator_config.mmio_size,
-                Box::new(pci_mmio_router),
+                Box::new(SharedPciBarMmioRouterMmio {
+                    router: pci_mmio_router.clone(),
+                }),
             )
             .unwrap();
 
@@ -1757,6 +1780,7 @@ impl PcPlatform {
             pci_intx_sources,
             pci_allocator,
             pci_io_bars,
+            pci_mmio_router,
             clock,
             pit,
             rtc,
@@ -1791,6 +1815,23 @@ impl PcPlatform {
             prev.is_none(),
             "duplicate PCI I/O BAR handler registration for {bdf:?} BAR{bar}"
         );
+    }
+
+    /// Registers a handler for a PCI MMIO BAR in the platform's PCI MMIO window.
+    ///
+    /// The handler is keyed by `(bdf, bar_index)` and is dispatched to whenever that BAR currently
+    /// decodes the accessed MMIO address (respecting PCI command MEM decoding and BAR relocation).
+    pub fn register_pci_mmio_bar_handler<T>(&mut self, bdf: PciBdf, bar: u8, handler: Rc<RefCell<T>>)
+    where
+        T: MmioHandler + 'static,
+    {
+        self.pci_mmio_router
+            .borrow_mut()
+            .register_shared_handler(bdf, bar, handler);
+    }
+
+    pub fn pci_mmio_router(&self) -> SharedPciBarMmioRouter {
+        self.pci_mmio_router.clone()
     }
 
     pub fn i8042_controller(&self) -> SharedI8042Controller {
