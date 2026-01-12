@@ -11,6 +11,7 @@ use aero_snapshot::io_snapshot_bridge::{
     apply_io_snapshot_to_device, device_state_from_io_snapshot,
 };
 use aero_snapshot::DeviceId;
+use aero_usb::hid::gamepad::UsbHidGamepadHandle;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hid::mouse::UsbHidMouseHandle;
 use aero_usb::uhci::regs::*;
@@ -1211,6 +1212,117 @@ fn pc_platform_uhci_interrupt_in_reads_hid_mouse_reports_via_dma() {
     let mut report = [0u8; 4];
     pc.memory.read_physical(BUF_INT as u64, &mut report);
     assert_eq!(report, [0x00, 5, 0xFD, 0x00]);
+
+    // Poll again without new input: should NAK and remain active.
+    pc.memory
+        .write_u32(TD0 as u64 + 4, td_status(true));
+    run_one_frame(&mut pc, TD0);
+    let st = pc.memory.read_u32(TD0 as u64 + 4);
+    assert_ne!(st & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st & TD_STATUS_NAK, 0);
+}
+
+#[test]
+fn pc_platform_uhci_interrupt_in_reads_hid_gamepad_reports_via_dma() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    let gamepad = UsbHidGamepadHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(gamepad.clone()));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io
+        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // SET_ADDRESS(5).
+    pc.memory.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    // SET_CONFIGURATION(1).
+    pc.memory.write_physical(
+        BUF_SETUP as u64,
+        &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    write_td(
+        &mut pc,
+        TD0,
+        TD1,
+        td_status(true),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut pc,
+        TD1,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    gamepad.set_buttons(0x0001);
+
+    // Poll interrupt endpoint 1 at address 5 (8-byte gamepad report).
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+
+    let mut report = [0u8; 8];
+    pc.memory.read_physical(BUF_INT as u64, &mut report);
+    assert_eq!(report, [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
     // Poll again without new input: should NAK and remain active.
     pc.memory
