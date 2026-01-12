@@ -11,6 +11,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -244,4 +245,56 @@ async fn aerogpu_cmd_writeback_dst_updates_guest_memory_on_wasm() {
             .copy_from_slice(&src_tex[base..base + TEX_UNPADDED_BPR]);
     }
     assert_eq!(out_tex, expected);
+}
+
+#[wasm_bindgen_test(async)]
+async fn aerogpu_cmd_sync_rejects_writeback_before_executing_any_cmds_on_wasm() {
+    let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+        Ok(exec) => exec,
+        Err(e) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+            return;
+        }
+    };
+
+    // If this stream were partially executed, the CREATE_* commands would allocate resources
+    // before the WRITEBACK_DST validation error is observed. The sync wasm entrypoint must reject
+    // WRITEBACK_DST before executing anything.
+    const TEX: u32 = 1;
+    const BUF_SRC: u32 = 2;
+    const BUF_DST: u32 = 3;
+
+    let stream = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_texture2d(
+            TEX,
+            AEROGPU_RESOURCE_USAGE_TEXTURE,
+            AerogpuFormat::R8G8B8A8Unorm as u32,
+            1,
+            1,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        writer.create_buffer(BUF_SRC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 4, 0, 0);
+        writer.create_buffer(BUF_DST, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 4, 0, 0);
+        writer.copy_buffer_writeback_dst(BUF_DST, BUF_SRC, 0, 0, 4);
+        writer.finish()
+    };
+
+    let mut guest_mem = VecGuestMemory::new(0x1000);
+    let err = exec
+        .execute_cmd_stream(&stream, None, &mut guest_mem)
+        .expect_err("sync executor must reject WRITEBACK_DST on wasm");
+    assert!(
+        err.to_string()
+            .contains("WRITEBACK_DST requires async execution on wasm"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        exec.texture_size(TEX).is_err(),
+        "expected sync rejection to happen before CREATE_TEXTURE2D executes"
+    );
 }
