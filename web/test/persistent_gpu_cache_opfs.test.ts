@@ -8,6 +8,7 @@ import { PersistentGpuCache } from "../gpu-cache/persistent_cache.ts";
 
 test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in IDB", async () => {
   const realNavigatorStorage = (navigator as any).storage;
+  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
   const root = installOpfsMock();
 
   try {
@@ -97,6 +98,10 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
       // Ignore.
     }
   } finally {
-    (navigator as any).storage = realNavigatorStorage;
+    if (hadNavigatorStorage) {
+      (navigator as any).storage = realNavigatorStorage;
+    } else {
+      delete (navigator as any).storage;
+    }
   }
 });
