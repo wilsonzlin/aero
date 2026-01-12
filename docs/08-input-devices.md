@@ -620,7 +620,9 @@ The repository includes a concrete browser-side input capture implementation:
 - `web/src/input/pointer_lock.ts` — minimal Pointer Lock state machine.
 - `web/src/input/event_queue.ts` — allocation-free event queue and batching transport to the I/O worker.
 - `web/src/input/scancodes.ts` — auto-generated `KeyboardEvent.code` → PS/2 Set 2 scancode mapping (including multi-byte sequences like PrintScreen/Pause).
-- `web/src/input/scancode.ts` — small helpers (allocation-free lookup + browser preventDefault policy).
+- `web/src/input/scancode.ts` — small helpers (allocation-free lookup + browser `preventDefault` policy).
+  - The default policy prevents browser/UI actions while the VM is focused (e.g. function keys like **F5** refresh, **Alt** menu/address-bar focus, browser navigation keys like **BrowserBack**).
+  - `Ctrl`/`Meta` shortcuts are intentionally *not* prevented by default so host shortcuts can win when desired.
 
 #### Worker Transport / Wire Format
 
