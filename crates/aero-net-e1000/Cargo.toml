@@ -8,7 +8,9 @@ license = "MIT OR Apache-2.0"
 path = "src/lib.rs"
 
 [features]
-default = []
+# Snapshot/restore is a core part of the emulator/machine integration, so enable it by default.
+# Downstream users that don't need snapshot support can disable default features.
+default = ["io-snapshot"]
 io-snapshot = ["dep:aero-io-snapshot"]
 
 [dependencies]
