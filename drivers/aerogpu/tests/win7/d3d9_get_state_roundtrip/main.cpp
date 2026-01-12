@@ -504,7 +504,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   }
 
   // Clip status round-trip (cached state). Some runtimes may reject this legacy
-  // fixed-function path; treat D3DERR_INVALIDCALL as a supported skip.
+  // fixed-function path; treat failures as a supported skip in permissive mode.
   {
     D3DCLIPSTATUS9 set_cs;
     ZeroMemory(&set_cs, sizeof(set_cs));
@@ -827,6 +827,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
     hr = dev->SetPaletteEntries(kPalette, entries_set);
     if (FAILED(hr)) {
+      if (strict_checks && hr != D3DERR_INVALIDCALL) {
+        return reporter.FailHresult("SetPaletteEntries", hr);
+      }
       aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetPaletteEntries (Set failed hr=0x%08lX)",
                                  kTestName,
                                  (unsigned long)hr);
@@ -852,6 +855,9 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
 
     hr = dev->SetCurrentTexturePalette(kPalette);
     if (FAILED(hr)) {
+      if (strict_checks && hr != D3DERR_INVALIDCALL) {
+        return reporter.FailHresult("SetCurrentTexturePalette", hr);
+      }
       aerogpu_test::PrintfStdout("INFO: %s: skipping Set/GetCurrentTexturePalette (Set failed hr=0x%08lX)",
                                  kTestName,
                                  (unsigned long)hr);
