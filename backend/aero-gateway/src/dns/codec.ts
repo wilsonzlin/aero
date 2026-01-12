@@ -44,7 +44,8 @@ export function readDnsName(message: Buffer, offset: number): { name: string; of
   const labels: string[] = [];
   let jumped = false;
   let offsetAfter = offset;
-  const seenPointers = new Set<number>();
+  // Allocate lazily: most DNS queries (and many records) use uncompressed names.
+  let seenPointers: Set<number> | null = null;
   // RFC1035: domain names are limited to 255 bytes in wire format (including length
   // octets and the terminating 0-length label). Enforce this defensively to avoid
   // unbounded allocations on malicious inputs.
@@ -58,7 +59,11 @@ export function readDnsName(message: Buffer, offset: number): { name: string; of
     if ((length & 0xc0) === 0xc0) {
       if (offset + 1 >= message.length) throw new Error("DNS name pointer out of bounds");
       const pointer = ((length & 0x3f) << 8) | message[offset + 1];
+      if (!seenPointers) seenPointers = new Set<number>();
       if (seenPointers.has(pointer)) throw new Error("DNS name pointer loop");
+      // Protect against malicious pointer chains that bounce between pointers without
+      // consuming any label bytes.
+      if (seenPointers.size >= 64) throw new Error("DNS name pointer chain too long");
       seenPointers.add(pointer);
 
       if (!jumped) {

@@ -21,3 +21,9 @@ test('encodeDnsName rejects DNS names longer than 255 bytes (RFC1035)', () => {
   const name = labels.join('.');
   assert.throws(() => encodeDnsName(name), /DNS name too long/);
 });
+
+test('readDnsName rejects compression pointer loops', () => {
+  // Pointer @ offset 0 -> offset 2, pointer @ offset 2 -> offset 0.
+  const msg = Buffer.from([0xc0, 0x02, 0xc0, 0x00]);
+  assert.throws(() => readDnsName(msg, 0), /DNS name pointer loop/);
+});
