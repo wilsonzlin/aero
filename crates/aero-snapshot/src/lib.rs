@@ -496,13 +496,17 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt("duplicate DISKS section"));
                     }
                     seen_disks_section = true;
-                    let disks = DiskOverlayRefs::decode(&mut section_reader)?;
+                    let mut disks = DiskOverlayRefs::decode(&mut section_reader)?;
                     let mut seen = HashSet::with_capacity(disks.disks.len().min(64));
                     for disk in &disks.disks {
                         if !seen.insert(disk.disk_id) {
                             return Err(SnapshotError::Corrupt(DUPLICATE_DISK_ENTRY));
                         }
                     }
+                    // Provide deterministic ordering to snapshot targets regardless of snapshot file
+                    // ordering. Snapshot encoding already canonicalizes by `disk_id`, but older or
+                    // external snapshot producers might not.
+                    disks.disks.sort_by_key(|disk| disk.disk_id);
                     target.restore_disk_overlays(disks);
                 }
             }
