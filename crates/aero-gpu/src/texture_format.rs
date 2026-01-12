@@ -148,9 +148,45 @@ impl TextureFormatSelection {
     }
 }
 
+fn mip_extent(v: u32, level: u32) -> u32 {
+    v.checked_shr(level).unwrap_or(0).max(1)
+}
+
+/// Returns whether a BC-compressed texture of the given dimensions can be created under wgpu's
+/// WebGPU validation rules.
+///
+/// WebGPU requires the base mip level dimensions to be aligned to the compression block size
+/// (4×4). Additionally, some backends conservatively validate that each mip level whose extent is
+/// at least one full block is also aligned.
+pub fn wgpu_bc_texture_dimensions_compatible(width: u32, height: u32, mip_level_count: u32) -> bool {
+    if mip_level_count == 0 {
+        return false;
+    }
+
+    // wgpu/WebGPU validation requires compressed texture creation sizes to be block aligned.
+    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
+        return false;
+    }
+
+    for level in 0..mip_level_count {
+        let w = mip_extent(width, level);
+        let h = mip_extent(height, level);
+        // Conservative mip validation (see aero-d3d11's helper): require block alignment for any mip
+        // level that still contains at least one full block. (Smaller-than-block mips are allowed.)
+        if (w >= 4 && !w.is_multiple_of(4)) || (h >= 4 && !h.is_multiple_of(4)) {
+            return false;
+        }
+    }
+
+    true
+}
+
 pub fn select_texture_format(
     requested: TextureFormat,
     caps: GpuCapabilities,
+    width: u32,
+    height: u32,
+    mip_level_count: u32,
 ) -> TextureFormatSelection {
     if !requested.is_bc_compressed() {
         return TextureFormatSelection {
@@ -160,7 +196,9 @@ pub fn select_texture_format(
         };
     }
 
-    if caps.supports_bc_texture_compression {
+    if caps.supports_bc_texture_compression
+        && wgpu_bc_texture_dimensions_compatible(width, height, mip_level_count)
+    {
         return TextureFormatSelection {
             requested,
             actual: requested.to_wgpu(),
@@ -189,5 +227,48 @@ pub fn select_texture_format(
         requested,
         actual: fallback.to_wgpu(),
         upload_transform,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bc_dimension_compatibility_requires_block_aligned_base_mip() {
+        assert!(!wgpu_bc_texture_dimensions_compatible(9, 9, 1));
+        assert!(wgpu_bc_texture_dimensions_compatible(8, 8, 1));
+    }
+
+    #[test]
+    fn bc_dimension_compatibility_checks_mip_alignment_conservatively() {
+        // mip0 is aligned but mip1 becomes 6x6, which fails the >=4 && multiple-of-4 check.
+        assert!(!wgpu_bc_texture_dimensions_compatible(12, 12, 2));
+        // 16x16 -> 8x8 -> 4x4 is fine.
+        assert!(wgpu_bc_texture_dimensions_compatible(16, 16, 3));
+    }
+
+    #[test]
+    fn selects_rgba8_fallback_for_non_block_aligned_bc_textures_even_when_supported() {
+        let caps = GpuCapabilities {
+            supports_bc_texture_compression: true,
+            ..Default::default()
+        };
+
+        let selection = select_texture_format(TextureFormat::Bc1RgbaUnorm, caps, 9, 9, 1);
+        assert_eq!(selection.actual, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(selection.upload_transform, TextureUploadTransform::Bc1ToRgba8);
+    }
+
+    #[test]
+    fn selects_native_bc_when_supported_and_block_aligned() {
+        let caps = GpuCapabilities {
+            supports_bc_texture_compression: true,
+            ..Default::default()
+        };
+
+        let selection = select_texture_format(TextureFormat::Bc1RgbaUnorm, caps, 8, 8, 1);
+        assert_eq!(selection.actual, wgpu::TextureFormat::Bc1RgbaUnorm);
+        assert_eq!(selection.upload_transform, TextureUploadTransform::Direct);
     }
 }

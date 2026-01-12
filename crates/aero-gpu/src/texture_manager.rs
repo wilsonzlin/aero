@@ -286,7 +286,13 @@ impl<'a> TextureManager<'a> {
     }
 
     pub fn create_texture(&mut self, key: TextureKey, mut desc: TextureDesc) -> Arc<wgpu::Texture> {
-        let selection = select_texture_format(desc.format, self.caps);
+        let selection = select_texture_format(
+            desc.format,
+            self.caps,
+            desc.size.width,
+            desc.size.height,
+            desc.mip_level_count,
+        );
 
         // Upload APIs require COPY_DST.
         desc.usage |= wgpu::TextureUsages::COPY_DST;
