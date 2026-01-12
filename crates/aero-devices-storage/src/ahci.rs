@@ -736,7 +736,18 @@ fn dma_read_sectors_into_guest(
     let mut remaining = byte_len;
     let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
 
-    for i in 0..header.prdt_entries() as u64 {
+    // Guard against pathological PRDT lists that would otherwise turn a single synchronous DMA
+    // operation into an extremely long loop. Real guests use relatively small PRDTs.
+    const MAX_PRDT_ENTRIES_PER_COMMAND: u16 = 32_768;
+    let prdt_entries = header.prdt_entries();
+    if prdt_entries > MAX_PRDT_ENTRIES_PER_COMMAND {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "PRDT too large for DMA read",
+        ));
+    }
+
+    for i in 0..prdt_entries as u64 {
         if remaining == 0 {
             break;
         }
@@ -798,7 +809,18 @@ fn dma_write_sectors_from_guest(
     let mut remaining = byte_len;
     let mut scratch = try_alloc_zeroed(MAX_DMA_CHUNK_BYTES)?;
 
-    for i in 0..header.prdt_entries() as u64 {
+    // Guard against pathological PRDT lists that would otherwise turn a single synchronous DMA
+    // operation into an extremely long loop. Real guests use relatively small PRDTs.
+    const MAX_PRDT_ENTRIES_PER_COMMAND: u16 = 32_768;
+    let prdt_entries = header.prdt_entries();
+    if prdt_entries > MAX_PRDT_ENTRIES_PER_COMMAND {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "PRDT too large for DMA write",
+        ));
+    }
+
+    for i in 0..prdt_entries as u64 {
         if remaining == 0 {
             break;
         }
