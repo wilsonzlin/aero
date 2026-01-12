@@ -60,8 +60,38 @@ fn parse_args() -> Result<CliArgs, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
+fn tokio_worker_threads_from_env() -> Option<usize> {
+    let raw = match std::env::var("AERO_TOKIO_WORKER_THREADS") {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    match raw.parse::<usize>() {
+        Ok(n) if n > 0 => Some(n),
+        _ => {
+            eprintln!(
+                "warning: invalid AERO_TOKIO_WORKER_THREADS value: {raw:?} (expected positive integer); using Tokio default"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_tokio_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    if let Some(n) = tokio_worker_threads_from_env() {
+        builder.worker_threads(n);
+    }
+    builder.enable_all().build()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn main() -> std::io::Result<()> {
+    build_tokio_runtime()?.block_on(async_main())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn async_main() -> std::io::Result<()> {
     let cli = match parse_args() {
         Ok(cli) => cli,
         Err(err) => {

@@ -178,6 +178,24 @@ elif ! [[ "${RUST_TEST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 unset _aero_default_rust_test_threads 2>/dev/null || true
 
+# Tokio defaults to spawning one worker thread per CPU core for multi-thread runtimes.
+# In thread-limited agent sandboxes this can exceed per-user thread limits and cause
+# EAGAIN/WouldBlock failures. Some Aero binaries read this repo-specific env var to cap
+# their Tokio worker thread count without changing production defaults.
+#
+# Keep it aligned with our overall Cargo parallelism knob for reliability.
+_aero_default_tokio_worker_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_tokio_worker_threads}" =~ ^[1-9][0-9]*$ ]]; then
+  _aero_default_tokio_worker_threads=1
+fi
+if [[ -z "${AERO_TOKIO_WORKER_THREADS:-}" ]]; then
+  export AERO_TOKIO_WORKER_THREADS="${_aero_default_tokio_worker_threads}"
+elif ! [[ "${AERO_TOKIO_WORKER_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "warning: invalid AERO_TOKIO_WORKER_THREADS value: ${AERO_TOKIO_WORKER_THREADS} (expected positive integer); using ${_aero_default_tokio_worker_threads}" >&2
+  export AERO_TOKIO_WORKER_THREADS="${_aero_default_tokio_worker_threads}"
+fi
+unset _aero_default_tokio_worker_threads 2>/dev/null || true
+
 # Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
 # Do NOT force a default `-C codegen-units=...` here. In some constrained sandboxes,
@@ -324,6 +342,7 @@ echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
 echo "  RUSTC_WORKER_THREADS=$RUSTC_WORKER_THREADS"
 echo "  RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 echo "  RUST_TEST_THREADS=$RUST_TEST_THREADS"
+echo "  AERO_TOKIO_WORKER_THREADS=$AERO_TOKIO_WORKER_THREADS"
 echo "  RUSTFLAGS=${RUSTFLAGS:-}"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
 if [[ -n "${CARGO_HOME:-}" ]]; then

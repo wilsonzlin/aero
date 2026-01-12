@@ -373,6 +373,9 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   if (parsePositiveIntEnv(env.RAYON_NUM_THREADS) === null) {
     env.RAYON_NUM_THREADS = String(jobs);
   }
+  if (parsePositiveIntEnv(env.AERO_TOKIO_WORKER_THREADS) === null) {
+    env.AERO_TOKIO_WORKER_THREADS = String(jobs);
+  }
 
   // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
   // That can make this harness flaky when the wrapper isn't available. Detect `sccache` wrappers

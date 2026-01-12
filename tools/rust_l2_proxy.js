@@ -510,6 +510,17 @@ export async function startRustL2Proxy(env = {}) {
   await ensureProxyBuilt();
   const binPath = await getProxyBinPath();
 
+  // Default Tokio runtime worker threads to match our conservative Cargo parallelism knob.
+  // This keeps the spawned proxy reliable in thread-limited sandboxes where Tokio's default
+  // (num_cpus) would spawn many worker threads.
+  const defaultJobs = 1;
+  const jobsFromAero = parsePositiveIntEnv(process.env.AERO_CARGO_BUILD_JOBS);
+  const jobsFromCargo = parsePositiveIntEnv(process.env.CARGO_BUILD_JOBS);
+  const jobs = jobsFromAero ?? jobsFromCargo ?? defaultJobs;
+
+  const tokioFromEnv = parsePositiveIntEnv(process.env.AERO_TOKIO_WORKER_THREADS);
+  const tokioThreads = tokioFromEnv ?? jobs;
+
   const child = spawn(binPath, [], {
     cwd: REPO_ROOT,
     env: {
@@ -530,6 +541,7 @@ export async function startRustL2Proxy(env = {}) {
       AERO_L2_SESSION_SECRET: "",
       SESSION_SECRET: "",
       AERO_L2_OPEN: "",
+      AERO_TOKIO_WORKER_THREADS: String(tokioThreads),
       ...env,
       // Ensure the "listening on ..." log line is emitted for test orchestration.
       RUST_LOG: "aero_l2_proxy=info",

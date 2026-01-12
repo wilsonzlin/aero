@@ -46,6 +46,7 @@ test(
       fs.mkdirSync(binDir, { recursive: true });
       const targetDir = path.join(tmpRoot, "target");
       const outputPath = path.join(tmpRoot, "cargo-env.txt");
+      const proxyEnvPath = path.join(tmpRoot, "proxy-env.txt");
 
       writeExecutable(
         path.join(binDir, "cargo"),
@@ -64,6 +65,8 @@ bin="\${CARGO_TARGET_DIR}/debug/aero-l2-proxy"
 cat > "\${bin}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+out="\${AERO_TEST_PROXY_ENV_OUTPUT:?}"
+echo "AERO_TOKIO_WORKER_THREADS=\${AERO_TOKIO_WORKER_THREADS:-}" > "\${out}"
 echo "aero-l2-proxy listening on http://127.0.0.1:12345"
 while true; do sleep 1; done
 EOF
@@ -77,11 +80,13 @@ exit 0
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
           CARGO_TARGET_DIR: targetDir,
           AERO_TEST_OUTPUT: outputPath,
+          AERO_TEST_PROXY_ENV_OUTPUT: proxyEnvPath,
           // Ensure we exercise the defaulting path.
           AERO_CARGO_BUILD_JOBS: null,
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
+          AERO_TOKIO_WORKER_THREADS: null,
         },
         async () => {
           const moduleUrl = new URL(
@@ -100,6 +105,11 @@ exit 0
         RUSTC_WORKER_THREADS: "1",
         RAYON_NUM_THREADS: "1",
       });
+
+      const proxyEnv = parseKeyValues(fs.readFileSync(proxyEnvPath, "utf8"));
+      assert.deepEqual(proxyEnv, {
+        AERO_TOKIO_WORKER_THREADS: "1",
+      });
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -116,6 +126,7 @@ test(
       fs.mkdirSync(binDir, { recursive: true });
       const targetDir = path.join(tmpRoot, "target");
       const outputPath = path.join(tmpRoot, "cargo-env.txt");
+      const proxyEnvPath = path.join(tmpRoot, "proxy-env.txt");
 
       writeExecutable(
         path.join(binDir, "cargo"),
@@ -134,6 +145,8 @@ bin="\${CARGO_TARGET_DIR}/debug/aero-l2-proxy"
 cat > "\${bin}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+out="\${AERO_TEST_PROXY_ENV_OUTPUT:?}"
+echo "AERO_TOKIO_WORKER_THREADS=\${AERO_TOKIO_WORKER_THREADS:-}" > "\${out}"
 echo "aero-l2-proxy listening on http://127.0.0.1:12346"
 while true; do sleep 1; done
 EOF
@@ -147,10 +160,12 @@ exit 0
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
           CARGO_TARGET_DIR: targetDir,
           AERO_TEST_OUTPUT: outputPath,
+          AERO_TEST_PROXY_ENV_OUTPUT: proxyEnvPath,
           AERO_CARGO_BUILD_JOBS: "2",
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
+          AERO_TOKIO_WORKER_THREADS: null,
         },
         async () => {
           const moduleUrl = new URL(
@@ -168,6 +183,11 @@ exit 0
         CARGO_BUILD_JOBS: "2",
         RUSTC_WORKER_THREADS: "2",
         RAYON_NUM_THREADS: "2",
+      });
+
+      const proxyEnv = parseKeyValues(fs.readFileSync(proxyEnvPath, "utf8"));
+      assert.deepEqual(proxyEnv, {
+        AERO_TOKIO_WORKER_THREADS: "2",
       });
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });

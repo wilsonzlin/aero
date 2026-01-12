@@ -57,6 +57,7 @@ out="\${AERO_TEST_CARGO_ENV_OUT:?}"
   echo "CARGO_BUILD_JOBS=\${CARGO_BUILD_JOBS:-}"
   echo "RUSTC_WORKER_THREADS=\${RUSTC_WORKER_THREADS:-}"
   echo "RAYON_NUM_THREADS=\${RAYON_NUM_THREADS:-}"
+  echo "AERO_TOKIO_WORKER_THREADS=\${AERO_TOKIO_WORKER_THREADS:-}"
 } > "\${out}"
 
 exec node -e '
@@ -92,6 +93,7 @@ exec node -e '
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
+          AERO_TOKIO_WORKER_THREADS: null,
         },
         async () => {
           const server = await startDiskGatewayServer({
@@ -112,6 +114,7 @@ exec node -e '
         CARGO_BUILD_JOBS: "1",
         RUSTC_WORKER_THREADS: "1",
         RAYON_NUM_THREADS: "1",
+        AERO_TOKIO_WORKER_THREADS: "1",
       });
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -139,6 +142,7 @@ out="\${AERO_TEST_CARGO_ENV_OUT:?}"
   echo "CARGO_BUILD_JOBS=\${CARGO_BUILD_JOBS:-}"
   echo "RUSTC_WORKER_THREADS=\${RUSTC_WORKER_THREADS:-}"
   echo "RAYON_NUM_THREADS=\${RAYON_NUM_THREADS:-}"
+  echo "AERO_TOKIO_WORKER_THREADS=\${AERO_TOKIO_WORKER_THREADS:-}"
 } > "\${out}"
 
 exec node -e '
@@ -173,6 +177,7 @@ exec node -e '
           CARGO_BUILD_JOBS: null,
           RUSTC_WORKER_THREADS: null,
           RAYON_NUM_THREADS: null,
+          AERO_TOKIO_WORKER_THREADS: null,
         },
         async () => {
           const server = await startDiskGatewayServer({
@@ -193,6 +198,7 @@ exec node -e '
         CARGO_BUILD_JOBS: "2",
         RUSTC_WORKER_THREADS: "2",
         RAYON_NUM_THREADS: "2",
+        AERO_TOKIO_WORKER_THREADS: "2",
       });
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });

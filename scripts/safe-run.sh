@@ -367,6 +367,23 @@ elif ! [[ "${RUSTC_WORKER_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 unset _aero_default_rustc_worker_threads 2>/dev/null || true
 
+# Tokio defaults to sizing its runtime thread pool to `num_cpus`, which can exceed per-user thread
+# limits in shared/contended sandboxes. Some Aero binaries read this repo-specific env var to size
+# their Tokio runtime more conservatively (without changing production defaults).
+#
+# Keep it aligned with our overall agent parallelism knob (`CARGO_BUILD_JOBS`) for reliability.
+_aero_default_tokio_worker_threads="${CARGO_BUILD_JOBS:-1}"
+if ! [[ "${_aero_default_tokio_worker_threads}" =~ ^[1-9][0-9]*$ ]]; then
+    _aero_default_tokio_worker_threads=1
+fi
+if [[ -z "${AERO_TOKIO_WORKER_THREADS:-}" ]]; then
+    export AERO_TOKIO_WORKER_THREADS="${_aero_default_tokio_worker_threads}"
+elif ! [[ "${AERO_TOKIO_WORKER_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[safe-run] warning: invalid AERO_TOKIO_WORKER_THREADS value: ${AERO_TOKIO_WORKER_THREADS} (expected positive integer); using ${_aero_default_tokio_worker_threads}" >&2
+    export AERO_TOKIO_WORKER_THREADS="${_aero_default_tokio_worker_threads}"
+fi
+unset _aero_default_tokio_worker_threads 2>/dev/null || true
+
 # Optional: reduce per-crate codegen parallelism (can reduce memory spikes).
 #
 # Do NOT force a default `-C codegen-units=...` here on the first attempt.
@@ -723,6 +740,7 @@ if [[ $# -lt 1 ]]; then
     echo "  RUSTC_WORKER_THREADS=1   rustc internal worker threads (default: CARGO_BUILD_JOBS)" >&2
     echo "  RAYON_NUM_THREADS=1      Rayon global pool size (default: CARGO_BUILD_JOBS)" >&2
     echo "  RUST_TEST_THREADS=1      Rust test harness parallelism (default: CARGO_BUILD_JOBS)" >&2
+    echo "  AERO_TOKIO_WORKER_THREADS=1  Tokio runtime worker threads for Aero binaries that support it (default: CARGO_BUILD_JOBS)" >&2
     echo "  AERO_RUST_CODEGEN_UNITS=<n>  Optional rustc per-crate codegen-units override (alias: AERO_CODEGEN_UNITS)" >&2
     echo "" >&2
     echo "Examples:" >&2
@@ -806,7 +824,7 @@ done
 echo "[safe-run] Command: $*" >&2
 echo "[safe-run] Timeout: ${TIMEOUT}s, Memory: ${MEM_LIMIT}" >&2
 if [[ "${is_cargo_cmd}" == "true" ]]; then
-    echo "[safe-run] Cargo jobs: ${CARGO_BUILD_JOBS:-}  rustc worker threads: ${RUSTC_WORKER_THREADS:-}  rayon threads: ${RAYON_NUM_THREADS:-}  test threads: ${RUST_TEST_THREADS:-}" >&2
+    echo "[safe-run] Cargo jobs: ${CARGO_BUILD_JOBS:-}  rustc worker threads: ${RUSTC_WORKER_THREADS:-}  rayon threads: ${RAYON_NUM_THREADS:-}  test threads: ${RUST_TEST_THREADS:-}  tokio worker threads: ${AERO_TOKIO_WORKER_THREADS:-}" >&2
 fi
 echo "[safe-run] Started: $(date -Iseconds 2>/dev/null || date)" >&2
 
