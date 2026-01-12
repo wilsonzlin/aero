@@ -1104,8 +1104,8 @@ function runEmulationLoop() {
 > `web/src/audio/audio_worklet_ring.ts`, `web/src/platform/audio_worklet_ring_layout.js`, `web/src/platform/audio.ts`, and `web/src/platform/audio-worklet-processor.js`.
 >
 > Note: In production builds, `audio-worklet-processor.js` is emitted as a standalone asset and imports
-> `./audio_worklet_ring_layout.js` at runtime; see `web/vite.config.ts` for the explicit asset emission
-> workaround (Vite does not automatically follow ESM imports from AudioWorklet modules).
+> `./audio_worklet_ring_layout.js` at runtime; see `web/vite.config.ts` and `vite.harness.config.ts` for the explicit
+> asset emission workaround (Vite does not automatically follow ESM imports from AudioWorklet modules).
 
 ### Processor Registration
 
