@@ -113,13 +113,13 @@ Audio samples flow through a SharedArrayBuffer ring buffer:
 Producer (Emulator)                    Consumer (AudioWorklet)
        │                                      │
        ▼                                      │
-  ┌─────────────────────────────────────────┐ │
-  │ [samples] [samples] [samples] [empty]  │ │
-  │     ↑                           ↑       │ │
-  │   read_ptr                  write_ptr   │ │
-  └─────────────────────────────────────────┘ │
+   ┌─────────────────────────────────────────┐ │
+   │ [frames]  [frames]  [frames]  [empty]   │ │
+   │    ↑                         ↑          │ │
+   │ readFrameIndex         writeFrameIndex  │ │
+   └─────────────────────────────────────────┘ │
        │                                      ▼
-       │                               Pull 128/256 samples
+       │                               Pull ~128 frames
        │                               per render quantum
        └───────────────────────────────────────
 ```
@@ -232,8 +232,8 @@ fn s32_to_f32(sample: i32) -> f32 {
 
 ### Dependencies on Other Workstreams
 
-- **CPU (A)**: HDA registers accessed via `CpuBus`
-- **Integration (H)**: Controller wired into PCI bus
+- **CPU (A)**: guest MMIO/PIO operations must reach the worker runtime device stack (HDA/virtio-snd are exposed as PCI/MMIO devices).
+- **Integration (H)**: IO worker PCI/MMIO registration + routing for guest audio devices (see `web/src/workers/io.worker.ts`, `web/src/io/*`).
 
 ### What Other Workstreams Need From You
 
