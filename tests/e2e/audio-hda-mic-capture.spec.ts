@@ -22,6 +22,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
   // different mic sample rate to exercise the capture resampler + sample-rate plumbing.
   const micSampleRateHz = 44_100;
   const captureStreamRateHz = 48_000;
+  const capacitySamples = 16_384;
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
 
@@ -39,6 +40,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
       MIC_READ_POS_INDEX,
       MIC_WRITE_POS_INDEX,
       micSampleRateHz,
+      capacitySamples,
     }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
@@ -60,7 +62,6 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     coord.setMicrophoneRingBufferOwner("io");
 
     // Create a deterministic mono f32 mic ring buffer and prefill it with samples.
-    const capacitySamples = 16_384;
     const sab = new SharedArrayBuffer(MIC_HEADER_BYTES + capacitySamples * Float32Array.BYTES_PER_ELEMENT);
     const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
     const samples = new Float32Array(sab, MIC_HEADER_BYTES, capacitySamples);
@@ -71,7 +72,10 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     }
 
     // Header layout matches `web/src/audio/mic_ring.js`.
-    Atomics.store(header, MIC_WRITE_POS_INDEX, capacitySamples >>> 0);
+    // Start the ring *empty*. The IO worker now discards any buffered mic samples when it
+    // attaches the ring (to avoid stale capture latency), so prefilling `write_pos` here would
+    // be immediately dropped on attach.
+    Atomics.store(header, MIC_WRITE_POS_INDEX, 0);
     Atomics.store(header, MIC_READ_POS_INDEX, 0);
     Atomics.store(header, MIC_DROPPED_SAMPLES_INDEX, 0);
     Atomics.store(header, MIC_CAPACITY_SAMPLES_INDEX, capacitySamples >>> 0);
@@ -90,6 +94,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
       MIC_READ_POS_INDEX,
       MIC_WRITE_POS_INDEX,
       micSampleRateHz,
+      capacitySamples,
     },
   );
 
@@ -104,6 +109,21 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
     return Boolean(coord?.getWorkerWasmStatus?.("io"));
   });
+
+  // Populate the mic ring buffer *after* the IO worker has initialized and attached it. This keeps
+  // the test deterministic while still matching production behaviour (consumer discards any stale
+  // backlog on attach).
+  await page.evaluate(
+    ({ MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, capacitySamples }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sab = (globalThis as any).__aeroTestMicRingSab as SharedArrayBuffer | undefined;
+      if (!sab) return;
+      const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+      Atomics.store(header, MIC_READ_POS_INDEX, 0);
+      Atomics.store(header, MIC_WRITE_POS_INDEX, capacitySamples >>> 0);
+    },
+    { MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, capacitySamples },
+  );
 
   const first = await page.evaluate(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
