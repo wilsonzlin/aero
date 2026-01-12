@@ -50,6 +50,7 @@ import { I8042Controller } from "../io/devices/i8042";
 import { E1000PciDevice } from "../io/devices/e1000";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
+import { VirtioInputPciFunction, hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import type { MountConfig } from "../storage/metadata";
@@ -199,6 +200,10 @@ let uhciControllerBridge: UhciControllerBridge | null = null;
 let e1000Device: E1000PciDevice | null = null;
 type E1000Bridge = InstanceType<NonNullable<WasmApi["E1000Bridge"]>>;
 let e1000Bridge: E1000Bridge | null = null;
+
+type VirtioInputPciDevice = InstanceType<NonNullable<WasmApi["VirtioInputPciDevice"]>>;
+let virtioInputKeyboard: VirtioInputPciFunction | null = null;
+let virtioInputMouse: VirtioInputPciFunction | null = null;
 
 type WebUsbGuestBridge = WebUsbUhciHotplugBridgeLike & UsbPassthroughBridgeLike;
 let webUsbGuestBridge: WebUsbGuestBridge | null = null;
@@ -707,6 +712,101 @@ function maybeInitE1000Device(): void {
     }
     e1000Bridge = null;
     e1000Device = null;
+  }
+}
+
+function maybeInitVirtioInput(): void {
+  if (virtioInputKeyboard || virtioInputMouse) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  const Ctor = api.VirtioInputPciDevice;
+  if (!Ctor) return;
+  if (!guestBase) return;
+
+  const base = guestBase >>> 0;
+  const size = guestSize >>> 0;
+
+  // wasm-bindgen's JS glue can enforce constructor arity; try a few common layouts.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const AnyCtor = Ctor as any;
+  let keyboardDev: VirtioInputPciDevice | null = null;
+  let mouseDev: VirtioInputPciDevice | null = null;
+  try {
+    try {
+      keyboardDev = new AnyCtor(base, size, "keyboard");
+    } catch {
+      keyboardDev = new AnyCtor("keyboard", base, size);
+    }
+
+    try {
+      mouseDev = new AnyCtor(base, size, "mouse");
+    } catch {
+      mouseDev = new AnyCtor("mouse", base, size);
+    }
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize virtio-input devices", err);
+    try {
+      keyboardDev?.free();
+    } catch {
+      // ignore
+    }
+    try {
+      mouseDev?.free();
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  let keyboardFn: VirtioInputPciFunction | null = null;
+  let mouseFn: VirtioInputPciFunction | null = null;
+  let keyboardRegistered = false;
+  try {
+    keyboardFn = new VirtioInputPciFunction({ kind: "keyboard", device: keyboardDev as unknown as any, irqSink: mgr.irqSink });
+    mouseFn = new VirtioInputPciFunction({ kind: "mouse", device: mouseDev as unknown as any, irqSink: mgr.irqSink });
+
+    // Register as a single multi-function PCI device (fn0 = keyboard, fn1 = mouse).
+    const addr0 = mgr.pciBus.registerDevice(keyboardFn);
+    keyboardRegistered = true;
+    mgr.pciBus.registerDevice(mouseFn, { device: addr0.device, function: 1 });
+
+    virtioInputKeyboard = keyboardFn;
+    virtioInputMouse = mouseFn;
+  } catch (err) {
+    console.warn("[io.worker] Failed to register virtio-input PCI functions", err);
+    if (!keyboardRegistered) {
+      try {
+        keyboardFn?.destroy();
+      } catch {
+        // ignore
+      }
+    } else {
+      // Function 0 is already registered on the PCI bus; keep the wrapper alive.
+      virtioInputKeyboard = keyboardFn;
+    }
+    try {
+      mouseFn?.destroy();
+    } catch {
+      // ignore
+    }
+    // If wrapper construction failed before we took ownership, free the raw WASM objects.
+    if (!keyboardFn) {
+      try {
+        keyboardDev?.free();
+      } catch {
+        // ignore
+      }
+    }
+    if (!mouseFn) {
+      try {
+        mouseDev?.free();
+      } catch {
+        // ignore
+      }
+    }
+    if (!keyboardRegistered) virtioInputKeyboard = null;
+    virtioInputMouse = null;
   }
 }
 
@@ -1762,6 +1862,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
         maybeInitE1000Device();
+        maybeInitVirtioInput();
 
         maybeInitWasmHidGuestBridge();
         if (!api.UhciRuntime && api.UsbPassthroughDemo && !usbDemo) {
@@ -1959,6 +2060,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       mgr.registerPciDevice(new PciTestDevice());
       maybeInitUhciDevice();
       maybeInitE1000Device();
+      maybeInitVirtioInput();
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
@@ -2789,9 +2891,11 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   Atomics.add(status, StatusIndex.IoInputBatchCounter, 1);
   Atomics.add(status, StatusIndex.IoInputEventCounter, count);
 
-  // The actual i8042 device model is implemented in Rust; this worker currently
-  // only wires the browser's input batches into the USB HID models (for the UHCI
-  // path) while retaining PS/2 scancode events for the legacy path.
+  const virtioKeyboard = virtioInputKeyboard;
+  const virtioMouse = virtioInputMouse;
+  const virtioKeyboardOk = virtioKeyboard?.driverOk() ?? false;
+  const virtioMouseOk = virtioMouse?.driverOk() ?? false;
+
   const base = 2;
   for (let i = 0; i < count; i++) {
     const off = base + i * 4;
@@ -2801,22 +2905,44 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const packed = words[off + 2] >>> 0;
         const usage = packed & 0xff;
         const pressed = ((packed >>> 8) & 1) !== 0;
-        usbHid?.keyboard_event(usage, pressed);
+        if (virtioKeyboardOk && virtioKeyboard) {
+          const keyCode = hidUsageToLinuxKeyCode(usage);
+          if (keyCode !== null) {
+            virtioKeyboard.injectKey(keyCode, pressed);
+          }
+        } else {
+          usbHid?.keyboard_event(usage, pressed);
+        }
         break;
       }
       case InputEventType.MouseMove: {
         const dx = words[off + 2] | 0;
         const dyPs2 = words[off + 3] | 0;
-        // PS/2 convention: positive is up. HID convention: positive is down.
-        usbHid?.mouse_move(dx, -dyPs2);
+        if (virtioMouseOk && virtioMouse) {
+          // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
+          virtioMouse.injectRelMove(dx, -dyPs2);
+        } else {
+          // PS/2 convention: positive is up. HID convention: positive is down.
+          usbHid?.mouse_move(dx, -dyPs2);
+        }
         break;
       }
       case InputEventType.MouseButtons: {
-        usbHid?.mouse_buttons(words[off + 2] & 0xff);
+        const buttons = words[off + 2] & 0xff;
+        if (virtioMouseOk && virtioMouse) {
+          virtioMouse.injectMouseButtons(buttons);
+        } else {
+          usbHid?.mouse_buttons(buttons);
+        }
         break;
       }
       case InputEventType.MouseWheel: {
-        usbHid?.mouse_wheel(words[off + 2] | 0);
+        const delta = words[off + 2] | 0;
+        if (virtioMouseOk && virtioMouse) {
+          virtioMouse.injectWheel(delta);
+        } else {
+          usbHid?.mouse_wheel(delta);
+        }
         break;
       }
       case InputEventType.GamepadReport:
@@ -2827,7 +2953,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Payload: a=packed bytes LE, b=len.
         const packed = words[off + 2] >>> 0;
         const len = words[off + 3] >>> 0;
-        if (i8042) {
+        if (!virtioKeyboardOk && i8042) {
           const bytes = new Uint8Array(len);
           for (let j = 0; j < len; j++) {
             bytes[j] = (packed >>> (j * 8)) & 0xff;
@@ -2912,6 +3038,10 @@ function shutdown(): void {
       e1000Device?.destroy();
       e1000Device = null;
       e1000Bridge = null;
+      virtioInputKeyboard?.destroy();
+      virtioInputKeyboard = null;
+      virtioInputMouse?.destroy();
+      virtioInputMouse = null;
       uhciHidTopology.setUhciBridge(null);
       try {
         usbDemoApi?.free();
