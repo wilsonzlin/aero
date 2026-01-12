@@ -241,17 +241,32 @@ class I8042WasmController {
   }
 
   injectMouseMove(dx: number, dyPs2: number): void {
-    this.#bridge.inject_mouse_move(dx | 0, dyPs2 | 0);
+    const anyBridge = this.#bridge as any;
+    if (typeof anyBridge.inject_ps2_mouse_motion === "function") {
+      anyBridge.inject_ps2_mouse_motion(dx | 0, dyPs2 | 0, 0);
+    } else {
+      this.#bridge.inject_mouse_move(dx | 0, dyPs2 | 0);
+    }
     this.#syncSideEffects();
   }
 
   injectMouseButtons(buttons: number): void {
-    this.#bridge.inject_mouse_buttons(buttons & 0xff);
+    const anyBridge = this.#bridge as any;
+    if (typeof anyBridge.inject_ps2_mouse_buttons === "function") {
+      anyBridge.inject_ps2_mouse_buttons(buttons & 0xff);
+    } else {
+      this.#bridge.inject_mouse_buttons(buttons & 0xff);
+    }
     this.#syncSideEffects();
   }
 
   injectMouseWheel(delta: number): void {
-    this.#bridge.inject_mouse_wheel(delta | 0);
+    const anyBridge = this.#bridge as any;
+    if (typeof anyBridge.inject_ps2_mouse_motion === "function") {
+      anyBridge.inject_ps2_mouse_motion(0, 0, delta | 0);
+    } else {
+      this.#bridge.inject_mouse_wheel(delta | 0);
+    }
     this.#syncSideEffects();
   }
 
