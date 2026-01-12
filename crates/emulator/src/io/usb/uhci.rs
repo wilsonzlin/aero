@@ -14,17 +14,24 @@ use crate::io::pci::{PciConfigSpace, PciDevice};
 use crate::io::PortIO;
 use memory::MemoryBus;
 
-struct AeroUsbMemoryBus<'a> {
-    inner: &'a mut dyn MemoryBus,
+enum AeroUsbMemoryBus<'a> {
+    Dma(&'a mut dyn MemoryBus),
+    NoDma,
 }
 
 impl aero_usb::MemoryBus for AeroUsbMemoryBus<'_> {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        self.inner.read_physical(paddr, buf);
+        match self {
+            AeroUsbMemoryBus::Dma(inner) => inner.read_physical(paddr, buf),
+            AeroUsbMemoryBus::NoDma => buf.fill(0xFF),
+        }
     }
 
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        self.inner.write_physical(paddr, buf);
+        match self {
+            AeroUsbMemoryBus::Dma(inner) => inner.write_physical(paddr, buf),
+            AeroUsbMemoryBus::NoDma => {}
+        }
     }
 }
 
@@ -110,10 +117,15 @@ impl UhciPciDevice {
         //
         // UHCI schedule processing reads/writes guest memory (frame list + TD/QH chain). When the
         // guest clears COMMAND.BME, the controller must not perform bus-master DMA.
-        if !self.bus_master_enabled() {
-            return;
-        }
-        let mut adapter = AeroUsbMemoryBus { inner: mem };
+        //
+        // Note: even with DMA disabled, the controller continues to advance its internal frame
+        // counter and root hub timers (port reset/debounce, remote wakeup). Use a `NoDma` memory
+        // adapter rather than returning early so those state machines keep running.
+        let mut adapter = if self.bus_master_enabled() {
+            AeroUsbMemoryBus::Dma(mem)
+        } else {
+            AeroUsbMemoryBus::NoDma
+        };
         self.controller.tick_1ms(&mut adapter);
     }
 }
@@ -246,6 +258,26 @@ mod tests {
             dev.tick_1ms(&mut mem);
         }));
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn pci_command_bme_clear_still_advances_frnum_when_running() {
+        let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
+
+        // Enable I/O decoding so we can start the controller, but keep BME disabled.
+        dev.config_write(0x04, 2, 1 << 0);
+
+        dev.port_write(0x1000 + regs::REG_FRNUM, 2, 0);
+        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+
+        let fr0 = dev.port_read(0x1000 + regs::REG_FRNUM, 2) as u16;
+
+        // With BME clear, ticking must not DMA but should still advance the frame counter.
+        let mut mem = PanicMem;
+        dev.tick_1ms(&mut mem);
+
+        let fr1 = dev.port_read(0x1000 + regs::REG_FRNUM, 2) as u16;
+        assert_eq!(fr1, fr0.wrapping_add(1) & 0x07ff);
     }
 
     #[test]
