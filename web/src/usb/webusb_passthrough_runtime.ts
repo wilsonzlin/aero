@@ -675,6 +675,14 @@ export class WebUsbPassthroughRuntime {
 
   private handleRingDetach(msg: UsbRingDetachMessage): void {
     const reason = msg.reason ?? "USB proxy rings disabled.";
+    const hadRings = this.#actionRing !== null || this.#completionRingUnsubscribe !== null;
+    if (!hadRings) {
+      // Another runtime on the same MessagePort may have negotiated rings and later detached them.
+      // If we were never using rings, treat this as informational and continue proxying via postMessage.
+      this.#lastError = reason;
+      this.detachRings();
+      return;
+    }
     this.handleRingFailure(reason, { notifyBroker: false });
   }
 
