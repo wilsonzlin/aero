@@ -23,23 +23,23 @@ If a test fails, treat the contract as the source of truth; fix code or bump the
 From the repo root:
 
 ```bash
-./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+cargo test -p aero-virtio --locked --test virtio_input
 ```
 
-If your checkout does not mark `scripts/*.sh` as executable, run via `bash`:
+Recommended (enforces repo resource limits via `safe-run.sh`):
 
 ```bash
-bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
+./scripts/safe-run.sh cargo test -p aero-virtio --locked --test virtio_input
 ```
 
 Equivalent (name-filter based; useful when you don’t remember the test binary name):
 
 ```bash
 # Required by this test plan (or equivalent)
-./scripts/safe-run.sh cargo test -p aero-virtio --locked -- tests::virtio_input
+cargo test -p aero-virtio --locked -- tests::virtio_input
 
 # Practical equivalent in this repo
-./scripts/safe-run.sh cargo test -p aero-virtio --locked -- virtio_input
+cargo test -p aero-virtio --locked -- virtio_input
 ```
 
 Primary coverage lives in:
@@ -49,6 +49,16 @@ Primary coverage lives in:
 ### 1.2 Run contract-level virtio PCI checks that virtio-input depends on
 
 These are not “virtio-input only”, but they lock down the **shared** virtio-pci contract that the Win7 driver stack depends on.
+
+```bash
+cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
+cargo test -p aero-virtio --locked --test win7_contract_ring_features
+cargo test -p aero-virtio --locked --test win7_contract_dma_64bit
+cargo test -p aero-virtio --locked --test pci_profile
+cargo test -p aero-devices --locked --test pci_virtio_input_multifunction
+```
+
+Recommended (enforces repo resource limits via `safe-run.sh`):
 
 ```bash
 ./scripts/safe-run.sh cargo test -p aero-virtio --locked --test win7_contract_queue_sizes
