@@ -93,38 +93,37 @@ fn normalize_request_host(request_host: &str, scheme: &'static str) -> Option<St
 
     // Host is an ASCII serialization. Be strict about rejecting non-ASCII or
     // non-printable characters that URL parsers may normalize away.
-    let lowered = trimmed.to_ascii_lowercase();
-    if !lowered.chars().all(|c| c.is_ascii_graphic()) {
+    if !trimmed.chars().all(|c| c.is_ascii_graphic()) {
         return None;
     }
     // Reject percent-encoding / IPv6 zone identifiers to avoid cross-language
     // parsing differences.
-    if lowered.contains('%') {
+    if trimmed.contains('%') {
         return None;
     }
     // Reject comma-delimited values. Some HTTP stacks join repeated headers with commas.
-    if lowered.contains(',') {
+    if trimmed.contains(',') {
         return None;
     }
     // Host is a host[:port] serialization; reject any path/query/fragment delimiters.
-    if lowered.contains('/') || lowered.contains('?') || lowered.contains('#') {
+    if trimmed.contains('/') || trimmed.contains('?') || trimmed.contains('#') {
         return None;
     }
     // Reject backslashes; some URL parsers normalize them to `/`.
-    if lowered.contains('\\') {
+    if trimmed.contains('\\') {
         return None;
     }
     // Reject any userinfo in the request host.
-    if lowered.contains('@') {
+    if trimmed.contains('@') {
         return None;
     }
     // Reject empty port specs like `example.com:`. (The `:/` case is handled
     // indirectly by URL parsing when we add the scheme prefix.)
-    if lowered.ends_with(':') {
+    if trimmed.ends_with(':') {
         return None;
     }
 
-    let url = Url::parse(&format!("{scheme}://{lowered}")).ok()?;
+    let url = Url::parse(&format!("{scheme}://{trimmed}")).ok()?;
 
     if !url.username().is_empty() || url.password().is_some() {
         return None;
@@ -193,15 +192,14 @@ pub fn normalize_origin(input: &str) -> Option<String> {
     // Require an explicit scheme://host serialization; `url` will happily
     // normalize `https:example.com` to `https://example.com/`, but browsers won't
     // emit those in Origin headers.
-    let lower = trimmed.to_ascii_lowercase();
-    let rest = if let Some(rest) = lower.strip_prefix("http://") {
-        rest
-    } else if let Some(rest) = lower.strip_prefix("https://") {
-        rest
+    let (scheme_len, rest) = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("http://")
+    {
+        (7usize, &trimmed[7..])
+    } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("https://") {
+        (8usize, &trimmed[8..])
     } else {
         return None;
     };
-    let scheme_len = trimmed.len().saturating_sub(rest.len());
     if rest.starts_with('/') {
         return None;
     }
@@ -230,10 +228,14 @@ pub fn normalize_origin(input: &str) -> Option<String> {
 
     let url = Url::parse(trimmed).ok()?;
 
-    let scheme = url.scheme().to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
+    let scheme = url.scheme();
+    let scheme = if scheme.eq_ignore_ascii_case("http") {
+        "http"
+    } else if scheme.eq_ignore_ascii_case("https") {
+        "https"
+    } else {
         return None;
-    }
+    };
 
     if !url.username().is_empty() || url.password().is_some() {
         return None;
@@ -255,7 +257,7 @@ pub fn normalize_origin(input: &str) -> Option<String> {
     if port == Some(0) {
         return None;
     }
-    if matches!((&*scheme, port), ("http", Some(80)) | ("https", Some(443))) {
+    if matches!((scheme, port), ("http", Some(80)) | ("https", Some(443))) {
         port = None;
     }
 
