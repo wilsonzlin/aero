@@ -79,6 +79,9 @@ impl DiskBackend for AeroStorageDiskAdapter {
 
     fn total_sectors(&self) -> u64 {
         // If the disk capacity is not a multiple of 512, expose the largest full-sector span.
+        //
+        // Note: [`from_virtual_disk`] rejects such disks; this truncation is only relevant when
+        // constructing the adapter directly.
         self.capacity_bytes() / u64::from(Self::sector_size(self))
     }
 
