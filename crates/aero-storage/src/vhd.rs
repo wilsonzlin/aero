@@ -147,6 +147,13 @@ impl<B: StorageBackend> VhdDisk<B> {
                 let mut raw_header = [0u8; 1024];
                 backend.read_at(footer.data_offset, &mut raw_header)?;
                 let dynamic = VhdDynamicHeader::parse(&raw_header)?;
+                let dyn_header_end = footer
+                    .data_offset
+                    .checked_add(1024)
+                    .ok_or(DiskError::OffsetOverflow)?;
+                if dynamic.table_offset < dyn_header_end {
+                    return Err(DiskError::CorruptImage("vhd bat overlaps dynamic header"));
+                }
 
                 let required_entries = footer.current_size.div_ceil(dynamic.block_size as u64);
                 if (dynamic.max_table_entries as u64) < required_entries {

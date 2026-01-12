@@ -1043,3 +1043,57 @@ fn vhd_dynamic_rejects_truncated_bat_when_max_table_entries_exceeds_file() {
     let err = VhdDisk::open(backend).err().expect("expected error");
     assert!(matches!(err, DiskError::CorruptImage("vhd bat truncated")));
 }
+
+#[test]
+fn vhd_dynamic_rejects_bat_overlapping_dynamic_header() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Point the BAT at the start of the dynamic header (overlapping it).
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    backend
+        .write_at(dyn_header_offset + 16, &dyn_header_offset.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd bat overlaps dynamic header")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_bad_dynamic_header_cookie() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    backend.write_at(dyn_header_offset, b"BADHDR!!").unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd dynamic header cookie mismatch")
+    ));
+}
+
+#[test]
+fn vhd_dynamic_rejects_invalid_block_size() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    // Dynamic header's block_size is at offset 32.
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    backend
+        .write_at(dyn_header_offset + 32, &123u32.to_be_bytes())
+        .unwrap();
+
+    let err = VhdDisk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd block_size invalid")
+    ));
+}
