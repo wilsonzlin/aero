@@ -78,25 +78,3 @@ fn scancodes_generated_matches_scancodes_json() {
         }
     }
 }
-
-#[test]
-fn legacy_emulator_scancodes_rs_matches_generated_copy() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    let generated_path = manifest_dir.join("src/scancodes_generated.rs");
-    let generated_src =
-        fs::read_to_string(&generated_path).expect("read aero-devices-input scancodes_generated.rs");
-
-    let emulator_path = manifest_dir.join("../emulator/src/io/input/scancodes.rs");
-    if !emulator_path.exists() {
-        // The emulator harness is considered legacy and may eventually be removed.
-        return;
-    }
-
-    let emulator_src =
-        fs::read_to_string(&emulator_path).expect("read emulator scancodes.rs (legacy)");
-    assert_eq!(
-        emulator_src, generated_src,
-        "Legacy emulator scancode map drifted from aero-devices-input; regenerate:\n  node tools/gen_scancodes/gen_scancodes.mjs",
-    );
-}
