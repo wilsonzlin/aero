@@ -6,6 +6,7 @@ use blake3::Hash;
 use thiserror::Error;
 
 use crate::dxbc;
+use crate::vertex::{DeclUsage, LocationMapError, StandardLocationMap, VertexLocationMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShaderStage {
@@ -187,6 +188,12 @@ pub struct ShaderProgram {
     pub used_inputs: BTreeSet<u16>,
     pub used_outputs: BTreeSet<Register>,
     pub temp_count: u16,
+    /// True when vertex shader input registers were remapped from raw `v#` indices to canonical
+    /// WGSL `@location(n)` values based on `dcl_*` semantics.
+    ///
+    /// When this is true, the host-side D3D9 executor must bind vertex attributes using the same
+    /// semantic-based mapping (see [`StandardLocationMap`]).
+    pub uses_semantic_locations: bool,
 }
 
 #[derive(Debug, Error)]
@@ -209,6 +216,16 @@ pub enum ShaderError {
     UnsupportedCompareOp(u8),
     #[error("invalid control flow: {0}")]
     InvalidControlFlow(&'static str),
+    #[error(transparent)]
+    LocationMap(#[from] LocationMapError),
+    #[error(
+        "vertex shader input DCL declarations map multiple input registers to WGSL @location({location}): v{first} and v{second}"
+    )]
+    DuplicateInputLocation {
+        location: u32,
+        first: u16,
+        second: u16,
+    },
 }
 
 fn read_u32(words: &[u32], idx: &mut usize) -> Result<u32, ShaderError> {
@@ -287,6 +304,7 @@ fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
 
     let file = match reg_type {
         0 => RegisterFile::Temp,
+        1 => RegisterFile::Input,
         4 => RegisterFile::RastOut,
         5 => RegisterFile::AttrOut,
         6 => RegisterFile::TexCoordOut,
@@ -389,6 +407,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     let mut used_outputs = BTreeSet::new();
     let mut temp_max = 0u16;
     let mut if_stack = Vec::<bool>::new(); // tracks whether an `else` has been seen for each active `if`
+    let mut input_dcl_map = HashMap::<u16, (DeclUsage, u8)>::new();
 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
@@ -409,13 +428,41 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             continue;
         }
 
-        // Declarations (DCL) are not currently used by the minimal WGSL backend; skip them.
-        // The operand count is still encoded in bits 24..27.
+        // Declarations (DCL).
+        //
+        // Layout (SM2/SM3):
+        //   dcl <decl_token>, <dst_register_token>
+        //
+        // We currently only use vertex shader input declarations to remap D3D9 input registers
+        // (`v#`) to canonical WGSL `@location(n)` values.
         if opcode == 0x001F {
             if idx + param_count > words.len() {
                 return Err(ShaderError::UnexpectedEof);
             }
-            idx += param_count;
+            let mut params = Vec::with_capacity(param_count);
+            for _ in 0..param_count {
+                params.push(read_u32(&words, &mut idx)?);
+            }
+            if params.len() < 2 {
+                return Err(ShaderError::UnexpectedEof);
+            }
+            let decl_token = params[0];
+            let dst_token = params[1];
+
+            // D3D9 `DCL` encoding:
+            // - usage_raw = decl_token & 0x1F
+            // - usage_index = (decl_token >> 16) & 0xF
+            let usage_raw = (decl_token & 0x1F) as u8;
+            let usage_index = ((decl_token >> 16) & 0xF) as u8;
+            let Ok(usage) = DeclUsage::from_u8(usage_raw) else {
+                continue;
+            };
+            let Ok(dst) = decode_dst(dst_token) else {
+                continue;
+            };
+            if dst.reg.file == RegisterFile::Input {
+                input_dcl_map.insert(dst.reg.index, (usage, usage_index));
+            }
             continue;
         }
 
@@ -641,6 +688,83 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         return Err(ShaderError::InvalidControlFlow("missing endif"));
     }
 
+    // Apply semantic-based vertex input remapping.
+    //
+    // D3D9's `dcl_*` declarations associate semantics with input registers (`v#`). The DX9 UMD is
+    // free to assign semantics to arbitrary input registers (e.g. COLOR0 might be declared as
+    // `v7`). Our WGSL backend uses `@location(v#)` for vertex inputs, so we remap those `v#`
+    // indices to a canonical semantic-based location assignment. This makes vertex input binding
+    // stable and ensures non-trivial register assignments receive the correct data.
+    let mut uses_semantic_locations = false;
+    if version.stage == ShaderStage::Vertex {
+        let mut used_vs_inputs = BTreeSet::<u16>::new();
+        for inst in &instructions {
+            if let Some(dst) = inst.dst {
+                if dst.reg.file == RegisterFile::Input {
+                    used_vs_inputs.insert(dst.reg.index);
+                }
+            }
+            for src in &inst.src {
+                if src.reg.file == RegisterFile::Input {
+                    used_vs_inputs.insert(src.reg.index);
+                }
+            }
+        }
+
+        if !used_vs_inputs.is_empty() {
+            // Only enable semantic remapping when we have DCL declarations for all used input
+            // registers. Otherwise, fall back to the legacy behavior (input index unchanged).
+            let mut remap = HashMap::<u16, u16>::new();
+            let mut used_locations = HashMap::<u32, u16>::new();
+            let map = StandardLocationMap;
+            let mut can_remap = true;
+            for &v in &used_vs_inputs {
+                let Some(&(usage, usage_index)) = input_dcl_map.get(&v) else {
+                    can_remap = false;
+                    break;
+                };
+                let loc = map.location_for(usage, usage_index)?;
+                if let Some(prev_v) = used_locations.insert(loc, v) {
+                    if prev_v != v {
+                        return Err(ShaderError::DuplicateInputLocation {
+                            location: loc,
+                            first: prev_v,
+                            second: v,
+                        });
+                    }
+                }
+                remap.insert(v, loc as u16);
+            }
+
+            if can_remap {
+                for inst in &mut instructions {
+                    if let Some(dst) = inst.dst.as_mut() {
+                        if dst.reg.file == RegisterFile::Input {
+                            if let Some(&new_idx) = remap.get(&dst.reg.index) {
+                                dst.reg.index = new_idx;
+                            }
+                        }
+                    }
+                    for src in &mut inst.src {
+                        if src.reg.file == RegisterFile::Input {
+                            if let Some(&new_idx) = remap.get(&src.reg.index) {
+                                src.reg.index = new_idx;
+                            }
+                        }
+                    }
+                }
+
+                // Update the used-input set to reflect canonical locations.
+                used_inputs = used_vs_inputs.iter().map(|v| remap[v]).collect();
+                uses_semantic_locations = true;
+            } else {
+                // Keep `used_inputs` consistent with the instruction stream (but without semantic
+                // remapping).
+                used_inputs = used_vs_inputs;
+            }
+        }
+    }
+
     Ok(ShaderProgram {
         version,
         instructions,
@@ -650,6 +774,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         used_inputs,
         used_outputs,
         temp_count: temp_max.max(1),
+        uses_semantic_locations,
     })
 }
 
@@ -669,6 +794,7 @@ pub struct ShaderIr {
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
     pub used_outputs: BTreeSet<Register>,
+    pub uses_semantic_locations: bool,
 }
 
 pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
@@ -681,6 +807,7 @@ pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
         used_consts: program.used_consts.clone(),
         used_inputs: program.used_inputs.clone(),
         used_outputs: program.used_outputs.clone(),
+        uses_semantic_locations: program.uses_semantic_locations,
     }
 }
 

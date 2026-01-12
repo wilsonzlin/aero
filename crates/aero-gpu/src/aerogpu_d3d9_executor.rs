@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use aero_d3d9::shader;
-use aero_d3d9::vertex::VertexDeclaration;
+use aero_d3d9::vertex::{StandardLocationMap, VertexDeclaration, VertexLocationMap};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -293,6 +293,7 @@ struct Shader {
     key: u64,
     module: wgpu::ShaderModule,
     entry_point: &'static str,
+    uses_semantic_locations: bool,
 }
 
 #[derive(Debug)]
@@ -2872,6 +2873,8 @@ impl AerogpuD3d9Executor {
                         key,
                         module,
                         entry_point: cached.wgsl.entry_point,
+                        uses_semantic_locations: cached.ir.uses_semantic_locations
+                            && bytecode_stage == shader::ShaderStage::Vertex,
                     },
                 );
                 Ok(())
@@ -4467,7 +4470,7 @@ impl AerogpuD3d9Executor {
         let (color_formats, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
-        let vertex_buffers = self.vertex_buffer_layouts(layout)?;
+        let vertex_buffers = self.vertex_buffer_layouts(layout, vs.uses_semantic_locations)?;
         let vertex_buffers_ref = vertex_buffers
             .buffers
             .iter()
@@ -5185,6 +5188,7 @@ impl AerogpuD3d9Executor {
     fn vertex_buffer_layouts(
         &self,
         input_layout: &InputLayout,
+        uses_semantic_locations: bool,
     ) -> Result<VertexInputs, AerogpuD3d9Error> {
         let mut streams: Vec<u8> = input_layout
             .decl
@@ -5218,18 +5222,37 @@ impl AerogpuD3d9Executor {
             })
             .collect();
 
-        // Bring-up behavior: map declaration elements to sequential shader locations.
+        let location_map = StandardLocationMap;
+        let mut seen_locations = HashMap::<u32, (aero_d3d9::vertex::DeclUsage, u8)>::new();
+
+        // Map declaration elements to shader locations.
         for (i, e) in input_layout.decl.elements.iter().enumerate() {
             let Some(&slot) = stream_to_slot.get(&e.stream) else {
                 continue;
             };
             let fmt = map_decl_type_to_vertex_format(e.ty)?;
+            let shader_location = if uses_semantic_locations {
+                let loc = location_map
+                    .location_for(e.usage, e.usage_index)
+                    .map_err(|e| AerogpuD3d9Error::VertexDeclaration(e.to_string()))?;
+                if let Some((prev_usage, prev_index)) =
+                    seen_locations.insert(loc, (e.usage, e.usage_index))
+                {
+                    return Err(AerogpuD3d9Error::VertexDeclaration(format!(
+                        "vertex declaration maps multiple elements to WGSL @location({loc}): {prev_usage:?}{prev_index} and {:?}{}",
+                        e.usage, e.usage_index
+                    )));
+                }
+                loc
+            } else {
+                i as u32
+            };
             buffers[slot as usize]
                 .attributes
                 .push(wgpu::VertexAttribute {
                     format: fmt,
                     offset: e.offset as u64,
-                    shader_location: i as u32,
+                    shader_location,
                 });
         }
 
