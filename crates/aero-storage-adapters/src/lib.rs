@@ -235,13 +235,66 @@ mod tests {
     fn map_aero_storage_error_to_io_classifies_unsupported_and_corrupt() {
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::Unsupported("feature"));
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::Unsupported("feature"))
+        ));
 
         let err =
             map_aero_storage_error_to_io(aero_storage::DiskError::NotSupported("backend".into()));
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::NotSupported(msg)) if msg == "backend"
+        ));
 
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::CorruptImage("bad"));
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::CorruptImage("bad"))
+        ));
+    }
+
+    #[test]
+    fn map_aero_storage_error_to_io_preserves_invalid_input_and_bounds_errors() {
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::UnalignedLength {
+            len: 1,
+            alignment: 512,
+        });
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::UnalignedLength { len: 1, alignment: 512 })
+        ));
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::OffsetOverflow);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::OffsetOverflow)
+        ));
+
+        let err = map_aero_storage_error_to_io(aero_storage::DiskError::OutOfBounds {
+            offset: 4,
+            len: 1,
+            capacity: 4,
+        });
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
+            Some(aero_storage::DiskError::OutOfBounds {
+                offset: 4,
+                len: 1,
+                capacity: 4
+            })
+        ));
     }
 
     #[test]
