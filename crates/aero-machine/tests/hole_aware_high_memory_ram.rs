@@ -110,3 +110,56 @@ fn dirty_pages_for_remapped_high_ram_are_reported_in_ram_offset_space() {
         vec![expected]
     );
 }
+
+#[test]
+fn snapshot_read_ram_straddles_low_high_boundary() {
+    let cfg = MachineConfig {
+        ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
+    let low_phys = low_ram_end - 0x10;
+    let high_phys = 0x1_0000_0000;
+
+    m.write_physical(low_phys, &[0xAA; 0x10]);
+    m.write_physical(high_phys, &[0xBB; 0x10]);
+
+    let mut buf = [0u8; 0x20];
+    snapshot::SnapshotSource::read_ram(&m, low_phys, &mut buf).unwrap();
+    assert_eq!(&buf[..0x10], &[0xAA; 0x10]);
+    assert_eq!(&buf[0x10..], &[0xBB; 0x10]);
+}
+
+#[test]
+fn snapshot_write_ram_straddles_low_high_boundary() {
+    let cfg = MachineConfig {
+        ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let low_ram_end = firmware::bios::PCIE_ECAM_BASE;
+    let low_offset = low_ram_end - 0x10;
+    let high_phys = 0x1_0000_0000;
+
+    let mut data = [0u8; 0x20];
+    data[..0x10].fill(0x11);
+    data[0x10..].fill(0x22);
+
+    snapshot::SnapshotTarget::write_ram(&mut m, low_offset, &data).unwrap();
+
+    assert_eq!(m.read_physical_bytes(low_offset, 0x10), vec![0x11; 0x10]);
+    assert_eq!(m.read_physical_bytes(high_phys, 0x10), vec![0x22; 0x10]);
+}
