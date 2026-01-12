@@ -563,6 +563,7 @@ mod tests {
     fn pcm_decode_8bit_unsigned_bias() {
         assert_f32_approx_eq(decode_one_sample(&[0], 8), -1.0, 1e-6);
         assert_f32_approx_eq(decode_one_sample(&[128], 8), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_one_sample(&[129], 8), 1.0 / 128.0, 1e-6);
         assert_f32_approx_eq(decode_one_sample(&[255], 8), 127.0 / 128.0, 1e-6);
     }
 
@@ -583,6 +584,7 @@ mod tests {
         // Values exactly representable with the 1/128 scaling.
         assert_eq!(encode_u8(0.5), 192);
         assert_eq!(encode_u8(-0.5), 64);
+        assert_eq!(encode_u8(1.0 / 128.0), 129);
 
         // Non-finite inputs should never panic and should clamp deterministically.
         assert_eq!(encode_u8(f32::INFINITY), 255);
@@ -640,6 +642,7 @@ mod tests {
         assert_f32_approx_eq(decode_raw_20(-524_288), -1.0, 1e-6);
         assert_f32_approx_eq(decode_raw_20(-1), -1.0 / 524_288.0, 1e-6);
         assert_f32_approx_eq(decode_raw_20(0), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_20(1), 1.0 / 524_288.0, 1e-6);
         assert_f32_approx_eq(decode_raw_20(524_287), 524_287.0 / 524_288.0, 1e-6);
 
         // Upper bits may contain garbage; decoding should still use only the low 20 bits.
@@ -653,6 +656,7 @@ mod tests {
         // Encode scaling and clipping.
         assert_eq!(encode_20(0.5), 262_144);
         assert_eq!(encode_20(-0.25), -131_072);
+        assert_eq!(encode_20(1.0 / 524_288.0), 1);
         assert_eq!(encode_20(1.0), 524_287);
         assert_eq!(encode_20(2.0), 524_287);
         assert_eq!(encode_20(-1.0), -524_288);
@@ -710,6 +714,7 @@ mod tests {
         assert_f32_approx_eq(decode_raw_24(-8_388_608), -1.0, 1e-6);
         assert_f32_approx_eq(decode_raw_24(-1), -1.0 / 8_388_608.0, 1e-6);
         assert_f32_approx_eq(decode_raw_24(0), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_raw_24(1), 1.0 / 8_388_608.0, 1e-6);
         assert_f32_approx_eq(
             decode_raw_24(8_388_607),
             8_388_607.0 / 8_388_608.0,
@@ -726,6 +731,7 @@ mod tests {
 
         assert_eq!(encode_24(0.5), 4_194_304);
         assert_eq!(encode_24(-0.25), -2_097_152);
+        assert_eq!(encode_24(1.0 / 8_388_608.0), 1);
         assert_eq!(encode_24(1.0), 8_388_607);
         assert_eq!(encode_24(2.0), 8_388_607);
         assert_eq!(encode_24(-1.0), -8_388_608);
@@ -780,6 +786,8 @@ mod tests {
 
         assert_f32_approx_eq(decode_i32(i32::MIN), -1.0, 1e-6);
         assert_f32_approx_eq(decode_i32(0), 0.0, 1e-6);
+        assert_f32_approx_eq(decode_i32(1), 1.0 / 2_147_483_648.0, 1e-6);
+        assert_f32_approx_eq(decode_i32(-1), -1.0 / 2_147_483_648.0, 1e-6);
         assert_f32_approx_eq(decode_i32(1 << 30), 0.5, 1e-6);
         assert_f32_approx_eq(decode_i32(-(1 << 30)), -0.5, 1e-6);
         // `i32::MAX` is not exactly representable as `f32` and rounds to 2^31, producing 1.0.
@@ -787,6 +795,7 @@ mod tests {
 
         assert_eq!(encode_i32(0.5), 1 << 30);
         assert_eq!(encode_i32(-0.5), -(1 << 30));
+        assert_eq!(encode_i32(1.0 / 2_147_483_648.0), 1);
         assert_eq!(encode_i32(1.0), i32::MAX);
         assert_eq!(encode_i32(2.0), i32::MAX);
         assert_eq!(encode_i32(-1.0), i32::MIN);
