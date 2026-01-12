@@ -471,6 +471,22 @@ fn qcow2_rejects_table_offset_overlapping_header() {
 }
 
 #[test]
+fn qcow2_rejects_table_offset_not_cluster_aligned() {
+    let cluster_size = 1u64 << 12;
+    let mut backend = make_qcow2_empty(64 * 1024);
+
+    // Set l1_table_offset to a value that's 8-byte aligned but not cluster aligned.
+    let bad = cluster_size * 2 + 8;
+    backend.write_at(40, &bad.to_be_bytes()).unwrap();
+
+    let err = Qcow2Disk::open(backend).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("qcow2 table offset not cluster aligned")
+    ));
+}
+
+#[test]
 fn qcow2_rejects_compressed_l1_entry() {
     let cluster_size = 1u64 << 12;
     let l1_table_offset = cluster_size * 2;
@@ -622,8 +638,8 @@ fn qcow2_rejects_absurd_l1_table_size() {
     write_be_u32(&mut header, 20, cluster_bits);
     write_be_u64(&mut header, 24, virtual_size);
     write_be_u32(&mut header, 36, 0x0200_0000); // l1_size must be >= required_l1 (33,554,432)
-    write_be_u64(&mut header, 40, 104); // l1_table_offset (won't be read on failure)
-    write_be_u64(&mut header, 48, 104); // refcount_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 40, 512); // l1_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 48, 512); // refcount_table_offset (won't be read on failure)
     write_be_u32(&mut header, 56, 1); // refcount_table_clusters
     write_be_u64(&mut header, 72, 0); // incompatible_features
     write_be_u32(&mut header, 96, 4); // refcount_order

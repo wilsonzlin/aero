@@ -136,6 +136,13 @@ impl Qcow2Header {
         }
 
         let cluster_size = 1u64 << cluster_bits;
+        if !l1_table_offset.is_multiple_of(cluster_size)
+            || !refcount_table_offset.is_multiple_of(cluster_size)
+        {
+            return Err(DiskError::CorruptImage(
+                "qcow2 table offset not cluster aligned",
+            ));
+        }
         let l2_entries_per_table = cluster_size / 8;
         let guest_clusters = size.div_ceil(cluster_size);
         let required_l1 = guest_clusters.div_ceil(l2_entries_per_table);
