@@ -220,6 +220,15 @@ export interface WasmApi {
      * TX/RX frames are moved over the IO_IPC_NET_{TX,RX} rings by the JS wrapper.
      */
     E1000Bridge?: new (guestBase: number, guestSize: number, mac?: Uint8Array) => {
+        /**
+         * Forward PCI configuration space writes into the Rust device model.
+         *
+         * This is required for keeping the device's internal PCI command register
+         * (including Bus Master Enable) in sync with the JS PCI bus.
+         *
+         * Optional while older WASM builds are still in circulation.
+         */
+        pci_config_write?: (offset: number, size: number, value: number) => void;
         mmio_read(offset: number, size: number): number;
         mmio_write(offset: number, size: number, value: number): void;
         io_read(offset: number, size: number): number;

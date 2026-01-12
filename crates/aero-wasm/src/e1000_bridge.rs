@@ -35,6 +35,13 @@ fn validate_io_size(size: u32) -> usize {
     }
 }
 
+fn validate_pci_size(size: u32) -> usize {
+    match size {
+        1 | 2 | 4 => size as usize,
+        _ => 0,
+    }
+}
+
 /// Guest physical memory backed by the module's linear memory.
 ///
 /// Guest physical address 0 maps to `guest_base` in linear memory and spans
@@ -216,6 +223,21 @@ impl E1000Bridge {
     /// correctly. Call this whenever the guest updates the PCI command register.
     pub fn set_pci_command(&mut self, command: u32) {
         self.dev.pci_config_write(0x04, 2, command & 0xffff);
+    }
+
+    pub fn pci_config_write(&mut self, offset: u32, size: u32, value: u32) {
+        let size = validate_pci_size(size);
+        if size == 0 {
+            return;
+        }
+        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        if end > 256 {
+            return;
+        }
+        if offset > u16::MAX as u32 {
+            return;
+        }
+        self.dev.pci_config_write(offset as u16, size, value);
     }
 
     pub fn poll(&mut self) {

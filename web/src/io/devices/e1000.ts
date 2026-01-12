@@ -4,6 +4,7 @@ import type { IrqSink, TickableDevice } from "../device_manager.ts";
 import type { RingBuffer } from "../../ipc/ring_buffer.ts";
 
 export type E1000BridgeLike = {
+  pci_config_write?: (offset: number, size: number, value: number) => void;
   mmio_read(offset: number, size: number): number;
   mmio_write(offset: number, size: number, value: number): void;
   io_read(offset: number, size: number): number;
@@ -99,6 +100,18 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     this.#irqSink = opts.irqSink;
     this.#netTxRing = opts.netTxRing;
     this.#netRxRing = opts.netRxRing;
+  }
+
+  pciConfigWrite(offset: number, size: number, value: number): void {
+    if (this.#destroyed) return;
+    const fn = this.#bridge.pci_config_write;
+    if (!fn) return;
+    if (size !== 1 && size !== 2 && size !== 4) return;
+    try {
+      fn.call(this.#bridge, offset >>> 0, size >>> 0, maskToSize(value >>> 0, size));
+    } catch {
+      // ignore device errors during guest PCI config writes
+    }
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {

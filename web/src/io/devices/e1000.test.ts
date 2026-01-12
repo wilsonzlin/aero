@@ -3,7 +3,24 @@ import { describe, expect, it, vi } from "vitest";
 import { createIpcBuffer, openRingByKind } from "../../ipc/ipc";
 import { IO_IPC_NET_RX_QUEUE_KIND, IO_IPC_NET_TX_QUEUE_KIND } from "../../runtime/shared_layout";
 import type { IrqSink } from "../device_manager";
+import { MmioBus } from "../bus/mmio";
+import { PciBus } from "../bus/pci";
+import { PortIoBus } from "../bus/portio";
 import { E1000PciDevice, type E1000BridgeLike } from "./e1000";
+
+function cfgAddr(dev: number, fn: number, off: number): number {
+  // PCI config mechanism #1 (I/O ports 0xCF8/0xCFC).
+  return (0x8000_0000 | ((dev & 0x1f) << 11) | ((fn & 0x07) << 8) | (off & 0xfc)) >>> 0;
+}
+
+function makeCfgIo(portBus: PortIoBus) {
+  return {
+    writeU16(dev: number, fn: number, off: number, value: number): void {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      portBus.write(0x0cfc + (off & 3), 2, value & 0xffff);
+    },
+  };
+}
 
 describe("io/devices/E1000PciDevice", () => {
   it("exposes the expected PCI identity and BAR layout", () => {
@@ -162,5 +179,45 @@ describe("io/devices/E1000PciDevice", () => {
     dev.tick(1);
     expect(irqSink.lowerIrq).toHaveBeenCalledTimes(1);
     expect(irqSink.lowerIrq).toHaveBeenCalledWith(10);
+  });
+
+  it("forwards PCI config writes (e.g. command/BME) to the WASM bridge when available", () => {
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    const pciConfigWrite = vi.fn();
+    const bridge: E1000BridgeLike = {
+      pci_config_write: pciConfigWrite,
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      poll: vi.fn(),
+      receive_frame: vi.fn(),
+      pop_tx_frame: vi.fn(() => undefined),
+      irq_level: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new E1000PciDevice({ bridge, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+    pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    // PCI command register write: set Bus Master Enable (bit 2).
+    const cfg = makeCfgIo(portBus);
+    cfg.writeU16(0, 0, 0x04, 0x0004);
+
+    expect(pciConfigWrite).toHaveBeenCalledTimes(1);
+    // The PCI bus callback is invoked on the aligned dword (0x04..0x07).
+    expect(pciConfigWrite).toHaveBeenCalledWith(0x04, 4, 0x0004);
   });
 });

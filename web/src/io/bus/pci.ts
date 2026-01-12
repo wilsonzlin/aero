@@ -119,6 +119,16 @@ export interface PciDevice {
    */
   onPciCommandWrite?(command: number): void;
 
+  /**
+   * Optional hook invoked when the guest writes to PCI configuration space.
+   *
+   * The PCI bus owns the config space byte array (including enforcing RW/RO
+   * fields and BAR decoding invariants). This callback allows device models to
+   * mirror relevant config state (e.g. PCI command register Bus Master Enable)
+   * into an out-of-band backend such as a WASM device model.
+   */
+  pciConfigWrite?(alignedOff: number, size: number, value: number): void;
+
   mmioRead?(barIndex: number, offset: bigint, size: number): number;
   mmioWrite?(barIndex: number, offset: bigint, size: number, value: number): void;
   ioRead?(barIndex: number, offset: number, size: number): number;
@@ -499,6 +509,13 @@ export class PciBus implements PortIoHandler {
           // Ignore device hook failures; PCI config space writes should remain resilient to
           // device implementation bugs.
         }
+
+        try {
+          fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
+        } catch {
+          // Ignore device hook failures; PCI config space writes should remain resilient to
+          // device implementation bugs.
+        }
       }
       return;
     }
@@ -518,6 +535,7 @@ export class PciBus implements PortIoHandler {
         else bar.sizingHigh = true;
         // Store all-ones as written; reads will return mask while sizing is true.
         writeU32LE(fn.config, alignedOff, value);
+        fn.device.pciConfigWrite?.(alignedOff, 4, value >>> 0);
         return;
       }
 
@@ -535,13 +553,21 @@ export class PciBus implements PortIoHandler {
           bar.base = (hi << 32n) | lo;
         }
         // Always write both halves in canonical form (correct type bits in low dword).
-        writeU32LE(fn.config, 0x10 + bar.index * 4, this.#encodeBarValueLow(bar));
-        writeU32LE(fn.config, 0x10 + (bar.index + 1) * 4, this.#encodeBarValueHigh(bar));
+        const lowOff = 0x10 + bar.index * 4;
+        const highOff = 0x10 + (bar.index + 1) * 4;
+        const lowVal = this.#encodeBarValueLow(bar);
+        const highVal = this.#encodeBarValueHigh(bar);
+        writeU32LE(fn.config, lowOff, lowVal);
+        writeU32LE(fn.config, highOff, highVal);
+        fn.device.pciConfigWrite?.(lowOff, 4, lowVal);
+        fn.device.pciConfigWrite?.(highOff, 4, highVal);
       } else {
         // 32-bit MMIO or IO BAR.
         if (bar.desc.kind === "mmio32") bar.base = BigInt((value & 0xffff_fff0) >>> 0);
         else bar.base = BigInt((value & 0xffff_fffc) >>> 0);
-        writeU32LE(fn.config, alignedOff, this.#encodeBarValueLow(bar));
+        const newValue = this.#encodeBarValueLow(bar);
+        writeU32LE(fn.config, alignedOff, newValue);
+        fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
       }
 
       // Remap BAR.
@@ -554,11 +580,13 @@ export class PciBus implements PortIoHandler {
     if (mask === 0) return;
     if (mask === 0xffff_ffff) {
       writeU32LE(fn.config, alignedOff, value);
+      fn.device.pciConfigWrite?.(alignedOff, 4, value >>> 0);
       return;
     }
     const cur = readU32LE(fn.config, alignedOff);
     const newValue = ((cur & ~mask) | (value & mask)) >>> 0;
     writeU32LE(fn.config, alignedOff, newValue);
+    fn.device.pciConfigWrite?.(alignedOff, 4, newValue);
   }
 
   #writableMaskForDword(alignedOff: number): number {
