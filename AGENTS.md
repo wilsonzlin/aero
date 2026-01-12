@@ -72,7 +72,9 @@ bash ./scripts/safe-run.sh cargo test --locked   # Test with timeout + memory li
 #   - AERO_CARGO_BUILD_JOBS controls Cargo parallelism (defaults to -j1 for reliability in constrained sandboxes).
 #   - AERO_ISOLATE_CARGO_HOME=1 isolates Cargo registry/cache state per checkout to avoid "Blocking waiting for file lock on package cache" on shared hosts.
 #   - AERO_RUST_CODEGEN_UNITS (alias: AERO_CODEGEN_UNITS) controls rustc per-crate codegen parallelism (`-C codegen-units=<n>`) without manually editing RUSTFLAGS.
-#   - AERO_SAFE_RUN_RUSTC_RETRIES controls how many times safe-run will retry transient rustc thread/process spawn failures (EAGAIN/WouldBlock).
+#   - AERO_SAFE_RUN_RUSTC_RETRIES controls how many times safe-run will retry transient rustc thread/process spawn failures (EAGAIN/WouldBlock), including panics like:
+#       - `failed to spawn helper thread (WouldBlock)`
+#       - `called Result::unwrap() on an Err value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }`
 AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G AERO_CARGO_BUILD_JOBS=2 bash ./scripts/safe-run.sh cargo build --release --locked
 ```
 
