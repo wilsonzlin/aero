@@ -314,10 +314,14 @@ Success looks like:
 - Harness exit code `0`
 - Serial log contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
 
-### 4.3 Optional: end-to-end input event delivery (QMP injection)
+### 4.3 Optional: end-to-end input event delivery (QMP injection + guest HID report read)
 
-The default `virtio-input` selftest validates **enumeration + report descriptors** only.
-If you want a regression test that covers the full “virtio queues → KMDF HID → user-mode `ReadFile`” path, use the harness’s optional **virtio-input-events** mode.
+The default guest marker `virtio-input` validates **enumeration** and the **HID report descriptor** contract (keyboard-only + mouse-only devices).
+It does **not** prove that real virtio-input events (virtio queues → KMDF HID → user-mode) are delivered.
+
+To validate actual event delivery deterministically, use the optional guest marker:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY/PASS/FAIL/...`
 
 Guest image requirement:
 
@@ -346,13 +350,21 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --snapshot
 ```
 
+When enabled, the harness:
+
+1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`
+2. Injects a deterministic input sequence via QMP `input-send-event`:
+   - keyboard: `'a'` press + release
+   - mouse: relative move + left click
+3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
+
 Expected signal:
 
 - Guest serial contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 - Host harness logs include a marker like `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|...`
 
 If the guest was not provisioned with `--test-input-events`, the guest will emit:
-`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`.
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set` and the harness will fail when `-WithInputEvents` / `--with-input-events` is enabled.
 
 ---
 
