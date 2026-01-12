@@ -19,5 +19,5 @@ Both files are intentionally **ignored by git** via `cert/.gitignore`.
 
 ## SHA-1 vs SHA-2
 
-For maximum compatibility with stock Windows 7 SP1, `scripts/make-cert.ps1` attempts to generate a **SHA-1-signed** certificate by default.
+For maximum compatibility with stock Windows 7 SP1, `..\scripts\make-cert.ps1` attempts to generate a **SHA-1-signed** certificate by default.
 If you opt into SHA-2 (`-AllowSha2CertFallback`), ensure the test machine has SHA-2 support updates installed (KB3033929 / KB4474419).
