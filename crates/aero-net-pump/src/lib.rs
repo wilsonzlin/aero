@@ -1167,12 +1167,23 @@ mod tests {
         }
     }
 
-    fn read_rx_desc_len_status_errors(mem: &TestMem, addr: u64) -> (u16, u8, u8) {
+    fn read_rx_desc_fields(mem: &TestMem, addr: u64) -> (u64, u16, u8, u8) {
+        let addr_bytes = mem.read_vec(addr, 8);
+        let buffer_addr = u64::from_le_bytes([
+            addr_bytes[0],
+            addr_bytes[1],
+            addr_bytes[2],
+            addr_bytes[3],
+            addr_bytes[4],
+            addr_bytes[5],
+            addr_bytes[6],
+            addr_bytes[7],
+        ]);
         let len_bytes = mem.read_vec(addr + 8, 2);
         let len = u16::from_le_bytes([len_bytes[0], len_bytes[1]]);
         let status = mem.read_vec(addr + 12, 1)[0];
         let errors = mem.read_vec(addr + 13, 1)[0];
-        (len, status, errors)
+        (buffer_addr, len, status, errors)
     }
 
     #[test]
@@ -1245,6 +1256,11 @@ mod tests {
             std::slice::from_ref(&discover_frame),
             "backend should have received exactly the DHCPDISCOVER TX frame"
         );
+        assert_eq!(
+            mem.read_vec(0x10_000, discover_frame.len()),
+            discover_frame,
+            "E1000 TX DMA must not modify the guest TX buffer"
+        );
         assert!(
             !backend.stack().is_ip_assigned(),
             "stack should not mark IP assigned after DHCP OFFER"
@@ -1269,8 +1285,8 @@ mod tests {
         );
 
         const DD_EOP: u8 = 0b0000_0011;
-        let (rx0_len, rx0_status, rx0_errors) = read_rx_desc_len_status_errors(&mem, 0x2000);
-        let (rx1_len, rx1_status, rx1_errors) = read_rx_desc_len_status_errors(&mem, 0x2010);
+        let (rx0_buf, rx0_len, rx0_status, rx0_errors) = read_rx_desc_fields(&mem, 0x2000);
+        let (rx1_buf, rx1_len, rx1_status, rx1_errors) = read_rx_desc_fields(&mem, 0x2010);
         assert!(
             rx0_len > 0,
             "RX desc 0 should have non-zero length after DMA (got {rx0_len})"
@@ -1289,6 +1305,8 @@ mod tests {
             DD_EOP,
             "RX desc 1 should have DD|EOP set (status={rx1_status:#04x})"
         );
+        assert_eq!(rx0_buf, rx_bufs[0], "RX desc 0 buffer addr changed");
+        assert_eq!(rx1_buf, rx_bufs[1], "RX desc 1 buffer addr changed");
         assert_eq!(rx0_errors, 0, "RX desc 0 should have no errors");
         assert_eq!(rx1_errors, 0, "RX desc 1 should have no errors");
         assert!(
@@ -1408,6 +1426,16 @@ mod tests {
             [discover_frame.clone(), request_frame.clone()],
             "backend should have received DHCPDISCOVER then DHCPREQUEST frames"
         );
+        assert_eq!(
+            mem.read_vec(0x10_000, discover_frame.len()),
+            discover_frame,
+            "E1000 TX DMA must not modify the original DHCPDISCOVER TX buffer"
+        );
+        assert_eq!(
+            mem.read_vec(0x11_000, request_frame.len()),
+            request_frame,
+            "E1000 TX DMA must not modify the DHCPREQUEST TX buffer"
+        );
 
         let tx1_status = mem.read_vec(0x1010 + 12, 1)[0];
         assert_ne!(
@@ -1426,8 +1454,8 @@ mod tests {
             "expected RDH==4 after receiving 2 DHCP ACK frames"
         );
 
-        let (rx2_len, rx2_status, rx2_errors) = read_rx_desc_len_status_errors(&mem, 0x2020);
-        let (rx3_len, rx3_status, rx3_errors) = read_rx_desc_len_status_errors(&mem, 0x2030);
+        let (rx2_buf, rx2_len, rx2_status, rx2_errors) = read_rx_desc_fields(&mem, 0x2020);
+        let (rx3_buf, rx3_len, rx3_status, rx3_errors) = read_rx_desc_fields(&mem, 0x2030);
         assert!(
             rx2_len > 0,
             "RX desc 2 should have non-zero length after DMA (got {rx2_len})"
@@ -1446,6 +1474,8 @@ mod tests {
             DD_EOP,
             "RX desc 3 should have DD|EOP set (status={rx3_status:#04x})"
         );
+        assert_eq!(rx2_buf, rx_bufs[2], "RX desc 2 buffer addr changed");
+        assert_eq!(rx3_buf, rx_bufs[3], "RX desc 3 buffer addr changed");
         assert_eq!(rx2_errors, 0, "RX desc 2 should have no errors");
         assert_eq!(rx3_errors, 0, "RX desc 3 should have no errors");
         assert!(
@@ -1525,7 +1555,11 @@ mod tests {
         // Remaining RX descriptors/buffers should be untouched (we only expect 4 total frames).
         for i in 4..rx_desc_count {
             let desc_addr = 0x2000 + (i as u64) * 16;
-            let (len, status, errors) = read_rx_desc_len_status_errors(&mem, desc_addr);
+            let (buf, len, status, errors) = read_rx_desc_fields(&mem, desc_addr);
+            assert_eq!(
+                buf, rx_bufs[i as usize],
+                "unexpected RX desc {i} buffer addr change"
+            );
             assert_eq!(len, 0, "unexpected RX desc {i} length (expected unused)");
             assert_eq!(
                 status, 0,
