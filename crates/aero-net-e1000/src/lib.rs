@@ -45,6 +45,17 @@ pub const MAX_TX_AGGREGATE_LEN: usize = 256 * 1024;
 pub const MAX_TSO_SEGMENTS: usize = 256;
 /// Upper bound for the host-facing TX output queue.
 pub const MAX_TX_OUT_QUEUE: usize = 256;
+/// Upper bound on the number of TX descriptors that may be processed in a single [`E1000Device::poll`]
+/// call.
+///
+/// The E1000 device model executes DMA in host-driven polling loops. Without an explicit bound here,
+/// a malicious guest could program an extremely large descriptor ring and force the host to spend an
+/// unbounded amount of time walking descriptors in a single poll call.
+///
+/// We pick a large value so normal guests/drivers still make rapid progress, while ensuring
+/// deterministic upper bounds for callers that invoke [`E1000Device::poll`] from latency-sensitive
+/// host runtimes (e.g. browser workers).
+pub const MAX_TX_DESCS_PER_POLL: u32 = 4096;
 
 // MMIO register offsets (subset).
 const REG_CTRL: u32 = 0x0000;
@@ -1149,7 +1160,9 @@ impl E1000Device {
 
         let mut should_raise_txdw = false;
 
-        while head != tail {
+        let mut desc_budget = MAX_TX_DESCS_PER_POLL;
+        while head != tail && desc_budget != 0 {
+            desc_budget -= 1;
             let idx = head as u64;
             let desc_addr = base + idx * TxDesc::LEN as u64;
             let mut desc_bytes = read_desc::<{ TxDesc::LEN }>(mem, desc_addr);
