@@ -415,11 +415,10 @@ impl D3D9Runtime {
 
         // Regression check: if the adapter supports BC and it's not disabled, ensure we actually
         // requested it so DXT textures can remain compressed on the GPU.
-        #[cfg(test)]
         if !texture_compression_disabled
             && adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
         {
-            assert!(
+            debug_assert!(
                 device_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
                 "adapter supports TEXTURE_COMPRESSION_BC but aero-d3d9 device was not created with it (set AERO_DISABLE_WGPU_TEXTURE_COMPRESSION=1 to force opt-out)"
             );
