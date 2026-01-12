@@ -37,6 +37,7 @@ const TD_CTRL_IOC: u32 = 1 << 24;
 const PORTSC_CSC: u16 = 0x0002;
 const PORTSC_PED: u16 = 0x0004;
 const PORTSC_PR: u16 = 0x0200;
+const PORTSC_SUSP: u16 = 0x1000;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -1446,4 +1447,127 @@ fn pc_platform_uhci_external_hub_delivers_keyboard_report_via_dma() {
     let mut report = [0u8; 8];
     pc.memory.read_physical(BUF_INT as u64, &mut report);
     assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
+}
+
+#[test]
+fn pc_platform_uhci_remote_wakeup_sets_resume_detect_and_triggers_intx() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = USB_UHCI_PIIX3.bdf;
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let irq = u8::try_from(gsi).expect("UHCI INTx should route to a PIC IRQ in legacy mode");
+
+    // Unmask IRQ2 (cascade) + the routed IRQ so we can observe UHCI interrupts through the PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(irq, false);
+    }
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    pc.uhci
+        .as_ref()
+        .expect("UHCI should be enabled")
+        .borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
+
+    // Enable Bus Mastering so UHCI can DMA the schedule/TD state.
+    let command = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | (1 << 2),
+    );
+    pc.tick(0);
+
+    init_frame_list(&mut pc);
+    reset_port(&mut pc, bar4_base, REG_PORTSC1);
+
+    pc.io
+        .write(bar4_base + REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    pc.io.write(bar4_base + REG_FRNUM, 2, 0);
+    pc.io.write(
+        bar4_base + REG_USBCMD,
+        2,
+        u32::from(USBCMD_RS | USBCMD_MAXP),
+    );
+
+    // Enumerate + configure the keyboard at address 5.
+    control_no_data(
+        &mut pc,
+        0,
+        [0x00, 0x05, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_ADDRESS(5)
+    );
+    control_no_data(
+        &mut pc,
+        5,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
+    );
+
+    // Enable remote wakeup on the device (standard SET_FEATURE DEVICE_REMOTE_WAKEUP).
+    control_no_data(
+        &mut pc,
+        5,
+        [0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+
+    // Enable resume-detect interrupts.
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_RESUME));
+
+    // Suspend the root hub port, then inject a key event. The HID device should request remote
+    // wakeup, which the root hub exposes via the PORTSC "resume detect" bit and the controller
+    // latches into USBSTS.RESUMEDETECT (triggering an interrupt when USBINTR.RESUME is enabled).
+    write_portsc(
+        &mut pc,
+        bar4_base,
+        REG_PORTSC1,
+        PORTSC_PED | PORTSC_SUSP,
+    );
+    keyboard.key_event(0x04, true);
+    pc.tick(1_000_000);
+
+    assert_ne!(
+        pc.io.read(bar4_base + REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0,
+        "remote wakeup should latch USBSTS.RESUMEDETECT"
+    );
+    assert_ne!(
+        read_portsc(&mut pc, bar4_base, REG_PORTSC1) & (1 << 6),
+        0,
+        "remote wakeup should set PORTSC.RD"
+    );
+
+    pc.poll_pci_intx_lines();
+
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("UHCI IRQ should be pending after RESUMEDETECT");
+    let pending_irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(pending_irq, irq);
+
+    // Consume + EOI, then clear the status bit and observe deassertion.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_RESUMEDETECT));
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
 }
