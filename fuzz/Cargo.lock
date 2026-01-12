@@ -28,6 +28,7 @@ dependencies = [
  "aero-platform",
  "aero-storage",
  "aero-storage-adapters",
+ "aero-usb",
  "memory",
 ]
 
@@ -120,6 +121,15 @@ dependencies = [
 [[package]]
 name = "aero-types"
 version = "0.1.0"
+
+[[package]]
+name = "aero-usb"
+version = "0.1.0"
+dependencies = [
+ "aero-io-snapshot",
+ "serde",
+ "thiserror",
+]
 
 [[package]]
 name = "aero-x86"
