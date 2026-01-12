@@ -129,8 +129,7 @@ async fn cors_headers_are_present_on_rejected_pathological_image_ids() {
         .with_cors_allow_credentials(true);
     let app = aero_storage_server::app(state);
 
-    const MAX_IMAGE_ID_LEN: usize = 128;
-    let long_raw = "a".repeat(MAX_IMAGE_ID_LEN * 3 + 1);
+    let long_raw = "a".repeat(aero_storage_server::store::MAX_IMAGE_ID_LEN * 3 + 1);
 
     // Bytes endpoint guard should return 404 but still include CORS headers so callers don't see
     // a generic CORS failure.

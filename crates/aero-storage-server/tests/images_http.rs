@@ -73,8 +73,8 @@ async fn get_without_range_returns_full_body() {
 async fn overly_long_image_id_is_rejected_with_404() {
     let (app, dir) = setup_app(1024).await;
 
-    // 129 chars (> 128 max) should be rejected by the store validator even if a file exists.
-    let long_id = "a".repeat(129);
+    // > `MAX_IMAGE_ID_LEN` should be rejected by the store validator even if a file exists.
+    let long_id = "a".repeat(aero_storage_server::store::MAX_IMAGE_ID_LEN + 1);
     tokio::fs::write(dir.path().join(&long_id), b"x")
         .await
         .expect("write long id file");

@@ -10,7 +10,7 @@ pub use local_fs::LocalFsImageStore;
 pub use manifest::{Manifest, ManifestError, ManifestImage};
 
 pub const CONTENT_TYPE_DISK_IMAGE: &str = "application/octet-stream";
-pub(crate) const MAX_IMAGE_ID_LEN: usize = 128;
+pub const MAX_IMAGE_ID_LEN: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageMeta {
