@@ -3702,6 +3702,89 @@ mod tests {
             "CPU should wake from HLT once PCI INTx is delivered"
         );
     }
+
+    #[test]
+    fn pc_e1000_intx_is_delivered_via_ioapic_in_apic_mode() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let interrupts = m.platform_interrupts().expect("pc platform enabled");
+        interrupts
+            .borrow_mut()
+            .set_mode(aero_platform::interrupts::PlatformInterruptMode::Apic);
+
+        let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+
+        // Program IOAPIC entry for this GSI -> vector 0x60 (active-low, level-triggered).
+        const VECTOR: u8 = 0x60;
+        let low: u32 = u32::from(VECTOR) | (1 << 13) | (1 << 15); // polarity low + level triggered
+        let redtbl_low = 0x10u32 + gsi * 2;
+        let redtbl_high = redtbl_low + 1;
+        {
+            let mut bus = m.mem.inner.borrow_mut();
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, low);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x00, redtbl_high);
+            bus.write_physical_u32(IOAPIC_MMIO_BASE + 0x10, 0);
+        }
+
+        // Install a trivial real-mode ISR for the vector.
+        //
+        // mov byte ptr [0x2000], 0xAA
+        // iret
+        const HANDLER_IP: u16 = 0x1100;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(HANDLER_IP), &[0xC6, 0x06, 0x00, 0x20, 0xAA, 0xCF]);
+        write_ivt_entry(&mut m, VECTOR, HANDLER_IP, 0x0000);
+
+        // Program CPU at 0x1000 with enough NOPs to cover the instruction budgets below.
+        const ENTRY_IP: u16 = 0x1000;
+        m.mem
+            .inner
+            .borrow_mut()
+            .write_physical(u64::from(ENTRY_IP), &[0x90; 32]);
+        m.mem.inner.borrow_mut().write_physical(0x2000, &[0x00]);
+
+        init_real_mode_cpu(&mut m, ENTRY_IP, RFLAGS_IF);
+
+        // Assert E1000 INTx level by enabling + setting a cause bit.
+        let e1000 = m.e1000().expect("e1000 enabled");
+        {
+            let mut dev = e1000.borrow_mut();
+            dev.mmio_write_reg(0x00D0, 4, aero_net_e1000::ICR_TXDW); // IMS
+            dev.mmio_write_reg(0x00C8, 4, aero_net_e1000::ICR_TXDW); // ICS
+            assert!(dev.irq_level());
+        }
+
+        // Before the machine runs a slice, the INTx level has not been synced into the platform.
+        assert_eq!(
+            PlatformInterruptController::get_pending(&*interrupts.borrow()),
+            None
+        );
+
+        // Simulate the CPU being halted: Tier-0 should wake it once the interrupt vector is
+        // delivered (via IOAPIC + LAPIC).
+        m.cpu.state.halted = true;
+        let _ = m.run_slice(10);
+        assert_eq!(m.read_physical_u8(0x2000), 0xAA);
+        assert!(
+            !m.cpu.state.halted,
+            "CPU should wake from HLT once PCI INTx is delivered via IOAPIC"
+        );
+    }
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn machine_e1000_tx_ring_requires_bus_master_and_transmits_to_ring_backend() {
