@@ -7,7 +7,9 @@ fn expected_retired_instructions_10k(variant: GuestCpuBenchVariant) -> u64 {
     match variant {
         GuestCpuBenchVariant::Alu64 | GuestCpuBenchVariant::Alu32 => 3 + iters * 7,
         GuestCpuBenchVariant::BranchPred64 | GuestCpuBenchVariant::BranchPred32 => 3 + iters * 10,
-        GuestCpuBenchVariant::BranchUnpred64 | GuestCpuBenchVariant::BranchUnpred32 => 4 + iters * 16,
+        GuestCpuBenchVariant::BranchUnpred64 | GuestCpuBenchVariant::BranchUnpred32 => {
+            4 + iters * 16
+        }
         GuestCpuBenchVariant::MemSeq64
         | GuestCpuBenchVariant::MemSeq32
         | GuestCpuBenchVariant::MemStride64
@@ -21,23 +23,39 @@ fn guest_cpu_payload_checksums_match_pf008_doc() {
     let mut runner = GuestCpuBenchCoreRunner::new();
 
     for payload in PAYLOADS {
-        let res = runner
+        let res1 = runner
             .run_payload_once(payload, ITERS_PER_RUN_CANONICAL)
             .unwrap_or_else(|e| panic!("{} failed: {e}", payload.variant.as_str()));
+        let res2 = runner
+            .run_payload_once(payload, ITERS_PER_RUN_CANONICAL)
+            .unwrap_or_else(|e| panic!("{} failed (second run): {e}", payload.variant.as_str()));
+
         assert_eq!(
-            res.checksum,
+            res1.checksum,
+            res2.checksum,
+            "non-deterministic checksum for {}",
+            payload.variant.as_str()
+        );
+        assert_eq!(
+            res1.retired_instructions,
+            res2.retired_instructions,
+            "non-deterministic retired instruction count for {}",
+            payload.variant.as_str()
+        );
+        assert_eq!(
+            res2.checksum,
             payload.expected_checksum_10k,
             "checksum mismatch for {}",
             payload.variant.as_str()
         );
         assert_eq!(
-            res.retired_instructions,
+            res2.retired_instructions,
             expected_retired_instructions_10k(payload.variant),
             "retired instruction count mismatch for {}",
             payload.variant.as_str()
         );
         assert!(
-            res.retired_instructions > 0,
+            res2.retired_instructions > 0,
             "retired instruction count should be non-zero for {}",
             payload.variant.as_str()
         );
@@ -50,7 +68,10 @@ fn guest_cpu_payload_rejects_zero_iters() {
     let payload = &PAYLOADS[0];
     let err = runner.run_payload_once(payload, 0).unwrap_err();
     assert!(
-        matches!(err, aero_wasm::guest_cpu_bench::GuestCpuBenchError::InvalidIters(0)),
+        matches!(
+            err,
+            aero_wasm::guest_cpu_bench::GuestCpuBenchError::InvalidIters(0)
+        ),
         "unexpected error: {err}"
     );
 }
