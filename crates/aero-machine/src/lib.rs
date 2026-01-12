@@ -1205,20 +1205,30 @@ impl Machine {
             let bdf: PciBdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
             let pin = PciInterruptPin::IntA;
 
-            let mut level = e1000.borrow().irq_level();
-
-            // Respect PCI command register Interrupt Disable bit (bit 10).
-            if let Some(pci_cfg) = &self.pci_cfg {
-                let intx_disabled = {
+            // Keep the device model's internal PCI command register in sync with the platform PCI
+            // bus so `E1000Device::irq_level` can respect COMMAND.INTX_DISABLE (bit 10) even though
+            // the machine owns the canonical PCI config space.
+            let command = self
+                .pci_cfg
+                .as_ref()
+                .and_then(|pci_cfg| {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     pci_cfg
                         .bus_mut()
                         .device_config(bdf)
-                        .is_some_and(|cfg| (cfg.command() & (1 << 10)) != 0)
-                };
-                if intx_disabled {
-                    level = false;
-                }
+                        .map(|cfg| cfg.command())
+                })
+                .unwrap_or(0);
+            {
+                let mut dev = e1000.borrow_mut();
+                dev.pci_config_write(0x04, 2, u32::from(command));
+            }
+
+            let mut level = e1000.borrow().irq_level();
+
+            // Redundantly gate on the canonical PCI command register as well (defensive).
+            if (command & (1 << 10)) != 0 {
+                level = false;
             }
 
             let mut pci_intx = pci_intx.borrow_mut();
@@ -1618,6 +1628,28 @@ impl Machine {
                 // `bios_post` is deterministic and keeps existing fixed BAR bases intact.
                 bios_post(pci_cfg.bus_mut(), &mut allocator)
                     .expect("PCI BIOS POST resource assignment should succeed");
+            }
+
+            // Keep the device model's internal PCI command register mirrored from the canonical PCI
+            // config space. The machine owns PCI enumeration state via `PciConfigPorts`, but the
+            // E1000 model consults its own PCI config when gating DMA (COMMAND.BME) and INTx
+            // assertion (COMMAND.INTX_DISABLE).
+            //
+            // This ensures snapshot/save_state sees a coherent view even before the first
+            // `poll_network()` call.
+            if let Some(e1000) = e1000.as_ref() {
+                let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+                let command = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.command())
+                        .unwrap_or(0)
+                };
+                e1000
+                    .borrow_mut()
+                    .pci_config_write(0x04, 2, u32::from(command));
             }
 
             // Map the PCI MMIO window used by `PciResourceAllocator` so BAR relocation is reflected

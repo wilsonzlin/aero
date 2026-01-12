@@ -1474,7 +1474,23 @@ impl PcPlatform {
                 pci_intx_sources.push(PciIntxSource {
                     bdf,
                     pin: PciInterruptPin::IntA,
-                    query_level: Box::new(move |_pc| e1000_for_intx.borrow().irq_level()),
+                    query_level: Box::new(move |pc| {
+                        let command = {
+                            let mut pci_cfg = pc.pci_cfg.borrow_mut();
+                            pci_cfg
+                                .bus_mut()
+                                .device_config(bdf)
+                                .map(|cfg| cfg.command())
+                                .unwrap_or(0)
+                        };
+
+                        // Keep the device model's internal PCI command register in sync so
+                        // `E1000Device::irq_level` can respect COMMAND.INTX_DISABLE (bit 10) even
+                        // though the platform owns the canonical PCI config space.
+                        let mut dev = e1000_for_intx.borrow_mut();
+                        dev.pci_config_write(0x04, 2, u32::from(command));
+                        dev.irq_level()
+                    }),
                 });
             }
 

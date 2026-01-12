@@ -594,6 +594,15 @@ impl E1000Device {
     }
 
     pub fn irq_level(&self) -> bool {
+        // PCI command register bit 10 disables legacy INTx assertion.
+        //
+        // Some integration layers additionally gate INTx externally (e.g. a platform router), but
+        // keeping this behavior in the device model makes standalone/unit-test usage consistent
+        // with real hardware.
+        let intx_disabled = (self.pci.read(0x04, 2) & (1 << 10)) != 0;
+        if intx_disabled {
+            return false;
+        }
         self.irq_level
     }
 
@@ -1833,6 +1842,24 @@ mod tests {
         let icr = dev.mmio_read_u32(REG_ICR);
         assert_eq!(icr & ICR_TXDW, ICR_TXDW);
         assert!(!dev.irq_level());
+    }
+
+    #[test]
+    fn pci_intx_disable_bit_gates_irq_level() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        // Enable a cause + interrupt mask so the device would normally assert INTx.
+        dev.mmio_write_u32_reg(REG_IMS, ICR_TXDW);
+        dev.mmio_write_u32_reg(REG_ICS, ICR_TXDW);
+        assert!(dev.irq_level());
+
+        // Disable INTx via PCI command bit 10; the line must be deasserted.
+        dev.pci_config_write(0x04, 2, 1 << 10);
+        assert!(!dev.irq_level());
+
+        // Re-enable INTx: since the interrupt cause is still pending, the line should reassert.
+        dev.pci_config_write(0x04, 2, 0);
+        assert!(dev.irq_level());
     }
 
     #[test]
