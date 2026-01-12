@@ -4,7 +4,9 @@ Windows (and Linux) bind drivers primarily based on PCI **Vendor ID / Device ID*
 
 This document defines Aero’s canonical PCI identity + wiring for I/O devices, with a focus on stable Windows 7 binding.
 
-The canonical values are encoded in `crates/devices/src/pci/profile.rs`, and validated by `crates/devices/tests/pci_profile.rs`.
+The canonical **paravirtual** device identities are encoded in `crates/devices/src/pci/profile.rs`, and validated by `crates/devices/tests/pci_profile.rs`.
+
+Note: the canonical `aero_machine::Machine` also exposes a **transitional** VGA/VBE PCI stub (`00:0c.0`, `1234:1111`) used only for boot display / VBE LFB routing; it is not part of the long-term Windows paravirtual device contract.
 
 ## Canonical PCI layout (bus/dev/fn)
 
