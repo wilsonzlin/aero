@@ -94,7 +94,6 @@ function parseIpv6ToBytes(address) {
   const zoneIdx = ip.indexOf("%");
   if (zoneIdx !== -1) ip = ip.slice(0, zoneIdx);
   if (ip.startsWith("[") && ip.endsWith("]")) ip = ip.slice(1, -1);
-  ip = ip.toLowerCase();
 
   const pieces = ip.split("::");
   if (pieces.length > 2) {
