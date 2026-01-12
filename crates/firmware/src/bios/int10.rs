@@ -21,6 +21,13 @@ impl Bios {
                     self.video_mode = 0x03;
                 }
             }
+            0x05 => {
+                // Select Active Display Page (AL = page)
+                let page = cpu.al();
+                if page < 8 {
+                    BiosDataArea::write_active_page(memory, page);
+                }
+            }
             0x0F => {
                 // Get Current Video Mode
                 let mode = BiosDataArea::read_video_mode(memory);
@@ -68,9 +75,10 @@ impl Bios {
                 let top_col = cpu.cl();
                 let bottom_row = cpu.dh();
                 let bottom_col = cpu.dl();
+                let page = BiosDataArea::read_active_page(memory);
                 self.video.vga.scroll_up(
                     memory,
-                    0,
+                    page,
                     lines,
                     attr,
                     crate::video::vga::TextWindow {

@@ -48,18 +48,31 @@ impl BiosDataArea {
         mem.write_u8(BDA_ACTIVE_PAGE_ADDR, page);
     }
 
-    pub fn read_cursor_pos_page0(mem: &mut impl MemoryBus) -> (u8, u8) {
-        let word = mem.read_u16(BDA_CURSOR_POS_PAGE0_ADDR);
+    pub fn read_cursor_pos(mem: &mut impl MemoryBus, page: u8) -> (u8, u8) {
+        if page >= 8 {
+            return (0, 0);
+        }
+        let addr = BDA_CURSOR_POS_PAGE0_ADDR + u64::from(page) * 2;
+        let word = mem.read_u16(addr);
         let col = (word & 0xFF) as u8;
         let row = (word >> 8) as u8;
         (row, col)
     }
 
+    pub fn write_cursor_pos(mem: &mut impl MemoryBus, page: u8, row: u8, col: u8) {
+        if page >= 8 {
+            return;
+        }
+        let addr = BDA_CURSOR_POS_PAGE0_ADDR + u64::from(page) * 2;
+        mem.write_u16(addr, ((row as u16) << 8) | (col as u16));
+    }
+
+    pub fn read_cursor_pos_page0(mem: &mut impl MemoryBus) -> (u8, u8) {
+        Self::read_cursor_pos(mem, 0)
+    }
+
     pub fn write_cursor_pos_page0(mem: &mut impl MemoryBus, row: u8, col: u8) {
-        mem.write_u16(
-            BDA_CURSOR_POS_PAGE0_ADDR,
-            ((row as u16) << 8) | (col as u16),
-        );
+        Self::write_cursor_pos(mem, 0, row, col);
     }
 
     pub fn read_cursor_shape(mem: &mut impl MemoryBus) -> (u8, u8) {

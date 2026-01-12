@@ -1,5 +1,7 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
-use firmware::bda::{BDA_CURSOR_POS_PAGE0_ADDR, BDA_SCREEN_COLS_ADDR};
+use firmware::bda::{
+    BDA_ACTIVE_PAGE_ADDR, BDA_CURSOR_POS_PAGE0_ADDR, BDA_PAGE_SIZE_ADDR, BDA_SCREEN_COLS_ADDR,
+};
 
 fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -40,6 +42,27 @@ fn build_int10_set_cursor_shape_boot_sector(start: u8, end: u8) -> [u8; 512] {
     i += 2;
     // mov cl, end
     sector[i..i + 2].copy_from_slice(&[0xB1, end]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+fn build_int10_set_active_page_boot_sector(page: u8) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ah, 0x05  ; INT 10h AH=05h Select Active Display Page
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x05]);
+    i += 2;
+    // mov al, page
+    sector[i..i + 2].copy_from_slice(&[0xB0, page]);
     i += 2;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
@@ -382,4 +405,36 @@ fn int10_teletype_output_advances_cursor_and_syncs_to_vga_crtc() {
     assert_eq!(start, 0x06);
     assert_eq!(end, 0x07);
     assert_eq!(pos, expected_pos);
+}
+
+#[test]
+fn int10_set_active_page_updates_crtc_start_address() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let page = 1u8;
+    let boot = build_int10_set_active_page_boot_sector(page);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    assert_eq!(m.read_physical_u8(BDA_ACTIVE_PAGE_ADDR), page);
+    let page_size_bytes = m.read_physical_u16(BDA_PAGE_SIZE_ADDR);
+    let expected_start = u16::from(page)
+        .saturating_mul(page_size_bytes / 2)
+        & 0x3FFF;
+
+    let got_start = read_crtc_start_addr(&mut m) & 0x3FFF;
+    assert_eq!(got_start, expected_start);
+
+    // Cursor location should also move to the active page's start (cursor pos defaults to 0,0).
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos, expected_start);
 }

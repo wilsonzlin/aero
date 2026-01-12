@@ -4291,7 +4291,8 @@ impl Machine {
         // - cursor pos for page 0 (row, col)
         // - cursor shape (start, end)
         let cols = BiosDataArea::read_screen_cols(&mut self.mem).max(1);
-        let (row, col) = BiosDataArea::read_cursor_pos_page0(&mut self.mem);
+        let page = BiosDataArea::read_active_page(&mut self.mem);
+        let (row, col) = BiosDataArea::read_cursor_pos(&mut self.mem, page);
         let (cursor_start, cursor_end) = BiosDataArea::read_cursor_shape(&mut self.mem);
 
         let cell_index = u16::from(row)
@@ -4438,6 +4439,23 @@ impl Machine {
                         (ax_before & 0xFF00) == 0x0000 && (ax_before & 0x007F) == 0x03;
                     if vbe_mode_before.is_some() || is_set_mode_03h {
                         vga.borrow_mut().set_text_mode_80x25();
+                    }
+
+                    // INT 10h AH=05 "Select Active Display Page" updates the BDA but does not
+                    // program VGA ports in our HLE BIOS. Mirror the active-page start address into
+                    // the CRTC start address regs so the visible text window matches BIOS state.
+                    let is_set_active_page = (ax_before & 0xFF00) == 0x0500;
+                    if is_set_active_page {
+                        let page = BiosDataArea::read_active_page(&mut self.mem);
+                        let page_size_bytes = BiosDataArea::read_page_size(&mut self.mem);
+                        let cells_per_page = page_size_bytes / 2;
+                        let start_addr = u16::from(page).saturating_mul(cells_per_page) & 0x3FFF;
+
+                        let mut vga = vga.borrow_mut();
+                        vga.port_write(0x3D4, 1, 0x0C);
+                        vga.port_write(0x3D5, 1, u32::from((start_addr >> 8) as u8));
+                        vga.port_write(0x3D4, 1, 0x0D);
+                        vga.port_write(0x3D5, 1, u32::from((start_addr & 0x00FF) as u8));
                     }
                 }
             }
