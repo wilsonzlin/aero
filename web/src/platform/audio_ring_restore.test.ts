@@ -92,6 +92,19 @@ describe("restoreAudioWorkletRing", () => {
     expect(ring.samples).toEqual(new Float32Array(ring.samples.length));
   });
 
+  it("treats snapshot capacityFrames > 2^32 as unknown (does not wrap via >>>0)", () => {
+    const ring = createTestRingBuffer(1, 8);
+    ring.samples.fill(1);
+
+    // If we applied `>>> 0` to this value we'd get 1, which would clamp the ring to 1 frame.
+    const state: AudioWorkletRingStateLike = { capacityFrames: 2 ** 32 + 1, readPos: 0, writePos: 100 };
+    restoreAudioWorkletRing(ring, state);
+
+    expect(Atomics.load(ring.readIndex, 0)).toBe(92);
+    expect(Atomics.load(ring.writeIndex, 0)).toBe(100);
+    expect(getRingBufferLevelFrames(ring)).toBe(8);
+  });
+
   it("clamps using min(snapshot capacity, ring capacity) when snapshot capacityFrames is smaller than the ring", () => {
     const ring = createTestRingBuffer(1, 8);
     ring.samples.fill(1);

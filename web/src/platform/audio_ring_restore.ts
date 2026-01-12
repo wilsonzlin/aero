@@ -42,7 +42,13 @@ export function restoreAudioWorkletRing(ring: AudioRingBufferLayout, state: Audi
   const ringCapacityFrames = ring.capacityFrames >>> 0;
 
   // Treat all snapshot fields as wrapping u32 values.
-  const snapshotCapacityFrames = state.capacityFrames >>> 0;
+  // `capacityFrames` is a ring *size* (not a wrapping counter). Treat invalid values as "unknown"
+  // rather than applying `>>> 0` (which would wrap e.g. 2^32+1 -> 1 and cause overly-aggressive
+  // clamping).
+  const snapshotCapacityFrames =
+    Number.isSafeInteger(state.capacityFrames) && state.capacityFrames > 0 && state.capacityFrames <= 0xffff_ffff
+      ? (state.capacityFrames >>> 0)
+      : 0;
   const effectiveCapacityFrames =
     snapshotCapacityFrames !== 0 ? Math.min(snapshotCapacityFrames, ringCapacityFrames) : ringCapacityFrames;
 
