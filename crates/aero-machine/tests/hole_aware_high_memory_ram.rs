@@ -163,3 +163,52 @@ fn snapshot_write_ram_straddles_low_high_boundary() {
     assert_eq!(m.read_physical_bytes(low_offset, 0x10), vec![0x11; 0x10]);
     assert_eq!(m.read_physical_bytes(high_phys, 0x10), vec![0x22; 0x10]);
 }
+
+#[test]
+fn physical_read_across_4gib_boundary_is_contiguous() {
+    let cfg = MachineConfig {
+        ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let pattern: Vec<u8> = (0..0x10).collect();
+    let prefix = m.read_physical_bytes(0xFFFF_FFF0, 0x10);
+    m.write_physical(0x1_0000_0000, &pattern);
+
+    let got = m.read_physical_bytes(0xFFFF_FFF0, 0x20);
+    assert_eq!(&got[..0x10], &prefix);
+    assert_eq!(&got[0x10..], &pattern);
+}
+
+#[test]
+fn physical_write_across_4gib_boundary_ignores_rom_and_writes_high_ram() {
+    let cfg = MachineConfig {
+        ram_size_bytes: firmware::bios::PCIE_ECAM_BASE + 0x2000,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let rom_before = m.read_physical_bytes(0xFFFF_FFF0, 0x10);
+    let data: Vec<u8> = (0..0x20).collect();
+    m.write_physical(0xFFFF_FFF0, &data);
+
+    // 0xFFFF_FFF0 is within the BIOS ROM alias window, so writes there must be ignored.
+    assert_eq!(m.read_physical_bytes(0xFFFF_FFF0, 0x10), rom_before);
+
+    // The bytes that landed at/above 4GiB should be written into RAM.
+    assert_eq!(
+        m.read_physical_bytes(0x1_0000_0000, 0x10),
+        data[0x10..].to_vec()
+    );
+}
