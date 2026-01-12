@@ -56,6 +56,37 @@ const _: () = {
     assert!(JitContext::TOTAL_BYTE_SIZE <= u32::MAX as usize);
 };
 
+#[cfg(test)]
+mod tests {
+    use memoffset::offset_of;
+
+    use super::JitContext;
+
+    #[test]
+    fn jit_context_layout_matches_constants() {
+        assert_eq!(
+            offset_of!(JitContext, ram_base) as u32,
+            JitContext::RAM_BASE_OFFSET
+        );
+        assert_eq!(
+            offset_of!(JitContext, tlb_salt) as u32,
+            JitContext::TLB_SALT_OFFSET
+        );
+
+        assert_eq!(core::mem::size_of::<JitContext>(), JitContext::BYTE_SIZE);
+        assert_eq!(JitContext::TLB_OFFSET as usize, JitContext::BYTE_SIZE);
+
+        assert_eq!(
+            JitContext::TLB_BYTES,
+            crate::JIT_TLB_ENTRIES * (crate::JIT_TLB_ENTRY_SIZE as usize)
+        );
+        assert_eq!(
+            JitContext::TOTAL_BYTE_SIZE,
+            JitContext::BYTE_SIZE + JitContext::TLB_BYTES
+        );
+    }
+}
+
 /// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
 pub const TIER2_CTX_OFFSET: u32 = abi::CPU_STATE_SIZE + (JitContext::TOTAL_BYTE_SIZE as u32);
 
