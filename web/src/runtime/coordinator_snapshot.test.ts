@@ -124,6 +124,59 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it("orchestrates snapshotSaveToOpfs without a net worker (still resets NET rings)", async () => {
+    const coordinator = new WorkerCoordinator();
+    const cpu = new StubWorker();
+    const io = new StubWorker();
+    installReadyWorkers(coordinator, { cpu, io });
+
+    const shared = (coordinator as any).shared;
+    const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+    const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+    txRing.tryPush(new Uint8Array([0xaa]));
+    rxRing.tryPush(new Uint8Array([0xbb]));
+
+    const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
+
+    expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    expect(io.posted.length).toBe(0);
+
+    cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    // Snapshot boundary must clear NET_TX/NET_RX rings even when there is no net worker.
+    expect(txRing.tryPop()).toBeNull();
+    expect(rxRing.tryPop()).toBeNull();
+
+    expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.getCpuState");
+
+    const cpuBuf = new ArrayBuffer(4);
+    const mmuBuf = new ArrayBuffer(8);
+    cpu.emitMessage({
+      kind: "vm.snapshot.cpuState",
+      requestId: cpu.posted[1]!.message.requestId,
+      ok: true,
+      cpu: cpuBuf,
+      mmu: mmuBuf,
+    });
+    await flushMicrotasks();
+
+    expect(io.posted[1]?.message.kind).toBe("vm.snapshot.saveToOpfs");
+    io.emitMessage({ kind: "vm.snapshot.saved", requestId: io.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
+    io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
   it("always resumes workers after snapshotSaveToOpfs errors", async () => {
     const coordinator = new WorkerCoordinator();
     const cpu = new StubWorker();
