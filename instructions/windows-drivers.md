@@ -247,6 +247,7 @@ Legend:
 │   Shared in-driver virtio libs (not a separate .sys): │
 │     - drivers/windows7/virtio/common/                 │
 │     - drivers/windows/virtio/{common,pci-modern}/     │
+│     - drivers/win7/virtio/virtio-core/                │
 │                 │                                     │
 ├─────────────────┼────────────────────────────────────┤
 │                 ▼                                     │
