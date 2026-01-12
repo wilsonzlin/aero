@@ -673,6 +673,26 @@ fn snapshot_rejects_other_regs_duplicate_key() {
 }
 
 #[test]
+fn snapshot_rejects_unaligned_other_regs_key() {
+    const TAG_OTHER_REGS: u16 = 90;
+
+    // other_regs field encoding: count (u32) then count*(key u32, val u32).
+    // Keys are always 32-bit register offsets and must be 4-byte aligned.
+    let other = Encoder::new().u32(1).u32(0x123).u32(0xDEAD_BEEF).finish();
+
+    let mut w = SnapshotWriter::new(
+        <E1000Device as IoSnapshot>::DEVICE_ID,
+        <E1000Device as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_bytes(TAG_OTHER_REGS, other);
+    let bytes = w.finish();
+
+    let mut dev = E1000Device::new([0; 6]);
+    let err = dev.load_state(&bytes).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
+}
+
+#[test]
 fn snapshot_rejects_inconsistent_irq_level_field() {
     // Tags from `aero_io_snapshot::io::net::state::E1000DeviceState`.
     const TAG_ICR: u16 = 20;

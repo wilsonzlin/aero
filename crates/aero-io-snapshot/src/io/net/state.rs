@@ -517,6 +517,9 @@ impl IoSnapshot for E1000DeviceState {
             let mut regs = std::collections::HashMap::new();
             for _ in 0..count {
                 let key = d.u32()?;
+                if (key & 3) != 0 {
+                    return Err(SnapshotError::InvalidFieldEncoding("e1000 other_regs key"));
+                }
                 let value = d.u32()?;
                 if regs.insert(key, value).is_some() {
                     return Err(SnapshotError::InvalidFieldEncoding(
