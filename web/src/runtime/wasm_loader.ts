@@ -235,6 +235,39 @@ export interface WasmApi {
         ioIpcSab: SharedArrayBuffer,
     ) => VirtioNetPciBridgeHandle;
 
+    /**
+     * Legacy i8042 (PS/2 keyboard + mouse) controller bridge.
+     *
+     * Optional for older WASM builds; when present, the browser I/O worker should
+     * prefer this over the JS i8042 implementation so behavior + snapshots stay
+     * consistent with the canonical Rust model.
+     */
+    I8042Bridge?: new () => {
+        port_read(port: number): number;
+        port_write(port: number, value: number): void;
+
+        inject_key_scancode_bytes(packed: number, len: number): void;
+        inject_mouse_move(dx: number, dy: number): void;
+        inject_mouse_buttons(buttons: number): void;
+        inject_mouse_wheel(delta: number): void;
+
+        /**
+         * IRQ "level mask" for IRQ1/IRQ12.
+         *
+         * Contract (matches `crates/aero-wasm/src/i8042_bridge.rs`):
+         * - bit0 (0x01): IRQ1 asserted
+         * - bit1 (0x02): IRQ12 asserted
+         */
+        irq_mask(): number;
+
+        readonly a20_enabled: boolean;
+        take_reset_requests(): number;
+
+        save_state(): Uint8Array;
+        load_state(bytes: Uint8Array): void;
+        free(): void;
+    };
+
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
         mouse_move(dx: number, dy: number): void;
@@ -919,6 +952,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UhciControllerBridge: mod.UhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
+        I8042Bridge: mod.I8042Bridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
         GuestCpuBenchHarness: mod.GuestCpuBenchHarness,
         UsbPassthroughDemo: mod.UsbPassthroughDemo,

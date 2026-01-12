@@ -56,6 +56,7 @@ import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDevi
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
+import { defaultReadValue } from "../io/ipc/io_protocol";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import {
@@ -190,7 +191,127 @@ const DISK_ERROR_READ_ONLY = 5;
 const DISK_ERROR_DISK_OOB = 6;
 
 let deviceManager: DeviceManager | null = null;
-let i8042: I8042Controller | null = null;
+
+type I8042Bridge = InstanceType<NonNullable<WasmApi["I8042Bridge"]>>;
+
+class I8042WasmController {
+  readonly #bridge: I8042Bridge;
+  readonly #irq: IrqSink;
+  readonly #systemControl: { setA20(enabled: boolean): void; requestReset(): void };
+
+  #irqMask = 0;
+  #a20Enabled = false;
+
+  constructor(bridge: I8042Bridge, irq: IrqSink, systemControl: { setA20(enabled: boolean): void; requestReset(): void }) {
+    this.#bridge = bridge;
+    this.#irq = irq;
+    this.#systemControl = systemControl;
+    this.#syncSideEffects();
+  }
+
+  free(): void {
+    try {
+      this.#bridge.free();
+    } catch {
+      // ignore
+    }
+  }
+
+  portRead(port: number, size: number): number {
+    if (size !== 1) return defaultReadValue(size);
+    const value = this.#bridge.port_read(port & 0xffff) & 0xff;
+    this.#syncSideEffects();
+    return value;
+  }
+
+  portWrite(port: number, size: number, value: number): void {
+    if (size !== 1) return;
+    this.#bridge.port_write(port & 0xffff, value & 0xff);
+    this.#syncSideEffects();
+  }
+
+  injectKeyScancode(packed: number, len: number): void {
+    this.#bridge.inject_key_scancode_bytes(packed >>> 0, len & 0xff);
+    this.#syncSideEffects();
+  }
+
+  injectMouseMove(dx: number, dyPs2: number): void {
+    this.#bridge.inject_mouse_move(dx | 0, dyPs2 | 0);
+    this.#syncSideEffects();
+  }
+
+  injectMouseButtons(buttons: number): void {
+    this.#bridge.inject_mouse_buttons(buttons & 0xff);
+    this.#syncSideEffects();
+  }
+
+  injectMouseWheel(delta: number): void {
+    this.#bridge.inject_mouse_wheel(delta | 0);
+    this.#syncSideEffects();
+  }
+
+  save_state(): Uint8Array {
+    return this.#bridge.save_state();
+  }
+
+  load_state(bytes: Uint8Array): void {
+    this.#bridge.load_state(bytes);
+    this.#syncSideEffects();
+  }
+
+  #syncSideEffects(): void {
+    this.#syncIrqs();
+    this.#syncSystemControl();
+  }
+
+  #syncIrqs(): void {
+    const next = this.#bridge.irq_mask() & 0xff;
+    const prev = this.#irqMask;
+    if (next === prev) return;
+    this.#irqMask = next;
+
+    // bit0: IRQ1, bit1: IRQ12
+    const changes = (prev ^ next) & 0x03;
+    if (changes & 0x01) {
+      if (next & 0x01) this.#irq.raiseIrq(1);
+      else this.#irq.lowerIrq(1);
+    }
+    if (changes & 0x02) {
+      if (next & 0x02) this.#irq.raiseIrq(12);
+      else this.#irq.lowerIrq(12);
+    }
+  }
+
+  #syncSystemControl(): void {
+    // wasm-bindgen getters may appear as either JS properties or no-arg methods depending on the
+    // generated glue version. Accept both.
+    let nextA20 = false;
+    try {
+      const raw = (this.#bridge as unknown as { a20_enabled?: unknown }).a20_enabled;
+      if (typeof raw === "function") {
+        nextA20 = Boolean((raw as (...args: unknown[]) => unknown).call(this.#bridge));
+      } else {
+        nextA20 = Boolean(raw);
+      }
+    } catch {
+      nextA20 = false;
+    }
+    if (nextA20 !== this.#a20Enabled) {
+      this.#a20Enabled = nextA20;
+      this.#systemControl.setA20(nextA20);
+    }
+
+    const resets = this.#bridge.take_reset_requests() >>> 0;
+    if (resets) {
+      for (let i = 0; i < resets; i++) {
+        this.#systemControl.requestReset();
+      }
+    }
+  }
+}
+
+let i8042Ts: I8042Controller | null = null;
+let i8042Wasm: I8042WasmController | null = null;
 
 let portReadCount = 0;
 let portWriteCount = 0;
@@ -328,13 +449,22 @@ function snapshotUsbDeviceState(): { kind: string; bytes: Uint8Array } | null {
 }
 
 function snapshotI8042DeviceState(): { kind: string; bytes: Uint8Array } | null {
-  if (!i8042) return null;
-  try {
-    return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes: i8042.saveState() };
-  } catch (err) {
-    console.warn("[io.worker] i8042 saveState failed:", err);
-    return null;
+  if (i8042Wasm) {
+    try {
+      const bytes = i8042Wasm.save_state();
+      if (bytes instanceof Uint8Array) return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes };
+    } catch (err) {
+      console.warn("[io.worker] I8042Bridge save_state failed:", err);
+    }
   }
+  if (i8042Ts) {
+    try {
+      return { kind: VM_SNAPSHOT_DEVICE_I8042_KIND, bytes: i8042Ts.saveState() };
+    } catch (err) {
+      console.warn("[io.worker] i8042 saveState failed:", err);
+    }
+  }
+  return null;
 }
 
 function restoreUsbDeviceState(bytes: Uint8Array): void {
@@ -360,8 +490,21 @@ function restoreUsbDeviceState(bytes: Uint8Array): void {
 }
 
 function restoreI8042DeviceState(bytes: Uint8Array): void {
-  if (!i8042) return;
-  i8042.loadState(bytes);
+  if (i8042Wasm) {
+    try {
+      i8042Wasm.load_state(bytes);
+    } catch (err) {
+      console.warn("[io.worker] I8042Bridge load_state failed:", err);
+    }
+    return;
+  }
+  if (i8042Ts) {
+    try {
+      i8042Ts.loadState(bytes);
+    } catch (err) {
+      console.warn("[io.worker] i8042 loadState failed:", err);
+    }
+  }
 }
 
 type AudioHdaSnapshotBridgeLike = {
@@ -1955,7 +2098,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         devices.push({ kind: e.kind, bytes: copyU8ToArrayBuffer(e.bytes) });
       }
 
-      // Apply device state locally (IO worker owns USB + audio device instances).
+      // Apply device state locally (IO worker owns USB + input/audio device instances).
       const usbBlob = devicesRaw.find(
         (entry): entry is { kind: string; bytes: Uint8Array } =>
           !!entry &&
@@ -2072,7 +2215,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
 async function initWorker(init: WorkerInitMessage): Promise<void> {
   perf.spanBegin("worker:boot");
   try {
-    void perf.spanAsync("wasm:init", async () => {
+    await perf.spanAsync("wasm:init", async () => {
       try {
         const { api, variant } = await initWasmForContext({
           variant: init.wasmVariant ?? "auto",
@@ -2292,9 +2435,28 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       const mgr = new DeviceManager(irqSink);
       deviceManager = mgr;
 
-      i8042 = new I8042Controller(mgr.irqSink, { systemControl });
-      mgr.registerPortIo(0x0060, 0x0060, i8042);
-      mgr.registerPortIo(0x0064, 0x0064, i8042);
+      // Prefer the canonical Rust i8042 model when the WASM export is available; fall back to
+      // the legacy TS model for older/missing builds.
+      i8042Ts = null;
+      i8042Wasm?.free();
+      i8042Wasm = null;
+      const apiForI8042 = wasmApi;
+      if (apiForI8042?.I8042Bridge) {
+        try {
+          const bridge = new apiForI8042.I8042Bridge();
+          i8042Wasm = new I8042WasmController(bridge, mgr.irqSink, systemControl);
+          mgr.registerPortIo(0x0060, 0x0060, i8042Wasm);
+          mgr.registerPortIo(0x0064, 0x0064, i8042Wasm);
+        } catch (err) {
+          console.warn("[io.worker] Failed to initialize WASM I8042Bridge; falling back to TS i8042", err);
+        }
+      }
+
+      if (!i8042Wasm) {
+        i8042Ts = new I8042Controller(mgr.irqSink, { systemControl });
+        mgr.registerPortIo(0x0060, 0x0060, i8042Ts);
+        mgr.registerPortIo(0x0064, 0x0064, i8042Ts);
+      }
 
       mgr.registerPciDevice(new PciTestDevice());
       maybeInitUhciDevice();
@@ -3349,8 +3511,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         if (virtioMouseOk && virtioMouse) {
           // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
           virtioMouse.injectRelMove(dx, -dyPs2);
-        } else if (!syntheticUsbMouseConfigured && i8042) {
-          i8042.injectMouseMotion(dx, dyPs2, 0);
+        } else if (!syntheticUsbMouseConfigured && i8042Wasm) {
+          i8042Wasm.injectMouseMove(dx, dyPs2);
+        } else if (!syntheticUsbMouseConfigured && i8042Ts) {
+          i8042Ts.injectMouseMotion(dx, dyPs2, 0);
         } else {
           // PS/2 convention: positive is up. HID convention: positive is down.
           usbHid?.mouse_move(dx, -dyPs2);
@@ -3361,8 +3525,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const buttons = words[off + 2] & 0xff;
         if (virtioMouseOk && virtioMouse) {
           virtioMouse.injectMouseButtons(buttons);
-        } else if (!syntheticUsbMouseConfigured && i8042) {
-          i8042.injectMouseButtons(buttons);
+        } else if (!syntheticUsbMouseConfigured && i8042Wasm) {
+          i8042Wasm.injectMouseButtons(buttons);
+        } else if (!syntheticUsbMouseConfigured && i8042Ts) {
+          i8042Ts.injectMouseButtons(buttons);
         } else {
           usbHid?.mouse_buttons(buttons);
         }
@@ -3372,8 +3538,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const dz = words[off + 2] | 0;
         if (virtioMouseOk && virtioMouse) {
           virtioMouse.injectWheel(dz);
-        } else if (!syntheticUsbMouseConfigured && i8042) {
-          i8042.injectMouseMotion(0, 0, dz);
+        } else if (!syntheticUsbMouseConfigured && i8042Wasm) {
+          i8042Wasm.injectMouseWheel(dz);
+        } else if (!syntheticUsbMouseConfigured && i8042Ts) {
+          i8042Ts.injectMouseMotion(0, 0, dz);
         } else {
           usbHid?.mouse_wheel(dz);
         }
@@ -3390,12 +3558,16 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Only inject PS/2 scancodes when the PS/2 keyboard backend is active. Other backends
         // (synthetic USB HID / virtio-input) rely on `KeyHidUsage` events and would otherwise
         // cause duplicated input in the guest.
-        if (!virtioKeyboardOk && i8042 && keyboardInputBackend === "ps2") {
-          const bytes = new Uint8Array(len);
-          for (let j = 0; j < len; j++) {
-            bytes[j] = (packed >>> (j * 8)) & 0xff;
+        if (!virtioKeyboardOk && keyboardInputBackend === "ps2") {
+          if (i8042Wasm) {
+            i8042Wasm.injectKeyScancode(packed, len);
+          } else if (i8042Ts) {
+            const bytes = new Uint8Array(len);
+            for (let j = 0; j < len; j++) {
+              bytes[j] = (packed >>> (j * 8)) & 0xff;
+            }
+            i8042Ts.injectKeyboardBytes(bytes);
           }
-          i8042.injectKeyboardBytes(bytes);
         }
         break;
       }
@@ -3506,7 +3678,9 @@ function shutdown(): void {
       netRxRing = null;
       deviceManager = null;
       ioIpcSab = null;
-      i8042 = null;
+      i8042Ts = null;
+      i8042Wasm?.free();
+      i8042Wasm = null;
       pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
       setReadyFlag(status, role, false);
       ctx.close();

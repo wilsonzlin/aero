@@ -351,6 +351,22 @@ impl I8042Controller {
         self.service_output();
     }
 
+    /// Host-side injection helper: push a raw Set-2 scancode byte sequence into the keyboard.
+    ///
+    /// The browser input pipeline already generates Set-2 scancode sequences (including `E0` and
+    /// `F0` prefixes) and transports them efficiently as packed bytes. This method feeds those raw
+    /// bytes into the keyboard device output queue so that:
+    /// - the i8042 controller can apply Set-2 -> Set-1 translation when the command-byte
+    ///   translation bit is enabled, and
+    /// - IRQ generation matches the normal "keyboard produced output" path.
+    pub fn inject_key_scancode_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.keyboard.inject_scancode_bytes(bytes);
+        self.service_output();
+    }
+
     pub fn inject_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         self.mouse.inject_motion(dx, dy, wheel);
         self.service_output();
@@ -670,6 +686,40 @@ impl I8042Controller {
                 self.status &= !STATUS_AUX_OBF;
             }
         }
+    }
+
+    /// Whether the guest-visible IRQ1 line should be considered asserted.
+    ///
+    /// The i8042 controller model emits IRQ pulses via [`IrqSink::raise_irq`] when output is
+    /// loaded, but browser integrations often need an explicit level that can be translated into
+    /// `irqRaise`/`irqLower` events. The level is high when:
+    /// - the output buffer currently holds a keyboard-originated byte, and
+    /// - the command byte has IRQ1 enabled (bit 0).
+    pub fn irq1_level(&self) -> bool {
+        (self.command_byte & 0x01) != 0
+            && matches!(
+                self.output_buffer,
+                Some(OutputByte {
+                    source: OutputSource::Keyboard,
+                    ..
+                })
+            )
+    }
+
+    /// Whether the guest-visible IRQ12 line should be considered asserted.
+    ///
+    /// The level is high when:
+    /// - the output buffer currently holds a mouse-originated byte, and
+    /// - the command byte has IRQ12 enabled (bit 1).
+    pub fn irq12_level(&self) -> bool {
+        (self.command_byte & 0x02) != 0
+            && matches!(
+                self.output_buffer,
+                Some(OutputByte {
+                    source: OutputSource::Mouse,
+                    ..
+                })
+            )
     }
 }
 

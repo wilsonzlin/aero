@@ -71,6 +71,11 @@ mod e1000_bridge;
 pub use e1000_bridge::E1000Bridge;
 
 #[cfg(target_arch = "wasm32")]
+mod i8042_bridge;
+#[cfg(target_arch = "wasm32")]
+pub use i8042_bridge::I8042Bridge;
+
+#[cfg(target_arch = "wasm32")]
 mod webusb_uhci_bridge;
 
 #[cfg(target_arch = "wasm32")]

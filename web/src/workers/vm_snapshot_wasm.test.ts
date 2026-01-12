@@ -121,6 +121,7 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 0x0201, flags: 0x0403 });
     expect(parseAeroIoSnapshotVersion(new Uint8Array())).toEqual({ version: 1, flags: 0 });
   });
+
   it("parses legacy AERO-prefixed device snapshot header when present", () => {
     const bytes = new Uint8Array(16);
     bytes[0] = 0x41;

@@ -669,6 +669,7 @@ version = "0.1.0"
 dependencies = [
  "aero-audio",
  "aero-cpu-core",
+ "aero-devices-input",
  "aero-io-snapshot",
  "aero-ipc",
  "aero-jit-x86",

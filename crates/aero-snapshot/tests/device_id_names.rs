@@ -7,7 +7,6 @@ fn usb_device_id_has_stable_name() {
         "USB DeviceId number changed; must remain stable"
     );
     assert_eq!(DeviceId::USB.name(), Some("USB"));
-
     assert_eq!(format!("{}", DeviceId::USB), "USB(12)");
 }
 

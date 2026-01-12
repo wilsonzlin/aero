@@ -75,6 +75,20 @@ impl Ps2Keyboard {
         }
     }
 
+    /// Host-side injection helper: push raw scancode bytes into the keyboard output queue.
+    ///
+    /// This is primarily intended for the browser runtime where the input capture pipeline already
+    /// produces Set-2 scancode sequences in a packed format. The i8042 controller can then apply
+    /// Set-2 -> Set-1 translation (when enabled) as it drains the keyboard output.
+    pub fn inject_scancode_bytes(&mut self, bytes: &[u8]) {
+        if !self.scanning_enabled {
+            return;
+        }
+        for &byte in bytes {
+            self.push_out(byte);
+        }
+    }
+
     /// Receives a byte from the host (guest) over the PS/2 data port.
     pub fn receive_byte(&mut self, byte: u8) {
         if let Some(expecting) = self.expecting_data.take() {
