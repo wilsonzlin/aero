@@ -28,6 +28,14 @@ function makeCfgIo(portBus: PortIoBus) {
       portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
       portBus.write(0x0cfc, 4, value >>> 0);
     },
+    writeU16(dev: number, fn: number, off: number, value: number): void {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      portBus.write(0x0cfc + (off & 3), 2, value & 0xffff);
+    },
+    writeU8(dev: number, fn: number, off: number, value: number): void {
+      portBus.write(0x0cf8, 4, cfgAddr(dev, fn, off));
+      portBus.write(0x0cfc + (off & 3), 1, value & 0xff);
+    },
   };
 }
 
@@ -101,6 +109,45 @@ describe("io/bus/pci", () => {
     const cfg = makeCfgIo(portBus);
     expect(cfg.readU8(addr0.device, addr0.function, 0x3d)).toBe(0x01);
     expect(cfg.readU8(addr1.device, addr1.function, 0x3d)).toBe(0x04);
+  });
+
+  it("treats SSVID/SSID + Interrupt Pin as RO while keeping Interrupt Line writable", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "rw_ro_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      subsystemVendorId: 0xabcd,
+      subsystemId: 0xef01,
+      irqLine: 0x0b,
+      interruptPin: 2,
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0xef01_abcd);
+
+    // Guest writes to Subsystem IDs should be ignored (RO).
+    cfg.writeU32(addr.device, addr.function, 0x2c, 0);
+    expect(cfg.readU32(addr.device, addr.function, 0x2c)).toBe(0xef01_abcd);
+
+    // Interrupt line should be writable, but interrupt pin should be RO.
+    expect(cfg.readU8(addr.device, addr.function, 0x3c)).toBe(0x0b);
+    expect(cfg.readU8(addr.device, addr.function, 0x3d)).toBe(0x02);
+
+    // Attempt to write both bytes at once.
+    cfg.writeU16(addr.device, addr.function, 0x3c, 0x040c); // line=0x0c, pin=0x04
+    expect(cfg.readU8(addr.device, addr.function, 0x3c)).toBe(0x0c);
+    expect(cfg.readU8(addr.device, addr.function, 0x3d)).toBe(0x02);
+
+    // Attempt to write just the pin byte.
+    cfg.writeU8(addr.device, addr.function, 0x3d, 0x03);
+    expect(cfg.readU8(addr.device, addr.function, 0x3d)).toBe(0x02);
   });
 
   it("sets the multifunction bit in header_type (fn0) when additional functions exist", () => {

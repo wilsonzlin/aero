@@ -35,7 +35,7 @@ export class PciTestDevice implements PciDevice {
   readonly subsystemId = 0xef01;
   readonly classCode = 0xff_00_00; // "other"
   readonly irqLine = 0x0b;
-  readonly interruptPin = 0x02; // INTB#
+  readonly interruptPin = 0x02 as const; // INTB#
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: 0x100 }, null, null, null, null, null];
 
