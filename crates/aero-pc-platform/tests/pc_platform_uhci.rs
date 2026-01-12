@@ -5,6 +5,7 @@ use aero_snapshot::DeviceId;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs::*;
 use aero_usb::uhci::UhciController;
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use memory::MemoryBus as _;
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
@@ -40,6 +41,15 @@ fn read_uhci_bar4_raw(pc: &mut PcPlatform) -> u32 {
 
 fn read_uhci_bar4_base(pc: &mut PcPlatform) -> u16 {
     (read_uhci_bar4_raw(pc) & 0xffff_fffc) as u16
+}
+
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
 }
 
 #[test]
@@ -271,4 +281,102 @@ fn pc_platform_uhci_dma_writes_mark_dirty_pages_when_enabled() {
         dirty.contains(&expected_page),
         "dirty pages should include TD page (got {dirty:?})"
     );
+}
+
+#[test]
+fn pc_platform_routes_uhci_intx_via_pic_in_legacy_mode() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    // Unmask IRQ2 (cascade) + IRQ11 so we can observe the UHCI interrupt through the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(11, false);
+    }
+
+    // Enable IOC interrupts in the UHCI controller.
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_IOC));
+
+    // Force a USBINT status bit so the controller asserts its IRQ line.
+    {
+        let uhci = pc.uhci.as_ref().expect("UHCI should be enabled").clone();
+        uhci.borrow_mut()
+            .controller_mut()
+            .set_usbsts_bits(USBSTS_USBINT);
+    }
+
+    pc.poll_pci_intx_lines();
+
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ11 should be pending after UHCI asserts INTx");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 11);
+
+    // Consume + EOI the interrupt so we can observe deassertion cleanly.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+
+    // Clear the status bit (W1C) and ensure the line deasserts.
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_USBINT));
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_routes_uhci_intx_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bar4_base = read_uhci_bar4_base(&mut pc);
+
+    // Switch the platform into APIC mode via IMCR (0x22/0x23).
+    pc.io.write_u8(0x22, 0x70);
+    pc.io.write_u8(0x23, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Route GSI11 (PIIX3 UHCI 00:01.2 INTA#) to vector 0x60, level-triggered + active-low.
+    let vector = 0x60u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    {
+        let mut ints = pc.interrupts.borrow_mut();
+        program_ioapic_entry(&mut ints, 11, low, 0);
+    }
+
+    pc.io
+        .write(bar4_base + REG_USBINTR, 2, u32::from(USBINTR_IOC));
+    {
+        let uhci = pc.uhci.as_ref().expect("UHCI should be enabled").clone();
+        uhci.borrow_mut()
+            .controller_mut()
+            .set_usbsts_bits(USBSTS_USBINT);
+    }
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Acknowledge the interrupt (vector in service).
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Clear the controller IRQ and propagate the deassertion before sending EOI, so we don't
+    // immediately retrigger due to the level-triggered line remaining high.
+    pc.io
+        .write(bar4_base + REG_USBSTS, 2, u32::from(USBSTS_USBINT));
+    pc.poll_pci_intx_lines();
+
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
