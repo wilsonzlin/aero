@@ -146,7 +146,7 @@ export class L2TunnelForwarder {
   private readonly maxFramesPerTick: number;
   private readonly maxPendingRxBytes: number;
   private readonly onTunnelEvent: ((ev: Exclude<L2TunnelEvent, { type: "frame" }>) => void) | null;
-  private readonly onFrame: ((ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }) => void) | null;
+  private onFrame: ((ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }) => void) | null;
 
   private tunnel: L2TunnelClient | null = null;
   private running = false;
@@ -196,6 +196,10 @@ export class L2TunnelForwarder {
         // WebSocket/DataChannel callback and can tear down the session.
       }
     };
+  }
+
+  setOnFrame(onFrame: ((ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }) => void) | null): void {
+    this.onFrame = onFrame;
   }
 
   setTunnel(tunnel: L2TunnelClient | null): void {

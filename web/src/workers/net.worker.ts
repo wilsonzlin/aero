@@ -34,6 +34,13 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 void installWorkerPerfHandlers();
 
 const tracer = new NetTracer();
+const traceFrame = (ev: { direction: "guest_tx" | "guest_rx"; frame: Uint8Array }): void => {
+  try {
+    tracer.recordEthernet(ev.direction, ev.frame);
+  } catch {
+    // Net tracing must never interfere with forwarding.
+  }
+};
 
 let role: WorkerRole = "net";
 let status!: Int32Array;
@@ -572,13 +579,6 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
       l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
-        onFrame: (ev) => {
-          try {
-            tracer.recordEthernet(ev.direction, ev.frame);
-          } catch {
-            // Net tracing must never interfere with forwarding.
-          }
-        },
         onTunnelEvent: (ev) => {
           l2TunnelTelemetry?.onTunnelEvent(ev);
           if (ev.type === "open") {
@@ -594,6 +594,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           }
         },
       });
+      if (tracer.isEnabled()) {
+        l2Forwarder.setOnFrame(traceFrame);
+      }
       l2TunnelTelemetry = new L2TunnelTelemetry({
         intervalMs: L2_STATS_LOG_INTERVAL_MS,
         getStats: () => l2Forwarder!.stats(),
@@ -642,11 +645,13 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (msg.kind === "net.trace.enable") {
       tracer.enable();
+      l2Forwarder?.setOnFrame(traceFrame);
       return;
     }
 
     if (msg.kind === "net.trace.disable") {
       tracer.disable();
+      l2Forwarder?.setOnFrame(null);
       return;
     }
 

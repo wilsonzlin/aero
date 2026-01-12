@@ -164,6 +164,35 @@ describe("net/l2TunnelForwarder", () => {
     }
   });
 
+  it("invokes onFrame hook for guest TX/RX frames", () => {
+    const { netTx, netRx } = createNetRings(256, 256);
+    const observed: { dir: string; payload: number[] }[] = [];
+    const forwarder = new L2TunnelForwarder(netTx, netRx);
+    forwarder.setOnFrame((ev) => observed.push({ dir: ev.direction, payload: Array.from(ev.frame) }));
+
+    const tunnel: L2TunnelClient = {
+      connect: () => {},
+      close: () => {},
+      sendFrame: () => true,
+    };
+
+    forwarder.setTunnel(tunnel);
+    forwarder.start();
+
+    const tx = Uint8Array.of(1, 2, 3);
+    expect(netTx.tryPush(tx)).toBe(true);
+    forwarder.tick();
+
+    const rx = Uint8Array.of(4, 5);
+    forwarder.sink({ type: "frame", frame: rx });
+
+    expect(observed).toEqual([
+      { dir: "guest_tx", payload: [1, 2, 3] },
+      { dir: "guest_rx", payload: [4, 5] },
+    ]);
+    forwarder.stop();
+  });
+
   it("buffers inbound frames when NET_RX is full and enforces maxPendingRxBytes", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
@@ -329,4 +358,3 @@ describe("net/l2TunnelForwarder", () => {
     expect(decoded).toMatchObject({ level: "info", message: msg });
   });
 });
-
