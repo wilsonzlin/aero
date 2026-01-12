@@ -231,3 +231,52 @@ pub fn dma_write_zeros(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct TestMem {
+        data: Vec<u8>,
+    }
+
+    impl TestMem {
+        fn with_len(len: usize) -> Self {
+            Self { data: vec![0xAA; len] }
+        }
+    }
+
+    impl MemoryBus for TestMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let start = paddr as usize;
+            let end = start.saturating_add(buf.len());
+            if end > self.data.len() {
+                buf.fill(0);
+                return;
+            }
+            buf.copy_from_slice(&self.data[start..end]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let start = paddr as usize;
+            let end = start.saturating_add(buf.len());
+            if end > self.data.len() {
+                self.data.resize(end, 0);
+            }
+            self.data[start..end].copy_from_slice(buf);
+        }
+    }
+
+    #[test]
+    fn dma_write_zeros_does_not_allocate_page_sized_buffer() {
+        // Historically `dma_write_zeros` allocated a `page_size`-sized buffer, which could be
+        // driven to absurd sizes by a malicious guest (or fuzz input). This test uses an
+        // intentionally huge (but power-of-two) `page_size` so any such allocation would likely
+        // OOM. With the chunked implementation, this remains lightweight.
+        let mut mem = TestMem::with_len(4096);
+        let page_size = 1usize << 30; // 1GiB
+        dma_write_zeros(&mut mem, 0, 0, 4096, page_size).unwrap();
+        assert!(mem.data.iter().all(|b| *b == 0));
+    }
+}
