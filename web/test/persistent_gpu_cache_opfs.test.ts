@@ -82,24 +82,27 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
       // Ignore.
     }
 
-    const cache = await PersistentGpuCache.open({
+    const cache1 = await PersistentGpuCache.open({
       shaderLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
       pipelineLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
     });
 
+    const key = "test-shader-key-opfs-spill";
+    const padLine = "// padding ................................................................................\n";
+    const wgsl = padLine.repeat(4000) + "@compute @workgroup_size(1) fn main() {}";
+    const reflection = { bindings: [] };
+
+    // Sanity: ensure payload is well above the 256KiB OPFS threshold.
+    assert.ok(new TextEncoder().encode(wgsl).byteLength > 300 * 1024);
+
     try {
-      const key = "test-shader-key-opfs-spill";
-      const padLine = "// padding ................................................................................\n";
-      const wgsl = padLine.repeat(4000) + "@compute @workgroup_size(1) fn main() {}";
-      const reflection = { bindings: [] };
+      const statsBefore = await cache1.stats();
+      assert.equal(statsBefore.opfs, true);
 
-      // Sanity: ensure payload is well above the 256KiB OPFS threshold.
-      assert.ok(new TextEncoder().encode(wgsl).byteLength > 300 * 1024);
-
-      await cache.putShader(key, { wgsl, reflection });
+      await cache1.putShader(key, { wgsl, reflection });
 
       // Verify IDB record is metadata-only and points at OPFS.
-      const tx = (cache as any)._db.transaction(["shaders"], "readonly");
+      const tx = (cache1 as any)._db.transaction(["shaders"], "readonly");
       const store = tx.objectStore("shaders");
       const record = await new Promise<any>((resolve, reject) => {
         const req = store.get(key);
@@ -130,18 +133,34 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
       assert.ok(file.size > 256 * 1024);
 
       // Verify reads go through OPFS and roundtrip.
-      const got = await cache.getShader(key);
+      const got = await cache1.getShader(key);
       assert.deepEqual(got, { wgsl, reflection });
     } finally {
-      await cache.close();
-      try {
-        await PersistentGpuCache.clearAll();
-      } catch {
-        // Ignore.
-      }
+      await cache1.close();
+    }
+
+    // Re-open to simulate a new browser session and verify the OPFS payload can
+    // be read back.
+    const cache2 = await PersistentGpuCache.open({
+      shaderLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
+      pipelineLimits: { maxEntries: 16, maxBytes: 8 * 1024 * 1024 },
+    });
+    try {
+      const statsAfter = await cache2.stats();
+      assert.equal(statsAfter.opfs, true);
+
+      const got2 = await cache2.getShader(key);
+      assert.deepEqual(got2, { wgsl, reflection });
+    } finally {
+      await cache2.close();
+    }
+
+    try {
+      await PersistentGpuCache.clearAll();
+    } catch {
+      // Ignore.
     }
   } finally {
     (navigator as any).storage = realNavigatorStorage;
   }
 });
-
