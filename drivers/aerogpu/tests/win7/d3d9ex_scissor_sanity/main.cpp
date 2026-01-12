@@ -200,37 +200,44 @@ static int RunD3D9ExScissorSanity(int argc, char** argv) {
   Vertex quad[6];
   const float z = 0.5f;
   const float rhw = 1.0f;
+  // D3D9 pixel center convention: use a -0.5 offset so the quad reliably covers
+  // pixel (0,0) through (W-1,H-1). Without this, edge pixels can be missed,
+  // causing false PASS results when validating scissor clipping.
+  const float left = -0.5f;
+  const float top = -0.5f;
+  const float right = (float)kWidth - 0.5f;
+  const float bottom = (float)kHeight - 0.5f;
 
-  // Triangle 0: (0,0) (W,0) (W,H)
-  quad[0].x = 0.0f;
-  quad[0].y = 0.0f;
+  // Triangle 0: (left,top) (right,top) (right,bottom)
+  quad[0].x = left;
+  quad[0].y = top;
   quad[0].z = z;
   quad[0].rhw = rhw;
   quad[0].color = kBlue;
-  quad[1].x = (float)kWidth;
-  quad[1].y = 0.0f;
+  quad[1].x = right;
+  quad[1].y = top;
   quad[1].z = z;
   quad[1].rhw = rhw;
   quad[1].color = kBlue;
-  quad[2].x = (float)kWidth;
-  quad[2].y = (float)kHeight;
+  quad[2].x = right;
+  quad[2].y = bottom;
   quad[2].z = z;
   quad[2].rhw = rhw;
   quad[2].color = kBlue;
 
-  // Triangle 1: (0,0) (W,H) (0,H)
-  quad[3].x = 0.0f;
-  quad[3].y = 0.0f;
+  // Triangle 1: (left,top) (right,bottom) (left,bottom)
+  quad[3].x = left;
+  quad[3].y = top;
   quad[3].z = z;
   quad[3].rhw = rhw;
   quad[3].color = kBlue;
-  quad[4].x = (float)kWidth;
-  quad[4].y = (float)kHeight;
+  quad[4].x = right;
+  quad[4].y = bottom;
   quad[4].z = z;
   quad[4].rhw = rhw;
   quad[4].color = kBlue;
-  quad[5].x = 0.0f;
-  quad[5].y = (float)kHeight;
+  quad[5].x = left;
+  quad[5].y = bottom;
   quad[5].z = z;
   quad[5].rhw = rhw;
   quad[5].color = kBlue;
