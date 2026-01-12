@@ -636,8 +636,15 @@ fn vhd_rejects_bad_footer_checksum() {
     footer[8] ^= 0x01;
     storage.write_at(footer_offset, &footer).unwrap();
 
-    let err = VhdDisk::open(storage).err().expect("expected error");
-    assert!(matches!(err, DiskError::CorruptImage(_)));
+    // Even when the checksum is wrong, format detection should still classify the image as a VHD so
+    // `open_auto` reports a corruption error instead of silently treating it as a raw disk.
+    assert_eq!(detect_format(&mut storage).unwrap(), DiskFormat::Vhd);
+
+    let err = DiskImage::open_auto(storage).err().expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::CorruptImage("vhd footer checksum mismatch")
+    ));
 }
 
 #[test]
