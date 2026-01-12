@@ -226,9 +226,11 @@ export class PciBus implements PortIoHandler {
     const deviceBdf = device.bdf;
 
     const bus = addr.bus ?? deviceBdf?.bus ?? 0;
+    if (!Number.isInteger(bus) || bus < 0) throw new RangeError(`PCI bus out of range: ${bus}`);
     if (bus !== 0) throw new Error(`only PCI bus 0 is supported, got bus ${bus}`);
 
     const fnNum = addr.function ?? deviceBdf?.function ?? 0;
+    if (!Number.isInteger(fnNum)) throw new RangeError(`PCI function out of range: ${fnNum}`);
     if (fnNum < 0 || fnNum > 7) throw new RangeError(`PCI function out of range: ${fnNum}`);
 
     let devNum: number;
@@ -239,6 +241,7 @@ export class PciBus implements PortIoHandler {
     } else {
       devNum = this.#allocDeviceNumber();
     }
+    if (!Number.isInteger(devNum)) throw new RangeError(`PCI device out of range: ${devNum}`);
     if (devNum < 0 || devNum > 31) throw new RangeError(`PCI device out of range: ${devNum}`);
 
     if (this.#functions[devNum]![fnNum] !== null) {
