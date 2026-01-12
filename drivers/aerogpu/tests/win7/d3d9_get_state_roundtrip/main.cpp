@@ -640,6 +640,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   mat_clobber.Diffuse.a = 0.6f;
   mat_clobber.Power = 32.0f;
 
+  float clip_plane_sb[4] = {0.25f, -0.5f, 0.75f, -1.0f};
+  float clip_plane_clobber[4] = {-1.0f, 2.0f, -3.0f, 4.0f};
+  bool clip_plane_test = false;
+
+  D3DLIGHT9 light_sb;
+  ZeroMemory(&light_sb, sizeof(light_sb));
+  light_sb.Type = D3DLIGHT_POINT;
+  light_sb.Diffuse.r = 0.1f;
+  light_sb.Diffuse.g = 0.2f;
+  light_sb.Diffuse.b = 0.3f;
+  light_sb.Diffuse.a = 1.0f;
+  light_sb.Position.x = 1.0f;
+  light_sb.Position.y = 2.0f;
+  light_sb.Position.z = 3.0f;
+  light_sb.Range = 10.0f;
+  light_sb.Attenuation0 = 1.0f;
+  D3DLIGHT9 light_clobber = light_sb;
+  light_clobber.Diffuse.r = 0.9f;
+  light_clobber.Diffuse.g = 0.8f;
+  light_clobber.Diffuse.b = 0.7f;
+  light_clobber.Position.x = -1.0f;
+  light_clobber.Position.y = -2.0f;
+  light_clobber.Position.z = -3.0f;
+  bool light_test = false;
+
   ComPtr<IDirect3DStateBlock9> sb;
   hr = dev->BeginStateBlock();
   if (FAILED(hr)) {
@@ -688,6 +713,31 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
   hr = dev->SetMaterial(&mat_sb);
   if (FAILED(hr)) {
     return reporter.FailHresult("SetMaterial (stateblock)", hr);
+  }
+
+  hr = dev->SetClipPlane(0, clip_plane_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetClipPlane (Set in stateblock failed hr=0x%08lX)",
+                               kTestName,
+                               (unsigned long)hr);
+  } else {
+    clip_plane_test = true;
+  }
+
+  hr = dev->SetLight(0, &light_sb);
+  if (FAILED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetLight (Set in stateblock failed hr=0x%08lX)",
+                               kTestName,
+                               (unsigned long)hr);
+  } else {
+    hr = dev->LightEnable(0, TRUE);
+    if (FAILED(hr)) {
+      aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock LightEnable (Enable in stateblock failed hr=0x%08lX)",
+                                 kTestName,
+                                 (unsigned long)hr);
+    } else {
+      light_test = true;
+    }
   }
 
   hr = dev->SetVertexShaderConstantI(10, vs_i_sb, 1);
@@ -754,6 +804,34 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     hr = dev->SetMaterial(&mat_clobber);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetMaterial (clobber)", hr);
+    }
+
+    if (clip_plane_test) {
+      hr = dev->SetClipPlane(0, clip_plane_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetClipPlane (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        clip_plane_test = false;
+      }
+    }
+
+    if (light_test) {
+      hr = dev->SetLight(0, &light_clobber);
+      if (FAILED(hr)) {
+        aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock Set/GetLight (clobber Set failed hr=0x%08lX)",
+                                   kTestName,
+                                   (unsigned long)hr);
+        light_test = false;
+      } else {
+        hr = dev->LightEnable(0, FALSE);
+        if (FAILED(hr)) {
+          aerogpu_test::PrintfStdout("INFO: %s: skipping StateBlock LightEnable (clobber disable failed hr=0x%08lX)",
+                                     kTestName,
+                                     (unsigned long)hr);
+          light_test = false;
+        }
+      }
     }
 
     const int vs_i_clobber[4] = {-1, -2, -3, -4};
@@ -863,6 +941,42 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
     if (std::memcmp(&got_mat, &mat_sb, sizeof(mat_sb)) != 0) {
       return reporter.Fail("stateblock restore mismatch: Material");
+    }
+
+    if (clip_plane_test) {
+      float got_plane[4] = {};
+      hr = dev->GetClipPlane(0, got_plane);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetClipPlane (after Apply)", hr);
+      }
+      for (int i = 0; i < 4; ++i) {
+        if (!NearlyEqual(got_plane[i], clip_plane_sb[i], 1e-6f)) {
+          return reporter.Fail("stateblock restore mismatch: ClipPlane[%d] got=%f expected=%f",
+                               i,
+                               (double)got_plane[i],
+                               (double)clip_plane_sb[i]);
+        }
+      }
+    }
+
+    if (light_test) {
+      D3DLIGHT9 got_light;
+      ZeroMemory(&got_light, sizeof(got_light));
+      hr = dev->GetLight(0, &got_light);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetLight (after Apply)", hr);
+      }
+      if (std::memcmp(&got_light, &light_sb, sizeof(light_sb)) != 0) {
+        return reporter.Fail("stateblock restore mismatch: Light");
+      }
+      BOOL got_enabled = FALSE;
+      hr = dev->GetLightEnable(0, &got_enabled);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetLightEnable (after Apply)", hr);
+      }
+      if (!got_enabled) {
+        return reporter.Fail("stateblock restore mismatch: LightEnable expected TRUE");
+      }
     }
 
     int got_i[4] = {};
