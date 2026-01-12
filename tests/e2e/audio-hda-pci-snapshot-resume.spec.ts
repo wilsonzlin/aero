@@ -164,8 +164,10 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
         let burstBaselineWrite: number | null = null;
         let burstStartAtMs: number | null = null;
         let burstSampleScheduled = false;
-        // Preserve the exact original method so cleanup restores the same function identity.
+        // Preserve the exact original postMessage method and descriptor so cleanup can fully
+        // restore the Worker object shape (avoid leaving an own `postMessage` property behind).
         const originalPostMessage = io.postMessage;
+        const originalPostMessageDescriptor = Object.getOwnPropertyDescriptor(io, "postMessage");
         let postMessageWrapped = false;
         let postMessageRestorePending = false;
 
@@ -173,11 +175,21 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
           io.removeEventListener("message", onMessage as EventListener);
           if (postMessageRestorePending) {
             try {
-              // Restore the original postMessage implementation so we don't interfere with subsequent coordinator ops.
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (io as any).postMessage = originalPostMessage;
+              if (originalPostMessageDescriptor) {
+                Object.defineProperty(io, "postMessage", originalPostMessageDescriptor);
+              } else {
+                // We created an own property when wrapping; delete it to fall back to Worker.prototype.postMessage.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                delete (io as any).postMessage;
+              }
             } catch {
-              // ignore best-effort
+              try {
+                // Restore the original postMessage implementation so we don't interfere with subsequent coordinator ops.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (io as any).postMessage = originalPostMessage;
+              } catch {
+                // ignore best-effort
+              }
             }
           }
           clearTimeout(timeout);
