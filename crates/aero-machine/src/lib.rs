@@ -2129,12 +2129,13 @@ impl Machine {
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
 
-        // `enable_vga` is a legacy/standalone VGA wiring option.
+        // `enable_vga` controls whether the machine wires the legacy VGA/VBE device model.
         //
-        // When the full PC platform is enabled, VGA is wired as part of that platform (see below).
-        // Avoid registering legacy VGA windows/ports twice (which would overlap and panic), and
-        // keep a stable `Rc` identity across resets because the physical memory bus persists MMIO
-        // mappings.
+        // Note: The physical memory bus persists across `Machine::reset()` calls, so any MMIO
+        // mappings that reference the VGA device must keep a stable `Rc` identity across resets.
+        // When VGA is disabled we drop the device handle, but any previously-installed MMIO
+        // mappings (if the machine was ever reset with VGA enabled) will still point at the old
+        // instance.
         if self.cfg.enable_vga && !self.cfg.enable_pc_platform {
             // VGA is a special legacy device whose MMIO window lives in the low 1MiB region. The
             // physical bus supports MMIO overlays on top of RAM, so mapping this window is safe
@@ -2693,10 +2694,18 @@ impl Machine {
             ..Default::default()
         });
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
-        // firmware-only tests can access it without MMIO routing. For the real machine, force the
-        // BIOS to report the fixed Bochs/QEMU-compatible LFB base that our VGA device is mapped at
-        // so OSes and bootloaders see a stable, MMIO-safe framebuffer address.
-        self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
+        // firmware-only tests can access it without MMIO routing.
+        //
+        // When VGA is enabled, force the BIOS to report the fixed Bochs/QEMU-compatible LFB base
+        // that our VGA device is mapped at (`SVGA_LFB_BASE`) so OSes and bootloaders see a stable,
+        // MMIO-safe framebuffer address.
+        //
+        // When VGA is disabled, keep the default LFB base in conventional RAM: pointing the BIOS
+        // at `SVGA_LFB_BASE` would overlap the canonical PCI MMIO window (and could cause BIOS VBE
+        // helpers like `int 0x10, ax=0x4F02` to scribble over PCI device BARs).
+        if self.cfg.enable_vga {
+            self.bios.video.vbe.lfb_base = aero_gpu_vga::SVGA_LFB_BASE;
+        }
         let bus: &mut dyn BiosBus = &mut self.mem;
         if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
@@ -6229,6 +6238,41 @@ mod tests {
 
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), expected_inhibit);
         assert_eq!(restored.cpu.pending.external_interrupts, expected_external);
+    }
+
+    #[test]
+    fn bios_vbe_lfb_base_uses_svga_base_only_when_vga_is_enabled() {
+        // When VGA is disabled, the BIOS should keep its default RAM-backed LFB base instead of
+        // pointing at `SVGA_LFB_BASE` (which overlaps the canonical PCI MMIO window).
+        let headless = Machine::new(MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: false,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            headless.bios.video.vbe.lfb_base,
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+        );
+
+        // When VGA is enabled, the BIOS should report the fixed MMIO-mapped SVGA base.
+        let vga = Machine::new(MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: true,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(vga.bios.video.vbe.lfb_base, aero_gpu_vga::SVGA_LFB_BASE);
     }
 
     #[test]
