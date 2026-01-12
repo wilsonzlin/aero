@@ -1265,8 +1265,8 @@ impl IoSnapshot for NvmePciDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use emulator::io::storage::disk as emu_disk;
-    use emulator::io::storage::DiskError as EmuDiskError;
+    use aero_storage::{MemBackend, RawDisk, VirtualDisk as StorageVirtualDisk, SECTOR_SIZE};
+    use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
     use std::sync::{Arc, Mutex};
 
     struct TestMem {
@@ -1299,135 +1299,53 @@ mod tests {
 
     #[derive(Clone)]
     struct TestDisk {
-        sector_size: u32,
-        data: Arc<Mutex<Vec<u8>>>,
+        inner: Arc<Mutex<RawDisk<MemBackend>>>,
         flushed: Arc<Mutex<u32>>,
     }
 
     impl TestDisk {
         fn new(sectors: u64) -> Self {
-            let sector_size = 512u32;
+            let capacity_bytes = sectors * SECTOR_SIZE as u64;
+            let disk = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
             Self {
-                sector_size,
-                data: Arc::new(Mutex::new(vec![
-                    0u8;
-                    sectors as usize * sector_size as usize
-                ])),
+                inner: Arc::new(Mutex::new(disk)),
                 flushed: Arc::new(Mutex::new(0)),
             }
         }
-    }
 
-    impl DiskBackend for TestDisk {
-        fn sector_size(&self) -> u32 {
-            self.sector_size
+        fn lock(&self) -> std::sync::MutexGuard<'_, RawDisk<MemBackend>> {
+            self.inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
         }
 
-        fn total_sectors(&self) -> u64 {
-            (self.data.lock().unwrap().len() as u64) / (self.sector_size as u64)
-        }
-
-        fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
-            let sector_size = self.sector_size as usize;
-            if !buffer.len().is_multiple_of(sector_size) {
-                return Err(DiskError::UnalignedBuffer {
-                    len: buffer.len(),
-                    sector_size: self.sector_size,
-                });
-            }
-            let sectors = (buffer.len() / sector_size) as u64;
-            let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: self.total_sectors(),
-            })?;
-            let capacity = self.total_sectors();
-            if end_lba > capacity {
-                return Err(DiskError::OutOfRange {
-                    lba,
-                    sectors,
-                    capacity_sectors: capacity,
-                });
-            }
-            let offset = lba as usize * sector_size;
-            let end = offset + buffer.len();
-            let data = self.data.lock().unwrap();
-            buffer.copy_from_slice(&data[offset..end]);
-            Ok(())
-        }
-
-        fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
-            let sector_size = self.sector_size as usize;
-            if !buffer.len().is_multiple_of(sector_size) {
-                return Err(DiskError::UnalignedBuffer {
-                    len: buffer.len(),
-                    sector_size: self.sector_size,
-                });
-            }
-            let sectors = (buffer.len() / sector_size) as u64;
-            let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: self.total_sectors(),
-            })?;
-            let capacity = self.total_sectors();
-            if end_lba > capacity {
-                return Err(DiskError::OutOfRange {
-                    lba,
-                    sectors,
-                    capacity_sectors: capacity,
-                });
-            }
-            let offset = lba as usize * sector_size;
-            let end = offset + buffer.len();
-            let mut data = self.data.lock().unwrap();
-            data[offset..end].copy_from_slice(buffer);
-            Ok(())
-        }
-
-        fn flush(&mut self) -> DiskResult<()> {
-            *self.flushed.lock().unwrap() += 1;
-            Ok(())
+        fn flush_count(&self) -> u32 {
+            *self
+                .flushed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
         }
     }
 
-    impl DiskBackend for emu_disk::MemDisk {
-        fn sector_size(&self) -> u32 {
-            emu_disk::DiskBackend::sector_size(self)
+    impl StorageVirtualDisk for TestDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.lock().capacity_bytes()
         }
 
-        fn total_sectors(&self) -> u64 {
-            emu_disk::DiskBackend::total_sectors(self)
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            self.lock().read_at(offset, buf)
         }
 
-        fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
-            emu_disk::DiskBackend::read_sectors(self, lba, buffer).map_err(map_emu_disk_error)
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+            self.lock().write_at(offset, buf)
         }
 
-        fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
-            emu_disk::DiskBackend::write_sectors(self, lba, buffer).map_err(map_emu_disk_error)
-        }
-
-        fn flush(&mut self) -> DiskResult<()> {
-            emu_disk::DiskBackend::flush(self).map_err(map_emu_disk_error)
-        }
-    }
-
-    fn map_emu_disk_error(err: EmuDiskError) -> DiskError {
-        match err {
-            EmuDiskError::UnalignedBuffer { len, sector_size } => {
-                DiskError::UnalignedBuffer { len, sector_size }
-            }
-            EmuDiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors,
-            } => DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors,
-            },
-            _ => DiskError::Io,
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            *self
+                .flushed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+            self.lock().flush()
         }
     }
 
@@ -1480,8 +1398,9 @@ mod tests {
 
     #[test]
     fn pci_bar0_probe_and_program() {
-        let disk = Box::new(TestDisk::new(1024));
-        let mut dev = NvmePciDevice::new(disk);
+        let disk = TestDisk::new(1024);
+        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+        let mut dev = NvmePciDevice::new(Box::new(backend));
 
         dev.pci_write_u32(0x10, 0xffff_ffff);
         let mask_lo = dev.pci_read_u32(0x10);
@@ -1504,8 +1423,9 @@ mod tests {
 
     #[test]
     fn registers_enable_sets_rdy() {
-        let disk = Box::new(TestDisk::new(1024));
-        let mut ctrl = NvmeController::new(disk);
+        let disk = TestDisk::new(1024);
+        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+        let mut ctrl = NvmeController::new(Box::new(backend));
         let mut mem = TestMem::new(1024 * 1024);
 
         ctrl.mmio_write(0x0024, 4, 0x000f_000f, &mut mem); // 16/16 queues
@@ -1518,8 +1438,9 @@ mod tests {
 
     #[test]
     fn aqa_fields_map_to_admin_queue_sizes() {
-        let disk = Box::new(TestDisk::new(1024));
-        let mut ctrl = NvmeController::new(disk);
+        let disk = TestDisk::new(1024);
+        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+        let mut ctrl = NvmeController::new(Box::new(backend));
         let mut mem = TestMem::new(1024 * 1024);
 
         // ASQS = 8 entries, ACQS = 4 entries (both are 0-based in AQA).
@@ -1534,8 +1455,9 @@ mod tests {
 
     #[test]
     fn admin_identify_controller_writes_data_and_completion() {
-        let disk = Box::new(TestDisk::new(1024));
-        let mut ctrl = NvmeController::new(disk);
+        let disk = TestDisk::new(1024);
+        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+        let mut ctrl = NvmeController::new(Box::new(backend));
         let mut mem = TestMem::new(1024 * 1024);
 
         let asq = 0x10000;
@@ -1568,9 +1490,9 @@ mod tests {
     #[test]
     fn create_io_queues_and_rw_roundtrip() {
         let disk = TestDisk::new(1024);
-        let disk_data = disk.data.clone();
-        let flush_count = disk.flushed.clone();
-        let mut ctrl = NvmeController::new(Box::new(disk));
+        let disk_state = disk.clone();
+        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+        let mut ctrl = NvmeController::new(Box::new(backend));
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -1645,17 +1567,20 @@ mod tests {
         set_nsid(&mut cmd, 1);
         mem.write_physical(io_sq + 2 * 64, &cmd);
         ctrl.mmio_write(0x1008, 4, 3, &mut mem);
-        assert_eq!(*flush_count.lock().unwrap(), 1);
+        assert_eq!(disk_state.flush_count(), 1);
 
         // Sanity: disk image contains the written sector.
-        let data = disk_data.lock().unwrap();
-        assert_eq!(&data[..sector_size], payload.as_slice());
+        let mut disk = disk_state.clone();
+        let mut data = vec![0u8; sector_size];
+        disk.read_at(0, &mut data).unwrap();
+        assert_eq!(data, payload.as_slice());
     }
 
     #[test]
     fn cq_phase_toggles_on_wrap() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(Box::new(disk));
+        let backend = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+        let mut ctrl = NvmeController::new(Box::new(backend));
         let mut mem = TestMem::new(2 * 1024 * 1024);
 
         let asq = 0x10000;
