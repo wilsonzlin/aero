@@ -2602,11 +2602,29 @@ impl Machine {
         let mut vga = vga.borrow_mut();
         vga.present();
         let fb: &[u32] = vga.get_framebuffer();
-        // Safety: `fb` is a valid slice of `u32` pixels (RGBA8888). On wasm32, the target is
-        // little-endian and the framebuffer stores pixels as `u32::from_le_bytes([r,g,b,a])`, so
-        // reinterpreting the backing bytes preserves RGBA byte order.
-        let bytes = unsafe { core::slice::from_raw_parts(fb.as_ptr() as *const u8, fb.len() * 4) };
-        bytes.to_vec()
+        // The VGA device stores pixels as `u32::from_le_bytes([r,g,b,a])`.
+        //
+        // On little-endian targets (including wasm32), the in-memory representation of `u32`
+        // matches RGBA byte order, so we can copy the framebuffer as a raw byte slice.
+        //
+        // On big-endian targets, we must convert each pixel to little-endian bytes explicitly.
+        #[cfg(target_endian = "little")]
+        {
+            // Safety: `fb` is a valid slice of `u32` pixels (RGBA8888). Reinterpreting it as bytes
+            // preserves RGBA byte order on little-endian architectures.
+            let bytes =
+                unsafe { core::slice::from_raw_parts(fb.as_ptr() as *const u8, fb.len() * 4) };
+            bytes.to_vec()
+        }
+
+        #[cfg(not(target_endian = "little"))]
+        {
+            let mut out = Vec::with_capacity(fb.len().saturating_mul(4));
+            for &px in fb {
+                out.extend_from_slice(&px.to_le_bytes());
+            }
+            out
+        }
     }
 
     /// Legacy helper: copy the current VGA front buffer into a JS `Uint8Array` (RGBA8888).
