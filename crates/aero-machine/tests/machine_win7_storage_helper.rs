@@ -1,6 +1,6 @@
 use aero_devices::pci::profile::{IDE_PIIX3, ISA_PIIX3, SATA_AHCI_ICH9};
 use aero_devices::pci::PciBdf;
-use aero_machine::Machine;
+use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
 fn pci_cfg_addr(bdf: PciBdf, offset: u8) -> u32 {
@@ -18,6 +18,19 @@ fn read_cfg_u32(m: &mut Machine, bdf: PciBdf, offset: u8) -> u32 {
 
 #[test]
 fn machine_helper_enables_canonical_win7_storage_topology_pci_functions() {
+    let cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    assert_eq!(cfg.cpu_count, 1);
+    assert!(cfg.enable_pc_platform);
+    assert!(cfg.enable_ahci);
+    assert!(cfg.enable_ide);
+    assert!(cfg.enable_serial);
+    assert!(cfg.enable_i8042);
+    assert!(cfg.enable_a20_gate);
+    assert!(cfg.enable_reset_ctrl);
+    assert!(!cfg.enable_vga);
+    assert!(!cfg.enable_e1000);
+    assert_eq!(cfg.e1000_mac_addr, None);
+
     let mut m = Machine::new_with_win7_storage(2 * 1024 * 1024).unwrap();
 
     let ahci_id = read_cfg_u32(&mut m, SATA_AHCI_ICH9.bdf, 0x00);

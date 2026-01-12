@@ -157,20 +157,29 @@ impl MachineConfig {
     /// - IDE (PIIX3) at `00:01.1` (with the accompanying PIIX3 ISA function at `00:01.0` so OSes
     ///   enumerate the multi-function device correctly)
     ///
-    /// Other devices follow [`MachineConfig::default`] for now:
+    /// Other devices are set to explicit, stable defaults to avoid drift:
     ///
-    /// - serial (`COM1`) enabled (useful for deterministic debug logs)
+    /// - serial (`COM1`) enabled
     /// - i8042 enabled (keyboard/mouse)
     /// - fast A20 gate enabled (port `0x92`)
     /// - reset control enabled (port `0xCF9`)
+    /// - VGA disabled
+    /// - E1000 disabled
     #[must_use]
     pub fn win7_storage(ram_size_bytes: u64) -> Self {
         Self {
             ram_size_bytes,
+            cpu_count: 1,
             enable_pc_platform: true,
             enable_ahci: true,
             enable_ide: true,
-            ..Default::default()
+            enable_vga: false,
+            enable_serial: true,
+            enable_i8042: true,
+            enable_a20_gate: true,
+            enable_reset_ctrl: true,
+            enable_e1000: false,
+            e1000_mac_addr: None,
         }
     }
 }
