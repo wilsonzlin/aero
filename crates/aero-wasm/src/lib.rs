@@ -76,6 +76,11 @@ mod i8042_bridge;
 pub use i8042_bridge::I8042Bridge;
 
 #[cfg(target_arch = "wasm32")]
+mod pc_machine;
+#[cfg(target_arch = "wasm32")]
+pub use pc_machine::PcMachine;
+
+#[cfg(target_arch = "wasm32")]
 mod webusb_uhci_bridge;
 
 #[cfg(target_arch = "wasm32")]

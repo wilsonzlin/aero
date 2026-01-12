@@ -39,15 +39,17 @@ impl DeviceId {
     pub const RTC: DeviceId = DeviceId(4);
     /// PCI core device state.
     ///
-    /// Newer snapshot adapters store PCI core state as a **single** `DeviceId::PCI` entry whose
-    /// payload is an `aero-io-snapshot` blob produced by a wrapper device (inner 4CC `PCIC`).
+    /// Snapshot adapters typically store PCI core state as a **single** [`DeviceId::PCI`] entry
+    /// whose payload is the `aero-io-snapshot` blob produced by
+    /// `aero_devices::pci::PciCoreSnapshot` (inner 4CC `PCIC`).
     ///
     /// The wrapper nests both:
     /// - PCI config ports + config-space/BAR state (`aero_devices::pci::PciConfigPorts`, inner `PCPT`)
     /// - PCI INTx routing + asserted levels (`aero_devices::pci::PciIntxRouter`, inner `INTX`)
     ///
     /// This avoids `aero-snapshot`'s `DEVICES` uniqueness constraint on `(DeviceId, version, flags)`
-    /// while still capturing both sub-snapshots.
+    /// while still capturing both sub-snapshots. See [`DeviceId::PCI_CFG`] and
+    /// [`DeviceId::PCI_INTX`] for the optional split-out entries.
     pub const PCI: DeviceId = DeviceId(5);
     pub const DISK_CONTROLLER: DeviceId = DeviceId(6);
     pub const VGA: DeviceId = DeviceId(7);

@@ -2091,6 +2091,9 @@ impl PcPlatform {
         // while the PC platform maintains a separate canonical config space for enumeration.
         // Mirror the live config (command + BAR bases) into the NIC model before polling so
         // bus-master gating works without needing a general "config write hook".
+        //
+        // Note: we still mirror the config registers even when bus mastering is disabled so the
+        // model's internal state stays coherent with the guest-programmed PCI config space.
         let mut dev = e1000.borrow_mut();
         dev.pci_config_write(0x04, 2, u32::from(command));
         if let Ok(bar0_base) = u32::try_from(bar0_base) {

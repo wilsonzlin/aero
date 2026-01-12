@@ -276,6 +276,21 @@ export interface WasmApi {
         free(): void;
     };
 
+    /**
+     * Full PCI-capable PC machine wrapper (includes E1000 + ring backend integration).
+     *
+     * Optional for older WASM builds.
+     */
+    PcMachine?: new (ram_size_bytes: number) => {
+        reset(): void;
+        set_disk_image(bytes: Uint8Array): void;
+        attach_l2_tunnel_rings(tx: SharedRingBufferHandle, rx: SharedRingBufferHandle): void;
+        detach_network(): void;
+        poll_network(): void;
+        run_slice(max_insts: number): { kind: RunExitKind; executed: number; detail: string };
+        free(): void;
+    };
+
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
         mouse_move(dx: number, dy: number): void;
@@ -985,6 +1000,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
         E1000Bridge: mod.E1000Bridge,
+        PcMachine: mod.PcMachine,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
         I8042Bridge: mod.I8042Bridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
