@@ -1072,7 +1072,9 @@ describe("RemoteRangeDisk", () => {
     const blockedStarted = new Promise<void>((resolve) => {
       blockedStartedResolve = resolve;
     });
-    let releaseBlockedFetch: (() => void) | null = null;
+    // Use a no-op default so TypeScript doesn't treat this as permanently `null`
+    // (it is reassigned inside the stub fetcher when the read-ahead request is created).
+    let releaseBlockedFetch: () => void = () => {};
     let writeAfterClose = false;
 
     class TrackingSparseDisk extends MemorySparseDisk {
@@ -1160,7 +1162,7 @@ describe("RemoteRangeDisk", () => {
           const onAbort = () => {
             if (settled) return;
             settled = true;
-            releaseBlockedFetch = null;
+            releaseBlockedFetch = () => {};
             reject(abortErr());
           };
 
@@ -1210,7 +1212,7 @@ describe("RemoteRangeDisk", () => {
     process.on("unhandledRejection", onUnhandled);
     try {
       const closePromise = disk.close();
-      (releaseBlockedFetch as (() => void) | null)?.();
+      releaseBlockedFetch();
       await closePromise;
 
       // Give any remaining microtasks a chance to run.

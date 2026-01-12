@@ -445,7 +445,9 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const chunkRequestStarted = new Promise<void>((resolve) => {
       chunkRequestStartedResolve = resolve;
     });
-    let releaseChunkResponsesResolve: (() => void) | null = null;
+    // Use a definite assignment assertion so TypeScript understands that the Promise
+    // executor sets the resolver synchronously.
+    let releaseChunkResponsesResolve!: () => void;
     const releaseChunkResponses = new Promise<void>((resolve) => {
       releaseChunkResponsesResolve = resolve;
     });
@@ -506,7 +508,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const p2 = disk.readSectors(0, buf2);
 
     // Release all pending chunk responses (there should only be one request).
-    (releaseChunkResponsesResolve as (() => void) | null)?.();
+    releaseChunkResponsesResolve();
     await Promise.all([p1, p2]);
 
     expect(buf1).toEqual(img.slice(0, 512));
