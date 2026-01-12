@@ -735,7 +735,10 @@ fn tier2_inline_tlb_high_ram_remap_store_uses_contiguous_ram_offset() {
     let got_ram = &got_mem[..ram.len()];
     assert_eq!(got_ram[desired_offset], 0xab);
 
-    let rax = read_u64_le(&got_mem, cpu_ptr_usize + abi::gpr_offset(Gpr::Rax.as_u8() as usize) as usize);
+    let rax = read_u64_le(
+        &got_mem,
+        cpu_ptr_usize + abi::gpr_offset(Gpr::Rax.as_u8() as usize) as usize,
+    );
     assert_eq!(rax & 0xff, 0xab);
 
     let host = *store.data();

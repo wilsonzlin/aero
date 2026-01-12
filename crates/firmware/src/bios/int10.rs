@@ -209,7 +209,9 @@ impl Bios {
                         (memory.read_u8(src + off), attr_default)
                     };
 
-                    self.video.vga.write_text_cell(memory, page, row, col, ch, attr);
+                    self.video
+                        .vga
+                        .write_text_cell(memory, page, row, col, ch, attr);
                     written = written.saturating_add(1);
                 }
 
@@ -226,4 +228,4 @@ impl Bios {
             }
         }
     }
-} 
+}
