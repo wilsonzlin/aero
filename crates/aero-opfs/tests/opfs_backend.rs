@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_opfs::OpfsStorage;
-use emulator::io::storage::disk::DiskBackend;
+use aero_opfs::DiskError;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -52,7 +52,7 @@ async fn opfs_roundtrip_small() {
 
     let mut backend = match OpfsStorage::open(&path, true, size).await {
         Ok(b) => b,
-        Err(emulator::io::storage::disk::DiskError::NotSupported(_)) => return,
+        Err(DiskError::NotSupported(_)) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
 
@@ -75,8 +75,8 @@ async fn opfs_large_offset_over_2gb() {
 
     let mut backend = match OpfsStorage::open(&path, true, size).await {
         Ok(b) => b,
-        Err(emulator::io::storage::disk::DiskError::NotSupported(_)) => return,
-        Err(emulator::io::storage::disk::DiskError::QuotaExceeded) => return,
+        Err(DiskError::NotSupported(_)) => return,
+        Err(DiskError::QuotaExceeded) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
 

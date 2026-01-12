@@ -67,8 +67,8 @@ mod platform_handle {
         Ok(as_u64)
     }
 
-    pub(super) fn disk_error_to_io(err: emulator::io::storage::disk::DiskError) -> io::Error {
-        use emulator::io::storage::disk::DiskError;
+    pub(super) fn disk_error_to_io(err: crate::DiskError) -> io::Error {
+        use crate::DiskError;
 
         match err {
             DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
@@ -79,16 +79,13 @@ mod platform_handle {
             DiskError::InvalidState(_) => {
                 io::Error::new(io::ErrorKind::BrokenPipe, err.to_string())
             }
-            DiskError::OutOfBounds
-            | DiskError::OutOfRange { .. }
-            | DiskError::InvalidBufferLength
-            | DiskError::UnalignedBuffer { .. } => {
+            DiskError::OutOfBounds | DiskError::InvalidBufferLength => {
                 io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
             }
             DiskError::CorruptImage(_) => {
                 io::Error::new(io::ErrorKind::InvalidData, err.to_string())
             }
-            _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
+            DiskError::Io(_) => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }
     }
 

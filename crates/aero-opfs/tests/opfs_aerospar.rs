@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_opfs::OpfsByteStorage;
-use emulator::io::storage::disk::DiskBackend;
-use emulator::io::storage::formats::SparseDisk;
+use aero_opfs::DiskError;
+use aero_storage::{AeroSparseConfig, AeroSparseDisk, VirtualDisk};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -28,23 +28,30 @@ async fn opfs_aerospar_roundtrip() {
 
     let storage = match OpfsByteStorage::open(&path, true).await {
         Ok(s) => s,
-        Err(emulator::io::storage::disk::DiskError::NotSupported(_)) => return,
-        Err(emulator::io::storage::disk::DiskError::QuotaExceeded) => return,
+        Err(DiskError::NotSupported(_)) => return,
+        Err(DiskError::QuotaExceeded) => return,
         Err(e) => panic!("open failed: {e:?}"),
     };
 
-    let mut disk = SparseDisk::create(storage, 512, 32 * 1024, 1024 * 1024).unwrap();
+    let mut disk = AeroSparseDisk::create(
+        storage,
+        AeroSparseConfig {
+            disk_size_bytes: 1024 * 1024,
+            block_size_bytes: 32 * 1024,
+        },
+    )
+    .unwrap();
 
     let mut write_buf = vec![0u8; 4096];
     fill_deterministic(&mut write_buf, 0x55AA_1234);
     disk.write_sectors(7, &write_buf).unwrap();
     disk.flush().unwrap();
 
-    let mut storage = disk.into_storage();
+    let mut storage = disk.into_backend();
     storage.close().unwrap();
 
     let storage = OpfsByteStorage::open(&path, false).await.unwrap();
-    let mut disk = SparseDisk::open(storage).unwrap();
+    let mut disk = AeroSparseDisk::open(storage).unwrap();
     let mut read_buf = vec![0u8; write_buf.len()];
     disk.read_sectors(7, &mut read_buf).unwrap();
     assert_eq!(read_buf, write_buf);

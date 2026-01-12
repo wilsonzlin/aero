@@ -1,4 +1,4 @@
-use emulator::io::storage::disk::DiskError;
+use crate::DiskError;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
