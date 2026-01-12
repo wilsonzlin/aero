@@ -100,7 +100,7 @@ To keep restore behavior deterministic and avoid ambiguous state merges, the dec
 
 - `DeviceState.id`: the *outer* Aero `DeviceId` (assigned by the coordinator)
 - `DeviceState.data`: the raw `aero-io-snapshot` TLV blob returned by `IoSnapshot::save_state()` (including the inner header)
-- `DeviceState.version` / `DeviceState.flags`: mirror the inner `SnapshotVersion` from the `aero-io-snapshot` header (`version = major`, `flags = minor`)
+- `DeviceState.version` / `DeviceState.flags`: mirror the inner *device* `SnapshotVersion` from the `aero-io-snapshot` header (`version = device_major`, `flags = device_minor`, not the io-snapshot format version)
 
 #### PcPlatform (full-system) device coverage
 
