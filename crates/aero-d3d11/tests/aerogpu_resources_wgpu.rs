@@ -443,6 +443,65 @@ fn upload_resource_bc3_texture_roundtrip_cpu_fallback() -> Result<()> {
         Ok(())
     })
 }
+
+#[test]
+fn upload_resource_bc2_texture_roundtrip_cpu_fallback() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        let tex_handle = 6;
+        resources.create_texture2d(
+            tex_handle,
+            Texture2dCreateDesc {
+                usage_flags: AEROGPU_RESOURCE_USAGE_TEXTURE,
+                format: AerogpuFormat::BC2RgbaUnorm as u32,
+                width: 4,
+                height: 4,
+                mip_levels: 1,
+                array_layers: 1,
+                // BC2: 4x4 blocks, 16 bytes per block. Use a padded row pitch to exercise repack.
+                row_pitch_bytes: 24,
+                backing_alloc_id: 0,
+                backing_offset_bytes: 0,
+            },
+        )?;
+
+        // From `aero_gpu::bc_decompress` unit tests: explicit 4-bit alpha values.
+        let bc2_data: Vec<u8> = vec![
+            0xff, 0xff, 0x00, 0x00, 0x88, 0x88, 0x11, 0x11, // alpha bits (LE u64)
+            0xff, 0xff, // color0 (white)
+            0xff, 0xff, // color1 (white)
+            0x00, 0x00, 0x00, 0x00, // indices (all 0 -> white)
+        ];
+
+        resources.upload_resource(
+            tex_handle,
+            DirtyRange {
+                offset_bytes: 0,
+                size_bytes: bc2_data.len() as u64,
+            },
+            &bc2_data,
+        )?;
+
+        let tex = resources.texture2d(tex_handle)?;
+        assert_eq!(tex.desc.format, wgpu::TextureFormat::Bc2RgbaUnorm);
+        assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+
+        let expected_rgba8 = aero_gpu::decompress_bc2_rgba8(4, 4, &bc2_data);
+        let readback =
+            read_texture_rgba8(resources.device(), resources.queue(), &tex.texture, 4, 4).await?;
+        assert_eq!(readback, expected_rgba8);
+
+        Ok(())
+    })
+}
 #[test]
 fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
     pollster::block_on(async {
