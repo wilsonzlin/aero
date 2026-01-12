@@ -679,6 +679,12 @@ impl IdeController {
 
     /// Read an I/O port (8/16/32-bit).
     pub fn io_read(&mut self, port: u16, size: u8) -> u32 {
+        // Treat zero-sized accesses as true no-ops. (They are not representable by the x86 ISA,
+        // but defensive callers may still attempt them.)
+        if size == 0 {
+            return 0;
+        }
+
         // Gate port I/O decoding on PCI command I/O Space Enable (bit 0).
         if !self.io_space_enabled() {
             return match size {
@@ -718,6 +724,9 @@ impl IdeController {
 
     /// Write an I/O port (8/16/32-bit).
     pub fn io_write(&mut self, port: u16, size: u8, val: u32) {
+        if size == 0 {
+            return;
+        }
         // Gate port I/O decoding on PCI command I/O Space Enable (bit 0).
         if !self.io_space_enabled() {
             return;
@@ -758,6 +767,9 @@ impl IdeController {
 
     /// Read from the PCI configuration space (little-endian).
     pub fn pci_config_read(&self, offset: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
         let offset = offset as usize;
         if offset >= self.pci_regs.len() || offset + size as usize > self.pci_regs.len() {
             return match size {
@@ -881,6 +893,9 @@ impl IdeController {
 
     /// Write to the PCI configuration space (little-endian).
     pub fn pci_config_write(&mut self, offset: u16, size: u8, val: u32) {
+        if size == 0 {
+            return;
+        }
         let offset = offset as usize;
         if offset >= self.pci_regs.len() || offset + size as usize > self.pci_regs.len() {
             return;

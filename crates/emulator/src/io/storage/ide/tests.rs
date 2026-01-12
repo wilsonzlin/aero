@@ -757,3 +757,36 @@ fn pci_wrapper_gates_ide_ports_on_pci_command_io_bit() {
     ide.pci_config_write(0x04, 2, 1);
     assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 6, 1) as u8, 0x00);
 }
+
+#[test]
+fn size0_io_access_is_noop() {
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(MemDisk::new(1)), "Aero HDD"));
+
+    // Disable PCI I/O space decode.
+    ide.pci_config_write(0x04, 2, 0);
+
+    // Size-0 reads should be true no-ops regardless of whether the device is decoded.
+    assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 7, 0), 0);
+
+    // Re-enable I/O decode for the remainder of the test.
+    ide.pci_config_write(0x04, 2, 1);
+
+    // Trigger an IRQ by issuing IDENTIFY DEVICE.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xec);
+    assert!(ide.primary_irq_pending());
+
+    // Reading STATUS with size=0 should not clear the pending IRQ.
+    assert_eq!(ide.io_read(PRIMARY_PORTS.cmd_base + 7, 0), 0);
+    assert!(ide.primary_irq_pending());
+
+    // Reading STATUS with size=1 should clear it (normal ATA semantics).
+    let _ = ide.io_read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.primary_irq_pending());
+
+    // Size-0 writes should not modify any state (e.g. the DEVICE register).
+    let device_before = ide.io_read(PRIMARY_PORTS.cmd_base + 6, 1);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 0, 0xe0);
+    let device_after = ide.io_read(PRIMARY_PORTS.cmd_base + 6, 1);
+    assert_eq!(device_after, device_before);
+}
