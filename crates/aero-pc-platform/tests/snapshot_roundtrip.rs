@@ -785,9 +785,13 @@ fn pc_platform_snapshot_roundtrip_preserves_storage_controllers_and_allows_backe
         .pci_intx
         .gsi_for_intx(profile::SATA_AHCI_ICH9.bdf, PciInterruptPin::IntA);
 
+    // Switch to APIC mode via IMCR so the IOAPIC path is active (matches how guests enable APIC).
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
     {
         let mut ints = pc.interrupts.borrow_mut();
-        ints.set_mode(PlatformInterruptMode::Apic);
 
         // PCI INTx is active-low + level-triggered.
         let low = u32::from(AHCI_VECTOR) | (1 << 13) | (1 << 15);
