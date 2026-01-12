@@ -151,3 +151,143 @@ pub(crate) fn translate_guest_paddr_chunk(ram_bytes: u64, paddr: u64, len: usize
         GuestRamChunk::OutOfBounds { .. } => GuestRamChunk::OutOfBounds { len: max_len },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guest_ram_phys_end_exclusive_matches_q35_layout() {
+        // No remap when RAM is <= ECAM base.
+        assert_eq!(guest_ram_phys_end_exclusive(0), 0);
+        assert_eq!(
+            guest_ram_phys_end_exclusive(PCIE_ECAM_BASE - 1),
+            PCIE_ECAM_BASE - 1
+        );
+        assert_eq!(guest_ram_phys_end_exclusive(PCIE_ECAM_BASE), PCIE_ECAM_BASE);
+
+        // When RAM exceeds ECAM base, the remainder is remapped above 4GiB.
+        assert_eq!(
+            guest_ram_phys_end_exclusive(PCIE_ECAM_BASE + 0x2000),
+            HIGH_RAM_BASE + 0x2000
+        );
+    }
+
+    #[test]
+    fn translate_guest_paddr_range_classifies_low_hole_and_high_ram() {
+        let ram_bytes = PCIE_ECAM_BASE + 0x2000;
+
+        // Low RAM is identity-mapped.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, 0x1000, 4),
+            GuestRamRange::Ram { ram_offset: 0x1000 }
+        );
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, PCIE_ECAM_BASE - 4, 4),
+            GuestRamRange::Ram {
+                ram_offset: PCIE_ECAM_BASE - 4
+            }
+        );
+
+        // The ECAM/PCI/MMIO hole is not backed by RAM.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, PCIE_ECAM_BASE, 4),
+            GuestRamRange::Hole
+        );
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE - 4, 4),
+            GuestRamRange::Hole
+        );
+
+        // High RAM is remapped above 4GiB: physical 4GiB corresponds to RAM offset PCIE_ECAM_BASE.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE, 4),
+            GuestRamRange::Ram {
+                ram_offset: PCIE_ECAM_BASE
+            }
+        );
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE + 0x1FFC, 4),
+            GuestRamRange::Ram {
+                ram_offset: PCIE_ECAM_BASE + 0x1FFC
+            }
+        );
+
+        // The range API rejects accesses that span multiple regions (low RAM -> hole).
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, PCIE_ECAM_BASE - 2, 4),
+            GuestRamRange::OutOfBounds
+        );
+
+        // Out of range beyond the end of high RAM.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE + 0x2000, 1),
+            GuestRamRange::OutOfBounds
+        );
+    }
+
+    #[test]
+    fn translate_guest_paddr_chunk_splits_on_region_boundaries() {
+        let ram_bytes = PCIE_ECAM_BASE + 0x2000;
+
+        // Crossing low RAM -> hole.
+        assert_eq!(
+            translate_guest_paddr_chunk(ram_bytes, PCIE_ECAM_BASE - 2, 8),
+            GuestRamChunk::Ram {
+                ram_offset: PCIE_ECAM_BASE - 2,
+                len: 2
+            }
+        );
+
+        // Hole reads are chunked up to the 4GiB boundary.
+        assert_eq!(
+            translate_guest_paddr_chunk(ram_bytes, PCIE_ECAM_BASE, 8),
+            GuestRamChunk::Hole { len: 8 }
+        );
+        assert_eq!(
+            translate_guest_paddr_chunk(ram_bytes, HIGH_RAM_BASE - 4, 8),
+            GuestRamChunk::Hole { len: 4 }
+        );
+
+        // Crossing hole -> high RAM.
+        assert_eq!(
+            translate_guest_paddr_chunk(ram_bytes, HIGH_RAM_BASE, 8),
+            GuestRamChunk::Ram {
+                ram_offset: PCIE_ECAM_BASE,
+                len: 8
+            }
+        );
+        assert_eq!(
+            translate_guest_paddr_chunk(ram_bytes, HIGH_RAM_BASE + 0x1FFC, 8),
+            GuestRamChunk::Ram {
+                ram_offset: PCIE_ECAM_BASE + 0x1FFC,
+                len: 4
+            }
+        );
+    }
+
+    #[test]
+    fn translate_guest_paddr_range_zero_length_classifies_containing_region() {
+        let ram_bytes = PCIE_ECAM_BASE + 0x2000;
+
+        // End of low RAM belongs to the hole, even for 0-length ranges.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, PCIE_ECAM_BASE, 0),
+            GuestRamRange::Hole
+        );
+
+        // Empty slice at the end of low RAM is valid.
+        assert_eq!(
+            translate_guest_paddr_range(0x2000, 0x2000, 0),
+            GuestRamRange::Ram { ram_offset: 0x2000 }
+        );
+
+        // Empty slice at the end of high RAM is valid.
+        assert_eq!(
+            translate_guest_paddr_range(ram_bytes, HIGH_RAM_BASE + 0x2000, 0),
+            GuestRamRange::Ram {
+                ram_offset: ram_bytes
+            }
+        );
+    }
+}

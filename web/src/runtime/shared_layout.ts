@@ -636,6 +636,10 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     );
   }
 
+  // A flat byte view of the guest RAM backing store. This is convenient for tests/demo harnesses.
+  //
+  // Note: on PC/Q35 with PCI holes + high-memory remap, guest physical memory is non-contiguous;
+  // this array is not a 1:1 view of guest *physical addresses* once holes are modeled.
   const guestU8 = new Uint8Array(segments.guestMemory.buffer, guestLayout.guest_base, guestLayout.guest_size);
   const guestI32 = new Int32Array(
     segments.guestMemory.buffer,
