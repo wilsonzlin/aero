@@ -2605,6 +2605,23 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
+    /// machine's canonical disk.
+    ///
+    /// This avoids requiring the caller to know the disk size ahead of time.
+    ///
+    /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
+    /// a dedicated worker (not the main thread).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_opfs_existing(&mut self, path: String) -> Result<(), JsValue> {
+        let backend = aero_opfs::OpfsBackend::open_existing(&path)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner
+            .set_disk_backend(Box::new(backend))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
         RunExit::from_native(self.inner.run_slice(max_insts as u64))
     }

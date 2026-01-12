@@ -820,6 +820,13 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
+        /**
+         * Open an existing OPFS-backed disk image (using the file's current size) and attach it as
+         * the machine's canonical disk.
+         *
+         * Optional for older WASM builds.
+         */
+        set_disk_opfs_existing?(path: string): Promise<void>;
         run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
         serial_output(): Uint8Array;
         /**

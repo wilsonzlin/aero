@@ -364,6 +364,64 @@ mod wasm {
             OpfsBackendMode::SyncAccessHandle
         }
 
+        /// Open an existing OPFS-backed disk without resizing it.
+        ///
+        /// This is useful for callers that don't know the on-disk size ahead of time (for example,
+        /// when persisting disks between page loads and recovering them by path).
+        ///
+        /// The returned backend reports capacity based on the existing file size.
+        pub async fn open_existing(path: &str) -> DiskResult<Self> {
+            if !opfs_platform::is_opfs_supported() {
+                return Err(DiskError::NotSupported(
+                    "OPFS is unavailable (navigator.storage.getDirectory missing)".to_string(),
+                ));
+            }
+
+            let file = opfs_platform::open_file(path, false).await?;
+
+            if !opfs_platform::is_worker_scope()
+                || !opfs_platform::file_handle_supports_sync_access_handle(&file)
+            {
+                return Err(DiskError::NotSupported(
+                    "OPFS sync access handles are unavailable; use OpfsAsyncBackend instead"
+                        .to_string(),
+                ));
+            }
+
+            let at_key = JsValue::from_str("at");
+            let rw_opts = Object::new();
+            Reflect::set(&rw_opts, &at_key, &JsValue::from_f64(0.0))
+                .map_err(opfs_platform::disk_error_from_js)?;
+
+            let handle = opfs_platform::create_sync_handle(&file).await?;
+            let mut backend = Self {
+                file,
+                handle,
+                sector_size: DEFAULT_SECTOR_SIZE,
+                total_sectors: 0,
+                size_bytes: 0,
+                at_key,
+                rw_opts,
+                closed: false,
+            };
+
+            let current_size = js_number_to_u64_checked(
+                backend
+                    .handle
+                    .get_size()
+                    .map_err(opfs_platform::disk_error_from_js)?,
+            )?;
+            if !current_size.is_multiple_of(DEFAULT_SECTOR_SIZE as u64) {
+                return Err(DiskError::Io(format!(
+                    "existing OPFS disk size {current_size} is not a multiple of sector size {DEFAULT_SECTOR_SIZE}"
+                )));
+            }
+            backend.size_bytes = current_size;
+            backend.total_sectors = current_size / DEFAULT_SECTOR_SIZE as u64;
+
+            Ok(backend)
+        }
+
         pub fn is_closed(&self) -> bool {
             self.closed
         }
@@ -1211,6 +1269,10 @@ mod native {
         }
 
         pub async fn open(_path: &str, _create: bool, _size_bytes: u64) -> DiskResult<Self> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+
+        pub async fn open_existing(_path: &str) -> DiskResult<Self> {
             Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
         }
 
