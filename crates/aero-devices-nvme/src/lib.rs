@@ -36,9 +36,9 @@ use aero_io_snapshot::io::storage::state::{
 /// capacity is not a multiple of 512, the trailing partial sector is ignored and
 /// only the largest whole-sector prefix is exposed via [`DiskBackend::total_sectors`].
 pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
+use aero_storage_adapter::NvmeDiskFromAeroStorage;
 use memory::MemoryBus;
 
-#[cfg(test)]
 mod aero_storage_adapter;
 
 const PAGE_SIZE: usize = 4096;

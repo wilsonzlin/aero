@@ -28,6 +28,7 @@ impl<D: VirtualDisk> NvmeDiskFromAeroStorage<D> {
         })
     }
 
+    #[cfg(test)]
     pub fn into_inner(self) -> D {
         self.disk
     }
