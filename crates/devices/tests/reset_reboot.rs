@@ -1,4 +1,6 @@
-use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
+use aero_devices::i8042::{
+    I8042Ports, PlatformSystemControlSink, I8042_DATA_PORT, I8042_STATUS_PORT,
+};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::ResetLatch;
@@ -127,8 +129,8 @@ impl TestVm {
         controller.borrow_mut().set_system_control_sink(Box::new(
             PlatformSystemControlSink::with_reset_sink(chipset.a20(), reset_latch.clone()),
         ));
-        io.register(0x60, Box::new(i8042.port60()));
-        io.register(0x64, Box::new(i8042.port64()));
+        io.register(I8042_DATA_PORT, Box::new(i8042.port60()));
+        io.register(I8042_STATUS_PORT, Box::new(i8042.port64()));
 
         Self {
             cpu: TestCpu::new(),
@@ -189,10 +191,10 @@ fn guest_out_cf9_restarts_at_reset_vector() {
 
     // Dirty some device state so we can verify the platform reset clears it.
     // Change the i8042 command byte away from its power-on value (0x45).
-    vm.io.write_u8(0x64, 0x60);
-    vm.io.write_u8(0x60, 0x00);
-    vm.io.write_u8(0x64, 0x20);
-    assert_eq!(vm.io.read_u8(0x60), 0x00);
+    vm.io.write_u8(I8042_STATUS_PORT, 0x60);
+    vm.io.write_u8(I8042_DATA_PORT, 0x00);
+    vm.io.write_u8(I8042_STATUS_PORT, 0x20);
+    assert_eq!(vm.io.read_u8(I8042_DATA_PORT), 0x00);
 
     assert_eq!(vm.cpu.physical_ip(), RESET_VECTOR_PHYS);
 
@@ -205,8 +207,8 @@ fn guest_out_cf9_restarts_at_reset_vector() {
                 assert_eq!(vm.cpu.physical_ip(), RESET_VECTOR_PHYS);
 
                 // Platform reset should have restored device power-on state.
-                vm.io.write_u8(0x64, 0x20);
-                assert_eq!(vm.io.read_u8(0x60), 0x45);
+                vm.io.write_u8(I8042_STATUS_PORT, 0x20);
+                assert_eq!(vm.io.read_u8(I8042_DATA_PORT), 0x45);
                 assert_eq!(vm.io.read_u8(RESET_CTRL_PORT), 0x00);
                 saw_reset = true;
                 break;
@@ -232,17 +234,26 @@ fn guest_i8042_reset_pulse_restarts_at_reset_vector_and_resets_devices() {
     //   mov dx, 0x0064
     //   out dx, al
     //   jmp $
-    let payload: [u8; 8] = [0xB0, 0xFE, 0xBA, 0x64, 0x00, 0xEE, 0xEB, 0xFE];
+    let payload: [u8; 8] = [
+        0xB0,
+        0xFE,
+        0xBA,
+        (I8042_STATUS_PORT & 0xFF) as u8,
+        (I8042_STATUS_PORT >> 8) as u8,
+        0xEE,
+        0xEB,
+        0xFE,
+    ];
 
     let mut vm = TestVm::new(&payload);
 
     // Dirty device state before issuing the reset.
     vm.io.write_u8(RESET_CTRL_PORT, 0x04);
-    vm.io.write_u8(0x64, 0x60);
-    vm.io.write_u8(0x60, 0x00);
+    vm.io.write_u8(I8042_STATUS_PORT, 0x60);
+    vm.io.write_u8(I8042_DATA_PORT, 0x00);
 
-    vm.io.write_u8(0x64, 0x20);
-    assert_eq!(vm.io.read_u8(0x60), 0x00);
+    vm.io.write_u8(I8042_STATUS_PORT, 0x20);
+    assert_eq!(vm.io.read_u8(I8042_DATA_PORT), 0x00);
     assert_eq!(vm.io.read_u8(RESET_CTRL_PORT), 0x04);
 
     let mut saw_reset = false;
@@ -253,8 +264,8 @@ fn guest_i8042_reset_pulse_restarts_at_reset_vector_and_resets_devices() {
                 assert_eq!(vm.cpu.physical_ip(), RESET_VECTOR_PHYS);
 
                 // Device state should be restored to power-on defaults.
-                vm.io.write_u8(0x64, 0x20);
-                assert_eq!(vm.io.read_u8(0x60), 0x45);
+                vm.io.write_u8(I8042_STATUS_PORT, 0x20);
+                assert_eq!(vm.io.read_u8(I8042_DATA_PORT), 0x45);
                 assert_eq!(vm.io.read_u8(RESET_CTRL_PORT), 0x00);
 
                 saw_reset = true;

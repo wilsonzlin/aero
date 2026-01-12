@@ -1,4 +1,5 @@
 use aero_devices::hpet::HPET_MMIO_BASE;
+use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_platform::interrupts::{InterruptController, InterruptInput, PlatformInterruptMode};
 use pretty_assertions::assert_eq;
@@ -506,9 +507,9 @@ fn machine_i8042_mouse_motion_raises_irq12_and_wakes_hlt_cpu() {
 
     // Enable PS/2 mouse data reporting *without* enabling IRQ12 yet. This avoids waking the CPU
     // due to the mouse ACK byte (0xFA) produced by the enable command itself.
-    m.io_write(0x64, 1, 0xD4); // i8042: next data write goes to mouse
-    m.io_write(0x60, 1, 0xF4); // mouse: enable data reporting (ACK 0xFA)
-    let ack = m.io_read(0x60, 1) as u8;
+    m.io_write(I8042_STATUS_PORT, 1, 0xD4); // i8042: next data write goes to mouse
+    m.io_write(I8042_DATA_PORT, 1, 0xF4); // mouse: enable data reporting (ACK 0xFA)
+    let ack = m.io_read(I8042_DATA_PORT, 1) as u8;
     assert_eq!(
         ack, 0xFA,
         "expected mouse ACK after enabling data reporting"
@@ -516,8 +517,8 @@ fn machine_i8042_mouse_motion_raises_irq12_and_wakes_hlt_cpu() {
 
     // Enable i8042 IRQ12 generation (command byte bit 1) while keeping the default settings
     // (IRQ1 enabled + translation enabled).
-    m.io_write(0x64, 1, 0x60); // i8042: write command byte
-    m.io_write(0x60, 1, 0x47); // default 0x45 | IRQ12 enable (bit 1)
+    m.io_write(I8042_STATUS_PORT, 1, 0x60); // i8042: write command byte
+    m.io_write(I8042_DATA_PORT, 1, 0x47); // default 0x45 | IRQ12 enable (bit 1)
 
     // Configure PIC offsets and unmask cascade (IRQ2) + IRQ12 so the mouse IRQ can be delivered.
     {
@@ -629,17 +630,17 @@ fn machine_i8042_mouse_motion_delivers_via_ioapic_in_apic_mode() {
     }
 
     // Enable PS/2 mouse reporting while IRQ12 is still disabled (avoid waking on the ACK).
-    m.io_write(0x64, 1, 0xD4);
-    m.io_write(0x60, 1, 0xF4);
-    let ack = m.io_read(0x60, 1) as u8;
+    m.io_write(I8042_STATUS_PORT, 1, 0xD4);
+    m.io_write(I8042_DATA_PORT, 1, 0xF4);
+    let ack = m.io_read(I8042_DATA_PORT, 1) as u8;
     assert_eq!(
         ack, 0xFA,
         "expected mouse ACK after enabling data reporting"
     );
 
     // Enable i8042 IRQ12 generation.
-    m.io_write(0x64, 1, 0x60);
-    m.io_write(0x60, 1, 0x47);
+    m.io_write(I8042_STATUS_PORT, 1, 0x60);
+    m.io_write(I8042_DATA_PORT, 1, 0x47);
 
     m.inject_mouse_motion(1, 1, 0);
 
@@ -690,8 +691,8 @@ fn machine_i8042_keyboard_irq1_is_gated_by_i8042_command_byte() {
     }
 
     // Disable i8042 IRQ1 generation (command byte bit 0).
-    m.io_write(0x64, 1, 0x60);
-    m.io_write(0x60, 1, 0x44); // 0x45 default with IRQ1 cleared.
+    m.io_write(I8042_STATUS_PORT, 1, 0x60);
+    m.io_write(I8042_DATA_PORT, 1, 0x44); // 0x45 default with IRQ1 cleared.
 
     m.inject_browser_key("KeyA", true);
 
@@ -705,7 +706,7 @@ fn machine_i8042_keyboard_irq1_is_gated_by_i8042_command_byte() {
     }
 
     // The scancode should still be present in the output buffer even if no interrupt is generated.
-    assert_eq!(m.io_read(0x60, 1) as u8, 0x1E); // Set-1 'A' make code.
+    assert_eq!(m.io_read(I8042_DATA_PORT, 1) as u8, 0x1E); // Set-1 'A' make code.
 
     for _ in 0..10 {
         let _ = m.run_slice(256);
@@ -745,9 +746,9 @@ fn machine_i8042_mouse_irq12_is_gated_by_i8042_command_byte() {
 
     // Enable PS/2 mouse reporting; this produces an ACK byte (0xFA) but should not generate IRQ12
     // because the i8042 command byte has IRQ12 disabled by default (bit 1 = 0).
-    m.io_write(0x64, 1, 0xD4);
-    m.io_write(0x60, 1, 0xF4);
-    let ack = m.io_read(0x60, 1) as u8;
+    m.io_write(I8042_STATUS_PORT, 1, 0xD4);
+    m.io_write(I8042_DATA_PORT, 1, 0xF4);
+    let ack = m.io_read(I8042_DATA_PORT, 1) as u8;
     assert_eq!(ack, 0xFA);
 
     m.inject_mouse_motion(1, 1, 0);
@@ -762,7 +763,7 @@ fn machine_i8042_mouse_irq12_is_gated_by_i8042_command_byte() {
     }
 
     // A mouse packet should still be available in the output buffer.
-    let _ = m.io_read(0x60, 1);
+    let _ = m.io_read(I8042_DATA_PORT, 1);
 
     for _ in 0..10 {
         let _ = m.run_slice(256);
@@ -799,12 +800,12 @@ fn machine_i8042_keyboard_port_disable_suppresses_output_until_reenabled() {
     }
 
     // Disable the keyboard port via i8042 command 0xAD.
-    m.io_write(0x64, 1, 0xAD);
+    m.io_write(I8042_STATUS_PORT, 1, 0xAD);
 
     m.inject_browser_key("KeyA", true);
 
     assert_eq!(
-        m.io_read(0x64, 1) as u8 & 0x01,
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
         "output buffer should remain empty while keyboard port is disabled"
     );
@@ -819,10 +820,10 @@ fn machine_i8042_keyboard_port_disable_suppresses_output_until_reenabled() {
 
     // Re-enable the keyboard port via i8042 command 0xAE. The previously-injected scancode should
     // now flow into the output buffer and generate a keyboard IRQ.
-    m.io_write(0x64, 1, 0xAE);
+    m.io_write(I8042_STATUS_PORT, 1, 0xAE);
 
     assert_ne!(
-        m.io_read(0x64, 1) as u8 & 0x01,
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
         "output buffer should become full once keyboard port is re-enabled"
     );
@@ -875,22 +876,22 @@ fn machine_i8042_mouse_port_disable_drops_motion_until_reenabled() {
     }
 
     // Enable PS/2 mouse reporting while IRQ12 is still disabled, drain ACK.
-    m.io_write(0x64, 1, 0xD4);
-    m.io_write(0x60, 1, 0xF4);
-    let ack = m.io_read(0x60, 1) as u8;
+    m.io_write(I8042_STATUS_PORT, 1, 0xD4);
+    m.io_write(I8042_DATA_PORT, 1, 0xF4);
+    let ack = m.io_read(I8042_DATA_PORT, 1) as u8;
     assert_eq!(ack, 0xFA);
 
     // Enable i8042 IRQ12 generation.
-    m.io_write(0x64, 1, 0x60);
-    m.io_write(0x60, 1, 0x47);
+    m.io_write(I8042_STATUS_PORT, 1, 0x60);
+    m.io_write(I8042_DATA_PORT, 1, 0x47);
 
     // Disable mouse port via i8042 command 0xA7.
-    m.io_write(0x64, 1, 0xA7);
+    m.io_write(I8042_STATUS_PORT, 1, 0xA7);
 
     m.inject_mouse_motion(1, 1, 0);
 
     assert_eq!(
-        m.io_read(0x64, 1) as u8 & 0x01,
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
         "output buffer should remain empty while mouse port is disabled"
     );
@@ -906,10 +907,10 @@ fn machine_i8042_mouse_port_disable_drops_motion_until_reenabled() {
     // Re-enable mouse port via i8042 command 0xA8. Host-side injected mouse motion should be
     // dropped while the port is disabled (to avoid buffering large cursor jumps), so re-enabling
     // the port should *not* suddenly produce an output byte or IRQ12.
-    m.io_write(0x64, 1, 0xA8);
+    m.io_write(I8042_STATUS_PORT, 1, 0xA8);
 
     assert_eq!(
-        m.io_read(0x64, 1) as u8 & 0x01,
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
         "output buffer should remain empty after re-enabling mouse port (disabled-port motion is dropped)"
     );
@@ -925,7 +926,7 @@ fn machine_i8042_mouse_port_disable_drops_motion_until_reenabled() {
     // Inject motion again with the port enabled; now we should observe output + IRQ12 delivery.
     m.inject_mouse_motion(1, 1, 0);
     assert_ne!(
-        m.io_read(0x64, 1) as u8 & 0x01,
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
         "output buffer should become full once mouse port is enabled and motion is injected"
     );
@@ -978,19 +979,19 @@ fn machine_i8042_translation_disable_emits_set2_scancodes() {
     // Disable Set-2 -> Set-1 translation (command byte bit 6).
     //
     // Default command byte is 0x45; clearing bit 6 yields 0x05 (IRQ1 still enabled).
-    m.io_write(0x64, 1, 0x60);
-    m.io_write(0x60, 1, 0x05);
+    m.io_write(I8042_STATUS_PORT, 1, 0x60);
+    m.io_write(I8042_DATA_PORT, 1, 0x05);
 
     m.inject_browser_key("KeyA", true);
 
     // With translation disabled, the Set-2 make code for 'A' is 0x1C.
     assert_ne!(
-        m.io_read(0x64, 1) as u8 & 0x01,
+        m.io_read(I8042_STATUS_PORT, 1) as u8 & 0x01,
         0,
         "output buffer should contain a scancode byte after key injection"
     );
     assert_eq!(
-        m.io_read(0x60, 1) as u8,
+        m.io_read(I8042_DATA_PORT, 1) as u8,
         0x1C,
         "expected Set-2 scancode when i8042 translation is disabled"
     );

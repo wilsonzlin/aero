@@ -1,7 +1,9 @@
 #![allow(deprecated)]
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, RFLAGS_IF};
 use aero_devices::a20_gate::A20Gate as Port92A20Gate;
-use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
+use aero_devices::i8042::{
+    I8042Ports, PlatformSystemControlSink, I8042_DATA_PORT, I8042_STATUS_PORT,
+};
 use aero_platform::{A20GateHandle, Platform};
 use firmware::bios::{Bios, BiosBus, BiosConfig, FirmwareMemory, InMemoryDisk};
 use std::sync::Arc;
@@ -100,8 +102,12 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     controller
         .borrow_mut()
         .set_system_control_sink(Box::new(PlatformSystemControlSink::new(a20.clone())));
-    platform.io.register(0x60, Box::new(i8042.port60()));
-    platform.io.register(0x64, Box::new(i8042.port64()));
+    platform
+        .io
+        .register(I8042_DATA_PORT, Box::new(i8042.port60()));
+    platform
+        .io
+        .register(I8042_STATUS_PORT, Box::new(i8042.port64()));
 
     assert!(!a20.enabled());
 
@@ -123,8 +129,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
     // i8042 output port reads should reflect disabled.
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x00);
 
     // Enable A20 via port 0x92 and verify memory separation.
     platform.io.write_u8(0x92, 0x02);
@@ -141,8 +147,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
 
     // i8042 output port reads should report the same A20 line state even though we did not
     // write the i8042 output port latch.
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x02);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x02);
 
     // Disable A20 via port 0x92 and verify aliasing.
     platform.io.write_u8(0x92, 0x00);
@@ -151,38 +157,38 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
     // i8042 output port reads should observe the same line state.
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x00);
 
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
     assert_int15_success(flags);
     assert_eq!(cpu.gpr[gpr::RAX] as u8, 0);
 
     // Enable A20 via the i8042 output port path and verify separation again.
-    platform.io.write_u8(0x64, 0xD1);
-    platform.io.write_u8(0x60, 0x03);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD1);
+    platform.io.write_u8(I8042_DATA_PORT, 0x03);
     assert!(a20.enabled());
     assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x02);
     assert_eq!(platform.memory.read_u8(0x0), 0x11);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x22);
 
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x02);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x02);
 
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
     assert_int15_success(flags);
     assert_eq!(cpu.gpr[gpr::RAX] as u8, 1);
 
     // Disable A20 via the i8042 output port and verify aliasing.
-    platform.io.write_u8(0x64, 0xD1);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD1);
     // Keep reset deasserted (bit 0) but clear A20 (bit 1).
-    platform.io.write_u8(0x60, 0x01);
+    platform.io.write_u8(I8042_DATA_PORT, 0x01);
     assert!(!a20.enabled());
     assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x00);
 
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2402);
     assert_int15_success(flags);
@@ -196,8 +202,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.memory.read_u8(0x0), 0x11);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x22);
 
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x02);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x02);
 
     // Disable A20 via BIOS INT 15h and verify aliasing.
     let flags = bios_int15(&mut bios, &mut bios_bus, &mut cpu, 0x2400);
@@ -206,8 +212,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     assert_eq!(platform.io.read_u8(0x92) & 0x02, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
-    platform.io.write_u8(0x64, 0xD0);
-    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
+    platform.io.write_u8(I8042_STATUS_PORT, 0xD0);
+    assert_eq!(platform.io.read_u8(I8042_DATA_PORT) & 0x02, 0x00);
 
     // BIOS should advertise that it supports the keyboard controller, port 0x92, and INT 15h.
     cpu.gpr[gpr::RBX] = 0;
