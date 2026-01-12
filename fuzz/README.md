@@ -78,4 +78,7 @@ cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
 # AeroSparse image parsing/open + bounded IO against corrupt images
 cd fuzz && cargo fuzz run fuzz_aerosparse_open -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_aero_storage_sparse_open -- -runs=10000
+
+# AeroGPU command stream + alloc-table parsing
+cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
 ```
