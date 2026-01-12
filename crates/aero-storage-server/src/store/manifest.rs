@@ -154,6 +154,7 @@ fn validate_file_path(id: &str, file: &str) -> Result<(), ManifestError> {
 }
 
 fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
+    let etag = etag.trim();
     if etag.is_empty() {
         return Err(ManifestError::InvalidEtag {
             id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
@@ -167,6 +168,24 @@ fn validate_etag(id: &str, etag: &str) -> Result<(), ManifestError> {
         etag: super::truncate_for_error(etag, 512),
         reason: err.to_string(),
     })?;
+
+    // Enforce HTTP entity-tag format (RFC 9110 § 8.8.3). We validate this separately from
+    // `HeaderValue` parsing so operators get a clear manifest error rather than surprising cache
+    // misses at runtime.
+    let tag = etag
+        .strip_prefix("W/")
+        .or_else(|| etag.strip_prefix("w/"))
+        .unwrap_or(etag);
+    let is_quoted = tag.starts_with('"') && tag.ends_with('"') && tag.len() >= 2;
+    let inner_has_quote = is_quoted && tag[1..tag.len() - 1].contains('"');
+    if !is_quoted || inner_has_quote {
+        return Err(ManifestError::InvalidEtag {
+            id: super::truncate_for_error(id, super::MAX_IMAGE_ID_LEN),
+            etag: super::truncate_for_error(etag, 512),
+            reason: "etag must be a quoted HTTP entity-tag (e.g. \"v1\" or W/\"v1\")".to_string(),
+        });
+    }
+
     Ok(())
 }
 
@@ -301,6 +320,20 @@ mod tests {
             r#"{
               "images": [
                 { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "bad\netag", "public": true }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ManifestError::InvalidEtag { .. }));
+    }
+
+    #[test]
+    fn rejects_unquoted_etag() {
+        let err = Manifest::parse_str(
+            r#"{
+              "images": [
+                { "id": "bad", "file": "bad.img", "name": "Bad", "etag": "unquoted", "public": true }
               ]
             }"#,
         )
