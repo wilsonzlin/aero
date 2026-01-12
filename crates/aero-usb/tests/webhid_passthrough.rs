@@ -1,7 +1,7 @@
 use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
 use aero_usb::hid::report_descriptor::parse_report_descriptor;
 use aero_usb::hid::webhid::{synthesize_report_descriptor, HidCollectionInfo};
-use aero_usb::usb::{SetupPacket, UsbDevice};
+use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
 fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
     let json = include_str!(concat!(
@@ -184,4 +184,86 @@ fn set_address_applies_on_status_stage() {
     );
 
     assert_eq!(dev.address(), 12);
+}
+
+#[test]
+fn string_descriptors_are_capped_to_u8_length_and_remain_valid_utf16() {
+    let long_ascii = "A".repeat(512);
+    let mut dev = UsbHidPassthrough::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        long_ascii,
+        None,
+        Vec::new(),
+        false,
+        None,
+        None,
+        None,
+    );
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x80,
+        request: 0x06, // GET_DESCRIPTOR
+        value: 0x0302, // STRING descriptor, index 2 (iProduct)
+        index: 0,
+        length: 255,
+    });
+
+    let mut buf = [0u8; 512];
+    let bytes = match dev.handle_in(0, &mut buf) {
+        UsbHandshake::Ack { bytes } => bytes,
+        other => panic!("expected ACK for string descriptor, got {other:?}"),
+    };
+    assert_eq!(bytes, 254, "string descriptor must be capped to 254 bytes");
+    assert_eq!(buf[0] as usize, bytes, "bLength must match payload length");
+    assert_eq!(buf[1], 0x03, "bDescriptorType must be STRING");
+
+    // Ensure the UTF-16 payload decodes (no unpaired surrogates).
+    let utf16: Vec<u16> = buf[2..bytes]
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let decoded = String::from_utf16(&utf16).expect("string descriptor must be valid UTF-16");
+    assert_eq!(
+        decoded.len(),
+        126,
+        "expected 126 ASCII characters after truncation"
+    );
+
+    // Non-BMP case: ensure we don't truncate in the middle of a surrogate pair.
+    let long_emoji = "😀".repeat(100);
+    let mut dev2 = UsbHidPassthrough::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        long_emoji,
+        None,
+        Vec::new(),
+        false,
+        None,
+        None,
+        None,
+    );
+    dev2.handle_setup(SetupPacket {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0302,
+        index: 0,
+        length: 255,
+    });
+    let mut buf2 = [0u8; 512];
+    let bytes2 = match dev2.handle_in(0, &mut buf2) {
+        UsbHandshake::Ack { bytes } => bytes,
+        other => panic!("expected ACK for string descriptor, got {other:?}"),
+    };
+    assert_eq!(bytes2, 254, "expected descriptor to fill the 254-byte cap");
+    assert_eq!(buf2[0] as usize, bytes2);
+    assert_eq!(buf2[1], 0x03);
+    let utf16: Vec<u16> = buf2[2..bytes2]
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let decoded = String::from_utf16(&utf16).expect("emoji string must be valid UTF-16");
+    assert_eq!(decoded.chars().count(), 63, "expected 63 emoji characters");
 }

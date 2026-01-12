@@ -191,12 +191,27 @@ fn build_hub_descriptor(num_ports: usize) -> Vec<u8> {
 }
 
 fn string_descriptor_utf16le(s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + s.len() * 2);
+    // USB string descriptors encode `bLength` as a u8, and strings are UTF-16LE. This caps the
+    // total descriptor size to 254 bytes (2-byte header + up to 126 UTF-16 code units) and avoids
+    // truncating surrogate pairs mid-character.
+    const MAX_LEN: usize = 254;
+
+    let mut out = Vec::with_capacity(MAX_LEN);
     out.push(0); // bLength placeholder
     out.push(USB_DESCRIPTOR_TYPE_STRING);
-    for unit in s.encode_utf16() {
-        out.extend_from_slice(&unit.to_le_bytes());
+
+    for ch in s.chars() {
+        let mut buf = [0u16; 2];
+        let units = ch.encode_utf16(&mut buf);
+        let needed = units.len() * 2;
+        if out.len() + needed > MAX_LEN {
+            break;
+        }
+        for unit in units {
+            out.extend_from_slice(&unit.to_le_bytes());
+        }
     }
+
     out[0] = out.len() as u8;
     out
 }
