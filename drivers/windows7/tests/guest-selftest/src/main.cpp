@@ -1565,7 +1565,7 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
              static_cast<unsigned long>(GetLastError()));
   }
 
-  constexpr uint32_t kAllocLen = 16;
+  constexpr uint32_t kAllocLen = 64;
   // Fill with a non-zero pattern so truncated/short transfers don't get mistaken for an all-zero LUN entry.
   std::vector<uint8_t> resp(kAllocLen, 0xCC);
 
@@ -1599,7 +1599,8 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   if (!ok) {
     log.Logf("virtio-blk: REPORT_LUNS FAIL DeviceIoControl(IOCTL_SCSI_PASS_THROUGH_DIRECT) err=%lu",
              static_cast<unsigned long>(err));
-    log.Logf("virtio-blk: REPORT_LUNS payload[16]=%s", HexDump(resp.data(), resp.size()).c_str());
+    log.Logf("virtio-blk: REPORT_LUNS payload[%lu]=%s", static_cast<unsigned long>(resp.size()),
+             HexDump(resp.data(), resp.size()).c_str());
     LogScsiSenseSummary(log, "virtio-blk: REPORT_LUNS", reinterpret_cast<const uint8_t*>(pkt.sense),
                         sizeof(pkt.sense));
     log.Logf("virtio-blk: REPORT_LUNS sense[32]=%s",
@@ -1609,7 +1610,8 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
 
   if (pkt.sptd.ScsiStatus != 0) {
     log.Logf("virtio-blk: REPORT_LUNS FAIL (SCSI status=0x%02x)", static_cast<unsigned>(pkt.sptd.ScsiStatus));
-    log.Logf("virtio-blk: REPORT_LUNS payload[16]=%s", HexDump(resp.data(), resp.size()).c_str());
+    log.Logf("virtio-blk: REPORT_LUNS payload[%lu]=%s", static_cast<unsigned long>(resp.size()),
+             HexDump(resp.data(), resp.size()).c_str());
     LogScsiSenseSummary(log, "virtio-blk: REPORT_LUNS", reinterpret_cast<const uint8_t*>(pkt.sense),
                         sizeof(pkt.sense));
     log.Logf("virtio-blk: REPORT_LUNS sense[32]=%s",
@@ -1627,7 +1629,8 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   if (list_len != 8 || reserved != 0 || !lun0_all_zero) {
     log.Logf("virtio-blk: REPORT_LUNS FAIL (invalid payload list_len=%lu reserved=%lu lun0_all_zero=%d)",
              static_cast<unsigned long>(list_len), static_cast<unsigned long>(reserved), lun0_all_zero ? 1 : 0);
-    log.Logf("virtio-blk: REPORT_LUNS payload[16]=%s", HexDump(resp.data(), resp.size()).c_str());
+    log.Logf("virtio-blk: REPORT_LUNS payload[%lu]=%s", static_cast<unsigned long>(resp.size()),
+             HexDump(resp.data(), resp.size()).c_str());
     LogScsiSenseSummary(log, "virtio-blk: REPORT_LUNS", reinterpret_cast<const uint8_t*>(pkt.sense),
                         sizeof(pkt.sense));
     log.Logf("virtio-blk: REPORT_LUNS sense[32]=%s",
