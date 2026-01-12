@@ -402,6 +402,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
 * `d3d11_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
 * `d3d11_texture` draws a textured triangle using a 2x2 BGRA texture and validates that the **center pixel samples the expected texel** (corner remains clear color) via staging readback
+* `d3d11_texture_mips_array_sanity` renders a 2x2 quad sampling a `Texture2DArray` with 2 slices and 2 mips via `SampleLevel`, validating **slice/mip selection** (expects a 2x2 readback of **red, green, blue, white**; requires feature level >= 10_0)
 * `d3d11_caps_smoke` validates the expected D3D11 feature level and common format support bits used by the runtime
 * `d3d11_rs_om_state_sanity` validates D3D11 rasterizer + blend state correctness (scissor enable/disable + `RSSetState(NULL)`, cull mode/front-face, depth clip enable/disable, alpha blending + write mask + blend factor + sample mask) via readback (requires feature level >= 10_0)
 * `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
