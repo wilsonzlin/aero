@@ -49,6 +49,17 @@ inline std::string slurp_file(const std::string& path) {
   return ss.str();
 }
 
+// Helper for tests that redirect `stderr` to a file via `freopen`.
+//
+// This closes `stderr` before reopening the file for reading, which improves
+// portability on platforms that restrict opening/deleting an actively written
+// file.
+inline std::string slurp_file_after_closing_stderr(const std::string& path) {
+  std::fflush(stderr);
+  std::fclose(stderr);
+  return slurp_file(path);
+}
+
 inline std::string make_unique_log_path(const char* stem) {
   if (!stem) {
     stem = "aerogpu_d3d9_trace_test";
@@ -69,4 +80,3 @@ inline int fail(const char* msg) {
 }
 
 } // namespace aerogpu_d3d9_trace_test
-

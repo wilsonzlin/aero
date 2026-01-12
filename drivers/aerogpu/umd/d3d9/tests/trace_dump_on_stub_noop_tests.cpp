@@ -52,9 +52,7 @@ int main() {
     trace.ret(S_OK);
   }
 
-  std::fflush(stderr);
-
-  const std::string output = slurp_file(out_path);
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("aerogpu-d3d9-trace: enabled") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected trace init line (log=%s)\n", out_path.c_str());
     return 1;

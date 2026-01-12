@@ -36,9 +36,8 @@ int main() {
   }
 
   aerogpu::d3d9_trace_on_process_detach();
-  std::fflush(stderr);
 
-  const std::string output = slurp_file(out_path);
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("entries=1") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected entries=1 in dump header (log=%s)\n", out_path.c_str());
     return 1;

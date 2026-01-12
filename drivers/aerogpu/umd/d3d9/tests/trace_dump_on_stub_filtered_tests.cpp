@@ -27,10 +27,8 @@ int main() {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
- 
-  std::fflush(stderr);
- 
-  const std::string output = slurp_file(out_path);
+
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("dump reason=") != std::string::npos) {
     std::fprintf(stdout, "FAIL: did not expect dump to trigger for filtered-out stub (log=%s)\n", out_path.c_str());
     return 1;

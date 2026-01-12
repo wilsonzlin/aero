@@ -43,9 +43,8 @@ int main() {
   }
 
   aerogpu::d3d9_trace_on_process_detach();
-  std::fflush(stderr);
 
-  const std::string output = slurp_file(out_path);
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("Device::ProcessVertices (stub)") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected stub-tagged entry to be recorded (log=%s)\n", out_path.c_str());
     return 1;
@@ -64,4 +63,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-

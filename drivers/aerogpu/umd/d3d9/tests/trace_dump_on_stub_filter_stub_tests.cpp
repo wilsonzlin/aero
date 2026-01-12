@@ -27,10 +27,8 @@ int main() {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceProcessVertices, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
-
-  std::fflush(stderr);
-
-  const std::string output = slurp_file(out_path);
+ 
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("filter_on=1") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected trace init to report filter_on=1 (log=%s)\n", out_path.c_str());
     return 1;
@@ -51,4 +49,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-

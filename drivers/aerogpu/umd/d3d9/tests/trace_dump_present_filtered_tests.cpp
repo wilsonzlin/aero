@@ -46,9 +46,7 @@ int main() {
     trace.maybe_dump_on_present(2);
   }
 
-  std::fflush(stderr);
-
-  const std::string output = slurp_file(out_path);
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("dump reason=present_count") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected dump reason present_count (log=%s)\n", out_path.c_str());
     return 1;
@@ -65,4 +63,3 @@ int main() {
   std::remove(out_path.c_str());
   return 0;
 }
-

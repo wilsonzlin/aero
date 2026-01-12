@@ -32,10 +32,8 @@ int main() {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceValidateDevice, 0x222, 0, 0, 0);
     trace.ret(E_INVALIDARG);
   }
- 
-  std::fflush(stderr);
- 
-  const std::string output = slurp_file(out_path);
+
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   if (output.find("dump reason=Device::ValidateDevice") == std::string::npos) {
     std::fprintf(stdout, "FAIL: expected dump reason Device::ValidateDevice (log=%s)\n", out_path.c_str());
     return 1;

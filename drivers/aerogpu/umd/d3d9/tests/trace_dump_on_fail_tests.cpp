@@ -43,10 +43,8 @@ int main() {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceCreateResource, 0x333, 0, 0, 0);
     trace.ret(E_INVALIDARG);
   }
- 
-  std::fflush(stderr);
 
-  const std::string output = slurp_file(out_path);
+  const std::string output = slurp_file_after_closing_stderr(out_path);
   int dump_count = 0;
   for (size_t pos = 0; (pos = output.find("dump reason=", pos)) != std::string::npos; ++dump_count) {
     pos += std::strlen("dump reason=");
