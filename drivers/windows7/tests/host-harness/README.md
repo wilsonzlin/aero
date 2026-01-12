@@ -300,8 +300,8 @@ only if you explicitly want the base image to be mutated.
 ## How the harness works
 
 - Starts a tiny HTTP server on `127.0.0.1:<HttpPort>`
-  - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can HTTP GET `http://10.0.2.2:<HttpPort>/aero-virtio-selftest`.
-  - The harness also serves a deterministic large payload at `http://10.0.2.2:<HttpPort>/aero-virtio-selftest-large`:
+  - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can HTTP GET `http://10.0.2.2:<HttpPort><HttpPath>`.
+  - The harness also serves a deterministic large payload at `http://10.0.2.2:<HttpPort><HttpPath>-large`:
     - HTTP 200
     - body size: **1 MiB**
     - bytes: repeating `0..255` pattern
