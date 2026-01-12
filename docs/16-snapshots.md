@@ -144,7 +144,9 @@ device must avoid emitting spurious IRQ pulses purely due to buffered output byt
 
 ### PCI core state (`aero-devices`)
 
-The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state) using `aero-io-snapshot` TLVs with the following inner `DEVICE_ID`s:
+The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state) using `aero-io-snapshot` TLVs.
+
+The inner `aero-io-snapshot` `DEVICE_ID`s used by the PCI core are:
 
 - `PCPT` — `PciConfigPorts`: wraps the config mechanism state and per-function config spaces:
   - `PCF1` — `PciConfigMechanism1` 0xCF8 address latch

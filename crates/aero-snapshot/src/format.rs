@@ -37,6 +37,15 @@ impl DeviceId {
     pub const APIC: DeviceId = DeviceId(2);
     pub const PIT: DeviceId = DeviceId(3);
     pub const RTC: DeviceId = DeviceId(4);
+    /// Legacy PCI core device state.
+    ///
+    /// Prefer using the more specific IDs:
+    /// - [`DeviceId::PCI_CFG`] for `aero_devices::pci::PciConfigPorts` (inner `PCPT`)
+    /// - [`DeviceId::PCI_INTX`] for `aero_devices::pci::PciIntxRouter` (inner `INTX`)
+    ///
+    /// `aero-snapshot` requires `DEVICES` entries to be unique by `(DeviceId, version, flags)`.
+    /// Since both `PciConfigPorts` and `PciIntxRouter` currently snapshot as `IoSnapshot` v1.0,
+    /// storing both under this single outer id would collide.
     pub const PCI: DeviceId = DeviceId(5);
     pub const DISK_CONTROLLER: DeviceId = DeviceId(6);
     pub const VGA: DeviceId = DeviceId(7);
