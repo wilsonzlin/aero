@@ -1010,19 +1010,17 @@ pub mod tier1 {
                     let imm8 = read_u8(bytes, offset)? as i8 as i64 as u64;
                     offset += 1;
                     width.truncate(imm8)
+                } else if width == Width::W16 {
+                    let imm16 = read_le(bytes, offset, 2)? as u16;
+                    offset += 2;
+                    imm16 as u64
                 } else {
-                    if width == Width::W16 {
-                        let imm16 = read_le(bytes, offset, 2)? as u16;
-                        offset += 2;
-                        imm16 as u64
+                    let imm32 = read_le(bytes, offset, 4)? as u32;
+                    offset += 4;
+                    if width == Width::W64 {
+                        sign_extend_imm(Width::W32, imm32 as u64)
                     } else {
-                        let imm32 = read_le(bytes, offset, 4)? as u32;
-                        offset += 4;
-                        if width == Width::W64 {
-                            sign_extend_imm(Width::W32, imm32 as u64)
-                        } else {
-                            imm32 as u64
-                        }
+                        imm32 as u64
                     }
                 };
 
