@@ -36,5 +36,8 @@ jobs:
       - name: fuzz_bus_rw (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_bus_rw -- -max_total_time=10
 
+      - name: fuzz_aerogpu_parse (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_parse -- -max_total_time=10
+
       - name: Ensure fuzz lockfile was not modified
         run: git diff --exit-code -- fuzz/Cargo.lock
