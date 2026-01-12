@@ -1,5 +1,14 @@
 #[test]
 fn machine_mouse_injection_exports_forward_without_panicking() {
+    // Verify the exported enum mappings stay stable.
+    assert_eq!(aero_wasm::MouseButton::Left as u8, 0);
+    assert_eq!(aero_wasm::MouseButton::Middle as u8, 1);
+    assert_eq!(aero_wasm::MouseButton::Right as u8, 2);
+
+    assert_eq!(aero_wasm::MouseButtons::Left as u8, 0x01);
+    assert_eq!(aero_wasm::MouseButtons::Right as u8, 0x02);
+    assert_eq!(aero_wasm::MouseButtons::Middle as u8, 0x04);
+
     // Keep the RAM size small-ish for a fast smoke test while still being large enough for the
     // canonical PC machine configuration.
     let mut m = aero_wasm::Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
@@ -23,9 +32,13 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_button(0xFF, true);
 
     // Mask injection (bit0=left, bit1=right, bit2=middle).
-    m.inject_mouse_buttons_mask(0x01);
+    m.inject_mouse_buttons_mask(aero_wasm::MouseButtons::Left as u8);
     m.inject_mouse_buttons_mask(0x00);
-    m.inject_mouse_buttons_mask(0x07);
+    m.inject_mouse_buttons_mask(
+        (aero_wasm::MouseButtons::Left as u8)
+            | (aero_wasm::MouseButtons::Right as u8)
+            | (aero_wasm::MouseButtons::Middle as u8),
+    );
     m.inject_mouse_buttons_mask(0x00);
 
     // Explicit helpers should also remain callable.
@@ -36,4 +49,3 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_middle(true);
     m.inject_mouse_middle(false);
 }
-
