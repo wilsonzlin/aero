@@ -411,6 +411,56 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_bindings_info_rejects_kind_mismatch_across_shaders() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let a = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+            let b = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 1,
+                },
+            }];
+
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [a.as_slice(), b.as_slice()],
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(
+                err.contains("kind mismatch across shaders"),
+                "unexpected error for kind mismatch: {err}"
+            );
+            assert!(
+                err.contains("Texture2D") && err.contains("ConstantBuffer"),
+                "expected error to mention both kinds; got: {err}"
+            );
+        });
+    }
+
+    #[test]
     fn build_bind_group_uses_scratch_for_unaligned_uniform_offsets() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
