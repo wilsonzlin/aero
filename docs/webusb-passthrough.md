@@ -39,7 +39,7 @@ Implementation references (current repo):
 - WebUSB passthrough demo panel (IO worker result + Run buttons, including a “Configuration full” rerun when `wTotalLength` indicates truncation): `web/src/main.ts` (`renderWebUsbPassthroughDemoWorkerPanel`)
 - WebUSB UHCI harness panel (I/O worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
-- (Repo-root WebUSB demo broker/client RPC; not the passthrough wire contract): `src/platform/webusb_{broker,client,protocol}.ts`
+- (Legacy repo-root WebUSB demo broker/client RPC; deprecated; not the passthrough wire contract): `src/platform/legacy/webusb_{broker,client,protocol}.ts`
 
 Note: An early WebUSB passthrough prototype lived in `crates/aero-wasm/src/usb_passthrough.rs`.
 It has been removed in favor of the single canonical `UsbPassthroughBridge` WASM export in
@@ -229,7 +229,7 @@ In this repo, the canonical WebUSB passthrough integration lives under `web/src/
 - **Main thread broker** (worker proxy): `web/src/usb/usb_broker.ts`
   - (message schema + validators): `web/src/usb/usb_proxy_protocol.ts`
 
-Note: there is also a separate **generic** WebUSB broker/client RPC under `src/platform/webusb_*`
+Note: there is also a separate **legacy/demo** WebUSB broker/client RPC under `src/platform/legacy/webusb_*`
 used by the repo-root WebUSB demo panels. It is not the `UsbHostAction` passthrough contract
 described in this document.
 
@@ -578,7 +578,7 @@ This pattern is implemented by `UsbBroker` (main thread) using a `postMessage` p
 - main thread → worker: `{ type: "usb.completion", completion: UsbHostCompletion }`
 
 Byte payloads (`Uint8Array`) are transferred where possible to avoid copies. (A legacy broker/client RPC
-implementation also exists under `src/platform/webusb_*`, but it is not the canonical passthrough wire contract.)
+implementation also exists under `src/platform/legacy/webusb_*`, but it is deprecated and not the canonical passthrough wire contract.)
 
 #### Fast path: SharedArrayBuffer ring buffers (`usb.ringAttach`)
 

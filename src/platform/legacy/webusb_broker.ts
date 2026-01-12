@@ -1,4 +1,5 @@
 // NOTE: Legacy demo-only WebUSB broker/client stack (repo-root Vite harness).
+// (Quarantined under `src/platform/legacy/`; not used by the canonical runtime.)
 //
 // This module implements a generic main-thread WebUSB broker used by the repo-root Vite harness
 // (`src/main.ts`) for diagnostics / demos. It forwards *direct* `navigator.usb` operations to a

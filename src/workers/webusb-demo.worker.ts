@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
-import { WEBUSB_BROKER_PORT_MESSAGE_TYPE } from '../platform/webusb_protocol';
-import { installWebUsbClientInWorker } from '../platform/webusb_client';
+import { WEBUSB_BROKER_PORT_MESSAGE_TYPE } from '../platform/legacy/webusb_protocol';
+import { installWebUsbClientInWorker } from '../platform/legacy/webusb_client';
 
 type MainToWorkerMessage = { type: 'WebUsbDemoRun'; deviceId: number };
 
@@ -110,4 +110,3 @@ ctx.addEventListener('message', (event: MessageEvent) => {
     void runDemo(msg.deviceId);
   }
 });
-

@@ -9,7 +9,7 @@ The repository historically accumulated multiple overlapping USB/UHCI implementa
   - WASM exports: `crates/aero-wasm`
   - Host integration (WebHID/WebUSB broker/executor, worker proxying): `web/`
 - **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
-  - Generic main-thread broker + worker client: `src/platform/webusb_{broker,client,protocol}.ts`
+  - Legacy/demo main-thread broker + worker client (deprecated/quarantined): `src/platform/legacy/webusb_{broker,client,protocol}.ts`
 - **Native emulator integration (consumer):**
   - PCI/PortIO wiring + compatibility re-exports: `crates/emulator` (`emulator::io::usb` module)
 - **Legacy prototype (duplicate wire contract; removed):**
@@ -150,9 +150,9 @@ reintroduce an independent USB stack.
 3. **Consolidate TypeScript WebUSB host integration**
    - Treat `web/src/usb/*` as the canonical WebUSB passthrough host integration for the
       `UsbHostAction`/`UsbHostCompletion` contract.
-   - The repo-root `src/platform/webusb_{broker,client,protocol}.ts` stack is a **generic WebUSB demo
-     RPC** (direct `navigator.usb` operations), and must not grow a second passthrough wire contract.
-   - Deletion target (once demos migrate or become redundant): `src/platform/webusb_{broker,client,protocol}.ts`.
+    - The repo-root `src/platform/legacy/webusb_{broker,client,protocol}.ts` stack is a **generic WebUSB demo
+      RPC** (direct `navigator.usb` operations), and must not grow a second passthrough wire contract.
+    - Deletion target (once demos migrate or become redundant): `src/platform/legacy/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
    - The native emulator consumes `aero-usb` for USB device models + UHCI behavior.

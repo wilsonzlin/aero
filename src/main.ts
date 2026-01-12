@@ -18,7 +18,6 @@ import type { HotspotEntry, PerfExport as HotspotPerfExport } from './perf/aero_
 import { createAudioOutput } from './platform/audio';
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from './platform/features';
 import { importFileToOpfs } from './platform/opfs';
-import { createWebUsbBroker } from './platform/webusb_broker';
 import { requestWebGpuDevice } from './platform/webgpu';
 import { VmCoordinator } from './emulator/vmCoordinator.js';
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from '../web/src/audio/mic_capture';
@@ -354,7 +353,6 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const workerGetDevicesBefore = el('pre', { text: '' });
   const workerGetDevicesAfter = el('pre', { text: '' });
   const workerMatchAndOpenOutput = el('pre', { text: '' });
-  const brokerOutput = el('pre', { text: '' });
   const errorTitle = el('div', { class: 'bad', text: '' });
   const errorDetails = el('div', { class: 'hint', text: '' });
   const errorRaw = el('pre', { class: 'mono', text: '' });
@@ -794,96 +792,6 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     },
   });
 
-  const broker = createWebUsbBroker();
-  let brokerWorker: Worker | null = null;
-  const brokerLines: string[] = [];
-
-  const logBroker = (line: string) => {
-    brokerLines.push(line);
-    brokerOutput.textContent = brokerLines.join('\n');
-  };
-
-  const ensureBrokerWorker = () => {
-    if (brokerWorker) return;
-    logBroker('Starting WebUSB demo worker…');
-    brokerWorker = new Worker(new URL('./workers/webusb-demo.worker.ts', import.meta.url), { type: 'module' });
-    broker.attachToWorker(brokerWorker);
-
-    brokerWorker.addEventListener('message', (event: MessageEvent) => {
-      const data = event.data as unknown;
-      if (!data || typeof data !== 'object') return;
-      const msg = data as { type?: unknown; line?: unknown; ok?: unknown; error?: unknown };
-
-      switch (msg.type) {
-        case 'WebUsbDemoReady':
-          logBroker('Worker ready.');
-          break;
-        case 'WebUsbDemoLog':
-          if (typeof msg.line === 'string') logBroker(msg.line);
-          break;
-        case 'WebUsbDemoDone':
-          if (msg.ok === true) logBroker('Demo done.');
-          else logBroker(`Demo failed: ${typeof msg.error === 'string' ? msg.error : 'unknown error'}`);
-          break;
-        default:
-          break;
-      }
-    });
-
-    brokerWorker.addEventListener('error', (event) => {
-      logBroker(`Worker error: ${event instanceof ErrorEvent ? event.message : String(event)}`);
-    });
-
-    brokerWorker.addEventListener('messageerror', () => {
-      logBroker('Worker message deserialization failed.');
-    });
-  };
-
-  const brokerDemoButton = el('button', {
-    text: 'Request device + run worker I/O via broker',
-    onclick: async () => {
-      brokerLines.length = 0;
-      brokerOutput.textContent = '';
-      clearError();
-
-      if (!report.webusb) {
-        logBroker('WebUSB is unavailable (navigator.usb is undefined).');
-        return;
-      }
-
-      const vendorId = parseUsbId(vendorIdInput.value);
-      const productId = parseUsbId(productIdInput.value);
-      if (productId !== null && vendorId === null) {
-        logBroker('productId filter requires vendorId.');
-        return;
-      }
-
-      // Some Chromium versions require at least one filter; `{}` is a best-effort "match all" filter for the demo.
-      const filters: USBDeviceFilter[] = [];
-      if (vendorId !== null) {
-        const filter: USBDeviceFilter = { vendorId };
-        if (productId !== null) filter.productId = productId;
-        filters.push(filter);
-      } else {
-        filters.push({});
-      }
-
-      try {
-        // Must be called directly from the user gesture handler (transient user activation).
-        ensureBrokerWorker();
-        const device = await broker.requestDevice({ filters });
-        logBroker(
-          `Selected deviceId=${device.deviceId} vendorId=0x${device.vendorId.toString(16)} productId=0x${device.productId.toString(16)}` +
-            (device.productName ? ` productName=${device.productName}` : ''),
-        );
-        brokerWorker?.postMessage({ type: 'WebUsbDemoRun', deviceId: device.deviceId });
-      } catch (err) {
-        showError(err);
-        logBroker(err instanceof Error ? err.message : String(err));
-      }
-    },
-  });
-
   // Initialize info + control state.
   updateInfo();
   // Probe worker-side WebUSB semantics on load so the panel reports both main + worker support.
@@ -926,9 +834,6 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     workerGetDevicesAfter,
     el('h4', { text: 'Worker match_and_open result' }),
     workerMatchAndOpenOutput,
-    el('h3', { text: 'Worker I/O via broker (MessagePort RPC)' }),
-    el('div', { class: 'row' }, brokerDemoButton),
-    brokerOutput,
   );
 }
 

@@ -1,4 +1,5 @@
 // NOTE: Legacy demo-only WebUSB broker/client stack (repo-root Vite harness).
+// (Quarantined under `src/platform/legacy/`; not used by the canonical runtime.)
 //
 // This module is the worker-side client for the generic WebUSB broker used by the repo-root Vite
 // harness (`src/main.ts`). It forwards *direct* `navigator.usb` operations over a MessagePort.

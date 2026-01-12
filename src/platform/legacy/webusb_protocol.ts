@@ -1,7 +1,8 @@
 // NOTE: Legacy demo-only WebUSB broker/client stack (repo-root Vite harness).
+// (Quarantined under `src/platform/legacy/`; not used by the canonical runtime.)
 //
 // This file defines the message schema for the legacy repo-root WebUSB demo RPC:
-// `src/platform/webusb_{broker,client}.ts`. It models *direct* `navigator.usb` operations and is
+// `src/platform/legacy/webusb_{broker,client}.ts`. It models *direct* `navigator.usb` operations and is
 // intentionally separate from Aero's canonical guest USB passthrough wire contract.
 //
 // WARNING: Do NOT extend this demo protocol for production USB passthrough into the guest. The
