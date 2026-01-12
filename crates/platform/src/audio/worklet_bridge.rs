@@ -61,7 +61,14 @@ pub fn frames_free(read_idx: u32, write_idx: u32, capacity_frames: u32) -> u32 {
 
 #[inline]
 pub fn buffer_byte_len(capacity_frames: u32, channel_count: u32) -> usize {
-    HEADER_BYTES + capacity_frames as usize * channel_count as usize * core::mem::size_of::<f32>()
+    // Callers may treat capacity/channel_count as untrusted (e.g. from UI/config). Clamp to the
+    // same caps enforced elsewhere in this module and use saturating arithmetic to avoid `usize`
+    // overflow on 32-bit targets.
+    let capacity_frames = capacity_frames.min(MAX_RING_CAPACITY_FRAMES);
+    let channel_count = channel_count.min(MAX_RING_CHANNEL_COUNT);
+    let sample_capacity = (capacity_frames as usize).saturating_mul(channel_count as usize);
+    let sample_bytes = sample_capacity.saturating_mul(core::mem::size_of::<f32>());
+    HEADER_BYTES.saturating_add(sample_bytes)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -325,6 +332,18 @@ mod tests {
             rb.storage.len(),
             rb.capacity_frames as usize * rb.channel_count as usize
         );
+    }
+
+    #[test]
+    fn test_buffer_byte_len_clamps_and_does_not_overflow() {
+        // `buffer_byte_len` is used by host runtimes to allocate SharedArrayBuffers and should be
+        // robust against absurd inputs.
+        let got = buffer_byte_len(u32::MAX, u32::MAX);
+        let expected = HEADER_BYTES
+            + (MAX_RING_CAPACITY_FRAMES as usize)
+                * (MAX_RING_CHANNEL_COUNT as usize)
+                * core::mem::size_of::<f32>();
+        assert_eq!(got, expected);
     }
 
     #[test]
