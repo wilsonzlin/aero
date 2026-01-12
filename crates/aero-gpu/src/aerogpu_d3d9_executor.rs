@@ -738,6 +738,13 @@ struct PipelineCacheKey {
     ps: u64,
     vertex_buffers: Vec<crate::pipeline_key::VertexBufferLayoutKey>,
     color_formats: Vec<Option<wgpu::TextureFormat>>,
+    /// Per color attachment: true if the bound render target is an X8 format (e.g. X8R8G8B8).
+    ///
+    /// These formats are mapped to wgpu formats that *do* have an alpha channel (RGBA/BGRA), but
+    /// D3D9 semantics require that alpha writes are ignored and alpha reads behave as opaque.
+    /// This needs to be part of the cache key to avoid reusing a pipeline with a mismatched color
+    /// write mask between X8 and A8 render targets of the same wgpu format.
+    x8_mask: Vec<bool>,
     depth_format: Option<wgpu::TextureFormat>,
     topology: wgpu::PrimitiveTopology,
     blend: BlendState,
@@ -4432,7 +4439,7 @@ impl AerogpuD3d9Executor {
         }
 
         let (color_attachments, depth_stencil) = self.render_target_attachments()?;
-        let (_, depth_format) = self.render_target_formats()?;
+        let (_, color_is_x8, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
 
@@ -4442,19 +4449,30 @@ impl AerogpuD3d9Executor {
             b: color_rgba[2] as f64,
             a: color_rgba[3] as f64,
         };
+        let clear_color_opaque = wgpu::Color {
+            r: clear_color.r,
+            g: clear_color.g,
+            b: clear_color.b,
+            a: 1.0,
+        };
 
         let mut color_attachments_out = Vec::with_capacity(color_attachments.len());
-        for attachment in color_attachments {
+        for (idx, attachment) in color_attachments.into_iter().enumerate() {
             let Some(view) = attachment else {
                 color_attachments_out.push(None);
                 continue;
+            };
+            let clear_color_for_rt = if color_is_x8.get(idx).copied().unwrap_or(false) {
+                clear_color_opaque
+            } else {
+                clear_color
             };
             color_attachments_out.push(Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: if clear_color_enabled {
-                        wgpu::LoadOp::Clear(clear_color)
+                        wgpu::LoadOp::Clear(clear_color_for_rt)
                     } else {
                         wgpu::LoadOp::Load
                     },
@@ -4529,20 +4547,29 @@ impl AerogpuD3d9Executor {
             params_bytes[i * 4..i * 4 + 4].copy_from_slice(&f.to_le_bytes());
         }
         params_bytes[16..20].copy_from_slice(&depth.to_le_bytes());
+        let mut params_bytes_opaque = params_bytes;
+        params_bytes_opaque[12..16].copy_from_slice(&1.0f32.to_le_bytes());
 
-        let staging = self
+        let staging_normal = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("aerogpu-d3d9.clear_params_staging"),
                 contents: &params_bytes,
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
-        encoder.copy_buffer_to_buffer(&staging, 0, &self.clear_color_buffer, 0, 32);
+        let staging_opaque = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("aerogpu-d3d9.clear_params_staging_opaque"),
+                contents: &params_bytes_opaque,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+        encoder.copy_buffer_to_buffer(&staging_normal, 0, &self.clear_color_buffer, 0, 32);
 
         if clear_color_enabled {
             // Collect render target formats/extents so we can build per-format pipelines without
             // holding borrows into `self.resources`.
-            let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32)> = Vec::new();
+            let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool)> = Vec::new();
             for slot in 0..rt.color_count.min(8) as usize {
                 let handle = rt.colors[slot];
                 if handle == 0 {
@@ -4556,15 +4583,23 @@ impl AerogpuD3d9Executor {
                 match res {
                     Resource::Texture2d {
                         format,
+                        format_raw,
                         width,
                         height,
                         ..
-                    } => targets.push((underlying, *format, *width, *height)),
+                    } => targets.push((
+                        underlying,
+                        *format,
+                        *width,
+                        *height,
+                        is_x8_format(*format_raw),
+                    )),
                     _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
                 }
             }
 
-            for (underlying, format, width, height) in targets {
+            let mut current_is_x8 = false;
+            for (underlying, format, width, height, is_x8) in targets {
                 let Some((x, y, w, h)) =
                     clamp_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3, width, height)
                 else {
@@ -4573,6 +4608,15 @@ impl AerogpuD3d9Executor {
 
                 self.ensure_clear_pipeline(format);
                 let pipeline = self.clear_pipeline(format);
+                if is_x8 != current_is_x8 {
+                    let src = if is_x8 {
+                        &staging_opaque
+                    } else {
+                        &staging_normal
+                    };
+                    encoder.copy_buffer_to_buffer(src, 0, &self.clear_color_buffer, 0, 32);
+                    current_is_x8 = is_x8;
+                }
                 let view = match self
                     .resources
                     .get(&underlying)
@@ -5165,7 +5209,7 @@ impl AerogpuD3d9Executor {
             .input_layouts
             .get(&layout_handle)
             .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
-        let (color_formats, depth_format) = self.render_target_formats()?;
+        let (color_formats, color_is_x8, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
         let vertex_buffers = self.vertex_buffer_layouts(layout, vs.uses_semantic_locations)?;
@@ -5183,17 +5227,24 @@ impl AerogpuD3d9Executor {
             .iter()
             .enumerate()
             .map(|(idx, fmt)| {
-                fmt.map(|format| wgpu::ColorTargetState {
-                    format,
-                    blend: map_blend_state(self.state.blend_state),
-                    write_mask: map_color_write_mask(
+                let is_x8 = color_is_x8.get(idx).copied().unwrap_or(false);
+                fmt.map(|format| {
+                    let mut write_mask = map_color_write_mask(
                         self.state
                             .blend_state
                             .color_write_mask
                             .get(idx)
                             .copied()
                             .unwrap_or(0xF),
-                    ),
+                    );
+                    if is_x8 {
+                        write_mask &= !wgpu::ColorWrites::ALPHA;
+                    }
+                    wgpu::ColorTargetState {
+                        format,
+                        blend: map_blend_state(self.state.blend_state),
+                        write_mask,
+                    }
                 })
             })
             .collect::<Vec<_>>();
@@ -5213,6 +5264,7 @@ impl AerogpuD3d9Executor {
             ps: ps_key,
             vertex_buffers: vertex_buffer_keys,
             color_formats: color_formats.clone(),
+            x8_mask: color_is_x8.clone(),
             depth_format,
             topology: self.state.topology,
             blend: self.state.blend_state,
@@ -6300,6 +6352,7 @@ impl AerogpuD3d9Executor {
     ) -> Result<
         (
             Vec<Option<wgpu::TextureFormat>>,
+            Vec<bool>,
             Option<wgpu::TextureFormat>,
         ),
         AerogpuD3d9Error,
@@ -6316,10 +6369,12 @@ impl AerogpuD3d9Executor {
             return Err(AerogpuD3d9Error::MissingRenderTargets);
         }
         let mut colors = Vec::new();
+        let mut color_is_x8 = Vec::new();
         for slot in 0..rt.color_count.min(8) as usize {
             let handle = rt.colors[slot];
             if handle == 0 {
                 colors.push(None);
+                color_is_x8.push(false);
                 continue;
             }
             let underlying = self.resolve_resource_handle(handle)?;
@@ -6329,7 +6384,10 @@ impl AerogpuD3d9Executor {
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d {
-                    format, view_srgb, ..
+                    format,
+                    format_raw,
+                    view_srgb,
+                    ..
                 } => {
                     let mut out = *format;
                     if srgb_write && view_srgb.is_some() {
@@ -6340,6 +6398,7 @@ impl AerogpuD3d9Executor {
                         };
                     }
                     colors.push(Some(out));
+                    color_is_x8.push(is_x8_format(*format_raw));
                 }
                 _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
             }
@@ -6360,7 +6419,7 @@ impl AerogpuD3d9Executor {
             }
         };
 
-        Ok((colors, depth))
+        Ok((colors, color_is_x8, depth))
     }
 }
 
