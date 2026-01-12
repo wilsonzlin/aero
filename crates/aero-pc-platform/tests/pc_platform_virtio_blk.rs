@@ -206,6 +206,16 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     assert_eq!(pc.memory.read_u16(USED_RING + 2), 1);
     assert_eq!(pc.memory.read_u8(status), 0);
 
+    // The virtio device should now be asserting its legacy INTx level until the guest reads the ISR.
+    assert!(
+        pc.virtio_blk
+            .as_ref()
+            .expect("virtio-blk enabled")
+            .borrow()
+            .irq_level(),
+        "virtio device should assert INTx after completing a request"
+    );
+
     pc.poll_pci_intx_lines();
     let pending = pc
         .interrupts
@@ -220,4 +230,15 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
         .vector_to_irq(pending)
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 11);
+
+    // Reading the ISR register should clear the interrupt level.
+    let isr = pc.memory.read_u8(bar0_base + 0x2000);
+    assert_ne!(isr, 0);
+    assert!(
+        !pc.virtio_blk
+            .as_ref()
+            .expect("virtio-blk enabled")
+            .borrow()
+            .irq_level()
+    );
 }
