@@ -698,12 +698,16 @@ export class PersistentGpuCache {
     let storage = "idb";
     let opfsFile = null;
     if (this._opfsCacheDir && size > OPFS_MIN_BYTES) {
-      const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
-      const name = `${key}.json`;
-      const ok = await writeOpfsTextFile(shadersDir, name, JSON.stringify(payload));
-      if (ok) {
-        storage = "opfs";
-        opfsFile = name;
+      try {
+        const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders", { create: true });
+        const name = `${key}.json`;
+        const ok = await writeOpfsTextFile(shadersDir, name, JSON.stringify(payload));
+        if (ok) {
+          storage = "opfs";
+          opfsFile = name;
+        }
+      } catch {
+        // Ignore OPFS errors and fall back to storing the payload in IDB.
       }
     }
 
@@ -743,8 +747,12 @@ export class PersistentGpuCache {
     if (existing) {
       this._shaderBytes -= existing.size ?? 0;
       if (existing.storage === "opfs" && this._opfsCacheDir) {
-        const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
-        await deleteOpfsFile(shadersDir, existing.opfsFile);
+        try {
+          const shadersDir = await this._opfsCacheDir.getDirectoryHandle("shaders");
+          await deleteOpfsFile(shadersDir, existing.opfsFile);
+        } catch {
+          // Ignore; metadata deletion is sufficient.
+        }
       }
     }
     store.delete(key);
@@ -796,12 +804,16 @@ export class PersistentGpuCache {
     let storage = "idb";
     let opfsFile = null;
     if (this._opfsCacheDir && size > OPFS_MIN_BYTES) {
-      const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
-      const name = `${key}.json`;
-      const ok = await writeOpfsTextFile(dir, name, JSON.stringify(payload));
-      if (ok) {
-        storage = "opfs";
-        opfsFile = name;
+      try {
+        const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines", { create: true });
+        const name = `${key}.json`;
+        const ok = await writeOpfsTextFile(dir, name, JSON.stringify(payload));
+        if (ok) {
+          storage = "opfs";
+          opfsFile = name;
+        }
+      } catch {
+        // Ignore OPFS errors and fall back to storing the payload in IDB.
       }
     }
 
@@ -843,8 +855,12 @@ export class PersistentGpuCache {
     if (existing) {
       this._pipelineBytes -= existing.size ?? 0;
       if (existing.storage === "opfs" && this._opfsCacheDir) {
-        const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
-        await deleteOpfsFile(dir, existing.opfsFile);
+        try {
+          const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
+          await deleteOpfsFile(dir, existing.opfsFile);
+        } catch {
+          // Ignore; metadata deletion is sufficient.
+        }
       }
     }
     store.delete(key);
@@ -1003,13 +1019,17 @@ export class PersistentGpuCache {
   async _loadShaderPayload(record) {
     if (record.storage === "opfs") {
       if (!this._opfsCacheDir) return null;
-      const dir = await this._opfsCacheDir.getDirectoryHandle("shaders");
-      const text = await readOpfsTextFile(dir, record.opfsFile);
-      if (text === null) return null;
       try {
-        const parsed = JSON.parse(text);
-        if (!parsed || typeof parsed.wgsl !== "string") return null;
-        return { wgsl: parsed.wgsl, reflection: parsed.reflection };
+        const dir = await this._opfsCacheDir.getDirectoryHandle("shaders");
+        const text = await readOpfsTextFile(dir, record.opfsFile);
+        if (text === null) return null;
+        try {
+          const parsed = JSON.parse(text);
+          if (!parsed || typeof parsed.wgsl !== "string") return null;
+          return { wgsl: parsed.wgsl, reflection: parsed.reflection };
+        } catch {
+          return null;
+        }
       } catch {
         return null;
       }
@@ -1025,11 +1045,15 @@ export class PersistentGpuCache {
   async _loadPipelinePayload(record) {
     if (record.storage === "opfs") {
       if (!this._opfsCacheDir) return null;
-      const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
-      const text = await readOpfsTextFile(dir, record.opfsFile);
-      if (text === null) return null;
       try {
-        return JSON.parse(text);
+        const dir = await this._opfsCacheDir.getDirectoryHandle("pipelines");
+        const text = await readOpfsTextFile(dir, record.opfsFile);
+        if (text === null) return null;
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
       } catch {
         return null;
       }
