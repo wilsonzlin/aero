@@ -31,6 +31,13 @@ export interface PciDevice {
   readonly vendorId: number;
   readonly deviceId: number;
   /**
+   * Optional requested PCI address (Bus/Device/Function).
+   *
+   * If provided, {@link PciBus.registerDevice} will use this BDF as the default registration
+   * address (unless overridden by an explicit `addr` argument).
+   */
+  readonly bdf?: PciAddress;
+  /**
    * Subsystem Vendor ID (SSVID) @ 0x2C.
    *
    * If omitted, defaults to {@link vendorId}.
@@ -208,15 +215,19 @@ export class PciBus implements PortIoHandler {
   }
 
   registerDevice(device: PciDevice, addr: Partial<PciAddress> = {}): PciAddress {
-    const bus = addr.bus ?? 0;
+    const deviceBdf = device.bdf;
+
+    const bus = addr.bus ?? deviceBdf?.bus ?? 0;
     if (bus !== 0) throw new Error(`only PCI bus 0 is supported, got bus ${bus}`);
 
-    const fnNum = addr.function ?? 0;
+    const fnNum = addr.function ?? deviceBdf?.function ?? 0;
     if (fnNum < 0 || fnNum > 7) throw new RangeError(`PCI function out of range: ${fnNum}`);
 
     let devNum: number;
     if (addr.device !== undefined) {
       devNum = addr.device;
+    } else if (deviceBdf?.device !== undefined) {
+      devNum = deviceBdf.device;
     } else {
       devNum = this.#allocDeviceNumber();
     }

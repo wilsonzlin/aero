@@ -57,6 +57,26 @@ describe("io/bus/pci", () => {
     expect(cfg.readU32(0, 1, 0x00)).toBe(0x4444_3333);
   });
 
+  it("uses PciDevice.bdf as the default registration address", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "bdf_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bdf: { bus: 0, device: 7, function: 0 },
+    };
+    const addr = pciBus.registerDevice(dev);
+    expect(addr).toEqual({ bus: 0, device: 7, function: 0 });
+
+    const cfg = makeCfgIo(portBus);
+    expect(cfg.readU32(7, 0, 0x00)).toBe(0x5678_1234);
+  });
+
   it("populates Subsystem Vendor ID / Subsystem ID (0x2c..0x2f) by default", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
