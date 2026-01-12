@@ -206,6 +206,41 @@ pub enum TextureManagerError {
         mip_level_count: u32,
     },
 
+    #[error("texture view mip_level_count cannot be Some(0)")]
+    ViewMipLevelCountZero,
+
+    #[error("texture view array_layer_count cannot be Some(0)")]
+    ViewArrayLayerCountZero,
+
+    #[error("texture view base mip level {base_mip_level} out of range (mip_level_count={mip_level_count})")]
+    ViewBaseMipLevelOutOfRange {
+        base_mip_level: u32,
+        mip_level_count: u32,
+    },
+
+    #[error("texture view base array layer {base_array_layer} out of range (array_layers={array_layers})")]
+    ViewBaseArrayLayerOutOfRange {
+        base_array_layer: u32,
+        array_layers: u32,
+    },
+
+    #[error("texture view mip range out of bounds (base_mip_level={base_mip_level} mip_level_count={mip_level_count} total_mips={total_mips})")]
+    ViewMipRangeOutOfBounds {
+        base_mip_level: u32,
+        mip_level_count: u32,
+        total_mips: u32,
+    },
+
+    #[error("texture view array range out of bounds (base_array_layer={base_array_layer} array_layer_count={array_layer_count} total_layers={total_layers})")]
+    ViewArrayRangeOutOfBounds {
+        base_array_layer: u32,
+        array_layer_count: u32,
+        total_layers: u32,
+    },
+
+    #[error("texture view range overflow")]
+    ViewRangeOverflow,
+
     #[error("write region out of bounds: origin={origin:?} size={size:?} mip_size={mip_size:?} mip={mip_level}")]
     RegionOutOfBounds {
         origin: wgpu::Origin3d,
@@ -375,7 +410,7 @@ impl<'a> TextureManager<'a> {
     pub fn view(
         &mut self,
         key: TextureKey,
-        desc: TextureViewDesc,
+        view_desc: TextureViewDesc,
     ) -> Result<Arc<wgpu::TextureView>, TextureManagerError> {
         let last_used = self.next_use_counter();
         let entry = self
@@ -384,14 +419,71 @@ impl<'a> TextureManager<'a> {
             .ok_or(TextureManagerError::TextureNotFound(key))?;
         entry.last_used = last_used;
 
-        if let Some(view) = entry.view_cache.get(&desc) {
+        // Avoid calling wgpu with out-of-range view descriptors, which can trigger validation
+        // panics. Treat `None` counts as "all remaining", mirroring WebGPU semantics.
+        if view_desc.mip_level_count == Some(0) {
+            return Err(TextureManagerError::ViewMipLevelCountZero);
+        }
+        if view_desc.array_layer_count == Some(0) {
+            return Err(TextureManagerError::ViewArrayLayerCountZero);
+        }
+
+        let total_mips = entry.desc.mip_level_count;
+        if view_desc.base_mip_level >= total_mips {
+            return Err(TextureManagerError::ViewBaseMipLevelOutOfRange {
+                base_mip_level: view_desc.base_mip_level,
+                mip_level_count: total_mips,
+            });
+        }
+        let resolved_mip_level_count =
+            view_desc
+                .mip_level_count
+                .unwrap_or(total_mips - view_desc.base_mip_level);
+        if view_desc
+            .base_mip_level
+            .checked_add(resolved_mip_level_count)
+            .ok_or(TextureManagerError::ViewRangeOverflow)?
+            > total_mips
+        {
+            return Err(TextureManagerError::ViewMipRangeOutOfBounds {
+                base_mip_level: view_desc.base_mip_level,
+                mip_level_count: resolved_mip_level_count,
+                total_mips,
+            });
+        }
+
+        let total_layers = entry.desc.size.depth_or_array_layers;
+        if view_desc.base_array_layer >= total_layers {
+            return Err(TextureManagerError::ViewBaseArrayLayerOutOfRange {
+                base_array_layer: view_desc.base_array_layer,
+                array_layers: total_layers,
+            });
+        }
+        let resolved_array_layer_count =
+            view_desc
+                .array_layer_count
+                .unwrap_or(total_layers - view_desc.base_array_layer);
+        if view_desc
+            .base_array_layer
+            .checked_add(resolved_array_layer_count)
+            .ok_or(TextureManagerError::ViewRangeOverflow)?
+            > total_layers
+        {
+            return Err(TextureManagerError::ViewArrayRangeOutOfBounds {
+                base_array_layer: view_desc.base_array_layer,
+                array_layer_count: resolved_array_layer_count,
+                total_layers,
+            });
+        }
+
+        if let Some(view) = entry.view_cache.get(&view_desc) {
             self.stats.view_cache_hits += 1;
             return Ok(view.clone());
         }
 
         self.stats.view_cache_misses += 1;
-        let view = Arc::new(entry.texture.create_view(&desc.to_wgpu()));
-        entry.view_cache.insert(desc, view.clone());
+        let view = Arc::new(entry.texture.create_view(&view_desc.to_wgpu()));
+        entry.view_cache.insert(view_desc, view.clone());
         self.stats.views_created += 1;
         Ok(view)
     }
@@ -1162,5 +1254,85 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, TextureManagerError::RegionOutOfBounds { .. }));
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn texture_manager_view_rejects_out_of_range_base_mip_level() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue().await else {
+                return;
+            };
+            let caps = GpuCapabilities::from_device(&device);
+
+            let mut mgr = TextureManager::new(&device, &queue, caps);
+            mgr.create_texture(
+                1,
+                TextureDesc::new_2d(
+                    4,
+                    4,
+                    TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+            );
+
+            let err = mgr
+                .view(
+                    1,
+                    TextureViewDesc {
+                        base_mip_level: 1,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                TextureManagerError::ViewBaseMipLevelOutOfRange { .. }
+            ));
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn texture_manager_view_rejects_out_of_bounds_array_range() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue().await else {
+                return;
+            };
+            let caps = GpuCapabilities::from_device(&device);
+
+            let mut mgr = TextureManager::new(&device, &queue, caps);
+            mgr.create_texture(
+                1,
+                TextureDesc {
+                    size: wgpu::Extent3d {
+                        width: 4,
+                        height: 4,
+                        depth_or_array_layers: 2,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    label: None,
+                },
+            );
+
+            let err = mgr
+                .view(
+                    1,
+                    TextureViewDesc {
+                        base_array_layer: 1,
+                        array_layer_count: Some(2),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                TextureManagerError::ViewArrayRangeOutOfBounds { .. }
+            ));
+        });
     }
 }
