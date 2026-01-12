@@ -4858,13 +4858,14 @@ impl AerogpuD3d11Executor {
             (width, height)
         };
 
-        // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle,
-        // upload it now so the untouched pixels remain correct.
+        // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle
+        // of the destination subresource, upload it now so the untouched pixels remain correct.
+        //
+        // Note: the texture dirty flag is coarse (we don't track per-mip/per-layer dirtiness), so
+        // uploading here refreshes all subresources from guest memory.
         let needs_dst_upload = dst_backing.is_some()
             && dst_dirty
-            && dst_mip_level == 0
-            && dst_array_layer == 0
-            && !(dst_x == 0 && dst_y == 0 && width == dst_desc.width && height == dst_desc.height);
+            && !(dst_x == 0 && dst_y == 0 && width == dst_w && height == dst_h);
 
         let writeback_plan = if writeback {
             let dst_backing = dst_backing.ok_or_else(|| {
@@ -9143,6 +9144,219 @@ mod tests {
             // Verify that partial uploads still work after the dirty-range no-op.
             exec.upload_resource_payload(TEX, 1, 1, &[0xAA])
                 .expect("partial UPLOAD_RESOURCE should succeed");
+        });
+    }
+
+    #[test]
+    fn copy_texture2d_uploads_dirty_guest_backed_dst_for_nonzero_mips() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const SRC_TEX: u32 = 1;
+            const DST_TEX: u32 = 2;
+            const SRC_ALLOC_ID: u32 = 1;
+            const DST_ALLOC_ID: u32 = 2;
+            const SRC_GPA: u64 = 0x1000;
+            const DST_GPA: u64 = 0x2000;
+
+            let width = 4u32;
+            let height = 4u32;
+            let mip_levels = 2u32;
+            let array_layers = 1u32;
+            let row_pitch_bytes = width * 4;
+
+            let layout = compute_guest_texture_layout(
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                width,
+                height,
+                mip_levels,
+                array_layers,
+                row_pitch_bytes,
+            )
+            .expect("compute guest layout");
+
+            let allocs = [
+                AerogpuAllocEntry {
+                    alloc_id: SRC_ALLOC_ID,
+                    flags: 0,
+                    gpa: SRC_GPA,
+                    size_bytes: layout.total_size,
+                    reserved0: 0,
+                },
+                AerogpuAllocEntry {
+                    alloc_id: DST_ALLOC_ID,
+                    flags: 0,
+                    gpa: DST_GPA,
+                    size_bytes: layout.total_size,
+                    reserved0: 0,
+                },
+            ];
+            let allocs = AllocTable::new(Some(&allocs)).unwrap();
+
+            let mut guest_mem = VecGuestMemory::new(0x10_000);
+
+            // Populate mip1 for each allocation with a distinct pattern so we can verify that a
+            // partial copy into a dirty destination preserves the untouched pixels by uploading the
+            // destination from guest memory first.
+            let mip1_offset = layout.mip_offsets[1] as usize;
+            let mip1_size =
+                (layout.mip_row_pitches[1] as usize) * (layout.mip_rows[1] as usize);
+
+            let mut src_bytes = vec![0u8; layout.total_size as usize];
+            src_bytes[mip1_offset..mip1_offset + mip1_size].fill(0xAA);
+            guest_mem.write(SRC_GPA, &src_bytes).unwrap();
+
+            let mut dst_bytes = vec![0u8; layout.total_size as usize];
+            dst_bytes[mip1_offset..mip1_offset + mip1_size].fill(0x11);
+            guest_mem.write(DST_GPA, &dst_bytes).unwrap();
+
+            // Create SRC and DST as guest-backed RGBA8 textures with 2 mips.
+            for (handle, alloc_id) in [(SRC_TEX, SRC_ALLOC_ID), (DST_TEX, DST_ALLOC_ID)] {
+                let mut create = Vec::new();
+                create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+                create.extend_from_slice(&56u32.to_le_bytes());
+                create.extend_from_slice(&handle.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+                create.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+                create.extend_from_slice(&width.to_le_bytes());
+                create.extend_from_slice(&height.to_le_bytes());
+                create.extend_from_slice(&mip_levels.to_le_bytes());
+                create.extend_from_slice(&array_layers.to_le_bytes());
+                create.extend_from_slice(&row_pitch_bytes.to_le_bytes());
+                create.extend_from_slice(&alloc_id.to_le_bytes()); // backing_alloc_id
+                create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(create.len(), 56);
+                exec.exec_create_texture2d(&create, &allocs)
+                    .expect("CREATE_TEXTURE2D should succeed");
+            }
+
+            // Copy a 1x1 region on mip1. This is a partial update of the destination subresource.
+            let mut copy = Vec::new();
+            copy.extend_from_slice(&(AerogpuCmdOpcode::CopyTexture2d as u32).to_le_bytes());
+            copy.extend_from_slice(&64u32.to_le_bytes());
+            copy.extend_from_slice(&DST_TEX.to_le_bytes());
+            copy.extend_from_slice(&SRC_TEX.to_le_bytes());
+            copy.extend_from_slice(&1u32.to_le_bytes()); // dst_mip_level
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+            copy.extend_from_slice(&1u32.to_le_bytes()); // src_mip_level
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+            copy.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_x
+            copy.extend_from_slice(&0u32.to_le_bytes()); // src_y
+            copy.extend_from_slice(&1u32.to_le_bytes()); // width
+            copy.extend_from_slice(&1u32.to_le_bytes()); // height
+            copy.extend_from_slice(&0u32.to_le_bytes()); // flags
+            copy.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            assert_eq!(copy.len(), 64);
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test copy mip1 encoder"),
+                });
+            let mut pending_writebacks = Vec::new();
+            exec.exec_copy_texture2d(
+                &mut encoder,
+                &copy,
+                &allocs,
+                &mut guest_mem,
+                &mut pending_writebacks,
+            )
+            .expect("COPY_TEXTURE2D should succeed");
+            assert!(
+                pending_writebacks.is_empty(),
+                "test does not request WRITEBACK_DST"
+            );
+            exec.submit_encoder(&mut encoder, "aerogpu_cmd test copy mip1 submit");
+            exec.poll_wait();
+
+            // Read back mip1 (2x2) from the destination texture and verify:
+            // - pixel (0,0) came from the source copy (0xAA)
+            // - all other pixels remain the destination's original guest-memory pattern (0x11)
+            let mip_level = 1u32;
+            let mip_w = width >> mip_level;
+            let mip_h = height >> mip_level;
+            assert_eq!((mip_w, mip_h), (2, 2));
+
+            let dst_tex = exec.resources.textures.get(&DST_TEX).unwrap();
+
+            let unpadded_bpr = mip_w * 4;
+            let padded_bpr = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let staging_size = (padded_bpr as u64) * (mip_h as u64);
+            let staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd test copy mip1 staging"),
+                size: staging_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut read_encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test copy mip1 read encoder"),
+                });
+            read_encoder.copy_texture_to_buffer(
+                wgpu::ImageCopyTexture {
+                    texture: &dst_tex.texture,
+                    mip_level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyBuffer {
+                    buffer: &staging,
+                    layout: wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bpr),
+                        rows_per_image: Some(mip_h),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: mip_w,
+                    height: mip_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            exec.queue.submit([read_encoder.finish()]);
+
+            let slice = staging.slice(..);
+            let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |res| {
+                sender.send(res).unwrap();
+            });
+            exec.poll_wait();
+            receiver
+                .receive()
+                .await
+                .expect("map_async callback should run")
+                .expect("map_async should succeed");
+
+            let mapped = slice.get_mapped_range();
+            let padded_bpr_usize = padded_bpr as usize;
+            let unpadded_bpr_usize = unpadded_bpr as usize;
+            let mut out = Vec::new();
+            for row in 0..mip_h as usize {
+                let start = row * padded_bpr_usize;
+                out.extend_from_slice(&mapped[start..start + unpadded_bpr_usize]);
+            }
+            drop(mapped);
+            staging.unmap();
+
+            let mut expected = vec![0x11u8; unpadded_bpr_usize * mip_h as usize];
+            // Overwrite pixel (0,0) (first 4 bytes) with src pattern.
+            expected[0..4].fill(0xAA);
+            assert_eq!(
+                out, expected,
+                "COPY_TEXTURE2D into a dirty guest-backed destination must preserve untouched pixels by uploading from guest memory first"
+            );
         });
     }
 }
