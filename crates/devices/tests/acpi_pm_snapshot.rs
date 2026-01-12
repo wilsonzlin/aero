@@ -367,6 +367,59 @@ fn snapshot_restore_from_ticks_and_remainder_with_wrap_restores_phase() {
 }
 
 #[test]
+fn snapshot_restore_from_ticks_and_remainder_with_wrap_preserves_tick_boundary() {
+    // Similar to `snapshot_restore_from_ticks_and_remainder_with_wrap_restores_phase`, but this
+    // test verifies observable phase by stepping across an expected tick boundary.
+    const TAG_PM_TIMER_TICKS: u16 = 8;
+    const TAG_PM_TIMER_REMAINDER: u16 = 9;
+    const PM_TIMER_HZ: u128 = 3_579_545;
+    const NS_PER_SEC: u128 = 1_000_000_000;
+    const MASK_24BIT: u32 = 0x00FF_FFFF;
+
+    let cfg = AcpiPmConfig::default();
+
+    let mut pm = AcpiPmIo::new(cfg);
+    // 10 seconds + 1ns => wrap count > 0 and a non-zero fractional remainder.
+    pm.advance_ns(10_000_000_001);
+    let t0 = pm.read(cfg.pm_tmr_blk, 4) & MASK_24BIT;
+
+    let snap = pm.save_state();
+    let r = SnapshotReader::parse(&snap, *b"ACPM").unwrap();
+    let ticks = r.u32(TAG_PM_TIMER_TICKS).unwrap().unwrap();
+    let remainder = r.u32(TAG_PM_TIMER_REMAINDER).unwrap().unwrap();
+
+    // Omit the preferred `elapsed_ns` field, forcing restore from `(ticks, remainder)`.
+    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
+    w.field_u32(TAG_PM_TIMER_TICKS, ticks);
+    w.field_u32(TAG_PM_TIMER_REMAINDER, remainder);
+    let bytes = w.finish();
+
+    let mut restored = AcpiPmIo::new(cfg);
+    restored.load_state(&bytes).unwrap();
+
+    let t1 = restored.read(cfg.pm_tmr_blk, 4) & MASK_24BIT;
+    assert_eq!(t1, t0);
+
+    // The snapshot remainder is `(elapsed_ns * FREQ) % 1e9`; the next tick occurs once
+    // `remainder + delta_ns * FREQ >= 1e9`.
+    let remainder_u128 = u128::from(remainder);
+    let ns_until_next_tick = (NS_PER_SEC - remainder_u128 + PM_TIMER_HZ - 1) / PM_TIMER_HZ;
+    assert!(ns_until_next_tick >= 1);
+
+    let before = (ns_until_next_tick - 1) as u64;
+    pm.advance_ns(before);
+    restored.advance_ns(before);
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4) & MASK_24BIT, t0);
+    assert_eq!(restored.read(cfg.pm_tmr_blk, 4) & MASK_24BIT, t0);
+
+    pm.advance_ns(1);
+    restored.advance_ns(1);
+    let expected = (t0 + 1) & MASK_24BIT;
+    assert_eq!(pm.read(cfg.pm_tmr_blk, 4) & MASK_24BIT, expected);
+    assert_eq!(restored.read(cfg.pm_tmr_blk, 4) & MASK_24BIT, expected);
+}
+
+#[test]
 fn snapshot_save_samples_clock_once_for_timer_encoding() {
     // Snapshot save should sample the clock once for deterministic PM timer encoding. This guards
     // against regressions where `save_state()` would call `Clock::now_ns()` multiple times and
