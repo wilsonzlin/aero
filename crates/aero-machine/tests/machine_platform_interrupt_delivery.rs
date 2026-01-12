@@ -154,6 +154,50 @@ fn machine_pit_irq0_wakes_cpu_from_hlt() {
 }
 
 #[test]
+fn machine_pit_irq0_wakes_cpu_from_hlt_in_apic_mode() {
+    // In our ACPI tables, ISA IRQ0 is overridden to IOAPIC GSI2. Route it to a known vector.
+    const PIT_GSI: u32 = 2;
+    let vector = 0x40u8;
+    let flag_addr = 0x0503u16;
+    let flag_value = 0xDDu8;
+
+    let boot = build_real_mode_interrupt_wait_boot_sector(vector, flag_addr, flag_value);
+
+    let mut m = Machine::new(pc_machine_config()).unwrap();
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    // Halt first so the PIT interrupt must wake the CPU.
+    run_until_halt(&mut m);
+
+    // Switch interrupt routing to APIC mode and route PIT GSI2 to `vector`.
+    {
+        let interrupts = m.platform_interrupts().unwrap();
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_entry(&mut ints, PIT_GSI, u32::from(vector), 0);
+    }
+
+    // Program PIT channel 0 for ~1kHz periodic interrupts (mode 2, lo/hi).
+    m.io_write(0x43, 1, 0x34);
+    m.io_write(0x40, 1, 1193 & 0xFF);
+    m.io_write(0x40, 1, 1193 >> 8);
+
+    // The machine should advance platform time even while halted so PIT IRQ0 can wake it.
+    for _ in 0..200 {
+        let _ = m.run_slice(10_000);
+        if m.read_physical_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "PIT IRQ0 (IOAPIC) handler did not run (flag=0x{:02x})",
+        m.read_physical_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
 fn machine_run_slice_polls_platform_pic_and_delivers_interrupt() {
     let vector = 0x21u8; // IRQ1 with PIC base 0x20
     let flag_addr = 0x0500u16;

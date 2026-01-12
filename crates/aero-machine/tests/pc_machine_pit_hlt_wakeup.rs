@@ -3,6 +3,7 @@
 use aero_devices::pit8254::{PIT_CH0, PIT_CMD, PIT_HZ};
 use aero_machine::pc::PcMachine;
 use aero_machine::RunExit;
+use aero_platform::interrupts::PlatformInterruptMode;
 
 fn write_u16_le(pc: &mut PcMachine, paddr: u64, value: u16) {
     pc.bus
@@ -63,6 +64,20 @@ fn setup_real_mode_cpu(pc: &mut PcMachine, entry_ip: u64) {
     pc.cpu.state.halted = false;
 }
 
+fn program_ioapic_entry(
+    ints: &mut aero_platform::interrupts::PlatformInterrupts,
+    gsi: u32,
+    low: u32,
+    high: u32,
+) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
+}
+
 #[test]
 fn pc_machine_pit_irq0_wakes_hlt_cpu() {
     let mut pc = PcMachine::new(2 * 1024 * 1024);
@@ -114,6 +129,62 @@ fn pc_machine_pit_irq0_wakes_hlt_cpu() {
 
     panic!(
         "real-mode PIT IRQ0 handler did not run (flag=0x{:02x})",
+        pc.bus.platform.memory.read_u8(u64::from(flag_addr))
+    );
+}
+
+#[test]
+fn pc_machine_pit_irq0_wakes_hlt_cpu_in_apic_mode() {
+    let mut pc = PcMachine::new(2 * 1024 * 1024);
+
+    // Program IOAPIC GSI2 (ISA IRQ0 per ACPI ISO mapping) to deliver vector 0x40.
+    let vector = 0x40u8;
+    let pit_gsi = 2u32;
+
+    let handler_addr = 0x1100u64;
+    let code_base = 0x2100u64;
+    let flag_addr = 0x0501u16;
+    let flag_value = 0x5Au8;
+
+    pc.bus
+        .platform
+        .memory
+        .write_u8(u64::from(flag_addr), 0x00);
+    install_real_mode_handler(&mut pc, handler_addr, flag_addr, flag_value);
+    install_hlt_loop(&mut pc, code_base);
+    write_ivt_entry(&mut pc, vector, 0x0000, handler_addr as u16);
+    setup_real_mode_cpu(&mut pc, code_base);
+
+    // Enter HLT first so the PIT interrupt must wake the CPU.
+    assert!(matches!(pc.run_slice(16), RunExit::Halted { .. }));
+
+    // Switch interrupt routing to APIC mode and program the IOAPIC redirection entry.
+    {
+        let mut ints = pc.bus.platform.interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        program_ioapic_entry(&mut ints, pit_gsi, u32::from(vector), 0);
+    }
+
+    // Program PIT channel 0 for periodic interrupts (~1kHz).
+    let divisor = (PIT_HZ / 1000) as u16;
+    {
+        let pit = pc.bus.platform.pit();
+        let mut pit = pit.borrow_mut();
+        // ch0, lobyte/hibyte, mode2, binary
+        pit.port_write(PIT_CMD, 1, 0x34);
+        pit.port_write(PIT_CH0, 1, (divisor & 0xFF) as u32);
+        pit.port_write(PIT_CH0, 1, (divisor >> 8) as u32);
+    }
+
+    for _ in 0..50 {
+        let _ = pc.run_slice(256);
+        if pc.bus.platform.memory.read_u8(u64::from(flag_addr)) == flag_value {
+            return;
+        }
+    }
+
+    panic!(
+        "real-mode PIT IRQ0 IOAPIC handler did not run (flag=0x{:02x})",
         pc.bus.platform.memory.read_u8(u64::from(flag_addr))
     );
 }
