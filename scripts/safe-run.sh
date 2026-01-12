@@ -487,6 +487,7 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
             local var="CARGO_TARGET_${target_upper}_RUSTFLAGS"
             var="${var//-/_}"
             var="${var//./_}"
+            unset target_upper 2>/dev/null || true
 
             local current="${!var:-}"
 

@@ -26,6 +26,31 @@ function makeFakeCargoBinPrintingWasmTargetRustflags() {
   return makeFakeCargoBinPrintingEnvVar("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS");
 }
 
+function makeFakeCargoBinPrintingRustflagsAndWasmTargetRustflags() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-fake-cargo-"));
+  const cargoPath = path.join(dir, "cargo");
+  fs.writeFileSync(
+    cargoPath,
+    `#!/bin/bash
+set -euo pipefail
+printf "%s|%s" "\${RUSTFLAGS:-}" "\${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-}"
+`,
+    { mode: 0o755 },
+  );
+  return { dir, cargoPath };
+}
+
+function hostTarget() {
+  const vv = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+  const m = vv.match(/^host:\s*(.+)\s*$/m);
+  assert.ok(m, "rustc -vV must include a host target triple");
+  return m[1];
+}
+
+function cargoTargetRustflagsVar(target) {
+  return `CARGO_TARGET_${target.toUpperCase().replace(/[-.]/g, "_")}_RUSTFLAGS`;
+}
+
 test("safe-run: uses --threads=<n> for wasm32 targets (rust-lld -flavor wasm)", { skip: process.platform !== "linux" }, () => {
   const { dir } = makeFakeCargoBinPrintingWasmTargetRustflags();
   try {
@@ -54,11 +79,14 @@ test("safe-run: uses --threads=<n> for wasm32 targets (rust-lld -flavor wasm)", 
 });
 
 test("safe-run: strips -Wl,--threads=<n> from global RUSTFLAGS (two-token form)", { skip: process.platform !== "linux" }, () => {
-  const { dir } = makeFakeCargoBinPrintingEnvVar("RUSTFLAGS");
+  const { dir } = makeFakeCargoBinPrintingRustflagsAndWasmTargetRustflags();
   try {
     const env = { ...process.env };
     env.RUSTFLAGS = "-C link-arg=-Wl,--threads=7 -C debuginfo=0";
     delete env.CARGO_BUILD_TARGET;
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
+    delete env.CARGO_BUILD_JOBS;
+    env.AERO_CARGO_BUILD_JOBS = "2";
     env.PATH = `${dir}:${env.PATH ?? ""}`;
 
     const stdout = execFileSync(
@@ -72,19 +100,27 @@ test("safe-run: strips -Wl,--threads=<n> from global RUSTFLAGS (two-token form)"
       },
     );
 
-    assert.match(stdout, /-C debuginfo=0\b/);
-    assert.doesNotMatch(stdout, /--threads=7\b/);
+    const [rustflags, wasmTargetRustflags] = stdout.split("|");
+    assert.match(rustflags, /-C debuginfo=0\b/);
+    assert.doesNotMatch(rustflags, /--threads=\d+\b/);
+    assert.doesNotMatch(rustflags, /-Wl,--threads=\d+\b/);
+
+    assert.match(wasmTargetRustflags, /-C link-arg=--threads=2\b/);
+    assert.doesNotMatch(wasmTargetRustflags, /-Wl,--threads=2\b/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test("safe-run: strips -Wl,--threads=<n> from global RUSTFLAGS (single-token form)", { skip: process.platform !== "linux" }, () => {
-  const { dir } = makeFakeCargoBinPrintingEnvVar("RUSTFLAGS");
+  const { dir } = makeFakeCargoBinPrintingRustflagsAndWasmTargetRustflags();
   try {
     const env = { ...process.env };
     env.RUSTFLAGS = "-Clink-arg=-Wl,--threads=7 -C debuginfo=0";
     delete env.CARGO_BUILD_TARGET;
+    delete env.CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS;
+    delete env.CARGO_BUILD_JOBS;
+    env.AERO_CARGO_BUILD_JOBS = "2";
     env.PATH = `${dir}:${env.PATH ?? ""}`;
 
     const stdout = execFileSync(
@@ -98,8 +134,13 @@ test("safe-run: strips -Wl,--threads=<n> from global RUSTFLAGS (single-token for
       },
     );
 
-    assert.match(stdout, /-C debuginfo=0\b/);
-    assert.doesNotMatch(stdout, /--threads=7\b/);
+    const [rustflags, wasmTargetRustflags] = stdout.split("|");
+    assert.match(rustflags, /-C debuginfo=0\b/);
+    assert.doesNotMatch(rustflags, /--threads=\d+\b/);
+    assert.doesNotMatch(rustflags, /-Wl,--threads=\d+\b/);
+
+    assert.match(wasmTargetRustflags, /-C link-arg=--threads=2\b/);
+    assert.doesNotMatch(wasmTargetRustflags, /-Wl,--threads=2\b/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -177,11 +218,14 @@ test(
 );
 
 test("safe-run: uses -Wl,--threads=<n> for native targets (cc -Wl,... passthrough)", { skip: process.platform !== "linux" }, () => {
-  const { dir } = makeFakeCargoBinPrintingEnvVar("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS");
+  const target = hostTarget();
+  const varName = cargoTargetRustflagsVar(target);
+  const { dir } = makeFakeCargoBinPrintingEnvVar(varName);
   try {
     const env = { ...process.env };
-    delete env.CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS;
-    env.CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
+    delete env.RUSTFLAGS;
+    delete env.CARGO_BUILD_TARGET;
+    delete env[varName];
     env.PATH = `${dir}:${env.PATH ?? ""}`;
 
     const stdout = execFileSync("bash", ["scripts/safe-run.sh", "cargo", "build"], {
