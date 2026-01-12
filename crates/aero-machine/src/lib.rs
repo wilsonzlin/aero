@@ -74,6 +74,11 @@ use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
+use aero_virtio::devices::net::VirtioNet;
+use aero_virtio::memory::{
+    GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
+};
+use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
 use firmware::bda::BiosDataArea;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::{
@@ -87,6 +92,7 @@ use pci_firmware::SharedPciConfigPortsBiosAdapter;
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 const DEFAULT_E1000_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+const DEFAULT_VIRTIO_NET_MAC_ADDR: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x57];
 const FOUR_GIB: u64 = 0x1_0000_0000;
 // Use a sparse RAM backend once memory sizes exceed this threshold to avoid accidentally
 // allocating multi-GB buffers in tests and constrained environments.
@@ -140,6 +146,12 @@ pub struct MachineConfig {
     pub enable_e1000: bool,
     /// Optional MAC address for the E1000 NIC.
     pub e1000_mac_addr: Option<[u8; 6]>,
+    /// Whether to attach a virtio-net PCI NIC (virtio-pci **modern** transport).
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_virtio_net: bool,
+    /// Optional MAC address for the virtio-net device.
+    pub virtio_net_mac_addr: Option<[u8; 6]>,
 }
 
 impl Default for MachineConfig {
@@ -157,6 +169,8 @@ impl Default for MachineConfig {
             enable_reset_ctrl: true,
             enable_e1000: false,
             e1000_mac_addr: None,
+            enable_virtio_net: false,
+            virtio_net_mac_addr: None,
         }
     }
 }
@@ -193,6 +207,8 @@ impl MachineConfig {
             enable_reset_ctrl: true,
             enable_e1000: false,
             e1000_mac_addr: None,
+            enable_virtio_net: false,
+            virtio_net_mac_addr: None,
         }
     }
 
@@ -248,6 +264,8 @@ pub enum MachineError {
     AhciRequiresPcPlatform,
     IdeRequiresPcPlatform,
     E1000RequiresPcPlatform,
+    VirtioNetRequiresPcPlatform,
+    MultipleNicsEnabled,
 }
 
 impl fmt::Display for MachineError {
@@ -277,6 +295,13 @@ impl fmt::Display for MachineError {
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
             }
+            MachineError::VirtioNetRequiresPcPlatform => {
+                write!(f, "enable_virtio_net requires enable_pc_platform=true")
+            }
+            MachineError::MultipleNicsEnabled => write!(
+                f,
+                "cannot enable both enable_e1000 and enable_virtio_net (choose exactly one NIC)"
+            ),
         }
     }
 }
@@ -527,6 +552,203 @@ impl PciDevice for E1000PciConfigDevice {
 
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.cfg
+    }
+}
+
+struct VirtioNetPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioNetPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::VIRTIO_NET.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for VirtioNetPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+#[derive(Debug, Default)]
+struct NoopVirtioInterruptSink;
+
+impl VirtioInterruptSink for NoopVirtioInterruptSink {
+    fn raise_legacy_irq(&mut self) {}
+
+    fn lower_legacy_irq(&mut self) {}
+
+    fn signal_msix(&mut self, _vector: u16) {}
+}
+
+struct VirtioPciBar0Mmio {
+    dev: Rc<RefCell<VirtioPciDevice>>,
+}
+
+impl VirtioPciBar0Mmio {
+    fn new(dev: Rc<RefCell<VirtioPciDevice>>) -> Self {
+        Self { dev }
+    }
+
+    fn all_ones(size: usize) -> u64 {
+        match size {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            8 => 0xFFFF_FFFF_FFFF_FFFF,
+            _ => 0xFFFF_FFFF_FFFF_FFFF,
+        }
+    }
+}
+
+impl PciBarMmioHandler for VirtioPciBar0Mmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !(1..=8).contains(&size) {
+            return Self::all_ones(size);
+        }
+        let mut buf = [0u8; 8];
+        self.dev
+            .borrow_mut()
+            .bar0_read(offset, &mut buf[..size]);
+        u64::from_le_bytes(buf)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !(1..=8).contains(&size) {
+            return;
+        }
+        let bytes = value.to_le_bytes();
+        self.dev.borrow_mut().bar0_write(offset, &bytes[..size]);
+    }
+}
+
+/// Guest-memory adapter to allow virtio devices to DMA against the canonical [`SystemMemory`] RAM.
+///
+/// Virtio queue descriptor addresses are guest-physical. We intentionally DMA only against guest
+/// RAM (not ROM/MMIO) and apply A20 masking when disabled so legacy behavior remains consistent.
+struct VirtioDmaMemory<'a> {
+    a20_enabled: bool,
+    bus: &'a mut PlatformMemoryBus,
+}
+
+impl<'a> VirtioDmaMemory<'a> {
+    fn new(mem: &'a mut SystemMemory) -> Self {
+        Self {
+            a20_enabled: mem.a20.enabled(),
+            bus: &mut mem.bus,
+        }
+    }
+
+    fn translate_a20(&self, addr: u64) -> u64 {
+        if self.a20_enabled {
+            addr
+        } else {
+            addr & !(1u64 << 20)
+        }
+    }
+
+    fn a20_range_is_contiguous(&self, addr: u64, len: usize) -> bool {
+        if self.a20_enabled || len <= 1 {
+            return true;
+        }
+        let len_u64 = u64::try_from(len).unwrap_or(u64::MAX);
+        let last = addr.wrapping_add(len_u64.saturating_sub(1));
+        // If bit 20 differs anywhere in the range, translation would produce a wrap and the region
+        // cannot be represented as a single contiguous slice.
+        ((addr ^ last) & (1u64 << 20)) == 0
+    }
+}
+
+impl VirtioGuestMemory for VirtioDmaMemory<'_> {
+    fn len(&self) -> u64 {
+        self.bus.ram().size()
+    }
+
+    fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), VirtioGuestMemoryError> {
+        if dst.is_empty() {
+            return Ok(());
+        }
+        if self.a20_enabled {
+            self.bus
+                .ram()
+                .read_into(addr, dst)
+                .map_err(|_| VirtioGuestMemoryError::OutOfBounds {
+                    addr,
+                    len: dst.len(),
+                })?;
+            return Ok(());
+        }
+
+        // A20-disabled slow path: translate each byte so accesses that cross the 1MiB boundary wrap
+        // like real hardware.
+        for (i, slot) in dst.iter_mut().enumerate() {
+            let a = self.translate_a20(addr.wrapping_add(i as u64));
+            let mut tmp = [0u8; 1];
+            self.bus
+                .ram()
+                .read_into(a, &mut tmp)
+                .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr: a, len: 1 })?;
+            *slot = tmp[0];
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), VirtioGuestMemoryError> {
+        if src.is_empty() {
+            return Ok(());
+        }
+        if self.a20_enabled {
+            self.bus
+                .ram_mut()
+                .write_from(addr, src)
+                .map_err(|_| VirtioGuestMemoryError::OutOfBounds {
+                    addr,
+                    len: src.len(),
+                })?;
+            return Ok(());
+        }
+
+        // A20-disabled slow path: translate each byte individually.
+        for (i, byte) in src.iter().copied().enumerate() {
+            let a = self.translate_a20(addr.wrapping_add(i as u64));
+            self.bus
+                .ram_mut()
+                .write_from(a, &[byte])
+                .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr: a, len: 1 })?;
+        }
+        Ok(())
+    }
+
+    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], VirtioGuestMemoryError> {
+        if len == 0 {
+            return Ok(&[]);
+        }
+        if !self.a20_range_is_contiguous(addr, len) {
+            return Err(VirtioGuestMemoryError::OutOfBounds { addr, len });
+        }
+        let translated = self.translate_a20(addr);
+        self.bus
+            .ram()
+            .get_slice(translated, len)
+            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
+    }
+
+    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], VirtioGuestMemoryError> {
+        if !self.a20_range_is_contiguous(addr, len) {
+            return Err(VirtioGuestMemoryError::OutOfBounds { addr, len });
+        }
+        let translated = self.translate_a20(addr);
+        self.bus
+            .ram_mut()
+            .get_slice_mut(translated, len)
+            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
     }
 }
 struct Piix3IsaPciConfigDevice {
@@ -1143,6 +1365,7 @@ pub struct Machine {
     acpi_pm: Option<SharedAcpiPmIo<ManualClock>>,
     hpet: Option<Rc<RefCell<hpet::Hpet<ManualClock>>>>,
     e1000: Option<Rc<RefCell<E1000Device>>>,
+    virtio_net: Option<Rc<RefCell<VirtioPciDevice>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
     ahci: Option<Rc<RefCell<AhciPciDevice>>>,
     ide: Option<Rc<RefCell<Piix3IdePciDevice>>>,
@@ -1200,6 +1423,9 @@ impl Machine {
         if cfg.cpu_count != 1 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
+        if cfg.enable_e1000 && cfg.enable_virtio_net {
+            return Err(MachineError::MultipleNicsEnabled);
+        }
         if (cfg.enable_ahci || cfg.enable_ide) && !cfg.enable_pc_platform {
             if cfg.enable_ahci {
                 return Err(MachineError::AhciRequiresPcPlatform);
@@ -1208,6 +1434,9 @@ impl Machine {
         }
         if cfg.enable_e1000 && !cfg.enable_pc_platform {
             return Err(MachineError::E1000RequiresPcPlatform);
+        }
+        if cfg.enable_virtio_net && !cfg.enable_pc_platform {
+            return Err(MachineError::VirtioNetRequiresPcPlatform);
         }
 
         let chipset = ChipsetState::new(false);
@@ -1239,6 +1468,7 @@ impl Machine {
             acpi_pm: None,
             hpet: None,
             e1000: None,
+            virtio_net: None,
             vga: None,
             ahci: None,
             ide: None,
@@ -1432,6 +1662,13 @@ impl Machine {
     /// - re-attach after restoring a snapshot, or
     /// - call [`Machine::detach_network`] before snapshotting to make the lifecycle explicit.
     pub fn set_network_backend(&mut self, backend: Box<dyn NetworkBackend>) {
+        if let Some(virtio) = &self.virtio_net {
+            let mut virtio = virtio.borrow_mut();
+            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
+                *net.backend_mut() = Some(backend);
+                return;
+            }
+        }
         self.network_backend = Some(backend);
     }
 
@@ -1467,13 +1704,26 @@ impl Machine {
     /// Detach (drop) any currently installed network backend.
     pub fn detach_network(&mut self) {
         self.network_backend = None;
+        if let Some(virtio) = &self.virtio_net {
+            let mut virtio = virtio.borrow_mut();
+            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
+                *net.backend_mut() = None;
+            }
+        }
     }
 
     /// Return best-effort stats for the attached `NET_TX`/`NET_RX` ring backend (if present).
     pub fn network_backend_l2_ring_stats(&self) -> Option<L2TunnelRingBackendStats> {
-        self.network_backend
-            .as_ref()
-            .and_then(|b| b.l2_ring_stats())
+        if let Some(virtio) = &self.virtio_net {
+            // `VirtioNet` currently only exposes a `backend_mut()` accessor. We only need `&self`
+            // for stats, but borrow mutably via `RefCell` so the same API can be used regardless of
+            // which NIC model is enabled.
+            let mut virtio = virtio.borrow_mut();
+            if let Some(net) = virtio.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>() {
+                return net.backend_mut().l2_ring_stats();
+            }
+        }
+        self.network_backend.as_ref().and_then(|b| b.l2_ring_stats())
     }
 
     /// Debug/testing helper: read a single guest physical byte.
@@ -1913,6 +2163,33 @@ impl Machine {
                 }
 
                 let mut level = ahci_dev.intx_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // Virtio-net legacy INTx (level-triggered).
+            if let Some(virtio) = &self.virtio_net {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let command = self
+                    .pci_cfg
+                    .as_ref()
+                    .and_then(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                    })
+                    .unwrap_or(0);
+
+                let mut level = virtio.borrow().irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -2467,6 +2744,42 @@ impl Machine {
             } else {
                 None
             };
+
+            let virtio_net = if self.cfg.enable_virtio_net {
+                let mac = self
+                    .cfg
+                    .virtio_net_mac_addr
+                    .unwrap_or(DEFAULT_VIRTIO_NET_MAC_ADDR);
+
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::VIRTIO_NET.bdf,
+                    Box::new(VirtioNetPciConfigDevice::new()),
+                );
+
+                let backend = self.virtio_net.as_ref().and_then(|dev| {
+                    let mut dev = dev.borrow_mut();
+                    dev.device_mut::<VirtioNet<Option<Box<dyn NetworkBackend>>>>()
+                        .and_then(|net| std::mem::take(net.backend_mut()))
+                });
+
+                match &self.virtio_net {
+                    Some(dev) => {
+                        // Reset in-place while keeping `Rc` identity stable for persistent MMIO
+                        // mappings.
+                        *dev.borrow_mut() = VirtioPciDevice::new(
+                            Box::new(VirtioNet::new(backend, mac)),
+                            Box::new(NoopVirtioInterruptSink),
+                        );
+                        Some(dev.clone())
+                    }
+                    None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
+                        Box::new(VirtioNet::new(None::<Box<dyn NetworkBackend>>, mac)),
+                        Box::new(NoopVirtioInterruptSink),
+                    )))),
+                }
+            } else {
+                None
+            };
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -2554,6 +2867,13 @@ impl Machine {
                             aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
                             0,
                             e1000,
+                        );
+                    }
+                    if let Some(virtio_net) = virtio_net.clone() {
+                        router.register_handler(
+                            aero_devices::pci::profile::VIRTIO_NET.bdf,
+                            0,
+                            VirtioPciBar0Mmio::new(virtio_net),
                         );
                     }
                     Box::new(router)
@@ -2661,6 +2981,7 @@ impl Machine {
             self.acpi_pm = Some(acpi_pm);
             self.hpet = Some(hpet);
             self.e1000 = e1000;
+            self.virtio_net = virtio_net;
             self.ahci = ahci;
             self.ide = ide;
 
@@ -2680,6 +3001,7 @@ impl Machine {
                 self.vga = None;
             }
             self.ahci = None;
+            self.virtio_net = None;
             self.ide = None;
         }
         if self.cfg.enable_serial {
@@ -2829,15 +3151,53 @@ impl Machine {
         dev.tick(&mut self.mem);
     }
 
-    /// Poll the E1000 + network backend bridge once.
+    /// Poll any enabled NIC + host network backend bridge once.
     ///
-    /// This is safe to call even when E1000 is disabled; it will no-op.
+    /// This is safe to call even when no NIC is enabled; it will no-op.
     pub fn poll_network(&mut self) {
-        let Some(e1000) = &self.e1000 else {
+        if let Some(e1000) = &self.e1000 {
+            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+            let command = self
+                .pci_cfg
+                .as_ref()
+                .and_then(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.command())
+                })
+                .unwrap_or(0);
+
+            // Keep the device model's internal PCI command register in sync with the platform PCI bus.
+            //
+            // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
+            // while the machine maintains a separate canonical config space for enumeration.
+            //
+            // The shared `aero-net-pump` helper assumes the NIC's internal PCI command state is already
+            // up to date.
+            let mut nic = e1000.borrow_mut();
+            nic.pci_config_write(0x04, 2, u32::from(command));
+
+            const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
+            // `Option<B>` implements `NetworkBackend`, so when no backend is installed this still
+            // drains guest TX frames (dropping them) while making no forward progress on host RX.
+            tick_e1000(
+                &mut nic,
+                &mut self.mem,
+                &mut self.network_backend,
+                MAX_FRAMES_PER_POLL,
+                MAX_FRAMES_PER_POLL,
+            );
+            return;
+        }
+
+        let Some(virtio) = &self.virtio_net else {
             return;
         };
 
-        let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+        // Respect PCI Bus Master Enable (bit 2). Virtio DMA is undefined without it.
+        let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
         let command = self
             .pci_cfg
             .as_ref()
@@ -2850,26 +3210,14 @@ impl Machine {
             })
             .unwrap_or(0);
 
-        // Keep the device model's internal PCI command register in sync with the platform PCI bus.
-        //
-        // The E1000 model gates DMA on COMMAND.BME (bit 2) by consulting its own PCI config state,
-        // while the machine maintains a separate canonical config space for enumeration.
-        //
-        // The shared `aero-net-pump` helper assumes the NIC's internal PCI command state is already
-        // up to date.
-        let mut nic = e1000.borrow_mut();
-        nic.pci_config_write(0x04, 2, u32::from(command));
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
 
-        const MAX_FRAMES_PER_POLL: usize = aero_net_pump::DEFAULT_MAX_FRAMES_PER_POLL;
-        // `Option<B>` implements `NetworkBackend`, so when no backend is installed this still
-        // drains guest TX frames (dropping them) while making no forward progress on host RX.
-        tick_e1000(
-            &mut nic,
-            &mut self.mem,
-            &mut self.network_backend,
-            MAX_FRAMES_PER_POLL,
-            MAX_FRAMES_PER_POLL,
-        );
+        let mut dma = VirtioDmaMemory::new(&mut self.mem);
+        let mut virtio = virtio.borrow_mut();
+        virtio.process_notified_queues(&mut dma);
+        virtio.poll(&mut dma);
     }
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {

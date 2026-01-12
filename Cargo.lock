@@ -409,6 +409,7 @@ dependencies = [
  "aero-platform",
  "aero-snapshot",
  "aero-storage",
+ "aero-virtio",
  "firmware",
  "memory",
  "pretty_assertions",
