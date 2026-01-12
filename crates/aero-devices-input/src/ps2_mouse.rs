@@ -114,13 +114,47 @@ impl Ps2Mouse {
             return;
         }
 
+        // When reporting is enabled, split large deltas into multiple packets so each packet fits
+        // within the signed 8-bit range that older guest drivers expect. (The PS/2 packet format
+        // has sign bits that can be treated as a 9th bit, but not all drivers decode it that way.)
+        if self.mode == Mode::Stream && self.reporting_enabled {
+            // Convert accumulated + new motion into PS/2 coordinates (+Y up).
+            let mut rem_x = self.dx + dx;
+            let mut rem_y = -(self.dy + dy);
+            let mut rem_wheel = self.wheel + wheel;
+
+            // We'll emit packets immediately; don't keep any buffered state.
+            self.dx = 0;
+            self.dy = 0;
+            self.wheel = 0;
+
+            // Ignore wheel deltas unless the IntelliMouse extension is active.
+            if self.device_id < 0x03 {
+                rem_wheel = 0;
+            }
+
+            while rem_x != 0 || rem_y != 0 || rem_wheel != 0 {
+                let step_x = rem_x.clamp(-128, 127);
+                let step_y = rem_y.clamp(-128, 127);
+                let step_wheel = rem_wheel.clamp(-8, 7);
+
+                // Convert back to internal representation (+Y down).
+                self.dx = step_x;
+                self.dy = -step_y;
+                self.wheel = step_wheel;
+
+                self.send_packet();
+
+                rem_x -= step_x;
+                rem_y -= step_y;
+                rem_wheel -= step_wheel;
+            }
+            return;
+        }
+
         self.dx += dx;
         self.dy += dy;
         self.wheel += wheel;
-
-        if self.mode == Mode::Stream && self.reporting_enabled {
-            self.send_packet();
-        }
     }
 
     pub fn inject_button(&mut self, button: Ps2MouseButton, pressed: bool) {
@@ -506,6 +540,26 @@ mod tests {
         assert_eq!(b0, 0x28); // bit3=1, y sign set.
         assert_eq!(b1, 10);
         assert_eq!(b2, 0xFB); // -5
+    }
+
+    #[test]
+    fn stream_packets_split_large_dx() {
+        let mut m = Ps2Mouse::new();
+        m.receive_byte(0xF4);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        // dx=200 doesn't fit in i8, so it must be split (127 + 73).
+        m.inject_motion(200, 0, 0);
+
+        // Packet 1.
+        assert_eq!(m.pop_output(), Some(0x08)); // status
+        assert_eq!(m.pop_output(), Some(0x7F)); // 127
+        assert_eq!(m.pop_output(), Some(0x00)); // dy
+
+        // Packet 2.
+        assert_eq!(m.pop_output(), Some(0x08)); // status
+        assert_eq!(m.pop_output(), Some(0x49)); // 73
+        assert_eq!(m.pop_output(), Some(0x00)); // dy
     }
 
     #[test]
