@@ -97,10 +97,9 @@ fn pci_bars_probe_and_program() {
 fn eeprom_read_returns_mac_words() {
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     let mut dev = E1000Device::new(mac);
-    let mut dma = TestDma::new(0x1000);
 
     // Read EEPROM word 0.
-    dev.mmio_write_u32(&mut dma, 0x0014, 1); // START + addr (word 0)
+    dev.mmio_write_u32_reg(0x0014, 1); // START + addr (word 0)
     let eerd = dev.mmio_read_u32(0x0014);
     let data = (eerd >> 16) as u16;
     assert_eq!(data, u16::from_le_bytes([mac[0], mac[1]]));
@@ -112,23 +111,23 @@ fn synthetic_guest_tx_and_rx() {
     let mut dma = TestDma::new(0x40_000);
 
     // Enable interrupts for both RX and TX.
-    dev.mmio_write_u32(&mut dma, 0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
+    dev.mmio_write_u32_reg(0x00D0, ICR_RXT0 | ICR_TXDW); // IMS
 
     // Configure TX ring: 4 descriptors at 0x1000.
-    dev.mmio_write_u32(&mut dma, 0x3800, 0x1000); // TDBAL
-    dev.mmio_write_u32(&mut dma, 0x3804, 0); // TDBAH
-    dev.mmio_write_u32(&mut dma, 0x3808, 4 * 16); // TDLEN
-    dev.mmio_write_u32(&mut dma, 0x3810, 0); // TDH
-    dev.mmio_write_u32(&mut dma, 0x3818, 0); // TDT
-    dev.mmio_write_u32(&mut dma, 0x0400, 1 << 1); // TCTL.EN
+    dev.mmio_write_u32_reg(0x3800, 0x1000); // TDBAL
+    dev.mmio_write_u32_reg(0x3804, 0); // TDBAH
+    dev.mmio_write_u32_reg(0x3808, 4 * 16); // TDLEN
+    dev.mmio_write_u32_reg(0x3810, 0); // TDH
+    dev.mmio_write_u32_reg(0x3818, 0); // TDT
+    dev.mmio_write_u32_reg(0x0400, 1 << 1); // TCTL.EN
 
     // Configure RX ring: 2 descriptors at 0x2000.
-    dev.mmio_write_u32(&mut dma, 0x2800, 0x2000); // RDBAL
-    dev.mmio_write_u32(&mut dma, 0x2804, 0); // RDBAH
-    dev.mmio_write_u32(&mut dma, 0x2808, 2 * 16); // RDLEN
-    dev.mmio_write_u32(&mut dma, 0x2810, 0); // RDH
-    dev.mmio_write_u32(&mut dma, 0x2818, 1); // RDT
-    dev.mmio_write_u32(&mut dma, 0x0100, 1 << 1); // RCTL.EN (defaults to 2048 buffer)
+    dev.mmio_write_u32_reg(0x2800, 0x2000); // RDBAL
+    dev.mmio_write_u32_reg(0x2804, 0); // RDBAH
+    dev.mmio_write_u32_reg(0x2808, 2 * 16); // RDLEN
+    dev.mmio_write_u32_reg(0x2810, 0); // RDH
+    dev.mmio_write_u32_reg(0x2818, 1); // RDT
+    dev.mmio_write_u32_reg(0x0100, 1 << 1); // RCTL.EN (defaults to 2048 buffer)
 
     // Populate RX descriptors with guest buffers.
     write_rx_desc(&mut dma, 0x2000, 0x3000, 0);
@@ -145,7 +144,8 @@ fn synthetic_guest_tx_and_rx() {
         0b0000_1001,
         0,
     ); // EOP|RS
-    dev.mmio_write_u32(&mut dma, 0x3818, 1); // TDT = 1 triggers TX processing.
+    dev.mmio_write_u32_reg(0x3818, 1);
+    dev.poll(&mut dma); // TDT advances TX processing via DMA.
 
     assert_eq!(dev.pop_tx_frame().as_deref(), Some(pkt_out.as_slice()));
     assert!(dev.irq_level());
