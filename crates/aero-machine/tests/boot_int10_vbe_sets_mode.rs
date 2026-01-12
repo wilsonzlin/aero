@@ -43,6 +43,7 @@ fn boot_sector_int10_vbe_sets_live_svga_mode_and_lfb_is_visible() {
 
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
+        enable_vga: true,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -68,4 +69,3 @@ fn boot_sector_int10_vbe_sets_live_svga_mode_and_lfb_is_visible() {
     vga.borrow_mut().present();
     assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_00FF);
 }
-

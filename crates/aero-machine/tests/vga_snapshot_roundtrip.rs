@@ -26,6 +26,7 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     let cfg = MachineConfig {
         ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
+        enable_vga: true,
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,
@@ -70,4 +71,3 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     let hash_after = framebuffer_hash_rgba8888(vga2.borrow().get_framebuffer());
     assert_eq!(hash_after, hash_before);
 }
-

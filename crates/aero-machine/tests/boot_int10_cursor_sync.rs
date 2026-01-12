@@ -42,6 +42,7 @@ fn int10_cursor_updates_sync_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
+        enable_vga: true,
         ..Default::default()
     })
     .unwrap();
