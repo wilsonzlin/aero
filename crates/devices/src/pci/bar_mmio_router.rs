@@ -288,6 +288,54 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct TestBarHandler {
+        state: Arc<Mutex<TestState>>,
+    }
+
+    impl TestBarHandler {
+        fn new(size: usize) -> (Self, Arc<Mutex<TestState>>) {
+            let state = Arc::new(Mutex::new(TestState {
+                mem: vec![0; size],
+                reads: Vec::new(),
+                writes: Vec::new(),
+            }));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
+        }
+    }
+
+    impl PciBarMmioHandler for TestBarHandler {
+        fn read(&mut self, offset: u64, size: usize) -> u64 {
+            let mut state = self.state.lock().unwrap();
+            state.reads.push((offset, size));
+
+            let off = usize::try_from(offset).ok().unwrap();
+            if off + size > state.mem.len() {
+                return all_ones(size);
+            }
+            let mut buf = [0u8; 8];
+            buf[..size].copy_from_slice(&state.mem[off..off + size]);
+            u64::from_le_bytes(buf)
+        }
+
+        fn write(&mut self, offset: u64, size: usize, value: u64) {
+            let mut state = self.state.lock().unwrap();
+            state.writes.push((offset, size, value));
+
+            let off = usize::try_from(offset).ok().unwrap();
+            if off + size > state.mem.len() {
+                return;
+            }
+            let bytes = value.to_le_bytes();
+            state.mem[off..off + size].copy_from_slice(&bytes[..size]);
+        }
+    }
+
     struct TestDev {
         cfg: PciConfigSpace,
     }
@@ -384,5 +432,97 @@ mod tests {
         }
         let got_zero = MmioHandler::read(&mut router, off1, 4);
         assert_eq!(got_zero, all_ones(4));
+    }
+
+    #[test]
+    fn register_handler_accepts_non_mmio_handler() {
+        let window_base = 0x8000_0000;
+        let bdf = PciBdf::new(0, 6, 0);
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let (handler, state) = TestBarHandler::new(0x1000);
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_handler(bdf, 0, handler);
+
+        // Program BAR0 and enable MEM decoding.
+        let bar0_base = window_base + 0x2000;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+        }
+
+        let dev_offset = 0x20u64;
+        let off = (bar0_base - window_base) + dev_offset;
+
+        MmioHandler::write(&mut router, off, 4, 0xDEAD_BEEF);
+        let got = MmioHandler::read(&mut router, off, 4);
+        assert_eq!(got, 0xDEAD_BEEF);
+
+        let state = state.lock().unwrap();
+        assert_eq!(&state.mem[dev_offset as usize..dev_offset as usize + 4], &[0xEF, 0xBE, 0xAD, 0xDE]);
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.reads.len(), 1);
+    }
+
+    #[test]
+    fn register_shared_handler_accepts_rc_refcell() {
+        let window_base = 0x8000_0000;
+        let bdf = PciBdf::new(0, 7, 0);
+
+        let mut bus = PciBus::new();
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(TestDev { cfg }));
+
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+
+        let (mmio, state) = TestMmio::new(0x1000);
+        let mmio = Rc::new(RefCell::new(mmio));
+
+        let mut router = PciBarMmioRouter::new(window_base, cfg_ports.clone());
+        router.register_shared_handler(bdf, 0, mmio);
+
+        // Program BAR0 and enable MEM decoding.
+        let bar0_base = window_base + 0x3000;
+        {
+            let mut cfg_ports_mut = cfg_ports.borrow_mut();
+            cfg_ports_mut
+                .bus_mut()
+                .write_config(bdf, 0x10, 4, bar0_base as u32);
+            cfg_ports_mut.bus_mut().write_config(bdf, 0x04, 2, 0x0002);
+        }
+
+        let dev_offset = 0x30u64;
+        let off = (bar0_base - window_base) + dev_offset;
+
+        MmioHandler::write(&mut router, off, 4, 0x1122_3344);
+        let got = MmioHandler::read(&mut router, off, 4);
+        assert_eq!(got, 0x1122_3344);
+
+        let state = state.lock().unwrap();
+        assert_eq!(&state.mem[dev_offset as usize..dev_offset as usize + 4], &[0x44, 0x33, 0x22, 0x11]);
+        assert_eq!(state.writes.len(), 1);
+        assert_eq!(state.reads.len(), 1);
     }
 }
