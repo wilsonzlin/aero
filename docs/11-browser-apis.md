@@ -1103,6 +1103,13 @@ function runEmulationLoop() {
 
 ```javascript
 // audio-worklet-processor.js
+const READ_FRAME_INDEX = 0;
+const WRITE_FRAME_INDEX = 1;
+const UNDERRUN_COUNT = 2;
+const OVERRUN_COUNT = 3;
+const HEADER_U32_LEN = 4;
+const HEADER_BYTES = HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+
 class AeroAudioProcessor extends AudioWorkletProcessor {
     static get parameterDescriptors() {
         return [{
@@ -1116,54 +1123,72 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
     constructor(options) {
         super();
         
-        // Shared ring buffer for audio data
+        // Shared ring buffer for audio data (SPSC):
+        // - producer: emulator worker
+        // - consumer: AudioWorklet
+        //
+        // Indices are monotonic u32 *frame counters* (wrapping naturally at 2^32),
+        // not modulo indices.
         this.ringBuffer = options.processorOptions.ringBuffer;
-        this.readIndex = new Uint32Array(this.ringBuffer, 0, 1);
-        this.writeIndex = new Uint32Array(this.ringBuffer, 4, 1);
-        this.underrunCount = new Uint32Array(this.ringBuffer, 8, 1);
-        this.overrunCount = new Uint32Array(this.ringBuffer, 12, 1);
-        this.audioData = new Float32Array(this.ringBuffer, 16);
-        
-        this.port.onmessage = this.handleMessage.bind(this);
+        this.header = new Uint32Array(this.ringBuffer, 0, HEADER_U32_LEN);
+        this.audioData = new Float32Array(this.ringBuffer, HEADER_BYTES);
+        this.channelCount = options.processorOptions.channelCount ?? 2;
+        this.capacityFrames =
+            options.processorOptions.capacityFrames ?? Math.floor(this.audioData.length / this.channelCount);
     }
     
     process(inputs, outputs, parameters) {
         const output = outputs[0];
         const volume = parameters.volume[0];
         
-        const readIdx = Atomics.load(this.readIndex, 0);
-        const writeIdx = Atomics.load(this.writeIndex, 0);
+        const cc = Math.min(this.channelCount, output.length);
+        const framesNeeded = output[0].length;
+        const capacityFrames = this.capacityFrames;
         
-        const available = (writeIdx - readIdx + this.audioData.length) % this.audioData.length;
-        const samplesNeeded = output[0].length * output.length;
-        
-        if (available >= samplesNeeded) {
-            let idx = readIdx;
-            for (let channel = 0; channel < output.length; channel++) {
-                const channelData = output[channel];
-                for (let i = 0; i < channelData.length; i++) {
-                    channelData[i] = this.audioData[idx] * volume;
-                    idx = (idx + 1) % this.audioData.length;
-                }
+        const readFrameIndex = Atomics.load(this.header, READ_FRAME_INDEX) >>> 0;
+        const writeFrameIndex = Atomics.load(this.header, WRITE_FRAME_INDEX) >>> 0;
+        const availableFrames = Math.min((writeFrameIndex - readFrameIndex) >>> 0, capacityFrames);
+        const framesToRead = Math.min(framesNeeded, availableFrames);
+
+        const readPos = readFrameIndex % capacityFrames;
+        const firstFrames = Math.min(framesToRead, capacityFrames - readPos);
+        const secondFrames = framesToRead - firstFrames;
+
+        // Copy first contiguous chunk.
+        for (let i = 0; i < firstFrames; i++) {
+            const base = (readPos + i) * cc;
+            for (let c = 0; c < cc; c++) {
+                output[c][i] = this.audioData[base + c] * volume;
             }
-            Atomics.store(this.readIndex, 0, idx);
-        } else {
-            // Underrun - output silence
-            for (let channel = 0; channel < output.length; channel++) {
-                output[channel].fill(0);
+        }
+
+        // Copy wrapped chunk.
+        for (let i = 0; i < secondFrames; i++) {
+            const base = i * cc;
+            for (let c = 0; c < cc; c++) {
+                output[c][firstFrames + i] = this.audioData[base + c] * volume;
             }
-            // Count missing output frames (not underrun *events*). A single render quantum is
-            // typically 128 frames.
-            const framesMissing = output[0].length;
-            const prev = Atomics.add(this.underrunCount, 0, framesMissing);
-            const newTotal = (prev + framesMissing) >>> 0;
+        }
+
+        // Underrun: render silence for missing frames and increment the underrun *frame* counter.
+        if (framesToRead < framesNeeded) {
+            const missing = framesNeeded - framesToRead;
+            for (let c = 0; c < output.length; c++) {
+                output[c].fill(0, framesToRead);
+            }
+            const prev = Atomics.add(this.header, UNDERRUN_COUNT, missing);
+            const newTotal = (prev + missing) >>> 0;
             this.port.postMessage({
                 type: 'underrun',
-                underrunFramesAdded: framesMissing,
+                underrunFramesAdded: missing,
                 underrunFramesTotal: newTotal,
                 // Backwards-compatible field name; this is a frame counter (not events).
                 underrunCount: newTotal,
             });
+        }
+
+        if (framesToRead > 0) {
+            Atomics.store(this.header, READ_FRAME_INDEX, readFrameIndex + framesToRead);
         }
         
         return true;
@@ -1190,12 +1215,15 @@ async function setupAudio() {
     await audioContext.audioWorklet.addModule('audio-worklet-processor.js');
     
     const sampleRate = audioContext.sampleRate;
-    // Shared buffer for audio data (~1 second of stereo frames).
-    const ringBufferSize = 16 + (sampleRate * 2 * 4);
-    const ringBuffer = new SharedArrayBuffer(ringBufferSize);
+
+    // Shared buffer for audio data (example: ~1 second of stereo frames).
+    const channelCount = 2;
+    const capacityFrames = sampleRate;
+    const ringBufferBytes = 16 + capacityFrames * channelCount * Float32Array.BYTES_PER_ELEMENT;
+    const ringBuffer = new SharedArrayBuffer(ringBufferBytes);
     
     const audioNode = new AudioWorkletNode(audioContext, 'aero-audio-processor', {
-        processorOptions: { ringBuffer },
+        processorOptions: { ringBuffer, channelCount, capacityFrames },
         outputChannelCount: [2]
     });
     
