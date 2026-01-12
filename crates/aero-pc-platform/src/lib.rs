@@ -1405,6 +1405,23 @@ impl PcPlatform {
             bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
         }
 
+        // Some device models (e.g. `AhciPciDevice`) gate MMIO reads/writes based on their internal
+        // PCI command register, but the platform maintains a separate config-space function for PCI
+        // enumeration. Sync the post-BIOS command register into the device model so MMIO is usable
+        // immediately after `PcPlatform` construction (before the first `process_*()` tick).
+        if let Some(ahci_dev) = ahci.as_ref() {
+            let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+            let command = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.command())
+                    .unwrap_or(0)
+            };
+            ahci_dev.borrow_mut().config_mut().set_command(command);
+        }
+
         // Register IDE legacy I/O ports after BIOS POST so the guest-visible PCI command/BAR
         // state is initialized. Bus Master IDE (BAR4) is routed through the PCI I/O window so BAR
         // relocation is reflected immediately.
