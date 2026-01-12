@@ -1288,7 +1288,10 @@ mod native {
     /// compile on non-wasm platforms.
     ///
     /// IndexedDB is async-only and this type intentionally does **not** implement
-    /// [`aero_storage::StorageBackend`] (see `docs/19-indexeddb-storage-story.md`):
+    /// [`aero_storage::StorageBackend`]. See:
+    ///
+    /// - `docs/19-indexeddb-storage-story.md`
+    /// - `docs/20-storage-trait-consolidation.md`
     ///
     /// ```compile_fail,E0277
     /// use aero_storage::StorageBackend;

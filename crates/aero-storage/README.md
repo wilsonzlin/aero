@@ -9,8 +9,14 @@ implementation in `crates/aero-opfs` (e.g. `aero_opfs::OpfsByteStorage`) that im
 Higher-level orchestration such as remote HTTP streaming/caching and UI integration may
 still live in the TypeScript host layer.
 
-Note: IndexedDB-based storage is generally async and is not currently exposed as a sync
-`aero_storage::StorageBackend`. The async IndexedDB block store lives in `crates/st-idb`.
+Note: IndexedDB-based storage is async and is not currently exposed as a synchronous
+`aero_storage::StorageBackend` / `aero_storage::VirtualDisk` for the boot-critical controller path;
+see:
+
+- [`docs/19-indexeddb-storage-story.md`](../../docs/19-indexeddb-storage-story.md)
+- [`docs/20-storage-trait-consolidation.md`](../../docs/20-storage-trait-consolidation.md)
+
+The async IndexedDB block store lives in `crates/st-idb`.
 
 ## Supported disk image formats
 

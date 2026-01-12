@@ -545,6 +545,13 @@ impl OptimizedFramebuffer {
 
 ### Async Storage with Prefetching
 
+Note: this is illustrative pseudocode. In the actual repo:
+
+- The canonical synchronous disk trait is `aero_storage::VirtualDisk` (plus `StorageBackend` for
+  resizable byte stores).
+- The async browser host layer uses TypeScript `AsyncSectorDisk` and Rust/wasm `st_idb::DiskBackend`.
+- Avoid introducing new disk/backend traits; see [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
+
 ```rust
 pub struct PrefetchingStorage {
     backend: Box<dyn DiskBackend>,

@@ -418,7 +418,8 @@ The `web/` app exposes an early, emulator-independent browser storage benchmark:
 
 Note: IndexedDB storage is async-only and does not currently back the synchronous Rust
 disk/controller path (`aero_storage::{StorageBackend, VirtualDisk}`); see
-[`docs/19-indexeddb-storage-story.md`](./docs/19-indexeddb-storage-story.md).
+[`docs/19-indexeddb-storage-story.md`](./docs/19-indexeddb-storage-story.md) and
+[`docs/20-storage-trait-consolidation.md`](./docs/20-storage-trait-consolidation.md).
 
 ### In-app API
 
@@ -487,7 +488,8 @@ In a Chromium-based browser with OPFS support:
 
 If OPFS sync access handles are unavailable, the disk manager falls back to IndexedDB for persistence.
 In that mode, the I/O worker cannot open a `FileSystemSyncAccessHandle` and the synchronous Rust
-disk/controller path is unavailable (see `docs/19-indexeddb-storage-story.md`).
+disk/controller path is unavailable (see `docs/19-indexeddb-storage-story.md` and
+`docs/20-storage-trait-consolidation.md`).
 
 ## Troubleshooting
 
