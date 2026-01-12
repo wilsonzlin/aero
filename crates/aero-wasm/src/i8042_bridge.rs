@@ -253,6 +253,10 @@ impl I8042Bridge {
 
     /// Restore controller state from snapshot bytes produced by [`save_state`].
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        // Reset pulses are a host-side side effect (not part of the deterministic snapshot blob).
+        // Drop any queued reset requests from pre-restore execution.
+        self.sys.borrow_mut().reset_requests = 0;
+
         self.ctrl
             .load_state(bytes)
             .map_err(|e| js_error(format!("Invalid i8042 snapshot: {e}")))?;

@@ -224,4 +224,18 @@ describe("io/devices/i8042 WASM bridge", () => {
       bridge2.free();
     }
   });
+
+  it("load_state clears queued reset requests", async () => {
+    const bridge = await createBridge();
+    if (!bridge) return;
+    try {
+      // i8042 command 0xFE: pulse reset line low.
+      bridge.port_write(0x64, 0xfe);
+      const snap = bridge.save_state();
+      bridge.load_state(snap);
+      expect(bridge.take_reset_requests()).toBe(0);
+    } finally {
+      bridge.free();
+    }
+  });
 });
