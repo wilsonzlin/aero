@@ -178,8 +178,15 @@ fn virtio_bar0_probe_returns_expected_size_mask() {
 #[test]
 fn pci_dump_includes_canonical_devices() {
     let dump = pci_dump(CANONICAL_IO_DEVICES);
-    assert!(dump.contains("00:01.1 8086:7010"));
-    assert!(dump.contains("00:02.0 8086:2922"));
-    assert!(dump.contains("00:03.0 1b36:0010"));
-    assert!(dump.contains("00:08.0 1af4:1041"));
+    for profile in [IDE_PIIX3, SATA_AHCI_ICH9, NVME_CONTROLLER, VIRTIO_NET] {
+        let prefix = format!(
+            "{:02x}:{:02x}.{} {:04x}:{:04x}",
+            profile.bdf.bus,
+            profile.bdf.device,
+            profile.bdf.function,
+            profile.vendor_id,
+            profile.device_id
+        );
+        assert!(dump.contains(&prefix), "pci_dump missing {prefix}");
+    }
 }
