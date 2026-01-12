@@ -180,6 +180,11 @@ To validate that full path, the repo-root harness exposes:
     - PCI config ports (0xCF8/0xCFC)
     - BAR0 MMIO reads/writes
   - The IO worker's WASM-backed `HdaPciDevice` then DMA-reads guest PCM and writes `f32` samples into the AudioWorklet ring.
+
+Note: the CPU worker continuously publishes a shared framebuffer demo into guest RAM (see
+`CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` / `DEMO_FB_OFFSET`). Any audio harness that uses fixed guest-physical scratch buffers
+(CORB/RIRB/BDL/PCM) must keep them disjoint from those regions, otherwise the framebuffer publish loop will corrupt device state
+and cause flaky tests.
 - **E2E test**: `tests/e2e/audio-worklet-hda-pci-device.spec.ts` asserts that:
   - ring read + write indices advance,
   - samples are **non-silent** (not just index movement),
