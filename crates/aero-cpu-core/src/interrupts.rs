@@ -617,16 +617,6 @@ pub fn deliver_external_interrupt<B: CpuBus>(
         return Ok(());
     };
 
-    // Tier-0 treats `HLT` as a BIOS interrupt hypercall only when
-    // `pending_bios_int_valid` is set. Software `INT n` assists already set this
-    // in real/v8086 mode, but externally injected interrupts (PIC/APIC) can also
-    // vector into BIOS ROM stubs that begin with `HLT; IRET`. Record the vector
-    // here so the Tier-0 interpreter exits with `BiosInterrupt(vector)` instead
-    // of permanently halting the VM.
-    if matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
-        state.set_pending_bios_int(vector);
-    }
-
     // Maskable interrupts wake the CPU from `HLT` when they are actually delivered.
     state.halted = false;
 
@@ -831,10 +821,10 @@ fn deliver_real_mode<B: CpuBus>(
     // `HLT; IRET` (F4 CF). This is used as a hypercall boundary: Tier-0 surfaces
     // `HLT` as `BiosInterrupt(vector)` only when `pending_bios_int_valid` is set.
     //
-    // Software `INT n` already sets this marker in `exec_interrupt_assist_decoded`,
-    // but externally injected interrupts/exceptions can also be delivered into
-    // these stubs. Without priming the marker here, the CPU would execute `HLT`
-    // with IF=0 and enter a permanent halt (no wakeup), hanging the VM.
+    // Real/v8086 vector delivery can enter these stubs from both software `INT n`
+    // and externally injected interrupts/exceptions. Without priming the marker
+    // here based on the actual handler bytes, the CPU would execute `HLT` with
+    // IF=0 and enter a permanent halt (no wakeup), hanging the VM.
     //
     // Best-effort: if the handler bytes cannot be read, skip stub detection.
     let handler_linear = ((segment as u64) << 4).wrapping_add(offset);

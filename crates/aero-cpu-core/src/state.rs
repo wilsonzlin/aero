@@ -731,8 +731,11 @@ pub struct CpuState {
     pub mode: CpuMode,
     /// Set by `HLT` and cleared by interrupt delivery/reset.
     pub halted: bool,
-    /// Interrupt vector recorded by a real-mode `INT n` instruction so the subsequent
-    /// BIOS ROM stub `HLT` can be surfaced to the host as a BIOS hypercall.
+    /// Interrupt vector recorded when real/v8086 vector delivery transfers control to
+    /// a BIOS ROM stub (`HLT; IRET`).
+    ///
+    /// Tier-0 treats `HLT` as a BIOS hypercall boundary only when this marker is set,
+    /// surfacing the event as `BiosInterrupt(vector)` instead of permanently halting.
     pub pending_bios_int: u8,
     pub pending_bios_int_valid: bool,
     pub _pad0: [u8; 4],

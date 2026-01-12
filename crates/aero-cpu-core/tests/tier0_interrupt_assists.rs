@@ -329,8 +329,8 @@ fn tier0_cpu_core_runner_delivers_external_interrupt_after_sti_shadow() {
 
     // Code: sti; nop; hlt
     bus.load(CODE_BASE, &[0xFB, 0x90, 0xF4]);
-    // Handler: hlt
-    bus.load(HANDLER_BASE, &[0xF4]);
+    // Handler: BIOS ROM stub `HLT; IRET`
+    bus.load(HANDLER_BASE, &[0xF4, 0xCF]);
     // IVT[0x20] -> 0000:0500
     write_ivt_entry(&mut bus, 0x20, HANDLER_BASE as u16, 0);
 
@@ -366,8 +366,8 @@ fn tier0_cpu_core_runner_delivers_external_interrupt_after_mov_ss_shadow() {
 
     // Code: mov ss, ax; nop; hlt
     bus.load(CODE_BASE, &[0x8E, 0xD0, 0x90, 0xF4]);
-    // Handler: hlt
-    bus.load(HANDLER_BASE, &[0xF4]);
+    // Handler: BIOS ROM stub `HLT; IRET`
+    bus.load(HANDLER_BASE, &[0xF4, 0xCF]);
     // IVT[0x20] -> 0000:0500
     write_ivt_entry(&mut bus, 0x20, HANDLER_BASE as u16, 0);
 
