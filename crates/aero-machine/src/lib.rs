@@ -2371,7 +2371,26 @@ impl Machine {
         self.virtio_blk.clone()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn swap_virtio_blk_backend_preserving_state(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> Result<(), MachineError> {
+        // `Box<dyn VirtualDisk + Send>` can be used anywhere `Box<dyn VirtualDisk>` is expected
+        // (dropping the `Send` auto-trait), which lets us share the implementation between native
+        // and wasm32 builds.
+        self.swap_virtio_blk_backend_preserving_state_impl(disk)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn swap_virtio_blk_backend_preserving_state(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> Result<(), MachineError> {
+        self.swap_virtio_blk_backend_preserving_state_impl(disk)
+    }
+
+    fn swap_virtio_blk_backend_preserving_state_impl(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> Result<(), MachineError> {
