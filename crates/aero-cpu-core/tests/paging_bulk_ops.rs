@@ -391,6 +391,68 @@ fn pagingbus_bulk_set_preflight_failure_is_atomic() -> Result<(), Exception> {
 }
 
 #[test]
+fn pagingbus_bulk_copy_declines_on_address_overflow() -> Result<(), Exception> {
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page0 = 0x5000u64;
+    let page1 = 0x6000u64;
+
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        page0 | PTE_P | PTE_RW | PTE_US,
+        page1 | PTE_P | PTE_RW | PTE_US,
+    );
+
+    let mut bus = PagingBus::new(phys);
+    bus.sync(&long_state(pml4_base));
+
+    // Range arithmetic overflows should decline (`Ok(false)`), not return MemoryFault.
+    assert!(!bus.bulk_copy(0, u64::MAX, 2)?);
+    assert!(!bus.bulk_copy(u64::MAX, 0, 2)?);
+    assert_eq!(bus.mmu().cr2(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn pagingbus_bulk_set_declines_on_address_overflow() -> Result<(), Exception> {
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let page0 = 0x5000u64;
+    let page1 = 0x6000u64;
+
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        page0 | PTE_P | PTE_RW | PTE_US,
+        page1 | PTE_P | PTE_RW | PTE_US,
+    );
+
+    let mut bus = PagingBus::new(phys);
+    bus.sync(&long_state(pml4_base));
+
+    assert!(!bus.bulk_set(u64::MAX, &[0xAB], 2)?);
+    assert_eq!(bus.mmu().cr2(), 0);
+
+    Ok(())
+}
+
+#[test]
 fn pagingbus_bulk_copy_overlap_memmove_backward_tiny_overlap_32b() -> Result<(), Exception> {
     // Exercise PagingBus's bulk_copy memmove semantics for overlapping ranges where dst > src.
     // This must copy backward so it behaves like memmove rather than memcpy.

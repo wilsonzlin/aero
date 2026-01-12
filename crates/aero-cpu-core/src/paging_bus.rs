@@ -571,9 +571,16 @@ where
             return Ok(true);
         }
 
-        let len_u64 = u64::try_from(len).map_err(|_| Exception::MemoryFault)?;
-        src.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
-        dst.checked_add(len_u64).ok_or(Exception::MemoryFault)?;
+        // Treat address arithmetic overflow as a reason to decline the bulk fast path so callers
+        // can fall back to scalar accesses (which preserve correct architectural wrap/partial
+        // progress semantics). Do not surface `MemoryFault` here: it's an internal error class and
+        // is not appropriate for guest-visible behavior.
+        let Ok(len_u64) = u64::try_from(len) else {
+            return Ok(false);
+        };
+        if src.checked_add(len_u64).is_none() || dst.checked_add(len_u64).is_none() {
+            return Ok(false);
+        }
 
         if !self.preflight_range_probe(src, len, AccessType::Read)? {
             return Ok(false);
@@ -649,12 +656,16 @@ where
             return Ok(true);
         }
 
-        let total = pattern
-            .len()
-            .checked_mul(repeat)
-            .ok_or(Exception::MemoryFault)?;
-        let total_u64 = u64::try_from(total).map_err(|_| Exception::MemoryFault)?;
-        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
+        // Like `bulk_copy`, decline on overflow so callers can fall back to scalar accesses.
+        let Some(total) = pattern.len().checked_mul(repeat) else {
+            return Ok(false);
+        };
+        let Ok(total_u64) = u64::try_from(total) else {
+            return Ok(false);
+        };
+        if dst.checked_add(total_u64).is_none() {
+            return Ok(false);
+        }
 
         if !self.preflight_range_probe(dst, total, AccessType::Write)? {
             return Ok(false);
