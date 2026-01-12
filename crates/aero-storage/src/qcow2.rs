@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::util::{align_up_u64, checked_range};
+use crate::util::align_up_u64;
+use crate::util::checked_range;
 use crate::{DiskError, Result, StorageBackend, VirtualDisk, SECTOR_SIZE};
 
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
@@ -18,7 +19,7 @@ const MAX_TABLE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 struct Qcow2Header {
     cluster_bits: u32,
     size: u64,
-    l1_size: u32,
+    l1_entries: u64,
     l1_table_offset: u64,
     refcount_table_offset: u64,
     refcount_table_clusters: u32,
@@ -51,6 +52,8 @@ impl Qcow2Header {
         let l1_table_offset = be_u64(&header_72[40..48]);
         let refcount_table_offset = be_u64(&header_72[48..56]);
         let refcount_table_clusters = be_u32(&header_72[56..60]);
+        let nb_snapshots = be_u32(&header_72[60..64]);
+        let snapshots_offset = be_u64(&header_72[64..72]);
 
         let (incompatible_features, refcount_order, header_length) = if version == 3 {
             if len < 104 {
@@ -84,6 +87,10 @@ impl Qcow2Header {
 
         if backing_file_offset != 0 || backing_file_size != 0 {
             return Err(DiskError::Unsupported("qcow2 backing file"));
+        }
+
+        if nb_snapshots != 0 || snapshots_offset != 0 {
+            return Err(DiskError::Unsupported("qcow2 internal snapshots"));
         }
 
         if size == 0 {
@@ -124,10 +131,17 @@ impl Qcow2Header {
             return Err(DiskError::CorruptImage("qcow2 l1 table too small"));
         }
 
+        let l1_bytes = required_l1
+            .checked_mul(8)
+            .ok_or(DiskError::OffsetOverflow)?;
+        if l1_bytes > MAX_TABLE_BYTES {
+            return Err(DiskError::Unsupported("qcow2 l1 table too large"));
+        }
+
         Ok(Self {
             cluster_bits,
             size,
-            l1_size,
+            l1_entries: required_l1,
             l1_table_offset,
             refcount_table_offset,
             refcount_table_clusters,
@@ -145,6 +159,7 @@ impl Qcow2Header {
 /// - unencrypted
 /// - uncompressed
 /// - no backing file
+/// - no internal snapshots
 pub struct Qcow2Disk<B> {
     backend: B,
     header: Qcow2Header,
@@ -163,15 +178,15 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         let file_len = backend.len()?;
 
         // ----- L1 table -----
-        let l1_entries_u64 = header.l1_size as u64;
-        let l1_bytes = l1_entries_u64
+        let l1_bytes = header
+            .l1_entries
             .checked_mul(8)
             .ok_or(DiskError::OffsetOverflow)?;
         if l1_bytes > MAX_TABLE_BYTES {
             return Err(DiskError::Unsupported("qcow2 l1 table too large"));
         }
         let l1_entries: usize = header
-            .l1_size
+            .l1_entries
             .try_into()
             .map_err(|_| DiskError::Unsupported("qcow2 l1 table too large"))?;
         let l1_bytes_usize: usize = l1_bytes
@@ -598,14 +613,16 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
             let chunk_len = remaining_in_cluster.min(buf.len() - buf_off);
 
             let chunk = &buf[buf_off..buf_off + chunk_len];
-            if chunk.iter().all(|b| *b == 0)
-                && self.lookup_data_cluster(guest_cluster_index)?.is_none()
-            {
+            let existing = self.lookup_data_cluster(guest_cluster_index)?;
+            if existing.is_none() && chunk.iter().all(|b| *b == 0) {
                 buf_off += chunk_len;
                 continue;
             }
 
-            let data_cluster = self.ensure_data_cluster(guest_cluster_index)?;
+            let data_cluster = match existing {
+                Some(off) => off,
+                None => self.ensure_data_cluster(guest_cluster_index)?,
+            };
             let phys = data_cluster
                 .checked_add(offset_in_cluster as u64)
                 .ok_or(DiskError::OffsetOverflow)?;

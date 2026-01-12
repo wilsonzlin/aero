@@ -18,11 +18,11 @@ struct VhdFooter {
     data_offset: u64,
     current_size: u64,
     disk_type: u32,
-    raw: [u8; 512],
+    raw: [u8; SECTOR_SIZE],
 }
 
 impl VhdFooter {
-    fn parse(raw: [u8; 512]) -> Result<Self> {
+    fn parse(raw: [u8; SECTOR_SIZE]) -> Result<Self> {
         if raw[..8] != VHD_FOOTER_COOKIE {
             return Err(DiskError::CorruptImage("vhd footer cookie mismatch"));
         }
@@ -105,12 +105,12 @@ pub struct VhdDisk<B> {
 impl<B: StorageBackend> VhdDisk<B> {
     pub fn open(mut backend: B) -> Result<Self> {
         let len = backend.len()?;
-        if len < 512 {
+        if len < SECTOR_SIZE as u64 {
             return Err(DiskError::CorruptImage("vhd file too small"));
         }
 
-        let footer_offset = len - 512;
-        let mut raw_footer = [0u8; 512];
+        let footer_offset = len - SECTOR_SIZE as u64;
+        let mut raw_footer = [0u8; SECTOR_SIZE];
         backend.read_at(footer_offset, &mut raw_footer)?;
         let footer = VhdFooter::parse(raw_footer)?;
 
@@ -118,7 +118,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             VHD_DISK_TYPE_FIXED => {
                 let required_len = footer
                     .current_size
-                    .checked_add(512)
+                    .checked_add(SECTOR_SIZE as u64)
                     .ok_or(DiskError::CorruptImage("vhd current_size overflow"))?;
                 if len < required_len {
                     return Err(DiskError::CorruptImage("vhd fixed disk truncated"));
@@ -153,14 +153,15 @@ impl<B: StorageBackend> VhdDisk<B> {
                     return Err(DiskError::CorruptImage("vhd bat too small"));
                 }
 
-                let bat_bytes = (dynamic.max_table_entries as u64)
+                // Only read the BAT entries needed for the virtual size; this avoids allocating
+                // memory proportional to `max_table_entries` for sparse/truncated images.
+                let bat_bytes = required_entries
                     .checked_mul(4)
                     .ok_or(DiskError::OffsetOverflow)?;
                 if bat_bytes > MAX_BAT_BYTES {
                     return Err(DiskError::Unsupported("vhd bat too large"));
                 }
-                let entries: usize = dynamic
-                    .max_table_entries
+                let entries: usize = required_entries
                     .try_into()
                     .map_err(|_| DiskError::Unsupported("vhd bat too large"))?;
                 let bat_bytes_usize: usize = bat_bytes
@@ -366,10 +367,10 @@ impl<B: StorageBackend> VhdDisk<B> {
         }
 
         let file_len = self.backend.len()?;
-        if file_len < 512 {
+        if file_len < SECTOR_SIZE as u64 {
             return Err(DiskError::CorruptImage("vhd file truncated"));
         }
-        let old_footer_offset = file_len - 512;
+        let old_footer_offset = file_len - SECTOR_SIZE as u64;
 
         let block_total_size = bitmap_size
             .checked_add(dyn_hdr.block_size as u64)
@@ -378,7 +379,7 @@ impl<B: StorageBackend> VhdDisk<B> {
             .checked_add(block_total_size)
             .ok_or(DiskError::OffsetOverflow)?;
         let new_len = new_footer_offset
-            .checked_add(512)
+            .checked_add(SECTOR_SIZE as u64)
             .ok_or(DiskError::OffsetOverflow)?;
 
         self.backend.set_len(new_len)?;
@@ -403,8 +404,11 @@ impl<B: StorageBackend> VhdDisk<B> {
         self.backend.write_at(0, &self.footer.raw)?;
         self.backend.write_at(new_footer_offset, &self.footer.raw)?;
 
+        let bitmap_size_usize: usize = bitmap_size
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("vhd bitmap too large"))?;
         self.bitmap_cache
-            .insert(old_footer_offset, vec![0u8; bitmap_size as usize]);
+            .insert(old_footer_offset, vec![0u8; bitmap_size_usize]);
 
         Ok(old_footer_offset)
     }
@@ -497,7 +501,7 @@ fn be_u64(bytes: &[u8]) -> u64 {
     ])
 }
 
-fn vhd_checksum_footer(raw: &[u8; 512]) -> u32 {
+fn vhd_checksum_footer(raw: &[u8; SECTOR_SIZE]) -> u32 {
     let mut sum: u32 = 0;
     for (i, b) in raw.iter().enumerate() {
         if (64..68).contains(&i) {

@@ -12,6 +12,20 @@ still live in the TypeScript host layer.
 Note: IndexedDB-based storage is generally async and is not currently exposed as a sync
 `aero_storage::StorageBackend`.
 
+## Supported disk image formats
+
+- Raw (`RawDisk`): byte-for-byte disk image (no header).
+- Aero Sparse (`AEROSPAR`, v1): Aero-specific sparse format (`AeroSparseDisk`).
+- Aero COW overlay: copy-on-write overlay built on top of a base disk (`AeroCowDisk`).
+- QCOW2 (`Qcow2Disk`):
+  - v2 and v3 headers
+  - `cluster_bits` in `9..=21`
+  - no backing files, encryption, compression, or internal snapshots
+  - v3 "zero cluster" flag is treated as unallocated (reads as zero)
+- VHD (`VhdDisk`):
+  - Fixed (type 2)
+  - Dynamic (type 3): BAT + bitmap + block allocation
+
 ## Using `aero-storage` disks with device models
 
 Device models such as NVMe and virtio-blk live in separate crates and generally use their own
