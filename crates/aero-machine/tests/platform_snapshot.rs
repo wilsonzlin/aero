@@ -541,6 +541,56 @@ fn restore_device_states_prefers_pci_over_legacy_pci_cfg_entry() {
 }
 
 #[test]
+fn restore_device_states_does_not_sync_pci_intx_when_intx_snapshot_is_invalid() {
+    let src = Machine::new(pc_machine_config()).unwrap();
+    let interrupts = src.platform_interrupts().unwrap();
+    let pci_intx = src.pci_intx_router().unwrap();
+
+    // Configure APIC routing but keep the entry masked so a pending interrupt only appears after
+    // we later unmask it.
+    let vector = 0x53u32;
+    {
+        let mut ints = interrupts.borrow_mut();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        // Active-low, level-triggered, masked.
+        let low = vector | (1 << 13) | (1 << 15) | (1 << 16);
+        program_ioapic_entry(&mut ints, 10, low, 0);
+        ints.raise_irq(InterruptInput::Gsi(10));
+        assert_eq!(ints.get_pending(), None);
+    }
+
+    // Snapshot the interrupt controller with GSI10 asserted.
+    let apic_state =
+        snapshot::io_snapshot_bridge::device_state_from_io_snapshot(snapshot::DeviceId::APIC, &*interrupts.borrow());
+
+    // Produce an invalid PCI_INTX state by corrupting the outer version (must match the inner
+    // io-snapshot header version). This forces `apply_io_snapshot_to_device` to fail.
+    let mut bad_intx_state = snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+        snapshot::DeviceId::PCI_INTX,
+        &*pci_intx.borrow(),
+    );
+    bad_intx_state.version = bad_intx_state.version.wrapping_add(1);
+
+    // Restore into a fresh machine. The invalid PCI_INTX state must *not* cause Machine restore to
+    // call `PciIntxRouter::sync_levels_to_sink()`, since the router's state did not apply.
+    let mut restored = Machine::new(pc_machine_config()).unwrap();
+    snapshot::SnapshotTarget::restore_device_states(&mut restored, vec![apic_state, bad_intx_state]);
+
+    let interrupts = restored.platform_interrupts().unwrap();
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Unmask the IOAPIC entry. If the restored asserted level survived and restore did not
+    // spuriously deassert it via an INTx sync, unmasking should deliver immediately.
+    {
+        let mut ints = interrupts.borrow_mut();
+        let low = vector | (1 << 13) | (1 << 15); // active-low, level-triggered, unmasked
+        program_ioapic_entry(&mut ints, 10, low, 0);
+    }
+
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
+}
+
+#[test]
 fn snapshot_restore_preserves_pci_command_bits_and_pic_pending_interrupt() {
     let mut vm = Machine::new(pc_machine_config()).unwrap();
     let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
